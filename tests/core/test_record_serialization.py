@@ -1,7 +1,7 @@
 """Round-trip tests for the terms that reconstruct through their own ``__reduce__``.
 
 These tests ensure that Record, RecordSpec, NumericRecord, RecordBatch,
-NumericRecordBatch, and ProductDistribution can survive pickle serialization,
+NumericRecordBatch, and FactoredDistribution can survive pickle serialization,
 which is required for Ray task distribution (Ray uses cloudpickle to ship
 arguments to workers), and that a copy or an unpickle preserves everything the
 term was carrying.
@@ -19,20 +19,17 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
     RecordBatch,
 )
-from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
 from probpipe.core._opaque import OpaqueSpec
-from probpipe.core._specs import (
-    NumericArraySpec,
-    NumericRecordSpec,
-    RecordSpec,
-)
+from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from probpipe.core.record import Record
+from probpipe.distributions import FactoredDistribution
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,7 +53,7 @@ def cloudpickle_roundtrip(obj):
 def test_record_pickle_roundtrip():
     r = Record("myrecord", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
     r2 = roundtrip(r)
-    assert r2.name == "myrecord"
+    assert r2.label == "myrecord"
     assert r2.fields == ("x", "y")
     assert float(r2["x"]) == pytest.approx(1.0)
     assert list(r2["y"]) == pytest.approx([2.0, 3.0])
@@ -65,7 +62,7 @@ def test_record_pickle_roundtrip():
 def test_record_pickle_auto_name():
     r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
     r2 = roundtrip(r)
-    assert r2.name == r.name
+    assert r2.label == r.label
     pass
     assert r2.fields == ("a", "b")
 
@@ -103,7 +100,7 @@ def test_record_no_provenance_roundtrip():
 
 
 def test_event_template_pickle_roundtrip():
-    t = RecordSpec(label=None, x=())
+    t = RecordSpec(label=OpaqueSpec(), x=())
     t2 = roundtrip(t)
     assert type(t2) is RecordSpec
     assert t2.fields == ("label", "x")
@@ -230,7 +227,7 @@ def test_bootstrap_replicate_pickle():
     brd = BootstrapReplicateDistribution("x", base)
     brd2 = roundtrip(brd)
     # Verify it round-tripped as the right type and is callable
-    assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
+    assert type(brd2) is BootstrapReplicateDistribution
     assert "replicate_size=3" in repr(brd2)
 
 
@@ -266,29 +263,29 @@ class TestNumericRecordNativePickle:
         nr = NumericRecord("nr", temps=xr_da, extra=jnp.array(1.0))
         restored = roundtrip(nr)
         # Native leaves pickle themselves: the restored field IS a DataArray.
-        assert restored["temps"].dims == ("t",)
-        assert _coord_ints(restored["temps"]) == [10, 20, 30]
-        assert restored["temps"].attrs == {"units": "meters"}
-        assert type(restored["temps"]).__name__ == "DataArray"
+        assert restored.raw("temps").dims == ("t",)
+        assert _coord_ints(restored.raw("temps")) == [10, 20, 30]
+        assert restored.raw("temps").attrs == {"units": "meters"}
+        assert type(restored.raw("temps")).__name__ == "DataArray"
 
     def test_pickle_preserves_nested_xarray_native(self, xr_da):
         # A nested native leaf pickles through the nested record verbatim.
         outer = NumericRecord("outer", grp=NumericRecord("grp", temps=xr_da))
         back = roundtrip(outer)
-        assert back.at_path("grp/temps").dims == ("t",)
-        assert _coord_ints(back.at_path("grp/temps")) == [10, 20, 30]
+        assert back.raw("grp/temps").dims == ("t",)
+        assert _coord_ints(back.raw("grp/temps")) == [10, 20, 30]
 
     def test_cloudpickle_preserves_xarray_native(self, xr_da):
         # Ray ships task arguments via cloudpickle.
         back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da))
-        assert back["temps"].dims == ("t",)
-        assert _coord_ints(back["temps"]) == [10, 20, 30]
+        assert back.raw("temps").dims == ("t",)
+        assert _coord_ints(back.raw("temps")) == [10, 20, 30]
 
     def test_pickle_preserves_pandas_series_native(self):
         pd = pytest.importorskip("pandas")
         s = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"], name="obs")
         back = roundtrip(NumericRecord("nr", vals=s))
-        restored = back["vals"]
+        restored = back.raw("vals")
         assert isinstance(restored, pd.Series)
         assert list(restored.index) == ["a", "b", "c"]
         assert restored.name == "obs"
@@ -299,7 +296,7 @@ class TestNumericRecordNativePickle:
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
         back = roundtrip(NumericRecord("nr", table=df))
-        restored = back["table"]
+        restored = back.raw("table")
         assert isinstance(restored, pd.DataFrame)
         assert list(restored.columns) == ["x", "y"]
         assert list(restored.index) == ["r0", "r1"]
@@ -309,8 +306,8 @@ class TestNumericRecordNativePickle:
         pd = pytest.importorskip("pandas")
         s = pd.Series([4.0, 5.0], index=["p", "q"], name="w")
         back = cloudpickle_roundtrip(NumericRecord("nr", vals=s))
-        assert list(back["vals"].index) == ["p", "q"]
-        assert back["vals"].name == "w"
+        assert list(back.raw("vals").index) == ["p", "q"]
+        assert back.raw("vals").name == "w"
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +332,13 @@ class TestPicklePreservesTemplate:
         assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
         back = roundtrip(r)
         assert back.event_template == r.event_template
+        assert back == r
+
+    def test_an_opaque_type_survives(self):
+        tpl = RecordSpec(tag=OpaqueSpec(type=str, meta="units"))
+        r = Record("r", {"tag": "meters"}, event_template=tpl)
+        back = roundtrip(r)
+        assert back.event_template["tag"] == OpaqueSpec(type=str, meta="units")
         assert back == r
 
     def test_numeric_record_template_survives(self):
@@ -362,7 +366,7 @@ class TestPicklePreservesTemplate:
         nr = NumericRecord("nr", {"x": da}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template  # explicit template survived
-        assert back["x"].dims == ("t",)  # the native leaf survived verbatim
+        assert back.raw("x").dims == ("t",)  # the native leaf survived verbatim
 
     def test_pickle_bare_array_record(self):
         # Bare jax leaves are their own native form; the single pickle path
@@ -393,8 +397,8 @@ class TestRoundTripPreservesAnnotations:
             pytest.param(lambda: Record("r", {"x": jnp.ones(3), "tag": "meters"}), id="record"),
             pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(3)}), id="numeric-record"),
             pytest.param(
-                lambda: ProductDistribution(value=Normal("value", 0.0, 1.0), name="joint"),
-                id="product-distribution",
+                lambda: FactoredDistribution("joint", [Normal("value", 0.0, 1.0)]),
+                id="factored-distribution",
             ),
         ]
     )
@@ -424,12 +428,12 @@ class TestRoundTripPreservesAnnotations:
 
     def test_unannotated_term_stays_unannotated(self):
         assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
-        assert roundtrip(ProductDistribution(v=Normal("v", 0.0, 1.0))).annotations is None
+        assert roundtrip(Normal("v", 0.0, 1.0) * Normal("w", 0.0, 1.0)).annotations is None
 
     def test_the_reconstruction_has_the_same_type(self, term):
         # A term whose class is chosen from its constructor arguments — a record
-        # promoting to ``NumericRecord``, a product distribution picking up the
-        # mixins its components support — lands on a different class if the
+        # promoting to ``NumericRecord``, a factored joint picking up the
+        # capabilities its factors support — lands on a different class if the
         # reconstruction lets one of its own keywords be read as data. The state
         # can look complete while the interface is not.
         assert type(roundtrip(term)) is type(term)

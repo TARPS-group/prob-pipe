@@ -61,6 +61,8 @@ def _validate_to_log_weights(
         weights = _as_float_array(weights)
         if weights.shape != (n,):
             raise ValueError(f"weights shape {weights.shape} does not match number of items {n}.")
+        if not jnp.all(jnp.isfinite(weights)):
+            raise ValueError("weights must be finite.")
         if jnp.any(weights < 0):
             raise ValueError("weights must be non-negative.")
         total = jnp.sum(weights)
@@ -298,17 +300,12 @@ class Weights:
         w.covariance(values)            # weighted covariance matrix
         w.choice(key, shape=(10,))      # draw 10 weighted random indices
 
-    **Passing to distribution constructors** — all ProbPipe distribution
-    constructors that accept ``weights`` or ``log_weights`` also accept
-    a pre-built ``Weights`` object for either parameter.  When a
-    ``Weights`` object is passed, it is used as-is (no re-validation).
-    The behavior is the same regardless of which parameter it is passed
-    to, since the ``Weights`` object already encapsulates its
-    representation::
+    **Passing to distribution constructors** — a distribution constructor
+    that accepts ``weights`` also accepts a pre-built ``Weights`` object,
+    which is used as-is (no re-validation), so log-weights reach it as one::
 
         w = Weights(log_weights=log_w)
-        EmpiricalDistribution("x", samples, weights=w)       # OK
-        EmpiricalDistribution("x", samples, log_weights=w)   # also OK, same result
+        EmpiricalDistribution("x", samples, weights=w)
 
     **JAX compatibility** — ``Weights`` is registered as a JAX pytree
     whose single leaf is the **normalized** weight array, so it works
@@ -415,12 +412,19 @@ class Weights:
 
     @property
     def normalized(self) -> Array:
-        """Normalized weights, shape ``(n,)``.  Cached after first access."""
+        """Normalized weights, shape ``(n,)``.
+
+        Cached after the first access outside a trace. A value computed while
+        tracing belongs to that trace, so it is returned without being cached.
+        """
         if self._is_uniform:
             return uniform_weights(self._n)
-        if self._cache is None:
-            self._cache = normalize_weights(self._log_weights)
-        return self._cache
+        if self._cache is not None:
+            return self._cache
+        normalized = normalize_weights(self._log_weights)
+        if not isinstance(normalized, jax.core.Tracer):
+            self._cache = normalized
+        return normalized
 
     @property
     def log_normalized(self) -> Array:

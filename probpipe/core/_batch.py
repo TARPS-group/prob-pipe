@@ -71,8 +71,9 @@ from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Self, cast
 
-from ._record_spec import _check_kind_of
-from ._spec_base import _unify_array_shape, _unify_specs
+from ._record_spec import RecordSpec, _check_kind_of
+from ._repr import format_levels, is_expression, public_class_name, term_repr
+from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -325,9 +326,22 @@ class BatchSpec(TermSpec):
         _unify_specs(self.element_spec, actual.element_spec, bindings, path)
         return True
 
+    def __repr__(self) -> str:
+        """The element spec, then the levels as a mapping of level name to size."""
+        return term_repr(
+            "BatchSpec",
+            None,
+            [
+                ("element_spec", repr(self.element_spec)),
+                ("levels", format_levels(self.level_names, self.axis_groups)),
+            ],
+        )
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a :class:`Batch` whose own spec equals this one.
 
+        An opaque type this spec leaves open admits the type a batch inferred
+        from its values, in the elements and in any record field of them.
         Anything that is not a ``Batch``, or a ``Batch`` whose spec cannot be
         read, does not satisfy the spec and returns ``False``. Mirrors
         :meth:`~probpipe.RecordSpec.is_valid`.
@@ -338,7 +352,25 @@ class BatchSpec(TermSpec):
             spec = value.spec
         except (AttributeError, TypeError):
             return False
-        return spec == self
+        return _admits(self, spec)
+
+
+def _admits(declared: TermSpec, actual: TermSpec) -> bool:
+    """Whether *actual* is *declared*, with an opaque type filled in where *declared* leaves it open."""
+    if declared == actual:
+        return True
+    if isinstance(declared, OpaqueSpec) and isinstance(actual, OpaqueSpec):
+        return declared.type in (None, actual.type) and _agree(declared.meta, actual.meta)
+    if isinstance(declared, RecordSpec) and isinstance(actual, RecordSpec):
+        return list(declared.keys()) == list(actual.keys()) and all(
+            _admits(declared[key], actual[key]) for key in declared
+        )
+    if isinstance(declared, BatchSpec) and isinstance(actual, BatchSpec):
+        return (declared.axis_groups, declared.level_names) == (
+            actual.axis_groups,
+            actual.level_names,
+        ) and _admits(declared.element_spec, actual.element_spec)
+    return False
 
 
 class Batch[E](TrackedTerm, ABC):
@@ -384,7 +416,7 @@ class Batch[E](TrackedTerm, ABC):
     """
 
     __slots__ = (
-        "_name",
+        "_label",
         "_provenance",
         "_root_name",
         "_root_selection",
@@ -395,7 +427,7 @@ class Batch[E](TrackedTerm, ABC):
     # The three ``_root_*`` slots are the machinery of view naming: the name and
     # spec of the batch a derivation starts from, and which of *that* batch's
     # positions this object selects — one entry per root axis, an integer where an
-    # axis has been dropped and a range of positions where one is kept. ``_name``
+    # axis has been dropped and a range of positions where one is kept. ``_label``
     # is read off them, which is what makes two routes to one selection agree: the
     # reading is a function of the selection, not of the calls that reached it.
     #
@@ -405,7 +437,7 @@ class Batch[E](TrackedTerm, ABC):
     # head of the chain. Leaving them unset for a non-view would put a
     # "means everything" reading on ``None`` — the reading positional ``[]``
     # refuses — and every site that composes or renders a selection would carry a
-    # branch for it. :meth:`with_name` re-roots a view: a user-given name replaces
+    # branch for it. :meth:`with_label` re-roots a view: a user-given name replaces
     # the derivation and discards the selection accumulated before it.
 
     # -- construction -------------------------------------------------------
@@ -569,33 +601,33 @@ class Batch[E](TrackedTerm, ABC):
             )
         return self._with_level_names(renamed)
 
-    def with_name(self, name: str) -> Self:
-        """Rename the batch, which becomes the root its view names derive from.
+    def _with_label(self, label: str) -> Self:
+        """Relabel the batch, which becomes the root its view labels derive from.
 
-        The new name starts a new view root, so the copy selects all of
-        itself: its own name is *name*, and a view of it reads
-        ``name[level=...]`` rather than carrying any selection the original had
-        accumulated. This is the way to rename a level a view derives its name
+        The new label starts a new view root, so the copy selects all of
+        itself: its own label is *label*, and a view of it reads
+        ``label[level=...]`` rather than carrying any selection the original had
+        accumulated. This is the way to rename a level a view derives its label
         from but no longer carries, which :meth:`with_level_names` refuses.
 
         Parameters
         ----------
-        name : str
-            The new name, preserved by later transforms.
+        label : str
+            The new label, preserved by later transforms.
 
         Returns
         -------
         Self
-            A shallow copy over the same axes, elements, and spec, named *name*
-            and rooted at itself.
+            A shallow copy over the same axes, elements, and spec, labeled
+            *label* and rooted at itself.
 
         Raises
         ------
         TypeError
-            If *name* is not a non-empty string.
+            If *label* is not a non-empty string.
         """
-        renamed = super().with_name(name)
-        object.__setattr__(renamed, "_root_name", name)
+        renamed = super()._with_label(label)
+        object.__setattr__(renamed, "_root_name", label)
         object.__setattr__(renamed, "_root_spec", renamed._spec)
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
         return renamed
@@ -603,11 +635,12 @@ class Batch[E](TrackedTerm, ABC):
     # -- reading ------------------------------------------------------------
 
     def __repr__(self) -> str:
-        """The class, the batch's name, and each level with its sizes.
+        """The public class, the label, the levels as a mapping, and the elements' structure.
 
-        A level of one axis reports that size, and a level of several reports them
-        as a tuple, so a two-level batch of chains and draws reads
-        ``<class>(name='posterior', chain=4, draw=1000)``.
+        A level of one axis reports its size, and a level of several the tuple of
+        its sizes, so a two-level batch of chains and draws reads
+        ``levels={'chain': 4, 'draw': 1000}``. The elements' structure is their
+        spec, or their field paths for a batch of records.
 
         Notes
         -----
@@ -616,11 +649,14 @@ class Batch[E](TrackedTerm, ABC):
         :meth:`TrackedTerm.with_provenance` interpolates the batch into its
         write-once error, so a ``repr`` that could fail would fail there.
         """
-        levels = ", ".join(
-            f"{level_name}={group[0] if len(group) == 1 else group}"
-            for level_name, group in zip(self.level_names, self.axis_groups, strict=True)
+        levels = ("levels", format_levels(self.level_names, self.axis_groups))
+        return term_repr(
+            public_class_name(type(self)), self.label, [levels, *self._element_repr_arguments()]
         )
-        return f"{type(self).__name__}(name={self.name!r}, {levels})"
+
+    def _element_repr_arguments(self) -> list[tuple[str, str]]:
+        """The elements' structure as the repr shows it: their spec, by default."""
+        return [("element_spec", repr(self.element_spec))]
 
     # -- indexing -----------------------------------------------------------
 
@@ -775,23 +811,20 @@ class Batch[E](TrackedTerm, ABC):
 
     @abstractmethod
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The single element at a fully-integer positional *index*.
+        """The single element at a fully-integer positional *index*, as a view named *name*.
 
-        *name* is the identity this class derived for the element view, and the
-        same split governs it as governs provenance below. A batch that
-        *materializes* an element gives it that name. A batch
-        that *stores* its elements hands back the stored object under the name it
-        already carries: renaming it would mean returning a copy, and an object
-        placed in a batch by name already means something. An element that is a
-        bare value has no identity to carry either way.
+        *name* is the identity this class derived for the element view. A batch
+        that *materializes* an element, as columnar storage builds a row, builds
+        a term of the element kind under *name* and gives it this batch's
+        provenance through :meth:`_inherit_provenance`. A batch that *stores*
+        its elements returns a view of the stored object under *name*: a copy of
+        a stored tracked term that shares its representation, or the stored
+        value wrapped as a term of the element kind. That view's provenance
+        records this batch and the stored term, and the stored object keeps its
+        own name and provenance, since the caller may still hold it.
 
-        **Provenance is this hook's own**, because only it knows whether the
-        element was built or borrowed. A batch that *materializes* an element —
-        a row of columnar storage does not exist until it is built — calls
-        :meth:`_inherit_provenance` on what it built. A batch that *stores* its
-        elements returns the stored object untouched: it did not produce that
-        object, so it cannot truthfully claim its lineage, and writing to it
-        would reach into something the caller still holds.
+        Provenance is this hook's own, because only it knows whether the element
+        was built or borrowed.
         """
 
     @abstractmethod
@@ -894,9 +927,10 @@ class Batch[E](TrackedTerm, ABC):
         selection = self._compose_selection(normalized)
         label = _render_index(self._root_spec, selection)
         if selection == self._root_selection:
-            name = self.name
+            name = self.label
         elif label:
-            name = f"{self._root_name}[{label}]"
+            root = f"({self._root_name})" if is_expression(self._root_name) else self._root_name
+            name = f"{root}[{label}]"
         else:
             name = self._root_name
 
@@ -1078,6 +1112,24 @@ def _axis_groups_for(
         groups.append(shape[at : at + count])
         at += count
     return tuple(groups)
+
+
+def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | None) -> int:
+    """How many batch axes the levels hold: the sum of *axes_per_level*, or one per name.
+
+    A constructor that infers its element spec reads the event axes as the axes
+    past these, so this count fixes where the batch axes end.
+
+    Raises
+    ------
+    TypeError
+        If a count is not an integer.
+    ValueError
+        If a count is not positive.
+    """
+    if axes_per_level is None:
+        return len(names)
+    return sum(_axis_count(count) for count in axes_per_level)
 
 
 def _axis_count(count: Any) -> int:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+from collections.abc import Mapping
 from contextlib import contextmanager
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
@@ -23,17 +24,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._specs import _components_record
-from ..core.ops import sample as _sample_op
-from ..core.protocols import GenerativeLikelihood
+from ..core.record import Record
 from ..custom_types import Array, PRNGKey
+from ..distributions._capabilities import SupportsConditionalSampling
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
 
 if TYPE_CHECKING:
-    # Type-only: tfp is a hard dependency but is only needed here for
-    # bijector annotations.
-    import tensorflow_probability.substrates.jax.bijectors as tfb
+    from ..values import Function
 
 # Offline-simulation execution backend; values mirror ``Function``'s
 # dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
@@ -79,6 +78,19 @@ def _import_bayesflow() -> ModuleType:
     return bf
 
 
+def _observation_slot(prior: Any) -> str:
+    """The name of a learned kernel's observation field: ``observation``, unless the prior declares it.
+
+    A kernel's given slots and event components are disjoint, and the prior's
+    components name the parameters, so the observation takes the first of
+    ``observation``, ``observation_``, and so on that the prior leaves free.
+    """
+    slot = _OBSERVATION_KEY
+    while slot in prior.event_spec.components:
+        slot += "_"
+    return slot
+
+
 def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
@@ -93,7 +105,7 @@ def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
 
 def _validate_learn_inputs(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     caller: str,
     sim_backend: SimBackend,
@@ -108,15 +120,18 @@ def _validate_learn_inputs(
             raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
         if _val < 1:
             raise ValueError(f"{_name} must be a positive integer, got {_val}.")
-    if not hasattr(simulator, "generate_data"):
+    if not (
+        isinstance(simulator, ConditionalDistribution)
+        and isinstance(simulator, SupportsConditionalSampling)
+    ):
         raise TypeError(
-            "simulator must be a GenerativeLikelihood with a generate_data method, "
-            f"got {type(simulator).__name__}"
+            "simulator must be a ConditionalDistribution that samples, the kernel of one "
+            f"observation given the prior's fields, got {type(simulator).__name__}"
         )
     if not isinstance(prior, NumericDistribution):
         raise TypeError(
             f"{caller} requires a numeric prior with named parameter fields -- "
-            "typically a ProductDistribution of named distributions -- "
+            "typically a factored joint of named distributions -- "
             f"but got {type(prior).__name__}, which declares no numeric event."
         )
     return _components_record(prior.event_spec)
@@ -140,14 +155,43 @@ def _isolated_keras_seeding(random_seed: int):
         np.random.set_state(np_state)
 
 
+def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
+    """The simulator's given values at *params*, the record of one prior draw.
+
+    A simulator whose given slots are the prior's components receives the record
+    itself, so it may read a nested field by its leaf path; any other receives
+    the record of its slots.
+    """
+    slots = tuple(simulator.given_spec)
+    if set(slots) == set(params.fields):
+        return params
+    return Record("given", {slot: params[slot] for slot in slots})
+
+
+def _leaf_draws(draws: Any, leaf: str) -> Any:
+    """The draws of the numeric leaf at the path *leaf*, from a law's raw batched draws.
+
+    A record-drawing law's raw draws are a nested mapping of stacked leaves, and
+    an array-drawing law's are the stacked array of its one leaf.
+    """
+    if isinstance(draws, Record):
+        return draws.raw(leaf)
+    if isinstance(draws, Mapping):
+        node = draws
+        for part in leaf.split("/"):
+            node = node[part]
+        return node
+    return draws
+
+
 def _simulate_offline(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     num_simulations: int,
     key: PRNGKey,
     *,
     sim_backend: SimBackend,
-    bijectors: dict[str, tfb.Bijector] | None,
+    bijectors: dict[str, Function] | None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Draw ``(theta, y)`` pairs offline: ``theta ~ prior``, ``y ~ simulator(theta)``.
 
@@ -168,35 +212,29 @@ def _simulate_offline(
     # leaf paths never reach BayesFlow's namespace.
     leaf_keys = tuple(template.leaf_shapes)
     k_theta, k_sim = jax.random.split(key)
-    theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
-    # Round-trip through the canonical 1-D vector layout: single-field priors'
-    # raw draws are not field-indexable by name, so from_vector gives uniform
-    # named access. Structured draws serialize via to_vector; raw arrays ravel.
-    if isinstance(theta, NumericRecordBatch):
-        theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
-    else:
-        theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)
-    from ..core._numeric_record import _reconstruct_from_vector
-
-    record = _reconstruct_from_vector(prior.name, template, theta_flat)
+    draws = prior._sample(k_theta, (num_simulations,))
+    columns = {leaf: jnp.asarray(_leaf_draws(draws, leaf)) for leaf in leaf_keys}
+    theta_flat = jnp.concatenate(
+        [jnp.reshape(column, (num_simulations, -1)) for column in columns.values()], axis=1
+    )
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
-    for leaf in leaf_keys:
-        arr = jnp.asarray(record[leaf])
+    for leaf, arr in columns.items():
         if bijectors is not None:
-            arr = bijectors[leaf].inverse(arr)
+            arr = bijectors[leaf]._inverse(arr)
         named[leaf] = np.asarray(jnp.reshape(arr, (num_simulations, -1)), dtype="float32")
     sim_keys = jax.random.split(k_sim, num_simulations)
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
-        # Per-draw structured params (named-field access), per the
-        # GenerativeLikelihood contract. ``flat_row`` is 1-D, so from_vector
-        # rebuilds a single NumericRecord.
+        # One observation of the simulator kernel at the per-draw structured
+        # params. ``flat_row`` is 1-D, so from_vector rebuilds a single
+        # NumericRecord.
         from ..core._numeric_record import _reconstruct_from_vector
+        from ._inference_utils import flat_vector
 
         params = _reconstruct_from_vector("params", template, flat_row)
-        return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
+        return flat_vector(simulator._conditional_sample(_simulator_given(simulator, params), k))
 
     if sim_backend == "jax":
         # JAX-traceable simulators: vmap the whole batch (fast path).

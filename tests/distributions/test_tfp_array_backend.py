@@ -1,7 +1,6 @@
 """Tests for ``_TFPArrayBackend``.
 
-The backend is the fused-storage substrate that
-:class:`~probpipe.DistributionArray` dispatches onto.
+The backend is the fused storage of a family's batched parameters.
 These tests pin the backend's behaviour in isolation:
 
 * Per-cell materialisation (``cell(i)``) returns fresh scalar
@@ -24,7 +23,7 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import Beta, Gamma, MultivariateNormal, Normal
-from probpipe.distributions._tfp_base import _TFPArrayBackend
+from probpipe.families._backend import _TFPArrayBackend
 
 # ---------------------------------------------------------------------------
 # Construction + minimum surface
@@ -162,7 +161,7 @@ class TestCellMaterialisation:
             scale=jnp.ones(3),
         )
         for i in range(3):
-            assert backend.cell(i).name == f"weights_{i}"
+            assert backend.cell(i).label == f"weights_{i}"
 
     def test_cell_returns_unbatched_distribution(self):
         """Cells materialise as scalar distributions
@@ -499,102 +498,3 @@ class TestScalarParamBroadcasting:
         assert backend.batch_shape == (2, 3)
         for i in range(6):
             assert float(backend.cell(i).loc) == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Backend-derived approximation status
-# ---------------------------------------------------------------------------
-
-
-class TestBackendApproximate:
-    """``_from_backend`` propagates ``is_approximate`` from the
-    backend rather than hardcoding ``False``. This is forward-
-    compatible with a future ``_RecordBatchBackend`` over an
-    empirical source whose samples are an approximation.
-    """
-
-    def test_tfp_backend_is_exact(self):
-        """The shipping ``_TFPArrayBackend`` has no
-        ``is_approximate`` attribute, so the ``DistributionArray``
-        defaults to exact (``False``)."""
-        from probpipe import DistributionArray
-
-        backend = Normal._make_array_backend(
-            name="x",
-            batch_shape=(3,),
-            loc=jnp.zeros(3),
-            scale=1.0,
-        )
-        da = DistributionArray._from_backend(backend, name="x")
-        assert da.is_approximate is False
-
-    def test_approximate_backend_propagates(self):
-        """A backend reporting ``is_approximate=True`` flows through
-        to the assembled DistributionArray."""
-        from probpipe import DistributionArray
-
-        class _ApproxBackend:
-            batch_shape = (3,)
-            event_shape = ()
-            is_approximate = True
-
-            @property
-            def cell_spec(self):
-                return self.cell(0).event_spec.spec
-
-            def cell(self, i):
-                return Normal(loc=0.0, scale=1.0, name=f"x_{i}")
-
-        da = DistributionArray._from_backend(_ApproxBackend(), name="x")
-        assert da.is_approximate is True
-
-
-# ---------------------------------------------------------------------------
-# Negative-index alignment
-# ---------------------------------------------------------------------------
-
-
-class TestFlatComponentNegativeRejection:
-    """``_flat_component`` rejects negatives in *both* the backend
-    and literal-array paths. ``__getitem__`` wraps user-facing
-    ``da[-1]`` before any flat-index call site sees it, so internal
-    sweep code (which already only passes non-negatives) and
-    direct ``_flat_component(-1)`` calls behave consistently.
-    """
-
-    def test_backed_path_rejects_negative(self):
-        from probpipe import DistributionArray
-
-        backend = Normal._make_array_backend(
-            name="x",
-            batch_shape=(3,),
-            loc=jnp.zeros(3),
-            scale=1.0,
-        )
-        da = DistributionArray._from_backend(backend, name="x")
-        with pytest.raises(IndexError):
-            da._flat_component(-1)
-
-    def test_literal_path_rejects_negative(self):
-        """The literal path used to silently allow Python tuple
-        wraparound; align with the backed path."""
-        from probpipe import DistributionArray
-
-        comps = [Normal(loc=float(i), scale=1.0, name=f"c_{i}") for i in range(3)]
-        da = DistributionArray(comps, name="x")
-        with pytest.raises(IndexError):
-            da._flat_component(-1)
-
-    def test_user_facing_da_minus_one_still_works(self):
-        """``da[-1]`` continues to work via ``__getitem__`` wrap."""
-        from probpipe import DistributionArray
-
-        backend = Normal._make_array_backend(
-            name="x",
-            batch_shape=(3,),
-            loc=jnp.array([10.0, 20.0, 30.0]),
-            scale=1.0,
-        )
-        da = DistributionArray._from_backend(backend, name="x")
-        assert float(da[-1].loc) == 30.0
-        assert float(da[-2].loc) == 20.0

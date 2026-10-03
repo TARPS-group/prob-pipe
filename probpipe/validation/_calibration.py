@@ -14,9 +14,8 @@ model that generated the data:
 These orchestrate inference through a **Python loop over** :func:`condition_on`,
 so they work for every backend (blackjax, Stan, PyMC, …); they are therefore not
 themselves jit-compatible, though the per-fit MCMC inside the loop is
-JAX-accelerated where the backend allows. The model must expose a sampleable
-``prior``, a ``likelihood`` with ``generate_data``, and be conditionable — e.g. a
-:class:`~probpipe.SimpleModel` built with a :class:`~probpipe.GLMLikelihood`.
+JAX-accelerated where the backend allows. The model is a joint that samples
+and conditions on its observed fields, such as a GLM likelihood times its prior.
 """
 
 from __future__ import annotations
@@ -29,12 +28,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core import _workflow_context
-from ..core.ops import condition_on
+from ..core._record_spec import RecordSpec
+from ..core._specs import OutputSpec
 from ..custom_types import Array, ArrayLike, PRNGKey
-from ._predictive_check import _supports_key_arg
+from ..distributions._distribution import _array_leaves
+from ..distributions._empirical import EmpiricalDistribution, _coordinates
+from ..distributions._factored import _raw_record
+from ..functions import _context
+from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
+from ..operations._condition import condition_on
 from ._workflow_rng import (
-    _require_certified_generative_provider,
     _resolve_validation_key,
     _validate_positive_int,
 )
@@ -45,16 +48,25 @@ __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 # -- helpers ----------------------------------------------------------------
 
 
-def _flatten_point(point: Any, fields: tuple[str, ...] | None) -> Array:
-    """Flatten one parameter draw to the 1-D layout of ``flat_samples``.
+def _flatten_point(point: Any, event_spec: OutputSpec) -> Array:
+    """Flatten one parameter draw to the flat layout of the posterior's atoms.
 
-    The single-draw analogue of :attr:`flat_samples`: ``prior._sample`` returns a
-    bare array for a single-field prior (raveled directly) or a ``Record`` for a
-    multi-field prior (fields raveled and concatenated in posterior field order).
+    The posterior's event declaration *event_spec* gives the layout. An array
+    draw is raveled, and a record draw, a ``Record`` or the nested mapping of
+    its leaves, has its leaves raveled and concatenated in the declaration's
+    leaf order.
     """
-    if hasattr(point, "fields"):
-        return jnp.concatenate([jnp.ravel(jnp.asarray(point[f])) for f in fields])
-    return jnp.ravel(jnp.asarray(point))
+    spec = event_spec.spec
+    if not isinstance(spec, RecordSpec):
+        return jnp.ravel(jnp.asarray(point))
+    raw = _raw_record(point)
+    leaves = []
+    for path in spec:
+        leaf = raw
+        for segment in path.split("/"):
+            leaf = leaf[segment]
+        leaves.append(jnp.ravel(jnp.asarray(leaf)))
+    return jnp.concatenate(leaves)
 
 
 def _ranks(draws: Array, point: Array) -> Array:
@@ -66,22 +78,17 @@ def _ranks(draws: Array, point: Array) -> Array:
     return jnp.sum(draws < point[None, :], axis=0)
 
 
-def _component_names(posterior: Any) -> tuple[str, ...] | None:
-    """Per-flattened-component parameter names matching the ``flat_samples`` columns.
+def _component_names(posterior: Any) -> tuple[str, ...]:
+    """Per-flattened-component parameter names matching the posterior's flat coordinates.
 
-    A scalar field keeps its name; a field with ``k > 1`` flattened components
-    becomes ``field[0] … field[k-1]`` (row-major), in posterior field order.
-    Returns ``None`` if the posterior exposes neither ``fields`` nor
-    ``event_shapes``.
+    A scalar leaf keeps its path, and a leaf with ``k > 1`` flattened
+    components becomes ``path[0] … path[k-1]`` (row-major), in the posterior's
+    leaf order. A whole-term posterior's one leaf is its component.
     """
-    fields = getattr(posterior, "fields", None)
-    shapes = getattr(posterior, "event_shapes", None)
-    if not fields or shapes is None:
-        return None
     names: list[str] = []
-    for f in fields:
-        size = int(np.prod(shapes[f], dtype=int))
-        names.extend([f] if size == 1 else [f"{f}[{i}]" for i in range(size)])
+    for path, spec in _array_leaves(posterior.event_spec).items():
+        size = int(np.prod(spec.shape, dtype=int))
+        names.extend([path] if size == 1 else [f"{path}[{i}]" for i in range(size)])
     return tuple(names)
 
 
@@ -169,34 +176,35 @@ class SBCResult:
 def simulation_based_calibration(
     model: Any,
     *,
+    observed: str | Sequence[str],
     num_simulations: int,
     num_posterior_draws: int,
-    num_observations: int,
     method: str | None = None,
     key: PRNGKey | None = None,
     **infer_kwargs: Any,
 ) -> SBCResult:
     """Simulation-based calibration of an inference method (Talts et al. 2018).
 
-    For each of ``num_simulations`` draws: sample ``θ★`` from ``model.prior``,
-    generate ``y`` from ``model.likelihood.generate_data(θ★, num_observations)``,
-    fit the posterior with :func:`condition_on`, and record the rank of each
-    flattened ``θ★`` component among the ``num_posterior_draws`` posterior draws.
-    Under correct calibration each rank is ``Uniform{0, …, L}``; the per-parameter
-    KS distance from uniform and its p-value summarize the fit.
+    For each of ``num_simulations`` draws of the joint *model*: split the draw
+    into the parameters ``θ★`` and the *observed* fields ``y``, fit the posterior
+    with :func:`condition_on` at ``y``, and record the rank of each flattened
+    ``θ★`` component among the ``num_posterior_draws`` posterior draws. Under
+    correct calibration each rank is ``Uniform{0, …, L}``; the per-parameter KS
+    distance from uniform and its p-value summarize the fit.
 
     Parameters
     ----------
     model
-        A conditionable generative model — sampleable ``prior``, a ``likelihood``
-        with ``generate_data``, and usable with :func:`condition_on` (e.g.
-        ``SimpleModel(prior, GLMLikelihood(...))``).
+        A joint that samples and that :func:`condition_on` conditions on its
+        observed fields, such as ``likelihood * prior``.
+    observed
+        The fields of a draw that the posterior conditions on; the others are the
+        parameters.
     num_simulations
         Number of ``(θ★, y, posterior)`` replications.
     num_posterior_draws
-        Posterior draws per fit (``num_results`` passed to :func:`condition_on`).
-    num_observations
-        Observations per generated dataset.
+        Posterior draws per fit, the ``num_results`` entry of the fit's
+        ``method_options``.
     method
         Inference method name for :func:`condition_on` (``None`` = auto-select).
     key
@@ -204,71 +212,72 @@ def simulation_based_calibration(
         per-fit MCMC seed, so a fixed key makes the whole run reproducible. Do not
         also pass ``random_seed`` in ``infer_kwargs``.
     **infer_kwargs
-        Extra keyword arguments forwarded to :func:`condition_on` (e.g.
-        ``num_warmup``, ``num_chains``).
+        Further budgets of the inference method, such as ``num_warmup`` or
+        ``num_chains``, which each fit passes in its ``method_options``.
 
     Returns
     -------
     SBCResult
+
+    Raises
+    ------
+    TypeError
+        If *model* does not sample.
+    ValueError
+        If an *observed* name is not a field of a draw, or no parameter is left.
     """
-    _workflow_context._assert_workflow_admission()
+    _context._assert_workflow_admission()
     num_simulations = _validate_positive_int("num_simulations", num_simulations)
     num_posterior_draws = _validate_positive_int(
         "num_posterior_draws",
         num_posterior_draws,
     )
-    num_observations = _validate_positive_int("num_observations", num_observations)
     if "random_seed" in infer_kwargs:
         raise ValueError(
             "simulation_based_calibration manages the per-fit random_seed; "
             "do not pass random_seed in infer_kwargs"
         )
-    prior = model.prior
-    likelihood = model.likelihood
-    if not callable(getattr(prior, "_sample", None)):
-        raise TypeError(f"{type(prior).__name__} does not support SBC prior sampling")
-    generate = likelihood.generate_data
-    if not callable(generate):
-        raise TypeError("model.likelihood.generate_data must be callable")
-    gen_takes_key = _supports_key_arg(likelihood)
-    if key is None:
-        provider_abi = _require_certified_generative_provider(
-            likelihood,
-            "simulation_based_calibration",
+    if not callable(getattr(model, "_sample", None)):
+        raise TypeError(f"{type(model).__name__} does not support SBC joint sampling")
+    observed = (observed,) if isinstance(observed, str) else tuple(observed)
+    components = tuple(model.event_spec.components)
+    unknown = [name for name in observed if name not in components]
+    if unknown:
+        raise ValueError(
+            f"{unknown} are not fields of {model.label!r}; its fields are {components}"
         )
+    parameters = tuple(name for name in components if name not in observed)
+    if not parameters:
+        raise ValueError(f"observing {list(observed)} leaves no parameter of {model.label!r}")
+    if key is None:
+        # The joint is a ProbPipe law, so its draws follow the distribution ABI.
         key = _resolve_validation_key(
             None,
             operation_kind="simulation-based-calibration",
             execution_mode="sampled",
             sample_shape=(num_simulations,),
-            provider_abi=provider_abi,
+            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
         )
 
     rank_rows: list[np.ndarray] = []
-    fields: tuple[str, ...] | None = None
     component_names: tuple[str, ...] | None = None
     draws = None
     for _ in range(num_simulations):
-        key, k_theta, k_data, k_mcmc = jax.random.split(key, 4)
-        theta_star = prior._sample(k_theta, ())
-        if gen_takes_key:
-            y = generate(theta_star, num_observations, key=k_data)
-        else:
-            y = generate(theta_star, num_observations)
+        key, k_draw, k_mcmc = jax.random.split(key, 3)
+        draw = _raw_record(model._sample(k_draw, ()))
+        theta_star = {name: draw[name] for name in parameters}
+        y = {name: draw[name] for name in observed}
         seed = int(jax.random.randint(k_mcmc, (), 0, 2_000_000_000))
-        posterior = condition_on(
-            model,
-            y,
-            method=method,
-            num_results=num_posterior_draws,
-            random_seed=seed,
-            **infer_kwargs,
-        )
-        draws = jnp.asarray(posterior.flat_samples)  # (L, p)
-        if fields is None:
-            fields = getattr(posterior, "fields", None)
+        budgets = {"num_results": num_posterior_draws, "random_seed": seed, **infer_kwargs}
+        posterior = condition_on.with_options(method=method, method_options=budgets)(model, y)
+        draws = _coordinates(posterior)  # (L, p)
+        if component_names is None:
             component_names = _component_names(posterior)
-        theta_flat = _flatten_point(theta_star, fields)  # (p,)
+        point = theta_star
+        if not posterior.event_spec.exposes_record and len(theta_star) == 1:
+            # A whole-term posterior's draw is its one parameter's value.
+            (point,) = theta_star.values()
+        theta_flat = _flatten_point(point, posterior.event_spec)  # (p,)
         rank_rows.append(np.asarray(_ranks(draws, theta_flat)))
 
     ranks = np.stack(rank_rows).astype(int)  # (num_simulations, p)
@@ -301,11 +310,15 @@ def interval_coverage(
     ``(posterior, truth)`` pairs gives the frequentist coverage, which matches the
     nominal level for a calibrated method.
 
-    *draws_or_dist* is an ``(n, d)`` (or 1-D ``(n,)``) array of draws or a
-    distribution exposing ``flat_samples`` (treated as equally weighted, as
-    MCMC draws are); *truth* is the matching ``(d,)``.
+    *draws_or_dist* is an ``(n, d)`` (or 1-D ``(n,)``) array of draws or an
+    empirical law, read as the flat coordinates of its atoms (treated as
+    equally weighted, as MCMC draws are); *truth* is the matching ``(d,)``.
     """
-    draws = jnp.asarray(getattr(draws_or_dist, "flat_samples", draws_or_dist))
+    draws = jnp.asarray(
+        _coordinates(draws_or_dist)
+        if isinstance(draws_or_dist, EmpiricalDistribution)
+        else draws_or_dist
+    )
     if draws.ndim == 1:
         draws = draws[:, None]
     truth = jnp.atleast_1d(jnp.asarray(truth))

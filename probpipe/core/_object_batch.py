@@ -1,9 +1,9 @@
 """Object-array storage for the batch forms of values that do not stack natively.
 
 A ``NumericArraySpec`` value batches natively — an array with the batch axes leading —
-so no class is needed for it. A callable and an opaque object have no such form:
-there is nothing to stack them *into*. :class:`_ObjectBatch` supplies the
-storage those two batch forms share, a numpy object array, leaving each public
+so no class is needed for it. A callable, an opaque object, and a law have no such
+form: there is nothing to stack them *into*. :class:`_ObjectBatch` supplies the
+storage those batch forms share, a numpy object array, leaving each public
 class to say only what its elements are and which spec they satisfy.
 
 The object array earns its place by answering the storage contract
@@ -12,7 +12,11 @@ numpy's basic indexing returns a **view** over the same objects, so a
 sub-batch shares its parent's store, and it honors a descending or stepped
 slice in the order given, which the derived names of a view are stated in.
 
-See design III.1.
+An element is a view as well: the stored object under the name derived from
+its position, sharing the stored object's representation, with provenance
+naming the batch and the stored object.
+
+See design II.4, II.5, and III.1.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import numpy as np
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._specs import TermSpec
 from .provenance import Provenance
+from .tracked import TrackedTerm
 
 
 class _ObjectBatch[E](Batch[E]):
@@ -33,7 +38,7 @@ class _ObjectBatch[E](Batch[E]):
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's name. Required, as it is for every batch: a batch is a value a
         caller holds, and a name derived from its class says nothing about what it
         holds.
@@ -93,7 +98,7 @@ class _ObjectBatch[E](Batch[E]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[E],
         /,
         level_names: str | Iterable[str],
@@ -112,7 +117,7 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name,
+            name=label,
             provenance=provenance,
         )
 
@@ -139,25 +144,54 @@ class _ObjectBatch[E](Batch[E]):
         batch._init_batch(spec, name=name)
         return batch
 
+    def raw(self) -> np.ndarray:
+        """The storage view: the frozen object array of the stored elements, batch axes leading."""
+        return self._store
+
     # -- the storage seam ---------------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The stored object at *index*: the caller's own, under its own identity.
+        """The stored object at *index*, as a view under the derived *name*.
 
-        *name*, the identity derived for the position, is unused, and no
-        provenance is written — this is the *storing* side of both rules
-        :meth:`~probpipe.core._batch.Batch._element_at` states.
+        A stored tracked term is returned as a copy under *name* that shares its
+        representation, so a law keeps its parameters and a function its callable,
+        and the stored object itself is left untouched. A stored value that is
+        not a tracked term is wrapped as the term of the batch's element kind by
+        :meth:`_wrap_element`. Either way the view's provenance records the
+        batch and, for a stored term, that term as its source, with the position
+        in the metadata.
 
-        Notes
-        -----
-        A derived name belongs to an element a batch *materializes*, since a row
-        of columnar storage has no identity until it is built. An object placed
-        here already means something, so renaming it to its position would lose
-        that and hand back a copy besides. The batch stays the one place the
-        position is recorded — in the name of a sub-batch, which is a view rather
-        than a caller's object.
+        Raises
+        ------
+        TypeError
+            If a stored value is not a tracked term and the element kind gives
+            it no term, as :meth:`_wrap_element` states.
         """
-        return self._store[index]
+        stored = self._store[index]
+        source = stored if isinstance(stored, TrackedTerm) else None
+        provenance = Provenance.of_view(self, source, metadata={"position": list(index)})
+        if isinstance(stored, TrackedTerm):
+            view = stored.with_label(name)
+            # ``with_label`` records a rename; the view's lineage is its selection.
+            object.__setattr__(view, "_provenance", None)
+            return view.with_provenance(provenance)
+        return self._wrap_element(stored, name).with_provenance(provenance)
+
+    def _wrap_element(self, value: Any, name: str) -> Any:
+        """The term of this batch's element kind holding the raw *value*, named *name*.
+
+        A batch whose elements are always tracked terms, as a batch of laws is,
+        keeps this default, which refuses a raw value.
+
+        Raises
+        ------
+        TypeError
+            Always, naming the value's type.
+        """
+        raise TypeError(
+            f"a {type(self).__name__} element is a tracked term, and the value stored at "
+            f"{name!r} is a {type(value).__name__}"
+        )
 
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
         """A view over the same store, indexed as given.

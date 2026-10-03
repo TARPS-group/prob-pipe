@@ -15,7 +15,7 @@ The package layout realizes the design reference as an import architecture: one 
 
 ### Rationale
 
-The layout makes the reference's dependency order mechanical: what a part may depend on is what its package may import, so the document and the code cannot drift on layering. Upward registration is `D2 – Generality first` in the import graph, since the supported set grows by adding a provider package rather than by widening a lower layer. The single curated namespace serves `C3 – Computational detail hidden by default, available on demand`: module paths stay free to change, and a user's imports do not. Module boundaries on the implementation's existing divisions keep the reorganization concrete: each target module names work that is already one coherent unit.
+The layout makes the reference's dependency order mechanical: what a part may depend on is what its package may import, so the document and the code cannot drift on layering. Upward registration is `D2 – Generality first` in the import graph, since the supported set grows by adding a provider package rather than by widening a lower layer. The single curated namespace serves `C3 – Computational detail hidden by default, available on demand`: module locations stay free to change, and a user's imports do not. Module boundaries on the implementation's existing divisions keep the reorganization concrete: each target module names work that is already one coherent unit.
 
 ### The tree
 
@@ -58,7 +58,7 @@ probpipe/
 │   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.7)
 │   ├── _views.py              #   FieldView (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
-│   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.9)
+│   ├── _conditional.py        #   ConditionalDistribution, its markers and spec, conditional_distribution (III.9)
 │   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
 │   ├── _factored.py           #   SupportsFactors and the factored classes (IV.1)
 │   ├── _composition.py        #   the * engine behind __mul__ (IV.2)
@@ -88,7 +88,8 @@ probpipe/
 │   ├── _evaluate.py           #   evaluate (VI.1); its registry is functions/_rules.py
 │   ├── _inverse.py            #   inverse, log_det_jacobian (VI.2)
 │   ├── _sample.py             #   sample (VI.3)
-│   ├── _density.py            #   log_prob, unnormalized_log_prob (VI.4)
+│   ├── _density.py            #   log_prob, unnormalized_log_prob, prob, unnormalized_prob,
+│   │                          #     random_log_prob, random_unnormalized_log_prob (VI.4)
 │   ├── _moments.py            #   mean, variance, cov, quantile, expectation (VI.5)
 │   ├── _condition.py          #   condition_on, the inference registry (VI.6)
 │   ├── _joint.py              #   joint (VI.7)
@@ -106,7 +107,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VII.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VII.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VII.8)
-│   ├── _programs.py           #   StanModel, PyMCModel: backend models with explicit given/event contracts (VII.9)
+│   ├── _programs.py           #   StanModel, PyMCModel, UnnormalizedDistribution: program-defined laws (VII.9)
 │   └── _converters.py         #   the shipped converters (IV.3)
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)
@@ -179,7 +180,8 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
 | `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes the `exact` flag, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
 | `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.3) |
-| `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `distributions/_distribution.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (V.2) |
+| `expectation_method_registry` (`operations/_moments.py`) | retired: `expectation` is the derived operation `mean(evaluate(f, d))` (VI.5), and an integration method registers as an evaluation rule in `functions/_rules.py` (V.7) |
+| `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `distributions/_distribution.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` is replaced by `set_default_n_broadcast_samples`, which sets the default sample count every function reads (V.2) |
 | `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
 | `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
 | `core/config.py` | `core/_config.py` |
@@ -192,13 +194,13 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `distributions/_tfp_base.py` | `families/_backend.py` (VII.1) |
 | `distributions/continuous.py`, `distributions/discrete.py`, `distributions/multivariate.py` | `families/_continuous.py`, `families/_discrete.py`, `families/_multivariate.py` (VII.1) |
 | `distributions/kde.py` | `families/_resampling.py` (VII.2) |
-| `distributions/transformed.py` | `families/_transformed.py` (VII.4) |
+| `distributions/transformed.py` | `families/_transformed.py` (VII.4): `TransformedDistribution` becomes `BijectorTransformedDistribution`, and a backend bijector enters as a `Function` |
 | `distributions/_bijector_dispatch.py` | `functions/_reparameterization.py` (V.12) |
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
 | `inference/_approximate_distribution.py`, `inference/_minibatch.py` | `inference/`, in place: `ApproximateDistribution` becomes an `EmpiricalDistribution` carrying provenance and annotations (VII.7), and `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
 | `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |
 | `_weights.py`, `_array_utils.py`, `_dtype.py`, `_utils.py` | private helpers, unchanged |
-| `diagnostics/`, `validation/` | unchanged |
+| `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its given slots, and reads its replications from their composition, as `mixture` does (VI.9) |
 
 ### Open points
 

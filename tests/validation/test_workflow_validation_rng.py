@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
-    GLMLikelihood,
+    EmpiricalDistribution,
     MultivariateNormal,
     Normal,
-    RecordEmpiricalDistribution,
+    conditional_distribution,
     predictive_check,
     workflow_run,
 )
-from probpipe.core import _workflow_context
+from probpipe.families import GaussianFamily, glm_likelihood
+from probpipe.functions import _context
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -33,43 +32,33 @@ class _OpaqueLikelihood:
         return jnp.asarray(params)[..., None] + noise
 
 
-class _RecordingNormal(Normal):
-    def __init__(self, calls):
-        self.calls = calls
-        super().__init__(loc=0.0, scale=1.0, name="x")
-
-    def _sample(self, key, sample_shape=()):
-        self.calls.append((key, tuple(sample_shape)))
-        return super()._sample(key, sample_shape)
-
-
-def _glm_validation_setup():
-    x = jnp.linspace(-1.0, 1.0, 6)[:, None]
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
-    likelihood = GLMLikelihood(tfp_glm.Normal(), x=x)
-    return prior, likelihood
+def _check_setup():
+    """A normal kernel of six observations and its normal prior."""
+    prior = Normal("mu", 0.0, 1.0)
+    likelihood = conditional_distribution(
+        "y_given_mu",
+        lambda mu: Normal("y", mu * jnp.ones(6), 1.0),
+        given_spec=prior.event_spec.components,
+    )
+    return likelihood, prior
 
 
 class TestPredictiveCheckBroker:
-    def test_certified_provider_is_seeded_and_claims_one_event(self):
-        prior, likelihood = _glm_validation_setup()
+    def test_a_seeded_check_is_reproducible_and_claims_one_event(self):
+        likelihood, prior = _check_setup()
 
         def run(num_replications):
             with (
                 patch(
-                    "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
-                    wraps=_workflow_context.derive_event_key_words_from_encoded,
+                    "probpipe.functions._context.derive_event_key_words_from_encoded",
+                    wraps=_context.derive_event_key_words_from_encoded,
                 ) as derive,
                 workflow_run(seed=7),
             ):
                 result = predictive_check(
-                    prior,
-                    likelihood,
-                    test_fn=jnp.mean,
-                    num_observations=6,
-                    num_replications=num_replications,
+                    likelihood, prior, jnp.mean, num_replications=num_replications
                 )
-            return np.asarray(result["replicated_statistics"].flat_samples), derive
+            return np.asarray(result["replicated_statistics"].atoms.values), derive
 
         first, first_derive = run(8)
         second, second_derive = run(8)
@@ -79,192 +68,101 @@ class TestPredictiveCheckBroker:
         assert first_derive.call_count == 1
         assert second_derive.call_count == 1
         assert larger_derive.call_count == 1
-        assert larger.shape == (16, 1)
+        assert larger.shape == (16,)
 
-    def test_opaque_provider_requires_explicit_key_before_sampling(self):
-        calls = []
-        prior = _RecordingNormal(calls)
+    def test_several_statistics_claim_one_event(self):
+        likelihood, prior = _check_setup()
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                wraps=_context.derive_event_key_words_from_encoded,
+            ) as derive,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
         ):
+            predictive_check(likelihood, prior, [jnp.mean, jnp.max], num_replications=4)
+
+        assert derive.call_count == 1
+
+    def test_an_explicit_key_claims_no_event(self):
+        likelihood, prior = _check_setup()
+
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
             predictive_check(
-                prior,
-                _OpaqueLikelihood(),
-                test_fn=jnp.mean,
-                num_observations=4,
-                num_replications=3,
+                likelihood, prior, jnp.mean, num_replications=3, key=jax.random.key(11)
             )
 
-        assert calls == []
         commit.assert_not_called()
 
-        explicit = jax.random.key(11)
-        with patch(
-            "probpipe.core._workflow_context._commit_stochastic_invocation"
-        ) as explicit_commit:
-            predictive_check(
-                prior,
-                _OpaqueLikelihood(),
-                test_fn=jnp.mean,
-                num_observations=4,
-                num_replications=3,
-                key=explicit,
-            )
-        assert len(calls) == 1
-        explicit_commit.assert_not_called()
+    def test_a_check_outside_a_workflow_run_draws_a_fresh_key(self):
+        likelihood, prior = _check_setup()
 
-    def test_numpy_integer_counts_are_normalized_before_event_commit(self):
-        prior, likelihood = _glm_validation_setup()
-
-        with workflow_run(seed=7):
-            result = predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=np.int64(6),
-                num_replications=np.int64(3),
-            )
+        result = predictive_check(likelihood, prior, jnp.mean, num_replications=3)
 
         assert result["replicated_statistics"].num_atoms == 3
 
-    @pytest.mark.parametrize(
-        ("argument", "value"),
-        [
-            ("num_replications", True),
-            ("num_replications", 0),
-            ("num_replications", 1.5),
-            ("num_observations", True),
-            ("num_observations", 0),
-            ("num_observations", 1.5),
-        ],
-    )
-    def test_invalid_counts_fail_before_event_commit(self, argument, value):
-        prior, likelihood = _glm_validation_setup()
-        kwargs = {"num_observations": 6, "num_replications": 3, argument: value}
+    def test_numpy_integer_counts_are_normalized_before_event_commit(self):
+        likelihood, prior = _check_setup()
+
+        with workflow_run(seed=7):
+            result = predictive_check(likelihood, prior, jnp.mean, num_replications=np.int64(3))
+
+        assert result["replicated_statistics"].num_atoms == 3
+
+    @pytest.mark.parametrize("value", [True, 0, 1.5])
+    def test_invalid_counts_fail_before_event_commit(self, value):
+        likelihood, prior = _check_setup()
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            predictive_check(prior, likelihood, test_fn=jnp.mean, **kwargs)
+            predictive_check(likelihood, prior, jnp.mean, num_replications=value)
 
         commit.assert_not_called()
 
-    def test_instance_method_override_is_not_certified(self):
-        prior, likelihood = _glm_validation_setup()
-        likelihood.generate_data = _OpaqueLikelihood().generate_data
+    def test_a_missing_given_slot_fails_before_event_commit(self):
+        likelihood, _ = _check_setup()
+        other = Normal("tau", 0.0, 1.0)
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
+            pytest.raises(ValueError, match=r"given slots \['mu'\]"),
         ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=6,
-                num_replications=3,
-            )
+            predictive_check(likelihood, other, jnp.mean, num_replications=3)
 
         commit.assert_not_called()
 
-    def test_glm_subclass_is_not_certified(self):
-        class DerivedGLMLikelihood(GLMLikelihood):
-            pass
 
-        prior, _ = _glm_validation_setup()
-        likelihood = DerivedGLMLikelihood(
-            tfp_glm.Normal(),
-            x=jnp.linspace(-1.0, 1.0, 6)[:, None],
-        )
+class _FakeConditionOn:
+    """A stand-in for ``condition_on`` that records each fit's seed and returns zero draws.
 
-        with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
-            workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
-        ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=6,
-                num_replications=3,
-            )
+    A fit reads its budgets from ``method_options``, as the operation's methods do.
+    """
 
-        commit.assert_not_called()
+    def __init__(self):
+        self.seeds = []
 
-    def test_class_method_override_is_not_certified(self, monkeypatch):
-        prior, likelihood = _glm_validation_setup()
-        monkeypatch.setattr(GLMLikelihood, "generate_data", _OpaqueLikelihood.generate_data)
+    def with_options(self, *, method=None, method_options):
+        def fit(model, data):
+            self.seeds.append(method_options["random_seed"])
+            return EmpiricalDistribution("beta", jnp.zeros((method_options["num_results"], 1)))
 
-        with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
-            workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
-        ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=6,
-                num_replications=3,
-            )
-
-        commit.assert_not_called()
-
-    def test_glm_without_design_matrix_fails_before_event_commit(self):
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
-        likelihood = GLMLikelihood(tfp_glm.Normal())
-
-        with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
-            workflow_run(seed=7),
-            pytest.raises(ValueError, match="design matrix"),
-        ):
-            predictive_check(
-                prior,
-                likelihood,
-                test_fn=jnp.mean,
-                num_observations=3,
-                num_replications=2,
-            )
-
-        commit.assert_not_called()
+        return fit
 
 
 class TestSimulationBasedCalibrationBroker:
     @staticmethod
     def _model():
         x = jnp.ones((3, 1))
-        return SimpleNamespace(
-            prior=MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), name="beta"),
-            likelihood=GLMLikelihood(tfp_glm.Normal(), x=x, fit_intercept=False),
-        )
+        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), label="beta")
+        return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
     def test_seeded_sbc_claims_one_event_and_derives_inference_seeds(self, monkeypatch):
-        inference_seeds = []
-
-        def fake_condition_on(
-            model,
-            data,
-            *,
-            method,
-            num_results,
-            random_seed,
-            **kwargs,
-        ):
-            del model, data, method, kwargs
-            inference_seeds.append(random_seed)
-            return RecordEmpiricalDistribution(
-                "beta",
-                jnp.zeros((num_results, 1)),
-            )
-
+        fake_condition_on = _FakeConditionOn()
+        inference_seeds = fake_condition_on.seeds
         monkeypatch.setattr(
             "probpipe.validation._calibration.condition_on",
             fake_condition_on,
@@ -274,16 +172,16 @@ class TestSimulationBasedCalibrationBroker:
             inference_seeds.clear()
             with (
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    "probpipe.functions._context._commit_stochastic_invocation",
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):
                 result = simulation_based_calibration(
                     self._model(),
+                    observed="y",
                     num_simulations=num_simulations,
                     num_posterior_draws=4,
-                    num_observations=3,
                 )
             return result.ranks.copy(), tuple(inference_seeds), commit
 
@@ -298,49 +196,34 @@ class TestSimulationBasedCalibrationBroker:
         second_commit.assert_called_once_with("operation")
         larger_commit.assert_called_once_with("operation")
 
-        with patch(
-            "probpipe.core._workflow_context._commit_stochastic_invocation"
-        ) as explicit_commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as explicit_commit:
             simulation_based_calibration(
                 self._model(),
+                observed="y",
                 num_simulations=2,
                 num_posterior_draws=4,
-                num_observations=3,
                 key=jax.random.key(11),
             )
         explicit_commit.assert_not_called()
 
     def test_numpy_integer_counts_are_normalized_before_event_commit(self, monkeypatch):
-        def fake_condition_on(
-            model,
-            data,
-            *,
-            num_results,
-            **kwargs,
-        ):
-            del model, data, kwargs
-            return RecordEmpiricalDistribution(
-                "beta",
-                jnp.zeros((num_results, 1)),
-            )
-
         monkeypatch.setattr(
             "probpipe.validation._calibration.condition_on",
-            fake_condition_on,
+            _FakeConditionOn(),
         )
 
         with (
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
+                "probpipe.functions._context._commit_stochastic_invocation",
+                wraps=_context._commit_stochastic_invocation,
             ) as commit,
             workflow_run(seed=11),
         ):
             result = simulation_based_calibration(
                 self._model(),
+                observed="y",
                 num_simulations=np.int64(2),
                 num_posterior_draws=np.int64(4),
-                num_observations=np.int64(3),
             )
 
         assert result.ranks.shape == (2, 1)
@@ -353,19 +236,17 @@ class TestSimulationBasedCalibrationBroker:
             ("num_simulations", 0),
             ("num_posterior_draws", True),
             ("num_posterior_draws", 0),
-            ("num_observations", True),
-            ("num_observations", 0),
         ],
     )
     def test_invalid_counts_fail_before_event_commit(self, argument, value):
         kwargs = {
+            "observed": "y",
             "num_simulations": 2,
             "num_posterior_draws": 4,
-            "num_observations": 3,
             argument: value,
         }
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
@@ -373,21 +254,17 @@ class TestSimulationBasedCalibrationBroker:
 
         commit.assert_not_called()
 
-    def test_opaque_provider_requires_explicit_key(self):
-        model = SimpleNamespace(
-            prior=Normal(loc=0.0, scale=1.0, name="x"),
-            likelihood=_OpaqueLikelihood(),
-        )
+    def test_a_model_that_does_not_sample_fails_before_event_commit(self):
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="explicit key"),
+            pytest.raises(TypeError, match="does not support SBC joint sampling"),
         ):
             simulation_based_calibration(
-                model,
+                _OpaqueLikelihood(),
+                observed="y",
                 num_simulations=2,
                 num_posterior_draws=4,
-                num_observations=3,
             )
 
         commit.assert_not_called()
@@ -406,8 +283,8 @@ class TestPosteriorScoreBroker:
         def run():
             with (
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
+                    "probpipe.functions._context._commit_stochastic_invocation",
+                    wraps=_context._commit_stochastic_invocation,
                 ) as commit,
                 workflow_run(seed=7),
             ):
@@ -429,7 +306,7 @@ class TestPosteriorScoreBroker:
         approx, reference = self._inputs()
         moments = Reference.from_moments(jnp.zeros(2), jnp.eye(2))
 
-        with patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit:
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
             score_posterior(approx, reference, metrics=("mmd",))
             score_posterior(approx, moments, metrics=("sliced_wasserstein",))
 
@@ -439,7 +316,7 @@ class TestPosteriorScoreBroker:
         approx, reference = self._inputs()
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(ValueError, match="unknown metric"),
         ):
@@ -455,7 +332,7 @@ class TestPosteriorScoreBroker:
         reference = Reference(draws=jnp.zeros((8, 2)))
 
         with (
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
             pytest.raises(ValueError, match="n, d"),
         ):
@@ -505,7 +382,7 @@ class TestPosteriorScoreBroker:
                 "probpipe.validation._comparison.sliced_wasserstein",
                 return_value=jnp.asarray(0.0),
             ) as metric,
-            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
         ):
             score_posterior(
                 approx,

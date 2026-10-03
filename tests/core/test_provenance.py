@@ -11,25 +11,41 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import probpipe
 from probpipe import (
-    Beta,
-    JointGaussian,
+    EmpiricalDistribution,
+    MultivariateNormal,
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
     Provenance,
     ProvenanceMode,
-    RecordEmpiricalDistribution,
-    SequentialJointDistribution,
-    TransformedDistribution,
+    StudentT,
     condition_on,
-    from_distribution,
+    convert,
     provenance_ancestors,
     provenance_dag,
     workflow_run,
 )
-from probpipe.core.node import Function
+from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.core.provenance import ParentInfo
+from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
+from probpipe.families import BijectorTransformedDistribution
+from probpipe.values._function_base import Function
+from tests._ops import condition_on as condition_on_operation
+
+
+class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Normal(z, 0.5)``, the dependent factor of a joint."""
+
+    def __init__(self):
+        spec = NumericArraySpec(())
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return Normal("x", given["z"], 0.5)
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return Normal("x", given["z"], 0.5)._sample(key, sample_shape)
+
 
 # ===========================================================================
 # 1. Provenance basics (dataclass, with_provenance, write-once)
@@ -103,26 +119,26 @@ class TestProvenanceBasics:
         assert different.inputs["value"].fingerprint_is_weak is True
 
     def test_provenance_with_parents(self):
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        n = Normal(loc=0.0, scale=1.0, label="n")
         p = Provenance("op", parents=(n,))
         assert len(p.parents) == 1
         assert p.parents[0] is n
 
     def test_repr(self):
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        n = Normal(loc=0.0, scale=1.0, label="n")
         p = Provenance("op", parents=(n,))
         assert "op" in repr(p)
         assert "n" in repr(p)
 
     def test_write_once(self):
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        n = Normal(loc=0.0, scale=1.0, label="n")
         n.with_provenance(Provenance("first"))
         with pytest.raises(RuntimeError, match="already set"):
             n.with_provenance(Provenance("second"))
 
     def test_with_provenance_none_is_noop_distribution(self):
         """with_provenance(None) leaves a Distribution unchanged."""
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        n = Normal(loc=0.0, scale=1.0, label="n")
         result = n.with_provenance(None)
         assert result is n
         assert n.provenance is None
@@ -145,19 +161,19 @@ class TestProvenanceBasics:
 class TestParentInfoHashEq:
     def test_hashable_without_provenance(self):
         """Root ParentInfo (provenance=None) is hashable."""
-        p = ParentInfo(type_name="Normal", name="prior")
+        p = ParentInfo(type_name="Normal", label="prior")
         assert isinstance(hash(p), int)
 
     def test_hashable_with_provenance(self):
         """Non-root ParentInfo (source set) is hashable despite Provenance.metadata."""
         src = Provenance("op", metadata={"key": "val"})
-        p = ParentInfo(type_name="Gamma", name="mid", provenance=src)
+        p = ParentInfo(type_name="Gamma", label="mid", provenance=src)
         assert isinstance(hash(p), int)
 
     def test_usable_in_set(self):
         """set(provenance_ancestors(d)) does not raise TypeError."""
-        X = Normal(loc=0.0, scale=1.0, name="X")
-        Y = Normal(loc=0.0, scale=1.0, name="Y")
+        X = Normal(loc=0.0, scale=1.0, label="X")
+        Y = Normal(loc=0.0, scale=1.0, label="Y")
         Y.with_provenance(Provenance.create("op", parents=[X]))
         ancestors = provenance_ancestors(Y)
         s = set(ancestors)
@@ -166,93 +182,91 @@ class TestParentInfoHashEq:
     def test_equal_same_fields(self):
         """Two ParentInfo with identical fields compare equal."""
         src = Provenance("op")
-        a = ParentInfo(type_name="Normal", name="x", provenance=src)
-        b = ParentInfo(type_name="Normal", name="x", provenance=src)
+        a = ParentInfo(type_name="Normal", label="x", provenance=src)
+        b = ParentInfo(type_name="Normal", label="x", provenance=src)
         assert a == b
 
     def test_not_equal_different_name(self):
-        a = ParentInfo(type_name="Normal", name="x")
-        b = ParentInfo(type_name="Normal", name="y")
+        a = ParentInfo(type_name="Normal", label="x")
+        b = ParentInfo(type_name="Normal", label="y")
         assert a != b
 
     def test_not_equal_different_type(self):
-        a = ParentInfo(type_name="Normal", name="x")
-        b = ParentInfo(type_name="Gamma", name="x")
+        a = ParentInfo(type_name="Normal", label="x")
+        b = ParentInfo(type_name="Gamma", label="x")
         assert a != b
 
     def test_obj_excluded_from_eq(self):
         """obj field does not affect equality — same ancestor, different live ref."""
-        n = Normal(loc=0.0, scale=1.0, name="x")
-        a = ParentInfo(type_name="Normal", name="x", parent=n)
-        b = ParentInfo(type_name="Normal", name="x", parent=None)
+        n = Normal(loc=0.0, scale=1.0, label="x")
+        a = ParentInfo(type_name="Normal", label="x", parent=n)
+        b = ParentInfo(type_name="Normal", label="x", parent=None)
         assert a == b
 
     def test_hash_contract(self):
         """Equal ParentInfo must have equal hashes."""
         src = Provenance("op", metadata={"k": 1})
-        a = ParentInfo(type_name="Normal", name="x", provenance=src)
-        b = ParentInfo(type_name="Normal", name="x", provenance=src)
+        a = ParentInfo(type_name="Normal", label="x", provenance=src)
+        b = ParentInfo(type_name="Normal", label="x", provenance=src)
         assert a == b
         assert hash(a) == hash(b)
 
 
 # ===========================================================================
-# 3. from_distribution provenance
+# 3. convert provenance
 # ===========================================================================
 
 
-class TestFromDistributionProvenance:
-    def test_normal_from_distribution(self):
-        src = Beta(alpha=2.0, beta=5.0, name="beta_src")
-        converted = from_distribution(src, Normal)
+class TestConvertProvenance:
+    def test_normal_by_convert(self):
+        src = StudentT(df=5.0, loc=0.0, scale=1.0, label="t_src")
+        converted = convert(src, Normal)
         assert converted.provenance is not None
-        assert converted.provenance.operation == "workflow.from_distribution"
-        assert len(converted.provenance.parents) == 2
+        assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[0], ParentInfo)
-        assert converted.provenance.parents[0].name == "from_distribution"
-        assert converted.provenance.parents[1].name == "beta_src"
+        assert converted.provenance.parents[0].label == "convert"
+        assert converted.provenance.parents[1].label == "t_src"
 
-    def test_empirical_from_distribution(self):
-        src = Normal(loc=0.0, scale=1.0, name="norm_src")
-        ed = from_distribution(src, RecordEmpiricalDistribution, n_samples=100)
+    def test_empirical_by_convert(self):
+        src = Normal(loc=0.0, scale=1.0, label="norm_src")
+        ed = convert.with_options(method_options={"num_samples": 100})(src, EmpiricalDistribution)
         assert ed.provenance is not None
-        assert ed.provenance.operation == "workflow.from_distribution"
-        assert len(ed.provenance.parents) == 2
+        assert ed.provenance.operation == "workflow.convert"
         assert isinstance(ed.provenance.parents[0], ParentInfo)
-        assert ed.provenance.parents[0].name == "from_distribution"
-        assert ed.provenance.parents[1].name == "norm_src"
+        assert ed.provenance.parents[0].label == "convert"
+        assert ed.provenance.parents[1].label == "norm_src"
 
 
 # ===========================================================================
-# 3. TransformedDistribution provenance
+# 3. BijectorTransformedDistribution provenance
 # ===========================================================================
 
 
-class TestTransformedDistributionProvenance:
+class TestBijectorTransformedDistributionProvenance:
     def test_transform_provenance_attached(self):
-        base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("td", base, tfb.Exp())
+        base = Normal(loc=0.0, scale=1.0, label="base")
+        td = BijectorTransformedDistribution("td", base, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
         assert len(td.provenance.parents) == 1
         assert isinstance(td.provenance.parents[0], ParentInfo)
-        assert td.provenance.parents[0].name == "base"
-        assert td.provenance.metadata["bijector"] == "Exp"
+        assert td.provenance.parents[0].label == "base"
+        assert td.provenance.metadata["bijector"] == "exp"
 
     def test_transform_chain_provenance(self):
-        base = Normal(loc=0.0, scale=1.0, name="base")
+        base = Normal(loc=0.0, scale=1.0, label="base")
         bij = tfb.Chain([tfb.Exp(), tfb.Shift(1.0)])
-        td = TransformedDistribution("td", base, bij)
-        assert td.provenance.metadata["bijector"] == "Chain"
+        td = BijectorTransformedDistribution("td", base, bij)
+        assert td.provenance.metadata["bijector"] == "chain_of_exp_of_shift"
 
     def test_transform_with_empirical_base(self):
-        ed = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
-        td = TransformedDistribution("td", ed, tfb.Exp())
+        ed = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        td = BijectorTransformedDistribution("td", ed, tfb.Exp())
         assert td.provenance is not None
         assert td.provenance.operation == "transform"
         assert len(td.provenance.parents) == 1
         assert isinstance(td.provenance.parents[0], ParentInfo)
-        assert td.provenance.parents[0].name == "x"
+        assert td.provenance.parents[0].label == "x"
 
 
 # ===========================================================================
@@ -262,63 +276,55 @@ class TestTransformedDistributionProvenance:
 
 class TestConditioningProvenance:
     def test_product_condition_on(self):
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=1.0, scale=2.0, name="y"),
-        )
-        raw = condition_on.apply(joint, x=jnp.array(0.0))
-        cond = condition_on(joint, x=jnp.array(0.0))
-        assert raw.provenance.operation == "condition_on"
-        assert "x" in raw.provenance.metadata["conditioned"]
+        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=1.0, scale=2.0, label="y")
+        cond = condition_on(joint, {"x": jnp.array(0.0)})
         assert cond.provenance is not None
         assert cond.provenance.operation == "workflow.condition_on"
-        assert len(cond.provenance.parents) == 2
         assert isinstance(cond.provenance.parents[0], ParentInfo)
-        assert [parent.name for parent in cond.provenance.parents] == [
+        # The operation, the joint, and the slice's law, whose own record names its stage.
+        assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
-            joint.name,
+            joint.label,
+            "y",
         ]
 
     def test_condition_on_records_plain_observation_by_parameter(self):
-        joint = ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=1.0, scale=2.0, name="y"),
-        )
+        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=1.0, scale=2.0, label="y")
 
-        at_zero = condition_on(joint, x=jnp.array(0.0))
-        at_five = condition_on(joint, x=jnp.array(5.0))
+        at_zero = condition_on(joint, {"x": jnp.array(0.0)})
+        at_five = condition_on(joint, {"x": jnp.array(5.0)})
 
         assert at_zero.provenance is not None
         assert at_five.provenance is not None
         assert [parent.fingerprint for parent in at_zero.provenance.parents] == [
             parent.fingerprint for parent in at_five.provenance.parents
         ]
-        assert at_zero.provenance.inputs["**kwargs['x']"].fingerprint != (
-            at_five.provenance.inputs["**kwargs['x']"].fingerprint
+        assert at_zero.provenance.inputs["given"].fingerprint != (
+            at_five.provenance.inputs["given"].fingerprint
         )
 
-    def test_sequential_condition_on(self):
-        seq = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
-        cond = condition_on(seq, z=jnp.array(1.0))
+    def test_dependent_joint_condition_on(self):
+        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, label="z")
+        cond = condition_on_operation(joint, {"z": jnp.array(1.0)})
         assert cond.provenance.operation == "workflow.condition_on"
-        assert len(cond.provenance.parents) == 2
+        # The operation, the joint, and the slice's law, whose own record names its stage.
+        assert [parent.label for parent in cond.provenance.parents] == [
+            "condition_on",
+            joint.label,
+            "x",
+        ]
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
-        jg = JointGaussian(
-            mean=jnp.zeros(2),
-            cov=jnp.eye(2),
-            x=1,
-            y=1,
+        jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
+            "y", jnp.zeros(1), cov=jnp.eye(1)
         )
-        cond = condition_on(jg, x=jnp.array([0.0]))
+        cond = condition_on(jg, {"x": jnp.array([0.0])})
         assert cond.provenance.operation == "workflow.condition_on"
-        assert [parent.name for parent in cond.provenance.parents] == [
+        assert [parent.label for parent in cond.provenance.parents] == [
             "condition_on",
-            jg.name,
+            jg.label,
+            "y",
         ]
 
 
@@ -329,15 +335,15 @@ class TestConditioningProvenance:
 
 class TestBroadcastingProvenance:
     def test_broadcast_loop_provenance(self, full_provenance_mode):
-        n = Normal(loc=0.0, scale=1.0, name="input_normal")
+        n = Normal(loc=0.0, scale=1.0, label="input_normal")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(x=n)
-        assert hasattr(result, "samples")
+        assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert len(result.provenance.parents) == 2
@@ -350,27 +356,27 @@ class TestBroadcastingProvenance:
         assert result.provenance.metadata["broadcast_args"] == ["x"]
 
     def test_broadcast_jax_provenance(self):
-        n = Normal(loc=0.0, scale=1.0, name="jax_input")
+        n = Normal(loc=0.0, scale=1.0, label="jax_input")
 
         def double(x: float) -> float:
             return 2.0 * x
 
-        wf = Function(func=double, dispatch="jax", n_broadcast_samples=20)
+        wf = Function(label="double", fn=double, dispatch="jax", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(x=n)
-        assert hasattr(result, "samples")
+        assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["dispatch"] == "jax"
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_broadcast_records_static_plain_inputs(self, dispatch):
-        n = Normal(loc=0.0, scale=1.0, name="input_normal")
+        n = Normal(loc=0.0, scale=1.0, label="input_normal")
 
         def shift(x: float, offset: float = 2.0) -> float:
             return x + offset
 
-        wf = Function(func=shift, dispatch=dispatch, n_broadcast_samples=5)
+        wf = Function(label="shift", fn=shift, dispatch=dispatch, n_broadcast_samples=5)
 
         with workflow_run(seed=42):
             result = wf(n)
@@ -380,31 +386,31 @@ class TestBroadcastingProvenance:
         assert result.provenance.inputs["offset"].fingerprint is not None
 
     def test_broadcast_multiple_parents(self):
-        a = Normal(loc=0.0, scale=1.0, name="a")
-        b = Normal(loc=1.0, scale=0.5, name="b")
+        a = Normal(loc=0.0, scale=1.0, label="a")
+        b = Normal(loc=1.0, scale=0.5, label="b")
 
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(x=a, y=b)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 3
-        assert [parent.name for parent in result.provenance.parents] == ["add", "a", "b"]
+        assert [parent.label for parent in result.provenance.parents] == ["add", "a", "b"]
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
-        ed = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        ed = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        n = Normal(loc=0.0, scale=1.0, label="n")
 
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(a=ed, b=n)
-        assert hasattr(result, "samples")
+        assert hasattr(result, "atoms")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
 
@@ -416,7 +422,7 @@ class TestBroadcastingProvenance:
         def shift(row, offset: float = 2.0) -> float:
             return row["value"] + offset
 
-        result = Function(func=shift)(rows)
+        result = Function(label="shift", fn=shift)(rows)
 
         assert result.provenance is not None
         assert tuple(result.provenance.inputs) == ("offset",)
@@ -426,20 +432,21 @@ class TestBroadcastingProvenance:
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=float(value)) for value in range(2)], level_name="draw"
         )
-        noise = Normal(loc=0.0, scale=1.0, name="noise")
+        noise = Normal(loc=0.0, scale=1.0, label="noise")
 
         def add_noise(row, random_value: float, offset: float = 2.0) -> float:
             return row["value"] + random_value + offset
 
-        wf = Function(func=add_noise, dispatch="sequential", n_broadcast_samples=5)
+        wf = Function(label="add_noise", fn=add_noise, dispatch="sequential", n_broadcast_samples=5)
 
         with workflow_run(seed=42):
             result = wf(rows, noise)
 
         assert result.provenance is not None
-        assert result.components[0].provenance is not None
+        row = result[0].provenance.parents[1].provenance
+        assert row is not None
         assert tuple(result.provenance.inputs) == ("offset",)
-        assert tuple(result.components[0].provenance.inputs) == ("offset",)
+        assert tuple(row.inputs) == ("offset",)
 
 
 # ===========================================================================
@@ -449,30 +456,33 @@ class TestBroadcastingProvenance:
 
 class TestProvenanceChains:
     def test_two_step_chain(self):
-        """from_distribution → condition_on creates a 2-step chain."""
-        src = Beta(alpha=2.0, beta=5.0, name="prior")
-        converted = from_distribution(src, Normal, name="x")
-        joint = ProductDistribution(x=converted, y=Normal(loc=0.0, scale=1.0, name="y"))
-        cond = condition_on(joint, x=jnp.array(0.0))
+        """convert → condition_on creates a 2-step chain.
+
+        The converted law keeps the source's component, which the joint conditions on.
+        """
+        src = StudentT(df=5.0, loc=0.0, scale=1.0, label="prior")
+        converted = convert(src, Normal)
+        joint = converted * Normal(loc=0.0, scale=1.0, label="y")
+        cond = condition_on(joint, {"prior": jnp.array(0.0)})
 
         # cond's provenance points to joint
         assert cond.provenance.operation == "workflow.condition_on"
         # joint has no provenance (constructed directly)
         assert joint.provenance is None
         # but converted has provenance pointing to src
-        assert converted.provenance.operation == "workflow.from_distribution"
+        assert converted.provenance.operation == "workflow.convert"
         assert isinstance(converted.provenance.parents[1], ParentInfo)
-        assert converted.provenance.parents[1].name == "prior"
+        assert converted.provenance.parents[1].label == "prior"
 
     def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
-        base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        base = Normal(loc=0.0, scale=1.0, label="base")
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
 
         def log_val(x: float) -> float:
             return jnp.log(x)
 
-        wf = Function(func=log_val, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(label="log_val", fn=log_val, dispatch="sequential", n_broadcast_samples=20)
         with workflow_run(seed=42):
             result = wf(x=td)
         # result → broadcast → td → transform → base
@@ -500,12 +510,12 @@ class TestSerialization:
         assert d["metadata"] == {"key": "val"}
 
     def test_to_dict_with_parents(self):
-        n = Normal(loc=0.0, scale=1.0, name="my_normal")
+        n = Normal(loc=0.0, scale=1.0, label="my_normal")
         p = Provenance.create("op", parents=[n], metadata={"x": 1})
         d = p.to_dict()
         assert len(d["parents"]) == 1
         assert d["parents"][0]["type"] == "Normal"
-        assert d["parents"][0]["name"] == "my_normal"
+        assert d["parents"][0]["label"] == "my_normal"
 
     def test_to_dict_with_plain_inputs(self):
         value = jnp.array([1.0, 2.0])
@@ -515,14 +525,14 @@ class TestSerialization:
         d = p.to_dict()
 
         assert d["inputs"]["x"]["type"] == type(value).__name__
-        assert d["inputs"]["x"]["name"] is None
+        assert d["inputs"]["x"]["label"] is None
         assert d["inputs"]["x"]["fingerprint"] == p.inputs["x"].fingerprint
         assert d["inputs"]["x"]["fingerprint_is_weak"] is False
 
     def test_to_dict_recursive(self):
         """Recursive serialization follows provenance chains."""
-        src = Normal(loc=0.0, scale=1.0, name="src")
-        td = TransformedDistribution("transformed", src, tfb.Exp())
+        src = Normal(loc=0.0, scale=1.0, label="src")
+        td = BijectorTransformedDistribution("transformed", src, tfb.Exp())
         p = Provenance.create("broadcast", parents=[td])
         d = p.to_dict(recurse=True)
         # td has source (transform), which should be serialized via ParentInfo.provenance
@@ -530,8 +540,8 @@ class TestSerialization:
         assert d["parents"][0]["provenance"]["operation"] == "transform"
 
     def test_to_dict_non_recursive(self):
-        src = Normal(loc=0.0, scale=1.0, name="src")
-        td = TransformedDistribution("transformed", src, tfb.Exp())
+        src = Normal(loc=0.0, scale=1.0, label="src")
+        td = BijectorTransformedDistribution("transformed", src, tfb.Exp())
         p = Provenance.create("broadcast", parents=[td])
         d = p.to_dict(recurse=False)
         assert "provenance" not in d["parents"][0]
@@ -547,13 +557,13 @@ class TestSerialization:
         assert restored.parents == ()
 
     def test_from_dict_preserves_parent_info(self):
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        n = Normal(loc=0.0, scale=1.0, label="n")
         p = Provenance.create("op", parents=[n])
         d = p.to_dict()
         restored = Provenance.from_dict(d)
         # Parent info preserved in metadata
         assert restored.metadata["_parents_info"][0]["type"] == "Normal"
-        assert restored.metadata["_parents_info"][0]["name"] == "n"
+        assert restored.metadata["_parents_info"][0]["label"] == "n"
 
     def test_from_dict_preserves_plain_input_info(self):
         p = Provenance.create("op", inputs={"x": jnp.array([1.0, 2.0])})
@@ -620,7 +630,7 @@ class TestSerialization:
 
     def test_to_dict_fingerprint_included(self):
         """fingerprint is serialized when set on a ParentInfo."""
-        pi = ParentInfo(type_name="Normal", name="x", fingerprint="abc123")
+        pi = ParentInfo(type_name="Normal", label="x", fingerprint="abc123")
         p = Provenance("op", parents=(pi,))
         d = p.to_dict()
         assert d["parents"][0]["fingerprint"] == "abc123"
@@ -629,7 +639,7 @@ class TestSerialization:
     def test_to_dict_weak_fingerprint_classification_included(self):
         pi = ParentInfo(
             type_name="Opaque",
-            name=None,
+            label=None,
             fingerprint="abc123",
             fingerprint_is_weak=True,
         )
@@ -639,7 +649,7 @@ class TestSerialization:
 
     def test_to_dict_fingerprint_omitted_when_none(self):
         """fingerprint key is absent when fingerprint is None."""
-        pi = ParentInfo(type_name="Normal", name="x")
+        pi = ParentInfo(type_name="Normal", label="x")
         p = Provenance("op", parents=(pi,))
         d = p.to_dict()
         assert "fingerprint" not in d["parents"][0]
@@ -659,26 +669,26 @@ class TestSerialization:
 
 class TestProvenanceAncestors:
     def test_no_provenance_returns_empty(self):
-        n = Normal(loc=0.0, scale=1.0, name="n")
+        n = Normal(loc=0.0, scale=1.0, label="n")
         assert provenance_ancestors(n) == []
 
     def test_single_parent(self):
-        base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("td", base, tfb.Exp())
+        base = Normal(loc=0.0, scale=1.0, label="base")
+        td = BijectorTransformedDistribution("td", base, tfb.Exp())
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].name == "base"
+        assert ancestors[0].label == "base"
 
     def test_chain_of_ancestors(self, full_provenance_mode):
         """Function plus base → transform are all broadcast ancestors."""
-        base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        base = Normal(loc=0.0, scale=1.0, label="base")
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=td)
         ancestors = provenance_ancestors(result)
@@ -693,12 +703,12 @@ class TestProvenanceAncestors:
 
     def test_no_duplicates(self, full_provenance_mode):
         """Same parent appearing in multiple roles doesn't duplicate."""
-        n = Normal(loc=0.0, scale=1.0, name="shared")
+        n = Normal(loc=0.0, scale=1.0, label="shared")
 
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
@@ -720,17 +730,17 @@ class TestProvenanceAncestors:
         A and B are both derived from X. C is derived from both A and B.
         provenance_ancestors(C) should contain X exactly once.
         """
-        X = Normal(loc=0.0, scale=1.0, name="X")
-        A = Normal(loc=0.0, scale=1.0, name="A")
-        B = Normal(loc=0.0, scale=1.0, name="B")
-        C = Normal(loc=0.0, scale=1.0, name="C")
+        X = Normal(loc=0.0, scale=1.0, label="X")
+        A = Normal(loc=0.0, scale=1.0, label="A")
+        B = Normal(loc=0.0, scale=1.0, label="B")
+        C = Normal(loc=0.0, scale=1.0, label="C")
 
         A.with_provenance(Provenance.create("op", parents=[X]))
         B.with_provenance(Provenance.create("op", parents=[X]))
         C.with_provenance(Provenance.create("op", parents=[A, B]))
 
         ancestors = provenance_ancestors(C)
-        names = [a.name for a in ancestors]
+        names = [a.label for a in ancestors]
         assert names.count("X") == 1, f"X appeared {names.count('X')} times: {names}"
         assert set(names) == {"A", "B", "X"}
 
@@ -755,8 +765,8 @@ class TestProvenanceDag:
         pytest.importorskip("graphviz")
 
     def test_basic_dag_has_correct_node_and_edge_count(self):
-        base = Normal(loc=0.0, scale=1.0, name="base")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        base = Normal(loc=0.0, scale=1.0, label="base")
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
         dag = provenance_dag(td)
         # Two distributions -> 2 nodes, 1 transform edge.
         num_nodes, num_edges = _count_dag_entries(dag)
@@ -766,10 +776,10 @@ class TestProvenanceDag:
         ancestors = provenance_ancestors(td)
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].name == "base"
+        assert ancestors[0].label == "base"
 
     def test_no_provenance_single_node(self):
-        n = Normal(loc=0.0, scale=1.0, name="alone")
+        n = Normal(loc=0.0, scale=1.0, label="alone")
         dag = provenance_dag(n)
         # Single distribution with no parents -> 1 node, 0 edges.
         num_nodes, num_edges = _count_dag_entries(dag)
@@ -778,13 +788,13 @@ class TestProvenanceDag:
         assert provenance_ancestors(n) == []
 
     def test_multi_step_dag_structure(self, full_provenance_mode):
-        base = Normal(loc=0.0, scale=1.0, name="prior")
-        td = TransformedDistribution("positive", base, tfb.Exp())
+        base = Normal(loc=0.0, scale=1.0, label="prior")
+        td = BijectorTransformedDistribution("positive", base, tfb.Exp())
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=td)
         dag = provenance_dag(result)
@@ -799,20 +809,20 @@ class TestProvenanceDag:
         assert any(a.parent is base for a in ancestors)
 
     def test_plain_inputs_are_not_dag_ancestors(self):
-        wf = Function(func=lambda x: x + 1)
+        wf = Function(label="function", fn=lambda x: x + 1)
 
         result = wf(jnp.asarray(2.0))
 
         ancestors = provenance_ancestors(result)
-        assert [ancestor.name for ancestor in ancestors] == [wf.name]
+        assert [ancestor.label for ancestor in ancestors] == [wf.label]
         dag = provenance_dag(result)
         assert _count_dag_entries(dag) == (2, 1)
 
     def test_diamond_dag_no_duplicate_nodes(self):
         """Shared ancestor in a diamond renders as a single node, not two."""
-        X = Normal(loc=0.0, scale=1.0, name="X")
-        A = Normal(loc=0.0, scale=1.0, name="A")
-        B = Normal(loc=0.0, scale=1.0, name="B")
+        X = Normal(loc=0.0, scale=1.0, label="X")
+        A = Normal(loc=0.0, scale=1.0, label="A")
+        B = Normal(loc=0.0, scale=1.0, label="B")
 
         A.with_provenance(Provenance.create("op", parents=[X]))
         B.with_provenance(Provenance.create("op", parents=[X]))
@@ -823,7 +833,7 @@ class TestProvenanceDag:
         # For the dag test, we use A since it's the simpler traversal.
         # The real diamond requires a root C; approximate by checking
         # ancestors of a manually-sourced C.
-        C = Normal(loc=0.0, scale=1.0, name="C")
+        C = Normal(loc=0.0, scale=1.0, label="C")
         C.with_provenance(Provenance.create("op", parents=[A, B]))
 
         dag = provenance_dag(C)
@@ -846,31 +856,31 @@ class TestProvenanceModes:
 
     def test_lightweight_stores_parent_info(self):
         """LIGHTWEIGHT mode stores ParentInfo descriptors, not live refs."""
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 2
         function_parent, parent = result.provenance.parents
         assert function_parent.type_name == "Function"
-        assert function_parent.name == "identity"
+        assert function_parent.label == "identity"
         assert isinstance(parent, ParentInfo)
         assert parent.type_name == "Normal"
-        assert parent.name == "input"
+        assert parent.label == "input"
 
     def test_lightweight_parent_info_not_live_ref(self):
         """In LIGHTWEIGHT mode, parents are not live Distribution references."""
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         parent = result.provenance.parents[1]
@@ -883,7 +893,7 @@ class TestProvenanceModes:
 
         assert provenance is not None
         info = provenance.inputs["value"]
-        assert info.name is None
+        assert info.label is None
         assert info.parent is None
         assert info.fingerprint is not None
 
@@ -893,18 +903,18 @@ class TestProvenanceModes:
         The DAG is preserved via ParentInfo.provenance, but live objects are not
         held — ParentInfo.parent is None.
         """
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         ancestors = provenance_ancestors(result)
         assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
-        assert [ancestor.name for ancestor in ancestors] == ["identity", "input"]
+        assert [ancestor.label for ancestor in ancestors] == ["identity", "input"]
         assert ancestors[0].parent is None
 
     def test_lightweight_dag_includes_function_and_input(self):
@@ -913,12 +923,12 @@ class TestProvenanceModes:
         Parent nodes are descriptors (no live objects), so the DAG retains both
         direct parents without keeping either live reference.
         """
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         dag = provenance_dag(result)
@@ -929,12 +939,12 @@ class TestProvenanceModes:
     def test_off_mode_no_provenance(self):
         """OFF mode attaches no provenance to workflow results."""
         probpipe.provenance_config.mode = ProvenanceMode.OFF
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         assert result.provenance is None
@@ -953,8 +963,8 @@ class TestProvenanceModes:
         import gc
         import weakref
 
-        parent = Normal(loc=0.0, scale=1.0, name="parent")
-        child = Normal(loc=0.0, scale=1.0, name="child")
+        parent = Normal(loc=0.0, scale=1.0, label="parent")
+        child = Normal(loc=0.0, scale=1.0, label="child")
         child.with_provenance(Provenance.create("op", parents=[parent]))
 
         ref = weakref.ref(parent)
@@ -968,8 +978,8 @@ class TestProvenanceModes:
         import gc
         import weakref
 
-        parent = Normal(loc=0.0, scale=1.0, name="parent")
-        child = Normal(loc=0.0, scale=1.0, name="child")
+        parent = Normal(loc=0.0, scale=1.0, label="parent")
+        child = Normal(loc=0.0, scale=1.0, label="child")
         child.with_provenance(Provenance.create("op", parents=[parent]))
 
         ref = weakref.ref(parent)
@@ -989,12 +999,12 @@ class TestProvenanceModes:
     def test_off_mode_ancestors_empty(self):
         """In OFF mode provenance_ancestors returns an empty list."""
         probpipe.provenance_config.mode = ProvenanceMode.OFF
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         assert provenance_ancestors(result) == []
@@ -1003,12 +1013,12 @@ class TestProvenanceModes:
         """In OFF mode provenance_dag renders only the root node with no edges."""
         pytest.importorskip("graphviz")
         probpipe.provenance_config.mode = ProvenanceMode.OFF
-        n = Normal(loc=0.0, scale=1.0, name="input")
+        n = Normal(loc=0.0, scale=1.0, label="input")
 
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
         with workflow_run(seed=42):
             result = wf(x=n)
         dag = provenance_dag(result)

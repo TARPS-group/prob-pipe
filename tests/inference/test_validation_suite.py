@@ -12,7 +12,6 @@ import jax
 import jax.numpy as jnp
 
 from probpipe import condition_on
-from probpipe.core.record import Record
 from probpipe.validation import relative_cov_error, score_posterior
 
 
@@ -32,16 +31,16 @@ class TestNUTSReproducesReference:
 class TestSGLDCovarianceBias:
     def test_sgld_overdisperses_vs_nuts(self, conjugate_linear_model, conjugate_nuts_posterior):
         m = conjugate_linear_model
-        sgld = condition_on(
-            m.model,
-            Record("r", X=m.design, y=m.data),
+        sgld = condition_on.with_options(
             method="blackjax_sgld",
-            batch_size=20,
-            num_results=5000,
-            num_warmup=2000,
-            step_size=1e-3,
-            random_seed=0,
-        )
+            method_options={
+                "batch_size": 20,
+                "num_results": 5000,
+                "num_warmup": 2000,
+                "step_size": 1e-3,
+                "random_seed": 0,
+            },
+        )(m.model, {"y": m.data})
         rce_nuts = float(relative_cov_error(conjugate_nuts_posterior, m.reference))
         rce_sgld = float(relative_cov_error(sgld, m.reference))
         # Vanilla fixed-step SGLD mis-estimates the posterior covariance. Measured

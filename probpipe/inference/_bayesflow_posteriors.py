@@ -2,12 +2,13 @@
 
 Trains amortized conditional posterior estimators -- NPE (neural posterior
 estimation), FMPE (flow-matching) and CMPE (consistency-model) -- with BayesFlow
-(keras-on-JAX) and wraps prior + simulator + trained estimator as a
-:class:`BayesFlowModel` of the joint ``p(theta, y)``:
-``condition_on(model, observed)`` draws from ``p(theta | observed)`` in a single
-forward pass through the trained network -- no MCMC, no gradient bridge, and no
-prior translation (the prior is used only to draw ``theta`` at train time via
-the :func:`~probpipe.sample` op).
+(keras-on-JAX) and returns the learned kernel ``q(theta | y)`` from the
+observation to the parameters: ``condition_on(q, {"observation": y})`` returns
+the amortized posterior's law at ``y``, each of whose draws is one forward pass
+through the trained network -- no MCMC, no gradient bridge, and no prior
+translation (the prior is used only to draw ``theta`` at train time via the
+:func:`~probpipe.sample` op). When the network is a coupling flow, NPE's
+default, the kernel and its laws also have the flow's density.
 
 The shared bridge (lazy import, validation, offline simulation, adapter keying,
 seeded training) lives in :mod:`._bayesflow_common`;
@@ -20,33 +21,49 @@ not pull keras.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from math import prod
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._dispatch import Feasibility, MathematicalDomainError, ResolutionError
+from ..core._numeric_record import _reconstruct_from_vector
+from ..core._spec_base import NumericArraySpec
 from ..core._specs import _components_record
-from ..core.node import function
-from ..core.protocols import GenerativeLikelihood, SupportsApproximateConditioning
-from ..custom_types import ArrayLike, PRNGKey
+from ..core.record import Record
+from ..custom_types import Array
+from ..distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalLogProb,
+    SupportsConditionalSampling,
+    SupportsLogProb,
+    SupportsSampling,
+    _capability_subclass,
+)
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ..distributions._factored import _raw_record
+from ..functions import function
+from ..values import Function
+from ._approximate_distribution import _record_run
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
     _adapter_field_keys,
     _import_bayesflow,
     _isolated_keras_seeding,
+    _leaf_draws,
+    _observation_slot,
     _simulate_offline,
     _validate_learn_inputs,
 )
 
 if TYPE_CHECKING:
-    # Type-only: bayesflow/keras load at runtime in _import_bayesflow; tfp is a
-    # hard dependency but is only needed here for bijector annotations.
-    import tensorflow_probability.substrates.jax.bijectors as tfb
+    # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
     from bayesflow import Adapter, ContinuousApproximator
     from bayesflow.networks import InferenceNetwork
     from keras.optimizers import Optimizer as KerasOptimizer
@@ -97,7 +114,7 @@ def _build_adapter(bf: ModuleType, internal_keys: tuple[str, ...]) -> Adapter:
     )
 
 
-def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tfb.Bijector]:
+def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, Function]:
     """Per-leaf bijector mapping each parameter's unconstrained R^d to its support.
 
     ``keys`` are the prior's numeric leaves (slash paths like ``"outer/a"`` for a
@@ -106,15 +123,15 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
 
     BayesFlow's ``ContinuousApproximator`` operates in unconstrained, real space, so a
     constrained prior (positive, an interval, ...) is trained on the *unconstrained*
-    parameters (``bijector.inverse``) and the network's draws are mapped back to the
-    support (``bijector.forward``). For a real-valued prior every bijector is the
+    parameters (the bijector's inverse) and the network's draws are mapped back to the
+    support (its forward map). For a real-valued prior every bijector is the
     identity, so the round-trip is a no-op. Discrete priors have no smooth bijector and
     are rejected here with a clear error.
     """
-    from ..distributions import bijector_for  # lazy: inference/ -> distributions/
+    from ..functions import bijector_for
 
     supports = prior.supports
-    bijectors: dict[str, tfb.Bijector] = {}
+    bijectors: dict[str, Function] = {}
     for k in keys:
         constraint = supports[k]
         if constraint is None:
@@ -125,7 +142,7 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
             )
         try:
             bijectors[k] = bijector_for(constraint)
-        except NotImplementedError as e:
+        except (MathematicalDomainError, ResolutionError) as e:
             raise ValueError(
                 f"learn_amortized_posterior cannot handle prior parameter {k!r} with "
                 f"support {constraint!r}: {e}. Amortized SBI requires a continuous prior "
@@ -135,88 +152,197 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
     return bijectors
 
 
-# ---------------------------------------------------------------------------
-# Trained-model wrapper: an approximate-conditioning direct sampler
-# ---------------------------------------------------------------------------
+def _unconstrained_shape(bijector: Function, shape: tuple[int, ...]) -> tuple[int, ...]:
+    """The shape of the unconstrained point the inverse of *bijector* gives at a point of *shape*.
 
-
-class BayesFlowModel(Distribution, SupportsApproximateConditioning):
-    """A BayesFlow amortized model of the joint ``p(theta, y)``.
-
-    Bundles the generative model it was trained from (``prior`` + ``simulator``,
-    exposed as properties) with the trained amortized estimator.  Conditioning
-    runs the trained network: ``condition_on(model, observed)`` draws from
-    ``p(theta | observed)`` in one forward pass, and -- because the estimator is
-    amortized -- the same instance conditions on any observation with no
-    retraining.  The network samples in unconstrained space; posterior draws are
-    mapped back to each leaf's support via the per-leaf forward bijectors
-    recorded at training time (identity for real-valued leaves).  The amortized
-    path honours ``num_results`` (a positive integer) and ``random_seed``;
-    ``num_warmup`` / ``num_chains`` do not apply (a forward pass yields a single
-    draw block).  Direct sampling is not implemented; simulate from the joint
-    via the ``prior`` / ``simulator`` components.
+    A dimension-shifting bijector changes it: a point of a ``d``-simplex has
+    ``d - 1`` unconstrained coordinates.
     """
+    point = jax.ShapeDtypeStruct(tuple(shape), jnp.float32)
+    return tuple(jax.eval_shape(bijector._inverse, point).shape)
+
+
+# ---------------------------------------------------------------------------
+# The amortized posterior: a learned kernel from the observation to the parameters
+# ---------------------------------------------------------------------------
+
+
+def _flow_log_density(kernel: _AmortizedPosterior, observation: np.ndarray, value: Any) -> Array:
+    """The coupling flow's log-density of the parameters *value* at *observation*.
+
+    Each leaf is mapped by the inverse of its bijector to the unconstrained
+    coordinates the network was trained in. The flow scores the point as
+    ``approximator.log_prob`` does, adding the standardization's
+    log-Jacobian, and each bijector's log-Jacobian at the point is subtracted.
+
+    Returns
+    -------
+    Array
+        One log-density per value, shaped like the value's leading axes.
+    """
+    raw = _raw_record(value)
+    leaves = {leaf: jnp.asarray(_leaf_draws(raw, leaf)) for leaf in kernel._leaf_keys}
+    first = kernel._leaf_keys[0]
+    batch = leaves[first].shape[: leaves[first].ndim - len(kernel._leaf_shapes[first])]
+    count = prod(batch)
+    points, log_jacobian = [], jnp.zeros(count)
+    for leaf, x in leaves.items():
+        x = jnp.reshape(x, (count, *kernel._leaf_shapes[leaf]))
+        bijector = kernel._bijectors.get(leaf)
+        if bijector is not None:
+            x = jax.vmap(bijector._inverse)(x)
+            log_jacobian = log_jacobian + jax.vmap(bijector._log_det_jacobian)(x)
+        points.append(jnp.reshape(x, (count, -1)))
+    standardizer = kernel._approximator.standardizer
+    conditions = standardizer.maybe_standardize(
+        jnp.tile(jnp.asarray(observation)[None, :], (count, 1)),
+        key="inference_conditions",
+        stage="inference",
+    )
+    z, standardization = standardizer.maybe_standardize(
+        jnp.concatenate(points, axis=-1).astype(jnp.float32),
+        key="inference_variables",
+        stage="inference",
+        log_det_jac=True,
+    )
+    network = kernel._approximator.inference_network
+    log_density = network.log_prob(z, conditions=conditions) + standardization
+    return jnp.reshape(log_density - log_jacobian, batch)
+
+
+def _amortized_conditional_log_prob(
+    self: _AmortizedPosterior, given: Record | Mapping[str, Any], value: Any
+) -> Array:
+    """The flow's log-density of the parameters *value* at the observation *given* binds."""
+    return _flow_log_density(self, self._observation(given), value)
+
+
+def _amortized_log_prob(self: _AmortizedPosteriorLaw, value: Any) -> Array:
+    """The flow's log-density of the parameters *value* at the law's observation."""
+    return _flow_log_density(self._kernel, self._observation_value, value)
+
+
+class _AmortizedPosterior(
+    ConditionalDistribution, SupportsApproximateConditioning, SupportsConditionalSampling
+):
+    """A learned amortized posterior ``q(theta | y)``: a kernel from the observation to the parameters.
+
+    Its given slot is the observation, named ``observation`` unless the prior
+    declares that name, and its event is the parameters, declared as the prior
+    declares them. Evaluating it at an observation yields the law whose draws
+    each run the trained network once, with no retraining and no inference.
+    The evaluation stands in for the posterior of the joint of the prior and
+    the simulator the network was trained on, so the kernel claims
+    ``SupportsApproximateConditioning`` and ``exact_only=True`` excludes it. The
+    network samples in unconstrained space, and the draws are mapped back to each
+    leaf's support by the forward bijectors recorded at training.
+
+    When the network is a coupling flow, the kernel claims
+    ``SupportsConditionalLogProb`` and its law at an observation claims
+    ``SupportsLogProb``. The log-density at a value of the parameters is the
+    flow's log-density at the value's unconstrained coordinates less each
+    bijector's log-Jacobian there, which is exact for the learned law. A
+    flow-matching or consistency network gives no density.
+
+    Parameters
+    ----------
+    approximator : ContinuousApproximator
+        The trained BayesFlow approximator.
+    prior : Distribution
+        The prior the network was trained against.
+    simulator : ConditionalDistribution
+        The simulator the network was trained against.
+    method : {"npe", "fmpe", "cmpe"}
+        The amortized estimator.
+    data_dim : int
+        The flattened size of the observation the network conditions on.
+    bijectors : dict of str to Function, optional
+        The forward bijector of each constrained leaf.
+    has_density : bool, default False
+        Whether the network computes the learned law's density, as a coupling
+        flow does.
+    """
+
+    _capability_table: ClassVar = {
+        SupportsConditionalLogProb: {"_conditional_log_prob": _amortized_conditional_log_prob}
+    }
+
+    def __new__(
+        cls,
+        approximator: ContinuousApproximator,
+        prior: Distribution,
+        simulator: ConditionalDistribution,
+        *,
+        method: AmortizedMethod,
+        data_dim: int,
+        bijectors: dict[str, Function] | None = None,
+        has_density: bool = False,
+    ) -> _AmortizedPosterior:
+        claimed = [SupportsConditionalLogProb] if has_density else []
+        return object.__new__(_capability_subclass(_AmortizedPosterior, claimed))
 
     def __init__(
         self,
         approximator: ContinuousApproximator,
         prior: Distribution,
-        simulator: GenerativeLikelihood,
+        simulator: ConditionalDistribution,
         *,
         method: AmortizedMethod,
         data_dim: int,
-        num_results: int = 2000,
-        random_seed: int = 0,
-        bijectors: dict[str, tfb.Bijector] | None = None,
+        bijectors: dict[str, Function] | None = None,
+        has_density: bool = False,
     ):
-        self._approximator = approximator
-        self._prior = prior
-        self._simulator = simulator
-        # Numeric leaves (slash paths for a nested prior; == fields for a flat
-        # one) -- the column order the network emits, matching training.
-        self._leaf_keys = tuple(_components_record(prior.event_spec).leaf_shapes)
-        self._method = method
-        self._data_dim = data_dim
-        self._num_results = num_results
-        self._random_seed = random_seed
-        # Forward bijectors (unconstrained -> support); missing entries mean identity.
-        self._bijectors = bijectors or {}
-        # The TrackedTerm metaclass check requires a non-empty name; the
-        # derived default is an auto name.
-        self._init_tracked(f"BayesFlowModel({method})")
-        # A law over the prior's parameters, declared as the prior declares them.
-        self._init_declaration(prior.event_spec)
+        slot = _observation_slot(prior)
+        super().__init__(
+            f"amortized_posterior_{method}", {slot: NumericArraySpec((data_dim,))}, prior.event_spec
+        )
+        leaf_shapes = dict(_components_record(prior.event_spec).leaf_shapes)
+        attributes = {
+            "_slot": slot,
+            "_approximator": approximator,
+            "_prior": prior,
+            "_simulator": simulator,
+            # Numeric leaves (slash paths for a nested prior; == fields for a flat
+            # one) -- the column order the network emits, matching training.
+            "_leaf_keys": tuple(leaf_shapes),
+            "_leaf_shapes": leaf_shapes,
+            "_method": method,
+            "_data_dim": data_dim,
+            # Forward bijectors (unconstrained -> support); missing entries mean identity.
+            "_bijectors": bijectors or {},
+        }
+        for name, value in attributes.items():
+            object.__setattr__(self, name, value)
 
     @property
     def prior(self) -> Distribution:
-        """The prior over model parameters."""
+        """The prior the network was trained against."""
         return self._prior
 
     @property
-    def simulator(self) -> GenerativeLikelihood:
-        """The generative likelihood (provides ``generate_data``)."""
+    def simulator(self) -> ConditionalDistribution:
+        """The simulator the network was trained against."""
         return self._simulator
 
-    def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
-        # Present so sampleability probes get NotImplementedError -- which
-        # Function's dispatch fallback catches -- not AttributeError.
-        raise NotImplementedError(
-            "BayesFlowModel does not implement direct sampling; draw posterior "
-            "samples by conditioning (condition_on(model, observed)), or simulate "
-            "from the joint via the prior / simulator properties."
-        )
+    def _observation(self, given: Any) -> np.ndarray:
+        """The observation *given* binds, flattened to the size the network was trained on.
 
-    def _condition_on(
-        self, observed: ArrayLike | np.ndarray, /, **kwargs: Any
-    ) -> ApproximateDistribution:
-        num_results = int(kwargs.get("num_results", self._num_results))
-        if num_results < 1:
-            raise ValueError(f"num_results must be a positive integer, got {num_results}.")
-        random_seed = int(kwargs.get("random_seed", self._random_seed))
-
-        # One observation -> a length-1 condition batch, matching the flattened
-        # ``(d_y,)`` layout the network was trained on.
-        obs_flat = np.ravel(np.asarray(observed, dtype="float32"))
+        Raises
+        ------
+        KeyError
+            If a mapping or record *given* lacks the observation slot or names
+            another key.
+        ValueError
+            If the observation's size is not the trained one.
+        """
+        if isinstance(given, Record):
+            given = given.children
+        if isinstance(given, Mapping):
+            others = sorted(set(given) - {self._slot})
+            if others:
+                raise KeyError(f"{others} are not the given slot {self._slot!r} of {self.label!r}")
+            given = given[self._slot]
+        obs_flat = np.ravel(np.asarray(given, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
                 f"observed data has {obs_flat.size} values but the estimator was "
@@ -225,12 +351,16 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
                 "time. Pass observed data of that shape; for datasets of other "
                 "sizes use learn_amortized_likelihood or learn_amortized_ratio."
             )
+        return obs_flat
+
+    def _network_draws(self, observation: np.ndarray, count: int, seed: int) -> Array:
+        """``count`` flat draws of the network at *observation*, in the prior's supports."""
         out = self._approximator.sample(
-            num_samples=num_results,
-            conditions={_OBSERVATION_KEY: obs_flat[None, :]},
-            seed=random_seed,
+            num_samples=count,
+            conditions={_OBSERVATION_KEY: observation[None, :]},
+            seed=seed,
         )
-        # ``out`` maps each internal theta key to ``(1, num_results, d_leaf)``.
+        # ``out`` maps each internal theta key to ``(1, count, d_leaf)``.
         # Stays in jnp end-to-end: this is the latency-critical amortized path,
         # so no per-leaf host round-trips. Columns are concatenated in leaf order,
         # which is the canonical flatten order the posterior's record unflattens by.
@@ -239,19 +369,92 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
             draws = jnp.asarray(out[k])[0]
             bij = self._bijectors.get(leaf)
             if bij is not None:
-                draws = bij.forward(draws)
-            cols.append(jnp.reshape(draws, (num_results, -1)))
-        flat = jnp.concatenate(cols, axis=-1)
-        return make_posterior(
-            [flat],
-            parents=(self._prior,),
-            algorithm=f"bayesflow_{self._method}",
-            event_spec=self._prior.event_spec,
-            num_results=num_results,
-        )
+                draws = bij.apply(draws)
+            cols.append(jnp.reshape(draws, (count, -1)))
+        return jnp.concatenate(cols, axis=-1)
 
-    def __repr__(self) -> str:
-        return f"BayesFlowModel(method={self._method!r}, num_results={self._num_results})"
+    def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
+        """Every path names the observation slot, since a parameter is conditioned by Bayes' rule."""
+        others = [path for path in paths if path != self._slot]
+        if others:
+            return Feasibility(
+                False,
+                f"{others} are not the given slot {self._slot!r} of the amortized posterior",
+            )
+        return Feasibility(True)
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
+        """The learned law at the observation *given* binds, which samples the network.
+
+        *given* is a mapping or record keyed by the observation slot, or the
+        observation itself. Evaluating the kernel runs no network and takes no
+        method options. Each draw of the law runs the network at the
+        observation, seeded by the draw's key, so ``workflow_run(seed=...)``
+        fixes the draws.
+
+        Raises
+        ------
+        TypeError
+            If a method option is given.
+        KeyError
+            If *given* names a key other than the observation slot.
+        ValueError
+            If the observation's size is not the trained one.
+        """
+        if kwargs:
+            raise TypeError(
+                f"method_options {sorted(kwargs)} are not options of the amortized posterior "
+                f"{self.label!r}, which takes none"
+            )
+        law = _AmortizedPosteriorLaw(self, self._observation(given))
+        return _record_run(law, (self,), f"bayesflow_{self._method}")
+
+    def _conditional_sample(
+        self, given: Any, key: Array, sample_shape: tuple[int, ...] = ()
+    ) -> Any:
+        """Draws of the network at the observation *given* binds, seeded by *key*.
+
+        One draw for ``sample_shape=()``, and the sample axes before the event
+        otherwise, at the kind the event declares.
+        """
+        count = int(np.prod(sample_shape)) if sample_shape else 1
+        seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
+        flat = self._network_draws(self._observation(given), count, seed)
+        spec = self.event_spec.spec
+        if not self.event_spec.exposes_record:
+            return flat.reshape(*sample_shape, *spec.shape)
+        vector = flat.reshape(*sample_shape, flat.shape[-1]) if sample_shape else flat[0]
+        return _reconstruct_from_vector(self.label, spec, vector)
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The network the posterior was learned with."""
+        return [("method", repr(self._method))]
+
+
+class _AmortizedPosteriorLaw(Distribution, SupportsSampling):
+    """An amortized posterior's law at an observation, whose draws are the network's.
+
+    Its event is the parameters, declared as the prior declares them, and each
+    draw runs the trained network at the observation. The law claims
+    ``SupportsLogProb`` when its kernel claims the conditional density.
+    """
+
+    _capability_table: ClassVar = {SupportsLogProb: {"_log_prob": _amortized_log_prob}}
+
+    def __new__(
+        cls, kernel: _AmortizedPosterior, observation: np.ndarray
+    ) -> _AmortizedPosteriorLaw:
+        claimed = [SupportsLogProb] if isinstance(kernel, SupportsConditionalLogProb) else []
+        return object.__new__(_capability_subclass(_AmortizedPosteriorLaw, claimed))
+
+    def __init__(self, kernel: _AmortizedPosterior, observation: np.ndarray) -> None:
+        super().__init__("posterior", kernel.event_spec)
+        self._kernel = kernel
+        self._observation_value = observation
+
+    def _sample(self, key: Array, sample_shape: tuple[int, ...] = ()) -> Any:
+        """Draws of the network at the observation, seeded by *key*."""
+        return self._kernel._conditional_sample(self._observation_value, key, sample_shape)
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +465,7 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
 @function
 def learn_amortized_posterior(
     prior: Distribution,
-    simulator: GenerativeLikelihood,
+    simulator: ConditionalDistribution,
     *,
     method: AmortizedMethod = "npe",
     num_simulations: int = 10_000,
@@ -270,46 +473,48 @@ def learn_amortized_posterior(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
-    num_results: int = 2000,
     random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
-) -> BayesFlowModel:
-    """Learn an amortized conditional posterior ``p(theta | y)`` with BayesFlow.
+) -> ConditionalDistribution:
+    """Learn an amortized conditional posterior ``q(theta | y)`` with BayesFlow.
 
     Trains an amortized neural posterior estimator (NPE / FMPE / CMPE) from a
-    ``prior`` and a ``simulator`` and returns a :class:`BayesFlowModel` -- the
-    joint model bundling prior, simulator, and the trained estimator.
-    ``condition_on(result, observed)`` produces fast amortized posterior draws
-    in a single forward pass (no MCMC).
+    ``prior`` and a ``simulator`` and returns the learned kernel from the
+    observation to the parameters, whose given slot is ``observation``.
+    ``condition_on(result, {"observation": y})`` evaluates it without retraining
+    or MCMC and returns the law at ``y``, each of whose draws is one forward pass
+    of the network; the evaluation is approximate, so ``exact_only=True`` refuses
+    it. Provenance names the prior
+    and the simulator it was trained on.
 
     Parameters
     ----------
     prior : Distribution
         Prior over the model parameters.  Must be a numeric distribution --
-        typically a ``ProductDistribution`` of named distributions (which may be
-        nested), or a single named distribution for a one-parameter model.  It is
+        typically a factored joint of named distributions, or a single named
+        distribution for a one-parameter model.  It is
         sampled via the :func:`~probpipe.sample` op to draw training thetas; it is
         *not* otherwise translated.  Constrained leaves (positive, an interval, a
         simplex, positive-definite matrices, ...) are trained in unconstrained space
         via the per-leaf bijector from :func:`~probpipe.bijector_for` -- applied at
         the leaf's native event shape -- and mapped back to the support at sample
         time; real-valued leaves use the identity.  Discrete priors are not supported.
-    simulator : GenerativeLikelihood
-        Must implement ``generate_data(params, num_observations, *, key)``.  As with
-        ``SimpleGenerativeModel`` / ``PriorPredictiveCheck``, ``params`` is the prior's
-        native per-draw sample -- a record whose fields are accessible by name
-        (``params["a"]``), not a flattened vector.  It must be JAX-vmappable unless
-        ``sim_backend="sequential"`` (see below). Training uses one simulated dataset
-        per ``theta``, fixing the conditioning shape: ``condition_on`` must be given
-        observed data of that same flattened size (datasets of any size are the
-        NLE/NRE learners' case).
+    simulator : ConditionalDistribution
+        The kernel of one observation given the prior's fields, which claims
+        ``SupportsConditionalSampling``. Its given values are the prior's native
+        per-draw sample -- a record whose fields are accessible by name
+        (``given["a"]``), not a flattened vector.  It must be JAX-vmappable unless
+        ``sim_backend="sequential"`` (see below). Training uses one simulated
+        observation per ``theta``, fixing the conditioning shape: ``condition_on``
+        must be given observed data of that same flattened size (datasets of any
+        size are the NLE/NRE learners' case).
     method : {"npe", "fmpe", "cmpe"}
         Amortized estimator: NPE (coupling flow), FMPE (flow matching), or CMPE
         (consistency model). NPE's coupling flow needs at least two *unconstrained*
         parameter dimensions (a one-parameter prior has one; so does a single
         2-simplex), below which the NPE default falls back to a flow-matching
-        network (still reported as ``method="npe"``).
+        network (still reported as ``method="npe"``), which gives no density.
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
     epochs, batch_size : int
@@ -321,14 +526,13 @@ def learn_amortized_posterior(
         code) at the cost of speed. Mirrors ``Function``'s dispatch names.
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
-        ``ConsistencyModel``).
-    num_results : int
-        Default number of posterior draws per ``condition_on`` call.
+        ``ConsistencyModel``). A ``CouplingFlow`` gives the posterior a density.
     random_seed : int
-        Seed for offline simulation (``jax.random``), keras network init + training
-        (via ``keras.utils.set_random_seed``), and sampling. The caller's global
+        Seed for offline simulation (``jax.random``) and keras network init +
+        training (via ``keras.utils.set_random_seed``). The caller's global
         NumPy / Python RNG state is snapshotted and restored after training, so the
-        call does not perturb unrelated random streams.
+        call does not perturb unrelated random streams. The draws of the learned
+        posterior's law at an observation are seeded by the workflow scope.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -336,21 +540,22 @@ def learn_amortized_posterior(
 
     Returns
     -------
-    BayesFlowModel
-        The joint-model wrapper: prior + simulator exposed as properties,
-        amortized conditioning via the trained estimator.
+    ConditionalDistribution
+        The amortized posterior ``q(theta | y)``, which claims
+        ``SupportsApproximateConditioning`` and ``SupportsConditionalSampling``,
+        and ``SupportsConditionalLogProb`` when its network is a coupling flow.
+        Its ``prior`` and ``simulator`` are the joint it was trained on.
 
     Raises
     ------
     ValueError
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
-        ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is
-        less than one, or a prior field's support is not declared or admits no
+        ``num_simulations`` / ``batch_size`` / ``epochs`` is less than one, or a prior field's support is not declared or admits no
         smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
-        If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, or ``prior`` is not a numeric distribution.
+        If a count parameter is not an integer, ``simulator`` is not a kernel
+        that samples, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -367,7 +572,6 @@ def learn_amortized_posterior(
             ("num_simulations", num_simulations),
             ("batch_size", batch_size),
             ("epochs", epochs),
-            ("num_results", num_results),
         ),
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
@@ -380,7 +584,7 @@ def learn_amortized_posterior(
     # The network trains on *unconstrained* widths, which differ from the prior's
     # event sizes for dimension-shifting bijectors (a d-simplex contributes d-1).
     unconstrained_size = sum(
-        int(np.prod(tuple(bijectors[k].inverse_event_shape(leaf_shapes[k])), dtype=int))
+        int(np.prod(_unconstrained_shape(bijectors[k], leaf_shapes[k]), dtype=int))
         for k in leaf_keys
     )
 
@@ -413,13 +617,12 @@ def learn_amortized_posterior(
         dataset = bf.OfflineDataset(data=sims, batch_size=batch_size, adapter=adapter)
         approximator.fit(dataset=dataset, epochs=epochs, **fit_kwargs)
 
-    return BayesFlowModel(
+    return _AmortizedPosterior(
         approximator,
         prior,
         simulator,
         method=method,
         data_dim=int(y.shape[-1]),
-        num_results=num_results,
-        random_seed=random_seed,
         bijectors=bijectors,
+        has_density=isinstance(net, bf.networks.CouplingFlow),
     )

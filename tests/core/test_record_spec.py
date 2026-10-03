@@ -18,7 +18,9 @@ import pytest
 from probpipe import (
     DistributionSpec,
     Function,
+    InputSpec,
     NumericRecord,
+    Opaque,
     OutputSpec,
     Record,
     positive,
@@ -32,13 +34,13 @@ from probpipe.core._record_spec import (
     _unify_record_spec_with_value,
 )
 from probpipe.core._specs import (
-    FunctionSpec,
     NumericArraySpec,
     NumericRecordSpec,
     NumericSpec,
     RecordSpec,
     TermSpec,
 )
+from probpipe.values._function_base import FunctionSpec
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,99 @@ class _TaggedTermSpec(TermSpec):
         return True
 
 
+class TestOpaqueSpecTypeAndMeta:
+    """An opaque spec checks a type, inferred from values, and carries unchecked metadata."""
+
+    def test_the_type_is_checked_and_a_mapping_is_never_admitted(self):
+        spec = OpaqueSpec(type=str)
+        assert spec.is_valid("north")
+        assert not spec.is_valid(3)
+        assert not spec.is_valid({"a": "north"})
+        assert OpaqueSpec().is_valid(3)
+
+    def test_the_type_must_be_a_class_or_none(self):
+        with pytest.raises(TypeError, match="class of the admitted values"):
+            OpaqueSpec(type="str")  # type: ignore[arg-type]
+
+    def test_meta_is_part_of_equality_and_hash_and_never_checked(self):
+        assert OpaqueSpec(type=str, meta="units") == OpaqueSpec(type=str, meta="units")
+        assert OpaqueSpec(meta="units") != OpaqueSpec(meta="tag")
+        assert hash(OpaqueSpec(type=str, meta="units")) == hash(OpaqueSpec(type=str, meta="units"))
+        assert OpaqueSpec(meta="units").is_valid(object())
+
+    @pytest.mark.parametrize(
+        ("spec", "text"),
+        [
+            pytest.param(OpaqueSpec(), "OpaqueSpec()", id="bare"),
+            pytest.param(OpaqueSpec(type=str), "OpaqueSpec(type=str)", id="typed"),
+            pytest.param(
+                OpaqueSpec(type=str, meta="units"), "OpaqueSpec(type=str, meta='units')", id="both"
+            ),
+        ],
+    )
+    def test_the_repr_prints_the_spec_in_full(self, spec, text):
+        assert repr(spec) == text
+
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            pytest.param(OpaqueSpec(), OpaqueSpec(type=str), id="open-declared"),
+            pytest.param(OpaqueSpec(type=str), OpaqueSpec(), id="open-actual"),
+            pytest.param(OpaqueSpec(type=str), OpaqueSpec(type=str), id="equal"),
+        ],
+    )
+    def test_specs_unify_when_a_type_is_open_or_both_agree(self, first, second):
+        assert first.bind_dims_from_spec(second) == first
+
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            pytest.param(OpaqueSpec(type=str), OpaqueSpec(type=int), id="types"),
+            pytest.param(OpaqueSpec(meta="a"), OpaqueSpec(meta="b"), id="meta"),
+        ],
+    )
+    def test_specs_with_different_types_or_meta_do_not_unify(self, first, second):
+        with pytest.raises(ValueError, match="does not conform"):
+            first.bind_dims_from_spec(second)
+
+    def test_an_open_meta_unifies_with_a_set_meta_and_takes_it(self):
+        """An inferred spec carries no meta, so a declared meta fills it in."""
+        declared, inferred = OpaqueSpec(meta="units"), OpaqueSpec(type=str)
+
+        assert declared.bind_dims_from_spec(inferred) == declared
+        assert inferred.bind_dims_from_spec(declared) == inferred
+        unified = OpaqueSpec(type=str, meta="units")
+        assert OutputSpec(label=declared).with_spec(inferred).spec == unified
+        assert OutputSpec(label=inferred).with_spec(declared).spec == unified
+
+    def test_a_function_returning_an_opaque_value_keeps_the_declared_meta(self):
+        tagged = Function(
+            "tagged",
+            lambda: Opaque("unit", "m"),
+            output_spec=OutputSpec(unit=OpaqueSpec(meta="units")),
+        )
+
+        assert tagged().spec == OpaqueSpec(type=str, meta="units")
+        assert tagged().raw() == "m"
+
+    def test_completion_keeps_the_declared_type(self):
+        declared = OutputSpec(label=OpaqueSpec(type=str))
+        assert declared.with_spec(OpaqueSpec()).spec == OpaqueSpec(type=str)
+        assert OutputSpec(label=OpaqueSpec()).with_spec(OpaqueSpec(type=str)).spec == OpaqueSpec(
+            type=str
+        )
+
+    def test_a_record_built_from_values_infers_its_opaque_leaves(self):
+        assert Record("r", {"label": "north", "x": 1.0}).event_template["label"] == OpaqueSpec(
+            type=str
+        )
+
+    def test_an_opaque_batch_infers_the_type_its_elements_share(self):
+        assert OpaqueBatch("b", ["north", "south"], "site").element_spec == OpaqueSpec(type=str)
+        assert OpaqueBatch("b", ["north", 3], "site").element_spec == OpaqueSpec()
+        assert OpaqueBatch("b", [], "site").element_spec == OpaqueSpec()
+
+
 class TestFrozenDataclassSpecs:
     @pytest.mark.parametrize(
         ("spec", "fields"),
@@ -65,7 +160,7 @@ class TestFrozenDataclassSpecs:
                 NumericArraySpec((3,), dtype="float32", support=positive),
                 ("shape", "dtype", "support"),
             ),
-            (OpaqueSpec(meta="label"), ("meta",)),
+            (OpaqueSpec(type=str, meta="label"), ("type", "meta")),
         ],
     )
     @pytest.mark.parametrize("operation", ["assign", "delete"])
@@ -85,7 +180,7 @@ class TestFrozenDataclassSpecs:
 
     @pytest.mark.parametrize(
         ("base", "args", "field"),
-        [(NumericArraySpec, ((3,),), "shape"), (OpaqueSpec, ("label",), "meta")],
+        [(NumericArraySpec, ((3,),), "shape"), (OpaqueSpec, (str, "label"), "meta")],
     )
     @pytest.mark.parametrize("slotted", [False, True], ids=["dict-subclass", "slotted-subclass"])
     def test_subclass_can_manage_own_attributes(self, base, args, field, slotted):
@@ -154,7 +249,7 @@ class TestConstruction:
         assert tpl.fields == ("a", "b")
 
     def test_fields_insertion_order(self):
-        tpl = RecordSpec(z=(), a=(3,), m=None)
+        tpl = RecordSpec(z=(), a=(3,), m=OpaqueSpec())
         assert tpl.fields == ("z", "a", "m")
 
     @pytest.mark.parametrize("empty_type", [RecordSpec, NumericRecordSpec])
@@ -220,7 +315,7 @@ class TestConstruction:
         assert empty.leaf_shapes == {}
 
     def test_none_spec(self):
-        tpl = RecordSpec(label=None, x=())
+        tpl = RecordSpec(label=OpaqueSpec(), x=())
         assert tpl["label"] == OpaqueSpec()
         assert tpl["x"] == NumericArraySpec(())
 
@@ -347,7 +442,7 @@ class TestLeafShapes:
         when every leaf is numeric — they live on
         :class:`NumericRecordSpec`, not the base ``RecordSpec``.
         """
-        tpl = RecordSpec(label=None, x=(), y=(3,))
+        tpl = RecordSpec(label=OpaqueSpec(), x=(), y=(3,))
         assert not hasattr(tpl, "leaf_shapes")
         assert not hasattr(tpl, "vector_size")
 
@@ -365,7 +460,7 @@ class TestKeys:
 
     def test_includes_opaque_leaves(self):
         # keys() enumerates every leaf, numeric or opaque.
-        tpl = RecordSpec(label=None, x=())
+        tpl = RecordSpec(label=OpaqueSpec(), x=())
         assert tuple(tpl.keys()) == ("label", "x")
 
     def test_nested_depth_first_insertion_order(self):
@@ -509,13 +604,13 @@ class TestFlatSize:
 
     def test_rejects_opaque_leaf(self):
         with pytest.raises(TypeError, match="only NumericArraySpec"):
-            NumericRecordSpec(label=None, x=(3,))
+            NumericRecordSpec(label=OpaqueSpec(), x=(3,))
 
     def test_rejects_non_numeric_nested(self):
         # ``RecordSpec(x=(), label=None)`` stays a plain base template
         # (mixed leaves block auto-promotion), so embedding it inside a
         # ``NumericRecordSpec`` must be rejected.
-        inner = RecordSpec(x=(), label=None)
+        inner = RecordSpec(x=(), label=OpaqueSpec())
         with pytest.raises(TypeError, match="NumericRecordSpec"):
             NumericRecordSpec(nested=inner, y=())
 
@@ -674,17 +769,17 @@ class TestInferFrom:
         r = Record("r", x=1.0, label="tag")
         tpl = RecordSpec.infer_from(r)
         assert type(tpl) is RecordSpec
-        assert tpl["label"] == OpaqueSpec()
+        assert tpl["label"] == OpaqueSpec(type=str)
 
     def test_list_leaf_is_opaque(self):
         """A Python list leaf has no .shape / .dtype, so the field is
-        recorded as opaque (``None``) even when it contains numbers.
+        recorded as an opaque list even when it contains numbers.
         Users should wrap lists in np.asarray/jnp.asarray for a numeric
         template entry — this test pins down that behavior so the
         documented guidance stays in sync with the implementation."""
         r = Record("r", xs=[1.0, 2.0, 3.0])
         tpl = RecordSpec.infer_from(r)
-        assert tpl["xs"] == OpaqueSpec()
+        assert tpl["xs"] == OpaqueSpec(type=list)
 
     def test_list_leaf_after_asarray_is_numeric(self):
         """The opposite end of the list-leaf story: wrapping the list
@@ -717,21 +812,32 @@ class TestRepr:
         assert "sub=NumericRecordSpec(" in r
 
     def test_mixed_stays_base(self):
-        tpl = RecordSpec(label=None, x=())
+        tpl = RecordSpec(label=OpaqueSpec(), x=())
         assert repr(tpl).startswith("RecordSpec(")
 
-    def test_opaque(self):
-        tpl = RecordSpec(label=None, x=())
-        assert "label=None" in repr(tpl)
+    def test_an_opaque_field_prints_its_spec_in_full(self):
+        assert repr(RecordSpec(label=OpaqueSpec(), x=())) == "RecordSpec(label=OpaqueSpec(), x=())"
+        assert "label=OpaqueSpec(type=str)" in repr(RecordSpec(label=OpaqueSpec(type=str)))
 
     def test_populated_numeric_array_spec_shows_full_repr(self):
-        # A spec carrying dtype/support is not bare, so repr falls back to the
-        # full dataclass repr rather than the bare-shape shorthand. The dtype
-        # renders in its normalised ``numpy.dtype`` form.
+        # A spec carrying a dtype or a support is not bare, so it prints in full
+        # rather than as the bare-shape shorthand, its dtype by name.
         tpl = RecordSpec(x=NumericArraySpec((3,), dtype="float32"))
-        r = repr(tpl)
-        assert "NumericArraySpec(" in r
-        assert "dtype=dtype('float32')" in r
+        assert repr(tpl) == "NumericRecordSpec(x=NumericArraySpec(shape=(3,), dtype=float32))"
+
+    def test_a_long_schema_shows_one_field_per_line(self):
+        tpl = RecordSpec(
+            effect=NumericArraySpec((), dtype="float32"),
+            se=NumericArraySpec((), dtype="float32"),
+            label=OpaqueSpec(type=str, meta="the school's two-letter code"),
+        )
+        assert repr(tpl) == (
+            "RecordSpec(\n"
+            "    effect=NumericArraySpec(shape=(), dtype=float32),\n"
+            "    se=NumericArraySpec(shape=(), dtype=float32),\n"
+            '    label=OpaqueSpec(type=str, meta="the school\'s two-letter code"),\n'
+            ")"
+        )
 
     def test_populated_opaque_spec_shows_full_repr(self):
         tpl = RecordSpec(label=OpaqueSpec(meta="tag"), x=())
@@ -787,16 +893,20 @@ class TestTermSpecs:
             pytest.param(NumericArraySpec((3,), dtype="float32"), "dtype", id="array-dtype"),
             pytest.param(NumericArraySpec((3,), support=positive), "support", id="array-support"),
             pytest.param(OpaqueSpec(meta="label"), "meta", id="opaque"),
-            pytest.param(RecordSpec(label=None), "_tree", id="record"),
+            pytest.param(RecordSpec(label=OpaqueSpec()), "_tree", id="record"),
             pytest.param(RecordSpec(x=()), "_tree", id="numeric-record"),
             pytest.param(
                 DistributionSpec(event_spec=RecordSpec(x=())), "event_spec", id="distribution"
             ),
             pytest.param(
-                FunctionSpec(input_template=RecordSpec(x=())), "input_template", id="function-input"
+                FunctionSpec(input_spec=InputSpec(RecordSpec(x=()).children)),
+                "input_spec",
+                id="function-input",
             ),
             pytest.param(
-                FunctionSpec(output_spec=RecordSpec(y=())), "output_spec", id="function-output"
+                FunctionSpec(output_spec=OutputSpec(result=RecordSpec(y=()))),
+                "output_spec",
+                id="function-output",
             ),
         ],
     )
@@ -832,7 +942,7 @@ class TestTermSpecs:
     @pytest.mark.parametrize(
         "spec",
         [
-            pytest.param(RecordSpec(label=None), id="record"),
+            pytest.param(RecordSpec(label=OpaqueSpec()), id="record"),
             pytest.param(NumericRecordSpec(x=(3,)), id="numeric-record"),
             pytest.param(DistributionSpec(RecordSpec(x=(3,))), id="distribution"),
             pytest.param(FunctionSpec(), id="function"),
@@ -848,7 +958,10 @@ class TestTermSpecs:
             NumericArraySpec((3,)): 1,
             OpaqueSpec(): 2,
             DistributionSpec(event_spec=RecordSpec(x=())): 3,
-            FunctionSpec(input_template=RecordSpec(x=()), output_spec=RecordSpec(y=())): 4,
+            FunctionSpec(
+                input_spec=InputSpec(RecordSpec(x=()).children),
+                output_spec=OutputSpec(result=RecordSpec(y=())),
+            ): 4,
             RecordSpec(x=()): 5,
         }
         assert len(specs) == 5
@@ -889,8 +1002,12 @@ class TestTermSpecs:
             event_spec=RecordSpec(x=())
         )
         assert FunctionSpec(
-            input_template=RecordSpec(x=()), output_spec=RecordSpec(y=())
-        ) == FunctionSpec(input_template=RecordSpec(x=()), output_spec=RecordSpec(y=()))
+            input_spec=InputSpec(RecordSpec(x=()).children),
+            output_spec=OutputSpec(result=RecordSpec(y=())),
+        ) == FunctionSpec(
+            input_spec=InputSpec(RecordSpec(x=()).children),
+            output_spec=OutputSpec(result=RecordSpec(y=())),
+        )
 
     def test_array_and_opaque_specs_are_distinct(self):
         assert NumericArraySpec(()) != OpaqueSpec()
@@ -934,9 +1051,9 @@ class TestTermSpecs:
         assert DistributionSpec(event_spec=RecordSpec(x=())) != DistributionSpec(
             event_spec=RecordSpec(y=())
         )
-        assert FunctionSpec(RecordSpec(a=()), RecordSpec(b=())) != FunctionSpec(
-            RecordSpec(a=()), RecordSpec(c=())
-        )
+        assert FunctionSpec(
+            InputSpec(RecordSpec(a=()).children), OutputSpec(result=RecordSpec(b=()))
+        ) != FunctionSpec(InputSpec(RecordSpec(a=()).children), OutputSpec(result=RecordSpec(c=())))
 
     def test_numeric_array_spec_unset_dtype_not_equal_to_set(self):
         # numpy treats ``np.dtype(None)`` as the default dtype, so a naive
@@ -973,7 +1090,8 @@ class TestTermSpecs:
             label=OpaqueSpec(meta="tag"),
             d=DistributionSpec(event_spec=RecordSpec(a=())),
             f=FunctionSpec(
-                RecordSpec(inp=NumericArraySpec(())), RecordSpec(out=NumericArraySpec(()))
+                InputSpec(RecordSpec(inp=NumericArraySpec(())).children),
+                OutputSpec(result=RecordSpec(out=NumericArraySpec(()))),
             ),
             r=RecordSpec(c=NumericArraySpec(())),
         )
@@ -1072,7 +1190,7 @@ class TestNumericArraySpecIsValid:
         # they fail NumericArraySpec, so infer_from routes them to OpaqueSpec.
         rec = np.zeros(2, dtype=[("a", "f4")])
         assert not NumericArraySpec((2,)).is_valid(rec)
-        assert RecordSpec.infer_from({"r": rec})["r"] == OpaqueSpec()
+        assert RecordSpec.infer_from({"r": rec})["r"] == OpaqueSpec(type=np.ndarray)
 
     def test_infer_from_bfloat16_is_numeric(self):
         tpl = RecordSpec.infer_from({"x": jnp.ones((2, 3), dtype=jnp.bfloat16)})
@@ -1146,12 +1264,18 @@ class TestOpaqueSpecIsValid:
 
 class TestFunctionSpecIsValid:
     def test_callable_valid(self):
-        spec = FunctionSpec(input_template=RecordSpec(a=()), output_spec=RecordSpec(b=()))
+        spec = FunctionSpec(
+            input_spec=InputSpec(RecordSpec(a=()).children),
+            output_spec=OutputSpec(result=RecordSpec(b=())),
+        )
         assert spec.is_valid(lambda a: a)
         assert spec.is_valid(np.sin)
 
     def test_non_callable_invalid(self):
-        spec = FunctionSpec(input_template=RecordSpec(a=()), output_spec=RecordSpec(b=()))
+        spec = FunctionSpec(
+            input_spec=InputSpec(RecordSpec(a=()).children),
+            output_spec=OutputSpec(result=RecordSpec(b=())),
+        )
         assert not spec.is_valid(3.0)
         assert not spec.is_valid("f")
 
@@ -1165,25 +1289,30 @@ class TestFunctionSpecTemplatesRequired:
     def test_explicit_sides_stored_per_the_storage_rule(self):
         # The input side is a schema and is stored as given; the output side is
         # a declaration, so a bare template is stored wrapped.
-        inp, out = RecordSpec(a=()), RecordSpec(b=())
+        inp, out = InputSpec(a=NumericArraySpec(())), OutputSpec(RecordSpec(b=()))
         spec = FunctionSpec(inp, out)
-        assert spec.input_template is inp
-        assert spec.output_spec == RecordSpec(out)
+        assert spec.input_spec is inp
+        assert spec.output_spec is out
 
     def test_bare_value_spec_rejected_on_the_input_side_only(self):
         # The input side is a record schema, written out as a RecordSpec, so
         # a bare TermSpec is not wrapped into one. The output side is a
         # declaration and accepts any value specification.
-        with pytest.raises(TypeError, match="input_template must be None or a RecordSpec"):
-            FunctionSpec(NumericArraySpec(()), RecordSpec(b=()))  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="input_spec must be an InputSpec or None"):
+            FunctionSpec(NumericArraySpec(()), OutputSpec(result=RecordSpec(b=())))  # type: ignore[arg-type]
 
-        assert FunctionSpec(RecordSpec(a=()), OpaqueSpec()).output_spec == OpaqueSpec()
+        assert (
+            FunctionSpec(
+                InputSpec(RecordSpec(a=()).children), OutputSpec(result=OpaqueSpec())
+            ).output_spec.spec
+            == OpaqueSpec()
+        )
 
     def test_non_spec_rejected(self):
-        with pytest.raises(TypeError, match="input_template must be None or a RecordSpec"):
-            FunctionSpec((3,), RecordSpec(b=()))  # type: ignore[arg-type]
-        with pytest.raises(TypeError, match="output_spec must be None or a TermSpec"):
-            FunctionSpec(RecordSpec(a=()), "not a template")  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="input_spec must be an InputSpec or None"):
+            FunctionSpec((3,), OutputSpec(result=RecordSpec(b=())))  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="output_spec must be an OutputSpec or None"):
+            FunctionSpec(InputSpec(RecordSpec(a=()).children), "not a template")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -1194,23 +1323,25 @@ class TestFunctionSpecTemplatesRequired:
 class TestFunctionSpecOptionalTemplates:
     def test_bare_function_spec_is_any_callable(self):
         spec = FunctionSpec()
-        assert spec.input_template is None
+        assert spec.input_spec is None
         assert spec.output_spec is None
         assert spec.is_valid(lambda x: x)
         assert spec.is_valid(np.sin)
         assert not spec.is_valid(3.0)
 
     def test_one_side_specified(self):
-        spec = FunctionSpec(output_spec=RecordSpec(out=NumericArraySpec(())))
-        assert spec.input_template is None
+        spec = FunctionSpec(output_spec=OutputSpec(result=RecordSpec(out=NumericArraySpec(()))))
+        assert spec.input_spec is None
         # A record output is stored as its declaration (the storage rule).
-        assert spec.output_spec == RecordSpec(out=NumericArraySpec(()))
+        assert spec.output_spec.spec == RecordSpec(out=NumericArraySpec(()))
 
     def test_none_specs_are_hashable_and_equal(self):
         assert FunctionSpec() == FunctionSpec()
         assert hash(FunctionSpec()) == hash(FunctionSpec())
         # A template-less spec differs from a typed one.
-        assert FunctionSpec() != FunctionSpec(RecordSpec(inp=()), RecordSpec(out=()))
+        assert FunctionSpec() != FunctionSpec(
+            InputSpec(RecordSpec(inp=()).children), OutputSpec(result=RecordSpec(out=()))
+        )
 
     def test_none_spec_usable_as_template_leaf(self):
         # A FunctionSpec leaf (with unspecified signature) lives in a template
@@ -1239,7 +1370,7 @@ class TestConstructionSpecs:
         assert tpl["x"] == NumericArraySpec((3,))
 
     def test_none_becomes_opaque_spec(self):
-        tpl = RecordSpec(label=None)
+        tpl = RecordSpec(label=OpaqueSpec())
         assert tpl["label"] == OpaqueSpec()
 
     def test_nested_template_preserved(self):
@@ -1259,7 +1390,10 @@ class TestConstructionSpecs:
 
     def test_explicit_distribution_and_function_specs_accepted(self):
         dspec = DistributionSpec(event_spec=RecordSpec(x=()))
-        fspec = FunctionSpec(input_template=RecordSpec(a=()), output_spec=RecordSpec(b=()))
+        fspec = FunctionSpec(
+            input_spec=InputSpec(RecordSpec(a=()).children),
+            output_spec=OutputSpec(result=RecordSpec(b=())),
+        )
         tpl = RecordSpec(d=dspec, f=fspec)
         assert tpl["d"] is dspec
         assert tpl["f"] is fspec
@@ -1363,7 +1497,10 @@ class TestAutoPromotionSpecs:
     def test_function_spec_blocks_promotion(self):
         tpl = RecordSpec(
             x=(),
-            f=FunctionSpec(input_template=RecordSpec(a=()), output_spec=RecordSpec(b=())),
+            f=FunctionSpec(
+                input_spec=InputSpec(RecordSpec(a=()).children),
+                output_spec=OutputSpec(result=RecordSpec(b=())),
+            ),
         )
         assert type(tpl) is RecordSpec
 
@@ -1377,13 +1514,16 @@ class TestAutoPromotionSpecs:
 
     def test_numeric_rejects_mixed_record_spec(self):
         with pytest.raises(TypeError, match="nested sub-templates"):
-            NumericRecordSpec(x=(), r=RecordSpec(a=None))
+            NumericRecordSpec(x=(), r=RecordSpec(a=OpaqueSpec()))
 
     def test_numeric_rejects_function_spec(self):
         with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericRecordSpec(
                 x=(),
-                f=FunctionSpec(input_template=RecordSpec(a=()), output_spec=RecordSpec(b=())),
+                f=FunctionSpec(
+                    input_spec=InputSpec(RecordSpec(a=()).children),
+                    output_spec=OutputSpec(result=RecordSpec(b=())),
+                ),
             )
 
 
@@ -1418,7 +1558,10 @@ def _dist_spec() -> DistributionSpec:
 
 
 def _func_spec() -> FunctionSpec:
-    return FunctionSpec(input_template=RecordSpec(a=()), output_spec=RecordSpec(b=()))
+    return FunctionSpec(
+        input_spec=InputSpec(RecordSpec(a=()).children),
+        output_spec=OutputSpec(result=RecordSpec(b=())),
+    )
 
 
 class TestIsNumeric:
@@ -1430,7 +1573,7 @@ class TestIsNumeric:
         assert tpl.is_numeric is True
 
     def test_mixed_opaque(self):
-        assert RecordSpec(x=(), label=None).is_numeric is False
+        assert RecordSpec(x=(), label=OpaqueSpec()).is_numeric is False
 
     def test_distribution_leaf(self):
         assert RecordSpec(x=(), d=_dist_spec()).is_numeric is False
@@ -1439,7 +1582,7 @@ class TestIsNumeric:
         assert RecordSpec(x=(), f=_func_spec()).is_numeric is False
 
     def test_nested_mixed(self):
-        tpl = RecordSpec(x=(), nested=RecordSpec(a=(), label=None))
+        tpl = RecordSpec(x=(), nested=RecordSpec(a=(), label=OpaqueSpec()))
         assert tpl.is_numeric is False
 
 
@@ -1451,10 +1594,10 @@ class TestIsMultiField:
         assert RecordSpec(x=(), y=()).is_multi_field is True
 
     def test_single_opaque_leaf(self):
-        assert RecordSpec(label=None).is_multi_field is False
+        assert RecordSpec(label=OpaqueSpec()).is_multi_field is False
 
     def test_two_leaves_mixed(self):
-        assert RecordSpec(x=(), label=None).is_multi_field is True
+        assert RecordSpec(x=(), label=OpaqueSpec()).is_multi_field is True
 
     def test_single_leaf_under_nested_field(self):
         # One top-level field nesting a single leaf -> one leaf -> not multi.
@@ -1473,25 +1616,25 @@ class TestIsMultiField:
 
 class TestNumericSubset:
     def test_drops_non_numeric_keeps_numeric(self):
-        tpl = RecordSpec(x=(), label=None, d=_dist_spec(), y=(3,))
+        tpl = RecordSpec(x=(), label=OpaqueSpec(), d=_dist_spec(), y=(3,))
         sub = tpl.numeric_subset()
         assert isinstance(sub, NumericRecordSpec)
         assert sub.fields == ("x", "y")
 
     def test_recurses_into_nested(self):
-        tpl = RecordSpec(x=(), nested=RecordSpec(a=(), label=None, b=(3,)))
+        tpl = RecordSpec(x=(), nested=RecordSpec(a=(), label=OpaqueSpec(), b=(3,)))
         sub = tpl.numeric_subset()
         assert sub.fields == ("x", "nested")
         assert isinstance(sub.at_path("nested"), NumericRecordSpec)
         assert tuple(sub.at_path("nested").children) == ("a", "b")
 
     def test_prunes_emptied_nested(self):
-        tpl = RecordSpec(x=(), nested=RecordSpec(label=None, tag=None))
+        tpl = RecordSpec(x=(), nested=RecordSpec(label=OpaqueSpec(), tag=OpaqueSpec()))
         sub = tpl.numeric_subset()
         assert sub.fields == ("x",)
 
     def test_path_stable(self):
-        tpl = RecordSpec(x=(), nested=RecordSpec(a=(), label=None, b=(3,)))
+        tpl = RecordSpec(x=(), nested=RecordSpec(a=(), label=OpaqueSpec(), b=(3,)))
         sub = tpl.numeric_subset()
         assert sub.leaf_shapes == {"x": (), "nested/a": (), "nested/b": (3,)}
 
@@ -1502,23 +1645,23 @@ class TestNumericSubset:
         assert sub.numeric_subset() == sub
 
     def test_returns_numeric_template_with_vector_size(self):
-        tpl = RecordSpec(x=(), label=None, y=(3,), z=(2, 4))
+        tpl = RecordSpec(x=(), label=OpaqueSpec(), y=(3,), z=(2, 4))
         sub = tpl.numeric_subset()
         assert isinstance(sub, NumericRecordSpec)
         assert sub.vector_size == 1 + 3 + 8
 
     def test_raises_when_no_numeric_leaves(self):
-        tpl = RecordSpec(label=None, tag=None)
+        tpl = RecordSpec(label=OpaqueSpec(), tag=OpaqueSpec())
         with pytest.raises(ValueError, match="NumericSpec leaves survive"):
             tpl.numeric_subset()
 
     def test_raises_names_dropped_fields(self):
-        tpl = RecordSpec(label=None, d=_dist_spec())
+        tpl = RecordSpec(label=OpaqueSpec(), d=_dist_spec())
         with pytest.raises(ValueError, match="label"):
             tpl.numeric_subset()
 
     def test_raises_when_only_nested_empties(self):
-        tpl = RecordSpec(nested=RecordSpec(label=None, tag=None))
+        tpl = RecordSpec(nested=RecordSpec(label=OpaqueSpec(), tag=OpaqueSpec()))
         with pytest.raises(ValueError, match="nested"):
             tpl.numeric_subset()
 
@@ -1526,13 +1669,15 @@ class TestNumericSubset:
     def test_empty_subtrees_do_not_count_as_numeric_leaves(self, empty):
         with pytest.raises(ValueError, match="no NumericSpec leaves survive"):
             empty.numeric_subset()
-        tpl = RecordSpec(nested=empty, label=None)
+        tpl = RecordSpec(nested=empty, label=OpaqueSpec())
         with pytest.raises(ValueError, match=r"Dropped fields:.*nested.*label"):
             tpl.numeric_subset()
         assert RecordSpec(nested=empty, x=(0,)).numeric_subset() == NumericRecordSpec(x=(0,))
 
     def test_prunes_empty_subtrees_inside_numeric_records(self):
-        tpl = RecordSpec(nested=NumericRecordSpec(empty=NumericRecordSpec(), x=()), label=None)
+        tpl = RecordSpec(
+            nested=NumericRecordSpec(empty=NumericRecordSpec(), x=()), label=OpaqueSpec()
+        )
         sub = tpl.numeric_subset()
         assert sub == NumericRecordSpec(nested=NumericRecordSpec(x=()))
         assert sub.numeric_subset() == sub
@@ -1541,7 +1686,7 @@ class TestNumericSubset:
         from probpipe.core.constraints import positive
 
         leaf = NumericArraySpec(("n",), dtype="float32", support=positive)
-        tpl = RecordSpec(z=(0,), nested=RecordSpec(label=None, a=leaf), x=())
+        tpl = RecordSpec(z=(0,), nested=RecordSpec(label=OpaqueSpec(), a=leaf), x=())
         sub = tpl.numeric_subset()
         assert sub.keys() == ("z", "nested/a", "x")
         assert sub["nested/a"] is leaf
@@ -1558,12 +1703,12 @@ class TestNumericSubset:
             def is_valid(self, value):
                 return True
 
-        tpl = RecordSpec(x=(), nested=RecordSpec(value=UnavailableLayout(), label=None))
+        tpl = RecordSpec(x=(), nested=RecordSpec(value=UnavailableLayout(), label=OpaqueSpec()))
         with pytest.raises(ValueError, match="numeric layout unavailable"):
             tpl.numeric_subset()
 
     def test_projected_layout_reconstructs_values_in_canonical_order(self):
-        tpl = RecordSpec(z=(), nested=RecordSpec(label=None, x=(2,), empty=(0,)))
+        tpl = RecordSpec(z=(), nested=RecordSpec(label=OpaqueSpec(), x=(2,), empty=(0,)))
         sub = tpl.numeric_subset()
         record = NumericRecord.from_vector("value", sub, jnp.array([1.0, 2.0, 3.0]))
         assert record.spec == sub
@@ -1752,15 +1897,19 @@ class TestTermSpecTaxonomy:
         tau = RecordSpec(x=())
         assert DistributionSpec(tau).event_spec.spec is tau
         assert isinstance(DistributionSpec(tau).event_spec, OutputSpec)
-        assert FunctionSpec(tau, tau).output_spec is tau
-        assert isinstance(FunctionSpec(tau, tau).output_spec, TermSpec)
+        assert FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)).output_spec.spec is tau
+        assert isinstance(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)).output_spec.spec, TermSpec
+        )
 
     def test_equal_schema_copies_produce_equal_declarations(self):
         """Schema copying does not change the declared kind or structure."""
 
         tau = RecordSpec(x=())
         assert DistributionSpec(RecordSpec(tau)) == DistributionSpec(tau)
-        assert FunctionSpec(tau, RecordSpec(tau)) == FunctionSpec(tau, tau)
+        assert FunctionSpec(
+            InputSpec(tau.children), OutputSpec(result=RecordSpec(tau))
+        ) == FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))
 
     def test_a_declaration_field_is_declared_at_the_type_it_stores(self):
         """The annotation is the post-construction guarantee, not the input sugar.
@@ -1770,7 +1919,7 @@ class TestTermSpecTaxonomy:
         the split against a rewidening of the field annotations.
         """
         assert get_type_hints(DistributionSpec)["event_spec"] is OutputSpec
-        assert get_type_hints(FunctionSpec)["output_spec"] == TermSpec | None
+        assert get_type_hints(FunctionSpec)["output_spec"] == OutputSpec | None
         assert get_type_hints(NumericArraySpec)["dtype"] == np.dtype | None
 
     def test_the_old_parameter_and_attribute_names_are_gone(self):
@@ -1781,19 +1930,26 @@ class TestTermSpecTaxonomy:
         """
         tau = RecordSpec(x=())
         assert DistributionSpec(tau) == DistributionSpec(event_spec=tau)
-        assert FunctionSpec(tau, tau) == FunctionSpec(tau, output_spec=tau)
+        assert FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)) == FunctionSpec(
+            InputSpec(tau.children), output_spec=OutputSpec(result=tau)
+        )
         with pytest.raises(TypeError, match="unexpected keyword argument 'event_template'"):
             DistributionSpec(event_template=tau)  # type: ignore[call-arg]
         with pytest.raises(TypeError, match="unexpected keyword argument 'output_template'"):
-            FunctionSpec(tau, output_template=tau)  # type: ignore[call-arg]
+            FunctionSpec(InputSpec(tau.children), output_template=tau)  # type: ignore[call-arg]
         assert not hasattr(DistributionSpec(tau), "event_template")
-        assert not hasattr(FunctionSpec(tau, tau), "output_template")
+        assert not hasattr(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)), "output_template"
+        )
 
     def test_term_valued_output_is_kept_not_wrapped(self):
         """A term output declaration names its own kind and passes through."""
         tau = RecordSpec(x=())
         for inner in (DistributionSpec(tau), FunctionSpec()):
-            assert FunctionSpec(tau, inner).output_spec is inner
+            assert (
+                FunctionSpec(InputSpec(tau.children), OutputSpec(result=inner)).output_spec.spec
+                is inner
+            )
 
     def test_term_valued_event_declaration_needs_a_component(self):
         """A bare term spec has no component name, so it is refused; named, it is kept.
@@ -1815,12 +1971,15 @@ class TestTermSpecTaxonomy:
         """
         tau = RecordSpec(x=())
         for raw in (NumericArraySpec((3,)), OpaqueSpec(meta="m")):
-            assert FunctionSpec(tau, raw).output_spec is raw
+            assert (
+                FunctionSpec(InputSpec(tau.children), OutputSpec(result=raw)).output_spec.spec
+                is raw
+            )
 
     def test_unspecified_output_stays_none(self):
         """None means "unspecified" and is not wrapped into a record declaration."""
         assert FunctionSpec().output_spec is None
-        assert FunctionSpec(RecordSpec(x=())).output_spec is None
+        assert FunctionSpec(InputSpec(RecordSpec(x=()).children)).output_spec is None
 
     def test_record_schema_is_its_kind_spec(self):
         tau = RecordSpec(x=())
@@ -1888,16 +2047,19 @@ class TestFunctionSpecOutputWidening:
 
     def test_term_spec_output_accepted(self):
         tau = RecordSpec(out=())
-        assert FunctionSpec(RecordSpec(x=()), DistributionSpec(tau)).output_spec == (
-            DistributionSpec(tau)
+        assert FunctionSpec(
+            InputSpec(RecordSpec(x=()).children), OutputSpec(result=DistributionSpec(tau))
+        ).output_spec.spec == DistributionSpec(tau)
+        assert isinstance(
+            FunctionSpec(output_spec=OutputSpec(result=RecordSpec(y=()))).output_spec.spec,
+            RecordSpec,
         )
-        assert isinstance(FunctionSpec(output_spec=RecordSpec(y=())).output_spec, RecordSpec)
 
     def test_input_template_still_event_template_only(self):
         # The input side is a schema, so a spec is not accepted there even though
         # the output side takes one.
-        with pytest.raises(TypeError, match="input_template must be None or a RecordSpec"):
-            FunctionSpec(input_template=DistributionSpec(RecordSpec(x=())))
+        with pytest.raises(TypeError, match="input_spec must be an InputSpec or None"):
+            FunctionSpec(input_spec=DistributionSpec(RecordSpec(x=())))
 
 
 def test_public_exports():
@@ -1930,8 +2092,8 @@ class TestFreeDimsReachThroughTermSpecs:
             lambda sym: RecordSpec(x=NumericArraySpec(shape=("obs",))),
             lambda sym: RecordSpec(r=RecordSpec(sym)),
             lambda sym: RecordSpec(law=DistributionSpec(sym)),
-            lambda sym: RecordSpec(f=FunctionSpec(sym, None)),
-            lambda sym: RecordSpec(f=FunctionSpec(None, RecordSpec(sym))),
+            lambda sym: RecordSpec(f=FunctionSpec(InputSpec(sym.children), None)),
+            lambda sym: RecordSpec(f=FunctionSpec(None, OutputSpec(result=RecordSpec(sym)))),
             lambda sym: RecordSpec(law=DistributionSpec(RecordSpec(sym))),
         ],
         ids=["array", "record", "distribution", "function-in", "function-out", "nested"],
@@ -2067,38 +2229,42 @@ class TestBindingAFunctionSpec:
 
     def test_a_bare_callable_leaves_the_dimensions_free(self):
         """It declares nothing, so there is nothing to bind from — and no refusal."""
-        declared = RecordSpec(f=FunctionSpec(self._sym(), None))
+        declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
 
         record = Record("r", f=lambda x: x, event_template=declared)
 
-        assert record.event_template["f"].input_template["x"].shape == ("obs",)
+        assert record.event_template["f"].input_spec["x"].shape == ("obs",)
 
     def test_the_input_side_binds_from_the_callable_declaration(self):
-        declared = RecordSpec(f=FunctionSpec(self._sym(), None))
+        declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
         typed = Function(
-            func=lambda x: x, name="g", input_template=RecordSpec(x=NumericArraySpec(shape=(7,)))
+            fn=lambda x: x,
+            label="g",
+            input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(7,))).children),
         )
 
         record = Record("r", f=typed, event_template=declared)
 
-        assert record.event_template["f"].input_template["x"].shape == (7,)
+        assert record.event_template["f"].input_spec["x"].shape == (7,)
 
     def test_the_output_side_binds_from_the_callable_declaration(self):
-        declared = RecordSpec(f=FunctionSpec(None, RecordSpec(y=NumericArraySpec(("m",)))))
+        declared = RecordSpec(
+            f=FunctionSpec(None, OutputSpec(RecordSpec(y=NumericArraySpec(("m",)))))
+        )
         typed = Function(
-            func=lambda x: x,
-            name="g",
-            output_template=RecordSpec(y=NumericArraySpec(shape=(5,))),
+            fn=lambda x: x,
+            label="g",
+            output_spec=RecordSpec(y=NumericArraySpec(shape=(5,))),
         )
 
         record = Record("r", f=typed, event_template=declared)
 
-        assert record.event_template["f"].output_spec["y"].shape == (5,)
+        assert record.event_template["f"].output_spec.spec["y"].shape == (5,)
 
     def test_a_non_callable_is_refused(self):
-        declared = RecordSpec(f=FunctionSpec(self._sym(), None))
+        declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
 
-        with pytest.raises(ValueError, match="does not conform to its field spec"):
+        with pytest.raises(ValueError, match="does not conform"):
             Record("r", f=3, event_template=declared)
 
 
@@ -2207,9 +2373,11 @@ class TestInferenceThroughTermSpecs:
 
     def test_a_callable_declaration_refuses_a_non_callable_in_the_pass(self):
         """Likewise for the FunctionSpec branch, which has its own refusal."""
-        declared = RecordSpec(f=FunctionSpec(RecordSpec(x=NumericArraySpec(shape=("obs",))), None))
+        declared = RecordSpec(
+            f=FunctionSpec(InputSpec(RecordSpec(x=NumericArraySpec(shape=("obs",))).children), None)
+        )
 
-        with pytest.raises(ValueError, match="does not conform to its field spec"):
+        with pytest.raises(ValueError, match="does not conform"):
             _unify_record_spec_with_value(declared, {"f": 3}, context="v")
 
     def test_a_concrete_declaration_still_requires_an_exact_match(self):
@@ -2231,17 +2399,28 @@ class TestAFunctionOutputBindsWhateverItDeclares:
     """
 
     @staticmethod
-    def _function(input_size=3, output_size=5):
+    def _function(input_size=3, output_size=5, *, record=False):
         return Function(
-            func=lambda x: jnp.zeros(output_size),
-            name="f",
-            input_template=RecordSpec(x=NumericArraySpec(shape=(input_size,))),
-            output_template=RecordSpec(out=NumericArraySpec(shape=(output_size,))),
+            fn=lambda x: jnp.zeros(output_size),
+            label="f",
+            input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(input_size,))).children),
+            output_spec=(
+                RecordSpec(out=NumericArraySpec(shape=(output_size,)))
+                if record
+                else OutputSpec(result=NumericArraySpec((output_size,)))
+            ),
         )
 
     @staticmethod
     def _declared(output_spec):
-        return RecordSpec(f=FunctionSpec(RecordSpec(x=NumericArraySpec(shape=("n",))), output_spec))
+        return RecordSpec(
+            f=FunctionSpec(
+                InputSpec(RecordSpec(x=NumericArraySpec(shape=("n",))).children),
+                OutputSpec(output_spec)
+                if isinstance(output_spec, RecordSpec)
+                else OutputSpec(result=output_spec),
+            )
+        )
 
     def test_a_shared_name_binds_from_a_non_record_output(self):
         """`n` on both sides binds once when the two agree."""
@@ -2250,7 +2429,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         record = Record("r", f=self._function(4, 4), event_template=declared)
 
         assert record.event_template.is_concrete
-        assert record.event_template["f"].output_spec.shape == (4,)
+        assert record.event_template["f"].output_spec.spec.shape == (4,)
 
     def test_a_non_record_output_that_disagrees_with_the_input_raises(self):
         """The case a skipped output hid: the input says 3, the output says 5.
@@ -2269,21 +2448,19 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         declared = self._declared(RecordSpec(out=NumericArraySpec(shape=("n",))))
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
-            Record("r", f=self._function(3, 5), event_template=declared)
+            Record("r", f=self._function(3, 5, record=True), event_template=declared)
 
     def test_one_declared_output_value_does_not_match_several_fields(self):
         """A single value declaration meets a single field, so two is a mismatch."""
         function = Function(
-            func=lambda x: x,
-            name="f",
-            input_template=RecordSpec(x=NumericArraySpec(shape=(3,))),
-            output_template=RecordSpec(
-                a=NumericArraySpec(shape=(3,)), b=NumericArraySpec(shape=(4,))
-            ),
+            fn=lambda x: x,
+            label="f",
+            input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(3,))).children),
+            output_spec=RecordSpec(a=NumericArraySpec(shape=(3,)), b=NumericArraySpec(shape=(4,))),
         )
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
-        with pytest.raises(ValueError, match=r"declares one output value.*output fields"):
+        with pytest.raises(ValueError, match="incompatible output components"):
             Record("r", f=function, event_template=declared)
 
     @pytest.mark.parametrize(
@@ -2292,14 +2469,14 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         ids=["nested_leaf", "empty_sibling"],
     )
     def test_one_array_output_does_not_flatten_record_structure(self, template):
-        function = Function(func=lambda: None, output_template=template)
+        function = Function(label="function", fn=lambda: None, output_spec=template)
         for size in (3, "n"):
-            spec = FunctionSpec(output_spec=NumericArraySpec((size,)))
+            spec = FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((size,))))
             with pytest.raises(ValueError):
                 spec.bind_dims_from_value(function)
             with pytest.raises(ValueError):
                 RecordSpec(f=spec).bind_dims_from_value({"f": function})
-        record_output = FunctionSpec(output_spec=template)
+        record_output = FunctionSpec(output_spec=OutputSpec(template))
         assert record_output.bind_dims_from_value(function) == record_output
 
     def test_a_bare_callable_still_binds_nothing_from_its_output(self):
@@ -2426,7 +2603,7 @@ class TestMultiplicityBindsFromAValue:
         """A fixed multiplicity is fixed, as a fixed array dimension is."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [(4,)], ["item"]))
 
-        with pytest.raises(ValueError, match="does not conform to its field spec"):
+        with pytest.raises(ValueError, match="does not conform"):
             Record("r", b=self._batch(3), event_template=declared)
 
     def test_a_value_carrying_no_multiplicity_says_so(self):
@@ -2486,7 +2663,7 @@ class TestMultiplicityBindsFromAValue:
         template that is neither concrete nor refused.
         """
         declared = RecordSpec(
-            f=FunctionSpec(RecordSpec(x=NumericArraySpec(shape=("k",))), None),
+            f=FunctionSpec(InputSpec(RecordSpec(x=NumericArraySpec(shape=("k",))).children), None),
             b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]),
         )
 

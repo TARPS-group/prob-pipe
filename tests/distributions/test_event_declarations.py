@@ -18,7 +18,6 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 import probpipe
 from probpipe import (
@@ -31,17 +30,12 @@ from probpipe import (
     Cauchy,
     Dirichlet,
     Distribution,
-    DistributionArray,
     EmpiricalDistribution,
     Exponential,
-    FlatNumericRecordDistribution,
     Gamma,
-    GLMLikelihood,
     HalfCauchy,
     HalfNormal,
     InverseGamma,
-    JointEmpirical,
-    JointGaussian,
     KDEDistribution,
     Laplace,
     LinearBasisFunction,
@@ -52,66 +46,71 @@ from probpipe import (
     NegativeBinomial,
     Normal,
     NumericDistribution,
-    NumericRecordDistribution,
+    NumericRecordBatch,
     NumericRecordSpec,
     NumericSpec,
+    OpaqueBatch,
+    OutputSpec,
     Pareto,
     Poisson,
-    ProductDistribution,
     Record,
-    RecordDistribution,
-    SequentialJointDistribution,
-    SimpleGenerativeModel,
-    SimpleModel,
     StudentT,
     TFPDistribution,
-    TransformedDistribution,
     TruncatedNormal,
     Uniform,
     VonMisesFisher,
     Wishart,
     sample,
 )
-from probpipe.core._broadcast_distributions import (
-    BroadcastDistribution,
-    _ListMarginal,
-    _make_mixture_marginal,
-    _MixtureMarginal,
-    _RecordMarginal,
+from probpipe.distributions import (
+    FactoredDistribution,
+    FactoredNumericDistribution,
+    FieldView,
 )
-from probpipe.core._empirical import (
-    RecordBootstrapReplicateDistribution,
-    RecordEmpiricalDistribution,
+from probpipe.distributions._capabilities import SupportsSampling
+from probpipe.distributions._factored import _SoleField
+from probpipe.distributions._views import _RenamedDistribution
+from probpipe.families import (
+    BernoulliFamily,
+    BijectorTransformedDistribution,
+    FactoredMultivariateGaussian,
+    GaussianProcess,
+    LinearPushforwardDistribution,
+    MixtureDistribution,
+    PoissonFamily,
+    RandomMeasure,
+    glm_likelihood,
 )
-from probpipe.core._numeric_record_distribution import (
-    FlattenedDistributionView,
-    NumericRecordDistributionView,
-)
-from probpipe.core._random_measures import RandomMeasure
-from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core._specs import RecordSpec
-from probpipe.core.protocols import SupportsSampling
-from probpipe.distributions._joint_empirical import NumericJointEmpirical
-from probpipe.distributions._product import TFPProductDistribution
-from probpipe.distributions.gaussian_random_function import (
+from probpipe.families._conditional import _LogRatePoisson
+from probpipe.families._gaussian import (
     _IndependentSumGRF,
     _LinearMapGRF,
     _ScaledGRF,
     _ShiftedGRF,
 )
-from probpipe.inference._approximate_distribution import (
-    ApproximateDistribution,
-    make_posterior,
+from probpipe.families._programs import (
+    PyMCModel,
+    StanModel,
+    UnnormalizedDistribution,
+    _StanPosterior,
+    _UnconstrainedStanView,
 )
-from probpipe.inference._bayesflow_posteriors import BayesFlowModel
+from probpipe.inference._bayesflow_likelihoods import (
+    BayesFlowLikelihood,
+    BayesFlowRatio,
+    _LearnedDensity,
+    _LearnedLaw,
+    _LearnedRatioLaw,
+)
+from probpipe.inference._bayesflow_posteriors import _AmortizedPosterior, _AmortizedPosteriorLaw
 from probpipe.inference._minibatch import (
     _FixedMinibatchDistribution,
     _MinibatchLogProbAtPoint,
     _RandomMinibatchLogProb,
 )
-from probpipe.modeling import PyMCModel, StanModel
-from probpipe.modeling._likelihood import GenerativeLikelihood
-from probpipe.modeling._stan import _UnconstrainedStanView
+from probpipe.linalg import DenseLinOp
+from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------
 
@@ -126,37 +125,27 @@ def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> Line
     width = 2 * max(1, int(np.prod(output_shape)))
     weights = MultivariateNormal("w", loc=jnp.zeros(width), cov=jnp.eye(width))
     return LinearBasisFunction(
-        name,
-        feature_map=functools.partial(_features, output_shape=output_shape),
-        weights=weights,
-        input_shape=(1,),
-        output_shape=output_shape,
+        name, functools.partial(_features, output_shape=output_shape), weights
     )
 
 
 def _measure() -> MinibatchedDistribution:
     X = jax.random.normal(jax.random.PRNGKey(0), (20, 2))
     y = (X[:, 0] > 0).astype(jnp.float32)
-    prior = MultivariateNormal("theta", loc=jnp.zeros(2), cov=jnp.eye(2))
-    likelihood = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
-    return MinibatchedDistribution(
-        "measure", prior, likelihood, Record("r", X=X, y=y), batch_size=5
-    )
+    prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
+    likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
+    return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
 
 
-class _Likelihood:
-    data_template = RecordSpec(y=(3,))
+class _ZeroNetwork:
+    """A stand-in for a trained posterior network, whose draws are zeros."""
 
-    def log_likelihood(self, params, data):
-        return jnp.asarray(0.0)
+    def sample(self, *, num_samples, conditions, seed):
+        return {"theta_0": np.zeros((1, num_samples, 1))}
 
 
-class _Simulator(GenerativeLikelihood):
-    def log_likelihood(self, params, data):
-        return jnp.asarray(0.0)
-
-    def generate_data(self, params, n_samples, *, key=None):
-        return jnp.zeros((n_samples, 1))
+class _Simulator:
+    """A stand-in for the simulator a learned kernel stores and never calls here."""
 
 
 def _pymc_model_fn(y=None):
@@ -174,15 +163,28 @@ def _pymc_model() -> PyMCModel:
     return PyMCModel("model", _pymc_model_fn)
 
 
-def _stan_model() -> StanModel:
-    pytest.importorskip("bridgestan")
+def _stan_model() -> _StanPosterior:
+    require_stanc()
     stan_file = pathlib.Path(tempfile.mkdtemp()) / "declared.stan"
     stan_file.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
     return StanModel("model", str(stan_file))
 
 
-def _conditional(z):
-    return Normal("x", z, 1.0)
+def _stan_view() -> _UnconstrainedStanView:
+    pytest.importorskip("bridgestan")
+    return _stan_model().as_unconstrained_distribution()
+
+
+def _standard_normal_density(x):
+    return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
+
+
+def _zero_mean(X):
+    return jnp.zeros(X.shape[0])
+
+
+def _squared_exponential(X, Y):
+    return jnp.exp(-0.5 * (X[:, None, 0] - Y[None, :, 0]) ** 2)
 
 
 # One construction per concrete class, keyed by the class it represents.
@@ -211,51 +213,14 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Multinomial: lambda: Multinomial("x", 4.0, probs=jnp.array([0.2, 0.3, 0.5])),
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
-    KDEDistribution: lambda: KDEDistribution("k", jnp.zeros((10, 2))),
-    TransformedDistribution: lambda: TransformedDistribution("t", Normal("x", 0.0, 1.0), tfb.Exp()),
-    EmpiricalDistribution: lambda: EmpiricalDistribution("e", ["a", "b"]),
-    RecordEmpiricalDistribution: lambda: EmpiricalDistribution("r", jnp.zeros((5, 2))),
+    KDEDistribution: lambda: KDEDistribution("kde", jnp.arange(6.0).reshape(3, 2)),
+    EmpiricalDistribution: lambda: EmpiricalDistribution(
+        "e", OpaqueBatch("labels", ["a", "b"], "e")
+    ),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
         "b", Normal("x", 0.0, 1.0), replicate_size=3
     ),
-    RecordBootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
-        "b", jnp.zeros((5, 2))
-    ),
-    BootstrapDistribution: lambda: BootstrapDistribution("expectation", jnp.zeros((10, 3))),
-    ProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), e=EmpiricalDistribution("e", ["x", "y"])
-    ),
-    TFPProductDistribution: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Gamma("b", 2.0, 1.0)
-    ),
-    SequentialJointDistribution: lambda: SequentialJointDistribution(
-        z=Normal("z", 0.0, 1.0), x=_conditional
-    ),
-    JointGaussian: lambda: JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), x=1, y=2),
-    JointEmpirical: lambda: JointEmpirical(
-        labels=np.array(["a", "b"], dtype=object), ids=np.array([0, 1])
-    ),
-    NumericJointEmpirical: lambda: JointEmpirical(u=np.ones((4, 2)), v=np.zeros(4)),
-    DistributionArray: lambda: DistributionArray.from_batched_params(
-        Normal, loc=jnp.zeros(3), scale=1.0, name="x"
-    ),
-    BroadcastDistribution: lambda: BroadcastDistribution(
-        {"x": jnp.zeros(3)}, jnp.zeros(3), broadcast_args=["x"]
-    ),
-    _RecordMarginal: lambda: _RecordMarginal(jnp.zeros((4, 2)), name="m"),
-    _MixtureMarginal: lambda: _make_mixture_marginal(
-        [Normal("y", 0.0, 1.0), Normal("y", 1.0, 1.0)]
-    ),
-    _ListMarginal: lambda: _ListMarginal(["a", "b"]),
-    FlattenedDistributionView: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    ).as_flat_distribution(),
-    NumericRecordDistributionView: lambda: MultivariateNormal(
-        "theta", jnp.zeros(3), cov=jnp.eye(3)
-    ).as_record_distribution(template=NumericRecordSpec(a=(), b=(2,))),
-    _RecordDistributionView: lambda: ProductDistribution(
-        a=Normal("a", 0.0, 1.0), b=Normal("b", 0.0, 1.0)
-    )["a"],
+    BootstrapDistribution: lambda: BootstrapDistribution("measure", Normal("x", 0.0, 1.0), 3),
     RandomMeasure: lambda: RandomMeasure("m"),
     MinibatchedDistribution: _measure,
     _FixedMinibatchDistribution: lambda: _measure()._draw_one(jax.random.PRNGKey(0)),
@@ -266,40 +231,89 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _ShiftedGRF: lambda: _basis_function() + 1.0,
     _ScaledGRF: lambda: 2.0 * _basis_function(),
     _IndependentSumGRF: lambda: _basis_function("f") + _basis_function("g"),
-    ApproximateDistribution: lambda: make_posterior(
-        [jnp.zeros((10, 2))],
-        parents=(MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)),),
-        algorithm="test",
-    ),
-    SimpleModel: lambda: SimpleModel(Normal("theta", 0.0, 1.0), _Likelihood()),
-    SimpleGenerativeModel: lambda: SimpleGenerativeModel(Normal("theta", 0.0, 1.0), _Simulator()),
-    BayesFlowModel: lambda: BayesFlowModel(
-        None, Normal("theta", 0.0, 1.0), _Simulator(), method="npe", data_dim=1
-    ),
+    _AmortizedPosteriorLaw: lambda: _AmortizedPosterior(
+        _ZeroNetwork(), Normal("theta", 0.0, 1.0), _Simulator(), method="npe", data_dim=2
+    )._condition_on({"observation": jnp.zeros(2)}),
+    _LearnedDensity: lambda: BayesFlowLikelihood(
+        None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
+    )._condition_on({"theta": 0.0}),
+    _LearnedRatioLaw: lambda: BayesFlowRatio(
+        None, Normal("theta", 0.0, 1.0), _Simulator(), data_dim=2
+    )._condition_on({"theta": 0.0}),
     PyMCModel: _pymc_model,
-    StanModel: _stan_model,
-    _UnconstrainedStanView: lambda: _stan_model().as_unconstrained_distribution(),
+    _StanPosterior: _stan_model,
+    _UnconstrainedStanView: _stan_view,
+    UnnormalizedDistribution: lambda: UnnormalizedDistribution(
+        "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
+    ),
+    FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
+    FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
+    _UnnormalizedConditional: lambda: _unnormalized_conditional(
+        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
+    ),
+    _LogRatePoisson: lambda: PoissonFamily()._build_canonical("y", jnp.zeros(3)),
+    MixtureDistribution: lambda: MixtureDistribution(
+        "m",
+        [
+            Normal("a", 0.0, 1.0, event_spec=OutputSpec(x=None)),
+            Normal("b", 1.0, 1.0, event_spec=OutputSpec(x=None)),
+        ],
+        jnp.array([0.5, 0.5]),
+    ),
+    LinearPushforwardDistribution: lambda: LinearPushforwardDistribution(
+        "y", MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), DenseLinOp(jnp.eye(2))
+    ),
+    BijectorTransformedDistribution: lambda: BijectorTransformedDistribution(
+        "y", Normal("x", 0.0, 1.0), tfb.Exp()
+    ),
+    FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+    GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
+    _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
+    _RenamedDistribution: lambda: EmpiricalDistribution(
+        "e",
+        NumericRecordBatch(
+            "rows",
+            {"a": jnp.zeros(2), "b": jnp.ones(2)},
+            "row",
+            element_spec=NumericRecordSpec(a=(), b=()),
+        ),
+    ).with_path_names({"a": "g/a"}),
+}
+
+# The catalog's families whose implementation has not merged construct by raising.
+_STUB_CONSTRUCTIONS = {
+    cls: pytest.mark.pending(reason=f"{cls.__name__} constructs")
+    for cls in (LinearPushforwardDistribution,)
 }
 
 # Bases a concrete class specializes, constructed only through one.
+#: The constructions that read a Stan program, so they need BridgeStan.
+_STAN_CONSTRUCTIONS = frozenset({_StanPosterior, _UnconstrainedStanView})
+
 _BASES = frozenset(
     {
         NumericDistribution,
+        FactoredNumericDistribution,
         TFPDistribution,
-        RecordDistribution,
-        NumericRecordDistribution,
-        FlatNumericRecordDistribution,
+        _LearnedLaw,
     }
 )
 
 
 def _rows(failures: dict[type, pytest.MarkDecorator] | None = None) -> list:
     """One case per construction, marked where the check fails for a known reason."""
-    failures = failures or {}
+    failures = {**_STUB_CONSTRUCTIONS, **(failures or {})}
     return [
-        pytest.param(cls, make, id=cls.__name__, marks=failures.get(cls, ()))
+        pytest.param(cls, make, id=cls.__name__, marks=_marks(cls, failures))
         for cls, make in _CONSTRUCTIONS.items()
     ]
+
+
+def _marks(cls: type, failures: dict[type, pytest.MarkDecorator]) -> tuple:
+    """The row's known-failure mark, and ``stan`` when its construction needs BridgeStan."""
+    known = failures.get(cls, ())
+    known = known if isinstance(known, tuple) else (known,)
+    return (*known, pytest.mark.stan) if cls in _STAN_CONSTRUCTIONS else known
 
 
 def _reachable(cls: type) -> bool:
@@ -338,62 +352,13 @@ def _library_classes() -> set[type]:
     }
 
 
-# ``sample`` stacks a tuple draw as rows instead of wrapping it as one opaque
-# value.
-_DRAW_FAILURES = {
-    SimpleGenerativeModel: pytest.mark.xfail(
-        raises=ValueError, strict=True, reason="sample stacks a tuple draw as rows"
-    ),
-}
-
 # Laws that do not pickle, by the exception each raises.
-_TFP_BACKEND = pytest.mark.xfail(
-    raises=pytest.RaisesExc(TypeError, match="missing a required argument"),
-    strict=True,
-    reason="a TFP backend built from another law does not unpickle",
-)
 _RUNTIME_CLASS = pytest.mark.xfail(
     raises=pickle.PicklingError,
     strict=True,
     reason="a class made at runtime does not pickle (#417)",
 )
-_BACKEND_MODEL = pytest.mark.xfail(
-    raises=AttributeError, strict=True, reason="the backend's model object does not pickle"
-)
-_PICKLE_FAILURES = {
-    PyMCModel: _BACKEND_MODEL,
-    StanModel: _BACKEND_MODEL,
-    _UnconstrainedStanView: _BACKEND_MODEL,
-    MultivariateNormal: _TFP_BACKEND,
-    KDEDistribution: _TFP_BACKEND,
-    JointGaussian: _TFP_BACKEND,
-    MinibatchedDistribution: _TFP_BACKEND,
-    _FixedMinibatchDistribution: _TFP_BACKEND,
-    _RandomMinibatchLogProb: _TFP_BACKEND,
-    _MinibatchLogProbAtPoint: _TFP_BACKEND,
-    LinearBasisFunction: _TFP_BACKEND,
-    _LinearMapGRF: _TFP_BACKEND,
-    _ShiftedGRF: _TFP_BACKEND,
-    _ScaledGRF: _TFP_BACKEND,
-    _IndependentSumGRF: _TFP_BACKEND,
-    TransformedDistribution: _RUNTIME_CLASS,
-    SequentialJointDistribution: _RUNTIME_CLASS,
-    _MixtureMarginal: _RUNTIME_CLASS,
-    FlattenedDistributionView: _RUNTIME_CLASS,
-    NumericRecordDistributionView: _RUNTIME_CLASS,
-    _RecordDistributionView: _RUNTIME_CLASS,
-}
-
-
-# The interim ``event_shape`` overrides: an empirical law over an array still
-# draws a one-field record, and the Stan and PyMC models count flat parameters.
-_EVENT_SHAPE_OVERRIDES = {
-    "RecordEmpiricalDistribution",
-    "RecordBootstrapReplicateDistribution",
-    "PyMCModel",
-    "StanModel",
-    "_UnconstrainedStanView",
-}
+_PICKLE_FAILURES = {}
 
 
 # -- Tests --------------------------------------------------------------------
@@ -425,16 +390,15 @@ class TestCoverage:
             assert "event_template" not in defined, cls
             if cls is not NumericDistribution:
                 assert not {"dtypes", "supports", "dtype", "support"} & defined.keys(), cls
-            if cls.__name__ not in _EVENT_SHAPE_OVERRIDES:
-                assert "event_shape" not in defined, cls
+            assert "event_shape" not in defined, cls
 
 
 class TestDeclaration:
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_a_rename_keeps_the_declaration(self, cls, make):
         law = make()
-        renamed = law.with_name("renamed")
-        assert renamed.name == "renamed"
+        renamed = law.with_label("renamed")
+        assert renamed.label == "renamed"
         assert renamed.event_spec == law.event_spec
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
@@ -449,12 +413,12 @@ class TestDeclaration:
         for view in ("dtypes", "supports", "dtype", "support"):
             assert hasattr(law, view) is numeric
 
-    @pytest.mark.parametrize(("cls", "make"), _rows(_DRAW_FAILURES))
+    @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_the_declaration_admits_the_draw(self, cls, make):
         law = make()
         if not isinstance(law, SupportsSampling):
             pytest.skip("the law does not sample")
-        assert law.event_spec.spec.is_valid(sample(law, key=jax.random.PRNGKey(0)))
+        assert law.event_spec.spec.is_valid(sample(law))
 
 
 class TestRoundTrips:
@@ -462,19 +426,19 @@ class TestRoundTrips:
 
     @pytest.mark.parametrize(("cls", "make"), _rows(_PICKLE_FAILURES))
     def test_pickle(self, cls, make):
-        law = make().with_name("renamed")
+        law = make().with_label("renamed")
         restored = pickle.loads(pickle.dumps(law))
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_copy(self, cls, make):
-        law = make().with_name("renamed")
+        law = make().with_label("renamed")
         restored = copy.copy(law)
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)
 
     @pytest.mark.parametrize(("cls", "make"), _rows())
     def test_pytree(self, cls, make):
-        law = make().with_name("renamed")
+        law = make().with_label("renamed")
         leaves, treedef = jax.tree_util.tree_flatten(law)
         restored = jax.tree_util.tree_unflatten(treedef, leaves)
-        assert (restored.name, restored.spec) == (law.name, law.spec)
+        assert (restored.label, restored.spec) == (law.label, law.spec)

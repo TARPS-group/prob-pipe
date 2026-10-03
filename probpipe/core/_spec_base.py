@@ -13,6 +13,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ._repr import format_dtype, public_class_name, term_repr
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -125,8 +126,9 @@ class TermSpec(ABC):
         Parameters
         ----------
         other : TermSpec
-            An authoritative spec. Dimensions used as sizes must be concrete;
-            dimension names on the two sides are not unified as aliases.
+            The spec to unify with, in one scope: a symbolic dimension on either
+            side binds to the size the other side gives at its axis, and a name
+            both sides declare is one dimension, which may stay free.
 
         Returns
         -------
@@ -138,7 +140,8 @@ class TermSpec(ABC):
         TypeError
             If the argument is not a spec.
         ValueError
-            If kinds, structure, or repeated sizes disagree.
+            If kinds, structure, or repeated sizes disagree, or two different
+            symbolic dimensions meet at one axis, which ``with_dim_names`` resolves.
         """
         if not isinstance(other, TermSpec):
             raise TypeError("bind_dims_from_spec expects a TermSpec")
@@ -342,13 +345,9 @@ class NumericArraySpec(NumericSpec):
                 raise ValueError(f"{path} does not conform to its field spec ({self!r})")
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Bind the symbolic entries of :attr:`shape` from *actual*'s own shape."""
+        """Unify the entries of :attr:`shape` with *actual*'s, symbols on both sides."""
         if not isinstance(actual, NumericArraySpec):
             return False
-        if any(isinstance(entry, str) for entry in actual.shape):
-            raise ValueError(
-                f"{path} has a polymorphic actual template; concrete dimensions are required"
-            )
         _unify_array_shape(self.shape, actual.shape, bindings, path)
         if self.dtype is not None and actual.dtype is not None:
             if not np.can_cast(actual.dtype, self.dtype, casting="same_kind"):
@@ -387,6 +386,15 @@ class NumericArraySpec(NumericSpec):
 
     def __hash__(self) -> int:
         return hash((self.shape, self.dtype, self.support))
+
+    def __repr__(self) -> str:
+        """The shape, then the dtype and the support where they are set."""
+        fields = [("shape", repr(self.shape))]
+        if self.dtype is not None:
+            fields.append(("dtype", format_dtype(self.dtype)))
+        if self.support is not None:
+            fields.append(("support", repr(self.support)))
+        return term_repr(public_class_name(type(self)), None, fields)
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a numeric array (or scalar) matching this spec.
@@ -448,56 +456,117 @@ def _unify_array_shape(
     actual: tuple[int | str, ...],
     bindings: dict[str, int],
     path: str,
-) -> tuple[int, ...]:
-    """Validate fixed dimensions and bind symbols against a concrete shape."""
+) -> tuple[int | str, ...]:
+    """Unify two shapes axis by axis in the caller's shared scope *bindings*.
+
+    A symbolic dimension on either side binds to the size the other side gives
+    at its axis, and a symbol already bound in *bindings* stands for its size.
+    The same symbol on both sides is one dimension and may stay free, while two
+    different symbols at one axis are different quantities until renamed to agree.
+
+    Returns
+    -------
+    tuple of int or str
+        The unified shape, with the dimensions still unbound left symbolic.
+
+    Raises
+    ------
+    ValueError
+        If the ranks differ, two sizes disagree, or two different unbound
+        symbols meet at one axis.
+    """
     if len(declared) != len(actual):
         raise ValueError(
             f"{path} has rank {len(actual)}, expected rank {len(declared)} from shape {declared!r}"
         )
-    concrete: list[int] = []
+    unified: list[int | str] = []
     for declared_dimension, actual_dimension in zip(declared, actual, strict=True):
-        if not isinstance(actual_dimension, int):
-            raise ValueError(f"{path} has non-concrete dimension {actual_dimension!r}")
-        if isinstance(declared_dimension, int):
-            if declared_dimension != actual_dimension:
+        declared_size = (
+            bindings.get(declared_dimension, declared_dimension)
+            if isinstance(declared_dimension, str)
+            else declared_dimension
+        )
+        actual_size = (
+            bindings.get(actual_dimension, actual_dimension)
+            if isinstance(actual_dimension, str)
+            else actual_dimension
+        )
+        if isinstance(declared_size, int) and isinstance(actual_size, int):
+            if declared_size != actual_size:
+                if isinstance(declared_dimension, str):
+                    raise ValueError(
+                        f"{path} binds symbolic dimension {declared_dimension!r} to "
+                        f"{actual_size}, but it is already bound to {declared_size}"
+                    )
+                if isinstance(actual_dimension, str):
+                    raise ValueError(
+                        f"{path} binds symbolic dimension {actual_dimension!r} to "
+                        f"{declared_size}, but it is already bound to {actual_size}"
+                    )
                 raise ValueError(
-                    f"{path} has dimension {actual_dimension}, expected "
-                    f"{declared_dimension} from shape {declared!r}"
+                    f"{path} has dimension {actual_size}, expected "
+                    f"{declared_size} from shape {declared!r}"
                 )
+            unified.append(declared_size)
+        elif isinstance(declared_size, str) and isinstance(actual_size, int):
+            bindings[declared_size] = actual_size
+            unified.append(actual_size)
+        elif isinstance(declared_size, int) and isinstance(actual_size, str):
+            bindings[actual_size] = declared_size
+            unified.append(declared_size)
+        elif declared_size == actual_size:
+            unified.append(declared_size)
         else:
-            previous = bindings.setdefault(declared_dimension, actual_dimension)
-            if previous != actual_dimension:
-                raise ValueError(
-                    f"{path} binds symbolic dimension {declared_dimension!r} to "
-                    f"{actual_dimension}, but it is already bound to {previous}"
-                )
-        concrete.append(actual_dimension)
-    return tuple(concrete)
+            raise ValueError(
+                f"{path} meets the symbolic dimensions {declared_size!r} and {actual_size!r} "
+                f"at one axis; rename them to agree with with_dim_names"
+            )
+    return tuple(unified)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class OpaqueSpec(TermSpec):
     """The fallback value spec, for a value no other spec describes.
 
-    An opaque value carries no exposed structure (a string, a DataFrame, an
-    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
-    must be hashable (or ``None``).
+    An opaque value carries no exposed structure, as a string, a DataFrame, or
+    an arbitrary Python object does.
+
+    Parameters
+    ----------
+    type : type or None
+        The Python type of the values the spec admits, which :meth:`is_valid`
+        checks. ``None`` admits every value that is not a mapping. Construction
+        from a value infers it.
+    meta : Hashable
+        Free-form metadata, such as units or a tag. It is part of the spec's
+        equality and hash, and it is never checked against a value or inferred,
+        so ``None`` unifies with a set ``meta``, as an open ``type`` does with a
+        set one.
+
+    Raises
+    ------
+    TypeError
+        If *type* is neither a class nor ``None``, or *meta* is not hashable.
     """
 
+    type: type | None = None
     meta: Hashable = None
 
     def __post_init__(self) -> None:
+        if self.type is not None and not isinstance(self.type, type):
+            raise TypeError(
+                f"OpaqueSpec.type is the class of the admitted values or None, got {self.type!r}"
+            )
         _require_hashable(self.meta, context="OpaqueSpec.meta")
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a valid opaque value — anything but a mapping.
+        """Whether *value* is a valid opaque value: an instance of :attr:`type`, and no mapping.
 
-        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
-        ``Mapping``: a mapping denotes tree structure (a subtree), never a
-        leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`NumericArraySpec`, but
-        an explicitly-opaque field still accepts it. ``meta`` is metadata
-        about the spec and is not checked against the value.
+        A ``Mapping`` denotes tree structure, a subtree rather than a leaf, so no
+        opaque spec admits one. With no type every other value is valid,
+        including a numeric array or scalar, which a :class:`NumericArraySpec`
+        typically describes but an explicitly opaque field still accepts.
+        ``meta`` is not checked against the value.
 
         Notes
         -----
@@ -505,4 +574,64 @@ class OpaqueSpec(TermSpec):
         :class:`~probpipe.Record` construction materialises a mapping field
         value into a nested subtree.
         """
-        return not isinstance(value, Mapping)
+        if isinstance(value, Mapping):
+            return False
+        return self.type is None or isinstance(_opaque_value(value), self.type)
+
+    def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
+        """Check another opaque spec: types and ``meta`` each equal or one of them ``None``.
+
+        Raises
+        ------
+        ValueError
+            If the two opaque specs do not unify.
+        """
+        if not isinstance(actual, OpaqueSpec):
+            return False
+        if not _agree(self.type, actual.type) or not _agree(self.meta, actual.meta):
+            raise ValueError(f"{path} spec {actual!r} does not conform to {self!r}")
+        return True
+
+    def __repr__(self) -> str:
+        """The type and the metadata where they are set, so an open spec reads ``OpaqueSpec()``."""
+        return term_repr(public_class_name(type(self)), None, self._repr_arguments())
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The type and the metadata where they are set, formatted for a repr."""
+        fields = []
+        if self.type is not None:
+            fields.append(("type", self.type.__qualname__))
+        if self.meta is not None:
+            fields.append(("meta", repr(self.meta)))
+        return fields
+
+
+def _agree(first: Any, second: Any) -> bool:
+    """Whether two opaque attributes unify: equal, or one of them ``None``."""
+    return first is None or second is None or first == second
+
+
+def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
+    """The unification of two opaque specs that unify, which takes the known type and ``meta``."""
+    unified = OpaqueSpec(
+        type=first.type if first.type is not None else second.type,
+        meta=first.meta if first.meta is not None else second.meta,
+    )
+    return first if unified == first else second if unified == second else unified
+
+
+def _opaque_value(value: Any) -> Any:
+    """*value*, or the value it wraps when it is a tracked opaque value, an ``Opaque``."""
+    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(value, "value"):
+        return value.value
+    return value
+
+
+def _opaque_spec_of(values: Iterable[Any]) -> OpaqueSpec:
+    """The opaque spec of *values*: the type they share exactly, or ``None`` when they differ.
+
+    A tracked opaque value counts by the value it wraps, and no values share no
+    type, so their spec admits any value.
+    """
+    types = {type(_opaque_value(value)) for value in values}
+    return OpaqueSpec(type=types.pop() if len(types) == 1 else None)

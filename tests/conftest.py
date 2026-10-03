@@ -6,6 +6,36 @@ import pytest
 import probpipe
 from probpipe import EmpiricalDistribution, ProvenanceMode
 
+#: The fixtures that skip a test unless BridgeStan is installed; a test requesting one is marked
+#: ``stan``, the marker CI's stan job selects.
+_STAN_FIXTURES = frozenset({"_stanc", "_stan_toolchain"})
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "pending(reason, raises=NotImplementedError, strict=True): a documented contract "
+        "whose implementation has not merged. The test xfails strictly, and only on *raises*, "
+        "so it fails once the implementation passes it or when it fails for another reason. "
+        "strict=False marks a failure that depends on the platform's numerics, such as a "
+        "sampler's run at a fixed budget, which passes on some platforms.",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if _STAN_FIXTURES.intersection(item.fixturenames):
+            item.add_marker(pytest.mark.stan)
+        for marker in item.iter_markers("pending"):
+            reason = marker.kwargs.get("reason") or (marker.args[0] if marker.args else "")
+            item.add_marker(
+                pytest.mark.xfail(
+                    raises=marker.kwargs.get("raises", NotImplementedError),
+                    strict=marker.kwargs.get("strict", True),
+                    reason=f"pending: {reason}",
+                )
+            )
+
 
 @pytest.fixture(autouse=True)
 def _reset_provenance_config():
@@ -71,6 +101,14 @@ def cov_matrix(dim):
     return A
 
 
+@pytest.fixture(scope="session")
+def _stanc():
+    """Skip unless BridgeStan's stanc compiler is here, which a StanModel reads its program with."""
+    from tests._stanc import require_stanc
+
+    require_stanc()
+
+
 @pytest.fixture(scope="module")
 def _stan_toolchain(tmp_path_factory):
     """Skip Stan integration tests unless BridgeStan can compile here.
@@ -81,9 +119,13 @@ def _stan_toolchain(tmp_path_factory):
     tests/modeling/ and tests/inference/.
     """
     bridgestan = pytest.importorskip("bridgestan")
+    from probpipe.families._programs import _BRIDGESTAN_MAKE_ARGS
+
     probe = tmp_path_factory.mktemp("stan_probe") / "probe.stan"
     probe.write_text("parameters { real x; } model { x ~ normal(0, 1); }")
     try:
-        bridgestan.StanModel(str(probe))
+        # Built as the adapter builds model libraries, without TBB's malloc proxy,
+        # which would break JAX's allocations for the rest of the process.
+        bridgestan.StanModel(str(probe), make_args=list(_BRIDGESTAN_MAKE_ARGS))
     except Exception as exc:
         pytest.skip(f"Stan compilation unavailable: {exc}")

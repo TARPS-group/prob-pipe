@@ -15,9 +15,11 @@ import pytest
 from probpipe import (
     DistributionSpec,
     FunctionSpec,
+    InputSpec,
     Normal,
     NumericArraySpec,
     OpaqueSpec,
+    OutputSpec,
     Record,
     RecordSpec,
     TermSpec,
@@ -27,8 +29,8 @@ from probpipe.core._fingerprint import (
     _update_function,
     fingerprint,
 )
-from probpipe.core.node import Function
 from probpipe.core.provenance import ParentInfo, Provenance
+from probpipe.values._function_base import Function
 
 # ===========================================================================
 # 1. Return type and format
@@ -37,13 +39,13 @@ from probpipe.core.provenance import ParentInfo, Provenance
 
 class TestReturnFormat:
     def test_returns_string(self):
-        assert isinstance(fingerprint(Normal(loc=0.0, scale=1.0, name="n")), str)
+        assert isinstance(fingerprint(Normal(loc=0.0, scale=1.0, label="n")), str)
 
     def test_returns_16_chars(self):
-        assert len(fingerprint(Normal(loc=0.0, scale=1.0, name="n"))) == 16
+        assert len(fingerprint(Normal(loc=0.0, scale=1.0, label="n"))) == 16
 
     def test_hex_characters_only(self):
-        fp = fingerprint(Normal(loc=0.0, scale=1.0, name="n"))
+        fp = fingerprint(Normal(loc=0.0, scale=1.0, label="n"))
         assert all(c in "0123456789abcdef" for c in fp)
 
 
@@ -115,7 +117,7 @@ class TestFingerprintStrength:
             def implementation(value):
                 return value if captured is None else captured
 
-            return Function(func=implementation)
+            return Function(label="implementation", fn=implementation)
 
         assert _fingerprint_with_strength(build(1))[1] is False
         assert _fingerprint_with_strength(build(object()))[1] is True
@@ -332,61 +334,60 @@ class TestRecordHashing:
 
 class TestDistributionHashing:
     def test_same_normal_stable(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=0.0, scale=1.0, name="x")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=0.0, scale=1.0, label="x")
         assert fingerprint(n1) == fingerprint(n2)
 
     def test_different_loc_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=1.0, scale=1.0, name="x")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=1.0, scale=1.0, label="x")
         assert fingerprint(n1) != fingerprint(n2)
 
     def test_different_scale_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=0.0, scale=2.0, name="x")
+        n1 = Normal(loc=0.0, scale=1.0, label="x")
+        n2 = Normal(loc=0.0, scale=2.0, label="x")
         assert fingerprint(n1) != fingerprint(n2)
 
-    def test_different_name_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = Normal(loc=0.0, scale=1.0, name="y")
-        assert fingerprint(n1) != fingerprint(n2)
+    def test_a_relabeled_law_keeps_its_fingerprint(self):
+        """A label names a law for display, so it is no part of what the law computes."""
+        law = Normal(loc=0.0, scale=1.0, label="x")
+        assert fingerprint(law.with_label("y")) == fingerprint(law)
+        assert fingerprint(Normal(loc=0.0, scale=1.0, label="y")) == fingerprint(law)
 
     def test_different_distribution_types_differ(self):
         from probpipe import Beta
 
-        n = Normal(loc=0.0, scale=1.0, name="x")
-        b = Beta(alpha=1.0, beta=1.0, name="x")
+        n = Normal(loc=0.0, scale=1.0, label="x")
+        b = Beta(alpha=1.0, beta=1.0, label="x")
         assert fingerprint(n) != fingerprint(b)
 
     def test_empirical_distribution_stable(self):
-        from probpipe import RecordEmpiricalDistribution
+        from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        e1 = RecordEmpiricalDistribution("posterior", samples)
-        e2 = RecordEmpiricalDistribution("posterior", samples)
+        e1 = EmpiricalDistribution("posterior", samples)
+        e2 = EmpiricalDistribution("posterior", samples)
         assert fingerprint(e1) == fingerprint(e2)
 
     def test_empirical_different_samples_differ(self):
-        from probpipe import RecordEmpiricalDistribution
+        from probpipe import EmpiricalDistribution
 
-        e1 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
-        e2 = RecordEmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
+        e1 = EmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
+        e2 = EmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
         assert fingerprint(e1) != fingerprint(e2)
 
     def test_empirical_non_uniform_weights_differ(self):
         """IS/SMC reweighting must produce a different fingerprint."""
-        from probpipe import RecordEmpiricalDistribution
+        from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        uniform = RecordEmpiricalDistribution("post", samples)
-        reweighted = RecordEmpiricalDistribution(
-            "post", samples, weights=jnp.array([0.7, 0.2, 0.1])
-        )
+        uniform = EmpiricalDistribution("post", samples)
+        reweighted = EmpiricalDistribution("post", samples, weights=jnp.array([0.7, 0.2, 0.1]))
         assert fingerprint(uniform) != fingerprint(reweighted)
 
     def test_kde_distribution_stable(self):
-        """KDE (composite TFP distribution) must be stable."""
-        from probpipe.distributions.kde import KDEDistribution
+        """A KDE's fingerprint is stable."""
+        from probpipe import KDEDistribution
 
         pts = jnp.array([0.0, 1.0, 2.0])
         k1 = KDEDistribution("kde", pts)
@@ -395,7 +396,7 @@ class TestDistributionHashing:
 
     def test_kde_different_points_differ(self):
         """Two KDE distributions with different data must have different fingerprints."""
-        from probpipe.distributions.kde import KDEDistribution
+        from probpipe import KDEDistribution
 
         k1 = KDEDistribution("kde", jnp.array([0.0, 1.0, 2.0]))
         k2 = KDEDistribution("kde", jnp.array([0.0, 1.0, 99.0]))
@@ -410,10 +411,10 @@ class TestBootstrapSourceFingerprint:
         from probpipe import BootstrapReplicateDistribution
 
         b1 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
         )
         b2 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=5.0, scale=1.0, label="x"), replicate_size=10
         )
         assert fingerprint(b1) != fingerprint(b2)
 
@@ -421,10 +422,10 @@ class TestBootstrapSourceFingerprint:
         from probpipe import BootstrapReplicateDistribution
 
         b1 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
         )
         b2 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10
+            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
         )
         assert fingerprint(b1) == fingerprint(b2)
 
@@ -436,7 +437,7 @@ class TestBootstrapSourceFingerprint:
 
 class TestFunctionHashing:
     def _make_wf(self, func):
-        return Function(func=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(label="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_legacy_content_marker_is_preserved(self):
         """A pure API rename must not invalidate existing cache identities."""
@@ -467,9 +468,10 @@ class TestFunctionHashing:
 
         def build(*, input_shape=(), output_shape=()):
             return Function(
-                func=identity,
-                input_template=RecordSpec(x=input_shape),
-                output_template=RecordSpec(y=output_shape),
+                label="identity",
+                fn=identity,
+                input_spec=InputSpec(RecordSpec(x=input_shape).children),
+                output_spec=RecordSpec(y=output_shape),
             )
 
         baseline = build()
@@ -483,6 +485,32 @@ class TestFunctionHashing:
 
         provenance = Provenance.create("compare", parents=[baseline, changed_output])
         assert provenance.parents[0].fingerprint != provenance.parents[1].fingerprint
+
+    @pytest.mark.parametrize(
+        ("before", "after"),
+        [
+            (OutputSpec(a=NumericArraySpec(())), OutputSpec(b=NumericArraySpec(()))),
+            (OutputSpec(RecordSpec(a=(), b=(3,))), OutputSpec(RecordSpec(c=(), d=(3,)))),
+            (
+                OutputSpec(DistributionSpec(OutputSpec(a=NumericArraySpec(())))),
+                OutputSpec(DistributionSpec(OutputSpec(b=NumericArraySpec(())))),
+            ),
+        ],
+        ids=["whole-term", "exposed-record", "exposed-law"],
+    )
+    def test_a_rename_of_the_function_or_its_outputs_keeps_the_fingerprint(self, before, after):
+        """A rename changes no value, so the renamed function shares the fingerprint."""
+
+        def identity(x):
+            return x
+
+        def build(output_spec, label="identity", **options):
+            return Function(label=label, fn=identity, output_spec=output_spec, **options)
+
+        baseline = fingerprint(build(before))
+        assert fingerprint(build(after)) == baseline
+        assert fingerprint(build(before, label="renamed", output_label="relabeled")) == baseline
+        assert fingerprint(build(OutputSpec(a=NumericArraySpec((3,))))) != baseline
 
     def test_callable_fingerprint_tracks_frozen_signature_declaration(self):
         def build(signature: inspect.Signature) -> Function:
@@ -562,13 +590,13 @@ class TestFunctionHashing:
             import sys
             sys.path.insert(0, sys.argv[1])
             from probpipe.core._fingerprint import fingerprint
-            from probpipe.core.node import Function
+            from probpipe import Function
 
             def f(x: float) -> float:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = Function(func=f, dispatch="sequential", n_broadcast_samples=10)
+            wf = Function("f", f, dispatch="sequential", n_broadcast_samples=10)
             print(fingerprint(wf))
         """)
         site = str(next(p for p in sys.path if "site-packages" in p))
@@ -585,7 +613,7 @@ class TestFunctionHashing:
 
 class TestFingerprintInProvenance:
     def test_parentinfo_fingerprint_set(self):
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         prov = Provenance.create("op", parents=[n])
         assert prov is not None
         parent = prov.parents[0]
@@ -595,21 +623,21 @@ class TestFingerprintInProvenance:
         assert parent.fingerprint_is_weak is False
 
     def test_parentinfo_fingerprint_stable_across_create_calls(self):
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         p1 = Provenance.create("op", parents=[n])
         p2 = Provenance.create("op", parents=[n])
         assert p1.parents[0].fingerprint == p2.parents[0].fingerprint
 
     def test_different_parents_different_fingerprints(self):
-        n1 = Normal(loc=0.0, scale=1.0, name="a")
-        n2 = Normal(loc=5.0, scale=1.0, name="b")
+        n1 = Normal(loc=0.0, scale=1.0, label="a")
+        n2 = Normal(loc=5.0, scale=1.0, label="b")
         prov = Provenance.create("op", parents=[n1, n2])
         fp1 = prov.parents[0].fingerprint
         fp2 = prov.parents[1].fingerprint
         assert fp1 != fp2
 
     def test_fingerprint_in_to_dict(self):
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         prov = Provenance.create("op", parents=[n])
         d = prov.to_dict()
         assert "fingerprint" in d["parents"][0]
@@ -621,7 +649,7 @@ class TestFingerprintInProvenance:
 
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         try:
-            n = Normal(loc=0.0, scale=1.0, name="prior")
+            n = Normal(loc=0.0, scale=1.0, label="prior")
             prov = Provenance.create("op", parents=[n])
             assert prov is None
         finally:
@@ -643,7 +671,7 @@ class TestFingerprintInProvenance:
 
         monkeypatch.setattr(fp_mod, "_fingerprint_with_strength", _bad_fp)
 
-        n = Normal(loc=0.0, scale=1.0, name="prior")
+        n = Normal(loc=0.0, scale=1.0, label="prior")
         with caplog.at_level(logging.WARNING, logger="probpipe.core.provenance"):
             prov = Provenance.create("op", parents=[n])
 
@@ -664,7 +692,7 @@ class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return Function(func=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(label="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
@@ -757,15 +785,56 @@ class TestNestedRecordHashing:
         assert fingerprint(r1) != fingerprint(r2)
 
 
+class TestEmpiricalAtoms:
+    """An empirical law is hashed by its stored rows, its levels, and its weights."""
+
+    @staticmethod
+    def _opaque(labels, level="site"):
+        from probpipe import EmpiricalDistribution, OpaqueBatch
+
+        return EmpiricalDistribution("o", OpaqueBatch("o", list(labels), level))
+
+    def test_equal_opaque_atoms_give_equal_strong_digests(self):
+        first, second = self._opaque(["north", "south"]), self._opaque(["north", "south"])
+        digest, weak = _fingerprint_with_strength(first)
+        assert (digest, weak) == (fingerprint(second), False)
+
+    def test_different_opaque_atoms_differ(self):
+        assert fingerprint(self._opaque(["north", "south"])) != fingerprint(
+            self._opaque(["north", "east"])
+        )
+
+    def test_the_level_names_enter_the_digest(self):
+        from probpipe import EmpiricalDistribution
+
+        atoms = jnp.arange(3.0)
+        assert fingerprint(EmpiricalDistribution("x", atoms, level="a")) != fingerprint(
+            EmpiricalDistribution("x", atoms, level="b")
+        )
+        assert fingerprint(self._opaque(["n", "s"], "a")) != fingerprint(
+            self._opaque(["n", "s"], "b")
+        )
+
+    def test_the_batch_shape_enters_the_digest(self):
+        from probpipe import EmpiricalDistribution, NumericArrayBatch
+
+        def law(shape):
+            values = jnp.arange(6.0).reshape(shape)
+            spec = NumericArraySpec((), jnp.float32)
+            atoms = NumericArrayBatch("x", values, ("chain", "draw"), element_spec=spec)
+            return EmpiricalDistribution("x", atoms)
+
+        assert fingerprint(law((2, 3))) != fingerprint(law((3, 2)))
+
+
 class TestEmpiricalReweighting:
-    """The Record-backed empirical class stores no ``_samples`` — reweighted
-    posteriors must still be distinguished (was a silent collision)."""
+    """Empirical laws over the same atoms are distinguished by their weights."""
 
     def _emp(self, weights):
-        from probpipe.core._empirical import EmpiricalDistribution
+        from probpipe import EmpiricalDistribution, Weights
 
         s = jnp.array([1.0, 2.0, 3.0])
-        return EmpiricalDistribution("p", s, log_weights=jnp.log(jnp.array(weights)))
+        return EmpiricalDistribution("p", s, Weights(log_weights=jnp.log(jnp.array(weights))))
 
     def test_reweighted_differs(self):
         assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))
@@ -812,22 +881,22 @@ class TestParentInfoIdentity:
     def test_fingerprint_excluded_from_equality(self):
         # Two descriptors for the same ancestor compare/hash equal regardless of
         # the content digest, so a fingerprint can't perturb ancestor-set dedup.
-        a = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="aaaaaaaaaaaaaaaa")
-        b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
+        a = ParentInfo(type_name="X", label="n", provenance=None, fingerprint="aaaaaaaaaaaaaaaa")
+        b = ParentInfo(type_name="X", label="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
         assert a == b
         assert hash(a) == hash(b)
 
     def test_fingerprint_strength_excluded_from_equality(self):
         strong = ParentInfo(
             type_name="X",
-            name="n",
+            label="n",
             provenance=None,
             fingerprint="aaaaaaaaaaaaaaaa",
             fingerprint_is_weak=False,
         )
         weak = ParentInfo(
             type_name="X",
-            name="n",
+            label="n",
             provenance=None,
             fingerprint="bbbbbbbbbbbbbbbb",
             fingerprint_is_weak=True,
@@ -962,11 +1031,19 @@ class TestTermSpecFingerprints:
             OpaqueSpec(),
             RecordSpec(tau),
             DistributionSpec(tau),
-            FunctionSpec(tau, tau),
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau)),
             FunctionSpec(),
         ):
             _, weak = _fingerprint_with_strength(RecordSpec(field=spec))
             assert not weak, f"{type(spec).__name__} hashed by identity"
+
+    def test_an_opaque_type_is_part_of_the_spec_fingerprint(self):
+        """The type hashes by its module and qualified name, beside the metadata."""
+        untyped = fingerprint(RecordSpec(field=OpaqueSpec()))
+        typed = fingerprint(RecordSpec(field=OpaqueSpec(type=str)))
+        assert typed != untyped
+        assert fingerprint(RecordSpec(field=OpaqueSpec(type=str))) == typed
+        assert fingerprint(RecordSpec(field=OpaqueSpec(type=bytes))) != typed
 
     def test_an_unknown_spec_kind_is_reported_weak(self, tau):
         """The contract boundary: a spec the hasher does not know is not silently
@@ -984,8 +1061,8 @@ class TestTermSpecFingerprints:
         [
             lambda t: RecordSpec(t),
             lambda t: DistributionSpec(t),
-            lambda t: FunctionSpec(t, t),
-            lambda t: FunctionSpec(t, DistributionSpec(t)),
+            lambda t: FunctionSpec(InputSpec(t.children), OutputSpec(result=t)),
+            lambda t: FunctionSpec(InputSpec(t.children), OutputSpec(result=DistributionSpec(t))),
         ],
         ids=["record", "distribution", "function-record-out", "function-term-out"],
     )
@@ -998,31 +1075,40 @@ class TestTermSpecFingerprints:
         other = RecordSpec(y=())
         assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
         assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
-        assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
+        assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) != self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=other))
+        )
+
+    def test_a_function_type_keeps_its_fingerprint_when_its_output_is_renamed(self, tau):
+        assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) == self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(renamed=tau))
+        )
 
     def test_declared_kind_changes_the_fingerprint(self, tau):
         # The same space under different declared kinds must not collide: the
         # declaration's class is the kind.
         assert self._fp(RecordSpec(tau)) != self._fp(DistributionSpec(tau))
-        assert self._fp(FunctionSpec(tau, tau)) != self._fp(
-            FunctionSpec(tau, DistributionSpec(tau))
+        assert self._fp(FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))) != self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=DistributionSpec(tau)))
         )
 
     def test_unspecified_output_differs_from_a_declared_one(self, tau):
-        assert self._fp(FunctionSpec(tau)) != self._fp(FunctionSpec(tau, tau))
+        assert self._fp(FunctionSpec(InputSpec(tau.children))) != self._fp(
+            FunctionSpec(InputSpec(tau.children), OutputSpec(result=tau))
+        )
 
     def test_a_deep_declaration_chain_truncates_instead_of_recursing(self, tau):
         """Declaration edges are hashed through the depth-guarded entry point.
 
         An output declaration may itself be a FunctionSpec, so the chain is
         unbounded; hashing it must degrade to the depth marker and report weak
-        rather than exhaust the interpreter stack. The spec is hashed directly:
-        nesting it in a template instead would recurse in ``RecordSpec``'s
-        own hash, which is a separate concern.
+        rather than traverse the full declaration. Keep the fixture beyond the
+        fingerprint depth limit but within OutputSpec construction's recursive
+        hashability check, which is a separate concern.
         """
         spec = FunctionSpec()
-        for _ in range(1000):
-            spec = FunctionSpec(tau, spec)
+        for _ in range(64):
+            spec = FunctionSpec(InputSpec(tau.children), OutputSpec(result=spec))
 
         _, weak = _fingerprint_with_strength(spec)
         assert weak

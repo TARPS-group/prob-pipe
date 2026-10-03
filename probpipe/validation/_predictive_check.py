@@ -1,170 +1,301 @@
-"""Predictive checking for model validation."""
+"""Predictive checks: replicated data from a model against the observed data."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import jax
 import numpy as np
 
-from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
-from ..core.node import function
-from ..core.protocols import GenerativeLikelihood, SupportsSampling
+from ..core._record_spec import _reshaped_template
+from ..core.record import Record
 from ..custom_types import PRNGKey
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
-from ._workflow_rng import (
-    _require_certified_generative_provider,
-    _resolve_validation_key,
-    _validate_positive_int,
-)
+from ..distributions._empirical import EmpiricalDistribution, _batch_form
+from ..distributions._factored import FactoredConditionalDistribution, _event_of, _raw_record
+from ..functions import function
+from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
+from ._workflow_rng import _resolve_validation_key, _validate_positive_int
 
 __all__ = ["predictive_check"]
 
 
 @function
-def predictive_check[P, D](
-    distribution: Distribution,
-    generative_likelihood: GenerativeLikelihood[P, D],
-    test_fn: Callable[[D], float],
+def predictive_check[D](
+    kernel: ConditionalDistribution,
+    law: Distribution,
+    test_fns: Callable[[D], float] | Sequence[Callable[[D], float]],
     observed_data: D | None = None,
     *,
-    num_observations: int | None = None,
     num_replications: int = 500,
     key: PRNGKey | None = None,
 ) -> dict:
-    """Predictive check — works as both prior and posterior check.
+    """Compare replicated data with the observed data through test statistics.
 
-    Draws parameter samples from *distribution*, generates replicated
-    data via *generative_likelihood*, and computes *test_fn* on each
-    replicate.
+    A replication is a draw of the kernel's event from the composition
+    ``kernel * law``, which draws the given slots from *law* and then the
+    kernel's event at those values. With the posterior as *law* the check is a
+    posterior predictive check, and with the prior it is a prior predictive
+    check. Each statistic is computed on the same replications and, when
+    *observed_data* is given, on the observed data; its p-value is the fraction
+    of replications whose statistic is at least the observed one.
 
-    When *observed_data* is provided, also computes *test_fn* on the
-    observed data and returns a calibration p-value, making this a
-    posterior predictive check.  Without *observed_data*, this is a
-    prior predictive check — useful for understanding the implications
-    of the prior.
-
-    When ``generate_data`` accepts a ``key`` keyword argument, all
-    replications are generated in a single vectorized call (by passing
-    a batch of parameter vectors), giving a large speedup.  The test
-    function is then applied via ``jax.vmap`` when possible, with an
-    automatic fallback to a Python loop.
+    A statistic receives a replication in the form the kernel declares for its
+    event: a whole term is its value, such as an array, and an exposed record is
+    the mapping of its fields. A statistic that JAX can trace is computed on
+    every replication in one ``jax.vmap`` call, and any other in a loop.
 
     Parameters
     ----------
-    distribution : Distribution
-        Prior or posterior to sample parameters from.
-    generative_likelihood : GenerativeLikelihood[P, D]
-        Must have ``generate_data(params: P, num_observations: int, *,
-        key: PRNGKey | None = None) -> D``. If ``generate_data`` also
-        accepts a ``key`` keyword, the vectorized fast path is used.
-    test_fn : Callable[[D], float]
-        Test statistic mapping data to a scalar.
-    observed_data : D or None, optional
-        If provided, compute the observed test statistic and p-value.
-    num_observations : int, optional
-        Number of observations per replicated dataset.  Required if
-        *observed_data* is not provided; otherwise defaults to
-        ``len(observed_data)``.
+    kernel : ConditionalDistribution
+        The law of the observations given the parameters, such as the
+        likelihood of a model ``likelihood * prior``.
+    law : Distribution
+        A law over the kernel's given slots: the posterior for a posterior
+        predictive check, or the prior for a prior predictive check. A
+        ``NumericRecord`` of stacked draws is read as the empirical law of its
+        rows.
+    test_fns : callable or sequence of callables
+        One or more test statistics, each mapping a dataset to a scalar. A
+        statistic is named by its ``__name__``, and the names in a sequence
+        are distinct.
+    observed_data : optional
+        The observed data, in the form of a replication, or as a mapping from
+        the kernel's components to their values, the form ``condition_on``
+        takes.
     num_replications : int
-        Number of replicated datasets to generate.
+        The number of replications.
     key : PRNGKey, optional
-        JAX PRNG key.  Auto-generated if ``None``.
+        JAX PRNG key. When it is omitted, the workflow supplies the key, so a
+        call inside ``workflow_run(seed=...)`` is reproducible.
 
     Returns
     -------
-    dict
-        Always contains:
+    Record
+        For a single statistic, the record has the fields:
 
-        - ``"replicated_statistics"`` — ``RecordEmpiricalDistribution``
-          over the test statistic values from replicated data.
+        - ``replicated_statistics``: an ``EmpiricalDistribution`` over the
+          statistic's values at the replications.
+        - ``test_fn_name``: the statistic's name.
+        - ``observed_statistic``: the statistic of *observed_data*, when
+          *observed_data* is given.
+        - ``p_value``: the fraction of replications whose statistic is at
+          least ``observed_statistic``, when *observed_data* is given.
 
-        When *observed_data* is provided, also contains:
+        For a sequence of statistics, each statistic's fields are nested
+        under its name, so ``check["mean/p_value"]`` is the p-value of a
+        statistic named ``mean``.
 
-        - ``"observed_statistic"`` — ``test_fn(observed_data)``
-        - ``"p_value"`` — fraction of replicates where the test
-          statistic is at least as extreme as the observed value.
+    Raises
+    ------
+    TypeError
+        If *kernel* is not a ``ConditionalDistribution``, *law* does not
+        sample, or a statistic is not callable.
+    ValueError
+        If *law* does not produce every given slot of *kernel*, naming the
+        missing slots; if *law* produces a component that *kernel* produces;
+        if *test_fns* is empty or holds two statistics of the same name; or if
+        *num_replications* is not a positive integer.
+
+    Notes
+    -----
+    Each statistic's result is also recorded in ``law.annotations``, as the
+    next child ``check_N`` of the group ``predictive_check``: a dataset with
+    the variable ``replicated_statistics`` over the dimension
+    ``replication``, and the attributes ``test_fn_name`` and, when
+    *observed_data* is given, ``observed_statistic`` and ``p_value``.
+
+    Examples
+    --------
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> from probpipe import Normal, conditional_distribution
+    >>> prior = Normal("mu", 0.0, 1.0)
+    >>> likelihood = conditional_distribution(
+    ...     "y_given_mu",
+    ...     lambda mu: Normal("y", mu * jnp.ones(10), 1.0),
+    ...     given_spec=prior.event_spec.components,
+    ... )
+    >>> check = predictive_check(
+    ...     likelihood, prior, jnp.mean, jnp.zeros(10), key=jax.random.key(0)
+    ... )
+    >>> check["replicated_statistics"].num_atoms
+    500
+    >>> 0.0 <= float(check["p_value"]) <= 1.0
+    True
     """
-    if num_observations is None:
-        if observed_data is None:
-            raise ValueError("num_observations is required when observed_data is not provided")
-        num_observations = len(observed_data)
-    num_observations = _validate_positive_int("num_observations", num_observations)
+    statistics = _planned_statistics(test_fns)
     num_replications = _validate_positive_int("num_replications", num_replications)
-    if not callable(test_fn):
-        raise TypeError(f"test_fn must be callable; got {type(test_fn).__name__}")
-
-    # -- Unwrap NumericRecord if the node system resolved the distribution --
-    if isinstance(distribution, NumericRecord):
-        distribution = RecordEmpiricalDistribution(
-            getattr(distribution, "name", "posterior"),
-            distribution,  # NumericRecord is a Record subclass — accepted directly
-        )
-    if not callable(getattr(distribution, "_sample", None)):
-        raise TypeError(f"{type(distribution).__name__} does not support predictive sampling")
+    # A NumericRecord of stacked draws is the empirical law of its rows.
+    if isinstance(law, NumericRecord):
+        name = getattr(law, "label", "posterior")
+        row = _reshaped_template(law.event_template, lambda shape: shape[1:])
+        law = EmpiricalDistribution(name, _batch_form(name, law, "draw", row))
+    joint = _predictive_joint(kernel, law, "predictive_check")
+    observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
     if key is None:
-        provider_abi = _require_certified_generative_provider(
-            generative_likelihood,
-            "predictive_check",
-        )
+        # The composition is a ProbPipe law, so its draws follow the distribution ABI.
         key = _resolve_validation_key(
             None,
             operation_kind="predictive-check",
             execution_mode="sampled",
             sample_shape=(num_replications,),
-            provider_abi=provider_abi,
+            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
         )
+    replicated = _replicated_statistics(joint, kernel, statistics, num_replications, key)
 
-    # -- Fast path: batched generation + vmap test_fn -----------------------
-    if _supports_key_arg(generative_likelihood):
-        stats_array = _predictive_check_batched(
-            distribution,
-            generative_likelihood,
-            test_fn,
-            num_observations,
-            num_replications,
-            key,
-        )
+    results = {}
+    for name, fn in statistics:
+        stats_array = replicated[name]
+        result: dict[str, Any] = {
+            "replicated_statistics": EmpiricalDistribution("replicated_statistics", stats_array),
+            "test_fn_name": name,
+        }
+        if observed is not None:
+            obs_stat = float(fn(observed))
+            result["observed_statistic"] = obs_stat
+            result["p_value"] = float(np.mean(stats_array >= obs_stat))
+        results[name] = result
+    # The law's annotations collect its validation history, one child per statistic.
+    for name, result in results.items():
+        _record_check_in_annotations(law, replicated[name], result)
+
+    if callable(test_fns):
+        return results[statistics[0][0]]
+    return results
+
+
+def _planned_statistics(test_fns: Any) -> tuple[tuple[str, Callable], ...]:
+    """Each statistic of *test_fns* with its name, checked before any draw.
+
+    A statistic is named by its ``__name__``, or by its ``repr`` when it has
+    none.
+
+    Raises
+    ------
+    TypeError
+        If *test_fns* is neither a callable nor an iterable, or holds an
+        element that is not callable.
+    ValueError
+        If *test_fns* is empty or holds two statistics of the same name.
+    """
+    if callable(test_fns):
+        candidates: tuple[Any, ...] = (test_fns,)
     else:
-        stats_array = _predictive_check_loop(
-            distribution,
-            generative_likelihood,
-            test_fn,
-            num_observations,
-            num_replications,
-            key,
+        try:
+            candidates = tuple(test_fns)
+        except TypeError as exc:
+            raise TypeError("test_fns must be a callable or an iterable of callables") from exc
+    if not candidates:
+        raise ValueError("test_fns must contain at least one callable")
+    planned: list[tuple[str, Callable]] = []
+    names: set[str] = set()
+    for index, fn in enumerate(candidates):
+        if not callable(fn):
+            raise TypeError(f"test_fns[{index}] must be callable; got {type(fn).__name__}")
+        name = getattr(fn, "__name__", None)
+        name = repr(fn) if name is None else name
+        if name in names:
+            raise ValueError(
+                f"test_fns must have unique names; duplicate name {name!r}. Use named "
+                f"functions with distinct names."
+            )
+        names.add(name)
+        planned.append((name, fn))
+    return tuple(planned)
+
+
+def _predictive_joint(
+    kernel: ConditionalDistribution, law: Distribution, operation: str
+) -> Distribution:
+    """The composition ``kernel * law``, from which a replication is drawn.
+
+    Raises
+    ------
+    TypeError
+        If *kernel* is not a ``ConditionalDistribution`` or *law* is not a
+        ``Distribution`` that samples.
+    ValueError
+        If *law* does not produce every given slot of *kernel*, or produces a
+        component that *kernel* produces.
+    """
+    if not isinstance(kernel, ConditionalDistribution):
+        raise TypeError(
+            f"{operation} takes the kernel of the observations, a ConditionalDistribution; "
+            f"got {type(kernel).__name__}"
         )
+    if not isinstance(law, Distribution) or not callable(getattr(law, "_sample", None)):
+        raise TypeError(
+            f"{operation} draws the kernel's given slots from a Distribution that samples; "
+            f"got {type(law).__name__}"
+        )
+    joint = kernel * law
+    if isinstance(joint, FactoredConditionalDistribution):
+        raise ValueError(
+            f"{operation}: the law {law.label!r} does not produce the given slots "
+            f"{sorted(joint.given_spec.required)} of the kernel {kernel.label!r}"
+        )
+    return joint
 
-    replicated_dist = RecordEmpiricalDistribution(
-        "replicated_statistics",
-        stats_array,
+
+def _observed_event(kernel: ConditionalDistribution, observed_data: Any) -> Any:
+    """*observed_data* in the form of a replication of *kernel*'s event.
+
+    A mapping or a ``Record`` keyed by the kernel's components is
+    reconstructed by the kernel's event declaration, so a whole term is its
+    component's value; any other value is the observed event as given.
+    """
+    if isinstance(observed_data, Record):
+        observed_data = _raw_record(observed_data)
+    declaration = kernel.event_spec
+    if isinstance(observed_data, Mapping) and set(observed_data) == set(declaration.components):
+        return _event_of(declaration, observed_data)
+    return observed_data
+
+
+def _replicated_statistics(
+    joint: Distribution,
+    kernel: ConditionalDistribution,
+    statistics: Sequence[tuple[str, Callable]],
+    num_replications: int,
+    key: PRNGKey,
+) -> dict[str, np.ndarray]:
+    """Each statistic's values at *num_replications* replications drawn from *joint*.
+
+    One call that samples *joint* gives every replication, and each statistic
+    reads the same replications, reconstructed from the joint's draws by
+    *kernel*'s event declaration.
+    """
+    draws = _raw_record(joint._sample(key, (num_replications,)))
+    replications = _event_of(kernel.event_spec, draws)
+    return {name: _statistic_values(fn, replications, num_replications) for name, fn in statistics}
+
+
+def _statistic_values(fn: Callable, replications: Any, num_replications: int) -> np.ndarray:
+    """*fn* at each replication, a float array of shape ``(num_replications,)``.
+
+    The statistic is vectorized with ``jax.vmap`` over the replications'
+    leading axis, and a statistic that JAX cannot trace, or that returns no
+    scalar per replication, is called on each replication in a loop.
+    """
+    try:
+        values = np.asarray(jax.vmap(fn)(replications), dtype=np.float64)
+    except Exception:
+        # The statistic uses Python control flow or a host conversion, which vmap cannot trace.
+        values = None
+    if values is not None and values.shape == (num_replications,):
+        return values
+    return np.array(
+        [
+            float(fn(jax.tree.map(lambda leaf, i=i: leaf[i], replications)))
+            for i in range(num_replications)
+        ],
+        dtype=np.float64,
     )
-
-    test_fn_name = getattr(test_fn, "__name__", repr(test_fn))
-    result = {
-        "replicated_statistics": replicated_dist,
-        "test_fn_name": test_fn_name,
-    }
-
-    if observed_data is not None:
-        obs_stat = float(test_fn(observed_data))
-        p_value = float(np.mean(stats_array >= obs_stat))
-        result["observed_statistic"] = obs_stat
-        result["p_value"] = p_value
-
-    # Attach to the distribution's ``annotations`` DataTree under a
-    # ``predictive_check`` group; each invocation appends a numbered
-    # child Dataset (``check_0``, ``check_1``, …). This keeps the
-    # validation history alongside the distribution without crowding
-    # the public API surface with a separate ``validation_results``
-    # property — and future validation functions (LOO, WAIC, …)
-    # land under their own named groups in the same DataTree.
-    _record_check_in_annotations(distribution, stats_array, result)
-
-    return result
 
 
 def _record_check_in_annotations(
@@ -172,15 +303,14 @@ def _record_check_in_annotations(
     stats_array: Any,
     result: dict[str, Any],
 ) -> None:
-    """Append a per-invocation result Dataset under
+    """Append one statistic's result Dataset under
     ``distribution.annotations["predictive_check/check_N"]``.
 
     Mutates ``distribution._annotations`` in place. This is the
     documented exception to ``Distribution`` immutability (see
-    :attr:`Distribution.annotations` and ``CONTRIBUTING.md`` §"Design
-    principles" §1) — diagnostic ops attach results under named
-    groups rather than returning renamed clones, which would break
-    source/identity tracking.
+    :attr:`Distribution.annotations` and design II.4) — diagnostic ops
+    attach results under named groups rather than returning renamed
+    clones, which would break source/identity tracking.
 
     Encoding:
 
@@ -224,65 +354,3 @@ def _record_check_in_annotations(
         group = aux["predictive_check"]
     n_existing = len(list(group.children))
     aux[f"predictive_check/check_{n_existing}"] = DataTree(dataset=ds)
-
-
-def _supports_key_arg(generative_likelihood: Any) -> bool:
-    """Check whether generate_data accepts a ``key`` keyword argument."""
-    import inspect
-
-    try:
-        sig = inspect.signature(generative_likelihood.generate_data)
-        return "key" in sig.parameters
-    except (ValueError, TypeError):
-        return False
-
-
-def _predictive_check_batched(
-    distribution: SupportsSampling,
-    generative_likelihood: Any,
-    test_fn: Callable,
-    num_observations: int,
-    num_replications: int,
-    key: PRNGKey,
-) -> np.ndarray:
-    """Vectorized predictive check using batched data generation."""
-    key_params, key_data = jax.random.split(key)
-
-    # Draw all parameter samples at once: (num_replications, *event_shape)
-    params_batch = distribution._sample(key_params, (num_replications,))
-
-    # Generate all replicated datasets in one call
-    y_rep_batch = generative_likelihood.generate_data(
-        params_batch,
-        num_observations,
-        key=key_data,
-    )
-
-    # Apply test_fn to each replicate — try vmap, fall back to loop
-    try:
-        stats = jax.vmap(test_fn)(y_rep_batch)
-        return np.asarray(stats, dtype=np.float64)
-    except Exception:
-        # test_fn may not be JAX-traceable (e.g., uses Python control flow)
-        return np.array(
-            [float(test_fn(y_rep_batch[i])) for i in range(num_replications)],
-            dtype=np.float64,
-        )
-
-
-def _predictive_check_loop(
-    distribution: SupportsSampling,
-    generative_likelihood: Any,
-    test_fn: Callable,
-    num_observations: int,
-    num_replications: int,
-    key: PRNGKey,
-) -> np.ndarray:
-    """Fallback: sequential predictive check in a Python loop."""
-    stats = []
-    for _i in range(num_replications):
-        key, subkey = jax.random.split(key)
-        params_i = distribution._sample(subkey, ())
-        y_rep = generative_likelihood.generate_data(params_i, num_observations)
-        stats.append(float(test_fn(y_rep)))
-    return np.array(stats, dtype=np.float64)

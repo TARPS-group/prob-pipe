@@ -7,54 +7,37 @@ import importlib
 import importlib.util
 import sys
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import xarray as xr
 
 import probpipe.diagnostics._arviz_bridge as arviz_bridge
+from probpipe import EmpiricalDistribution, NumericRecordBatch, RecordSpec
 from probpipe.diagnostics._arviz_bridge import (
     check_arviz_installed,
     extract_draws,
     to_arviz_dataset,
 )
+from tests._posterior import posterior_of
 
 
-class _Record(dict):
-    @property
-    def fields(self):
-        return list(self.keys())
-
-
-class _DrawsPosterior:
-    def __init__(self, draws: dict[str, np.ndarray]):
-        self._draws = _Record(draws)
-
-    def draws(self):
-        return self._draws
-
-
-class _SamplesPosterior:
-    def __init__(self, samples):
-        self.samples = samples
-
-
-def test_extract_draws_supports_draws_records_dicts_and_samples():
-    post = _DrawsPosterior({"alpha": np.arange(3), "beta": np.ones(3)})
-    assert set(extract_draws(post)) == {"alpha", "beta"}
-
-    class _DictDraws:
-        def draws(self):
-            return {"theta": [1.0, 2.0]}
-
-    np.testing.assert_array_equal(extract_draws(_DictDraws())["theta"], [1.0, 2.0])
-    np.testing.assert_array_equal(extract_draws(_SamplesPosterior([4, 5]))["x"], [4, 5])
+def test_extract_draws_reads_an_empirical_law_and_refuses_others():
+    empirical = EmpiricalDistribution("x", jnp.array([4.0, 5.0]))
+    np.testing.assert_array_equal(extract_draws(empirical)["x"], [4.0, 5.0])
 
     with pytest.raises(TypeError, match="Cannot extract draws"):
         extract_draws(object())
 
 
-def test_extract_draws_supports_sample_records():
-    post = _SamplesPosterior(_Record({"alpha": [1.0, 2.0], "beta": [3.0, 4.0]}))
+def test_extract_draws_supports_record_atoms():
+    atoms = NumericRecordBatch(
+        "rows",
+        {"alpha": jnp.array([1.0, 2.0]), "beta": jnp.array([3.0, 4.0])},
+        "row",
+        element_spec=RecordSpec(alpha=(), beta=()),
+    )
+    post = EmpiricalDistribution("post", atoms)
 
     draws = extract_draws(post)
 
@@ -63,12 +46,13 @@ def test_extract_draws_supports_sample_records():
 
 
 def test_to_arviz_dataset_flat_empirical_and_filtering():
-    post = _DrawsPosterior(
-        {
-            "alpha": np.array([1.0, 2.0, 3.0]),
-            "beta": np.ones((1, 3, 2)),
-        }
+    atoms = NumericRecordBatch(
+        "rows",
+        {"alpha": jnp.array([1.0, 2.0, 3.0]), "beta": jnp.ones((3, 2))},
+        "row",
+        element_spec=RecordSpec(alpha=(), beta=(2,)),
     )
+    post = EmpiricalDistribution("post", atoms)
     ds = to_arviz_dataset(post, var_names=["alpha"])
     assert isinstance(ds, xr.Dataset)
     assert set(ds.data_vars) == {"alpha"}
@@ -77,20 +61,20 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
 
 
 def test_to_arviz_dataset_prepends_chain_for_matrix_valued_params():
-    post = _DrawsPosterior({"omega": np.arange(24.0).reshape(4, 2, 3)})
+    omega = np.arange(24.0).reshape(4, 2, 3)
+    post = EmpiricalDistribution("omega", jnp.asarray(omega))
 
     ds = to_arviz_dataset(post)
 
     assert ds["omega"].dims == ("chain", "draw", "dim_0", "dim_1")
     assert ds["omega"].shape == (1, 4, 2, 3)
-    np.testing.assert_array_equal(ds["omega"].values[0], post.draws()["omega"])
+    np.testing.assert_array_equal(ds["omega"].values[0], omega)
 
 
-def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
-    class _ApproxPosterior:
-        def __init__(self):
-            self.chains = [object()]
-            self.fields = ["alpha", "beta"]
+def test_to_arviz_dataset_delegates_for_an_inference_result(monkeypatch):
+    result = posterior_of(
+        [np.stack([np.ones(2), np.zeros(2)], axis=-1)], event_spec=RecordSpec(alpha=(), beta=())
+    )
 
     source = xr.Dataset(
         {
@@ -100,7 +84,7 @@ def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
     )
 
     def _fake_builder(posterior):
-        assert isinstance(posterior, _ApproxPosterior)
+        assert posterior is result
         return source
 
     monkeypatch.setattr(
@@ -108,7 +92,7 @@ def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
         _fake_builder,
     )
 
-    ds = to_arviz_dataset(_ApproxPosterior(), var_names=["beta"])
+    ds = to_arviz_dataset(result, var_names=["beta"])
 
     assert list(ds.data_vars) == ["beta"]
 
@@ -117,7 +101,7 @@ def test_to_arviz_dataset_requires_xarray(monkeypatch):
     monkeypatch.setattr(arviz_bridge, "xr", None)
 
     with pytest.raises(ImportError, match="xarray is required"):
-        to_arviz_dataset(_DrawsPosterior({"x": [1.0]}))
+        to_arviz_dataset(EmpiricalDistribution("x", jnp.array([1.0])))
 
 
 def test_check_arviz_installed_reports_missing_dependencies(monkeypatch):

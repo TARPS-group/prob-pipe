@@ -1,29 +1,28 @@
-# Contract Discipline — Value-Model Refactor (issue #235)
+# Contract Discipline
 
-**Audience:** every session (Claude or human) implementing a phase of the #235 value-model plan —
-`RecordSpec`, the `Record` / `Distribution` value containers, the Batch types
-(`*Array` → `*Batch`), `Function`, and naming/provenance. **Read this before you start, and
-follow it for every phase.** It is meant to outlive any single PR or session — do not assume the
-plan's author is available to restate these rules.
+**Audience:** every contributor, human or agent, whose PR adds or changes code in
+`probpipe/`. Read this before you start a change, and follow it in every PR.
 
 ## Why this exists
-The #235 plan defines the *contracts* — APIs, shapes, return types, error cases, invariants,
-variable names — for ProbPipe's core value abstractions. Those contracts must be **explicit,
-documented, and obeyed**: for correctness and consistency now, and because this contract
-documentation is the **source material for the user guide** (a later PR). Write every docstring as
-if it were user-guide reference text.
 
-## Standing directives (apply to every phase)
+Each abstraction and operation of ProbPipe has a *contract*: its API, shapes,
+return types, error cases, invariants, and parameter names. Those contracts must
+be **explicit, documented, and obeyed**, for correctness and consistency, and
+because the docstrings that state them are the source of the API reference.
+Write every docstring as reference text for a user.
 
-1. **Contract-first — clarify before you implement.** Before writing code, make the contract of
-   every major abstraction you touch *crystal clear* in your own understanding (see the table
-   below for where each lives). If #235 (Chapter 1, the naming contract, the relevant chapters) or
-   the existing docstrings leave **any** part ambiguous — shape conventions, single-vs-batched
-   behavior, canonical orderings, error/raise cases, return types, invariants — **resolve the
-   ambiguity before coding**: ask the maintainer, or pin it explicitly, and record the decision in
-   the PR. Do not guess and do not let an unclear contract reach the code.
+## Standing directives (apply to every PR)
 
-2. **Document the contract fully, where it lives.** When you implement an abstraction, document its
+1. **Contract-first — clarify before you implement.** Before writing code, make
+   the contract of every abstraction you change clear in your own understanding.
+   Its design section states the target contract, and its docstrings state the
+   contract as implemented. If they leave **any** part ambiguous — shape
+   conventions, single-vs-batched behavior, canonical orderings, error/raise
+   cases, return types, invariants — **resolve the ambiguity before coding**: ask
+   the maintainer, or pin it explicitly, and record the decision in the PR. Do
+   not guess and do not let an unclear contract into the code.
+
+2. **Document the contract fully, in the docstring.** When you implement an abstraction, document its
    contract *completely* in the **docstring** (NumPy style: Parameters / Returns / Raises). The
    docstring must state the *precise* contract, not a vague summary:
    - exact return type and **shape**, distinguishing single vs batched
@@ -34,111 +33,74 @@ if it were user-guide reference text.
 
    **Lead with the contract; defer the rationale.** The opening of every docstring — the one-line
    summary and the first paragraph(s) — must describe the **API**: what the abstraction *is*, what it
-   accepts and returns, and how a caller uses it. Write it as precise, clear reference text for a
-   *user*, not as a design log: prefer plain language, define or avoid jargon, and state the contract
-   directly. Keep design reasoning, motivation, history, and implementation trade-offs *out* of the
-   opening; when including them is genuinely justified, put them **later** — typically in a NumPy-style
-   **Notes** section (or an explicitly labelled interim-detail note, per directive 5). A reader
+   accepts and returns, and how a caller uses it. Write it as reference text for a *user*, by the
+   writing rules of `STYLE_GUIDE.md` §10, and state the contract directly. Keep design reasoning, motivation, history, and implementation trade-offs *out* of the
+   opening; when including them is justified, put them **later** — typically in a NumPy-style
+   **Notes** section, or in an interim-detail note labeled as directive 5 describes. A reader
    skimming the first lines should learn how to *use* the abstraction correctly, not why it was built
    that way.
 
    **Code documentation must stand on its own — no references to transient artifacts.** Do not cite
    PRs, issues, tracking numbers, or other out-of-band discussion in docstrings or code comments.
    The contract is whatever the docstring states; a reader should never need to open a PR or issue to
-   understand it. (Such references belong in commit messages and PR descriptions, not the code.)
-   Update the index in this file when you add or change a cross-cutting contract.
+   understand it. Such references belong in commit messages and PR descriptions.
+   The `no-issue-numbers` pre-commit hook rejects an issue or PR number in `probpipe/`.
 
 3. **Analyze clarity; make the code obey the contract.** As part of every PR:
-   - explicitly assess whether the contracts you touched are unambiguous, and call out any that
+   - explicitly assess whether the contracts you changed are unambiguous, and call out any that
      are not;
    - verify the **code obeys the documented contract** — there must be no drift between docstring
-     and behavior — and add tests that *assert the contract* (shapes, orderings, and error cases,
-     not just happy-path values);
-   - use **consistent variable names** for the same concept across the codebase (see the naming
-     table). Renaming for consistency within the files you touch is in scope; flag larger
-     inconsistencies you cannot fix within scope.
+     and behavior — and add tests that *assert the contract*: its shapes, orderings, and error
+     cases, beyond the happy-path values;
+   - use **consistent variable names** for the same concept across the codebase: the names of
+     `design/glossary.md` § Canonical names. Renaming for consistency within the files you change
+     is in scope; flag larger inconsistencies you cannot fix within scope. A new contract that
+     introduces a recurring parameter adds its name to that table.
 
-4. **Stay in scope, but never ship an undocumented or contradicted contract.** Work to your phase's
-   PR brief. But if implementing your slice reveals a contract in this file or in #235 that is
-   wrong, missing, or unclear, fix the documentation (or escalate) rather than silently coding
-   around it.
+4. **Stay in scope, but never ship an undocumented or contradicted contract.** Work to the scope of
+   your PR. If the work reveals a contract in `design/` or in a docstring that is wrong, missing, or
+   unclear, fix the documentation, or raise it with the maintainer, rather than coding around it.
 
-5. **Document to the plan's target, not the stale status quo.** These PRs are intentionally
-   incremental — each lands one slice and most do *not* yet implement the full set of new
-   standards. When you implement or touch an abstraction, its docstrings and naming must describe
-   the **plan's target contract and terminology** (per #235 and this file), *not* the current
-   behavior of code elsewhere in the repo that the plan will soon update. Stale neighboring code
-   is not the reference; the plan is.
-   - Where your slice must temporarily coexist with or delegate to not-yet-migrated code, you
+5. **Document to the design's target, not the stale status quo.** The design reference in
+   `design/` describes the target state, and most PRs move the code only part of the way toward
+   it. When you implement or change an abstraction, its docstrings and naming must describe the
+   **design's target contract and terminology**, *not* the current behavior of code elsewhere in
+   the repo that the design will change. Stale neighboring code is not the reference; the design is.
+   - **Precedence.** Where `design/` disagrees with the code or with a contributor document, the
+     design decides, and the PR brings the code toward the design without asking. Ask the
+     maintainer in four cases:
+     - a conflict: two parts of the design disagree;
+     - a gap: the design leaves a real choice open;
+     - a public name: the change names a public API;
+     - an amendment: the change would amend the design.
+   - Where your change must temporarily coexist with or delegate to not-yet-migrated code, you
      *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
-     let it define the contract or blur a distinction the plan draws.
-   - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
-     enforces them lands. *Example:* `to_vector` / `from_vector` are **value**
-     operations — a template describes structure and does not depend on the value
+     let it define the contract or blur a distinction the design draws.
+   - In particular, keep the design's **vocabulary distinctions** intact even before the code that
+     enforces them exists. *Example:* `to_vector` / `from_vector` are **value**
+     operations — a spec describes structure and does not depend on the value
      type, so it carries neither. `to_vector` is `NumericRecord.to_vector` /
-     `NumericRecordBatch.to_vector`; `from_vector(name, spec, vec)` is the
+     `NumericRecordBatch.to_vector`; `from_vector(label, spec, vec)` is the
      classmethod pair `NumericRecord.from_vector` (single) /
      `NumericRecordBatch.from_vector` (batched), each taking the spec as an
      argument. These are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
      `list(record.values())` and reconstruct with `Record.from_field_values`, visited at the
-     **template's** granularity in canonical `keys()` order. Both treat a container-valued opaque
+     **spec's** granularity in canonical `keys()` order. Both treat a container-valued opaque
      leaf (tuple/namedtuple; a dict is never a leaf) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer
      pytree view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten`
      are **not** `Record` methods — use `jax.tree_util` directly). Do not describe these as
      interchangeable.
 
-## Major abstractions & where their contract lives
-| Abstraction | Canonical contract location |
-|---|---|
-| `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
-| `TermSpec` / `NumericSpec` (one spec protocol across all kinds) | docstrings in `probpipe/core/_spec_base.py`; design II.1–II.3 |
-| `Numeric` (the flat-vector interface that `NumericArray` and `NumericRecord` implement) | docstrings in `probpipe/core/_numeric.py`; design II.3 |
-| `NumericArraySpec` / `OpaqueSpec` (numeric-array and opaque value declarations) | docstrings in `probpipe/core/_spec_base.py`; design III.1–III.2 |
-| `Distribution` (stores one `DistributionSpec`; `event_spec` and the schema views read it, and construction checks it is stored) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
-| `NumericDistribution` (membership read from the declaration; `dtypes`, `supports`, `dtype`, and `support` belong to numeric laws only) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
-| `DistributionSpec` (the distribution kind's declaration) | docstrings in `probpipe/distributions/_distribution.py`; design III.7 |
-| `FunctionSpec` (the callable kind's declaration) | docstrings in `probpipe/core/_kind_specs.py`; design III.3 |
-| `InputSpec` / `OutputSpec` (slots, component exposure, paths, type holes, completion) | docstrings in `probpipe/core/_specs.py`; design II.2 |
-| `RecordSpec` / `NumericRecordSpec` (the record kind spec is its schema) | docstrings in `probpipe/core/_record_spec.py`; design III.5 |
-| the kind table (which tracked class and which batch form each value spec has) | docstrings in `probpipe/core/_kinds.py` |
-| `NumericArray` / `Opaque` (the tracked classes of the two raw-value kinds) | docstrings in `probpipe/core/_numeric_array.py`, `_opaque.py` |
-| `Record` / `NumericRecord` (`spec` and `event_template` return the same stored `RecordSpec` object) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
-| `Batch` / `BatchSpec` (the multiplicity axis: levels, level names, view identity) | docstrings in `probpipe/core/_batch.py`; #235 Chapter 2 |
-| `NumericArrayBatch` (the batch form of the numeric-array kind; one native store, not columns) | docstrings in `probpipe/core/_numeric_array_batch.py`; #235 Chapter 2 |
-| `RecordBatch` / `NumericRecordBatch` (columnar, leaf-path-keyed storage; a collection, not a named tree) | docstrings in `probpipe/core/_record_batch.py`, `_numeric_record_batch.py`; #235 Chapter 2 |
-| `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
-| `Function` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
-| Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
-| Immutability (`Immutable` mixin: the assignment guard, and the `copy` / `pickle` state round-trip it forces) | docstrings in `probpipe/core/_immutable.py`; `design/02-shared-abstractions.md` §II.4 |
+## Where each contract is stated
 
-## Canonical variable names (use these; don't invent synonyms)
-| Concept | Name |
-|---|---|
-| a draw / value of type T | `value` |
-| a 1-D numeric serialization | `vec` |
-| values for leaves dropped by `numeric_subset`, supplied when reconstructing a full value | `non_numeric` |
-| batch dimensions | `batch_shape` |
-| batch axes tiled into levels | `axis_groups` (reported; construction takes `axes_per_level`) |
-| one name per level of a batch | `level_names` |
-| the spec every element of a batch satisfies | `element_spec` |
-| the objects a batch is built from | `elements` |
-| independent-draw shape prefix for `sample` | `sample_shape` |
-| a distribution's event declaration | `event_spec` (an `OutputSpec`) |
-| PRNG key | `key` |
-| a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
-| a field key within a tree / the name being assigned to a field | `field_name` / `key` |
-| attributes an immutable class keeps out of its state round-trip (memos) | `_transient_state` |
-| attributes an immutable class restores into their own container (stores written in place) | `_decoupled_state` |
-*(Extend this table whenever a new contract introduces a recurring parameter.)*
+The section of `design/` that owns an abstraction states its target contract, and
+`design/package-structure.md` § Correspondence to the implementation maps each module of the
+code to the package and section of its target. The docstrings of a module state its contracts
+as implemented.
 
-## Per-PR checklist (copy into the PR description)
-- [ ] Contract of every touched abstraction was clear before coding (ambiguities resolved & noted).
-- [ ] New/changed contracts fully documented in docstrings (types, shapes, orderings, raises, invariants).
-- [ ] Docstring openings lead with the API/contract (precise, clear, low-jargon); design rationale deferred to a Notes section.
-- [ ] Code verified to obey the documented contract; tests assert it (shapes + orderings + error cases).
-- [ ] Docstrings describe the plan's **target** contract/terminology, not stale neighboring code; any temporary coexistence is labeled as an interim implementation detail.
-- [ ] Variable names consistent with the canonical table above.
-- [ ] This `CONTRACTS.md` index updated if a cross-cutting contract changed.
-- [ ] `ruff format` and `ruff check` are clean (both are **blocking** in CI).
+## The per-PR checklist
+
+`.github/PULL_REQUEST_TEMPLATE.md` carries the checklist of these directives, and every PR body
+copies it from the template.

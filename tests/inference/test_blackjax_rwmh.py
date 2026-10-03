@@ -18,8 +18,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericRecordDistribution
-from probpipe.core.protocols import SupportsLogProb
+from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericDistribution
+from probpipe.distributions._capabilities import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
     rwmh,
@@ -32,6 +32,8 @@ from probpipe.inference._blackjax_rwmh import (
     _rgg_scale,
     _window_sizes,
 )
+from tests._posterior import arviz_data, flat_chains, num_draws
+from tests.inference._harness import validate_method
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
 # construction inside the test fixtures.
@@ -48,7 +50,7 @@ pytestmark = pytest.mark.filterwarnings(
 @pytest.fixture(scope="module")
 def iso_gaussian():
     """A 2-D isotropic standard normal ``N(0, I)`` — analytic stds [1, 1]."""
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +59,7 @@ def aniso_gaussian():
     return MultivariateNormal(
         loc=jnp.zeros(2),
         cov=jnp.diag(jnp.array([1.0, 4.0])),
-        name="z",
+        label="z",
     )
 
 
@@ -249,7 +251,7 @@ class TestAdaptiveWarmup:
             random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
@@ -266,7 +268,7 @@ class TestAdaptiveWarmup:
         dist = MultivariateNormal(
             loc=jnp.zeros(5),
             cov=jnp.eye(5),
-            name="z",
+            label="z",
         )
         result = rwmh(
             dist=dist,
@@ -317,7 +319,7 @@ class TestAdaptiveWarmup:
             proposal_cov=tiny_chol,
             random_seed=0,
         )
-        assert result.num_draws == 400
+        assert num_draws(result) == 400
         assert result.provenance.metadata["accept_rate"] > 0.9
 
     def test_explicit_proposal_cov_huge_kills_acceptance(self, iso_gaussian):
@@ -490,7 +492,7 @@ class TestWindowedWarmup:
         dist = MultivariateNormal(
             loc=jnp.zeros(5),
             cov=jnp.diag(true_stds**2),
-            name="z",
+            label="z",
         )
         result = rwmh(
             dist=dist,
@@ -500,7 +502,7 @@ class TestWindowedWarmup:
             random_seed=11,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(
@@ -522,10 +524,10 @@ class TestWindowedWarmup:
             n_windows=1,
             random_seed=7,
         )
-        assert result.num_draws == 4000
+        assert num_draws(result) == 4000
         assert result.provenance.metadata["n_windows"] == 1
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
@@ -549,8 +551,8 @@ def _assert_every_chain_moves(result, min_std):
     proposal is always accepted and a NaN one never is, and either leaves
     the coordinates' standard deviations at zero.
     """
-    is_accepted = np.asarray(result.inference_data["sample_stats"]["is_accepted"])
-    for accept_rate, chain in zip(is_accepted.mean(axis=1), result.chains, strict=True):
+    is_accepted = np.asarray(arviz_data(result)["sample_stats"]["is_accepted"])
+    for accept_rate, chain in zip(is_accepted.mean(axis=1), flat_chains(result), strict=True):
         assert 0.1 < accept_rate < 0.9, f"accept rate {accept_rate}"
         stds = np.asarray(chain).std(0, ddof=1)
         assert stds.min() > min_std, f"per-coordinate std {stds}"
@@ -593,7 +595,7 @@ class TestProposalNeverCollapses:
         """At ``d = 20`` the first 33-step window accepts far fewer than 20
         proposals, so its covariance estimate is singular; the default warmup
         still moves every chain."""
-        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), name="z")
+        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), label="z")
         # Observed across seeds 0-7: per-chain accept 0.42-0.48, per-chain
         # min std 0.42.
         result = rwmh(
@@ -611,7 +613,7 @@ class TestProposalNeverCollapses:
 # ---------------------------------------------------------------------------
 
 
-class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
+class _NumpyLogProbDist(NumericDistribution, SupportsLogProb):
     """A 2-D Gaussian whose log-density is *not* JAX-traceable.
 
     Uses numpy + Python control flow — the same shape as a likelihood
@@ -625,8 +627,8 @@ class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
     # 1 / variance per coordinate. Standard normal by default.
     precision = (1.0, 1.0)
 
-    def __init__(self, name):
-        super().__init__(name, NumericArraySpec((len(self.precision),), "float32"))
+    def __init__(self, label):
+        super().__init__(label, NumericArraySpec((len(self.precision),), "float32"))
 
     def _log_prob(self, value):
         v = np.asarray(value)
@@ -669,14 +671,14 @@ class TestEagerFallback:
     def test_short_warmup_moves_chain_in_ten_dimensions(self):
         """The eager warmup uses the same refit, so a 100-step warmup in ten
         dimensions leaves a proposal that moves the chain."""
-        dist = _NumpyStdNormal10(name="np10")
+        dist = _NumpyStdNormal10(label="np10")
         # Observed across seeds 0-3: accept 0.33-0.43, min std 0.58.
-        result = rwmh(dist=dist, num_results=300, num_warmup=100, random_seed=0)
+        result = rwmh(dist=dist, num_results=300, num_warmup=100, num_chains=1, random_seed=0)
         assert result.event_shape == (10,)
         _assert_every_chain_moves(result, min_std=0.25)
 
     def test_runs_end_to_end(self):
-        dist = _NumpyLogProbDist(name="np_dist")
+        dist = _NumpyLogProbDist(label="np_dist")
         result = rwmh(
             dist=dist,
             num_results=400,
@@ -685,7 +687,7 @@ class TestEagerFallback:
             random_seed=42,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         # Standard normal target — sample mean ~ 0, sample sd ~ 1.
@@ -697,11 +699,12 @@ class TestEagerFallback:
         )
 
     def test_accept_rate_positive(self):
-        dist = _NumpyLogProbDist(name="np_dist")
+        dist = _NumpyLogProbDist(label="np_dist")
         result = rwmh(
             dist=dist,
             num_results=400,
             num_warmup=200,
+            num_chains=1,
             random_seed=42,
         )
         assert result.provenance.metadata["accept_rate"] > 0.10
@@ -745,7 +748,7 @@ class TestFastEagerEquivalence:
             random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
@@ -755,7 +758,7 @@ class TestFastEagerEquivalence:
         # Confirm we are exercising the eager path: the non-traceable target.
         from probpipe.inference._inference_utils import is_jax_traceable
 
-        dist = _NumpyAnisoLogProbDist(name="np_aniso")
+        dist = _NumpyAnisoLogProbDist(label="np_aniso")
         assert not is_jax_traceable(dist._unnormalized_log_prob, jnp.zeros(2))
         # Lighter counts than the fast path: the Python loop is ~100x
         # slower per step. Empirically (seed sweep 1/2/7) the worst-case
@@ -769,7 +772,7 @@ class TestFastEagerEquivalence:
             random_seed=7,
         )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
@@ -780,18 +783,18 @@ class TestFastEagerEquivalence:
         kw = dict(num_results=500, num_warmup=200, num_chains=2, random_seed=11)
         a = rwmh(dist=aniso_gaussian, **kw)
         b = rwmh(dist=aniso_gaussian, **kw)
-        da = np.concatenate([np.asarray(c) for c in a.chains], axis=0)
-        db = np.concatenate([np.asarray(c) for c in b.chains], axis=0)
+        da = np.concatenate([np.asarray(c) for c in flat_chains(a)], axis=0)
+        db = np.concatenate([np.asarray(c) for c in flat_chains(b)], axis=0)
         np.testing.assert_array_equal(da, db)
 
     def test_eager_path_deterministic(self):
         """Eager path: identical seed → bit-identical draws on a rerun."""
-        dist = _NumpyAnisoLogProbDist(name="np_aniso")
+        dist = _NumpyAnisoLogProbDist(label="np_aniso")
         kw = dict(num_results=150, num_warmup=80, num_chains=1, random_seed=5)
         a = rwmh(dist=dist, **kw)
         b = rwmh(dist=dist, **kw)
-        da = np.concatenate([np.asarray(c) for c in a.chains], axis=0)
-        db = np.concatenate([np.asarray(c) for c in b.chains], axis=0)
+        da = np.concatenate([np.asarray(c) for c in flat_chains(a)], axis=0)
+        db = np.concatenate([np.asarray(c) for c in flat_chains(b)], axis=0)
         np.testing.assert_array_equal(da, db)
 
 
@@ -803,5 +806,12 @@ class TestFastEagerEquivalence:
 class TestClassesExpose:
     def test_blackjax_rwmh_method_has_expected_check(self, iso_gaussian):
         m = BlackJAXRWMHMethod()
-        info = m.check(iso_gaussian, None)
+        info = m.check(iso_gaussian)
         assert info.feasible
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_rwmh_canonical = validate_method("blackjax_rwmh")

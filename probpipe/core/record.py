@@ -46,9 +46,11 @@ import numpy as np
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
 from ._record_spec import _unify_record_spec_with_value
-from ._spec_base import _full_array_shape_or_none
-from ._specs import NumericRecordSpec, RecordSpec
+from ._repr import format_names, public_class_name, term_repr
+from ._spec_base import OpaqueSpec, _full_array_shape_or_none
+from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
+from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 
 if TYPE_CHECKING:
@@ -224,7 +226,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         # Each field value maps to a value spec by type:
         Record("r", vec=jnp.zeros(3), label="fox").event_template
-        # RecordSpec(vec=(3,), label=None)   — array -> NumericArraySpec, str -> OpaqueSpec
+        # RecordSpec(vec=(3,), label=OpaqueSpec(type=str))   — array -> NumericArraySpec
 
     Metadata: identity and annotations
     ----------------------------------
@@ -294,7 +296,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     Parameters
     ----------
-    name : str
+    label : str
         The record's name — the required first positional argument on
         explicit construction (a user-given name). An operation that
         produces a record supplies a deterministic name derived from its
@@ -359,7 +361,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     __slots__ = (
         "_annotations",
-        "_name",
+        "_label",
         "_provenance",
         "_spec",
         "_tree",
@@ -411,7 +413,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         _fields: Mapping[str, _FieldValue] | None = None,
         /,
         *,
@@ -430,7 +432,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         if event_template is not None and event_template.free_dims and _validate_leaves:
             event_template, _ = _unify_record_spec_with_value(
-                event_template, field_inputs, context=f"Record {name!r}"
+                event_template, field_inputs, context=f"Record {label!r}"
             )
 
         field_map: dict[str, _FieldValue] = {}
@@ -480,7 +482,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        self._init_tracked(name)
+        self._init_tracked(label)
         if event_template is None:
             event_template = RecordSpec.infer_from(field_map)
         else:
@@ -507,10 +509,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         identity copy (fields and template shared) is stored under the key
         name. Access names the nested view at its construction.
         """
-        if child._name == field_name:
+        if child._label == field_name:
             return child
         renamed = child._shallow_copy()
-        object.__setattr__(renamed, "_name", field_name)
+        object.__setattr__(renamed, "_label", field_name)
         return renamed
 
     def _validate_event_template(
@@ -567,7 +569,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- Name & provenance --------------------------------------------------
     #
-    # ``name`` / ``provenance`` / ``with_name`` /
+    # ``name`` / ``provenance`` / ``with_label`` /
     # ``with_provenance`` are provided by the
     # :class:`~probpipe.core.tracked.TrackedTerm` mixin, and ``annotations`` by
     # :class:`~probpipe.core.tracked.Annotated`. Semantic transformations
@@ -604,6 +606,36 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """
         return self._spec
 
+    # -- The representation -------------------------------------------------
+
+    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
+        """The stored representation: the nested mapping of raw leaves, or one node's.
+
+        A leaf is held in native form, so its raw value is the leaf itself, and a
+        tracked term held as a leaf, such as a law, gives its own ``raw()``. An
+        interior node gives the nested mapping of the raw leaves beneath it.
+
+        Parameters
+        ----------
+        path : str or tuple of str, optional
+            The path of one node, a field or a subtree. Omitted, the whole
+            record.
+
+        Returns
+        -------
+        Any
+            The raw leaf at a key, and otherwise a nested ``dict`` of raw leaves.
+
+        Raises
+        ------
+        KeyError
+            If *path* is not a path of the record.
+        """
+        node = self if path is None else self._node_at(path)
+        if isinstance(node, Record):
+            return _raw_nested(node)
+        return _raw_leaf(node)
+
     # -- Tree structure -----------------------------------------------------
     #
     # The mapping and path-navigation methods (``keys`` / ``values`` /
@@ -614,6 +646,55 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     @classmethod
     def _node_type(cls) -> type:
         return Record
+
+    # -- Field access -------------------------------------------------------
+
+    def _present(self, key: str, leaf: Any) -> Any:
+        """The view of the field at *key*, whose stored leaf is *leaf*.
+
+        Access returns views (III.5), so the leaf-keyed accessors give a field
+        as a tracked term named by its key and declared by the field's spec. An
+        array field gives a ``NumericArray``, an opaque field an ``Opaque``, and
+        a callable field a ``Function``. A stored term other than an array or an
+        opaque value, such as a law or a function, gives a copy of itself under
+        the key. The view's provenance
+        records this record and the stored term. A term presents as its raw
+        representation inside a JAX trace (II.4), so a traced field is its
+        stored leaf. A leaf that is no value of the field's declared kind, as a
+        transform leaves when it maps the leaves to ``None``, is returned as it
+        is, and :meth:`raw` returns the stored leaf.
+
+        Raises
+        ------
+        ValueError
+            If the leaf is a callable whose signature cannot be inspected, which
+            has no ``Function`` view.
+        """
+        from ._numeric_array import NumericArray
+        from ._opaque import Opaque
+
+        if isinstance(leaf, jax.core.Tracer):
+            return leaf
+        source = leaf if isinstance(leaf, TrackedTerm) else None
+        provenance = Provenance.of_view(self, source, metadata={"path": key})
+        if isinstance(leaf, TrackedTerm) and not isinstance(leaf, NumericArray | Opaque):
+            view = leaf.with_label(key) if leaf.label != key else leaf._shallow_copy()
+            object.__setattr__(view, "_provenance", None)
+            return view.with_provenance(provenance)
+        value = _leaf_value(leaf)
+        spec = self._spec[key]
+        if isinstance(spec, NumericArraySpec):
+            if _full_array_shape_or_none(value) is None:
+                return value
+            return NumericArray._view(key, value, spec, provenance)
+        if isinstance(spec, OpaqueSpec):
+            return Opaque._view(key, value, spec, provenance)
+        from ..values._function_base import Function, FunctionSpec
+
+        if isinstance(spec, FunctionSpec) and callable(value):
+            view = Function(key, value, input_spec=spec.input_spec, output_spec=spec.output_spec)
+            return view.with_provenance(provenance)
+        return value
 
     @classmethod
     def _rebuild_class(cls) -> type:
@@ -627,7 +708,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     def _rebuild_node(self, leaves: Mapping[str, Any], *, node_name: str | None) -> Record:
         # A new nested view takes its field key; a transformed root keeps its name.
-        name = self._name if node_name is None else node_name
+        name = self._label if node_name is None else node_name
         return self._rebuild_class()(name, leaves)
 
     # -- Selection ----------------------------------------------------------
@@ -693,7 +774,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         The rebuilt record preserves the root's name and derives its numeric
         kind from the resulting template.
         """
-        return self._rebuild_class()(self._name, children, event_template=event_template)
+        return self._rebuild_class()(self._label, children, event_template=event_template)
 
     def without(self, *paths: str) -> Record:
         """Return a new Record without the fields/subtrees at *paths*.
@@ -706,7 +787,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """
         norms = [self._norm_path(p) for p in paths]
         for p in norms:
-            self.at_path(p)  # KeyError if the path does not exist
+            self._node_at(p)  # KeyError if the path does not exist
         full_drops = {p for p in norms if _PATH_SEP not in p}
         sub_drops: dict[str, list[str]] = {}
         for p in norms:
@@ -816,7 +897,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 new_children[name] = child
                 specs[name] = self._child_spec(name, child)
         return self._rebuild_class()(
-            self._name,
+            self._label,
             new_children,
             event_template=RecordSpec(specs),
         )
@@ -830,33 +911,25 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Field renaming -------------------------------------------------------
 
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
-        """Return a Record with the given fields renamed, ``old -> new``.
+        """Return a Record with the given nodes renamed or moved, ``old -> new``.
 
         The structural contract is :meth:`NamedTree.with_path_names`: each key
-        is the exact path of a node; values are the new single-segment names;
-        renames apply simultaneously. The authoritative :attr:`event_template`
-        renames in lockstep, so the subtree invariant holds on the result. The
-        record keeps its name; ``with_name`` renames the record itself. The
-        result carries no provenance.
+        is the exact path of a node and each target its new exact path. The
+        authoritative :attr:`event_template` is renamed by the same rule, so the
+        subtree invariant holds on the result. The record keeps its name, since
+        ``with_label`` renames the record itself, and the result carries no
+        provenance.
 
         Raises
         ------
         KeyError
             If a key is not the path of a node.
         ValueError
-            If a new name is empty or contains ``/``, two keys rename the same
-            node, no renames are given, or a rename collides with an existing
-            sibling name.
+            As :meth:`NamedTree.with_path_names` raises it.
         """
         renames = self._resolve_path_renames(mapping, kwargs)
-        renamed = self._renamed_leaf_map(renames)
-        if len(renamed) != len(self):
-            raise ValueError(
-                "with_path_names() produced colliding field keys; a rename "
-                "must not collide with an existing sibling name"
-            )
-        renamed_template = self.event_template.with_path_names(mapping, **kwargs)
-        return self._rebuild_root(renamed, renamed_template)
+        tree, _ = self._renamed_tree(renames)
+        return self._rebuild_root(tree, self.event_template.with_path_names(renames))
 
     # -- Backend conversion -------------------------------------------------
 
@@ -918,7 +991,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         from ._numeric_record import NumericRecord
 
         return NumericRecord(
-            self._name,
+            self._label,
             {
                 field_name: val.to_numeric() if isinstance(val, Record) else val
                 for field_name, val in self._tree.items()
@@ -928,7 +1001,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Coercion -----------------------------------------------------------
 
     @classmethod
-    def ensure(cls, x: Any, *, name: str | None = None) -> Record:
+    def ensure(cls, x: Any, *, label: str | None = None) -> Record:
         """Coerce *x* to Record if it isn't already.
 
         - ``Record`` → pass through (any *name* is ignored)
@@ -945,19 +1018,19 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             fields = x
         else:
             fields = {"data": x}
-        if name is None:
+        if label is None:
             return cls(_derived_record_name(fields), fields)
-        return cls(name, fields)
+        return cls(label, fields)
 
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, name: str, d: dict[str, ArrayLike | Record]) -> Record:
+    def from_dict(cls, label: str, d: dict[str, ArrayLike | Record]) -> Record:
         """Construct a Record named *name* from a dict of arrays."""
-        return cls(name, d)
+        return cls(label, d)
 
     @classmethod
-    def from_field_values(cls, name: str, template: RecordSpec, values: Iterable[Any]) -> Record:
+    def from_field_values(cls, label: str, template: RecordSpec, values: Iterable[Any]) -> Record:
         """Reconstruct a value from an ordered sequence of field values.
 
         *values* supplies one object per field, in canonical order (the order
@@ -972,7 +1045,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Parameters
         ----------
-        name : str
+        label : str
             Name for the reconstructed record (user-given).
         template : RecordSpec
             The authoritative schema supplying names, nesting, and order.
@@ -1012,7 +1085,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             # ``Record.__new__`` selects the class from the template.
             return Record(node_name, fields, event_template=tpl)
 
-        return _build(template, name)
+        return _build(template, label)
 
     # -- Leaf-wise operations -----------------------------------------------
     #
@@ -1026,15 +1099,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = []
-        for name, val in self._tree.items():
-            if isinstance(val, Record):
-                parts.append(f"{name}={val!r}")
-            elif hasattr(val, "shape") and val.shape != ():
-                parts.append(f"{name}=array(shape={val.shape})")
-            else:
-                parts.append(f"{name}={val!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
+        """The label, then the field paths in canonical order, read from the schema."""
+        return term_repr(
+            public_class_name(type(self)), self.label, [("fields", format_names(self.keys()))]
+        )
 
     # -- Call-forwarding shim for single-field Records ----------------------
     #
@@ -1099,7 +1167,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         if self.event_template != other.event_template:
             return False
         for name, a in self._tree.items():
-            b = other._tree[name]
+            a, b = _leaf_value(a), _leaf_value(other._tree[name])
             if isinstance(a, Record) and isinstance(b, Record):
                 if a != b:
                     return False
@@ -1136,6 +1204,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # equal.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._tree.items():
+            val = _leaf_value(val)
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
                 continue
@@ -1145,6 +1214,34 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 continue
             parts.append((name, shape, _canonical_dtype_str(val)))
         return hash(tuple(parts))
+
+
+def _raw_leaf(leaf: Any) -> Any:
+    """A stored leaf's raw value: a tracked term's ``raw()``, and any other leaf as stored."""
+    return leaf.raw() if isinstance(leaf, TrackedTerm) else leaf
+
+
+def _leaf_value(leaf: Any) -> Any:
+    """A stored leaf by its value, as equality, the hash, and the fingerprint read it.
+
+    A stored ``NumericArray``, ``Opaque``, or ``Function`` reads as its raw
+    value, so a record that stores the views of another record equals that
+    record. Any other leaf, such as a law or a nested record, reads as stored,
+    since the raw value of a law is a detached copy.
+    """
+    from ..values._function_base import Function
+    from ._numeric_array import NumericArray
+    from ._opaque import Opaque
+
+    return leaf.raw() if isinstance(leaf, NumericArray | Opaque | Function) else leaf
+
+
+def _raw_nested(record: Record) -> dict[str, Any]:
+    """*record* as the nested ``dict`` of its raw leaves, in canonical order."""
+    return {
+        name: _raw_nested(child) if isinstance(child, Record) else _raw_leaf(child)
+        for name, child in record._tree.items()
+    }
 
 
 def _pack_fields(
@@ -1210,7 +1307,7 @@ def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str]]:
     # record built with an explicit template ordered differently would
     # otherwise zip each value against the wrong field name.
     children = [v._tree[name] for name in v.event_template.children]
-    return children, (v._spec, v._name)
+    return children, (v._spec, v._label)
 
 
 def _record_unflatten(aux: tuple[RecordSpec, str], children: list) -> Record:

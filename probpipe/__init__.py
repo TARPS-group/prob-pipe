@@ -34,48 +34,23 @@ from probpipe import distributions
 # isort: split
 
 from probpipe._weights import Weights
-from probpipe.converters import (
-    ConversionInfo,
-    ConversionMethod,
-    Converter,
-    converter_registry,
-)
 from probpipe.core._array_backend import (
     ArrayBackend,
     array_backend_for,
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
-from probpipe.core._broadcast_distributions import BroadcastDistribution
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
-from probpipe.core._distribution_array import DistributionArray
-from probpipe.core._empirical import (
-    BootstrapReplicateDistribution,
-    EmpiricalDistribution,
-    RecordBootstrapReplicateDistribution,
-    RecordEmpiricalDistribution,
-)
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
-from probpipe.core._numeric_record_distribution import (
-    BootstrapDistribution,
-    FlatNumericRecordDistribution,
-    FlattenedDistributionView,
-    NumericRecordDistribution,
-    NumericRecordDistributionView,
-)
 from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
-from probpipe.core._random_functions import ArrayRandomFunction, RandomFunction
-from probpipe.core._random_measures import NumericRandomMeasure, RandomMeasure
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core._record_distribution import RecordDistribution
 from probpipe.core._specs import (
-    FunctionSpec,
     InputSpec,
     NumericArraySpec,
     NumericRecordSpec,
@@ -84,13 +59,6 @@ from probpipe.core._specs import (
     RecordSpec,
     TermSpec,
 )
-from probpipe.core._workflow_context import workflow_run
-from probpipe.core._workflow_errors import (
-    ReplayCompatibilityError,
-    ReplayUnsupportedCallableError,
-    UnmanagedConcurrentWorkflowEntryError,
-)
-from probpipe.core._workflow_replay import replay_run
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -108,16 +76,20 @@ from probpipe.core.constraints import (
     unit_interval,
 )
 from probpipe.core.named_tree import NamedTree
-from probpipe.core.node import (
-    Function,
-    Module,
-    abstract_workflow_method,
-    function,
-    workflow_method,
+from probpipe.core.protocols import SupportsArrayBackend
+from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
+from probpipe.core.record import (
+    Record,
 )
-from probpipe.core.protocols import (
+from probpipe.core.tracked import Annotated, TrackedTerm
+from probpipe.core.transition import (
+    iterate,
+    with_conversion,
+    with_resampling,
+)
+from probpipe.distributions._batches import DistributionBatch
+from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
-    SupportsArrayBackend,
     SupportsCovariance,
     SupportsExactConditioning,
     SupportsExpectation,
@@ -130,75 +102,73 @@ from probpipe.core.protocols import (
     SupportsUnnormalizedLogProb,
     SupportsVariance,
 )
-from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
-from probpipe.core.record import (
-    Record,
+from probpipe.distributions._conditional import conditional_distribution
+from probpipe.distributions._conversion import ConversionInfo, Converter, converter_registry
+from probpipe.distributions._distribution import (
+    Distribution,
+    DistributionSpec,
+    NumericDistribution,
 )
-from probpipe.core.tracked import Annotated, TrackedTerm
-from probpipe.core.transition import (
-    iterate,
-    with_conversion,
-    with_resampling,
-)
-from probpipe.distributions import (
-    # Discrete
+from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.families import (
     Bernoulli,
     Beta,
+    BijectorTransformedDistribution,
     Binomial,
     Categorical,
     Cauchy,
     Dirichlet,
     Exponential,
     Gamma,
-    # Gaussian random functions
     GaussianRandomFunction,
     HalfCauchy,
     HalfNormal,
     InverseGamma,
-    JointEmpirical,
-    JointGaussian,
-    # KDE
-    KDEDistribution,
     Laplace,
     LinearBasisFunction,
     LogNormal,
     Multinomial,
-    # Multivariate
     MultivariateNormal,
     NegativeBinomial,
-    # Continuous
     Normal,
-    NumericJointEmpirical,
     Pareto,
     Poisson,
-    # Joint
-    ProductDistribution,
-    SequentialJointDistribution,
+    RandomFunction,
+    RandomMeasure,
     StudentT,
-    # TFP base
     TFPDistribution,
-    # Transformed
-    TransformedDistribution,
     TruncatedNormal,
     Uniform,
+    UnnormalizedDistribution,
     VonMisesFisher,
     Wishart,
+)
+from probpipe.families._resampling import (
+    BootstrapDistribution,
+    BootstrapReplicateDistribution,
+    KDEDistribution,
+)
+from probpipe.functions import (
+    AbstractModule,
+    Module,
+    abstract_workflow_method,
     bijector_for,
+    function,
     register_bijector,
+    workflow_method,
 )
-from probpipe.distributions._distribution import (
-    DEFAULT_NUM_EVALUATIONS,
-    RETURN_APPROX_DIST,
-    Distribution,
-    DistributionSpec,
-    NumericDistribution,
-    set_default_num_evaluations,
-    set_return_approx_dist,
+from probpipe.functions._call import ApplicabilityError, CallReport
+from probpipe.functions._context import workflow_run
+from probpipe.functions._errors import (
+    ReplayCompatibilityError,
+    ReplayUnsupportedCallableError,
+    UnmanagedConcurrentWorkflowEntryError,
 )
+from probpipe.functions._replay import replay_run
+from probpipe.functions._result import ResultKindError, ResultSchemaError
+from probpipe.functions._rules import evaluation_rule_registry
 from probpipe.inference import (
-    ApproximateDistribution,
     BayesFlowLikelihood,
-    BayesFlowModel,
     BayesFlowRatio,
     MinibatchedDistribution,
     condition_on_nutpie,
@@ -209,69 +179,83 @@ from probpipe.inference import (
     learn_amortized_ratio,
     rwmh,
 )
-from probpipe.modeling import (
-    ConditionallyIndependentLikelihood,
-    GenerativeLikelihood,
-    GLMLikelihood,
-    IncrementalConditioner,
-    Likelihood,
-    ProbabilisticModel,
-    SimpleGenerativeModel,
-    SimpleModel,
+from probpipe.operations import (
+    condition_on,
+    convert,
+    cov,
+    evaluate,
+    expectation,
+    factor,
+    inverse,
+    joint,
+    log_det_jacobian,
+    log_prob,
+    marginal,
+    mean,
+    mixture,
+    operation_registry,
+    prob,
+    quantile,
+    random_log_prob,
+    random_unnormalized_log_prob,
+    sample,
+    unnormalized_log_prob,
+    unnormalized_prob,
+    variance,
 )
 from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
+from probpipe.values import (
+    Function,
+    FunctionSpec,
+    SupportsDifferentiation,
+    SupportsInverse,
+    SupportsLogDetJacobian,
+    is_differentiable,
+    is_invertible,
+    set_default_n_broadcast_samples,
+)
 
 __all__ = [
+    "AbstractModule",
     "Annotated",
-    "ApproximateDistribution",
+    "ApplicabilityError",
     "ArrayBackend",
-    "ArrayRandomFunction",
     "Batch",
     "BatchSpec",
     "BayesFlowLikelihood",
-    "BayesFlowModel",
     "BayesFlowRatio",
     "Bernoulli",
     "Beta",
+    "BijectorTransformedDistribution",
     "Binomial",
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
-    "BroadcastDistribution",
+    "CallReport",
     "Categorical",
     "Cauchy",
-    "ConditionallyIndependentLikelihood",
     "Constraint",
     "ConversionInfo",
-    "ConversionMethod",
     "Converter",
     "Design",
     "Dirichlet",
     "Distribution",
-    "DistributionArray",
+    "DistributionBatch",
     "DistributionSpec",
     "EmpiricalDistribution",
     "Exponential",
-    "FlatNumericRecordDistribution",
-    "FlattenedDistributionView",
     "FullFactorialDesign",
     "Function",
     "FunctionBatch",
     "FunctionSpec",
-    "GLMLikelihood",
     "Gamma",
     "GaussianRandomFunction",
-    "GenerativeLikelihood",
     "HalfCauchy",
     "HalfNormal",
-    "IncrementalConditioner",
     "InputSpec",
     "InverseGamma",
-    "JointEmpirical",
-    "JointGaussian",
     "KDEDistribution",
     "Laplace",
-    "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
     "MathematicalDomainError",
@@ -287,12 +271,8 @@ __all__ = [
     "NumericArrayBatch",
     "NumericArraySpec",
     "NumericDistribution",
-    "NumericJointEmpirical",
-    "NumericRandomMeasure",
     "NumericRecord",
     "NumericRecordBatch",
-    "NumericRecordDistribution",
-    "NumericRecordDistributionView",
     "NumericRecordSpec",
     "NumericSpec",
     "Opaque",
@@ -302,30 +282,29 @@ __all__ = [
     "ParentInfo",
     "Pareto",
     "Poisson",
-    "ProbabilisticModel",
-    "ProductDistribution",
     "Provenance",
     "ProvenanceMode",
+    "PyMCModel",
     "RandomFunction",
     "RandomMeasure",
     "Record",
     "RecordBatch",
-    "RecordBootstrapReplicateDistribution",
-    "RecordDistribution",
-    "RecordEmpiricalDistribution",
     "RecordSpec",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
-    "SequentialJointDistribution",
-    "SimpleGenerativeModel",
-    "SimpleModel",
+    "ResultKindError",
+    "ResultSchemaError",
+    "StanModel",
     "StudentT",
     "SupportsApproximateConditioning",
     "SupportsArrayBackend",
     "SupportsCovariance",
+    "SupportsDifferentiation",
     "SupportsExactConditioning",
     "SupportsExpectation",
+    "SupportsInverse",
+    "SupportsLogDetJacobian",
     "SupportsLogProb",
     "SupportsMean",
     "SupportsQuantile",
@@ -337,10 +316,10 @@ __all__ = [
     "TFPDistribution",
     "TermSpec",
     "TrackedTerm",
-    "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
+    "UnnormalizedDistribution",
     "VonMisesFisher",
     "Weights",
     "Wishart",
@@ -349,57 +328,73 @@ __all__ = [
     "array_backend_for",
     "bijector_for",
     "boolean",
+    "condition_on",
     "condition_on_nutpie",
+    "conditional_distribution",
+    "convert",
     "converter_registry",
+    "cov",
     "elliptical_slice",
+    "evaluate",
+    "evaluation_rule_registry",
+    "expectation",
+    "factor",
     "function",
     "greater_than",
     "inference_method_registry",
     "integer_interval",
     "interval",
+    "inverse",
+    "is_differentiable",
+    "is_invertible",
     "iterate",
+    "joint",
     "learn_amortized_likelihood",
     "learn_amortized_posterior",
     "learn_amortized_ratio",
+    "log_det_jacobian",
+    "log_prob",
+    "marginal",
+    "mean",
+    "mixture",
     "non_negative",
     "non_negative_integer",
+    "operation_registry",
     "positive",
     "positive_definite",
     "predictive_check",
     "prefect_config",
+    "prob",
     "provenance_ancestors",
     "provenance_config",
     "provenance_dag",
+    "quantile",
+    "random_log_prob",
+    "random_unnormalized_log_prob",
     "real",
     "register_array_backend",
     "register_bijector",
     "replay_run",
     "rwmh",
+    "sample",
+    "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
     "unit_interval",
+    "unnormalized_log_prob",
+    "unnormalized_prob",
+    "variance",
     "with_conversion",
     "with_resampling",
     "workflow_method",
     "workflow_run",
 ]
 
-# ---------------------------------------------------------------------------
-# Standalone operations (plain functions + Function wrappers)
-# ---------------------------------------------------------------------------
-from probpipe.core.ops import (
-    condition_on,
-    cov,
-    expectation,
-    from_distribution,
-    log_prob,
-    mean,
-    prob,
-    quantile,
-    random_log_prob,
-    random_unnormalized_log_prob,
-    sample,
-    unnormalized_log_prob,
-    unnormalized_prob,
-    variance,
-)
+
+def __getattr__(name: str):
+    """The program-defined families, which ``probpipe`` exports lazily."""
+    if name in ("PyMCModel", "StanModel"):
+        from probpipe.families import _programs
+
+        return getattr(_programs, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

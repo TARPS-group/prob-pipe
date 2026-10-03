@@ -14,9 +14,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from probpipe import ApproximateDistribution
+from probpipe import EmpiricalDistribution, PyMCModel
 from probpipe.core._specs import NumericArraySpec
-from probpipe.modeling import PyMCModel
+from probpipe.core.constraints import real
+from tests._posterior import arviz_data, flat_draws, method_of, num_chains, num_draws
+
+#: The dtype the array backend gives a PyMC float variable.
+_FLOAT = np.dtype(jnp.result_type(float))
 
 
 @contextmanager
@@ -71,22 +75,10 @@ class TestPyMCModel:
 
     def test_construction(self, model):
         assert isinstance(model, PyMCModel)
-        assert model.name == "test_pymc"
+        assert model.label == "test_pymc"
 
-    def test_parameter_names(self, model):
-        names = model.parameter_names
-        assert "mu" in names
-        assert "sigma" in names
-
-    def test_fields(self, model):
-        names = model.fields
-        assert "mu" in names
-        assert "sigma" in names
-        assert "y" in names
-
-    def test_supports_named_components(self, model):
-        assert hasattr(model, "fields")
-        assert len(model.fields) > 0
+    def test_the_components_are_the_free_variables(self, model):
+        assert tuple(model.event_spec.components) == ("mu", "sigma", "y")
 
     def test_repr(self, model):
         r = repr(model)
@@ -94,31 +86,23 @@ class TestPyMCModel:
         assert "mu" in r
         assert "sigma" in r
 
-    def test_getitem_returns_name_placeholder(self, model):
-        """PyMCModel['mu'] returns the name — PyMC doesn't expose
-        sub-distributions, so __getitem__ only validates the key. See the
-        comment in PyMCModel.__getitem__.
-        """
-        assert model["mu"] == "mu"
-        assert model["sigma"] == "sigma"
-
     def test_getitem_unknown_key_raises(self, model):
         with pytest.raises(KeyError):
             model["nonexistent"]
 
-    def test_event_shape_values(self, model):
-        """mu (scalar) + sigma (scalar) -> event_shape == (2,)."""
-        assert model.event_shape == (2,)
+    def test_a_draw_is_a_record_of_the_declared_parameters(self, model):
+        draw = model._sample(jax.random.PRNGKey(0), sample_shape=())
+        assert model.event_spec.spec.is_valid(draw)
+        assert all(np.shape(draw[name]) == () for name in model.event_spec.components)
 
-    def test_sample_scalar(self, model):
-        key = jax.random.PRNGKey(0)
-        s = model._sample(key, sample_shape=())
-        assert s.shape == (2,)  # 2 scalar params
+    def test_batched_draws_carry_the_sample_axes_before_each_field(self, model):
+        draws = model._sample(jax.random.PRNGKey(0), sample_shape=(5,))
+        assert all(np.shape(draws[name]) == (5,) for name in model.event_spec.components)
 
-    def test_sample_batched(self, model):
-        key = jax.random.PRNGKey(0)
-        s = model._sample(key, sample_shape=(5,))
-        assert s.shape == (5, 2)
+    def test_the_sample_operation_returns_a_draw_of_the_declaration(self, model):
+        from probpipe import sample
+
+        assert model.event_spec.spec.is_valid(sample(model))
 
     def test_pymc_model_no_data(self, model):
         m = model._pymc_model()
@@ -136,7 +120,7 @@ class TestPyMCModel:
         assert len(m.observed_RVs) > 0
 
     def test_condition_on(self, model):
-        """condition_on runs PyMC sampling and returns ApproximateDistribution.
+        """condition_on runs PyMC sampling and returns an inference result.
 
         Explicitly pins ``method="pymc_nuts"`` — the registry would
         otherwise prefer nutpie (higher priority) when it's installed,
@@ -145,24 +129,24 @@ class TestPyMCModel:
         from probpipe import condition_on
 
         data = np.random.randn(50)
-        result = condition_on.apply(
-            model,
-            {"y": data},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=20,
-            num_warmup=10,
-            num_chains=1,
-            random_seed=42,
-        )
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_chains == 1
-        assert result.num_draws == 20
-        assert result.algorithm == "pymc_nuts"
-        assert result.inference_data is not None
-        assert hasattr(result.inference_data, "posterior")
-        assert hasattr(result.inference_data, "sample_stats")
+            method_options={
+                "num_results": 20,
+                "num_warmup": 10,
+                "num_chains": 1,
+                "random_seed": 42,
+            },
+        )(model, {"y": data})
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_chains(result) == 1
+        assert num_draws(result) == 20
+        assert method_of(result) == "pymc_nuts"
+        assert arviz_data(result) is not None
+        assert hasattr(arviz_data(result), "posterior")
+        assert hasattr(arviz_data(result), "sample_stats")
         assert result.provenance is not None
-        assert result.provenance.operation == "pymc_nuts"
+        assert result.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_multicore_spawn(self, model):
         """Multi-core sampling (``cores=2``) runs under the spawn start method
@@ -180,20 +164,20 @@ class TestPyMCModel:
         _ = jnp.ones(1000).sum().block_until_ready()
 
         data = np.random.randn(50)
-        result = condition_on.apply(
-            model,
-            {"y": data},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=50,
-            num_warmup=50,
-            num_chains=2,
-            cores=2,
-            random_seed=0,
-        )
-        assert isinstance(result, ApproximateDistribution)
-        assert result.num_chains == 2
-        assert result.num_draws == 50
-        assert result.algorithm == "pymc_nuts"
+            method_options={
+                "num_results": 50,
+                "num_warmup": 50,
+                "num_chains": 2,
+                "cores": 2,
+                "random_seed": 0,
+            },
+        )(model, {"y": data})
+        assert isinstance(result, EmpiricalDistribution)
+        assert num_chains(result) == 2
+        assert num_draws(result) == 50
+        assert method_of(result) == "pymc_nuts"
 
     def test_multicore_passes_spawn_to_pm_sample(self, model):
         """Deterministically prove production calls ``pm.sample`` with
@@ -208,22 +192,22 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured:
-            result = condition_on.apply(
-                model,
-                {"y": data},
+            result = condition_on.with_options(
                 method="pymc_nuts",
-                num_results=20,
-                num_warmup=10,
-                num_chains=2,
-                cores=2,
-                random_seed=0,
-            )
+                method_options={
+                    "num_results": 20,
+                    "num_warmup": 10,
+                    "num_chains": 2,
+                    "cores": 2,
+                    "random_seed": 0,
+                },
+            )(model, {"y": data})
 
         assert captured["mp_ctx"] == "spawn"
         assert captured["cores"] >= 2
         assert captured["chains"] == 2
-        assert isinstance(result, ApproximateDistribution)
-        assert result.algorithm == "pymc_nuts"
+        assert isinstance(result, EmpiricalDistribution)
+        assert method_of(result) == "pymc_nuts"
 
     def test_default_chains_pass_spawn_to_pm_sample(self, model):
         """The default path (no ``cores`` kwarg, ``num_chains`` defaults to 4)
@@ -241,14 +225,10 @@ class TestPyMCModel:
             patch("probpipe.inference._pymc_method.os.cpu_count", return_value=4),
             _captured_pm_sample_kwargs() as captured,
         ):
-            _ = condition_on(
-                model,
-                {"y": data},
+            _ = condition_on.with_options(
                 method="pymc_nuts",
-                num_results=20,
-                num_warmup=10,
-                random_seed=0,
-            )
+                method_options={"num_results": 20, "num_warmup": 10, "random_seed": 0},
+            )(model, {"y": data})
 
         assert captured["chains"] == 4  # the documented default
         assert captured["cores"] == 4  # min(num_chains=4, cpu_count=4)
@@ -267,14 +247,10 @@ class TestPyMCModel:
             patch("probpipe.inference._pymc_method.os.cpu_count", return_value=1),
             _captured_pm_sample_kwargs() as captured,
         ):
-            _ = condition_on(
-                model,
-                {"y": data},
+            _ = condition_on.with_options(
                 method="pymc_nuts",
-                num_results=20,
-                num_warmup=10,
-                random_seed=0,
-            )
+                method_options={"num_results": 20, "num_warmup": 10, "random_seed": 0},
+            )(model, {"y": data})
 
         assert captured["cores"] == 1
         assert captured["mp_ctx"] is None
@@ -296,9 +272,9 @@ class TestRecordSpec:
             return m
 
         tpl = PyMCModel("model", model_fn).event_spec.spec
-        assert tpl.fields == ("intercept", "slope")
-        assert tpl["intercept"] == NumericArraySpec(())
-        assert tpl["slope"] == NumericArraySpec((3,))
+        assert tpl.fields == ("intercept", "slope", "y")
+        assert tpl["intercept"] == NumericArraySpec((), _FLOAT, real)
+        assert tpl["slope"] == NumericArraySpec((3,), _FLOAT, real)
 
     def test_the_declaration_is_the_free_rv_record(self):
         """The model declares one field per free RV; an unknown size is symbolic."""
@@ -316,14 +292,15 @@ class TestRecordSpec:
         model = PyMCModel("model", model_fn)
         assert model.event_spec == OutputSpec(
             RecordSpec(
-                intercept=NumericArraySpec(()),
-                slope=NumericArraySpec((3,)),
-                z=NumericArraySpec(("z_0",)),
+                intercept=NumericArraySpec((), _FLOAT, real),
+                slope=NumericArraySpec((3,), _FLOAT, real),
+                z=NumericArraySpec(("z_0",), _FLOAT, real),
+                y=NumericArraySpec((), _FLOAT, real),
             )
         )
 
-    def test_observed_rvs_excluded(self):
-        """Observed variables are not part of the parameter template."""
+    def test_observed_variables_are_event_fields(self):
+        """An observed variable is a field of the joint law, drawn as the build without data draws it."""
 
         def model_fn(y=None):
             with pm.Model() as m:
@@ -332,8 +309,8 @@ class TestRecordSpec:
             return m
 
         tpl = PyMCModel("model", model_fn).event_spec.spec
-        assert tpl.fields == ("mu",)
-        assert "y" not in tpl.fields
+        assert tpl.fields == ("mu", "y")
+        assert tpl["y"] == NumericArraySpec((), _FLOAT, real)
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
         """``_parameter_record_for(model)`` reports the data-conditioned
@@ -347,30 +324,22 @@ class TestRecordSpec:
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
-        model = PyMCModel("model", per_observation_effect_model_fn)
-        # Declared (no-data) property: sentinel (1,) for alpha.
-        tpl = model.event_spec.spec
-        assert tpl.fields == ("intercept", "alpha")
-        assert tpl["intercept"] == NumericArraySpec(())
-        assert tpl["alpha"] == NumericArraySpec((1,))
-        assert model.event_shape == (1 + 1,)
+        kernel = PyMCModel("model", per_observation_effect_model_fn)
+        # X is a covariate, a given slot, so the event's shapes are symbolic.
+        tpl = kernel.event_spec.spec
+        assert tpl.fields == ("intercept", "alpha", "y")
+        assert tpl["alpha"] == NumericArraySpec(("alpha_0",), _FLOAT, real)
 
-        # Template built from a data-conditioned build picks up the real
-        # shape — and the instance carries no cached state afterward.
+        # Binding X, then building at the data, picks up the real shape.
         N = 50
-        conditioned = model._pymc_model(
-            data={
-                "X": np.zeros(N, dtype=np.float32),
-                "y": np.zeros(N, dtype=np.float32),
-            }
-        )
+        model = kernel._condition_on({"X": np.zeros(N, dtype=np.float32)})
+        assert model.event_spec.spec["alpha"] == NumericArraySpec((N,), _FLOAT, real)
+        conditioned = model._pymc_model(data={"y": np.zeros(N, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         tpl_c = model._parameter_record_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
-        assert tpl_c["alpha"] == NumericArraySpec((N,))
+        assert tpl_c["alpha"] == NumericArraySpec((N,), _FLOAT, real)
         assert not hasattr(model, "_last_conditioned_model")
-        # Property still reports the declared shape (no hidden mutation).
-        assert model.event_spec.spec["alpha"] == NumericArraySpec((1,))
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a
@@ -385,52 +354,130 @@ class TestRecordSpec:
         X = np.arange(N, dtype=np.float32)
         y = rng.normal(size=N).astype(np.float32)
         model = PyMCModel("model", per_observation_effect_model_fn)
-        result = condition_on(
-            model,
-            {"X": X, "y": y},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=20,
-            num_warmup=10,
-            num_chains=1,
-            random_seed=0,
-        )
-        draws = result.draws()
+            method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1, "random_seed": 0},
+        )(model, {"X": X, "y": y})
+        draws = flat_draws(result)
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
 
-    def test_advi_field_order_realignment(self):
-        """End-to-end: ``pymc_advi`` realigns posterior columns to the
-        template by name, like the NUTS/nutpie paths.
+    @staticmethod
+    def _intercept_alpha_model(y=None):
+        # The backend sorts ``alpha`` before ``intercept``, while the template
+        # defines ``intercept`` first, and the shapes differ (scalar vs. (3,)).
+        with pm.Model() as m:
+            intercept = pm.Normal("intercept", 0, 1)
+            pm.Normal("alpha", 0, 1, shape=3)
+            pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
+        return m
 
-        ADVI's trace comes from ``approx.sample`` rather than a NUTS run,
-        so it exercises ``posterior_var_order`` on a distinct trace source.
-        The names are chosen so the backend's alphabetical column order
-        (``alpha`` before ``intercept``) differs from the template order
-        (``intercept`` defined first), and the shapes differ (scalar vs.
-        ``(3,)``) — a positional split would shape-scramble instead of
-        realigning by name.
+    def test_advi_returns_the_fitted_family_in_template_order(self):
+        """``pymc_advi`` returns the fitted mean-field family, one factor per parameter.
+
+        The factors follow the template's order, and each draws at its
+        parameter's shape.
         """
-        from probpipe import condition_on
+        from probpipe import condition_on, sample, workflow_run
+        from probpipe.distributions import FactoredDistribution
+
+        y = np.zeros(8, dtype=np.float32)
+        result = condition_on.with_options(
+            method="pymc_advi", method_options={"num_iterations": 200, "random_seed": 0}
+        )(PyMCModel("model", self._intercept_alpha_model), {"y": y})
+        assert isinstance(result, FactoredDistribution)
+        assert method_of(result) == "pymc_advi"
+        assert tuple(result.event_spec.components) == ("intercept", "alpha")
+        with workflow_run(seed=0):
+            draws = sample(result, sample_shape=(25,))
+        assert jnp.asarray(draws["intercept"].values).shape == (25,)
+        assert jnp.asarray(draws["alpha"].values).shape == (25, 3)
+
+    def test_the_mean_field_family_is_the_fitted_approximation(self):
+        """The family's density is the fitted Gaussian at PyMC's unconstrained value
+        less PyMC's log-Jacobian, for the log, logodds, interval, and simplex transforms."""
+        import jax
+
+        from probpipe import log_prob
+        from probpipe.inference._pymc_method import _mean_field_family
+
+        with pm.Model() as model:
+            pm.Normal("mu", 0, 5)
+            pm.HalfCauchy("tau", 5)
+            pm.Beta("p", 2, 3)
+            pm.Dirichlet("w", np.ones(3))
+            pm.Uniform("u", -1, 2)
+            pm.TruncatedNormal("lo", 0, 1, lower=0.5)
+            pm.Normal("y", 0.0, 1.0, observed=np.zeros(2))
+            approx = pm.fit(n=200, method="advi", random_seed=1, progressbar=False)
+            trace = approx.sample(3, random_seed=2)
+        names = [rv.name for rv in model.free_RVs]
+        family = _mean_field_family(approx, model, names)
+        assert tuple(family.event_spec.components) == tuple(names)
+        group, mean, std = approx.groups[0], approx.mean.eval(), approx.std.eval()
+
+        def evaluated(x):
+            return x.eval() if hasattr(x, "eval") else np.asarray(x)
+
+        for k in range(3):
+            point = {n: trace.posterior[n].values[0, k] for n in names}
+            expected = 0.0
+            for n in names:
+                rv = model[n]
+                transform = model.rvs_to_transforms.get(rv)
+                _, coordinates, _, _ = group.ordering[model.rvs_to_values[rv].name]
+                x = np.asarray(point[n], dtype="float64")
+                y = x if transform is None else evaluated(transform.forward(x, *rv.owner.inputs))
+                expected += jax.scipy.stats.norm.logpdf(
+                    np.ravel(y), mean[coordinates], std[coordinates]
+                ).sum()
+                if transform is not None:
+                    expected -= np.sum(evaluated(transform.log_jac_det(y, *rv.owner.inputs)))
+            actual = float(log_prob(family, {n: jnp.asarray(point[n]) for n in names}))
+            assert actual == pytest.approx(float(expected), rel=1e-4, abs=1e-4)
+
+    def test_a_transform_the_family_does_not_cover_gives_draws(self):
+        """A bound that depends on another parameter has no fixed bijector, so the
+        result is the approximation's draws."""
+        from probpipe import EmpiricalDistribution, condition_on
 
         def model_fn(y=None):
             with pm.Model() as m:
-                intercept = pm.Normal("intercept", 0, 1)  # scalar, defined first
-                pm.Normal("alpha", 0, 1, shape=3)  # shape (3,), sorts first
-                pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
+                upper = pm.HalfNormal("upper", 1.0)
+                pm.Uniform("x", 0.0, upper)
+                pm.Normal("y", 0.0, 1.0, observed=y)
             return m
 
-        y = np.zeros(8, dtype=np.float32)
-        result = condition_on.apply(
-            PyMCModel("model", model_fn),
-            {"y": y},
+        result = condition_on.with_options(
             method="pymc_advi",
-            num_iterations=200,
-            num_results=25,
-            random_seed=0,
-        )
-        assert result.algorithm == "pymc_advi"
-        draws = result.draws()
+            method_options={"num_iterations": 100, "num_results": 10, "random_seed": 0},
+        )(PyMCModel("model", model_fn), {"y": np.zeros(3, dtype=np.float32)})
+        assert isinstance(result, EmpiricalDistribution)
+        assert method_of(result) == "pymc_advi"
+        assert result.atoms.batch_shape == (1, 10)
+
+    def test_fullrank_advi_draws_realign_by_name(self):
+        """Full-rank ADVI's draws are realigned to the template by name.
+
+        Its trace comes from ``approx.sample`` rather than a NUTS run, so it
+        exercises ``posterior_var_order`` on a distinct trace source, where a
+        positional split would shape-scramble the fields.
+        """
+        from probpipe import condition_on
+
+        y = np.zeros(8, dtype=np.float32)
+        result = condition_on.with_options(
+            method="pymc_advi",
+            method_options={
+                "num_iterations": 200,
+                "num_results": 25,
+                "random_seed": 0,
+                "vi_method": "fullrank_advi",
+            },
+        )(PyMCModel("model", self._intercept_alpha_model), {"y": y})
+        assert method_of(result) == "pymc_fullrank_advi"
+        draws = flat_draws(result)
         assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (25,)
         assert jnp.asarray(draws["alpha"]).shape == (25, 3)
@@ -454,7 +501,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        assert "ghost" in model.parameter_names
+        assert "ghost" in model.event_spec.components
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
             model._conditioned_param_names(conditioned)
@@ -478,7 +525,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        assert model.parameter_names == ("mu",)  # extra absent at construction
+        assert tuple(model.event_spec.components) == ("mu", "y")  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
             model._conditioned_param_names(conditioned)
@@ -501,8 +548,8 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        # Declared template excludes observed names entirely.
-        assert tuple(model.event_spec.components) == ("mu",)
+        # Both observed variables are fields of the joint law.
+        assert tuple(model.event_spec.components) == ("mu", "X", "y")
 
         # Condition on y only — X is left free and should be inferred.
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
@@ -524,16 +571,11 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        result = condition_on(
-            model,
-            {"y": np.zeros(5, dtype=np.float32)},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=20,
-            num_warmup=10,
-            num_chains=1,
-            random_seed=0,
-        )
-        assert set(result.draws().event_template.fields) == {"mu", "X"}
+            method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1, "random_seed": 0},
+        )(model, {"y": np.zeros(5, dtype=np.float32)})
+        assert set(flat_draws(result).event_template.fields) == {"mu", "X"}
 
     def test_partial_conditioning_draws_not_mislabeled(self):
         """The inferred observed variable's draws are labeled correctly —
@@ -555,16 +597,16 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        result = condition_on(
-            model,
-            {"y": np.zeros(5, dtype=np.float32)},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            random_seed=0,
-        )
-        draws = result.draws()
+            method_options={
+                "num_results": 200,
+                "num_warmup": 200,
+                "num_chains": 1,
+                "random_seed": 0,
+            },
+        )(model, {"y": np.zeros(5, dtype=np.float32)})
+        draws = flat_draws(result)
         assert set(draws.event_template.fields) == {"mu", "X"}
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
@@ -592,16 +634,16 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        result = condition_on(
-            model,
-            {"y": np.zeros(5, dtype=np.float32)},
+        result = condition_on.with_options(
             method="pymc_nuts",
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            random_seed=0,
-        )
-        draws = result.draws()
+            method_options={
+                "num_results": 200,
+                "num_warmup": 200,
+                "num_chains": 1,
+                "random_seed": 0,
+            },
+        )(model, {"y": np.zeros(5, dtype=np.float32)})
+        draws = flat_draws(result)
         # Declared order, not nutpie/pymc's alphabetical data_vars order.
         assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
@@ -627,15 +669,15 @@ class TestRecordSpec:
 
         model = PyMCModel("model", model_fn)
         with pytest.raises(ValueError, match="dynamic random variables"):
-            condition_on(
-                model,
-                {"y": np.zeros(5, dtype=np.float32)},
+            condition_on.with_options(
                 method="pymc_nuts",
-                num_results=5,
-                num_warmup=5,
-                num_chains=1,
-                random_seed=0,
-            )
+                method_options={
+                    "num_results": 5,
+                    "num_warmup": 5,
+                    "num_chains": 1,
+                    "random_seed": 0,
+                },
+            )(model, {"y": np.zeros(5, dtype=np.float32)})
 
     def test_a_none_dimension_is_declared_symbolic(self):
         """A free RV with a ``None`` dimension is declared with a symbolic one.
@@ -656,28 +698,9 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        # The declaration holds a symbolic dimension, and the flat parameter
-        # count refuses to guess its size.
+        # The declaration holds a symbolic dimension.
         model = PyMCModel("model", model_fn)
         assert model.event_spec.spec["z"].shape == ("z_0",)
-        with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = model.event_shape
-
-    def test_event_shape_rejects_non_concrete_shape(self):
-        """``event_shape`` counts the elements of the parameter record, so it rejects
-        a non-concrete free-RV shape rather than silently under-counting.
-        """
-        import pytensor.tensor as pt
-
-        def model_fn(y=None):
-            with pm.Model() as m:
-                mu = pt.vector("mu_data")
-                pm.Normal("z", mu=mu, sigma=1.0)
-                pm.Normal("y", 0, 1, observed=y)
-            return m
-
-        with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel("model", model_fn).event_shape
 
 
 class TestRecordDataUnpacking:
@@ -711,10 +734,11 @@ class TestRecordDataUnpacking:
         y = rng.poisson(2.0, size=N).astype(np.float32)
         data = Record("r", X=jnp.asarray(X), y=jnp.asarray(y))
 
-        model = PyMCModel("model", self._xy_model)
-        # _pymc_model unpacks and coerces. Result is a PyMC model built
-        # against the *real* X and y (not the unconditioned-build sentinel).
-        built = model._pymc_model(data=data)
+        # X is a covariate: binding it curries the kernel, and the law's
+        # _pymc_model unpacks y from a Record. The build uses the *real* X
+        # and y, not the sentinel of the build without data.
+        model = PyMCModel("model", self._xy_model)._condition_on(Record("r", X=data["X"]))
+        built = model._pymc_model(data=Record("r", y=data["y"]))
         # The 'y' observed RV should have N observations.
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
@@ -725,8 +749,8 @@ class TestRecordDataUnpacking:
         N = 15
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        model = PyMCModel("model", self._xy_model)
-        built = model._pymc_model(data={"X": X, "y": y})
+        model = PyMCModel("model", self._xy_model)._condition_on({"X": X})
+        built = model._pymc_model(data={"y": y})
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
 
@@ -741,9 +765,9 @@ class TestRecordDataUnpacking:
 
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
-        model = PyMCModel("model", self._xy_model)
+        model = PyMCModel("model", self._xy_model)._condition_on(Record("r", X=X))
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
-        built = model._pymc_model(data=Record("r", X=X, y=y))
+        built = model._pymc_model(data=Record("r", y=y))
         assert "y" in {rv.name for rv in built.observed_RVs}

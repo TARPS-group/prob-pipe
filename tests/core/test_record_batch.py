@@ -23,6 +23,7 @@ from probpipe import (
     ArrayBackend,
     FunctionBatch,
     FunctionSpec,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     OpaqueBatch,
@@ -225,7 +226,7 @@ class TestConstruction:
                 "batch",
                 {"x": jnp.zeros(3), "label": np.array(["a", "b", "c"], dtype=object)},
                 "draw",
-                element_spec=RecordSpec(x=(), label=None),
+                element_spec=RecordSpec(x=(), label=OpaqueSpec()),
             )
 
     def test_numeric_batch_refuses_a_non_numeric_column(self):
@@ -360,9 +361,12 @@ class TestLeafKeyedFieldColumns:
 
 
 class TestColumnBatchForms:
-    def test_an_array_field_yields_the_array_itself(self):
+    def test_an_array_field_yields_a_numeric_array_batch_over_its_column(self):
         batch = nested_batch()
-        assert batch["m"] is batch._columns["m"]
+        column = batch["m"]
+        assert isinstance(column, NumericArrayBatch)
+        assert column.raw() is batch._columns["m"]
+        assert column.level_names == batch.level_names
 
     def test_a_callable_field_yields_a_function_batch(self):
         functions = np.empty(2, dtype=object)
@@ -386,42 +390,48 @@ class TestColumnBatchForms:
             "design",
             {"site": labels, "x": jnp.zeros(2)},
             "row",
-            element_spec=RecordSpec(site=None, x=()),
+            element_spec=RecordSpec(site=OpaqueSpec(), x=()),
         )
         column = batch["site"]
         assert isinstance(column, OpaqueBatch)
-        assert column[0] == "north"
+        assert column[0].value == "north"
         assert column.level_names == ("row",)
 
     def test_a_field_with_no_batch_form_is_refused_at_construction(self):
         """A batch admits the element kinds it can present, and no more.
 
-        Reading a field gives the batch of its element kind, and a distribution
-        has none — so admitting the field and refusing the read would make a
-        batch nobody can take a field from. The refusal moves to where the field
+        Reading a field gives the batch of its element kind, and a kind that
+        registers none has none — so admitting the field and refusing the read
+        would make a batch nobody can take a field from. The refusal moves to where the field
         is declared."""
-        from probpipe import DistributionSpec, Normal
+        from dataclasses import dataclass
 
-        law = Normal("n", 0.0, 1.0)
-        spec = RecordSpec({"d": DistributionSpec(law.event_spec), "x": ()})
-        with pytest.raises(TypeError, match="DistributionSpec, which has no batch form"):
+        from probpipe import TermSpec
+
+        @dataclass(frozen=True)
+        class UnbatchedSpec(TermSpec):
+            def is_valid(self, value):
+                return True
+
+        spec = RecordSpec({"d": UnbatchedSpec(), "x": ()})
+        with pytest.raises(TypeError, match="UnbatchedSpec, which has no batch form"):
             RecordBatch(
                 "batch",
-                {"d": _object_column([law, law]), "x": jnp.zeros(2)},
+                {"d": _object_column(["a", "b"]), "x": jnp.zeros(2)},
                 "row",
                 element_spec=spec,
             )
 
-    def test_a_column_batch_carries_a_derived_name(self):
+    def test_a_column_batch_is_labeled_by_its_key(self):
         labels = np.empty(2, dtype=object)
         labels[0], labels[1] = "north", "south"
         batch = RecordBatch(
             "design",
             {"site": labels},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
-        assert batch["site"].name == "design['site']"
+        assert batch["site"].label == "site"
 
     def test_an_object_column_is_presented_as_a_view_not_a_copy(self):
         """Reading a field is O(1), as it is for an array field.
@@ -472,7 +482,7 @@ class TestColumnEntryValidation:
                 "batch",
                 {"o": _object_column(["fine", {"k": 1}, "fine"])},
                 "row",
-                element_spec=RecordSpec(o=None),
+                element_spec=RecordSpec(o=OpaqueSpec()),
             )
 
     def test_a_callable_field_refuses_a_non_callable_entry(self):
@@ -532,7 +542,7 @@ class TestColumnSpecConformance:
             element_spec=RecordSpec(x=NumericArraySpec(shape=(), dtype=declared)),
         )
 
-    @pytest.mark.parametrize("spec", [FunctionSpec(), None], ids=["function", "opaque"])
+    @pytest.mark.parametrize("spec", [FunctionSpec(), OpaqueSpec()], ids=["function", "opaque"])
     def test_a_field_with_no_stacked_form_refuses_a_dense_column(self, spec):
         """A dense array under such a field would make its *entries* array
         elements rather than the values themselves, and the column could not be
@@ -563,7 +573,7 @@ class TestConstructionRefusals:
                     "batch",
                     columns,
                     "row",
-                    element_spec=RecordSpec(o=None, x=(2,)),
+                    element_spec=RecordSpec(o=OpaqueSpec(), x=(2,)),
                 )
 
     def test_a_column_too_short_for_its_event_shape_is_refused(self):
@@ -576,6 +586,39 @@ class TestConstructionRefusals:
             )
 
 
+class TestTheElementSpecIsInferredWhenOmitted:
+    """The columns imply the element spec, as a record's values imply its spec."""
+
+    def test_each_column_gives_its_fields_spec(self):
+        batch = RecordBatch(
+            "draws",
+            {
+                "x": jnp.zeros((3, 2)),
+                "tag": np.array(["a", "b", "c"], dtype=object),
+                "g": {"y": jnp.arange(3.0)},
+            },
+            "draw",
+        )
+
+        assert batch.element_spec == RecordSpec(
+            x=(2,), tag=OpaqueSpec(type=str), g=RecordSpec(y=())
+        )
+
+    def test_the_levels_fix_where_each_event_shape_starts(self):
+        batch = NumericRecordBatch("draws", {"x": jnp.zeros((2, 4, 3))}, ("chain", "draw"))
+
+        assert batch.batch_shape == (2, 4)
+        assert batch.element_spec == RecordSpec(x=(3,))
+
+    def test_a_numeric_batch_refuses_an_inferred_opaque_field(self):
+        with pytest.raises(TypeError, match="all-numeric element"):
+            NumericRecordBatch("draws", {"t": np.array(["a", "b"], dtype=object)}, "draw")
+
+    def test_a_column_with_fewer_axes_than_the_levels_is_refused(self):
+        with pytest.raises(ValueError, match="fewer axes than the 2 batch axes"):
+            RecordBatch("draws", {"x": jnp.arange(3.0)}, ("chain", "draw"))
+
+
 class TestProvenance:
     def test_every_derived_view_inherits_the_batchs_provenance(self):
         from probpipe import Provenance
@@ -584,7 +627,7 @@ class TestProvenance:
             "design",
             {"outer/a": jnp.zeros(3), "site": _object_column(list("abc"))},
             "row",
-            element_spec=RecordSpec(outer=RecordSpec(a=()), site=None),
+            element_spec=RecordSpec(outer=RecordSpec(a=()), site=OpaqueSpec()),
         )
         batch.with_provenance(Provenance.create("sample", parents=[]))
         assert batch[0].provenance is batch.provenance
@@ -602,17 +645,17 @@ class TestPlainRecordBatch:
             "design",
             {"site": _object_column(["north", "south"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert type(batch[0]) is Record
-        assert [element["site"] for element in batch] == ["north", "south"]
+        assert [element.raw("site") for element in batch] == ["north", "south"]
 
     def test_it_has_no_flat_layout(self):
         batch = RecordBatch(
             "batch",
             {"site": _object_column(["north"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert not hasattr(batch, "to_vector")
 
@@ -621,7 +664,7 @@ class TestPlainRecordBatch:
             "batch",
             {"site": _object_column(["north", "south"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert pickle.loads(pickle.dumps(batch)) == batch
         leaves, treedef = jax.tree_util.tree_flatten(batch)
@@ -636,7 +679,7 @@ class TestStructuralTransforms:
 
     def test_with_path_names_renames_within_every_element(self):
         batch = nested_batch(name="post")
-        renamed = batch.with_path_names({"outer/a": "alpha"})
+        renamed = batch.with_path_names({"outer/a": "outer/alpha"})
         assert tuple(renamed.event_template.keys()) == ("outer/alpha", "outer/b", "m")
         np.testing.assert_array_equal(
             np.asarray(renamed["outer/alpha"]), np.asarray(batch["outer/a"])
@@ -648,6 +691,30 @@ class TestStructuralTransforms:
         assert "mass" in nested_batch().with_path_names(m="mass").event_template
         with pytest.raises(KeyError):
             nested_batch().with_path_names(a="alpha")
+
+    def test_with_path_names_moves_a_column_out_of_its_group(self):
+        batch = nested_batch()
+        moved = batch.with_path_names({"outer/a": "a"})
+        assert tuple(moved.event_template.keys()) == ("outer/b", "m", "a")
+        np.testing.assert_array_equal(np.asarray(moved["a"]), np.asarray(batch["outer/a"]))
+        np.testing.assert_array_equal(np.asarray(moved["outer/b"]), np.asarray(batch["outer/b"]))
+        assert (moved.level_names, moved.batch_shape) == (batch.level_names, batch.batch_shape)
+
+    def test_with_path_names_moves_a_column_into_a_group(self):
+        batch = nested_batch()
+        moved = batch.with_path_names({"m": "outer/m"})
+        assert tuple(moved.event_template.keys()) == ("outer/a", "outer/b", "outer/m")
+        np.testing.assert_array_equal(np.asarray(moved["outer/m"]), np.asarray(batch["m"]))
+        # Each element is the element of the batch moved the same way.
+        assert moved[1] == batch[1].with_path_names({"m": "outer/m"})
+
+    def test_with_path_names_removes_a_group_its_moves_empty(self):
+        moved = nested_batch().with_path_names({"outer/a": "a", "outer/b": "b"})
+        assert tuple(moved.event_template.children) == ("m", "a", "b")
+
+    def test_with_path_names_refuses_a_move_onto_a_field(self):
+        with pytest.raises(ValueError, match="collides"):
+            nested_batch().with_path_names({"m": "outer/a"})
 
     def test_the_two_name_spaces_are_independent(self):
         # Renaming a field never touches a level, or the reverse.
@@ -745,7 +812,7 @@ class TestStructuralTransforms:
             "batch",
             {"s": _object_column(list("abc"))},
             "draw",
-            element_spec=RecordSpec(s=None),
+            element_spec=RecordSpec(s=OpaqueSpec()),
         )
         assert type(numeric.replace({"x": _object_column(list("abc"))})) is RecordBatch
         assert type(plain.replace({"s": jnp.ones(3)})) is NumericRecordBatch
@@ -769,7 +836,7 @@ class TestStructuralTransforms:
             "batch",
             {"s": _object_column(list("ab"))},
             "draw",
-            element_spec=RecordSpec(s=None),
+            element_spec=RecordSpec(s=OpaqueSpec()),
         )
         with pytest.raises(TypeError, match="no stacked form"):
             plain.replace({"s": np.array(["x", "y"])})
@@ -791,8 +858,8 @@ class TestStructuralTransforms:
     def test_a_transform_carries_the_name_and_whether_it_was_given(self):
         """The transform restates both, rather than deriving a fresh name: an
         auto name stays auto and a caller's stays the caller's."""
-        assert nested_batch(name="post").without("m").name == "post"
-        assert nested_batch().without("m").name == "batch"
+        assert nested_batch(name="post").without("m").label == "post"
+        assert nested_batch().without("m").label == "batch"
 
 
 # ---------------------------------------------------------------------------
@@ -840,7 +907,7 @@ class TestElements:
 
     def test_an_element_takes_the_derived_name(self):
         element = nested_batch(name="post")[1]
-        assert element.name == "post[draw=1]"
+        assert element.label == "post[draw=1]"
 
     def test_an_element_shares_the_batchs_spec_object(self):
         """Materializing a row must not allocate a declaration.
@@ -860,7 +927,7 @@ class TestElements:
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
         )
-        assert batch[1, 2].name == "post[chain=1, draw=2]"
+        assert batch[1, 2].label == "post[chain=1, draw=2]"
 
     def test_an_element_inherits_the_batchs_provenance(self):
         from probpipe import Provenance
@@ -887,7 +954,7 @@ class TestLevels:
         assert isinstance(inner, NumericRecordBatch)
         assert inner.level_names == ("draw",)
         assert inner.batch_shape == (3,)
-        assert inner.name == "post[chain=0]"
+        assert inner.label == "post[chain=0]"
 
     def test_at_levels_selects_by_name(self):
         batch = NumericRecordBatch(
@@ -897,7 +964,7 @@ class TestLevels:
             element_spec=RecordSpec(x=()),
         )
         assert batch.at_levels(draw=2).level_names == ("chain",)
-        assert batch.at_levels(chain=1, draw=2).name == "post[chain=1, draw=2]"
+        assert batch.at_levels(chain=1, draw=2).label == "post[chain=1, draw=2]"
         assert float(np.asarray(batch.at_levels(chain=1, draw=2)["x"])) == 5.0
 
     def test_with_level_names_renames(self):
@@ -911,7 +978,7 @@ class TestLevels:
 
     def test_a_renamed_batch_derives_view_names_under_the_new_name(self):
         renamed = nested_batch(name="post").with_level_names(draw="sample")
-        assert renamed[0].name == "post[sample=0]"
+        assert renamed[0].label == "post[sample=0]"
 
     def test_a_descending_slice_is_presented_in_the_order_given(self):
         """The batch base requires storage to honor a reversed selection rather
@@ -922,7 +989,7 @@ class TestLevels:
             np.asarray(reversed_view["outer/a"]), np.asarray([3.0, 2.0, 1.0, 0.0])
         )
         assert reversed_view[0]["outer/a"] == 3.0
-        assert reversed_view.name == "post[draw=3::-1]"
+        assert reversed_view.label == "post[draw=3::-1]"
 
     def test_a_stepped_slice_selects_every_other_element(self):
         batch = nested_batch(4)
@@ -930,7 +997,7 @@ class TestLevels:
 
     def test_a_negative_index_names_the_position_it_resolves_to(self):
         batch = nested_batch(4, name="post")
-        assert batch[-1].name == "post[draw=3]"
+        assert batch[-1].label == "post[draw=3]"
         assert batch[-1]["outer/a"] == 3.0
 
     def test_an_object_column_view_shares_its_parents_store(self):
@@ -939,7 +1006,7 @@ class TestLevels:
             "batch",
             {"site": _object_column(["a", "b", "c", "d"])},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         assert np.shares_memory(batch[1:3]._columns["site"], batch._columns["site"])
 
@@ -949,13 +1016,13 @@ class TestLevels:
             "batch",
             {"site": column},
             "row",
-            element_spec=RecordSpec(site=None),
+            element_spec=RecordSpec(site=OpaqueSpec()),
         )
         with pytest.raises(ValueError, match="read-only"):
             batch._columns["site"][0] = "MUTATED"
         # Nor can the caller's own handle reach in after construction.
         column[0] = "MUTATED"
-        assert batch["site"][0] == "a"
+        assert batch["site"][0].value == "a"
 
     def test_a_slice_keeps_the_level_and_its_values(self):
         batch = nested_batch(4)
@@ -1074,7 +1141,7 @@ class TestFlatLayout:
     def test_round_trip_through_a_vector(self):
         batch = nested_batch()
         rebuilt = NumericRecordBatch.from_vector(
-            batch.name, batch.event_template, batch.to_vector(), level_names="draw"
+            batch.label, batch.event_template, batch.to_vector(), level_names="draw"
         )
         assert rebuilt == batch
 
@@ -1182,6 +1249,18 @@ class TestFlatLayout:
 
 
 class TestStack:
+    def test_stack_types_an_opaque_field_by_what_its_values_share(self):
+        shared = RecordBatch.stack(
+            [Record("r", {"label": "a", "x": 1.0}), Record("r", {"label": "b", "x": 2.0})],
+            level_name="row",
+        )
+        assert shared.element_spec["label"] == OpaqueSpec(type=str)
+        mixed = RecordBatch.stack(
+            [Record("r", {"label": "a", "x": 1.0}), Record("r", {"label": 3, "x": 2.0})],
+            level_name="row",
+        )
+        assert mixed.element_spec["label"] == OpaqueSpec()
+
     def test_stack_builds_one_named_level(self):
         records = [NumericRecord("r", x=jnp.asarray(float(i))) for i in range(3)]
         batch = NumericRecordBatch.stack(records, level_name="draw")
@@ -1239,15 +1318,15 @@ class TestStack:
         conclude the field is an array — the column would come back as the wrong
         batch form and an element would come back as an array, not the int put in.
         """
-        spec = RecordSpec(tag=None, x=(2,))
+        spec = RecordSpec(tag=OpaqueSpec(), x=(2,))
         records = [
             Record(f"r{i}", {"tag": i, "x": jnp.zeros(2)}, event_template=spec) for i in range(3)
         ]
         batch = RecordBatch.stack(records, level_name="draw")
         assert isinstance(batch["tag"], OpaqueBatch)
-        assert batch["tag"][1] == 1
-        assert batch[0]["tag"] == 0
-        assert not isinstance(batch[0]["tag"], jnp.ndarray)
+        assert batch["tag"][1].value == 1
+        assert batch[0].raw("tag") == 0
+        assert not isinstance(batch[0].raw("tag"), jnp.ndarray)
 
     def test_stack_refuses_an_empty_list(self):
         with pytest.raises(ValueError, match="at least one record"):
@@ -1263,12 +1342,12 @@ class TestStack:
 
     def test_stack_stores_a_non_array_field_as_an_object_column(self):
         records = [
-            Record("r", {"site": s}, event_template=RecordSpec(site=None))
+            Record("r", {"site": s}, event_template=RecordSpec(site=OpaqueSpec()))
             for s in ("north", "south")
         ]
         batch = RecordBatch.stack(records, level_name="row")
         assert isinstance(batch["site"], OpaqueBatch)
-        assert batch["site"][1] == "south"
+        assert batch["site"][1].value == "south"
 
     def test_stack_converts_a_leaf_by_its_registered_backend(self, clean_registry):
         """Stacking goes through ``_to_jax_array``, the one conversion every
@@ -1356,7 +1435,7 @@ class TestEqualityAndCopying:
     def test_an_object_column_compares_by_value(self):
         """The object-column path is the only one a non-numeric batch takes, and
         ``jnp.array_equal`` cannot walk it."""
-        spec = RecordSpec(site=None)
+        spec = RecordSpec(site=OpaqueSpec())
         labels = ["north", "south"]
         left = RecordBatch(
             "batch",
@@ -1382,7 +1461,7 @@ class TestEqualityAndCopying:
     def test_an_object_column_of_arrays_compares_by_value(self):
         """Entries that are themselves arrays have no single truth value, so a
         vectorized comparison cannot answer; they are compared entry by entry."""
-        spec = RecordSpec(cov=None)
+        spec = RecordSpec(cov=OpaqueSpec())
         left = RecordBatch(
             "batch",
             {"cov": _object_column([np.zeros(2), np.zeros(3)])},
@@ -1434,13 +1513,15 @@ class TestEqualityAndCopying:
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
         )
-        assert repr(batch) == "NumericRecordBatch(name='post', chain=4, draw=100)"
+        assert repr(batch) == (
+            "NumericRecordBatch('post', levels={'chain': 4, 'draw': 100}, fields=('x',))"
+        )
 
     def test_pickle_round_trip(self):
         batch = nested_batch(name="post")
         rebuilt = pickle.loads(pickle.dumps(batch))
         assert rebuilt == batch
-        assert rebuilt.name == "post"
+        assert rebuilt.label == "post"
 
     def test_copy_round_trip(self):
         batch = nested_batch()
@@ -1465,7 +1546,7 @@ class TestPyTree:
         assert len(leaves) == 3
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
         assert rebuilt == batch
-        assert rebuilt.name == "post"
+        assert rebuilt.label == "post"
 
     def test_the_spec_rides_in_the_aux_by_identity(self):
         batch = nested_batch()

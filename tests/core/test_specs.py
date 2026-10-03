@@ -81,8 +81,29 @@ class TestOutputSpec:
         assert exposed.components["law"] is law
         assert list(OutputSpec(posterior=law).components) == ["posterior"]
 
-    def test_record_none_is_opaque_not_an_output_hole(self):
-        output = OutputSpec(RecordSpec(payload=None))
+    def test_a_law_or_a_batch_exposes_its_components(self):
+        record = RecordSpec(mu=(), tau=())
+        law = OutputSpec(DistributionSpec(OutputSpec(record)))
+        assert (list(law.components), law.exposes_record) == (["mu", "tau"], False)
+        assert law.with_path_names({"mu": "center"}).spec == DistributionSpec(
+            OutputSpec(record.with_path_names({"mu": "center"}))
+        )
+        batch = OutputSpec(BatchSpec(record, ((3,),), ("sample",)))
+        assert (list(batch.components), batch.exposes_record) == (["mu", "tau"], False)
+        with pytest.raises(TypeError, match="exposed law declaration needs"):
+            law.with_spec(record)
+        with pytest.raises(TypeError, match="no record's fields"):
+            _components_record(law)
+
+    def test_a_batch_of_arrays_exposes_no_components(self):
+        with pytest.raises(TypeError):
+            OutputSpec(BatchSpec(NumericArraySpec(()), ((3,),), ("sample",)))
+
+    def test_a_record_field_given_none_is_refused_naming_the_opaque_spec(self):
+        """None is a pending type, so a record field takes OpaqueSpec() instead."""
+        with pytest.raises(TypeError, match=r"OpaqueSpec\(\)"):
+            RecordSpec(payload=None)
+        output = OutputSpec(RecordSpec(payload=OpaqueSpec()))
         assert isinstance(output.components["payload"], OpaqueSpec)
         assert output.is_concrete
 
@@ -143,9 +164,40 @@ class TestOutputSpecCompletion:
             beta=produced
         )
 
+    def test_with_spec_keeps_the_declared_dtype_and_support(self):
+        declared = NumericArraySpec(("k",), jnp.float32, positive)
+        assert OutputSpec(beta=declared).with_spec(NumericArraySpec((3,))) == OutputSpec(
+            beta=NumericArraySpec((3,), jnp.float32, positive)
+        )
+        # A produced dtype that casts to the declared one does not replace it.
+        produced = NumericArraySpec((3,), jnp.float64)
+        assert OutputSpec(beta=declared).with_spec(produced) == OutputSpec(
+            beta=NumericArraySpec((3,), jnp.float32, positive)
+        )
+
+    def test_with_spec_unifies_a_record_field_by_field(self):
+        declared = RecordSpec(a=NumericArraySpec((), jnp.float32), b=NumericArraySpec(("k",)))
+        produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,), jnp.float32))
+        assert OutputSpec(declared).with_spec(produced) == OutputSpec(
+            RecordSpec(a=NumericArraySpec((), jnp.float32), b=NumericArraySpec((2,), jnp.float32))
+        )
+
     def test_with_spec_rejects_a_spec_that_does_not_unify(self):
         with pytest.raises(ValueError, match="has dimension 3, expected 2"):
             OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+
+    def test_with_spec_names_the_node_that_does_not_unify_by_its_path(self):
+        with pytest.raises(ValueError, match=r"^beta has dimension 3"):
+            OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+        whole = OutputSpec(params=RecordSpec(a=NumericArraySpec((2,))))
+        with pytest.raises(ValueError, match=r"^params/a has dimension 3"):
+            whole.with_spec(RecordSpec(a=NumericArraySpec((3,))))
+        # An exposed record's fields are its components, so a path starts at a field.
+        exposed = OutputSpec(RecordSpec(a=NumericArraySpec((2,))))
+        with pytest.raises(ValueError, match=r"^a has dimension 3"):
+            exposed.with_spec(RecordSpec(a=NumericArraySpec((3,))))
+        with pytest.raises(ValueError, match=r"^fields \['b'\] do not match template fields"):
+            exposed.with_spec(RecordSpec(b=NumericArraySpec((2,))))
 
     def test_with_spec_keeps_an_exposed_record_exposed(self):
         produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,)))
@@ -162,27 +214,38 @@ class TestOutputSpecCompletion:
             OutputSpec(prior=array).with_path_names(sigma="s")
         with pytest.raises(KeyError):
             OutputSpec(prior=array).with_path_names({"prior/x": "y"})
-        # The component is renamed in place, so a path target raises.
-        with pytest.raises(ValueError, match="contain no '/'"):
+        # The component is renamed in place: moving it into a group would
+        # change the packaging, so a path target raises.
+        with pytest.raises(ValueError, match="keeps the packaging"):
             OutputSpec(prior=array).with_path_names(prior="group/beta")
 
     def test_a_whole_record_renames_its_fields_through_its_component(self):
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
-        renamed = OutputSpec(parameters=record).with_path_names(
-            {"parameters": "theta", "parameters/beta": "b"}
+        renamed = OutputSpec(parameters=record).with_path_names({"parameters/beta": "parameters/b"})
+        assert renamed == OutputSpec(parameters=record.with_path_names(beta="b"))
+        assert renamed.with_path_names(parameters="theta") == OutputSpec(
+            theta=record.with_path_names(beta="b")
         )
-        assert renamed == OutputSpec(theta=record.with_path_names(beta="b"))
         with pytest.raises(KeyError):
             OutputSpec(parameters=record).with_path_names(beta="b")
 
+    def test_a_component_and_a_field_below_it_are_renamed_in_two_calls(self):
+        # Each target is a new exact path, so renaming the component to theta
+        # and its field to theta/b in one call gives one target inside another.
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        with pytest.raises(ValueError, match="overlap"):
+            OutputSpec(parameters=record).with_path_names(
+                {"parameters": "theta", "parameters/beta": "theta/b"}
+            )
+
     def test_both_packagings_of_one_interface_take_the_same_paths(self):
         inner = RecordSpec(beta=NumericArraySpec(()))
-        renames = {"parameters": "theta", "parameters/beta": "b"}
+        renames = {"parameters/beta": "parameters/b"}
         renamed_inner = RecordSpec(b=NumericArraySpec(()))
-        assert OutputSpec(parameters=inner).with_path_names(renames) == OutputSpec(
-            theta=renamed_inner
-        )
-        assert OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames) == OutputSpec(
+        whole = OutputSpec(parameters=inner).with_path_names(renames)
+        exposed = OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames)
+        assert whole.with_path_names(parameters="theta") == OutputSpec(theta=renamed_inner)
+        assert exposed.with_path_names(parameters="theta") == OutputSpec(
             RecordSpec(theta=renamed_inner)
         )
 
@@ -190,9 +253,29 @@ class TestOutputSpecCompletion:
         record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
         declaration = OutputSpec(beta=record)
         assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
-        assert declaration.with_path_names({"beta/beta": "b"}) == OutputSpec(
+        assert declaration.with_path_names({"beta/beta": "beta/b"}) == OutputSpec(
             beta=record.with_path_names(beta="b")
         )
+
+    def test_a_whole_record_moves_a_field_within_its_component(self):
+        record = RecordSpec(a=NumericArraySpec(()), g=RecordSpec(b=NumericArraySpec(())))
+        moved = OutputSpec(p=record).with_path_names({"p/a": "p/g/a"})
+        assert moved == OutputSpec(
+            p=RecordSpec(g=RecordSpec(b=NumericArraySpec(()), a=NumericArraySpec(())))
+        )
+
+    @pytest.mark.parametrize(
+        "renames",
+        [
+            pytest.param({"p/a": "a"}, id="a-field-out-of-the-component"),
+            pytest.param({"p/a": "p"}, id="a-field-onto-the-component"),
+            pytest.param({"p": "q", "p/a": "p/a2"}, id="a-field-under-the-old-component"),
+        ],
+    )
+    def test_a_whole_record_keeps_its_fields_under_its_component(self, renames):
+        record = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))
+        with pytest.raises(ValueError, match="keeps the packaging"):
+            OutputSpec(p=record).with_path_names(renames)
 
     def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
         record = RecordSpec(beta=NumericArraySpec(()))
@@ -209,9 +292,21 @@ class TestOutputSpecCompletion:
         assert renamed == OutputSpec(record.with_path_names(beta="b"))
         assert renamed.exposes_record
         nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
-        assert tuple(nested.with_path_names({"g/mu": "m"}).components) == ("g",)
+        assert tuple(nested.with_path_names({"g/mu": "g/m"}).components) == ("g",)
         with pytest.raises(KeyError):
             nested.with_path_names(mu="m")
+
+    def test_an_exposed_record_moves_fields_across_its_components(self):
+        scalar = NumericArraySpec(())
+        declaration = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar), y=scalar))
+        out = declaration.with_path_names({"g/mu": "mu"})
+        assert out == OutputSpec(RecordSpec(g=RecordSpec(sigma=scalar), y=scalar, mu=scalar))
+        into = declaration.with_path_names({"y": "g/y"})
+        assert into == OutputSpec(RecordSpec(g=RecordSpec(mu=scalar, sigma=scalar, y=scalar)))
+        assert into.exposes_record
+        # A component the moves empty is removed.
+        emptied = OutputSpec(RecordSpec(g=RecordSpec(mu=scalar))).with_path_names({"g/mu": "m"})
+        assert tuple(emptied.components) == ("m",)
 
 
 class TestDeclarationConstruction:
@@ -313,22 +408,33 @@ class TestDimensionBinding:
         with pytest.raises(TypeError, match="bind_dims_from_spec expects a TermSpec"):
             RecordSpec(x=(3,)).bind_dims_from_spec(actual)
 
-    @pytest.mark.parametrize("actual_name", ["n", "m"])
     @pytest.mark.parametrize("kind", ["array", "batch"])
-    def test_binding_requires_concrete_actual_dimensions(self, actual_name, kind):
+    def test_a_name_both_sides_declare_is_one_free_dimension(self, kind):
         if kind == "array":
-            declared = NumericArraySpec(("n",))
-            actual = NumericArraySpec((actual_name,))
-            message = "concrete dimensions are required"
+            declared, actual = NumericArraySpec(("n",)), NumericArraySpec(("n",))
         else:
             declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
-            actual = BatchSpec(OpaqueSpec(), [(actual_name,)], ["draw"])
-            message = "non-concrete dimension"
+            actual = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
+        assert declared.bind_dims_from_spec(actual).free_dims == {"n"}
 
-        with pytest.raises(ValueError, match=message):
+    @pytest.mark.parametrize("kind", ["array", "batch"])
+    def test_two_different_names_at_one_axis_raise(self, kind):
+        if kind == "array":
+            declared, actual = NumericArraySpec(("n",)), NumericArraySpec(("m",))
+        else:
+            declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
+            actual = BatchSpec(OpaqueSpec(), [("m",)], ["draw"])
+        with pytest.raises(ValueError, match="meets the symbolic dimensions 'n' and 'm'"):
             declared.bind_dims_from_spec(actual)
-        assert declared.free_dims == {"n"}
-        assert actual.free_dims == {actual_name}
+
+    def test_a_symbol_on_the_other_side_binds_to_this_side_size(self):
+        declared = RecordSpec(a=(3,), b=("m",))
+        actual = RecordSpec(a=("m",), b=("m",))
+        assert declared.bind_dims_from_spec(actual) == RecordSpec(a=(3,), b=(3,))
+
+    def test_a_symbol_bound_on_one_side_constrains_the_other(self):
+        with pytest.raises(ValueError, match="already bound to 3"):
+            RecordSpec(a=(3,), b=(4,)).bind_dims_from_spec(RecordSpec(a=("m",), b=("m",)))
 
     @pytest.mark.parametrize(
         ("expected", "actual_spec", "actual_value", "value_error"),
@@ -393,7 +499,10 @@ class TestDimensionBinding:
             data=NumericArraySpec(("n", "m"), dtype="float32"),
             batch=BatchSpec(NumericArraySpec(("n",)), [("m",)], ["draw"]),
             law=DistributionSpec(RecordSpec(x=("n",))),
-            function=FunctionSpec(RecordSpec(x=("m",)), NumericArraySpec(("n",))),
+            function=FunctionSpec(
+                InputSpec(RecordSpec(x=("m",)).children),
+                OutputSpec(result=NumericArraySpec(("n",))),
+            ),
         )
         renamed = spec.with_dim_names(n="m", m="n")
         assert renamed["data"].shape == ("m", "n")
@@ -402,8 +511,8 @@ class TestDimensionBinding:
         assert renamed["batch"].element_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
         assert renamed["law"].event_spec.components["x"].shape == ("m",)
-        assert renamed["function"].input_template["x"].shape == ("n",)
-        assert renamed["function"].output_spec.shape == ("m",)
+        assert renamed["function"].input_spec["x"].shape == ("n",)
+        assert renamed["function"].output_spec.spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
         for value in (None, "", 2):
             with pytest.raises(TypeError):
@@ -451,25 +560,30 @@ class TestSpecKinds:
 
         law = Normal("x", 0.0, 1.0)
         function = Function(
-            func=lambda x: x, input_template=RecordSpec(x=()), output_template=RecordSpec(y=())
+            label="function",
+            fn=lambda x: x,
+            input_spec=InputSpec(RecordSpec(x=()).children),
+            output_spec=RecordSpec(y=()),
         )
         schema = RecordSpec.infer_from(
             {"law": law, "function": function, "raw_callable": lambda x: x}
         )
         assert schema["law"] == law.spec
-        assert schema["function"] == FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
+        assert schema["function"] == FunctionSpec(
+            InputSpec(RecordSpec(x=()).children), OutputSpec(RecordSpec(y=()))
+        )
         assert schema["raw_callable"] == FunctionSpec()
 
     def test_an_empirical_over_opaque_atoms_is_a_distribution_field(self):
-        from probpipe import EmpiricalDistribution
+        from probpipe import EmpiricalDistribution, OpaqueBatch
 
-        law = EmpiricalDistribution("law", ["a", "b"])
+        law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "law"))
         schema = RecordSpec.infer_from({"law": law})
         assert schema["law"] == law.spec
-        assert law.event_spec == OutputSpec(law=OpaqueSpec())
+        assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
         record = Record("r", law=law)
-        assert record["law"] is law
+        assert type(record["law"]) is type(law) and record["law"].spec == law.spec
         assert record.spec == schema
         assert schema.is_valid(record)
 
@@ -501,7 +615,7 @@ class TestSpecKinds:
             def is_valid(self, value):
                 return np.shape(value) == (self.size,)
 
-        schema = RecordSpec(x=Coordinates(4), nested=RecordSpec(y=(2, 3)), label=None)
+        schema = RecordSpec(x=Coordinates(4), nested=RecordSpec(y=(2, 3)), label=OpaqueSpec())
         numeric = schema.numeric_subset()
         assert isinstance(numeric, NumericRecordSpec)
         assert numeric.vector_size == 10
@@ -520,11 +634,45 @@ class TestDistributionSchemaAvailability:
         assert inferred["law"] == DistributionSpec(template)
         assert inferred["law"].event_spec.spec is template
         record = Record("r", law=law)
-        assert record["law"] is law
+        assert type(record["law"]) is type(law) and record["law"].spec == law.spec
         assert record.spec == inferred
 
 
 class TestInputSpec:
+    def test_optional_slots_are_part_of_the_declaration(self):
+        array = NumericArraySpec(())
+        inputs = InputSpec(a=array, b=array).with_optional("b")
+        assert inputs.required == ("a",)
+        assert inputs.optional == {"b"}
+        assert inputs != InputSpec(a=array, b=array)
+        assert hash(inputs) != hash(InputSpec(a=array, b=array))
+        assert repr(inputs).endswith(".with_optional('b')")
+
+    def test_an_optional_slot_stays_optional(self):
+        inputs = InputSpec(a=NumericArraySpec(("n",)), b=NumericArraySpec(())).with_optional("b")
+        assert inputs.with_dim_sizes(n=2).optional == {"b"}
+        assert inputs.with_dim_names(n="m").optional == {"b"}
+        assert inputs.bind_dims_from_value({"a": np.ones(2), "b": 1.0}).optional == {"b"}
+        assert inputs.bind_dims_from_spec(inputs.with_dim_sizes(n=2)).optional == {"b"}
+        assert inputs.without("a").optional == {"b"}
+        assert inputs.without("b").optional == frozenset()
+
+    def test_marking_slots_optional_accumulates(self):
+        array = NumericArraySpec(())
+        inputs = InputSpec(a=array, b=array, c=array).with_optional("a").with_optional("c")
+        assert inputs.optional == {"a", "c"}
+        assert inputs.required == ("b",)
+
+    def test_an_input_spec_with_optional_slots_pickles(self):
+        import pickle
+
+        inputs = InputSpec(a=NumericArraySpec(()), b=NumericArraySpec(())).with_optional("b")
+        assert pickle.loads(pickle.dumps(inputs)) == inputs
+
+    def test_marking_an_unknown_slot_optional_raises(self):
+        with pytest.raises(KeyError, match="'c'"):
+            InputSpec(a=NumericArraySpec(())).with_optional("c")
+
     def test_binding_values_requires_a_mapping(self):
         with pytest.raises(TypeError, match=r"InputSpec\.bind_dims_from_value expects a mapping"):
             InputSpec(x=OpaqueSpec()).bind_dims_from_value(None)
@@ -647,16 +795,32 @@ class TestNestedValueBinding:
     def test_fixed_and_concretized_specs_follow_the_same_binding_rules(
         self, wrap_binding, kind, size
     ):
-        from probpipe import EmpiricalDistribution, Function
+        from probpipe import EmpiricalDistribution, Function, NumericRecordBatch
 
         if kind == "function":
-            spec_type = FunctionSpec
-            reference = Function(func=lambda x: x, input_template=RecordSpec(x=(3,)))
-            actual = Function(func=lambda x: x, input_template=RecordSpec(x=(size,)))
+
+            def spec_type(spec):
+                return FunctionSpec(InputSpec(spec.children))
+
+            reference = Function(
+                label="function", fn=lambda x: x, input_spec=InputSpec(RecordSpec(x=(3,)).children)
+            )
+            actual = Function(
+                label="function",
+                fn=lambda x: x,
+                input_spec=InputSpec(RecordSpec(x=(size,)).children),
+            )
         else:
             spec_type = DistributionSpec
-            reference = EmpiricalDistribution("x", np.zeros((2, 3)))
-            actual = EmpiricalDistribution("x", np.zeros((2, size)))
+
+            def law(width):
+                atoms = NumericRecordBatch(
+                    "rows", {"x": np.zeros((2, width))}, "row", element_spec=RecordSpec(x=(width,))
+                )
+                return EmpiricalDistribution("x", atoms)
+
+            reference = law(3)
+            actual = law(size)
 
         # Both kinds bind by unification; function binding reads the available
         # declarations without checking callable compatibility.
@@ -768,7 +932,7 @@ class TestNestedValueBinding:
             assert declared.bind_dims_from_value(value) == declared
 
     def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
-        symbolic = FunctionSpec(RecordSpec(x=("n",)))
+        symbolic = FunctionSpec(InputSpec(RecordSpec(x=("n",)).children))
         for spec in (symbolic, symbolic.with_dim_sizes(n=3)):
             declared, value = wrap_binding(spec, lambda x: x)
             assert declared.bind_dims_from_value(value) == declared
@@ -796,16 +960,20 @@ class TestNestedSpecBinding:
     @pytest.mark.parametrize(
         "expected, actual, result",
         [
-            (FunctionSpec(), FunctionSpec(output_spec=NumericArraySpec((3,))), FunctionSpec()),
             (
-                FunctionSpec(RecordSpec(x=("n",))),
                 FunctionSpec(),
-                FunctionSpec(RecordSpec(x=("n",))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
+                FunctionSpec(),
             ),
             (
-                FunctionSpec(output_spec=NumericArraySpec(("n",))),
-                FunctionSpec(output_spec=NumericArraySpec((3,))),
-                FunctionSpec(output_spec=NumericArraySpec((3,))),
+                FunctionSpec(InputSpec(RecordSpec(x=("n",)).children)),
+                FunctionSpec(),
+                FunctionSpec(InputSpec(RecordSpec(x=("n",)).children)),
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec(("n",)))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
             ),
             (
                 NumericArraySpec((3,)),
@@ -824,8 +992,8 @@ class TestNestedSpecBinding:
         [
             (FunctionSpec(), OpaqueSpec()),
             (
-                FunctionSpec(output_spec=NumericArraySpec((2,))),
-                FunctionSpec(output_spec=NumericArraySpec((3,))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((2,)))),
+                FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((3,)))),
             ),
             (NumericArraySpec((3,), dtype="int32"), NumericArraySpec((3,), dtype="float32")),
             (NumericArraySpec((3,)), RecordSpec(x=(3,))),

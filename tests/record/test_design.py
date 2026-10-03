@@ -23,8 +23,8 @@ from probpipe import (
 
 # Some assertions use NumericRecord / NumericRecordBatch — these only
 # appear as Function outputs, not as Design types. A Design is
-# always a plain RecordBatch subclass; the columns themselves are
-# jnp.ndarray for numeric marginals.
+# always a plain RecordBatch subclass; a numeric marginal's column is a
+# NumericArrayBatch over the stored jnp.ndarray.
 
 
 # ---------------------------------------------------------------------------
@@ -44,9 +44,9 @@ class TestFullFactorial:
         assert ff.batch_shape == (6,)
         # Fields come back in insertion order.
         assert ff.event_template.fields == ("r", "K")
-        # Numeric-only marginals produce ``jnp.ndarray`` column leaves.
-        assert isinstance(ff["r"], jnp.ndarray)
-        assert isinstance(ff["K"], jnp.ndarray)
+        # A numeric marginal's column is a NumericArrayBatch over a ``jnp.ndarray``.
+        assert isinstance(ff["r"], NumericArrayBatch)
+        assert isinstance(ff["K"].raw(), jnp.ndarray)
 
     def test_row_order_is_lexicographic(self):
         """With insertion-order axes ``r`` (outer) and ``K`` (inner),
@@ -81,7 +81,7 @@ class TestFullFactorial:
         assert not isinstance(ff, NumericRecordBatch)
         assert ff.batch_shape == (4,)
         # Insertion order: method outer, scale inner.
-        assert list(ff["method"]) == ["nutpie", "nutpie", "pymc", "pymc"]
+        assert [element.value for element in ff["method"]] == ["nutpie", "nutpie", "pymc", "pymc"]
         np.testing.assert_allclose(
             np.asarray(ff["scale"]),
             [0.5, 1.0, 0.5, 1.0],
@@ -193,23 +193,36 @@ class TestDesignAsSweep:
         assert out_a.batch_shape == out_b.batch_shape == (6,)
         np.testing.assert_allclose(out_a.values, out_b.values)
 
-    def test_raw_fields_still_cartesian_product(self):
-        """Passing raw columns (``design["r"]``, ``design["K"]``) gives
-        the expected independent-arrays behaviour: they cartesian-product
-        because they carry no parent-identity signal the WF layer can
-        use to zip them."""
+    def test_columns_zip_on_the_design_level(self):
+        """Two columns of a design (``design["r"]``, ``design["K"]``) are
+        batches on the design's level, so the sweep zips them, one inner call
+        per row, as it does the single Record-arg pattern."""
 
         @function
         def product(r, K):
             return r * K
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
-        # Raw columns → two independent jnp.ndarrays. With no type
-        # hints they're passed to the body wholesale and JAX broadcasts
-        # the arithmetic to a (6,)-array; WF wraps as NumericRecord.
         out = product(r=ff["r"], K=ff["K"])
-        # Confirm the output is a single value carrying the arithmetic
-        # result, not a swept NumericArrayBatch.
+        assert isinstance(out, NumericArrayBatch)
+        assert out.batch_shape == (6,)
+        np.testing.assert_allclose(
+            out.values,
+            [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
+        )
+
+    def test_raw_columns_pass_whole(self):
+        """The raw columns (``design["r"].raw()``, ``design["K"].raw()``) are
+        two bare arrays, so with no type hints the body receives them whole
+        and JAX broadcasts the arithmetic to a (6,)-array."""
+
+        @function
+        def product(r, K):
+            return r * K
+
+        ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
+        out = product(r=ff["r"].raw(), K=ff["K"].raw())
+        # A single value carrying the arithmetic result, not a swept batch.
         assert isinstance(out, NumericArray)
         assert out.shape == (6,)
 
@@ -231,7 +244,7 @@ class TestDesignAsSweep:
         # the elements are reached by position rather than by a field name.
         assert isinstance(out, OpaqueBatch)
         assert out.batch_shape == (4,)
-        assert [out[i] for i in range(4)] == [
+        assert [out[i].value for i in range(4)] == [
             "nutpie-0.5",
             "nutpie-1.0",
             "pymc-0.5",

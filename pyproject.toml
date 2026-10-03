@@ -77,6 +77,8 @@ testpaths = ["tests"]
 addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
+    "bayesflow: marks tests requiring the bayesflow extra (select with '-m bayesflow')",
+    "stan: marks tests requiring BridgeStan (select with '-m stan')",
 ]
 
 [tool.ruff]
@@ -126,12 +128,14 @@ exclude = ["*.ipynb"]
 [tool.ruff.lint.per-file-ignores]
 # Re-export facades: unused-import (F401) is the point, and __init__ modules
 # set up warnings or registration before importing, so module imports aren't
-# all at the top (E402).
-"__init__.py" = ["F401", "E402"]
+# all at the top (E402). The future import of STYLE_GUIDE.md §4.1 is required
+# of the other modules of probpipe/ only (I002).
+"__init__.py" = ["F401", "E402", "I002"]
+"!probpipe/**" = ["I002"]
 # Demo scripts and tests legitimately import after setup (sys.path / env) or a
 # pytest.importorskip(...) guard, so E402 there is expected.
-"example_scripts/*" = ["E402"]
 "tests/**" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["probpipe"]
+required-imports = ["from __future__ import annotations"]

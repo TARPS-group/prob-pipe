@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -77,7 +76,7 @@ class TestARawReturnWrapsIntoItsOwnKind:
         def scaled(x):
             return x * 3
 
-        assert scaled(jnp.asarray(1.0)).name == "scaled"
+        assert scaled(jnp.asarray(1.0)).label == "scaled"
 
 
 class TestTheKindsAreOrderedNotDisjoint:
@@ -93,8 +92,8 @@ class TestTheKindsAreOrderedNotDisjoint:
 
     def test_every_tracked_term_keeps_its_kind(self):
         """Whatever the kind, a term keeps it."""
-        inner = Function(func=lambda x: x + 1, name="inner")
-        outer = Function(func=lambda: inner, name="outer")
+        inner = Function(fn=lambda x: x + 1, label="inner")
+        outer = Function(fn=lambda: inner, label="outer")
 
         assert isinstance(outer(), Function)
 
@@ -111,28 +110,28 @@ class TestTheKindsAreOrderedNotDisjoint:
     )
     def test_the_rule_is_the_same_for_every_kind(self, make):
         kind = type(make())
-        returning = Function(func=make, name="returning")
+        returning = Function(fn=make, label="returning")
 
         assert isinstance(returning(), kind)
 
 
 class TestTheOperationsReturnTheirDeclaredKind:
     def test_log_prob_is_a_numeric_array(self):
-        law = Normal(loc=0.0, scale=1.0, name="x")
+        law = Normal(loc=0.0, scale=1.0, label="x")
 
         assert isinstance(log_prob(law, 0.0), NumericArray)
 
     def test_mean_of_a_scalar_law_is_a_numeric_array(self):
-        assert isinstance(mean(Normal(loc=2.0, scale=1.0, name="x")), NumericArray)
+        assert isinstance(mean(Normal(loc=2.0, scale=1.0, label="x")), NumericArray)
 
     def test_a_scalar_draw_is_a_numeric_array(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), key=jax.random.PRNGKey(0))
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"))
 
         assert isinstance(drawn, NumericArray)
 
     def test_a_numeric_array_result_still_computes(self):
         """A result computes directly, which is what the array surface is for."""
-        law = Normal(loc=0.0, scale=1.0, name="x")
+        law = Normal(loc=0.0, scale=1.0, label="x")
 
         assert float(log_prob(law, 0.0) * 2) == pytest.approx(
             float(np.asarray(log_prob(law, 0.0))) * 2
@@ -143,7 +142,7 @@ class TestASampleShapeGetsADrawLevel:
     """Design V.2: the leading dimensions go on a level named `draw`."""
 
     def test_no_sample_shape_is_one_value(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), key=jax.random.PRNGKey(0))
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"))
 
         assert isinstance(drawn, NumericArray)
 
@@ -151,11 +150,7 @@ class TestASampleShapeGetsADrawLevel:
     def test_draws_land_on_one_draw_level(self, sample_shape):
         from probpipe import NumericArrayBatch
 
-        drawn = sample(
-            Normal(loc=0.0, scale=1.0, name="x"),
-            sample_shape=sample_shape,
-            key=jax.random.PRNGKey(0),
-        )
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=sample_shape)
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == sample_shape
@@ -165,9 +160,9 @@ class TestASampleShapeGetsADrawLevel:
         """A vector law draws vectors, so its event axes stay with the element."""
         from probpipe import MultivariateNormal, NumericArrayBatch
 
-        law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
+        law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="v")
 
-        drawn = sample(law, sample_shape=(5,), key=jax.random.PRNGKey(0))
+        drawn = sample(law, sample_shape=(5,))
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == (5,)
@@ -175,64 +170,43 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.shape == (5, 3)
 
     def test_an_element_is_one_draw(self):
-        drawn = sample(
-            Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(5,), key=jax.random.PRNGKey(0)
-        )
+        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(5,))
 
         assert isinstance(drawn[2], NumericArray)
         assert drawn[2].shape == ()
 
-    def test_a_record_law_still_draws_its_own_batch(self):
-        """A record law builds its own batch."""
-        from probpipe import NumericRecordBatch, ProductDistribution
+    def test_a_joint_draws_a_batch_of_records_under_its_declaration(self):
+        """A law whose draws are a mapping of columns draws the batch its declaration names."""
+        from probpipe import NumericRecordBatch
 
-        law = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
-        )
+        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
 
-        drawn = sample(law, sample_shape=(5,), key=jax.random.PRNGKey(0))
+        drawn = sample(law, sample_shape=(4,))
 
         assert isinstance(drawn, NumericRecordBatch)
+        assert (drawn.batch_shape, drawn.level_names) == ((4,), ("sample",))
+        assert drawn.element_spec == law.event_spec.spec
 
-    @pytest.mark.parametrize("kind", ["numeric", "record", "object"])
-    @pytest.mark.parametrize(
-        "shape, sample_shape",
-        [
-            ((2, 7), (5,)),
-            ((5,), (3,)),
-            ((3, 2), (2, 3)),
-            ((6,), (2, 3)),
-            ((), (1,)),
-            ((0, 2), (2, 0)),
-        ],
-        ids=["event-axes", "count", "same-size", "missing-axis", "scalar", "empty"],
-    )
-    def test_a_law_that_does_not_prepend_its_draws_is_left_alone(self, kind, shape, sample_shape):
-        """Mismatched leading axes leave the original draw intact."""
-        from probpipe.core.ops import _drawn_at_its_batch_form
+    def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
+        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
 
-        if kind == "object":
-            original = np.full(shape, "value", dtype=object)
-        else:
-            values = jnp.zeros(shape)
-            original = Record("law", x=values) if kind == "record" else values
+        drawn = sample(law)
 
-        drawn = _drawn_at_its_batch_form(original, sample_shape, name="law")
-
-        assert drawn is original
+        assert isinstance(drawn, Record)
+        assert drawn.spec == law.event_spec.spec
 
 
 class TestAnEmptyReturnKeepsItsHostsKind:
     """The kind follows the host's type, and having no entries does not change it.
 
-    A mapping is a tree and a sequence a multiplicity whether or not anything is
+    A mapping is a tree and a sequence an opaque value whether or not anything is
     in it. Reading the kind off the *cardinality* instead would give a function
     returning a dict a result type that varies with its data.
     """
 
     @staticmethod
     def _returned(value):
-        return Function(func=lambda: value, name="f")()
+        return Function(fn=lambda: value, label="f")()
 
     def test_an_empty_mapping_is_an_empty_record(self):
         result = self._returned({})
@@ -240,19 +214,12 @@ class TestAnEmptyReturnKeepsItsHostsKind:
         assert isinstance(result, Record)
         assert list(result.event_template) == []
 
-    @pytest.mark.parametrize("sequence", [[], ()], ids=["list", "tuple"])
-    def test_an_empty_sequence_is_a_batch_of_no_elements(self, sequence):
-        """No element to read a kind off, so the batch claims the least it can.
-
-        Every element spec holds vacuously of no elements, which is why the
-        opaque one is not a narrowing here.
-        """
-        from probpipe import OpaqueBatch
-
+    @pytest.mark.parametrize("sequence", [[], (), set()], ids=["list", "tuple", "set"])
+    def test_an_empty_sequence_is_opaque(self, sequence):
         result = self._returned(sequence)
 
-        assert isinstance(result, OpaqueBatch)
-        assert (result.batch_shape, result.level_names) == ((0,), ("f",))
+        assert isinstance(result, Opaque)
+        assert result.value == sequence
 
     def test_an_empty_array_is_still_an_array(self):
         """Distinct from an empty container: the kind was never in doubt."""
@@ -262,40 +229,44 @@ class TestAnEmptyReturnKeepsItsHostsKind:
         assert result.shape == (0,)
 
 
-class TestASequenceAggregatesAtItsRowsKind:
-    """The multiplicity side of the same table: rows batch at their own kind.
-
-    Numeric rows had a batch form and opaque or callable ones did not, so they
-    fell to a single-field `RecordBatch` keyed by the function's name — the
-    burial this boundary otherwise stopped doing.
-    """
+class TestAReturnedSequenceIsOpaque:
+    """A list, a tuple, or a set is one Opaque, and a batch is declared through
+    ``output_spec``."""
 
     @staticmethod
-    def _returned(value):
-        return Function(func=lambda: value, name="f")()
+    def _returned(value, **declaration):
+        return Function(fn=lambda: value, label="f", **declaration)()
 
-    def test_numeric_rows_batch_as_arrays(self):
-        from probpipe import NumericArrayBatch
+    @pytest.mark.parametrize(
+        "value",
+        [[1.0, 2.0], ("a", "b"), [lambda: 1, lambda: 2], {1, 2}],
+        ids=["numeric", "strings", "callables", "set"],
+    )
+    def test_a_sequence_is_one_opaque_under_the_functions_name(self, value):
+        result = self._returned(value)
 
-        assert isinstance(self._returned([1.0, 2.0]), NumericArrayBatch)
+        assert isinstance(result, Opaque)
+        assert result.label == "f"
+        assert result.value == value
 
-    def test_opaque_rows_batch_as_opaque(self):
-        from probpipe import OpaqueBatch
+    def test_a_declared_batch_takes_the_sequence_as_its_elements(self):
+        from probpipe import BatchSpec, NumericArrayBatch, NumericArraySpec
 
-        result = self._returned(["a", "b"])
+        declared = BatchSpec(NumericArraySpec(()), (("n",),), ("item",))
+        result = self._returned([1.0, 2.0, 3.0], output_spec=declared)
+
+        assert isinstance(result, NumericArrayBatch)
+        assert (result.batch_shape, result.level_names) == ((3,), ("item",))
+        np.testing.assert_array_equal(np.asarray(result.values), [1.0, 2.0, 3.0])
+
+    def test_a_declared_batch_of_opaque_elements_stores_each_one(self):
+        from probpipe import BatchSpec, OpaqueBatch, OpaqueSpec
+
+        declared = BatchSpec(OpaqueSpec(), ((2,),), ("item",))
+        result = self._returned(["a", "b"], output_spec=declared)
 
         assert isinstance(result, OpaqueBatch)
-        assert [result[0], result[1]] == ["a", "b"]
-
-    def test_callable_rows_batch_as_functions(self):
-        from probpipe import FunctionBatch
-
-        assert isinstance(self._returned([lambda: 1, lambda: 2]), FunctionBatch)
-
-    def test_every_kind_takes_the_functions_name(self):
-        """The last-ditch branch alone used to leave the aggregate auto-named."""
-        for value in ([1.0, 2.0], ["a", "b"], [lambda: 1], []):
-            assert self._returned(value).name == "f"
+        assert [result[0].value, result[1].value] == ["a", "b"]
 
 
 class TestAnEmptyRecordHasNoBatch:
@@ -355,7 +326,7 @@ class TestEachSweptRowTakesItsOwnKind:
         )
 
     def _swept(self, body, dispatch):
-        return Function(func=body, name="f", dispatch=dispatch)(v=self._rows())
+        return Function(fn=body, label="f", dispatch=dispatch)(v=self._rows())
 
     def test_a_mapping_row_gives_a_batch_of_records(self, dispatch):
         out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, dispatch)
@@ -380,43 +351,26 @@ class TestEachSweptRowTakesItsOwnKind:
 
         assert list(out.event_template) == ["y"]
 
-    def test_a_sequence_row_keeps_its_own_level(self, dispatch):
-        """The row's multiplicity is a level, not part of the element's shape."""
-        out = self._swept(lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])], dispatch)
-
-        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
-
     @pytest.mark.parametrize(
-        ("body", "expected"),
+        "body",
         [
-            (lambda v: [object(), object()], "OpaqueBatch"),
-            (lambda v: [lambda z: z, lambda z: z], "FunctionBatch"),
+            lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])],
+            lambda v: [object(), object()],
+            lambda v: (lambda z: z, lambda z: z),
+            lambda v: [],
+            lambda v: [[jnp.asarray(v["x"])], [jnp.asarray(v["x"])]],
         ],
-        ids=["opaque", "callable"],
+        ids=["arrays", "objects", "callables", "empty", "nested"],
     )
-    def test_a_row_of_unstackable_elements_keeps_its_level_too(self, dispatch, body, expected):
-        """The level does not depend on what the elements are.
+    def test_a_sequence_row_is_one_opaque_element(self, dispatch, body):
+        """A returned sequence is an Opaque, so each row stores one element and
+        the sweep's level is the only one."""
+        from probpipe import OpaqueBatch
 
-        These rows were stored whole: the row's own batch became one opaque
-        element of the aggregate, so its multiplicity vanished and a batch of
-        callables came back as opaque.
-        """
         out = self._swept(body, dispatch)
 
-        assert type(out).__name__ == expected
-        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
-
-    def test_an_empty_sequence_row_counts_zero_on_its_level(self, dispatch):
-        """A batch of nothing is still a batch, as it is for a single return."""
-        out = self._swept(lambda v: [], dispatch)
-
-        assert (out.batch_shape, out.level_names) == ((3, 0), ("row", "f"))
-
-    def test_two_nested_anonymous_levels_are_refused(self, dispatch):
-        """Both would take the function's name, and a clash is not resolved by
-        suffixing it."""
-        with pytest.raises(ValueError, match="level names must be unique"):
-            self._swept(lambda v: [[jnp.asarray(v["x"])], [jnp.asarray(v["x"])]], dispatch)
+        assert isinstance(out, OpaqueBatch)
+        assert (out.batch_shape, out.level_names) == ((3,), ("row",))
 
     def test_a_batch_row_keeps_the_level_it_named(self, dispatch):
         """A row that names its own level keeps that name inside the sweep's."""
@@ -441,12 +395,6 @@ class TestEachSweptRowTakesItsOwnKind:
         with pytest.raises(ValueError, match="differing shapes"):
             self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1), dispatch)
 
-    def test_a_disagreement_inside_a_returned_sequence_is_not_swallowed(self):
-        """The stack has a batch form for every element kind, so what raises here
-        is the rows disagreeing — which the caller should see."""
-        with pytest.raises(ValueError, match="differing shapes"):
-            Function(func=lambda: [jnp.ones(1), jnp.ones(2)], name="g")()
-
 
 class TestASweptEmptyMappingHitsTheSameWall:
     """Per-row wrapping makes a `{}` row a `Record`, so the sweep reaches the
@@ -465,4 +413,4 @@ class TestASweptEmptyMappingHitsTheSameWall:
         )
 
         with pytest.raises(ValueError, match="at least one field"):
-            Function(func=lambda v: {}, name="f", dispatch=dispatch)(v=rows)
+            Function(fn=lambda v: {}, label="f", dispatch=dispatch)(v=rows)

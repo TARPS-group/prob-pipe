@@ -110,6 +110,42 @@ jobs:
             echo "_Full report in the \"Pyright\" step log above. Type checking is advisory; see CONTRIBUTING.md § Type checking._"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The design ledger: the stubs the package declares but does not yet
+  # implement, the tests marked pending, and the stale uses of removed names in
+  # the docs notebooks (scripts/design/ledger.py). The job reports the three
+  # lists in its summary and fails when the docs use a removed name, since the
+  # stubs and the pending tests stay while the code catches up with design/.
+  ledger:
+    name: design ledger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc --extra pyabc
+
+      - name: Run the ledger
+        run: |
+          set -o pipefail
+          uv run --frozen python scripts/design/ledger.py --require-no-stale-docs | tee ledger.txt
+
+      - name: Surface the ledger counts
+        if: always()
+        run: |
+          {
+            echo "### Design ledger (fails on stale docs)"
+            echo '```'
+            grep -E '^(stubs|pending tests|stale docs):' ledger.txt || echo "no counts found"
+            echo '```'
+            echo "_Full lists in the \"Run the ledger\" step log above._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -161,17 +197,12 @@ jobs:
             done
           fi
 
-          # Check RUN_ALL before the empty-CHANGED skip, so a foundational
-          # change with no .py edits (e.g. a pyproject.toml-only PR) still
-          # runs the full suite instead of being skipped.
+          # Check RUN_ALL first, so a foundational change with no .py edits
+          # (e.g. a pyproject.toml-only PR) still runs the full suite.
           if [ "$RUN_ALL" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             echo "run_all=true" >> "$GITHUB_OUTPUT"
             echo "Will run ALL tests (foundational change detected)."
-          elif [ -z "$CHANGED" ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "run_all=false" >> "$GITHUB_OUTPUT"
-            echo "No .py files changed — skipping tests."
           else
             # Expand changed source files to their transitively-dependent
             # modules via the shared, unit-tested import-graph builder
@@ -207,6 +238,27 @@ jobs:
               echo "$MAPPED"
               TEST_TARGETS="$TEST_TARGETS $MAPPED"
             fi
+
+            # Tests that read files rather than import the changed modules, so
+            # the import graph cannot select them. The conformance tests
+            # compare the code blocks of design/ with the code; tests/docs/
+            # checks what the rule documents, the agent files, and the
+            # CHANGELOG cite, including probpipe names; tests/ci/ covers the
+            # scripts; and tests/test_version.py checks the packaging lockstep.
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                design/*|scripts/design/*)
+                  TEST_TARGETS="$TEST_TARGETS $(git ls-files 'tests/*/test_design_conformance.py' | xargs) tests/docs tests/ci" ;;
+                scripts/docs/*|docs/*|README.md|mkdocs.yml|mkdocs_hooks.py)
+                  TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
+                scripts/*)
+                  TEST_TARGETS="$TEST_TARGETS tests/ci" ;;
+                probpipe/*|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|CONTRACTS.md|STYLE_GUIDE.md|CHANGELOG.md|.github/PULL_REQUEST_TEMPLATE.md|.claude/*)
+                  TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
+                packaging/*)
+                  TEST_TARGETS="$TEST_TARGETS tests/test_version.py" ;;
+              esac
+            done
 
             # Deduplicate (works for both file paths and directory paths)
             TEST_TARGETS=$(echo "$TEST_TARGETS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
@@ -319,10 +371,14 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
-          # Globs, not single files: the BayesFlow backend is being split into
-          # multiple modules (NLE/NRE), so match the whole family.
+          # Run for a change to a module of the backend or a helper of its tests,
+          # or to a test file that holds tests marked `bayesflow`, since this leg
+          # runs those tests.
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'probpipe/inference/_bayesflow*.py' 'tests/inference/test_bayesflow*.py' || true)
+            -- 'probpipe/inference/_bayesflow*.py' 'tests/inference/_bayesflow*.py' || true)
+          CHANGED_TESTS=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'tests/*.py' || true)
+          MARKED=$(echo "$CHANGED_TESTS" | xargs -r grep -lF 'pytest.mark.bayesflow' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_BF=false
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -336,7 +392,7 @@ jobs:
                   RUN_BF=true ;;
               esac
             done
-            [ -n "$CHANGED" ] && RUN_BF=true
+            [ -n "$CHANGED$MARKED" ] && RUN_BF=true
           fi
           if [ "$RUN_BF" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -362,8 +418,9 @@ jobs:
 
       - name: Run BayesFlow backend tests
         if: steps.bf_check.outputs.skip != 'true'
-        # Glob to pick up the split BayesFlow test files (NLE/NRE) as they land.
-        run: uv run pytest tests/inference/test_bayesflow*.py --cov-report=xml
+        # Runs every test in the suite marked `bayesflow` (registered in
+        # pyproject.toml); the other jobs lack the extra and skip those tests.
+        run: uv run pytest tests -m bayesflow --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         # The main test job does not install [bayesflow], so its run measures
@@ -382,11 +439,15 @@ jobs:
     # programs (needs a C++ toolchain — ubuntu-latest provides one). Kept
     # separate from the main matrix so the per-model compile cost stays out of
     # every leg: the main matrix runs StanModel's pure tests (the name parser,
-    # the bridgestan-missing guard, the CmdStan import shim) and skips the
-    # compile-backed ones (gated by the _stan_toolchain fixture). One leg only —
+    # the bridgestan-missing guard, the CmdStan import shim) and skips the tests
+    # marked `stan`, which need BridgeStan. One leg only —
     # BridgeStan is a C++/ctypes backend, so behaviour doesn't vary by Python
     # version and the compile cost is paid per leg.
     runs-on: ubuntu-latest
+    env:
+      # The CmdStan release the cmdstan_nuts tests run against; the cache key
+      # below names it, so a bump builds the new release once.
+      CMDSTAN_VERSION: "2.40.0"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -406,9 +467,16 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
+          # Run for a change to the Stan adapter, a Stan test helper, or a test
+          # file that holds tests marked `stan`, since this leg runs those tests.
+          # tests/conftest.py marks a test that requests `_stanc` or
+          # `_stan_toolchain`, so the grep matches those requests and the marker.
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'probpipe/modeling/_stan.py' 'tests/modeling/test_stan_model.py' \
-            'tests/distributions/test_event_declarations.py' || true)
+            -- 'probpipe/families/_programs.py' 'tests/_stanc.py' 'tests/inference/_harness.py' || true)
+          CHANGED_TESTS=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'tests/*.py' || true)
+          MARKED=$(echo "$CHANGED_TESTS" \
+            | xargs -r grep -lE 'pytest\.mark\.stan\b|"_stanc"|"_stan_toolchain"|_stan_toolchain[,)]' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_STAN=false
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -420,7 +488,7 @@ jobs:
                   RUN_STAN=true ;;
               esac
             done
-            [ -n "$CHANGED" ] && RUN_STAN=true
+            [ -n "$CHANGED$MARKED" ] && RUN_STAN=true
           fi
           if [ "$RUN_STAN" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -456,24 +524,38 @@ jobs:
         if: steps.stan_check.outputs.skip != 'true'
         # Versions are pinned in uv.lock; --frozen fails if the lockfile drifts.
         # The `stan` extra brings bridgestan (and cmdstanpy); dev+nutpie match
-        # the other backend legs' base.
-        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan
+        # the other backend legs' base. pymc is here because test_nutpie.py,
+        # which holds the nutpie-on-Stan tests, skips as a module without it.
+        run: uv sync --frozen --python 3.12 --extra dev --extra nutpie --extra stan --extra pymc
 
-      - name: Run StanModel tests (real BridgeStan)
+      - name: Cache the CmdStan build
+        # install_cmdstan downloads CmdStan and builds it under ~/.cmdstan, which
+        # takes minutes, so a cache hit skips the next step.
         if: steps.stan_check.outputs.skip != 'true'
+        id: cmdstan_cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cmdstan
+          key: cmdstan-${{ runner.os }}-${{ env.CMDSTAN_VERSION }}
+
+      - name: Install CmdStan
+        # cmdstanpy finds the build under ~/.cmdstan. Without it the cmdstan_nuts
+        # tests skip.
+        if: steps.stan_check.outputs.skip != 'true' && steps.cmdstan_cache.outputs.cache-hit != 'true'
+        run: uv run install_cmdstan --version "$CMDSTAN_VERSION" --cores 4
+
+      - name: Run Stan tests (real BridgeStan)
+        if: steps.stan_check.outputs.skip != 'true'
+        # Runs every test in the suite marked `stan` (registered in
+        # pyproject.toml); the other jobs lack BridgeStan and skip those tests.
         # -n 0 disables xdist so the module-scoped model fixtures compile once,
-        # not once per worker. The suite is small; serial is fine. The -k
-        # expression adds the Stan rows of the event-declaration table test.
-        run: >-
-          uv run pytest tests/modeling/test_stan_model.py
-          tests/distributions/test_event_declarations.py
-          -k "test_stan_model or StanModel or UnconstrainedStanView"
-          -n 0 --cov-report=xml
+        # not once per worker.
+        run: uv run pytest tests -m stan -n 0 --cov-report=xml
 
       - name: Upload coverage reports to Codecov
-        # The main test job doesn't install [stan], so it measures _stan.py as
-        # (mostly) uncovered. Upload this leg under the `stan` flag so Codecov's
-        # union counts the real-backend coverage.
+        # The main test job doesn't install [stan], so it measures the Stan
+        # adapter in families/_programs.py as (mostly) uncovered. Upload this leg
+        # under the `stan` flag so Codecov's union counts the real-backend coverage.
         if: steps.stan_check.outputs.skip != 'true'
         uses: codecov/codecov-action@v7
         with:

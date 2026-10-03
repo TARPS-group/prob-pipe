@@ -55,7 +55,7 @@ class NumericRecord(Record, Numeric):
     holds the same named, ordered, possibly-nested collection of fields, but
     constrains every field to be numeric. It inherits the full
     :class:`Record` interface — the leaf-keyed mapping, the tree navigation,
-    the metadata (:attr:`~Record.name`, :attr:`~Record.provenance`), and the
+    the metadata (:attr:`~Record.label`, :attr:`~Record.provenance`), and the
     equality and hashing rules — and adds the array-only features described
     below.
 
@@ -135,7 +135,7 @@ class NumericRecord(Record, Numeric):
 
     Parameters
     ----------
-    name : str
+    label : str
         The record's name — the required first positional argument, exactly
         as on :class:`Record`.
     _fields : Mapping, optional
@@ -188,7 +188,7 @@ class NumericRecord(Record, Numeric):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
@@ -225,7 +225,7 @@ class NumericRecord(Record, Numeric):
                 raw_fields[field_name] = value
         validated = self._validate(raw_fields)
         super().__init__(
-            name,
+            label,
             validated,
             event_template=event_template,
             _validate_leaves=_validate_leaves,
@@ -365,7 +365,7 @@ class NumericRecord(Record, Numeric):
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
+    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
@@ -377,7 +377,7 @@ class NumericRecord(Record, Numeric):
 
         Parameters
         ----------
-        name : str
+        label : str
             Name for the reconstructed record (user-given).
         spec : NumericRecordSpec
             The flat layout supplying field names, shapes, and order. Every
@@ -409,7 +409,7 @@ class NumericRecord(Record, Numeric):
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
                 f"NumericRecordBatch.from_vector."
             )
-        return _reconstruct_from_vector(name, spec, vec)
+        return _reconstruct_from_vector(label, spec, vec)
 
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
@@ -591,7 +591,7 @@ def _reconstruct_from_vector(
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
-    object.__setattr__(value, "_name", name)
+    object.__setattr__(value, "_label", name)
     return value
 
 
@@ -621,7 +621,7 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
         child if isinstance(child, Record) else v._child_field_as_jax(name)
         for name, child in ((n, v._tree[n]) for n in v.event_template.children)
     ]
-    return children, (v._spec, v._name)
+    return children, (v._spec, v._label)
 
 
 def _numeric_record_unflatten(aux: tuple[RecordSpec, str], children: list) -> NumericRecord:

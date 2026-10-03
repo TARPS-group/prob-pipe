@@ -1,20 +1,20 @@
 """Tests for probpipe.core.transition — iterate, with_conversion, with_resampling."""
 
-import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from probpipe import (
     Distribution,
     EmpiricalDistribution,
-    IncrementalConditioner,
     MultivariateNormal,
     Provenance,
+    Weights,
     iterate,
     with_conversion,
     with_resampling,
 )
-from probpipe.core.node import Function
+from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -27,22 +27,27 @@ def initial():
     return EmpiricalDistribution("initial", jnp.zeros((50, 2)))
 
 
+def _component(dist):
+    """The one component of *dist*'s whole-term event, which the steps keep."""
+    (component,) = dist.event_spec.components
+    return component
+
+
 def shift_step(dist, offset):
-    """Shift all samples by a scalar. Returns a bare Distribution."""
-    # ``dist.samples`` is a single-field NumericRecord; pull the field
-    # for raw-array arithmetic.
-    field = dist.samples.fields[0]
-    samples = dist.samples[field] + offset
-    return EmpiricalDistribution(field, samples)
+    """Shift every atom by a scalar. Returns a bare Distribution."""
+    return EmpiricalDistribution(_component(dist), dist.atoms.values + offset)
 
 
 def provenance_step(dist, value):
     """A step that sets its own provenance."""
-    field = dist.samples.fields[0]
-    samples = dist.samples[field] + value
-    new_dist = EmpiricalDistribution(field, samples)
+    new_dist = EmpiricalDistribution(_component(dist), dist.atoms.values + value)
     new_dist.with_provenance(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
     return new_dist
+
+
+def _produced(element):
+    """The provenance of the law a batch element views, which the fold produced."""
+    return element.provenance.parents[1].provenance
 
 
 # ---------------------------------------------------------------------------
@@ -52,57 +57,56 @@ def provenance_step(dist, value):
 
 class TestIterate:
     def test_basic(self, initial):
-        """iterate returns a DistributionArray including the initial.
+        """iterate returns a DistributionBatch including the initial.
 
-        A Function whose body returns a Python list of Distributions
-        wraps its output as a ``DistributionArray`` (the
-        stacked-collection counterpart to ``list[Distribution]``), so
-        indexing, iteration, and len all work.
+        Indexing, iteration, and len all work, and an element is a view of the
+        law the fold produced at that step.
         """
-        from probpipe import DistributionArray
+        from probpipe import DistributionBatch
 
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert isinstance(dists, DistributionArray)
+        assert isinstance(dists, DistributionBatch)
         assert len(dists) == 3  # initial + 2 steps
-        assert dists[0] is initial
+        assert dists[0].atoms is initial.atoms
         assert all(isinstance(d, Distribution) for d in dists)
 
     def test_values(self, initial):
         """Step results have correct sample values."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert jnp.allclose(dists[1].samples[dists[1].samples.fields[0]], jnp.ones((50, 2)))
-        assert jnp.allclose(dists[2].samples[dists[2].samples.fields[0]], jnp.full((50, 2), 3.0))
+        assert jnp.allclose(dists[1].atoms.values, jnp.ones((50, 2)))
+        assert jnp.allclose(dists[2].atoms.values, jnp.full((50, 2), 3.0))
 
     def test_provenance_auto_attach(self, initial):
         """Provenance is auto-attached when step function doesn't set it."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0])
-        dist = dists[1]
-        assert dist.provenance is not None
-        assert dist.provenance.operation == "iterate"
-        assert dist.provenance.metadata["step"] == 0
-        assert len(dist.provenance.parents) == 1
-        assert dist.provenance.parents[0].name == initial.name
+        produced = _produced(dists[1])
+        assert produced is not None
+        assert produced.operation == "iterate"
+        assert produced.metadata["step"] == 0
+        assert len(produced.parents) == 1
+        assert produced.parents[0].label == initial.label
 
     def test_provenance_preserved(self, initial):
         """Provenance set by step function is not overwritten."""
         dists = iterate(step_fn=provenance_step, initial=initial, inputs=[1.0])
-        dist = dists[1]
-        assert dist.provenance.operation == "custom_step"
-        assert dist.provenance.metadata["value"] == 1.0
+        produced = _produced(dists[1])
+        assert produced.operation == "custom_step"
+        assert produced.metadata["value"] == 1.0
 
     def test_provenance_chain(self, initial):
         """Each step's provenance points to the previous distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0])
-        assert dists[1].provenance.parents[0].name == initial.name
-        assert dists[2].provenance.parents[0].name == dists[1].name
-        assert dists[3].provenance.parents[0].name == dists[2].name
+        for step in (1, 2, 3):
+            previous = _produced(dists[step]).parents[0]
+            assert previous.label == "initial"
+            assert previous.provenance == _produced(dists[step - 1])
 
     def test_callback(self, initial):
         """Callback receives correct (index, dist) pairs."""
         recorded = []
 
         def cb(i, dist):
-            recorded.append((i, float(dist.samples[dist.samples.fields[0]][0, 0])))
+            recorded.append((i, float(dist.atoms.values[0, 0])))
 
         iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0], callback=cb)
         assert len(recorded) == 3
@@ -130,7 +134,7 @@ class TestIterate:
         """Empty inputs returns list with only the initial distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[])
         assert len(dists) == 1
-        assert dists[0] is initial
+        assert dists[0].atoms is initial.atoms
 
     def test_bad_return_type(self, initial):
         """Non-Distribution return raises TypeError."""
@@ -144,7 +148,21 @@ class TestIterate:
     def test_final_is_last(self, initial):
         """dists[-1] is the final distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
-        assert jnp.allclose(dists[-1].samples[dists[-1].samples.fields[0]], jnp.full((50, 2), 3.0))
+        assert jnp.allclose(dists[-1].atoms.values, jnp.full((50, 2), 3.0))
+
+    def test_the_laws_are_on_one_level_named_iterate(self, initial):
+        dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0])
+        assert dists.level_names == ("iterate",)
+        assert dists.event_spec == initial.event_spec
+
+    def test_a_step_that_changes_the_event_declaration_raises(self, initial):
+        """The visited laws share one event declaration, as a batch's elements do."""
+
+        def widen(dist, inp):
+            return EmpiricalDistribution(_component(dist), jnp.zeros((50, 3)))
+
+        with pytest.raises(TypeError):
+            iterate(step_fn=widen, initial=initial, inputs=[1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -157,9 +175,9 @@ class TestWithConversion:
         """with_conversion returns a Function."""
         step = with_conversion(shift_step, MultivariateNormal)
         assert isinstance(step, Function)
-        assert "with_conversion" in step._name
-        assert "shift_step" in step._name
-        assert "MultivariateNormal" in step._name
+        assert "with_conversion" in step._label
+        assert "shift_step" in step._label
+        assert "MultivariateNormal" in step._label
 
     def test_converts_output(self, initial):
         """Output is converted to target type."""
@@ -181,11 +199,10 @@ class TestWithConversion:
         from probpipe import sample as pp_sample
 
         def parametric_step(dist, shift):
-            key = jax.random.PRNGKey(42)
-            samples = jnp.asarray(pp_sample(dist, key=key, sample_shape=(50,))) + shift
+            samples = jnp.asarray(pp_sample(dist, sample_shape=(50,))) + shift
             return EmpiricalDistribution("x", samples)
 
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="x")
         step = with_conversion(parametric_step, MultivariateNormal)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0, 2.0, 3.0])
         for d in dists[1:]:
@@ -202,15 +219,15 @@ class TestWithResampling:
         """with_resampling returns a Function."""
         step = with_resampling(shift_step, ess_threshold=0.5)
         assert isinstance(step, Function)
-        assert "with_resampling" in step._name
-        assert "shift_step" in step._name
+        assert "with_resampling" in step._label
+        assert "shift_step" in step._label
 
     def test_no_resample_uniform(self):
         """Uniform weights -> no resampling (ESS = N)."""
         initial = EmpiricalDistribution("x", jnp.zeros((100, 2)))
         step = with_resampling(shift_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
-        assert dists[-1].provenance.operation == "workflow.with_resampling(shift_step)"
+        assert _produced(dists[-1]).operation == "workflow.with_resampling(shift_step)"
 
     def test_resample_degenerate(self):
         """Highly non-uniform weights -> resampling triggered."""
@@ -219,14 +236,14 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution("x", samples, log_weights=log_w)
+            return EmpiricalDistribution("x", samples, Weights(log_weights=log_w))
 
         initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
         step = with_resampling(weighted_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
-        assert resampled.is_uniform
-        assert resampled.provenance.operation == "workflow.with_resampling(weighted_step)"
+        np.testing.assert_allclose(resampled.weights, 1.0 / n)
+        assert _produced(resampled).operation == "workflow.with_resampling(weighted_step)"
 
     def test_resample_stores_ess_in_metadata(self):
         """Pre-resampling ESS is stored in provenance metadata."""
@@ -234,7 +251,7 @@ class TestWithResampling:
         log_w = jnp.full(n, -100.0).at[0].set(0.0)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution("x", jnp.zeros((n, 2)), log_weights=log_w)
+            return EmpiricalDistribution("x", jnp.zeros((n, 2)), Weights(log_weights=log_w))
 
         initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
         step = with_resampling(weighted_step, ess_threshold=0.5)
@@ -242,16 +259,16 @@ class TestWithResampling:
         wrapped = iterate(step_fn=step, initial=initial, inputs=[0.0])[-1]
         assert raw.provenance.operation == "resample"
         assert "ess" in raw.provenance.metadata
-        assert wrapped.provenance.operation == "workflow.with_resampling(weighted_step)"
+        assert _produced(wrapped).operation == "workflow.with_resampling(weighted_step)"
         assert "ess_ratio" in raw.provenance.metadata
         assert raw.provenance.metadata["ess_ratio"] < 0.5
 
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
 
         def mvn_step(dist, inp):
-            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2), name="z")
+            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2), label="z")
 
         step = with_resampling(mvn_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
@@ -264,7 +281,7 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution("x", samples, log_weights=log_w)
+            return EmpiricalDistribution("x", samples, Weights(log_weights=log_w))
 
         initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
 
@@ -277,93 +294,8 @@ class TestWithResampling:
         # Both assertions use explicit field-access — the auto-wrap field
         # name is ``"x"`` (set on the initial ``EmpiricalDistribution``),
         # not whatever the post-resampling internal default would be.
-        assert jnp.allclose(dists1[1].samples["x"], dists2[1].samples["x"])
-        assert jnp.allclose(dists1[2].samples["x"], dists2[2].samples["x"])
-
-
-# ---------------------------------------------------------------------------
-# IncrementalConditioner
-# ---------------------------------------------------------------------------
-
-
-def _mock_condition_fn(model, data, **kwargs):
-    """Conditioning function for testing: return EmpiricalDistribution near data mean."""
-    data_mean = jnp.mean(jnp.asarray(data), axis=0)
-    key = jax.random.PRNGKey(0)
-    noise = jax.random.normal(key, shape=(50, data_mean.shape[0]))
-    samples = data_mean[None, :] + noise * 0.1
-    return EmpiricalDistribution("x", samples)
-
-
-class _SimpleLikelihood:
-    def log_likelihood(self, params, data):
-        return -0.5 * jnp.sum((data - params) ** 2)
-
-
-class TestIncrementalConditioner:
-    def test_update_single_batch(self):
-        """update() conditions on a single data batch, updates state."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        assert conditioner.curr_posterior is prior
-
-        data = jnp.ones((10, 2)) * 2.0
-        posterior = conditioner.update(data=data)
-
-        assert isinstance(posterior, Distribution)
-        assert conditioner.curr_posterior is posterior
-
-    def test_update_successive(self):
-        """Successive update() calls chain posteriors."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        post1 = conditioner.update(data=jnp.ones((10, 2)))
-        post2 = conditioner.update(data=jnp.ones((10, 2)) * 2.0)
-        assert conditioner.curr_posterior is post2
-        assert post1 is not post2
-
-    def test_update_all(self):
-        """update_all() iterates over batches, returns DistributionArray,
-        updates state."""
-        from probpipe import DistributionArray
-
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0, 3.0]]
-        dists = conditioner.update_all(data_batches=batches)
-
-        assert isinstance(dists, DistributionArray)
-        assert len(dists) == 4  # prior + 3 steps
-        assert dists[0] is prior
-        assert conditioner.curr_posterior is dists[-1]
-
-    def test_step_property(self):
-        """step property exposes the step function for use with iterate."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10.0, name="prior")
-        conditioner = IncrementalConditioner(
-            prior,
-            _SimpleLikelihood(),
-            condition_fn=_mock_condition_fn,
-        )
-        assert isinstance(conditioner.step, Function)
-
-        # Use .step with iterate
-        batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0]]
-        dists = iterate(conditioner.step, prior, batches)
-        assert len(dists) == 3
-        assert all(isinstance(d, Distribution) for d in dists)
+        assert jnp.allclose(dists1[1].atoms.values, dists2[1].atoms.values)
+        assert jnp.allclose(dists1[2].atoms.values, dists2[2].atoms.values)
 
 
 # ---------------------------------------------------------------------------
@@ -376,11 +308,7 @@ class TestNestability:
         """A step function can call iterate internally."""
 
         def inner_step(dist, value):
-            field = dist.samples.fields[0]
-            return EmpiricalDistribution(
-                field,
-                dist.samples[field] + value,
-            )
+            return EmpiricalDistribution(_component(dist), dist.atoms.values + value)
 
         def outer_step(dist, batch):
             """Each outer step runs an inner iterate loop."""
@@ -391,4 +319,4 @@ class TestNestability:
         dists = iterate(step_fn=outer_step, initial=initial, inputs=outer_inputs)
         assert len(dists) == 3  # initial + 2 outer steps
         # Total shift: (0.1+0.2) + (0.3+0.4+0.5) = 1.5
-        assert jnp.allclose(dists[-1].samples, jnp.full((50, 2), 1.5))
+        assert jnp.allclose(dists[-1].atoms.values, jnp.full((50, 2), 1.5))

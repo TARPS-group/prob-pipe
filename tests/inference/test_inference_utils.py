@@ -9,79 +9,75 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Dirichlet,
+    Gamma,
+    HalfNormal,
+    MultivariateNormal,
     Normal,
     NumericArraySpec,
     NumericRecord,
+    NumericRecordSpec,
     OpaqueSpec,
-    ProductDistribution,
-    SimpleModel,
     condition_on,
+    conditional_distribution,
+    inference_method_registry,
+    workflow_run,
 )
-from probpipe.core.protocols import SupportsSampling
+from probpipe.distributions import FactoredDistribution
+from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._distribution import Distribution
 from probpipe.inference._inference_utils import (
     as_prng_key,
-    build_likelihood_flat,
     build_target_log_prob,
     build_target_log_prob_flat,
     extract_event_spec,
     get_init_state,
-    get_prior,
     is_jax_traceable,
+    likelihood_flat,
+    model_factors,
+    observed_target,
+    parameter_given,
     posterior_var_order,
     run_chain_scan,
+    unconstrained_chain,
 )
-from probpipe.modeling._likelihood import Likelihood
+from tests._posterior import flat_chains, flat_draws
+from tests.inference.canonical import ObservationKernel
 
 
-class _IdentityLikelihood(Likelihood):
-    """Trivial likelihood for unit-test fixtures: ``log p(y | theta) = 0``."""
-
-    def log_likelihood(self, params, data) -> float:
-        return jnp.asarray(0.0)
-
-
-class _GaussianMeanLikelihood(Likelihood):
-    """Gaussian likelihood with known scale, mean = flat parameter vector.
-
-    ``log p(y | theta) = sum_i log N(y_i; mu, scale^2)`` with ``mu`` the
-    (scalar) flat parameter. Used to check ``build_likelihood_flat``
-    against an independently computed value.
-    """
-
-    def __init__(self, scale: float = 2.0):
-        self.scale = scale
-
-    def log_likelihood(self, params, data):
-        mu = jnp.reshape(jnp.asarray(params), ())
-        s = self.scale
-        return jnp.sum(
-            -0.5 * ((jnp.asarray(data) - mu) / s) ** 2 - jnp.log(s) - 0.5 * jnp.log(2 * jnp.pi)
-        )
+def _gaussian_mean(prior, n, scale=1.0):
+    """``y_i ~ N(mu, scale^2)`` for ``n`` observations, times *prior* over ``mu``."""
+    likelihood = ObservationKernel(
+        "y",
+        dict(prior.event_spec.components),
+        NumericArraySpec((n,)),
+        lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), scale), 1),
+    )
+    return likelihood * prior
 
 
 @pytest.fixture
-def small_model() -> SimpleModel:
-    """SimpleModel with a 2-field ProductDistribution prior."""
-    prior = ProductDistribution(
-        a=Normal(loc=0.0, scale=1.0, name="a"),
-        b=Normal(loc=2.0, scale=0.5, name="b"),
+def small_model():
+    """The unnormalized conditional of a joint with a 2-field factored prior."""
+    prior = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=2.0, scale=0.5, label="b")
+    likelihood = ObservationKernel(
+        "y",
+        dict(prior.event_spec.components),
+        NumericArraySpec((4,)),
+        lambda a, b: tfd.Independent(tfd.Normal(jnp.zeros(4), 1.0), 1),
     )
-    return SimpleModel(prior, _IdentityLikelihood(), name="m")
+    return observed_target(likelihood * prior, {"y": jnp.zeros((4,))})
 
 
 class TestBuildTargetLogProbFlat:
     """Characterise the flat-vector target builder used by BlackJAX backends."""
 
     def test_flat_target_matches_record_target(self, small_model):
-        observed = jnp.zeros((4,))
-        target_record = build_target_log_prob(small_model, observed)
-        target_flat, flat_init, event_spec = build_target_log_prob_flat(
-            small_model,
-            observed,
-        )
+        target_record = build_target_log_prob(small_model, None)
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
         record_init = NumericRecord.from_vector("nr", event_spec.spec, flat_init)
@@ -102,7 +98,7 @@ class TestBuildTargetLogProbFlat:
 
     def test_the_declared_component_order_is_preserved(self, small_model):
         _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
-        # Insertion order from the ProductDistribution constructor.
+        # The order of the joint's factors.
         assert tuple(event_spec.components) == ("a", "b")
 
     def test_bare_distribution_falls_through_unwrapped(self):
@@ -148,8 +144,8 @@ class _FlatTarget(Distribution):
 
 
 class TestExtractEventSpec:
-    def test_a_prior_with_a_flat_view_gives_its_declaration(self, small_model):
-        assert extract_event_spec(small_model) == small_model.prior.event_spec
+    def test_a_target_over_a_record_gives_its_declaration(self, small_model):
+        assert extract_event_spec(small_model) == small_model.event_spec
 
     def test_a_target_with_no_flat_view_gives_none(self):
         assert extract_event_spec(_FlatTarget()) is None
@@ -157,28 +153,11 @@ class TestExtractEventSpec:
     @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
     def test_the_methods_agree_on_a_bare_target(self, method):
         """Each names the posterior and draws it as build_target_log_prob_flat does."""
-        posterior = condition_on(
-            _FlatTarget(),
-            None,
-            method=method,
-            num_results=20,
-            num_warmup=20,
-            num_chains=1,
-            random_seed=0,
+        posterior = inference_method_registry.execute(
+            _FlatTarget(), method=method, num_results=20, num_warmup=20, num_chains=1, random_seed=0
         )
-        assert posterior.fields == ("posterior",)
-        assert isinstance(posterior.draws(), jax.Array)
-
-
-class TestGetPrior:
-    """``get_prior`` returns the SimpleModel's prior or the dist itself."""
-
-    def test_simple_model_returns_prior(self, small_model):
-        assert get_prior(small_model) is small_model._prior
-
-    def test_bare_distribution_returns_self(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        assert get_prior(d) is d
+        assert list(posterior.event_spec.components) == ["posterior"]
+        assert isinstance(flat_draws(posterior), jax.Array)
 
 
 # ---------------------------------------------------------------------------
@@ -292,45 +271,94 @@ class TestIsJaxTraceable:
         assert is_jax_traceable(host_side, init) is False
 
 
-class TestBuildLikelihoodFlat:
-    """``build_likelihood_flat`` returns the *likelihood alone* as a flat-
-    vector callable (the ESS entry point).
-    """
+class TestModelFactors:
+    """The prior and likelihood of a joint at observed fields, and the flat log-likelihood."""
 
     @pytest.fixture
-    def gaussian_model(self):
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        return SimpleModel(prior, _GaussianMeanLikelihood(scale=2.0), name="g")
-
-    def test_returns_scalar_log_likelihood(self, gaussian_model):
-        data = jnp.array([1.0, -1.0, 0.5])
-        llf = build_likelihood_flat(
-            gaussian_model._prior,
-            gaussian_model._likelihood,
-            data,
+    def gaussian_target(self):
+        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        return observed_target(
+            _gaussian_mean(prior, 3, scale=2.0), {"y": jnp.array([1.0, -1.0, 0.5])}
         )
-        assert callable(llf)
-        out = llf(jnp.array([0.3]))
-        # Scalar (rank-0) log-likelihood.
-        assert jnp.ndim(out) == 0
 
-    def test_matches_independent_gaussian(self, gaussian_model):
-        data = jnp.array([1.0, -1.0, 0.5])
-        llf = build_likelihood_flat(
-            gaussian_model._prior,
-            gaussian_model._likelihood,
-            data,
-        )
+    def test_the_factors_split_at_the_observed_fields(self, gaussian_target):
+        factors = model_factors(gaussian_target)
+        assert list(factors.prior.event_spec.components) == ["mu"]
+        assert list(factors.likelihood.event_spec.components) == ["y"]
+        np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
+
+    def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
+        assert model_factors(Normal(loc=0.0, scale=1.0, label="x")) is None
+
+    def test_returns_scalar_log_likelihood(self, gaussian_target):
+        llf = likelihood_flat(model_factors(gaussian_target))
+        assert jnp.ndim(llf(jnp.array([0.3]))) == 0
+
+    def test_matches_independent_gaussian(self, gaussian_target):
+        llf = likelihood_flat(model_factors(gaussian_target))
+        data = np.array([1.0, -1.0, 0.5])
         mu, scale = 0.3, 2.0
         expected = np.sum(
-            -0.5 * ((np.asarray(data) - mu) / scale) ** 2 - np.log(scale) - 0.5 * np.log(2 * np.pi)
+            -0.5 * ((data - mu) / scale) ** 2 - np.log(scale) - 0.5 * np.log(2 * np.pi)
         )
-        np.testing.assert_allclose(
-            float(llf(jnp.array([mu]))),
-            expected,
-            rtol=0,
-            atol=1e-5,
+        np.testing.assert_allclose(float(llf(jnp.array([mu]))), expected, rtol=0, atol=1e-5)
+
+
+Y = jnp.array([1.0, 2.0, 0.5, 1.5, 2.5])
+
+
+def _shifted(**given_spec):
+    """``y_i ~ N(mu + shift, 2^2)`` over five observations, with ``shift`` optional at 0."""
+    return conditional_distribution(
+        "lik",
+        lambda mu, shift=0.0: Normal("y", (mu + shift) * jnp.ones(5), 2.0),
+        given_spec={"mu": NumericArraySpec(()), **given_spec},
+    )
+
+
+class TestModelFactorsWithOptionalSlots:
+    """An optional slot of the likelihood takes its default unless the prior produces it."""
+
+    def test_an_unmet_optional_slot_is_left_to_its_default(self):
+        factors = model_factors(observed_target(_shifted() * Normal("mu", 0.0, 1.0), {"y": Y}))
+        # The prior is the whole-term law of mu, so its draw is the value itself.
+        given = parameter_given(factors, jnp.asarray(1.0))
+        assert list(given) == ["mu"]
+        np.testing.assert_allclose(given["mu"], 1.0)
+
+    def test_the_prior_meets_an_optional_slot(self):
+        prior = Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        factors = model_factors(observed_target(_shifted() * prior, {"y": Y}))
+        given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
+        assert set(given) == {"mu", "shift"}
+
+    def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
+        hyper = conditional_distribution("mu", lambda loc=0.0: Normal("mu", loc, 1.0))
+        factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))
+        assert isinstance(factors.prior, Normal)
+
+    @pytest.mark.parametrize("met", [False, True], ids=["default", "prior"])
+    def test_elliptical_slice_fits_the_conjugate_posterior(self, met):
+        """The posterior mean of the location ``mu + shift`` is conjugate under either prior.
+
+        With the default the location is ``mu`` with prior variance 1; with a
+        prior on ``shift`` it is ``mu + shift`` with prior variance 2. The
+        observations have variance 4, so the posterior mean is
+        ``(sum(y) / 4) / (1 / v + 5 / 4)`` for prior variance ``v``.
+        """
+        prior = (
+            Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0) if met else Normal("mu", 0.0, 1.0)
         )
+        budget = {"num_results": 2000, "num_warmup": 200, "num_chains": 2}
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_elliptical_slice", method_options=budget
+            )(_shifted() * prior, {"y": Y})
+        draws = flat_draws(posterior)
+        location = np.asarray(draws["mu"]) + (np.asarray(draws["shift"]) if met else 0.0)
+        variance = 2.0 if met else 1.0
+        expected = float(jnp.sum(Y)) / 4.0 / (1.0 / variance + 5.0 / 4.0)
+        np.testing.assert_allclose(location.mean(), expected, atol=0.1)
 
 
 # ---------------------------------------------------------------------------
@@ -362,12 +390,25 @@ class _NoInitHeuristicDist(Distribution):
         return jnp.asarray(0.0)
 
 
+class _MappingDrawDist(Distribution):
+    """A law over the record ``(a, b)`` whose draw is a mapping keyed ``b`` first."""
+
+    def __init__(self):
+        super().__init__("mapping_draw", NumericRecordSpec(a=(), b=(2,)))
+
+    def _sample(self, key, sample_shape=()):
+        return {"b": jnp.array([3.0, 4.0]), "a": jnp.asarray(1.0)}
+
+    def _unnormalized_log_prob(self, value):
+        return jnp.asarray(0.0)
+
+
 class TestGetInitState:
     """Cover every documented branch of ``get_init_state``."""
 
     def test_explicit_init_passthrough(self):
         # Branch 1: explicit init returned verbatim (cast to prior dtype).
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         out = get_init_state(prior, init=jnp.array([3.0, 4.0]))
         np.testing.assert_array_equal(np.asarray(out), np.array([3.0, 4.0]))
         # Cast to the prior dtype: a default-float Normal yields a float
@@ -376,18 +417,39 @@ class TestGetInitState:
 
     def test_explicit_init_casts_dtype(self):
         # An integer-valued init is cast to the prior's float dtype.
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         out = get_init_state(prior, init=np.array([1, 2], dtype=np.int32))
         assert jnp.issubdtype(out.dtype, jnp.floating)
         np.testing.assert_allclose(np.asarray(out), np.array([1.0, 2.0]))
 
     def test_prior_sample_path(self):
         # Branch 2: prior implements SupportsSampling -> draw a sample.
-        prior = Normal(loc=0.0, scale=1.0, name="x")
+        prior = Normal(loc=0.0, scale=1.0, label="x")
         assert isinstance(prior, SupportsSampling)
         out = get_init_state(prior, init=None, random_seed=0)
         assert out.shape == (1,)  # scalar Normal -> length-1 vector
         assert bool(jnp.all(jnp.isfinite(out)))
+
+    def test_a_factored_prior_starts_at_its_own_draw(self):
+        # A factored prior draws a nested mapping, which is flattened rather
+        # than replaced by the Uniform(-2, 2) box.
+        prior = Normal("a", 0.0, 1.0) * MultivariateNormal(
+            "b", jnp.array([10.0, -10.0]), cov=jnp.eye(2)
+        )
+        out = get_init_state(prior, init=None, random_seed=0)
+        draw = prior._sample(as_prng_key(0), sample_shape=())
+        expected = jnp.concatenate([jnp.ravel(draw["a"]), jnp.ravel(draw["b"])])
+        np.testing.assert_allclose(np.asarray(out), np.asarray(expected))
+
+    @pytest.mark.parametrize("seed", range(12))
+    def test_a_factored_prior_starts_inside_its_support(self, seed):
+        prior = Normal("a", 0.0, 1.0) * HalfNormal("scale", 1.0)
+        out = get_init_state(prior, init=None, random_seed=seed)
+        assert float(out[1]) > 0.0
+
+    def test_a_mapping_draw_flattens_in_the_order_of_the_declaration(self):
+        out = get_init_state(_MappingDrawDist(), init=None, random_seed=0)
+        np.testing.assert_allclose(np.asarray(out), np.array([1.0, 3.0, 4.0]))
 
     def test_stan_uniform_fallback(self):
         # Branch 3: no sampling path, but event_shape exposed -> Uniform(-2, 2).
@@ -413,6 +475,43 @@ class TestGetInitState:
         np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
         c = get_init_state(dist, init=None, random_seed=8)
         assert not bool(jnp.all(a == c))
+
+
+# ---------------------------------------------------------------------------
+# The seed of a run
+# ---------------------------------------------------------------------------
+
+
+_SEEDED_METHODS = ["blackjax_rwmh", "blackjax_nuts", "tfp_nuts"]
+
+
+def _first_draws(method, seed, **options):
+    """The first chain's draws of *method* on a Gaussian mean, in a scope seeded by *seed*."""
+    model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
+    data = jnp.array([0.3, -0.2, 0.5, 0.1])
+    with workflow_run(seed=seed):
+        posterior = condition_on.with_options(
+            method=method, method_options={"num_results": 8, "num_warmup": 4, **options}
+        )(model, {"y": data})
+    return np.asarray(flat_chains(posterior)[0])
+
+
+class TestRunSeed:
+    """A run is seeded by the workflow scope unless its options set ``random_seed``."""
+
+    @pytest.mark.parametrize("method", _SEEDED_METHODS)
+    def test_a_seeded_scope_reproduces_the_run(self, method):
+        np.testing.assert_array_equal(_first_draws(method, 0), _first_draws(method, 0))
+
+    @pytest.mark.parametrize("method", _SEEDED_METHODS)
+    def test_scopes_with_different_seeds_run_different_chains(self, method):
+        assert not np.array_equal(_first_draws(method, 0), _first_draws(method, 1))
+
+    @pytest.mark.parametrize("method", _SEEDED_METHODS)
+    def test_an_explicit_random_seed_wins_over_the_scope(self, method):
+        np.testing.assert_array_equal(
+            _first_draws(method, 0, random_seed=3), _first_draws(method, 1, random_seed=3)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -557,3 +656,50 @@ class TestPosteriorVarOrder:
         trace = _StubTrace(["mu"])
         with pytest.raises(ValueError, match="sigma"):
             posterior_var_order(trace, ["mu", "sigma"])
+
+
+# ---------------------------------------------------------------------------
+# Unconstrained chain coordinates
+# ---------------------------------------------------------------------------
+
+
+class TestUnconstrainedChain:
+    """A flat chain over a constrained leaf runs in unconstrained coordinates."""
+
+    def test_a_law_of_the_reals_keeps_its_coordinates(self):
+        law = Normal("x", 0.0, 1.0)
+        density = law._unnormalized_log_prob
+        same, init, constrain = unconstrained_chain(density, jnp.zeros(()), law)
+        assert same is density
+        assert float(init) == 0.0
+        np.testing.assert_array_equal(constrain(jnp.ones((4, 1))), jnp.ones((4, 1)))
+
+    def test_a_positive_leaf_adds_the_log_jacobian(self):
+        law = Gamma("g", 2.0, 1.0)
+
+        def log_density(theta):
+            return law._log_prob(jnp.reshape(theta, ()))
+
+        density, init, constrain = unconstrained_chain(log_density, jnp.ones(1), law)
+        z = jnp.array([0.3])
+        x = float(jnp.squeeze(constrain(z[None])))
+        slope = jax.grad(lambda u: jnp.squeeze(constrain(jnp.reshape(u, (1, 1)))))(0.3)
+        assert x > 0
+        assert init.shape == (1,)
+        expected = float(log_density(jnp.asarray(x))) + float(jnp.log(slope))
+        np.testing.assert_allclose(float(density(z)), expected, rtol=1e-5)
+
+    def test_a_simplex_leaf_has_one_fewer_coordinate_and_its_draws_sum_to_one(self):
+        law = Dirichlet("p", jnp.ones(3))
+        density, init, constrain = unconstrained_chain(law._log_prob, jnp.full(3, 1.0 / 3.0), law)
+        assert init.shape == (2,)
+        draws = constrain(jax.random.normal(jax.random.PRNGKey(0), (5, 2)))
+        assert draws.shape == (5, 3)
+        np.testing.assert_allclose(jnp.sum(draws, axis=-1), 1.0, rtol=1e-5)
+        assert bool(jnp.all(jnp.isfinite(jax.vmap(density)(jnp.zeros((2, 2))))))
+
+    def test_an_initial_state_outside_the_support_starts_at_the_center(self):
+        law = Gamma("g", 2.0, 1.0)
+        _, init, constrain = unconstrained_chain(lambda theta: 0.0, jnp.array([-1.0]), law)
+        assert bool(jnp.all(jnp.isfinite(init)))
+        assert float(jnp.squeeze(constrain(init[None]))) > 0
