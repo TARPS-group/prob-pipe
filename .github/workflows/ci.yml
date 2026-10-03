@@ -319,10 +319,14 @@ jobs:
           else
             BASE="${{ github.event.before }}"
           fi
-          # Globs, not single files: the BayesFlow backend is being split into
-          # multiple modules (NLE/NRE), so match the whole family.
+          # Run for a change to a module of the backend or a helper of its tests,
+          # or to a test file that holds tests marked `bayesflow`, since this leg
+          # runs those tests.
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'probpipe/inference/_bayesflow*.py' 'tests/inference/test_bayesflow*.py' || true)
+            -- 'probpipe/inference/_bayesflow*.py' 'tests/inference/_bayesflow*.py' || true)
+          CHANGED_TESTS=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'tests/*.py' || true)
+          MARKED=$(echo "$CHANGED_TESTS" | xargs -r grep -lF 'pytest.mark.bayesflow' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_BF=false
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -336,7 +340,7 @@ jobs:
                   RUN_BF=true ;;
               esac
             done
-            [ -n "$CHANGED" ] && RUN_BF=true
+            [ -n "$CHANGED$MARKED" ] && RUN_BF=true
           fi
           if [ "$RUN_BF" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -362,8 +366,9 @@ jobs:
 
       - name: Run BayesFlow backend tests
         if: steps.bf_check.outputs.skip != 'true'
-        # Glob to pick up the split BayesFlow test files (NLE/NRE) as they land.
-        run: uv run pytest tests/inference/test_bayesflow*.py --cov-report=xml
+        # Runs every test in the suite marked `bayesflow` (registered in
+        # pyproject.toml); the other jobs lack the extra and skip those tests.
+        run: uv run pytest tests -m bayesflow --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         # The main test job does not install [bayesflow], so its run measures

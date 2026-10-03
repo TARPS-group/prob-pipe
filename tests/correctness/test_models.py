@@ -551,6 +551,7 @@ def _shift_reference(observation):
     return exact_reference(0.8 * np.asarray(observation), np.full(2, 0.2), path="theta")
 
 
+@pytest.mark.bayesflow
 class TestLearnedKernels:
     def test_an_amortized_posterior_locates_the_conjugate_posterior(self):
         """The amortized posterior's law at an observation has the posterior's means.

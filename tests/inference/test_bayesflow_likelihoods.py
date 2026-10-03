@@ -43,6 +43,8 @@ from tests._posterior import flat_draws
 from ._bayesflow_helpers import SimulatorKernel, theta_vec
 from .canonical import ObservationKernel
 
+pytestmark = pytest.mark.bayesflow
+
 # Conjugate model: theta ~ N(0, I_2), y_i = theta + sigma * eps. With n rows the
 # posterior is N(sum(y) / (n + sigma^2), sigma^2 / (n + sigma^2) I).
 _SIGMA = 0.5

@@ -350,7 +350,9 @@ GitHub Actions (`.github/workflows/ci.yml`):
   change detection, so an unrelated leg is skipped (`bridgestan` is installed
   only in the `stan` leg, below)
 - A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
-  `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
+  `<3.14`) syncs `dev,nutpie,bayesflow` and runs every test marked `bayesflow`.
+  The other jobs skip a test that needs the extra, so such a test carries
+  `@pytest.mark.bayesflow`
 - A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan`, caches the
   `~/.bridgestan` build, and runs StanModel's compile-backed tests against a
   real BridgeStan backend; coverage uploads under a `stan` flag. Gated like the

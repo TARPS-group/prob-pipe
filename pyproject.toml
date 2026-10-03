@@ -77,6 +77,7 @@ testpaths = ["tests"]
 addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
+    "bayesflow: marks tests requiring the bayesflow extra (select with '-m bayesflow')",
 ]
 
 [tool.ruff]

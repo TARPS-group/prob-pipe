@@ -441,6 +441,7 @@ def _schools(params, key):
     return mu + tau * theta_tilde + sigma * jax.random.normal(key, theta_tilde.shape)
 
 
+@pytest.mark.bayesflow
 class TestLearnedKernelOverANestedRecord:
     def test_the_amortized_posterior_of_a_nested_prior_draws_the_nested_record(self):
         """An amortized posterior trained on the nested eight-schools prior yields laws over that record.

@@ -46,6 +46,8 @@ from tests._posterior import law_draws, method_of
 
 from ._bayesflow_helpers import SimulatorKernel, theta_vec
 
+pytestmark = pytest.mark.bayesflow
+
 
 def _toy(params, key):
     """Identifiable 2-parameter model: ``y = [a + b, a - b] + small noise``."""
