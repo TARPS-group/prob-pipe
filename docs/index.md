@@ -4,6 +4,10 @@
 
 --8<-- "README.md:intro"
 
+## The approach
+
+--8<-- "README.md:approach"
+
 ## Quick example
 
 --8<-- "README.md:quick-example"
