@@ -67,14 +67,14 @@ print("posterior mean of beta:", mean(posterior["beta"]).raw())
 # Every result records how it was computed.
 for name, result in [("mean of the prior", mean(prior)), ("posterior", posterior)]:
     prov_meta = result.provenance.metadata
-    method = f", method {prov_meta['method']}" if "method" in prov_meta else ""
+    method = f", method={prov_meta['method']}" if "method" in prov_meta else ""
     print(f"{name} provenance: route={prov_meta['route']}{method}, exact={prov_meta['exact']}")
 ```
 
 ```text
 posterior mean of beta: [11.602147   -0.18273503]
 mean of the prior provenance: route=closed_form, exact=True
-posterior provenance: route=inference_methods, method blackjax_nuts, exact=False
+posterior provenance: route=inference_methods, method=blackjax_nuts, exact=False
 ```
 
 The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients, which `glm_likelihood` builds for us.
