@@ -535,6 +535,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checks. Every numeric law has its views `dtypes`, `supports`, `dtype`, and
   `support`, whatever its class. The marker is not a dispatch type, so
   registering a method that lists it raises `TypeError`.
+- **`registry_catalog` — one place to discover every registry (design II.7).**
+  `print(probpipe.registry_catalog)` lists the cataloged registries,
+  `"inference"`, `"converters"`, and `"bijectors"`, with a one-line
+  description and an entry count each, and `registry_catalog.describe(name)`
+  lists one registry's entries in selection order before type specificity:
+  exact entries first, then by priority, with the opt-in-only entries in a
+  section of their own and each entry's exactness shown where the registry
+  declares one. An *entry* is one registered item: an inference method, a
+  converter, or a bijector factory.
+  - A registry is cataloged by implementing `SupportsRegistryCataloging`
+    (`name`, `description`, `kind`, `entry_summaries()`, `describe_entry()`)
+    and by an explicit `registry_catalog.register(registry)`, which rejects
+    an empty or duplicate name. Constructing a registry never catalogs it.
+  - Every dispatch registry implements the protocol: `BaseDispatchRegistry`
+    takes keyword-only `name` and `description` and has `kind = "dispatch"`,
+    and its `entry_summaries()` and `describe_entry(name)` report each
+    method's registered name, exactness, effective priority, supported types,
+    and description as an `EntrySummary`. A method may declare a one-line
+    `description`, which the registry reads and validates at registration
+    with its other declarations.
+  - The converter registry and the bijector factory implement the protocol
+    without changing how they dispatch; their entries report `exact=None`.
+  - `EntrySummary.is_opt_in_only` is `priority is None`, as in dispatch.
+  - Exported from `probpipe`: `registry_catalog`, `EntrySummary`,
+    `RegistryInfo`, and `SupportsRegistryCataloging`, defined in
+    `probpipe/core/_catalog.py`.
 
 - **`NumericArray` and `NumericArrayBatch` (#398).** The tracked class of the
   numeric-array kind and its batch form, so `NumericArraySpec` has the pair every

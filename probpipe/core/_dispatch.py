@@ -24,6 +24,10 @@ method's name and declared exactness from the registration.
 A :class:`ResolutionError` means there is no available implementation under
 the requested controls. A :class:`MathematicalDomainError` means the
 mathematical operation is known to be undefined.
+
+Every registry implements
+:class:`~probpipe.core._catalog.SupportsRegistryCataloging`, so a named one
+can be added to :data:`~probpipe.core._catalog.registry_catalog`.
 """
 
 from __future__ import annotations
@@ -33,7 +37,9 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
+
+from ._catalog import EntrySummary
 
 __all__ = [
     "BaseDispatchMethod",
@@ -161,11 +167,15 @@ class BaseDispatchMethod[SupportedTypesT](ABC):
 
     A subclass declares a unique ``name``, whether it is ``exact``, the
     ``supported_types`` the registry's structural pre-filter admits, and
-    ``check`` / ``execute``; ``priority`` has a default. The type parameter
-    is the shape of ``supported_types``. :class:`UnaryDispatchMethod` and
-    :class:`BinaryDispatchMethod` fix it, so an implementation subclasses
-    one of those and never spells the parameter.
+    ``check`` / ``execute``; ``priority`` and ``description`` have defaults.
+    The type parameter is the shape of ``supported_types``.
+    :class:`UnaryDispatchMethod` and :class:`BinaryDispatchMethod` fix it, so
+    an implementation subclasses one of those and never spells the
+    parameter.
     """
+
+    #: A one-line description, shown by the registry catalog.
+    description: ClassVar[str] = ""
 
     @property
     @abstractmethod
@@ -244,6 +254,7 @@ class _Registration[M]:
     priority: int | None
     supported_types: Any
     index: int
+    description: str = ""
 
 
 def _validated_priority(name: str, priority: Any) -> int | None:
@@ -259,10 +270,17 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     :meth:`register` adds a method, :meth:`check` reports which method a call
     would run, :meth:`execute` runs it, :meth:`set_priorities` re-ranks at
     runtime, and :meth:`list_methods` lists the methods in selection order.
-    The registry reads a method's ``name``, ``exact``, ``priority``, and
-    ``supported_types()`` once, at registration, and validates them before it
-    changes; ranking, filtering, and reporting then use that registration, so
-    a method mutated afterwards changes nothing.
+    The registry reads a method's ``name``, ``exact``, ``priority``,
+    ``supported_types()``, and ``description`` once, at registration, and
+    validates them before it changes; ranking, filtering, and reporting then
+    use that registration, so a method mutated afterwards changes nothing.
+
+    A registry implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` through
+    ``name``, ``description``, ``kind``, :meth:`entry_summaries`, and
+    :meth:`describe_entry`. Constructing one does not catalog it; that takes
+    an explicit ``registry_catalog.register(registry)``, which requires a
+    non-empty ``name``.
 
     Everything that does not depend on how many arguments select the method
     is implemented here, admission and ranking included; an arity subclass
@@ -271,7 +289,22 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     :meth:`_format_key`.
     """
 
-    def __init__(self) -> None:
+    #: The catalog kind of every dispatch registry.
+    kind: ClassVar[str] = "dispatch"
+
+    def __init__(self, *, name: str = "", description: str = "") -> None:
+        """Create an empty registry.
+
+        Parameters
+        ----------
+        name : str
+            The registry's name in the catalog; empty for a registry that
+            will not be cataloged.
+        description : str
+            A one-line description, shown by the catalog.
+        """
+        self.name = name
+        self.description = description
         self._registrations: list[_Registration[M]] = []
         self._by_name: dict[str, _Registration[M]] = {}
         self._priority_overrides: dict[str, int | None] = {}
@@ -286,8 +319,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def register(self, method: M) -> None:
         """Register a method.
 
-        The method's ``name``, ``exact``, ``priority``, and
-        ``supported_types()`` are read here, once, and validated before the
+        The method's ``name``, ``exact``, ``priority``, ``supported_types()``,
+        and ``description`` are read here, once, and validated before the
         registry changes, so a rejected method leaves it as it was.
 
         Parameters
@@ -301,9 +334,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             If ``method.name`` is not a ``str``; if ``method.exact`` is not a
             ``bool``; if ``method.priority`` is not an ``int`` or ``None``, a
             ``bool`` included; if ``method.supported_types()`` does not
-            have the registry's arity shape; or if it lists a class whose
+            have the registry's arity shape, or lists a class whose
             membership follows an instance's declaration rather than its class,
-            such as ``NumericDistribution``, which matching by class would miss.
+            such as ``NumericDistribution``, which matching by class would miss;
+            or if ``method.description`` is not a ``str``.
         ValueError
             If ``method.name`` is empty or already registered.
         """
@@ -321,8 +355,17 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         supported_types = method.supported_types()
         self._validate_supported_types(name, supported_types)
         _refuse_declaration_markers(name, supported_types)
+        description = method.description
+        if not isinstance(description, str):
+            raise TypeError(f"Method {name!r} description must be a str; got {description!r}")
         registration = _Registration(
-            method, name, exact, priority, supported_types, len(self._registrations)
+            method,
+            name,
+            exact,
+            priority,
+            supported_types,
+            len(self._registrations),
+            description,
         )
         self._registrations.append(registration)
         self._by_name[name] = registration
@@ -452,6 +495,52 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             a call would run; :meth:`check` does.
         """
         return [registration.name for registration in self._registrations]
+
+    def entry_summaries(self) -> list[EntrySummary]:
+        """One :class:`~probpipe.core._catalog.EntrySummary` per method, in :meth:`list_methods` order.
+
+        Returns
+        -------
+        list of EntrySummary
+            Each method's registered name, exactness, ``supported_types()``,
+            description, and defining module, with its effective priority,
+            a :meth:`set_priorities` override included.
+        """
+        return [self._summary(registration) for registration in self._registrations]
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """The :class:`~probpipe.core._catalog.EntrySummary` of one method.
+
+        Parameters
+        ----------
+        name : str
+            A registered method name.
+
+        Returns
+        -------
+        EntrySummary
+            The method's summary, as :meth:`entry_summaries` reports it.
+
+        Raises
+        ------
+        KeyError
+            If no method is registered under ``name``.
+        """
+        try:
+            registration = self._by_name[name]
+        except KeyError:
+            raise KeyError(f"No method named {name!r}. Available: {self._available()}") from None
+        return self._summary(registration)
+
+    def _summary(self, registration: _Registration[M]) -> EntrySummary:
+        return EntrySummary(
+            name=registration.name,
+            priority=self._effective_priority(registration),
+            supported_types=registration.supported_types,
+            description=registration.description,
+            module_path=type(registration.method).__module__,
+            exact=registration.exact,
+        )
 
     def _is_auto_dispatchable(self, registration: _Registration[M]) -> bool:
         return self._effective_priority(registration) is not None

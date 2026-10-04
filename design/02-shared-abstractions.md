@@ -373,7 +373,8 @@ Each **dispatch method** declares:
 3. a `check` function that probes feasibility without significant computation and reports, as a `Feasibility`, whether the call is feasible, infeasible, or **unresolved**, which means the declarations the probe needs are not yet available; it does not report exactness, which the method declared;
 4. an `execute` function that performs it;
 5. whether it is **exact**: a method either returns a representation of the requested result or a stand-in for it, declared where the method is registered and fixed for the method's life;
-6. a **priority**: an integer rank among the methods of the same exactness, and the one thing about a method a deployment may change at runtime.
+6. a **priority**: an integer rank among the methods of the same exactness, and the one thing about a method a deployment may change at runtime;
+7. optionally, a one-line `description`, which the catalog shows.
 
 Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes matching methods in **selection order** and runs the first whose `check` establishes feasibility. An unresolved higher-ranked candidate prevents a probe from claiming which method will run; execution resolves prerequisite plans first or reports unavailable requirements (V.9). Selection order is the same in every registry:
 1. exact methods before approximate ones, so exactness is never silently traded away;
@@ -391,6 +392,7 @@ class BaseDispatchMethod[SupportedTypesT](ABC):
     name: str
     exact: bool                   # declared at registration, fixed for the method's life
     priority: int | None = None   # rank among methods of the same exactness, higher first; None is opt-in-only
+    description: str = ""         # one line, shown by the catalog
 
     @abstractmethod
     def supported_types(self) -> SupportedTypesT: ...   # admitted by the registry's structural pre-filter
@@ -416,12 +418,16 @@ class MathematicalDomainError(ValueError): ...  # the mathematical operation is 
 
 class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
+    kind: str = "dispatch"        # with name and description, the SupportsRegistryCataloging identity
+    def __init__(self, *, name: str = "", description: str = "") -> None: ...   # constructing does not catalog
     def register(self, method: M) -> None: ...
     def set_priorities(self, priorities: Mapping[str, int | None] | None = None, /,
                        **kwargs: int | None) -> None: ...   # ranks only; warns on a move into or out of opt-in-only
     def execute(self, *args, method: str | None = None, exact_only: bool = False, **kwargs) -> Any: ...   # auto-select, or run the named method
     def check(self, *args, method: str | None = None, exact_only: bool = False, **kwargs) -> MethodInfo: ...
     def list_methods(self) -> list[str]: ...                           # names, ranked by exactness, priority, and registration order
+    def entry_summaries(self) -> list[EntrySummary]: ...               # one per method, in list_methods order
+    def describe_entry(self, name: str) -> EntrySummary: ...           # KeyError for an unknown name
 
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ...    # keys on one argument's type
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
@@ -433,7 +439,7 @@ Provenance records whether each step was exact and its target, preserving upstre
 
 **Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
 
-A single **catalog** makes every registry discoverable: it lists the registries, their entries with their priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries whose items are not all type-dispatched methods. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
+A single **catalog** makes every registry discoverable: it lists the registries, their entries with their exactness and priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries whose items are not all type-dispatched methods. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
 
 ```python
 @dataclass(frozen=True)
@@ -443,8 +449,9 @@ class EntrySummary:
     supported_types: tuple[Any, ...] = ()
     description: str = ""
     module_path: str = ""
+    exact: bool | None = None   # None when the registry declares no exactness per entry
     @property
-    def is_opt_in_only(self) -> bool: ...
+    def is_opt_in_only(self) -> bool: ...   # priority is None; meaningful only in a registry that ranks its entries
 
 @dataclass(frozen=True)
 class RegistryInfo:            # the catalog's per-registry record

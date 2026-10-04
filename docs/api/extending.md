@@ -12,6 +12,8 @@ the section on this page that covers it in detail.
 | New inference method (custom sampler, optimiser, ...) | Subclass of `InferenceMethod` declaring `supported_types`, `priority`, `check()`, and `execute()` | `inference_method_registry.register(...)` — see [Custom inference methods](#custom-inference-methods) |
 | New distribution-to-distribution converter | Subclass of `Converter` with `check()` / `convert()` | `converter_registry.register(...)` — see [Custom converters](#custom-converters) |
 | New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
+| New auxiliary-metadata adapter (custom array-like) | `capture` and `restore` callables | `register_aux(leaf_type, capture, restore)` — see [Custom auxiliary metadata](#custom-auxiliary-metadata) |
+| New registry, made discoverable | A `BaseDispatchRegistry` subclass constructed with `name=` and `description=`, or any registry exposing `name`, `description`, `kind`, `entry_summaries()`, and `describe_entry()` | `registry_catalog.register(registry)` — see [Registry catalog](#registry-catalog) |
 | New array backend (custom array-like leaf type) | An `ArrayBackend` (shape / dtype / conversion hooks) | `register_array_backend(leaf_type, backend)` — see [Custom array backends](#custom-array-backends) |
 
 The two remaining sections — [Broadcasting internals](#broadcasting-internals-exposed-for-extension)
@@ -186,6 +188,50 @@ sharp failure modes, or exists only for `method=` testing — leaves
 ::: probpipe.core._dispatch.ResolutionError
 
 ::: probpipe.core._dispatch.MathematicalDomainError
+
+## Registry catalog
+
+`probpipe.registry_catalog` lists every cataloged registry, the entries in
+each with their exactness and priority, and a one-line description of each.
+An *entry* is one registered item: an inference method, a converter, or a
+bijector factory, depending on the registry. The catalog never dispatches;
+the per-registry singletons such as `inference_method_registry` stay the
+way to call one.
+
+- `print(probpipe.registry_catalog)` prints one row per registry, and
+  `registry_catalog.list()` returns one `RegistryInfo` each.
+- `print(registry_catalog.describe("inference"))` lists one registry's
+  entries in selection order before type specificity: exact entries first,
+  then by priority, with the opt-in-only entries in a section of their
+  own. `registry_catalog["inference"].describe_entry("nutpie_nuts")`
+  returns one entry's `EntrySummary`.
+
+A registry is cataloged by an explicit call,
+`registry_catalog.register(registry)`, which rejects an empty or duplicate
+name; constructing a registry never catalogs it. Any registry implementing
+`SupportsRegistryCataloging` qualifies:
+
+- **A dispatch registry** implements it already. Give it a `name` and a
+  `description` at construction, and a method may set a one-line
+  `description` class attribute, which the registry reads at registration:
+
+  ```python
+  kl_registry = BinaryDispatchRegistry(name="kl", description="KL divergence between two laws.")
+  registry_catalog.register(kl_registry)
+  ```
+
+- **Any other registry**, such as the converter registry or the bijector
+  factory, exposes `name`, `description`, and `kind` with
+  `entry_summaries()` and `describe_entry()`, and is registered the same
+  way. Its dispatch is unaffected.
+
+::: probpipe.core._catalog.RegistryCatalog
+
+::: probpipe.core._catalog.SupportsRegistryCataloging
+
+::: probpipe.core._catalog.EntrySummary
+
+::: probpipe.core._catalog.RegistryInfo
 
 ## Custom converters
 

@@ -611,6 +611,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration and the validation of a method's declarations, ordering by exactness, then rank, then type specificity, then registration order, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop, `_find_methods` included. Arity-specific subclasses implement `_cache_key`, `_validate_supported_types`, `_distance`, and `_format_key`. |
 | `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
 | `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
+| `RegistryCatalog` / `registry_catalog` | The catalog of registries (`probpipe.core._catalog`): lists each cataloged registry and its entries, with each entry's exactness, priority, and description, and never dispatches. A registry joins by implementing `SupportsRegistryCataloging` and by an explicit `registry_catalog.register(registry)`; see [Registry catalog](#registry-catalog). |
 | `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
@@ -751,6 +752,36 @@ for a `BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` /
 `BinaryDispatchRegistry`) or `ConverterRegistry` instead when
 dispatch needs to consider the input value, environment, or
 installed backends.
+
+### Registry catalog
+
+`registry_catalog` (`probpipe.core._catalog`, design II.7) lists every
+cataloged registry: `print(probpipe.registry_catalog)` gives one row per
+registry, and `registry_catalog.describe(name)` lists that registry's
+entries, exact entries first, then by priority, with the opt-in-only ones
+apart. An *entry* is one registered item: an inference method, a converter,
+or a bijector factory. The catalog never dispatches; the per-registry
+singletons stay the way to call one.
+
+A registry is cataloged when it implements `SupportsRegistryCataloging`
+(`name`, `description`, `kind`, `entry_summaries()`, `describe_entry()`)
+**and** its owning module calls `registry_catalog.register(registry)` at
+import, as `inference/_registry.py` does for `"inference"`. Constructing a
+registry never catalogs it, and `register` rejects an empty or duplicate
+name, so a registry built in a test stays out of the global catalog unless
+the test registers it.
+
+- **A dispatch registry** implements the protocol already: construct it with
+  `name=` and `description=`, and its entries report each method's
+  registered exactness, effective priority, supported types, and the
+  method's optional one-line `description` class attribute.
+- **Any other registry** — the `ConverterRegistry` (`"converters"`) and the
+  constraint → bijector factory (`"bijectors"`) — exposes the same five
+  members over its own entries, leaving its dispatch as it is.
+
+When adding a registry, register it with the catalog in the module that
+creates it, and add its name to `TestBuiltinPopulation` in
+`tests/core/test_catalog.py`.
 
 ### Generic vs Record-based pattern
 

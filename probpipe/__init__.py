@@ -47,6 +47,12 @@ from probpipe.core._array_backend import (
 )
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._broadcast_distributions import BroadcastDistribution
+from probpipe.core._catalog import (
+    EntrySummary,
+    RegistryInfo,
+    SupportsRegistryCataloging,
+    registry_catalog,
+)
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._empirical import (
@@ -251,6 +257,7 @@ __all__ = [
     "DistributionArray",
     "DistributionSpec",
     "EmpiricalDistribution",
+    "EntrySummary",
     "Exponential",
     "FlatNumericRecordDistribution",
     "FlattenedDistributionView",
@@ -314,6 +321,7 @@ __all__ = [
     "RecordDistribution",
     "RecordEmpiricalDistribution",
     "RecordSpec",
+    "RegistryInfo",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
@@ -331,6 +339,7 @@ __all__ = [
     "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
+    "SupportsRegistryCataloging",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
@@ -373,6 +382,7 @@ __all__ = [
     "real",
     "register_array_backend",
     "register_bijector",
+    "registry_catalog",
     "replay_run",
     "rwmh",
     "simplex",

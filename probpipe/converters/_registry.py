@@ -6,9 +6,10 @@ import operator
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from ..core import _workflow_broker, _workflow_descendants
+from ..core._catalog import EntrySummary, registry_catalog
 
 _ConversionExecutionMode = Literal[
     "exact",
@@ -184,7 +185,20 @@ class ConverterRegistry:
 
     Converters are tried in descending priority order.  The first
     converter whose ``check()`` returns ``feasible=True`` wins.
+
+    The registry is cataloged as ``"converters"``: it implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` through the
+    class attributes ``name``, ``description``, and ``kind`` and the methods
+    :meth:`entry_summaries` and :meth:`describe_entry`, which read the
+    converters in the order :meth:`check` tries them.
     """
+
+    #: The catalog identity, shared by every instance.
+    name: ClassVar[str] = "converters"
+    description: ClassVar[str] = (
+        "Cross-type distribution converters (TFP, scipy, ProbPipe-internal, protocol-based)."
+    )
+    kind: ClassVar[str] = "converter"
 
     def __init__(self) -> None:
         self._converters: list[Converter] = []
@@ -280,6 +294,46 @@ class ConverterRegistry:
             return True
         return any(isinstance(obj, tuple(c.source_types())) for c in self._converters)
 
+    # -- catalog surface ----------------------------------------------------
+
+    def entry_summaries(self) -> list[EntrySummary]:
+        """Return one :class:`EntrySummary` per registered converter.
+
+        Walks ``self._converters`` in priority-sorted order (the same
+        order :meth:`check` uses).  ``supported_types`` is encoded as
+        ``(source_types, target_types)`` to match the converter's
+        :meth:`Converter.source_types` / :meth:`Converter.target_types`
+        contract.
+        """
+        return [
+            EntrySummary(
+                name=type(c).__name__,
+                priority=c.priority,
+                supported_types=(c.source_types(), c.target_types()),
+                description=(type(c).__doc__ or "").strip().splitlines()[0]
+                if type(c).__doc__
+                else "",
+                module_path=type(c).__module__,
+            )
+            for c in self._converters
+        ]
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """Return the :class:`EntrySummary` for the named converter.
+
+        *name* matches ``type(converter).__name__``.
+
+        Raises
+        ------
+        KeyError
+            If no registered converter has that class name.
+        """
+        for s in self.entry_summaries():
+            if s.name == name:
+                return s
+        available = ", ".join(sorted(s.name for s in self.entry_summaries())) or "(none)"
+        raise KeyError(f"No converter named {name!r}. Available: {available}")
+
     # -- internals ----------------------------------------------------------
 
     def _find_converters(self, source_type: type) -> list[Converter]:
@@ -325,5 +379,6 @@ class ConverterRegistry:
         )
 
 
-# Module-level singleton
+# Module-level singleton, cataloged as "converters".
 converter_registry = ConverterRegistry()
+registry_catalog.register(converter_registry)

@@ -45,9 +45,11 @@ unify them.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import ClassVar
 
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+from ..core._catalog import EntrySummary, registry_catalog
 from ..core.constraints import (
     Constraint,
     _Boolean,
@@ -64,7 +66,7 @@ from ..core.constraints import (
     _UnitInterval,
 )
 
-__all__ = ["bijector_for", "register_bijector"]
+__all__ = ["bijector_for", "bijector_registry", "register_bijector"]
 
 
 # Factory takes the (parameterized) constraint instance and returns a bijector.
@@ -214,3 +216,77 @@ register_bijector(
         "discrete support; consider a continuous relaxation (e.g., Gumbel-Softmax) or rounding"
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Catalog facade
+# ---------------------------------------------------------------------------
+
+
+def _bijector_entry_name(key: type | Constraint) -> str:
+    """Stable catalog name for a registered constraint key.
+
+    Constraint subclasses are named by their class name with any leading
+    underscore stripped (``_Positive`` → ``"Positive"``).  Instance keys
+    are rendered via ``repr``.
+    """
+    if isinstance(key, type):
+        return key.__name__.lstrip("_")
+    return repr(key)
+
+
+class _BijectorRegistryFacade:
+    """The bijector factory as the catalog sees it, cataloged as ``"bijectors"``.
+
+    The factory maps a constraint, by instance first and then by the
+    constraint class's MRO, to a function returning a bijector; it is
+    populated by :func:`register_bijector` and read by :func:`bijector_for`.
+    This object implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` over those
+    registrations, one entry per constraint key in name order. The factory
+    does not rank its entries, so each entry's ``priority`` is ``None``.
+    """
+
+    name: ClassVar[str] = "bijectors"
+    description: ClassVar[str] = (
+        "Constraint -> Bijector factory dispatch (instance-first, MRO fallback)."
+    )
+    kind: ClassVar[str] = "factory"
+
+    def entry_summaries(self) -> list[EntrySummary]:
+        """Return one :class:`EntrySummary` per registered constraint key.
+
+        Entries are ordered by name for deterministic output.
+        """
+        summaries = [
+            EntrySummary(
+                name=_bijector_entry_name(key),
+                priority=None,
+                supported_types=(key,),
+                module_path=(key.__module__ if isinstance(key, type) else type(key).__module__),
+            )
+            for key in _CONSTRAINT_BIJECTOR_REGISTRY
+        ]
+        summaries.sort(key=lambda s: s.name)
+        return summaries
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """Return the :class:`EntrySummary` for the named constraint entry.
+
+        Raises
+        ------
+        KeyError
+            If no registered entry has that name.  The error message
+            lists the available names.
+        """
+        for s in self.entry_summaries():
+            if s.name == name:
+                return s
+        available = ", ".join(s.name for s in self.entry_summaries()) or "(none)"
+        raise KeyError(f"No bijector entry named {name!r}. Available: {available}")
+
+
+# Module-level singleton, registered with the global catalog so it can be
+# discovered via ``probpipe.registry_catalog["bijectors"]``.
+bijector_registry = _BijectorRegistryFacade()
+registry_catalog.register(bijector_registry)

@@ -8,6 +8,7 @@ first feasible method in selection order, or the user names one through
 
 from __future__ import annotations
 
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (  # noqa: F401 (re-export)
     Feasibility,
     MethodInfo,
@@ -40,5 +41,9 @@ class InferenceMethod(UnaryDispatchMethod):
 
 
 # The singleton registry — a plain UnaryDispatchRegistry, no subclass
-# needed.
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry()
+# needed — cataloged as "inference".
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry(
+    name="inference",
+    description="Inference-method dispatch for condition_on.",
+)
+registry_catalog.register(inference_method_registry)
