@@ -999,6 +999,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The registry catalog.** `probpipe.registry_catalog` lists the registries
+  and their entries, so a user can see which implementations exist and how a
+  call resolves. `print(registry_catalog)` gives one row per registry, and
+  `registry_catalog.describe(name)` lists one registry's entries, each with
+  its priority, exactness, and description. An entry is one registered item of
+  a registry, such as an inference method or a converter.
+  - **Membership:** a registry is cataloged by implementing
+    `SupportsRegistryCataloging` (`name`, `description`, `kind`,
+    `entry_summaries()`, and `describe_entry()`) and by an explicit
+    `registry_catalog.register(registry)`, which rejects an empty or duplicate
+    name. Constructing a registry does not catalog it.
+  - **The built-in registries:** the bijector factories, the converters, the
+    evaluation rules, the inference methods, and the operations, each under
+    its own name.
+  - **Dispatch registries:** `BaseDispatchRegistry` takes keyword-only `name`
+    and `description` and has `kind = "dispatch"`. Its `entry_summaries()`
+    reports each method's registered name, exactness, effective priority,
+    supported types, and description as an `EntrySummary`, in `list_methods()`
+    order. A method may declare a one-line `description`, which registration
+    reads and validates with its other declarations.
+  - **Operations:** `OperationSummary` is an `EntrySummary`, and
+    `OperationRegistry` implements `SupportsRegistryCataloging`.
+  - **Exports:** `probpipe` exports `registry_catalog` and the four classes
+    that `probpipe/core/_catalog.py` defines: `RegistryCatalog`,
+    `EntrySummary`, `RegistryInfo`, and `SupportsRegistryCataloging`.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the

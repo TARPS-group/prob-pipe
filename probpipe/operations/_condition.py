@@ -64,6 +64,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BaseDispatchRegistry,
     Feasibility,
@@ -238,11 +239,15 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         return (_observed_target(*args),)
 
 
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry()
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = _InferenceMethodRegistry(
+    name="inference",
+    description="Inference methods for condition_on, keyed on the target's type.",
+)
 """The registry of the normalization stage of ``condition_on``, keyed on the target's type.
 
 The methods of ``probpipe.inference`` register here.
 """
+registry_catalog.register(inference_method_registry)
 
 
 # ---------------------------------------------------------------------------
