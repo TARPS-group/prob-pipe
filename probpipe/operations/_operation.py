@@ -47,6 +47,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ..core._catalog import EntrySummary, SupportsRegistryCataloging, registry_catalog
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._expression import Expression, Named
 from ..core._kinds import _KINDS
@@ -1952,6 +1953,7 @@ class Operation(Function):
         doc = inspect.getdoc(self) or ""
         return OperationSummary(
             name=self.label,
+            priority=None,
             supported_types=operands[0].accepts if operands else (),
             description=doc.split("\n\n", 1)[0].replace("\n", " "),
             module_path=self.__module__,
@@ -2060,23 +2062,21 @@ class RouteSummary:
 
 
 @dataclass(frozen=True, kw_only=True)
-class OperationSummary:
+class OperationSummary(EntrySummary):
     """One operation, as the registry of operations lists it.
 
-    The first five attributes are those every registry entry reports.
+    The attributes of :class:`~probpipe.core._catalog.EntrySummary` come first,
+    and for an operation they hold:
+
+    - ``name``: the operation's name;
+    - ``priority`` and ``exact``: ``None``, since operations are not ranked
+      against each other and each route declares its own exactness;
+    - ``supported_types``: the kinds the first operand accepts;
+    - ``description``: the first paragraph of the operation's docstring;
+    - ``module_path``: the module that declares the operation.
 
     Attributes
     ----------
-    name : str
-        The operation's name.
-    priority : int or None
-        Always ``None``: operations are not ranked against each other.
-    supported_types : tuple of type
-        The kinds the first operand accepts.
-    description : str
-        The first paragraph of the operation's docstring.
-    module_path : str
-        The module that declares the operation.
     operands : tuple of OperandSummary
         Every parameter, in signature order.
     is_derived : bool
@@ -2087,11 +2087,6 @@ class OperationSummary:
         The routes, in selection order.
     """
 
-    name: str
-    priority: int | None = None
-    supported_types: tuple[Any, ...] = ()
-    description: str = ""
-    module_path: str = ""
     operands: tuple[OperandSummary, ...]
     is_derived: bool
     identity: str | None
@@ -2121,13 +2116,14 @@ def _render(summary: OperationSummary) -> str:
     return "\n".join(lines)
 
 
-class OperationRegistry:
+class OperationRegistry(SupportsRegistryCataloging):
     """The registry of operations, which makes the vocabulary discoverable.
 
     Each entry is an operation, listed with its operands, whether it is
     primitive or derived, and its routes in selection order. The registry
-    carries the members a cataloged registry reports: ``name``,
-    ``description``, ``kind``, ``entry_summaries``, and ``describe_entry``.
+    implements :class:`~probpipe.core._catalog.SupportsRegistryCataloging`
+    through ``name``, ``description``, ``kind``, :meth:`entry_summaries`, and
+    :meth:`describe_entry`, and it is cataloged as ``"operations"``.
     """
 
     name = "operations"
@@ -2243,6 +2239,7 @@ class OperationRegistry:
 
 operation_registry: OperationRegistry = OperationRegistry()
 """The global registry of operations."""
+registry_catalog.register(operation_registry)
 
 
 def operation(

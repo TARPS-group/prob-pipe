@@ -88,10 +88,7 @@ _PROSE = {
 }
 
 #: Declarations the implementation does not match yet, with the change each awaits.
-_PENDING = {
-    "OperationSummary": "the registry catalog's EntrySummary is defined in core",
-    "OperationRegistry": "the registry catalog's SupportsRegistryCataloging is defined in core",
-}
+_PENDING: dict[str, str] = {}
 
 #: Names the package exports that Part VI does not declare, with where each is declared.
 _DECLARED_ELSEWHERE = {
