@@ -147,6 +147,14 @@ class TestThePosterior:
         expected = np.exp(log_likelihood - log_likelihood.max())
         np.testing.assert_allclose(posterior.weights, expected / expected.sum(), atol=1e-6)
 
+    def test_observed_values_in_an_xarray_dataarray_give_the_weights_of_the_array(self):
+        xr = pytest.importorskip("xarray")
+        observed = xr.DataArray(np.asarray(Y), dims="observation")
+        posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": observed})
+        np.testing.assert_allclose(
+            posterior.weights, _expected_weights(np.ones(41) / 41), atol=1e-6
+        )
+
     def test_the_annotations_record_the_method(self):
         posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": Y})
         assert posterior.annotations.attrs["method"] == "empirical_reweighting"

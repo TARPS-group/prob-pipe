@@ -183,6 +183,24 @@ class TestBlackJAXNuts:
         np.testing.assert_allclose(np.asarray(step_size), 0.05)
 
 
+class TestObservedDataInRawHosts:
+    """Observed data held in a pandas or xarray object condition as their array does."""
+
+    @pytest.mark.parametrize("host", ["pandas", "xarray"])
+    def test_the_draws_match_those_of_the_array(self, host):
+        y = np.array([0.4, 0.9, -0.1], dtype=np.float32)
+        if host == "pandas":
+            hosted = pytest.importorskip("pandas").Series(y, name="y")
+        else:
+            hosted = pytest.importorskip("xarray").DataArray(y, dims="observation")
+        model = _gaussian_mean(Normal("mu", 0.0, 1.0))
+        options = {"num_results": 50, "num_warmup": 50, "num_chains": 1, "random_seed": 0}
+        fit = condition_on.with_options(method="blackjax_nuts", method_options=options)
+        np.testing.assert_array_equal(
+            flat_draws(fit(model, {"y": hosted})), flat_draws(fit(model, {"y": jnp.asarray(y)}))
+        )
+
+
 class TestBlackJAXHmc:
     """End-to-end smoke + correctness checks for ``blackjax_hmc``."""
 
