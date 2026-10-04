@@ -22,7 +22,7 @@ Every result is another ProbPipe object, which records how it was computed.
 3. **Computation from capabilities:** an operation computes its result from what its inputs can do, by a closed form where one exists, and otherwise by an exact algorithm or an approximate method from a registry of backends such as BlackJAX, Stan, and PyMC. The choice is automatic, `check` reports it before a call runs, and `with_options` overrides it.
 4. **Lifting:** an ordinary Python function applied to distributions returns the distribution of its output, and applied to a batch it returns the batch of its outputs.
 5. **Traceable, reproducible results:** every result records the operation, the route, and the inputs that produced it, and `workflow_run(seed=...)` makes its random draws reproducible.
-6. **Native Python and existing packages:** functions are plain Python, written with packages such as JAX, pandas, or xarray, whose values pass through ProbPipe unchanged. A model written in PyMC or Stan becomes a ProbPipe object, and a sampler's draws are available as ArviZ data.
+6. **Native Python and existing packages:** functions are plain Python, typically JAX code, and data can arrive in pandas or xarray objects. A model written in PyMC or Stan becomes a ProbPipe object, and a sampler's draws are available as ArviZ data.
 <!-- --8<-- [end:approach] -->
 
 ## Quick example
@@ -66,15 +66,15 @@ print("posterior mean of beta:", mean(posterior["beta"]).raw())
 
 # Every result records how it was computed.
 for name, result in [("mean of the prior", mean(prior)), ("posterior", posterior)]:
-    record = result.provenance.metadata
-    method = f", method {record['method']}" if "method" in record else ""
-    print(f"{name}: route {record['route']}{method}, exact {record['exact']}")
+    prov_meta = result.provenance.metadata
+    method = f", method {prov_meta['method']}" if "method" in prov_meta else ""
+    print(f"{name} provenance: route={prov_meta['route']}{method}, exact={prov_meta['exact']}")
 ```
 
 ```text
 posterior mean of beta: [11.602147   -0.18273503]
-mean of the prior: route closed_form, exact True
-posterior: route inference_methods, method blackjax_nuts, exact False
+mean of the prior provenance: route=closed_form, exact=True
+posterior provenance: route=inference_methods, method blackjax_nuts, exact=False
 ```
 
 The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients, which `glm_likelihood` builds for us.
@@ -106,14 +106,14 @@ print("P(damage at 31°F), posterior mean:", round(float(mean(risk)), 3))
 print("P(damage at 31°F), 90% interval:", quantile(risk, jnp.array([0.05, 0.95])).raw())
 
 # The forecast records how it was computed, too.
-record = risk.provenance.metadata
-print(f"risk: route {record['route']}, exact {record['exact']}")
+prov_meta = risk.provenance.metadata
+print(f"risk provenance: route={prov_meta['route']}, exact={prov_meta['exact']}")
 ```
 
 ```text
 P(damage at 31°F), posterior mean: 0.96
 P(damage at 31°F), 90% interval: [0.77571553 0.9999759 ]
-risk: route sampling_lift, exact False
+risk provenance: route=sampling_lift, exact=False
 ```
 
 We wrote `damage_probability` for one pair of coefficients, and ProbPipe lifted it to the posterior: it evaluated the function at draws of the coefficients and returned the distribution of the results, so the forecast carries the posterior's uncertainty.
