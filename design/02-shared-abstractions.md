@@ -451,7 +451,7 @@ class EntrySummary:
     module_path: str = ""
     exact: bool | None = None   # None when the registry declares no exactness per entry
     @property
-    def is_opt_in_only(self) -> bool: ...   # priority is None
+    def is_opt_in_only(self) -> bool: ...   # priority is None; meaningful only in a registry that ranks its entries
 
 @dataclass(frozen=True)
 class RegistryInfo:            # the catalog's per-registry record

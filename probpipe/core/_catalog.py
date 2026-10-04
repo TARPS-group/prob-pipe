@@ -77,8 +77,12 @@ class EntrySummary:
     def is_opt_in_only(self) -> bool:
         """``True`` when ``priority`` is ``None``.
 
-        In a dispatch registry such an entry is skipped by automatic
-        selection and reachable only by ``method="..."``.
+        Meaningful for a registry that ranks its entries: in a dispatch
+        registry such an entry is skipped by automatic selection and
+        reachable only by ``method="..."``. A registry that does not rank its
+        entries, such as a factory, reports ``None`` for every entry and has
+        no opt-in; :meth:`RegistryCatalog.describe` lists its entries
+        together.
         """
         return self.priority is None
 
