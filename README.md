@@ -17,7 +17,7 @@ Every result is another ProbPipe object, which records how it was computed.
 ## The approach
 
 <!-- --8<-- [start:approach] -->
-1. **Mathematical objects:** distributions, conditional distributions, functions, and values are ProbPipe objects, and each one names its components, such as the intercept and the slope of a regression. A batch holds several objects of one kind, such as a set of scenarios, on named axes.
+1. **Mathematical objects:** distributions, conditional distributions, functions, and values are ProbPipe objects, and each one names its components, such as the coefficients and the response of a regression. A batch holds several objects of one kind, such as a set of scenarios, on named axes.
 2. **One vocabulary of operations:** `*` composes a conditional distribution with a distribution into their joint distribution, `condition_on` conditions, and summaries such as `mean` and `quantile` describe a law. Each operation applies to every object that supports it mathematically and returns another ProbPipe object, so results compose.
 3. **Computation from capabilities:** an operation computes its result from what its inputs can do, by a closed form where one exists, and otherwise by an exact algorithm or an approximate method from a registry of backends such as BlackJAX, Stan, and PyMC. The choice is automatic, `check` reports it before a call runs, and `with_options` overrides it.
 4. **Lifting:** an ordinary Python function applied to distributions returns the distribution of its output, and applied to a batch it returns the batch of its outputs.
@@ -30,78 +30,94 @@ Every result is another ProbPipe object, which records how it was computed.
 <!-- --8<-- [start:quick-example] -->
 A Bayesian logistic regression on the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster) relates the temperature of 23 shuttle launches to whether an O-ring was damaged.
 Its posterior then gives the probability of damage at 31°F, far below the 53°F of the coldest of those launches.
-The example uses each idea of the approach.
+
+First, we specify the model and condition it on the data:
 
 ```python
-import jax
 import jax.numpy as jnp
 import pandas as pd
 
-from probpipe import (
-    Bernoulli,
-    Normal,
-    NumericArraySpec,
-    condition_on,
-    conditional_distribution,
-    function,
-    mean,
-    quantile,
-    workflow_run,
-)
+from probpipe import Normal, condition_on, mean, workflow_run
+from probpipe.families import BernoulliFamily, glm_likelihood
 
+# One row per launch: the temperature, and whether an O-ring was damaged.
 data = pd.read_csv("docs/tutorials/data/challenger.csv")
 temperature = jnp.asarray(data["temperature"], dtype=jnp.float32)
 damage = jnp.asarray(data["damage"], dtype=jnp.int32)
 
-# A distribution of the intercept and the slope of the log-odds of damage.
-prior = Normal("intercept", 0.0, 10.0) * Normal("slope", 0.0, 1.0)
+# The design matrix: a column of ones for the intercept, and the temperatures for the slope.
+X = jnp.stack([jnp.ones_like(temperature), temperature], axis=1)
 
-# A conditional distribution of the 23 damage indicators, given the intercept and the slope.
-likelihood = conditional_distribution(
-    "damage",
-    lambda intercept, slope: Bernoulli("damage", logits=intercept + slope * temperature),
-    given_spec={"intercept": NumericArraySpec(()), "slope": NumericArraySpec(())},
-)
+# The prior: a normal distribution of the coefficients beta = (intercept, slope).
+prior = Normal("beta", jnp.zeros(2), jnp.array([10.0, 1.0]))
 
-# Their composition is the joint distribution of the parameters and the data.
+# The likelihood: the distribution of the 23 damage indicators given beta, a logistic regression.
+likelihood = glm_likelihood("damage", BernoulliFamily(), X=X)
+
+# The model is the joint distribution of beta and the damage indicators.
 model = likelihood * prior
 
-
-# An ordinary function of two numbers.
-@function
-def damage_probability(intercept, slope):
-    return jax.nn.sigmoid(intercept + slope * 31.0)
-
-
+# Conditioning the model on the observed damage gives the posterior of beta.
+# The seed makes the sampler's random draws reproducible.
 with workflow_run(seed=0):
-    prior_mean = mean(prior)
     posterior = condition_on(model, {"damage": damage})
-    risk = damage_probability(posterior["intercept"], posterior["slope"])
 
-print("posterior mean of the slope:", round(float(mean(posterior["slope"])), 3))
-print("P(damage at 31°F), posterior mean:", round(float(mean(risk)), 3))
-print("P(damage at 31°F), 90% interval:", quantile(risk, jnp.array([0.05, 0.95])).values)
+print("posterior mean of beta:", mean(posterior["beta"]).raw())
 
-# How each result was computed, from its provenance.
-for name, result in [("mean of the prior", prior_mean), ("posterior", posterior), ("risk", risk)]:
+# Every result records how it was computed.
+for name, result in [("mean of the prior", mean(prior)), ("posterior", posterior)]:
     record = result.provenance.metadata
     method = f", method {record['method']}" if "method" in record else ""
     print(f"{name}: route {record['route']}{method}, exact {record['exact']}")
 ```
 
 ```text
-posterior mean of the slope: -0.182
-P(damage at 31°F), posterior mean: 0.962
-P(damage at 31°F), 90% interval: [0.82085985 0.9999324 ]
+posterior mean of beta: [11.602147   -0.18273503]
 mean of the prior: route closed_form, exact True
 posterior: route inference_methods, method blackjax_nuts, exact False
+```
+
+The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients, which `glm_likelihood` builds for us.
+Multiplying them with `*` gives the model, and `condition_on` turns the model into the posterior.
+The output also shows how ProbPipe computed each result.
+The prior's mean has a formula, so `mean` computed it exactly.
+The posterior of a logistic regression has none, so `condition_on` drew from it with BlackJAX's No-U-Turn Sampler, and the posterior is approximate: it is held as the sampler's draws.
+
+Next, we forecast.
+The probability of damage at 31°F is a function of the coefficients, which we write in plain JAX:
+
+```python
+import jax
+
+from probpipe import function, quantile
+
+
+# The probability of damage at 31°F, for one pair of coefficients.
+@function
+def damage_probability(beta: jax.Array) -> jax.Array:
+    return jax.nn.sigmoid(beta[0] + beta[1] * 31.0)
+
+
+# Called on the posterior, the function returns the distribution of the probability.
+with workflow_run(seed=1):
+    risk = damage_probability(posterior["beta"])
+
+print("P(damage at 31°F), posterior mean:", round(float(mean(risk)), 3))
+print("P(damage at 31°F), 90% interval:", quantile(risk, jnp.array([0.05, 0.95])).raw())
+
+# The forecast records how it was computed, too.
+record = risk.provenance.metadata
+print(f"risk: route {record['route']}, exact {record['exact']}")
+```
+
+```text
+P(damage at 31°F), posterior mean: 0.96
+P(damage at 31°F), 90% interval: [0.77571553 0.9999759 ]
 risk: route sampling_lift, exact False
 ```
 
-1. **Objects and composition:** `prior` is a distribution and `likelihood` a conditional distribution, each naming its components, and `likelihood * prior` is their joint distribution.
-2. **Capabilities decide the computation:** the prior's mean has a closed form, so `mean` computes it exactly. The posterior of a logistic regression has none, so `condition_on` selects BlackJAX's No-U-Turn Sampler, and the posterior is a distribution held as its draws.
-3. **Lifting:** `damage_probability` is a function of two numbers, and called on the posterior's two components it returns the distribution of the probability of damage, evaluated at joint draws of the intercept and the slope.
-4. **Provenance:** each result records its route and whether it is exact, and the seed of `workflow_run` reproduces the draws.
+We wrote `damage_probability` for one pair of coefficients, and ProbPipe lifted it to the posterior: it evaluated the function at draws of the coefficients and returned the distribution of the results, so the forecast carries the posterior's uncertainty.
+Its provenance says it came from those draws, so it too is approximate, and running the code again with the same seeds reproduces it.
 <!-- --8<-- [end:quick-example] -->
 
 ## Installation
