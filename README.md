@@ -17,11 +17,12 @@ Every result is another ProbPipe object, which records how it was computed.
 ## The approach
 
 <!-- --8<-- [start:approach] -->
-1. **Mathematical objects:** distributions, conditional distributions, functions, and values are ProbPipe objects, and each one names its components, such as the intercept and the slope of a regression.
+1. **Mathematical objects:** distributions, conditional distributions, functions, and values are ProbPipe objects, and each one names its components, such as the intercept and the slope of a regression. A batch holds several objects of one kind, such as a set of scenarios, on named axes.
 2. **One vocabulary of operations:** `*` composes a conditional distribution with a distribution into their joint distribution, `condition_on` conditions, and summaries such as `mean` and `quantile` describe a law. Each operation applies to every object that supports it mathematically and returns another ProbPipe object, so results compose.
 3. **Computation from capabilities:** an operation computes its result from what its inputs can do, by a closed form where one exists, and otherwise by an exact algorithm or an approximate method from a registry of backends such as BlackJAX, Stan, and PyMC. The choice is automatic, `check` reports it before a call runs, and `with_options` overrides it.
-4. **Lifting:** an ordinary Python function applied to distributions returns the distribution of its output.
+4. **Lifting:** an ordinary Python function applied to distributions returns the distribution of its output, and applied to a batch it returns the batch of its outputs.
 5. **Traceable, reproducible results:** every result records the operation, the route, and the inputs that produced it, and `workflow_run(seed=...)` makes its random draws reproducible.
+6. **Native Python and existing packages:** functions are plain Python, written with packages such as JAX, pandas, or xarray, whose values pass through ProbPipe unchanged. A model written in PyMC or Stan becomes a ProbPipe object, and a sampler's draws are available as ArviZ data.
 <!-- --8<-- [end:approach] -->
 
 ## Quick example
