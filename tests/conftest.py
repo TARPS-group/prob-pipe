@@ -48,6 +48,20 @@ def _reset_provenance_config():
     probpipe.provenance_config.reset()
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _clear_jax_caches():
+    """Drop JAX's compiled executables and traces after each test module.
+
+    JAX keeps every executable a process compiles, so an xdist worker's memory
+    grows with the number of tests it runs. Over the full suite the two workers
+    of a CI runner then exhaust its 16 GB, and the runner shuts the job down.
+    Clearing at each module boundary bounds a worker's memory by its largest
+    module.
+    """
+    yield
+    jax.clear_caches()
+
+
 @pytest.fixture
 def full_provenance_mode():
     """Switch to FULL provenance mode for the duration of a test."""
