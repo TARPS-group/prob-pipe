@@ -999,6 +999,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
+  warmup's step-size adaptation targets is a method option, 0.75 unless set,
+  so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
+  removes the divergent transitions of a posterior with regions of high
+  curvature. A target outside the open interval from 0 to 1 raises
+  `ValueError`.
 - **`condition_on` conditions an empirical prior exactly.** The inference method
   `empirical_reweighting` applies Bayes' rule to a joint whose prior is an
   `EmpiricalDistribution` over numeric atoms and whose likelihood has a
