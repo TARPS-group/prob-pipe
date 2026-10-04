@@ -2782,6 +2782,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`predictive_check` takes observed data held in a pandas or xarray object.**
+  It passed such an object to the statistics as given, while each replication
+  is a JAX array, so a statistic written with `jax.numpy` failed on a pandas
+  `Series` or an xarray `DataArray`. It now converts a registered array host
+  to the JAX array a replication holds, whether the data are one value or a
+  mapping of the kernel's components.
 - **`add_mcmc_diagnostics` counts the divergent transitions.** It recorded no
   count, so `posterior.diagnostics.mcmc.n_divergences` reported "not recorded by
   this backend" for every method. It now records the sum of the ArviZ sample

@@ -8,6 +8,7 @@ from typing import Any
 import jax
 import numpy as np
 
+from ..core._array_backend import array_backend_for
 from ..core._numeric_record import NumericRecord
 from ..core._record_spec import _reshaped_template
 from ..core.record import Record
@@ -247,14 +248,25 @@ def _observed_event(kernel: ConditionalDistribution, observed_data: Any) -> Any:
 
     A mapping or a ``Record`` keyed by the kernel's components is
     reconstructed by the kernel's event declaration, so a whole term is its
-    component's value; any other value is the observed event as given.
+    component's value; any other value is the observed event as given. A
+    value held in a registered array host, such as a pandas or xarray object,
+    converts to the JAX array a replication holds, so a statistic receives the
+    observed data in the form of a replication.
     """
     if isinstance(observed_data, Record):
         observed_data = _raw_record(observed_data)
     declaration = kernel.event_spec
     if isinstance(observed_data, Mapping) and set(observed_data) == set(declaration.components):
-        return _event_of(declaration, observed_data)
-    return observed_data
+        return _event_of(
+            declaration, {key: _as_replication(value) for key, value in observed_data.items()}
+        )
+    return _as_replication(observed_data)
+
+
+def _as_replication(value: Any) -> Any:
+    """*value* as a replication holds it: a registered array host's JAX array, else *value*."""
+    backend = array_backend_for(value)
+    return value if backend is None else backend.to_jax(value)
 
 
 def _replicated_statistics(

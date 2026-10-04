@@ -493,6 +493,27 @@ class TestForms:
         assert float(as_mapping["observed_statistic"]) == float(as_value["observed_statistic"])
         assert float(as_mapping["p_value"]) == float(as_value["p_value"])
 
+    @pytest.mark.parametrize("host", ["pandas", "xarray", "xarray in a mapping"])
+    def test_data_in_a_pandas_or_xarray_host_is_checked_as_its_array(
+        self, prior, likelihood, observed_data, host
+    ):
+        pd = pytest.importorskip("pandas")
+        xr = pytest.importorskip("xarray")
+        values = np.asarray(observed_data)
+        hosted = {
+            "pandas": pd.Series(values, name="y"),
+            "xarray": xr.DataArray(values, dims="observation"),
+            "xarray in a mapping": {"y": xr.DataArray(values, dims="observation")},
+        }[host]
+        as_array = predictive_check(
+            likelihood, prior, sample_max, observed_data, num_replications=30, key=jax.random.key(9)
+        )
+        as_host = predictive_check(
+            likelihood, prior, sample_max, hosted, num_replications=30, key=jax.random.key(9)
+        )
+        assert float(as_host["observed_statistic"]) == float(as_array["observed_statistic"])
+        assert float(as_host["p_value"]) == float(as_array["p_value"])
+
 
 # ---------------------------------------------------------------------------
 # Errors
