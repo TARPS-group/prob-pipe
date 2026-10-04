@@ -189,10 +189,8 @@ class ConverterRegistry:
     The registry is cataloged as ``"converters"``: it implements
     :class:`~probpipe.core._catalog.SupportsRegistryCataloging` through the
     class attributes ``name``, ``description``, and ``kind`` and the methods
-    :meth:`entry_summaries` and :meth:`describe_entry`. Its dispatch is
-    unchanged by that; a ``(source, target_type)`` lookup with the target
-    passed as a type does not fit
-    :class:`~probpipe.core._dispatch.BinaryDispatchRegistry`.
+    :meth:`entry_summaries` and :meth:`describe_entry`, which read the
+    converters in the order :meth:`check` tries them.
     """
 
     #: The catalog identity, shared by every instance.

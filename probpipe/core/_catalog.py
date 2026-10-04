@@ -20,6 +20,7 @@ rejects an empty or duplicate name.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -298,10 +299,10 @@ class RegistryCatalog:
         if not self._registries:
             return "<i>RegistryCatalog (empty)</i>"
         rows = "\n".join(
-            f"<tr><td><code>{info.name}</code></td>"
-            f"<td>{info.kind}</td>"
+            f"<tr><td><code>{html.escape(info.name)}</code></td>"
+            f"<td>{html.escape(info.kind)}</td>"
             f"<td>{info.entry_count}</td>"
-            f"<td>{info.description}</td></tr>"
+            f"<td>{html.escape(info.description)}</td></tr>"
             for info in self.list()
         )
         return (

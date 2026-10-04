@@ -246,6 +246,15 @@ class TestRepr:
         assert "<table>" in html
         assert "a" in html
 
+    def test_html_repr_escapes_text(self) -> None:
+        cat = RegistryCatalog()
+        cat.register(_StubRegistry("a<b>", kind="k&d", description="maps <x> to y & z"))
+        html = cat._repr_html_()
+        assert "<code>a&lt;b&gt;</code>" in html
+        assert "<td>k&amp;d</td>" in html
+        assert "maps &lt;x&gt; to y &amp; z" in html
+        assert "<b>" not in html and "<x>" not in html
+
 
 class TestErrorPaths:
     """Error / edge-case paths on the catalog itself."""
@@ -324,14 +333,11 @@ class TestConstruction:
 
 
 class TestBuiltinPopulation:
-    """The global catalog contains every built-in registry after
-    ``import probpipe``.
+    """The global catalog contains every built-in registry after ``import probpipe``.
 
-    NOTE: when new registries land (``kl_registry`` in Stage 4, sibling
-    discrepancy registries in Stage 5, ``pushforward_registry`` in
-    Stage 6, third-party plugins, ...), EXTEND this test with one
-    assertion per new name.  Do NOT relax to a subset check — that loses
-    the disappearance signal we want here.
+    Each built-in registry has its own assertion, so a registry that drops
+    out of the catalog fails by name; a registry added to the built-ins gets
+    one too.
     """
 
     def test_inference_registry_present(self) -> None:
@@ -353,12 +359,7 @@ class TestBuiltinPopulation:
         assert info.entry_count > 0
 
     def test_inference_summaries_ordering_matches_list_methods(self) -> None:
-        """Catalog round-trip: the inference registry's entry_summaries()
-        ordering matches its (unchanged) list_methods() shape and order.
-
-        Regression guard for the dual-API design: the names list and the
-        summary list must stay in lock-step.
-        """
+        """The catalog's entry summaries follow ``list_methods`` name for name."""
         sums = registry_catalog["inference"].entry_summaries()
         names = inference_method_registry.list_methods()
         assert [s.name for s in sums] == names
@@ -391,7 +392,7 @@ class TestBuiltinPopulation:
 
 
 # ---------------------------------------------------------------------------
-# Adapter introspection — non-conforming registries expose entry_summaries
+# Converter and bijector registries expose entry_summaries
 # ---------------------------------------------------------------------------
 
 
@@ -464,11 +465,10 @@ class TestAdapterSurfaces:
             assert len(s.supported_types) == 1
 
     def test_bijector_facade_renders_instance_key_via_repr(self) -> None:
-        """Instance keys (rather than constraint *types*) take the
-        ``repr(key)`` branch of ``_bijector_entry_name``.
+        """A registration keyed on a constraint instance is named by its ``repr``.
 
-        Default registrations use type keys, so this exercises a
-        currently-untested branch.
+        The built-in registrations are keyed on types, so this registers an
+        instance key for the duration of the test.
         """
         from probpipe.core.constraints import _Positive
         from probpipe.distributions._bijector_dispatch import (
@@ -522,13 +522,11 @@ class TestProtocol:
 
 
 class TestDispatchRegistryEntrySummaries:
-    """Direct test of the two new methods on ``BaseDispatchRegistry``.
+    """``entry_summaries`` and ``describe_entry`` on a ``UnaryDispatchRegistry``.
 
-    The adapter tests above cover the *non-conforming* paths (converters
-    and bijectors).  These tests exercise the *conforming* path through
-    a real ``UnaryDispatchRegistry`` so the ``EntrySummary`` field
-    mapping, priority ordering, override reflection, and round-trip
-    against ``describe_entry`` are all under direct test.
+    Covers the ``EntrySummary`` field mapping, selection order, priority
+    overrides, the registration snapshot, and the round trip through
+    ``describe_entry``.
     """
 
     def _registry_with(

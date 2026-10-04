@@ -236,21 +236,15 @@ def _bijector_entry_name(key: type | Constraint) -> str:
 
 
 class _BijectorRegistryFacade:
-    """Catalog adapter for the module-level bijector dispatch.
+    """The bijector factory as the catalog sees it, cataloged as ``"bijectors"``.
 
-    The bijector dispatch is a module-level ``dict`` + two functions
-    (:func:`register_bijector`, :func:`bijector_for`) — not a class.  It
-    is *non-conforming* in two ways: the lookup is instance-first then
-    MRO-fallback (no priority semantics), and there is no
-    ``check()``/``execute()`` cycle (just a factory call).  This facade
-    satisfies
-    :class:`~probpipe.core._catalog.SupportsRegistryCataloging`
-    by walking the module-level
-    :data:`_CONSTRAINT_BIJECTOR_REGISTRY` dict; dispatch behaviour is
-    unchanged.
-
-    ``priority`` on each :class:`~probpipe.core._catalog.EntrySummary`
-    is ``None`` because the underlying registry has no priority concept.
+    The factory maps a constraint, by instance first and then by the
+    constraint class's MRO, to a function returning a bijector; it is
+    populated by :func:`register_bijector` and read by :func:`bijector_for`.
+    This object implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` over those
+    registrations, one entry per constraint key in name order. The factory
+    does not rank its entries, so each entry's ``priority`` is ``None``.
     """
 
     name: ClassVar[str] = "bijectors"
