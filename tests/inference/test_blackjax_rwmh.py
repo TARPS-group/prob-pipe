@@ -18,7 +18,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Distribution, MultivariateNormal, NumericRecordDistribution
+from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericRecordDistribution
 from probpipe.core.protocols import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
@@ -395,10 +395,8 @@ class TestNumWarmupZeroWarning:
         is rejected before any sampling."""
 
         class NoDensityDist(Distribution):
-            event_shape = (2,)
-
             def __init__(self):
-                super().__init__(name="no_density")
+                super().__init__("no_density", NumericArraySpec((2,)))
 
         with pytest.raises(TypeError, match="SupportsUnnormalizedLogProb"):
             rwmh(dist=NoDensityDist(), num_results=10, num_warmup=10, random_seed=0)
@@ -627,13 +625,8 @@ class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
     # 1 / variance per coordinate. Standard normal by default.
     precision = (1.0, 1.0)
 
-    @property
-    def event_shape(self):
-        return (2,)
-
-    @property
-    def dtypes(self):
-        return self._per_field_dict(jnp.float32)
+    def __init__(self, name):
+        super().__init__(name, NumericArraySpec((len(self.precision),), "float32"))
 
     def _log_prob(self, value):
         v = np.asarray(value)
@@ -668,10 +661,6 @@ class _NumpyStdNormal10(_NumpyLogProbDist):
     two dimensions on the eager path."""
 
     precision = (1.0,) * 10
-
-    @property
-    def event_shape(self):
-        return (10,)
 
 
 class TestEagerFallback:

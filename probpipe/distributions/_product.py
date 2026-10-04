@@ -25,7 +25,7 @@ from ..core._numeric_record_distribution import (
 )
 from ..core._record_distribution import (
     RecordDistribution,
-    _build_event_template,
+    _joint_event_spec,
     _register_dynamic_subclass,
 )
 from ..core.named_tree import _PATH_SEP
@@ -171,11 +171,14 @@ class ProductDistribution(
     **When every leaf is a :class:`NumericRecordDistribution`** the
     dynamic class factory mixes in :class:`NumericRecordDistribution`
     too, so the joint also exposes the numeric API (``event_size``,
-    ``flatten_value`` / ``unflatten_value``, ``as_flat_distribution``,
-    ``dtypes``, ``supports``). For mixed or non-numeric leaves those
-    methods are simply absent on the instance — the joint stays on
-    the generic :class:`RecordDistribution` surface. See
-    :func:`_product_class_for_components` for the dispatch.
+    ``flatten_value`` / ``unflatten_value``, ``as_flat_distribution``).
+    For mixed or non-numeric leaves those methods are simply absent on
+    the instance — the joint stays on the generic
+    :class:`RecordDistribution` surface. See
+    :func:`_product_class_for_components` for the dispatch. Either way,
+    one draw is declared as an exposed record of the components' declared
+    terms. A numeric product's ``dtypes`` and ``supports`` read each leaf's
+    by path, and a mixed one has neither.
 
     All leaf components are sampled independently. ``_sample()``
     returns :class:`NumericRecord` when all leaves are numeric, and
@@ -267,11 +270,11 @@ class ProductDistribution(
         self._components = resolved
         name = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
         super().__init__(
-            name=name,
+            name,
+            _joint_event_spec(resolved),
             _provenance=_provenance,
             _annotations=_annotations,
         )
-        self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
         # Annotations are threaded explicitly: they are written after
@@ -320,7 +323,7 @@ class ProductDistribution(
                 self.name,
                 _sample_columns(self._components, key, sample_shape),
                 "sample",
-                element_spec=self.event_template,
+                element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
             )
 
@@ -366,14 +369,7 @@ class ProductDistribution(
             flat = jnp.asarray(value)
             if flat.ndim == 0:
                 flat = flat[None]
-            value = self.unflatten_value(flat, template=self.event_template)
-            # Single-field templates return a raw array (preserving the
-            # "single-leaf returns raw" contract on the static method);
-            # the tree-map below expects a per-field structure, so
-            # re-key it under the lone field name.
-            if isinstance(value, jnp.ndarray):
-                (field_name,) = self.event_template.fields
-                value = {field_name: value}
+            value = self.unflatten_value(flat, template=self.event_spec.spec)
         if isinstance(value, RecordBatch):
             # Leaf-keyed columns, re-nested, so the tree map below pairs each
             # column with the component that declared it.
@@ -421,25 +417,6 @@ class ProductDistribution(
         if all(isinstance(v, NumericRecordDistribution) for v in self._components.values()):
             return MappingProxyType(self._components)
         return self._components
-
-    @property
-    def supports(self):
-        """Per-leaf support constraints -- each leaf component's ``support``.
-
-        Nested components are keyed by slash-delimited paths
-        (``"outer/a"``), matching ``RecordSpec.leaf_shapes``, so every
-        value is a ``Constraint``."""
-        out: dict = {}
-
-        def _walk(components: dict, prefix: str) -> None:
-            for name, comp in components.items():
-                if isinstance(comp, dict):
-                    _walk(comp, f"{prefix}{name}/")
-                else:
-                    out[f"{prefix}{name}"] = comp.support
-
-        _walk(self._components, "")
-        return out
 
     # -- Conditioning -------------------------------------------------------
 
@@ -500,8 +477,8 @@ class TFPProductDistribution(ProductDistribution):
 
     Instantiated automatically by ``ProductDistribution.__new__`` when all
     leaf components are TFP-backed (i.e., have a ``_tfp_dist`` attribute).
-    Provides ``event_shape``, ``batch_shape``, ``dtype``, and ``_tfp_dist``
-    for interop with SBI and other TFP-dependent subsystems.
+    Provides ``_tfp_dist``, whose event is the flat concatenation of the
+    components, for interop with SBI and other TFP-dependent subsystems.
     """
 
     def __init__(self, *positional, **kwargs):
@@ -552,16 +529,6 @@ class TFPProductDistribution(ProductDistribution):
         else:
             combined = tfd.Blockwise(tfp_dists)
         object.__setattr__(self, "_tfp_dist", combined)
-
-    @property
-    def event_shape(self) -> tuple[int, ...]:
-        return tuple(self._tfp_dist.event_shape)
-
-    @property
-    def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtype — the TFP Blockwise's dtype spread
-        across the auto-built single-field template."""
-        return self._per_field_dict(self._tfp_dist.dtype)
 
 
 # -- Helpers for nested component pytrees ----------------------------------

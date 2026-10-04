@@ -25,10 +25,10 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
-│   ├── _spec_base.py          #   TermSpec and dimension unification (II.1), NumericArraySpec, OpaqueSpec (III.1–III.2)
+│   ├── _spec_base.py          #   TermSpec and dimension unification (II.1), NumericSpec (II.3), NumericArraySpec, OpaqueSpec (III.1–III.2)
 │   ├── _specs.py              #   InputSpec, OutputSpec and component projection contracts (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
-│   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
+│   ├── _numeric.py            #   Numeric, the flat-vector interface of the numeric kinds (II.3)
 │   ├── _array_backend.py      #   the array-backend registry for native numeric leaves (II.3)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm with annotations on the base, Immutable, Provenance, fingerprints, the provenance traversal (II.4)
@@ -165,7 +165,7 @@ spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_dispatch.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
-| `core/_spec_base.py` | `TermSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place; `NumericSpec` joins `Numeric` in `core/_numeric.py` (II.1, II.3, III.1–III.2) |
+| `core/_spec_base.py` | `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place, since `NumericArraySpec` subclasses `NumericSpec`, which subclasses `TermSpec` (II.1, II.3, III.1–III.2) |
 | `core/_record_spec.py` | in place: `RecordSpec`, `NumericRecordSpec`, and record unification (III.5) |
 | `core/_kind_specs.py` | `FunctionSpec` to `values/_function_base.py` (III.3) |
 | `core/_specs.py` | `InputSpec`, `OutputSpec`, and component projection contracts stay in place (II.2) |

@@ -464,8 +464,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
           unchanged.
         - A **mapping** of named fields (e.g. a ``Record``'s field dict) is
           inferred field by field: a nested ``Record`` field contributes its
-          own schema; other tracked fields retain their specs. Distributions
-          with a record event schema and callables become their kind specs;
+          own schema; other tracked fields, distributions included, retain
+          their specs. Callables become function specs;
           a numeric array or scalar becomes a :class:`NumericArraySpec` of its
           shape, and remaining raw values become :class:`OpaqueSpec`. The result
           auto-promotes to a :class:`NumericRecordSpec` when every field is numeric.
@@ -474,8 +474,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         yet (e.g. at a workflow boundary); for a value you already hold, read
         its authoritative ``event_template`` directly. Inference is lossy — it
         cannot recover an untracked array's declared ``dtype`` / ``support``
-        constraints or opaque metadata. A tracked field keeps its own spec;
-        distributions without a declaration remain opaque. A Python ``list`` /
+        constraints or opaque metadata. A tracked field keeps its own spec.
+        A Python ``list`` /
         ``tuple`` leaf (no ``.shape`` / ``.dtype``) is treated as opaque even if
         it holds numbers; wrap it in
         ``np.asarray`` / ``jnp.asarray`` first for a numeric leaf.
@@ -507,7 +507,6 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             )
 
         def _leaf_spec(val: Any) -> _FieldSpecInput:
-            from ..distributions._distribution import Distribution, DistributionSpec
             from ._kind_specs import FunctionSpec
             from .tracked import TrackedTerm
 
@@ -517,18 +516,6 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                     return spec
             if isinstance(val, Record):
                 return val.event_template
-            if isinstance(val, Distribution):
-                # Temporary bridge for a distribution that carries no spec of
-                # its own. Remove this branch once every Distribution does;
-                # the TrackedTerm path above must then supply it.
-                try:
-                    template = getattr(val, "event_template", None)
-                except TypeError:
-                    # A schema that cannot yet be derived is unavailable.
-                    return OpaqueSpec()
-                if isinstance(template, RecordSpec):
-                    return DistributionSpec(template)
-                return OpaqueSpec()
             if callable(val):
                 if isinstance(val, TrackedTerm):
                     return FunctionSpec(
@@ -697,24 +684,6 @@ def _concretize_record_spec(
         dimensions = ", ".join(sorted(missing))
         raise ValueError(f"{context} has unbound symbolic dimensions: {dimensions}")
     return template._substitute_dims(bindings)
-
-
-def _schema_carried_by(value: Any, spec: TermSpec, path: str) -> RecordSpec:
-    """The :class:`RecordSpec` *value* carries, for binding *spec* against.
-
-    A value carrying none raises, since the declaration would otherwise stay
-    symbolic with nothing left to resolve it.
-    """
-    try:
-        template = getattr(value, "event_template", None)
-    except TypeError:
-        template = None
-    if not isinstance(template, RecordSpec):
-        raise ValueError(
-            f"{path} declares the polymorphic schema {spec!r}, but "
-            f"{type(value).__name__} exposes no schema to bind it against"
-        )
-    return template
 
 
 def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> None:

@@ -9,7 +9,7 @@ that supports density evaluation.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
@@ -20,14 +20,12 @@ from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core._specs import NumericRecordSpec
+from ..core._record_distribution import _record_with_leaves
+from ..core._specs import NumericArraySpec, NumericRecordSpec, OutputSpec, RecordSpec
 from ..core.constraints import Constraint, real
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
-
-if TYPE_CHECKING:
-    from ..core._specs import RecordSpec
 
 __all__ = ["KDEDistribution"]
 
@@ -57,16 +55,21 @@ class KDEDistribution(TFPDistribution):
         Per-dimension bandwidth (standard deviation of each Gaussian
         kernel), shape ``(d,)`` or scalar.  If ``None``, Silverman's
         rule is used: ``n^{-1/(d+4)} * std_j`` for each dimension *j*.
-    event_template : RecordSpec or None
-        Structural template for the KDE's value type. When ``None`` (the
-        default) a single-field template keyed by ``name`` is auto-built,
-        matching the historical behavior. When supplied with multiple
-        fields, the template defines how the flat ``(n, d)`` sample matrix
-        maps back to a structured ``NumericRecord`` / ``NumericRecordBatch``
-        — preserving named fields end-to-end across e.g. an MCMC posterior
-        being routed through KDE as the new prior in
-        :class:`~probpipe.modeling.IncrementalConditioner`. The template's
-        ``vector_size`` must equal ``samples.shape[1]``.
+    event_spec : OutputSpec, RecordSpec, or None
+        The declaration of one draw, which the KDE completes with the term it
+        draws. When ``None`` (the default), one draw is an array under
+        ``name``. A record defines how the flat ``(n, d)`` sample matrix maps
+        back to a structured ``NumericRecord`` / ``NumericRecordBatch``, and
+        one draw is declared as that record, each array leaf declaring the
+        samples' dtype and the real line as its support. Any other declaration
+        is completed with the flat array one draw is.
+
+    Raises
+    ------
+    ValueError
+        If *event_spec* is a record whose flat width is not ``samples.shape[1]``,
+        or any other declaration whose type does not unify with the flat array
+        one draw is.
     """
 
     def __init__(
@@ -77,7 +80,7 @@ class KDEDistribution(TFPDistribution):
         *,
         log_weights: ArrayLike | Weights | None = None,
         bandwidth: ArrayLike | None = None,
-        event_template: RecordSpec | None = None,
+        event_spec: OutputSpec | RecordSpec | None = None,
     ):
         samples = _as_float_array(samples)
         if samples.ndim == 0:
@@ -92,28 +95,32 @@ class KDEDistribution(TFPDistribution):
         self._samples = samples
         self._d = d
 
-        # Multi-field template support: when the caller supplies a template
-        # with more than one field, preset ``_event_template`` so that
-        # ``NumericRecordDistribution.event_template`` (parent) skips its
-        # single-field auto-build keyed by ``name``. Validate that the
-        # template's flat width matches the samples' trailing dimension.
-        if event_template is not None and len(event_template.fields) > 1:
-            if isinstance(event_template, NumericRecordSpec):
-                expected = event_template.vector_size
+        # The KDE completes its declaration with the term it draws. A record
+        # gives the draws its structure, after a check that its flat width
+        # matches the samples' trailing dimension, and any other declaration
+        # takes the flat array, which a one-column KDE draws as scalars.
+        if event_spec is not None and not isinstance(event_spec, OutputSpec):
+            event_spec = OutputSpec.default(event_spec, component=name)
+        if event_spec is not None and event_spec.exposes_record:
+            record = cast(RecordSpec, event_spec.spec)
+            if isinstance(record, NumericRecordSpec):
+                expected = record.vector_size
             else:
                 expected = sum(
                     int(jnp.prod(jnp.array(shape))) if shape else 1
-                    for shape in event_template.leaf_shapes.values()
+                    for shape in record.leaf_shapes.values()
                 )
             if expected != d:
                 raise ValueError(
-                    f"event_template vector_size ({expected}) does not match "
-                    f"samples flat dimension ({d}); template fields="
-                    f"{event_template.fields}"
+                    f"event_spec vector_size ({expected}) does not match "
+                    f"samples flat dimension ({d}); record fields={record.fields}"
                 )
-            object.__setattr__(self, "_event_template", event_template)
+            declaration = event_spec.with_spec(_record_with_leaves(record, samples.dtype, real))
+        else:
+            array = NumericArraySpec((d,) if d > 1 else (), samples.dtype, real)
+            declaration = array if event_spec is None else event_spec.with_spec(array)
 
-        super().__init__(name=name)
+        super().__init__(name, declaration)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
@@ -156,28 +163,25 @@ class KDEDistribution(TFPDistribution):
         """Number of kernel centres (atoms) backing the KDE."""
         return self._samples.shape[0]
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
+        """The support of one draw: a Gaussian kernel density is positive everywhere."""
         return real
 
-    # -- sampling & density (template-aware overrides) ------------------------
+    # -- sampling & density ---------------------------------------------------
     #
-    # When ``_event_template`` is multi-field, sample output is unflattened
-    # back into ``NumericRecord`` / ``NumericRecordBatch`` keyed by the
-    # template, and log_prob accepts both structured and flat inputs. Single-
-    # field auto-templates fall through to the TFP base class behaviour, so
-    # existing call sites are unchanged.
+    # A KDE that declares a record unflattens its draws into ``NumericRecord``
+    # / ``NumericRecordBatch``, and its log_prob accepts structured and flat
+    # inputs alike. A KDE that draws one array behaves as the TFP base class.
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         flat = self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
-        tpl = getattr(self, "_event_template", None)
-        if tpl is None or len(tpl.fields) <= 1:
+        spec = self.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
             return flat
-        return NumericRecordDistribution.unflatten_value(flat, template=tpl)
+        return NumericRecordDistribution.unflatten_value(flat, template=spec)
 
     def _log_prob(self, value: Any) -> Array:
-        tpl = getattr(self, "_event_template", None)
-        if tpl is not None and len(tpl.fields) > 1:
+        if not isinstance(self.event_spec.spec, NumericArraySpec):
             if isinstance(value, (Record, NumericRecord, NumericRecordBatch)):
                 value = NumericRecordDistribution.flatten_value(value)
         return self._tfp_dist.log_prob(jnp.asarray(value))
@@ -194,10 +198,10 @@ class KDEDistribution(TFPDistribution):
     ) -> KDEDistribution:
         """Build a KDE from a :class:`RecordEmpiricalDistribution` source.
 
-        Reuses the source's stored samples, weights, and record template,
-        so the resulting KDE preserves the source's named-field structure
-        end-to-end. Works for any subclass (notably
-        :class:`~probpipe.inference.ApproximateDistribution`).
+        Reuses the source's stored samples, weights, and declared record, so
+        the resulting KDE keeps the source's named fields, and a posterior's
+        nested ones. Works for any subclass, such as
+        :class:`~probpipe.inference.ApproximateDistribution`.
 
         Parameters
         ----------
@@ -214,7 +218,11 @@ class KDEDistribution(TFPDistribution):
                 f"(or subclass); got {type(source).__name__}"
             )
         name = name or source.name
-        tpl = source.event_template
+        # A posterior's target record keeps the nesting its stored chunks
+        # flatten, an interim reader until the posterior declares the nesting.
+        tpl = getattr(source, "_target_record", None)
+        if tpl is None:
+            tpl = source.event_spec.spec
         if len(tpl.fields) == 1:
             field = tpl.fields[0]
             arr = source.samples[field]
@@ -224,8 +232,14 @@ class KDEDistribution(TFPDistribution):
             source.flat_samples,
             weights=source._w,
             bandwidth=bandwidth,
-            event_template=tpl,
+            event_spec=tpl,
         )
 
     def __repr__(self) -> str:
-        return f"KDEDistribution(num_atoms={self.num_atoms}, event_shape={self.event_shape})"
+        # The declaration, not the flat TFP backend, gives the shape of one draw.
+        spec = self.event_spec.spec
+        if isinstance(spec, NumericArraySpec):
+            shape = f"event_shape={spec.shape}"
+        else:
+            shape = f"event_shapes={dict(spec.leaf_shapes)}"
+        return f"KDEDistribution(num_atoms={self.num_atoms}, {shape})"

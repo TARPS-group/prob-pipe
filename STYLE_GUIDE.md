@@ -252,8 +252,8 @@ One surface is a documented exception, pending its own follow-up:
 - Record-based **distributions** (`RecordDistribution`,
   `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
   `[]` surface is still **top-level** pending the distribution
-  value-model work. Use `dist.event_template.keys()` for the leaf paths
-  of one draw.
+  value-model work. Use `dist.event_spec.spec.keys()` for the leaf
+  paths of one draw.
 
 **Mappings are never leaves.** A `Mapping` value denotes tree
 structure: a dict field value is always materialised into a nested
@@ -264,10 +264,10 @@ inside a `Record`; use a non-mapping container if you need one leaf.
 
 **Renaming fields.** `with_path_names(old=new, ...)` returns a
 same-family tree with the given nodes (leaves or whole subtrees)
-renamed. Keys are node paths, or bare names when unambiguous — a bare
-name resolves to the unique node so named and raises `ValueError`
-when the tree contains it more than once. It renames fields *within*
-the tree; renaming the object itself is `with_name`.
+renamed. Each key is the exact path of a node, so a single name
+addresses a top-level node and a nested node takes its full path. It
+renames fields *within* the tree; renaming the object itself is
+`with_name`.
 
 When adding new Record-based containers, follow these conventions:
 preserve first-appearance order, reject `/` in field names, materialize
@@ -294,9 +294,7 @@ views like an array, and its fields are read from `event_template`.
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell
 count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
-Its read-only `event_template` is an explicitly supplied authoritative
-Function aggregate template, a common template derived from compatible literal
-components, or `None` when no common declaration exists.
+Its `event_spec` declares the term every cell draws.
 Iteration walks the leading axis — for a 1-D `DistributionArray`
 it yields scalar cells; for a multi-d one it yields sub-arrays of
 shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For

@@ -626,10 +626,10 @@ def _convert_to_kde(source, key, **kw):
 
     For a ``RecordEmpiricalDistribution`` source (including its
     subclasses such as :class:`~probpipe.inference.ApproximateDistribution`),
-    the stored samples, weights, and ``event_template`` are reused
+    the stored samples, weights, and declared record are reused
     directly via :meth:`KDEDistribution.from_empirical` — which
     preserves named-field structure end-to-end. Other sources fall
-    back to drawing fresh samples (single-field auto-template).
+    back to drawing fresh samples, and the KDE draws one array.
 
     Raises
     ------
@@ -649,8 +649,8 @@ def _convert_to_kde(source, key, **kw):
 
     if isinstance(source, RecordEmpiricalDistribution):
         # Single-field and multi-field paths both route through
-        # ``from_empirical``, which threads the source's
-        # ``event_template`` so KDE preserves named fields.
+        # ``from_empirical``, which threads the source's declared record so
+        # KDE preserves named fields.
         r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
         r.with_provenance(_mm_provenance(source))
         return r
@@ -872,9 +872,7 @@ class ProbPipeConverter(Converter):
         # built. Targets that aren't ``NumericRecordDistribution``
         # don't carry the method (skipped via the ``getattr`` fallback);
         # sources that don't expose per-field ``supports`` raise
-        # ``AttributeError`` inside the check (caught here and treated
-        # as "unknown", same as the ``NotImplementedError`` branch
-        # inside ``_check_support_compatible``).
+        # ``AttributeError``, which counts as "unknown".
         if check_support:
             check = getattr(result, "_check_support_compatible", None)
             if check is not None:

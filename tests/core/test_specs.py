@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import pickle
 from dataclasses import FrozenInstanceError
+from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
@@ -27,31 +28,16 @@ from probpipe import (
     TermSpec,
     positive,
 )
+from probpipe.core._specs import _components_record
 
 
 @pytest.fixture
 def declared_law():
     class DeclaredLaw(Distribution):
         def __init__(self, template):
-            super().__init__(name="law")
-            self.event_template = template
+            super().__init__("law", template)
 
     return DeclaredLaw
-
-
-@pytest.fixture(params=["missing", "none", "type_error"])
-def law_without_schema(request, declared_law):
-    if request.param == "missing":
-        return Distribution(name="law")
-    if request.param == "none":
-        return declared_law(None)
-
-    class UndeclaredLaw(Distribution):
-        @property
-        def event_template(self):
-            raise TypeError("draw schema is not derivable")
-
-    return UndeclaredLaw(name="law")
 
 
 class TestOutputSpec:
@@ -73,10 +59,12 @@ class TestOutputSpec:
         assert dict(exposed.components) == dict(whole.components)
         assert exposed != whole
 
-        multiple = OutputSpec(beta=beta, sigma=sigma)
-        assert multiple == OutputSpec(RecordSpec(beta=beta, sigma=sigma))
-        assert list(multiple.components) == ["beta", "sigma"]
-        assert multiple.spec == RecordSpec(beta=beta, sigma=sigma)
+        # Two keywords would make packaging depend on how many names there are.
+        with pytest.raises(TypeError, match="takes one keyword"):
+            OutputSpec(beta=beta, sigma=sigma)
+        exposed_two = OutputSpec(RecordSpec(beta=beta, sigma=sigma))
+        assert list(exposed_two.components) == ["beta", "sigma"]
+        assert exposed_two.exposes_record and not whole.exposes_record
 
         parameters = RecordSpec(beta=beta, sigma=sigma)
         wrapped = OutputSpec(parameters=parameters)
@@ -126,6 +114,105 @@ class TestOutputSpec:
         hole = OutputSpec(beta=None)
         assert hole.with_dim_sizes(n=3).with_dim_names(n="m") == hole
 
+    def test_the_components_record_of_each_form(self):
+        assert _components_record(OutputSpec(theta=NumericArraySpec(()))) == RecordSpec(theta=())
+        assert _components_record(OutputSpec(RecordSpec(a=()))) == RecordSpec(a=())
+
+    def test_an_exposed_term_that_is_no_record_is_refused(self):
+        # The constructor refuses one, so only a malformed declaration holds it.
+        malformed = SimpleNamespace(exposes_record=True, spec=NumericArraySpec(()))
+        with pytest.raises(TypeError, match="an exposed declaration holds a RecordSpec"):
+            _components_record(malformed)
+
+
+class TestOutputSpecCompletion:
+    def test_default_exposes_a_record_and_names_any_other_term(self):
+        record = RecordSpec(beta=NumericArraySpec(()))
+        assert OutputSpec.default(record, component="posterior") == OutputSpec(record)
+        array = NumericArraySpec((3,))
+        assert OutputSpec.default(array, component="beta") == OutputSpec(beta=array)
+
+    def test_with_spec_fills_a_hole_under_the_declared_name(self):
+        array = NumericArraySpec((3,), jnp.float32)
+        assert OutputSpec(beta=None).with_spec(array) == OutputSpec(beta=array)
+
+    def test_with_spec_keeps_the_produced_spec_when_the_declared_one_unifies(self):
+        # The declaration sets only the shape; the producer's dtype stands.
+        produced = NumericArraySpec((3,), jnp.float32)
+        assert OutputSpec(beta=NumericArraySpec((3,))).with_spec(produced) == OutputSpec(
+            beta=produced
+        )
+
+    def test_with_spec_rejects_a_spec_that_does_not_unify(self):
+        with pytest.raises(ValueError, match="has dimension 3, expected 2"):
+            OutputSpec(beta=NumericArraySpec((2,))).with_spec(NumericArraySpec((3,)))
+
+    def test_with_spec_keeps_an_exposed_record_exposed(self):
+        produced = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,)))
+        declared = OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec((2,))))
+        assert declared.with_spec(produced) == OutputSpec(produced)
+        with pytest.raises(TypeError, match="needs a RecordSpec"):
+            declared.with_spec(NumericArraySpec(()))
+
+    def test_a_whole_term_is_renamed_by_its_component(self):
+        array = NumericArraySpec(())
+        assert OutputSpec(prior=array).with_path_names(prior="beta") == OutputSpec(beta=array)
+        assert OutputSpec(prior=None).with_path_names(prior="beta") == OutputSpec(beta=None)
+        with pytest.raises(KeyError):
+            OutputSpec(prior=array).with_path_names(sigma="s")
+        with pytest.raises(KeyError):
+            OutputSpec(prior=array).with_path_names({"prior/x": "y"})
+        # The component is renamed in place, so a path target raises.
+        with pytest.raises(ValueError, match="contain no '/'"):
+            OutputSpec(prior=array).with_path_names(prior="group/beta")
+
+    def test_a_whole_record_renames_its_fields_through_its_component(self):
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        renamed = OutputSpec(parameters=record).with_path_names(
+            {"parameters": "theta", "parameters/beta": "b"}
+        )
+        assert renamed == OutputSpec(theta=record.with_path_names(beta="b"))
+        with pytest.raises(KeyError):
+            OutputSpec(parameters=record).with_path_names(beta="b")
+
+    def test_both_packagings_of_one_interface_take_the_same_paths(self):
+        inner = RecordSpec(beta=NumericArraySpec(()))
+        renames = {"parameters": "theta", "parameters/beta": "b"}
+        renamed_inner = RecordSpec(b=NumericArraySpec(()))
+        assert OutputSpec(parameters=inner).with_path_names(renames) == OutputSpec(
+            theta=renamed_inner
+        )
+        assert OutputSpec(RecordSpec(parameters=inner)).with_path_names(renames) == OutputSpec(
+            RecordSpec(theta=renamed_inner)
+        )
+
+    def test_a_component_and_a_field_of_one_name_have_distinct_paths(self):
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        declaration = OutputSpec(beta=record)
+        assert declaration.with_path_names(beta="b") == OutputSpec(b=record)
+        assert declaration.with_path_names({"beta/beta": "b"}) == OutputSpec(
+            beta=record.with_path_names(beta="b")
+        )
+
+    def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
+        record = RecordSpec(beta=NumericArraySpec(()))
+        with pytest.raises(ValueError, match="more than once"):
+            OutputSpec(p=record).with_path_names({"p": "q"}, p="r")
+        with pytest.raises(ValueError, match="more than once"):
+            OutputSpec(p=record).with_path_names({"p/beta": "b"}, **{"p/beta": "c"})
+        with pytest.raises(ValueError, match="at least one rename"):
+            OutputSpec(p=record).with_path_names()
+
+    def test_an_exposed_record_renames_its_fields(self):
+        record = RecordSpec(beta=NumericArraySpec(()), sigma=NumericArraySpec(()))
+        renamed = OutputSpec(record).with_path_names(beta="b")
+        assert renamed == OutputSpec(record.with_path_names(beta="b"))
+        assert renamed.exposes_record
+        nested = OutputSpec(RecordSpec(g=RecordSpec(mu=NumericArraySpec(()))))
+        assert tuple(nested.with_path_names({"g/mu": "m"}).components) == ("g",)
+        with pytest.raises(KeyError):
+            nested.with_path_names(mu="m")
+
 
 class TestDeclarationConstruction:
     @pytest.mark.parametrize(
@@ -154,15 +241,22 @@ class TestDeclarationConstruction:
         assert InputSpec(**{name: spec})[name] is spec
 
     @pytest.mark.parametrize("name", ["a/b", "", "two words", "1x", "class"])
-    def test_component_names_are_python_identifiers(self, name):
+    def test_input_slot_names_are_python_identifiers(self, name):
+        with pytest.raises(ValueError, match="input slot names must be Python identifiers"):
+            InputSpec({name: NumericArraySpec(())})
+
+    @pytest.mark.parametrize("name", ["two words", "1x", "class", "post-1", "*args[0]"])
+    def test_a_component_name_follows_the_field_rule(self, name):
+        # A component that binds a Python parameter must be an identifier, which
+        # binding checks; the declaration accepts any field name.
         spec = NumericArraySpec(())
-        with pytest.raises(ValueError):
-            InputSpec({name: spec})
-        with pytest.raises(ValueError):
-            OutputSpec(**{name: spec})
-        if name not in ("", "a/b"):
-            with pytest.raises(ValueError):
-                OutputSpec(RecordSpec({name: spec}))
+        assert list(OutputSpec(**{name: spec}).components) == [name]
+        assert list(OutputSpec(RecordSpec({name: spec})).components) == [name]
+
+    @pytest.mark.parametrize("name", ["a/b", ""])
+    def test_a_component_name_is_non_empty_without_a_slash(self, name):
+        with pytest.raises(ValueError, match="component names must be non-empty"):
+            OutputSpec(**{name: NumericArraySpec(())})
 
     @pytest.mark.parametrize("value", [None, (), {}, 1, "spec"])
     def test_input_slots_require_specs(self, value):
@@ -307,7 +401,7 @@ class TestDimensionBinding:
         assert renamed["batch"].axis_groups == (("n",),)
         assert renamed["batch"].element_spec.shape == ("m",)
         assert renamed["batch"].level_names == ("draw",)
-        assert renamed["law"].event_spec["x"].shape == ("m",)
+        assert renamed["law"].event_spec.components["x"].shape == ("m",)
         assert renamed["function"].input_template["x"].shape == ("n",)
         assert renamed["function"].output_spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
@@ -362,16 +456,17 @@ class TestSpecKinds:
         schema = RecordSpec.infer_from(
             {"law": law, "function": function, "raw_callable": lambda x: x}
         )
-        assert schema["law"] == DistributionSpec(law.event_template)
+        assert schema["law"] == law.spec
         assert schema["function"] == FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
         assert schema["raw_callable"] == FunctionSpec()
 
-    def test_empirical_without_event_template_remains_a_record_field(self):
+    def test_an_empirical_over_opaque_atoms_is_a_distribution_field(self):
         from probpipe import EmpiricalDistribution
 
         law = EmpiricalDistribution("law", ["a", "b"])
         schema = RecordSpec.infer_from({"law": law})
-        assert schema["law"] == OpaqueSpec()
+        assert schema["law"] == law.spec
+        assert law.event_spec == OutputSpec(law=OpaqueSpec())
 
         record = Record("r", law=law)
         assert record["law"] is law
@@ -418,42 +513,15 @@ class TestSpecKinds:
 
 
 class TestDistributionSchemaAvailability:
-    def test_inference_keeps_a_distribution_without_schema_as_an_opaque_field(
-        self, law_without_schema
-    ):
-        inferred = RecordSpec.infer_from({"law": law_without_schema})
-        assert inferred == RecordSpec(law=OpaqueSpec())
-        record = Record("r", law=law_without_schema)
-        assert record["law"] is law_without_schema
-        assert record.spec == inferred
-        assert inferred.is_valid(record)
-
     def test_inference_preserves_an_available_distribution_schema(self, declared_law):
         template = RecordSpec(x=NumericArraySpec((3,), dtype="float64", support=positive))
         law = declared_law(template)
         inferred = RecordSpec.infer_from({"law": law})
         assert inferred["law"] == DistributionSpec(template)
-        assert inferred["law"].event_spec is template
+        assert inferred["law"].event_spec.spec is template
         record = Record("r", law=law)
         assert record["law"] is law
         assert record.spec == inferred
-
-    @pytest.mark.parametrize("error_type", [RuntimeError, ValueError, KeyError])
-    def test_unexpected_schema_getter_errors_propagate(self, error_type):
-        error = error_type("broken schema getter")
-
-        class BrokenLaw(Distribution):
-            @property
-            def event_template(self):
-                raise error
-
-        law = BrokenLaw(name="law")
-        with pytest.raises(error_type) as caught:
-            RecordSpec.infer_from({"law": law})
-        assert caught.value is error
-        with pytest.raises(error_type) as caught:
-            DistributionSpec(RecordSpec(x=("n",))).bind_dims_from_value(law)
-        assert caught.value is error
 
 
 class TestInputSpec:
@@ -574,19 +642,6 @@ class TestNestedValueBinding:
 
         return wrap
 
-    def test_unavailable_distribution_schema_cannot_bind(self, wrap_binding, law_without_schema):
-        spec = DistributionSpec(RecordSpec(x=("n",)))
-        declared, value = wrap_binding(spec, law_without_schema)
-        with pytest.raises(ValueError, match="exposes no schema to bind it against") as caught:
-            declared.bind_dims_from_value(value)
-        if isinstance(declared, RecordSpec):
-            assert f"RecordSpec/{next(iter(declared))} declares" in str(caught.value)
-        assert declared.free_dims == {"n"}
-
-        concrete, value = wrap_binding(spec.with_dim_sizes(n=3), law_without_schema)
-        with pytest.raises(ValueError, match="does not conform"):
-            concrete.bind_dims_from_value(value)
-
     @pytest.mark.parametrize("kind", ["function", "distribution"])
     @pytest.mark.parametrize("size", [3, 4])
     def test_fixed_and_concretized_specs_follow_the_same_binding_rules(
@@ -603,8 +658,8 @@ class TestNestedValueBinding:
             reference = EmpiricalDistribution("x", np.zeros((2, 3)))
             actual = EmpiricalDistribution("x", np.zeros((2, size)))
 
-        # Concrete distributions require exact metadata; function binding reads
-        # the available declarations without checking callable compatibility.
+        # Both kinds bind by unification; function binding reads the available
+        # declarations without checking callable compatibility.
         dtype = "float64" if kind == "function" else None
         symbolic = spec_type(RecordSpec(x=NumericArraySpec(("n",), dtype=dtype)))
         fixed = spec_type(RecordSpec(x=NumericArraySpec((3,), dtype=dtype)))
@@ -620,62 +675,97 @@ class TestNestedValueBinding:
             if size == 3:
                 assert declared.bind_dims_from_value(value) == declared
             else:
-                message = "dimension 4, expected 3" if kind == "function" else "does not conform"
-                with pytest.raises(ValueError, match=message):
+                with pytest.raises(ValueError, match="dimension 4, expected 3"):
                     declared.bind_dims_from_value(value)
         assert symbolic.free_dims == {"n"}
 
     @pytest.mark.parametrize(
-        "expected, actual",
+        ("declared", "actual", "matches"),
         [
-            (
-                RecordSpec(x=NumericArraySpec((3,), dtype="float64")),
-                RecordSpec(x=NumericArraySpec((3,), dtype="float32")),
+            pytest.param(
+                NumericArraySpec((3,)),
+                NumericArraySpec((3,), dtype="int32"),
+                True,
+                id="unset-dtype",
             ),
-            (RecordSpec(x=(3,), y=()), RecordSpec(y=(), x=(3,))),
-            (
-                RecordSpec(x=NumericArraySpec((3,), support=positive)),
-                RecordSpec(x=(3,)),
+            pytest.param(
+                NumericArraySpec((3,), dtype="float64"),
+                NumericArraySpec((3,), dtype="float32"),
+                True,
+                id="same-kind-float",
             ),
-            (
-                RecordSpec(x=(3,)),
-                RecordSpec(x=NumericArraySpec((3,), support=positive)),
+            pytest.param(
+                NumericArraySpec((3,), dtype="int32"),
+                NumericArraySpec((3,), dtype="float32"),
+                False,
+                id="float-against-int",
             ),
+            pytest.param(
+                NumericArraySpec((3,), dtype="float32"),
+                NumericArraySpec((3,), dtype="int32"),
+                True,
+                id="same-kind-int-to-float",
+            ),
+            pytest.param(
+                NumericArraySpec((3,), support=positive), NumericArraySpec((3,)), True, id="support"
+            ),
+            pytest.param(
+                NumericArraySpec((3,)),
+                NumericArraySpec((3,), support=positive),
+                True,
+                id="support-on-the-law",
+            ),
+            pytest.param(NumericArraySpec((3,)), NumericArraySpec((4,)), False, id="size"),
         ],
-        ids=["dtype", "field_order", "missing_support", "extra_support"],
     )
-    def test_concrete_distribution_values_require_exact_schemas(
-        self, wrap_binding, declared_law, expected, actual
+    def test_concrete_distribution_values_match_by_unification(
+        self, wrap_binding, declared_law, declared, actual, matches
     ):
-        law = declared_law(actual)
-        spec = DistributionSpec(expected)
-        declared, value = wrap_binding(spec, law)
-        with pytest.raises(ValueError, match="does not conform"):
-            declared.bind_dims_from_value(value)
+        """A law matches when its declaration unifies with the declared one.
+
+        An unset dtype accepts any dtype and a set one a same-kind cast, sizes must
+        agree, and support is not compared.
+        """
+        law = declared_law(RecordSpec(x=actual))
+        spec = DistributionSpec(RecordSpec(x=declared))
         schema = RecordSpec(law=spec)
-        assert not spec.is_valid(law)
-        assert not schema.is_valid({"law": law})
-        assert not schema.is_valid(Record("value", law=law))
-        with pytest.raises(ValueError):
-            Record("value", law=law, event_template=schema)
+        declared_spec, value = wrap_binding(spec, law)
+        assert spec.is_valid(law) is matches
+        assert schema.is_valid({"law": law}) is matches
+        if matches:
+            assert declared_spec.bind_dims_from_value(value) == declared_spec
+            assert schema.is_valid(Record("value", law=law, event_template=schema))
+        else:
+            with pytest.raises(ValueError):
+                declared_spec.bind_dims_from_value(value)
+            with pytest.raises(ValueError):
+                Record("value", law=law, event_template=schema)
 
-        matching = declared_law(expected)
-        declared, value = wrap_binding(spec, matching)
+    def test_field_order_does_not_change_a_match(self, wrap_binding, declared_law):
+        law = declared_law(RecordSpec(y=(), x=(3,)))
+        spec = DistributionSpec(RecordSpec(x=(3,), y=()))
+        schema = RecordSpec(law=spec)
+        assert spec.is_valid(law)
+        declared, value = wrap_binding(spec, law)
         assert declared.bind_dims_from_value(value) == declared
-        assert schema.is_valid(Record("value", law=matching, event_template=schema))
+        assert schema.is_valid(Record("value", law=law, event_template=schema))
 
-    def test_concretized_distribution_uses_the_same_strict_metadata_check(
-        self, wrap_binding, declared_law
-    ):
+    def test_fields_sharing_a_dimension_bind_it_once(self, declared_law):
+        spec = DistributionSpec(RecordSpec(x=("n",), y=("n",)))
+        agreeing = declared_law(RecordSpec(x=(3,), y=(3,)))
+        assert spec.bind_dims_from_value(agreeing) == DistributionSpec(RecordSpec(x=(3,), y=(3,)))
+        with pytest.raises(ValueError, match="already bound"):
+            spec.bind_dims_from_value(declared_law(RecordSpec(x=(3,), y=(4,))))
+
+    def test_concretized_distribution_binds_like_a_fixed_one(self, wrap_binding, declared_law):
         symbolic = DistributionSpec(RecordSpec(x=NumericArraySpec(("n",), dtype="float64")))
-        law = declared_law(RecordSpec(x=(3,)))
+        law = declared_law(RecordSpec(x=NumericArraySpec((3,), dtype="float32")))
         bound = symbolic.bind_dims_from_value(law)
         fixed = DistributionSpec(RecordSpec(x=NumericArraySpec((3,), dtype="float64")))
         for spec in (bound, symbolic.with_dim_sizes(n=3), fixed):
             assert spec == fixed
             declared, value = wrap_binding(spec, law)
-            with pytest.raises(ValueError, match="does not conform"):
-                declared.bind_dims_from_value(value)
+            assert declared.bind_dims_from_value(value) == declared
 
     def test_missing_callable_declarations_remain_unspecified(self, wrap_binding):
         symbolic = FunctionSpec(RecordSpec(x=("n",)))

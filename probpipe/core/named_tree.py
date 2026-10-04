@@ -114,7 +114,7 @@ class NamedTree[L]:
     field or subtree — ``x.children["a"].children["b"] == x.at_path("a", "b")
     == x.at_path("a/b")``. Sibling names are distinct, so every path
     identifies at most one node; distinct subtrees may reuse a name (``a/c``
-    and ``b/c``), and a bare name is then ambiguous on its own.
+    and ``b/c``).
 
     A child is an interior node if and only if it is an instance of the
     family's own node class (the hook :meth:`_node_type`); every other value
@@ -622,41 +622,20 @@ class NamedTree[L]:
 
     # -- Field renaming -------------------------------------------------------
 
-    def _all_node_paths(self) -> Iterator[str]:
-        """Yield the ``/``-path of every node below the root, canonical order.
-
-        Interior nodes are yielded before their descendants; leaves are
-        included. This is the resolution domain for :meth:`with_path_names`.
-        """
-        node_type = self._node_type()
-
-        def walk(node: Any, prefix: str) -> Iterator[str]:
-            for name, child in node._tree.items():
-                path = f"{prefix}{name}"
-                yield path
-                if isinstance(child, node_type):
-                    yield from walk(child, f"{path}{_PATH_SEP}")
-
-        yield from walk(self, "")
-
     def _resolve_path_renames(
         self, mapping: Mapping[str, str] | None, kwargs: Mapping[str, str]
     ) -> dict[str, str]:
         """Resolve :meth:`with_path_names` inputs to ``{node_path: new_name}``.
 
-        Multi-segment keys are paths and must resolve to a node. A
-        single-segment key is a **bare name**: it resolves to the unique node
-        so named anywhere in the tree, and raises ``ValueError`` when the tree
-        contains that name more than once. New names must be non-empty,
-        ``/``-free single segments.
+        Each key is the exact path of a node, so a single name addresses a
+        top-level node. New names must be non-empty, ``/``-free single segments.
 
         Raises
         ------
         KeyError
-            If a key resolves to no node.
+            If a key is not the path of a node.
         ValueError
-            If a bare name is ambiguous, a new name is malformed, or two
-            keys resolve to the same node.
+            If a new name is malformed, or two keys resolve to the same node.
         """
         pairs: dict[str, str] = {}
         for source in (mapping or {}), kwargs:
@@ -665,22 +644,8 @@ class NamedTree[L]:
                     raise ValueError(f"new name for {old!r} must be a non-empty string")
                 _check_no_path_sep(new)
                 segments = self._split_path((old,))
-                if len(segments) > 1:
-                    self.at_path(segments)  # KeyError if absent
-                    resolved = _PATH_SEP.join(segments)
-                else:
-                    name = segments[0]
-                    matches = [
-                        p for p in self._all_node_paths() if p.rsplit(_PATH_SEP, 1)[-1] == name
-                    ]
-                    if not matches:
-                        raise KeyError(name)
-                    if len(matches) > 1:
-                        raise ValueError(
-                            f"bare name {name!r} is ambiguous: it names the nodes "
-                            f"{matches}; use a full path"
-                        )
-                    resolved = matches[0]
+                self.at_path(segments)  # KeyError if absent
+                resolved = _PATH_SEP.join(segments)
                 if resolved in pairs:
                     raise ValueError(f"node {resolved!r} is renamed more than once")
                 pairs[resolved] = new
@@ -712,25 +677,24 @@ class NamedTree[L]:
 
         Renames **fields within** the tree (leaves or whole subtrees); it does
         not rename the object itself — that is ``with_name`` on the tracked
-        value types. Keys are node paths, or bare names when unambiguous: a
-        bare name resolves to the unique node so named and raises when the
-        tree contains it more than once. Values are the new (single-segment)
-        names. Renames apply simultaneously, so sibling swaps are legal.
-        Everything else about the tree — field order, leaf objects, nesting —
-        is unchanged, and the mapping interface (``[]`` / ``keys()``) stays
-        keyed by full path. ::
+        value types. Each key is the exact path of a node, so a single name
+        addresses a top-level node and a nested node takes its full path.
+        Values are the new (single-segment) names. Renames apply
+        simultaneously, so sibling swaps are legal. Everything else about the
+        tree — field order, leaf objects, nesting — is unchanged, and the
+        mapping interface (``[]`` / ``keys()``) stays keyed by full path. ::
 
-            t.with_path_names(mu="loc")                  # bare name (unique)
-            t.with_path_names({"group1/mu": "loc"})      # full path
+            t.with_path_names(mu="loc")                  # top-level node
+            t.with_path_names({"group1/mu": "loc"})      # nested node
 
         Raises
         ------
         KeyError
-            If a key resolves to no node.
+            If a key is not the path of a node.
         ValueError
-            If a bare name is ambiguous, a new name is empty or contains
-            ``/``, two keys rename the same node, no renames are given, or a
-            rename collides with an existing sibling name.
+            If a new name is empty or contains ``/``, two keys rename the same
+            node, no renames are given, or a rename collides with an existing
+            sibling name.
         """
         renames = self._resolve_path_renames(mapping, kwargs)
         renamed = self._renamed_leaf_map(renames)

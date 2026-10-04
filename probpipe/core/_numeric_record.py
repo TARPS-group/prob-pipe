@@ -34,6 +34,7 @@ from ._array_backend import (
     _numpy_dtype_of,
     _to_jax_array,
 )
+from ._numeric import Numeric
 from ._specs import (
     NumericArraySpec,
     NumericRecordSpec,
@@ -47,7 +48,7 @@ from .record import Record
 __all__ = ["NumericRecord", "_is_numeric_leaf"]
 
 
-class NumericRecord(Record):
+class NumericRecord(Record, Numeric):
     """A :class:`Record` whose fields are all numeric, stored in native form.
 
     A ``NumericRecord`` is the numeric specialization of :class:`Record`. It
@@ -109,7 +110,8 @@ class NumericRecord(Record):
 
     The flat vector form
     --------------------
-    Because every leaf is numeric, the whole value can be flattened into a
+    Because every leaf is numeric, the record implements
+    :class:`~probpipe.Numeric`, and the whole value can be flattened into a
     single dense 1-D array. :meth:`to_vector` converts and ravels the leaves,
     in canonical order, into a vector of length :attr:`vector_size`;
     :meth:`from_vector` rebuilds the record from such a vector (with bare
@@ -127,7 +129,9 @@ class NumericRecord(Record):
     whose single child is a nested record — an interior node, not a field —
     raises ``TypeError`` from these conversions, since unwrapping one field of
     several would be ambiguous; access a specific field explicitly in that
-    case.
+    case. The array conversions override the ones :class:`~probpipe.Numeric`
+    supplies, which present :meth:`to_vector`. The override is an interim
+    implementation detail until a record no longer presents a single field.
 
     Parameters
     ----------
@@ -361,13 +365,13 @@ class NumericRecord(Record):
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, name: str, template: NumericRecordSpec, vec: Array) -> NumericRecord:
+    def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
-        template's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
+        spec's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
         in canonical leaf order, and returns a ``NumericRecord`` carrying
-        *template* as its authoritative schema under the user-given *name*.
+        *spec* as its authoritative schema under the user-given *name*.
         The reconstructed leaves are bare ``jax.Array``\\ s — a flat vector
         carries no native container to restore.
 
@@ -375,11 +379,11 @@ class NumericRecord(Record):
         ----------
         name : str
             Name for the reconstructed record (user-given).
-        template : NumericRecordSpec
+        spec : NumericRecordSpec
             The flat layout supplying field names, shapes, and order. Every
             leaf must be a NumericArraySpec.
         vec : Array
-            A vector of shape ``(template.vector_size,)`` — one single
+            A vector of shape ``(spec.vector_size,)`` — one single
             (unbatched) value.
 
         Returns
@@ -391,12 +395,12 @@ class NumericRecord(Record):
         Raises
         ------
         TypeError
-            If the template contains a non-array leaf, or *vec* carries
+            If *spec* contains a non-array leaf, or *vec* carries
             leading batch axes — batched reconstruction is
             the batch type's concern; use :meth:`NumericRecordBatch.from_vector`
             for a batched matrix.
         ValueError
-            If the vector length does not equal ``template.vector_size``.
+            If the vector length does not equal ``spec.vector_size``.
         """
         vec = jnp.asarray(vec)
         if vec.ndim != 1:
@@ -405,7 +409,7 @@ class NumericRecord(Record):
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
                 f"NumericRecordBatch.from_vector."
             )
-        return _reconstruct_from_vector(name, template, vec)
+        return _reconstruct_from_vector(name, spec, vec)
 
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
@@ -438,6 +442,9 @@ class NumericRecord(Record):
     def __bool__(self) -> bool:
         return bool(self._child_field_as_jax(self._single_numeric_field()))
 
+    # The array conversions present the sole field rather than Numeric's flat
+    # vector, an interim implementation detail until a record no longer presents
+    # a single field.
     def __array__(self, dtype=None, copy=None):
         leaf = self._child_field_as_jax(self._single_numeric_field())
         arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)

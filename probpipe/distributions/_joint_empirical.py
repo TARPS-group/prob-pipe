@@ -31,8 +31,9 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record_distribution import NumericRecordDistribution, _mc_expectation
-from ..core._record_distribution import RecordDistribution, _build_event_template
-from ..core._specs import RecordSpec
+from ..core._record_distribution import RecordDistribution
+from ..core._specs import NumericArraySpec, OpaqueSpec, RecordSpec
+from ..core.constraints import real
 from ..core.protocols import (
     SupportsMean,
     SupportsSampling,
@@ -139,26 +140,23 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
         self._joint_samples = stored
         self._num_atoms = n
         name = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
-        super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
-        if self._components is not None:
-            self._event_template = _build_event_template(self._components)
-        else:
-            # Generic (non-numeric) path: derive a structural
-            # ``RecordSpec`` directly from the stored samples. Each
-            # field's per-row shape becomes its spec; object-dtype leaves
-            # report ``None``. This keeps the
-            # ``RecordDistribution`` metaclass invariant
-            # (``event_template`` is non-``None``) without requiring
-            # numeric coercion.
-            specs: dict[str, Any] = {}
-            for cname, arr in stored.items():
-                if _is_numeric_array(arr):
-                    specs[cname] = tuple(arr.shape[1:])
-                else:
-                    specs[cname] = None
-            self._event_template = RecordSpec(specs)
+        # One draw is a row: a numeric field declares its per-row array, and any
+        # other field is opaque. The all-numeric joint's fields lie on the real
+        # line, as its component empiricals declare theirs.
+        support = real if self._components is not None else None
+        super().__init__(
+            name,
+            RecordSpec(
+                {
+                    cname: NumericArraySpec(tuple(arr.shape[1:]), arr.dtype, support)
+                    if _is_numeric_array(arr)
+                    else OpaqueSpec()
+                    for cname, arr in stored.items()
+                }
+            ),
+        )
 
     # Hook for NumericJointEmpirical to override; base class returns None
     # because generic joint samples can't be expressed as per-component
@@ -181,11 +179,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
     def weights(self) -> Array:
         """Normalised weights, shape ``(n,)``."""
         return self._w.normalized
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Component names in insertion order."""
-        return tuple(self._joint_samples.keys())
 
     @property
     def components(self):
@@ -221,14 +214,14 @@ class JointEmpirical(RecordDistribution, SupportsSampling):
             return Record(self.name, rows)
         cls = (
             NumericRecordBatch
-            if isinstance(self.event_template, NumericRecordSpec)
+            if isinstance(self.event_spec.spec, NumericRecordSpec)
             else RecordBatch
         )
         return cls(
             self.name,
             rows,
             "sample",
-            element_spec=self.event_template,
+            element_spec=self.event_spec.spec,
             axes_per_level=(len(sample_shape),),
         )
 
@@ -328,13 +321,6 @@ class NumericJointEmpirical(
             cname: RecordEmpiricalDistribution(cname, arr, weights=self._w)
             for cname, arr in self._joint_samples.items()
         }
-
-    # -- event_shapes (used by the record template) ------------------------
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-component event shapes."""
-        return {k: v.event_shape for k, v in self._components.items()}
 
     # -- Moments -----------------------------------------------------------
 

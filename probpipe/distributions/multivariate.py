@@ -9,6 +9,7 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _as_float_array, _promote_floats
 from ..core._numeric_record_distribution import FlatNumericRecordDistribution
+from ..core._specs import OutputSpec
 from ..core.constraints import (
     Constraint,
     non_negative_integer,
@@ -49,6 +50,20 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
         *scale_tril* or *cov* must be provided.
     cov : array-like, shape ``(d, d)``, optional
         Covariance matrix (Cholesky-decomposed internally).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If not exactly one of *scale_tril* and *cov* is given, *cov* does not
+        match the length of *loc*, the parameters imply a nonempty batch shape,
+        or *event_spec* declares a type that one draw does not conform to.
     """
 
     def __init__(
@@ -58,6 +73,7 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
         scale_tril: ArrayLike | None = None,
         *,
         cov: ArrayLike | None = None,
+        event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and cov is not None:
             raise ValueError("Provide exactly one of scale_tril or cov, not both.")
@@ -80,7 +96,7 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
         self._loc = loc
         self._scale_tril = scale_tril
         self._tfp_dist = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -103,8 +119,7 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return real
 
 
@@ -123,16 +138,32 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
         Distribution name.
     concentration : array-like, shape ``(k,)``
         Positive concentration (alpha) parameters.
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If *concentration* is a scalar, the parameters imply a nonempty batch
+        shape, or *event_spec* declares a type that one draw does not conform
+        to.
     """
 
-    def __init__(self, name: str, concentration: ArrayLike):
+    def __init__(
+        self, name: str, concentration: ArrayLike, *, event_spec: OutputSpec | None = None
+    ):
         concentration = _as_float_array(concentration)
         if concentration.ndim == 0:
             raise ValueError("concentration must be at least 1-D.")
 
         self._concentration = concentration
         self._tfp_dist = tfd.Dirichlet(concentration=concentration)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -146,8 +177,7 @@ class Dirichlet(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return simplex
 
 
@@ -172,6 +202,20 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
         Event probabilities (need not be normalised).
     logits : array-like, shape ``(k,)``, optional
         Log-odds of each event.
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If not exactly one of *probs* and *logits* is given, the parameters
+        imply a nonempty batch shape, or *event_spec* declares a type that one
+        draw does not conform to.
     """
 
     def __init__(
@@ -180,6 +224,8 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
         total_count: int | ArrayLike,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
+        *,
+        event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
             raise ValueError("Exactly one of probs or logits must be provided.")
@@ -196,7 +242,7 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
             self._tfp_dist = tfd.Multinomial(total_count=total_count, logits=logits)
 
         self._total_count = total_count
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -214,8 +260,7 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return non_negative_integer
 
 
@@ -240,6 +285,20 @@ class Wishart(TFPDistribution):
         Lower-triangular Cholesky factor of the scale matrix.
     scale : array-like, shape ``(d, d)``, optional
         Full scale matrix (Cholesky-decomposed internally).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If not exactly one of *scale_tril* and *scale* is given, the parameters
+        imply a nonempty batch shape, or *event_spec* declares a type that one
+        draw does not conform to.
     """
 
     def __init__(
@@ -249,6 +308,7 @@ class Wishart(TFPDistribution):
         scale_tril: ArrayLike | None = None,
         *,
         scale: ArrayLike | None = None,
+        event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and scale is not None:
             raise ValueError("Provide exactly one of scale_tril or scale, not both.")
@@ -264,7 +324,7 @@ class Wishart(TFPDistribution):
         self._df = df
         self._scale_tril = scale_tril
         self._tfp_dist = tfd.WishartTriL(df=df, scale_tril=scale_tril)
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -287,8 +347,7 @@ class Wishart(TFPDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return positive_definite
 
 
@@ -309,9 +368,29 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
         Unit vector giving the mean direction.
     concentration : float or array-like
         Scalar concentration parameter (kappa >= 0).
+    event_spec : OutputSpec, optional
+        The declaration of one draw, which names its component. The family
+        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
+        component is ``name``.
+
+    Raises
+    ------
+    TypeError
+        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
+        record.
+    ValueError
+        If the parameters imply a nonempty batch shape, or *event_spec*
+        declares a type that one draw does not conform to.
     """
 
-    def __init__(self, name: str, mean_direction: ArrayLike, concentration: float | ArrayLike):
+    def __init__(
+        self,
+        name: str,
+        mean_direction: ArrayLike,
+        concentration: float | ArrayLike,
+        *,
+        event_spec: OutputSpec | None = None,
+    ):
         _, (mean_direction, concentration) = _promote_floats(mean_direction, concentration)
 
         self._mean_direction = mean_direction
@@ -319,7 +398,7 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
         self._tfp_dist = tfd.VonMisesFisher(
             mean_direction=mean_direction, concentration=concentration
         )
-        super().__init__(name=name)
+        super().__init__(name=name, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -337,6 +416,5 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
 
     # -- support ------------------------------------------------------------
 
-    @property
-    def support(self) -> Constraint:
+    def _event_support(self) -> Constraint:
         return sphere

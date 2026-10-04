@@ -298,10 +298,8 @@ class TestRecordDistributionViewDynamicProtocols:
         from probpipe.core._specs import RecordSpec
 
         class _LogProbOnlyParent(RecordDistribution, SupportsLogProb):
-            event_template = RecordSpec(x=(), y=())
-
             def __init__(self):
-                self._name = "lp_only"
+                super().__init__("lp_only", RecordSpec(x=(), y=()))
 
             def _log_prob(self, value):
                 import jax.numpy as jnp
@@ -351,17 +349,11 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core._specs import RecordSpec
+        from probpipe.core._specs import NumericArraySpec
 
         class _SampleOnlyBase(NumericRecordDistribution, SupportsSampling):
-            event_template = RecordSpec(x=())
-
             def __init__(self):
-                self._name = "sample_only"
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__("sample_only", NumericArraySpec((), "float32"))
 
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, sample_shape)
@@ -380,17 +372,11 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core._specs import RecordSpec
+        from probpipe.core._specs import NumericArraySpec
 
         class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
-            event_template = RecordSpec(x=())
-
             def __init__(self):
-                self._name = "lpo_base"
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__("lpo_base", NumericArraySpec((), "float32"))
 
             def _log_prob(self, x):
                 return jnp.asarray(0.0)
@@ -555,26 +541,16 @@ class TestTransformedDistributionDynamicProtocols:
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import NumericRecordDistribution
-        from probpipe.core._specs import RecordSpec
+        from probpipe.core._specs import NumericArraySpec
+        from probpipe.core.constraints import real
         from probpipe.core.protocols import SupportsLogProb
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
             _sampling_cost = "low"
             _preferred_orchestration = None
-            event_template = RecordSpec(x=())
 
             def __init__(self):
-                self._name = "lpo"
-
-            @property
-            def event_shape(self):
-                return ()
-
-            @property
-            def support(self):
-                from probpipe.core.constraints import real
-
-                return real
+                super().__init__("lpo", NumericArraySpec((), "float32", real))
 
             def _log_prob(self, x):
                 return jnp.asarray(0.0)
@@ -806,7 +782,7 @@ class TestSupportsArrayBackendProtocolSurface:
 
         # Protocol attributes via __annotations__ / methods via vars.
         members = set(dir(_DistributionArrayBackend))
-        for required in ("batch_shape", "event_shape", "cell"):
+        for required in ("batch_shape", "event_shape", "cell_spec", "cell"):
             assert required in members, (
                 f"_DistributionArrayBackend missing required attr {required!r}"
             )

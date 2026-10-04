@@ -21,6 +21,7 @@ import pytest
 from probpipe import (
     Normal,
     NumericArrayBatch,
+    NumericArraySpec,
     NumericRecordBatch,
     ProductDistribution,
     Provenance,
@@ -49,14 +50,14 @@ class TestConstruction:
         assert da.batch_shape == (4,)
         assert da.event_shape == ()
 
-    def test_common_component_event_template_is_exposed(self):
+    def test_cells_sharing_a_declaration_give_it(self):
         components = [Normal(loc=float(i), scale=1.0, name="y") for i in range(2)]
 
         array = DistributionArray(components, name="common")
 
-        assert array.event_template == RecordSpec(y=())
+        assert array.event_spec == components[0].event_spec
 
-    def test_mismatched_component_event_templates_report_none(self):
+    def test_cells_with_different_components_declare_under_the_array_name(self):
         components = [
             Normal(loc=0.0, scale=1.0, name="left"),
             Normal(loc=1.0, scale=1.0, name="right"),
@@ -64,23 +65,25 @@ class TestConstruction:
 
         array = DistributionArray(components, name="mixed")
 
-        assert array.event_template is None
+        assert tuple(array.event_spec.components) == ("mixed",)
 
-    def test_explicit_event_template_is_validated_by_private_factory(self):
+    def test_an_output_template_is_validated_by_private_factory(self):
         components = [Normal(loc=float(i), scale=1.0, name="y") for i in range(2)]
 
         array = _make_distribution_array(
             components,
             name="declared",
-            event_template=RecordSpec(y=()),
+            output_template=RecordSpec(y=()),
         )
 
-        assert array.event_template == RecordSpec(y=())
-        with pytest.raises(ValueError, match="does not match declared template"):
+        assert array.event_spec == components[0].event_spec
+        with pytest.raises(
+            ValueError, match=r"component 0 fields \['y'\] do not match template fields \['z'\]"
+        ):
             _make_distribution_array(
                 components,
                 name="invalid",
-                event_template=RecordSpec(z=()),
+                output_template=RecordSpec(z=()),
             )
 
     def test_indexing_returns_component(self):
@@ -897,11 +900,7 @@ class TestFromBatchedParams:
         class MyDist(Distribution):
             def __init__(self, value, *, name):
                 self._value = float(value)
-                super().__init__(name=name)
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__(name, NumericArraySpec(()))
 
             @property
             def batch_shape(self):
@@ -1054,11 +1053,7 @@ class TestDistributionFromBatchedParamsAlias:
         class MyDist(Distribution):
             def __init__(self, value, *, name):
                 self._value = float(value)
-                super().__init__(name=name)
-
-            @property
-            def event_shape(self):
-                return ()
+                super().__init__(name, NumericArraySpec(()))
 
             @property
             def batch_shape(self):

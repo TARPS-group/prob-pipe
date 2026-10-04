@@ -17,17 +17,17 @@ Parts III, IV, and VI fixed what a distribution *is* and what the operations do 
 
 ### Contract
 
-A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its event term spec from its parameters, including shape, dtype, and support, and wraps it in the component declaration of II.2. The array event's component is the law's `name`, captured once at construction, unless `component_name` gives another (III.7). Each family auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4).
+A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its event term spec from its parameters, including shape, dtype, and support, and wraps it in the component declaration of II.2. The array event's component defaults to the law's `name`, captured once at construction. An `event_spec` declaration names another, usually with its type pending, and the family completes it with `with_spec` (II.2), so `Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))` is labeled `prior` and exports `beta`. Each family auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4).
 
 ```python
 class TFPDistribution(Distribution):
-    def __init__(self, name: str, backend_dist: Any, *, component_name: str | None = None) -> None: ...   # the wrapped backend object
+    def __init__(self, name: str, backend_dist: Any, *, event_spec: OutputSpec | None = None) -> None: ...   # the wrapped backend object
     # closed-form _sample, _log_prob, _mean, _variance, and _quantile;
     # _cov and _marginal where the family defines them
 
 class Normal(TFPDistribution):
     def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike, *,
-                 component_name: str | None = None) -> None: ...
+                 event_spec: OutputSpec | None = None) -> None: ...
 # and likewise for each family above: parameters in, event spec and capabilities derived
 ```
 
@@ -39,13 +39,13 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 ### Contract
 
-An `EmpiricalDistribution` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. An explicit `event_spec` preserves component names and exposure form; atoms alone determine the returned term kind but cannot recover an independent whole-term component name. Without a declaration, record atoms expose their fields and any other atoms form a whole-term event under the law's `name` (III.7); a type hole is filled from the atoms. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
+An `EmpiricalDistribution` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. An explicit `event_spec` preserves component names and exposure form; atoms alone determine the returned term kind but cannot recover an independent whole-term component name. Without a declaration, record atoms expose their fields and any other atoms form a whole-term event whose component defaults to the law's `name` (III.7); a type hole is filled from the atoms. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap, where an empirical source is resampled, and the parametric bootstrap, where a fitted law is redrawn, in one interface; `replicate_size` defaults to the source's atom count when the source is empirical and is required otherwise.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in the event's batch form.
-- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. Their outer event declaration, for the batch-valued replicate or the measure-valued draw, is derived from the source and the replicate size and is distinct from the source's event interface; its component is the law's `name` unless `component_name` gives another. A new bootstrap or replicate object label never renames either interface.
+- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. Their outer event declaration, for the batch-valued replicate or the measure-valued draw, is derived from the source and the replicate size and is distinct from the source's event interface; its component defaults to the law's `name`, and an `event_spec` declaration names another.
 
-A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, and is resolved before the copies are built. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only. Event completion follows `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event under the law's `name` unless `event_spec` names the component otherwise, and every placed kernel carries the completed declaration.
+A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, and is resolved before the copies are built. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only. Event completion follows `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event whose component `event_spec` names or else defaults to the law's `name`, and every placed kernel carries the completed declaration.
 
 ```python
 class EmpiricalDistribution(Distribution):
@@ -55,12 +55,12 @@ class EmpiricalDistribution(Distribution):
 
 class BootstrapReplicateDistribution(Distribution):
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
-                 component_name: str | None = None) -> None: ...
+                 event_spec: OutputSpec | None = None) -> None: ...
     # a draw is one replicate in the event's batch form: replicate_size iid draws from source
 
 class BootstrapDistribution(Distribution):   # a random measure: a draw is an EmpiricalDistribution
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None, *,
-                 component_name: str | None = None) -> None: ...
+                 event_spec: OutputSpec | None = None) -> None: ...
     # the empirical measure of one replicate
 
 class SmoothingKernel(ABC):                # a bank of mean-zero kernel copies, one per center
@@ -165,7 +165,7 @@ The algebra is closed under the operations: an affine pushforward of any member 
 class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived by `*` / `joint`, never constructed
 ```
 
-**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. These laws preserve the evaluated function's output component name independently of their distribution labels. The drawn function's output component and the function-valued event's component both default to the random function's `name`; `output_spec` names the former otherwise, and `component_name` the latter. A type hole in either is filled from the model, and evaluated shapes may stay symbolic until inputs bind them (II.1). Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
+**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. These laws preserve the evaluated function's output component name independently of their distribution labels. The drawn function's output component and the function-valued event's component both default to the random function's `name`; `output_spec` names the former otherwise, and `event_spec` the latter. A type hole in either is filled from the model, and evaluated shapes may stay symbolic until inputs bind them (II.1). Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
 
 ```python
 class GaussianRandomFunction(RandomFunction, ABC):
@@ -179,11 +179,11 @@ class GaussianRandomFunction(RandomFunction, ABC):
 class GaussianProcess(GaussianRandomFunction):
     def __init__(self, name: str, mean_fn: Callable[[Array], Array],
                  cov_kernel: Callable[[Array, Array], Array], *,
-                 output_spec: OutputSpec | None = None, component_name: str | None = None) -> None: ...
+                 output_spec: OutputSpec | None = None, event_spec: OutputSpec | None = None) -> None: ...
 
 class LinearBasisFunction(GaussianRandomFunction):
     def __init__(self, name: str, basis: Callable[[Array], Array], weights: MultivariateNormal, *,
-                 output_spec: OutputSpec | None = None, component_name: str | None = None) -> None: ...
+                 output_spec: OutputSpec | None = None, event_spec: OutputSpec | None = None) -> None: ...
     # f(x) = basis(x)ᵀ w; the covariance kernel is basis(x)ᵀ Σ_w basis(x′)
 ```
 
@@ -213,7 +213,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) pair.
 
 - A **linear-Gaussian conditional distribution** is `s ↦ N(A @ s + b, Σ)` with `A` a `LinOp`. It is the conditional member of the Gaussian algebra: composed with a Gaussian prior it yields a `FactoredMultivariateGaussian`, and conditioning through it is exact.
-- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion, component_name=...)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `β`, and the dispersion when the family has one, its event is the response vector, and its law is `family.build(name, link⁻¹(X @ β), dispersion, component_name=component_name)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction as the exogenous curry of `condition_on` applied early. The response component is the likelihood's `name` unless `component_name` gives another, and it is passed through to the family. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
+- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion, event_spec=...)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `β`, and the dispersion when the family has one, its event is the response vector, and its law is `family.build(name, link⁻¹(X @ β), dispersion, event_spec=event_spec)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction as the exogenous curry of `condition_on` applied early. The response component defaults to the likelihood's `name`, and an `event_spec` declaration naming another is passed through to the family. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
 
 ```python
 class LinearGaussianConditional(ConditionalDistribution):
@@ -225,7 +225,7 @@ class GLMFamily(ABC):                     # a mean-parameterized response family
     has_dispersion: bool                  # whether build takes a dispersion, e.g. a Gaussian scale
     @abstractmethod
     def build(self, name: str, mean: Array, dispersion: ArrayLike | None = None, *,
-              component_name: str | None = None) -> Distribution: ...
+              event_spec: OutputSpec | None = None) -> Distribution: ...
     # the law of len(mean) conditionally independent observations with the given means
 
 class GaussianFamily(GLMFamily): ...      # canonical link: identity; dispersion: the scale
@@ -233,7 +233,7 @@ class BernoulliFamily(GLMFamily): ...     # canonical link: logit; no dispersion
 class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
 def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
-                   *, component_name: str | None = None, X: Array | None = None,
+                   *, event_spec: OutputSpec | None = None, X: Array | None = None,
                    dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
     # shapes: X ("obs", "features"), β ("features",), y ("obs",); the dimensions are symbolic until X binds them
 ```

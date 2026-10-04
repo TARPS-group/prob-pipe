@@ -832,12 +832,21 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
         """Return a Record with the given fields renamed, ``old -> new``.
 
-        The structural contract is :meth:`NamedTree.with_path_names`: keys are
-        node paths, or bare names when unambiguous; values are the new
-        single-segment names; renames apply simultaneously. The authoritative
-        :attr:`event_template` renames in lockstep, so the subtree invariant
-        holds on the result. The record keeps its name; ``with_name`` renames
-        the record itself. The result carries no provenance.
+        The structural contract is :meth:`NamedTree.with_path_names`: each key
+        is the exact path of a node; values are the new single-segment names;
+        renames apply simultaneously. The authoritative :attr:`event_template`
+        renames in lockstep, so the subtree invariant holds on the result. The
+        record keeps its name; ``with_name`` renames the record itself. The
+        result carries no provenance.
+
+        Raises
+        ------
+        KeyError
+            If a key is not the path of a node.
+        ValueError
+            If a new name is empty or contains ``/``, two keys rename the same
+            node, no renames are given, or a rename collides with an existing
+            sibling name.
         """
         renames = self._resolve_path_renames(mapping, kwargs)
         renamed = self._renamed_leaf_map(renames)

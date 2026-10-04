@@ -3,7 +3,7 @@ from ._bijector_dispatch import (
     bijector_for,
     register_bijector,
 )
-from ._distribution import Distribution, DistributionSpec
+from ._distribution import Distribution, DistributionSpec, NumericDistribution
 from ._tfp_base import TFPDistribution
 from .continuous import (
     Beta,
@@ -79,6 +79,7 @@ __all__ = [
     "NegativeBinomial",
     # Univariate continuous
     "Normal",
+    "NumericDistribution",
     "NumericJointEmpirical",
     "Pareto",
     "Poisson",

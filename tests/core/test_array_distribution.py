@@ -11,7 +11,9 @@ from probpipe import (
     FlattenedDistributionView,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     NumericRecordDistribution,
+    OpaqueSpec,
     RecordEmpiricalDistribution,
     from_distribution,
     log_prob,
@@ -86,7 +88,7 @@ class TestDistributionBase:
         class StubDist(Distribution):
             pass
 
-        d = StubDist(name="stub")
+        d = StubDist("stub", OpaqueSpec())
         with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))
 
@@ -171,7 +173,7 @@ class TestArrayDistFlattenUnflatten:
         flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
         restored = vector_mvn.unflatten_value(
             flat,
-            template=vector_mvn.event_template,
+            template=vector_mvn.event_spec.spec,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -184,7 +186,7 @@ class TestArrayDistFlattenUnflatten:
         assert flat.shape == (5, 3)
         restored = vector_mvn.unflatten_value(
             flat,
-            template=vector_mvn.event_template,
+            template=vector_mvn.event_spec.spec,
         )
         np.testing.assert_allclose(restored, samples, atol=1e-6)
 
@@ -194,7 +196,7 @@ class TestArrayDistFlattenUnflatten:
         assert flat.shape == (4,)
         restored = matrix_mvn.unflatten_value(
             flat,
-            template=matrix_mvn.event_template,
+            template=matrix_mvn.event_spec.spec,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -252,7 +254,7 @@ class TestFlattenedDistributionView:
             restored,
             vector_mvn.unflatten_value(
                 flat_sample,
-                template=vector_mvn.event_template,
+                template=vector_mvn.event_spec.spec,
             ),
             atol=1e-6,
         )
@@ -321,35 +323,23 @@ class TestCanonicalConvenience:
 
     @pytest.fixture
     def multi_leaf_dist(self):
-        """A synthetic ``NumericRecordDistribution`` with a multi-leaf
-        template (two scalar fields). Exercises the convenience-
-        accessor multi-leaf guards that no concrete subclass shipping
-        today triggers (every shipped class is single-leaf via the
-        auto-template helper)."""
-        from probpipe import NumericRecord
+        """A synthetic ``NumericRecordDistribution`` declaring a
+        multi-leaf record (two fields of different dtypes). Exercises the
+        convenience-accessor multi-leaf guards."""
+        from probpipe import NumericRecord, real
         from probpipe.core._specs import RecordSpec
 
         class TwoField(NumericRecordDistribution):
-            # Multi-leaf subclasses bypass the single-field auto-template
-            # by overriding ``event_template`` directly. The base
-            # ``event_shape`` raises ``NotImplementedError`` for
-            # multi-leaf templates — there's no single-field shortcut
-            # to provide — so we leave it inherited (callers should
-            # reach for ``event_shapes`` instead).
-
-            @property
-            def event_template(self):
-                return RecordSpec(a=(), b=(2,))
-
-            @property
-            def dtypes(self):
-                return {"a": jnp.float32, "b": jnp.int32}
-
-            @property
-            def supports(self):
-                from probpipe import real
-
-                return {"a": real, "b": real}
+            # A record draw has no ``event_shape``; callers read
+            # ``event_shapes`` instead.
+            def __init__(self, name):
+                super().__init__(
+                    name,
+                    RecordSpec(
+                        a=NumericArraySpec((), "float32", real),
+                        b=NumericArraySpec((2,), "int32", real),
+                    ),
+                )
 
             def _sample(self, key, sample_shape=()):
                 # Multi-leaf templates return a ``NumericRecord``
@@ -379,11 +369,12 @@ class TestCanonicalConvenience:
         # Two fields, different dtypes → convenience returns None.
         assert multi_leaf_dist.dtype is None
 
-    def test_support_raises_typeerror_on_multi_leaf(self, multi_leaf_dist):
-        """Multi-leaf: ``support`` (the convenience) raises TypeError
-        via the shared ``_single_field_name`` guard."""
-        with pytest.raises(TypeError, match="not array-like"):
-            _ = multi_leaf_dist.support
+    def test_support_is_the_support_every_leaf_shares(self, multi_leaf_dist):
+        """Multi-leaf with one support: ``support`` is that support, as
+        ``dtype`` is the dtype every leaf shares."""
+        from probpipe import real
+
+        assert multi_leaf_dist.support == real
 
     def test_check_support_compatible_includes_field_name_on_multi_leaf(
         self,
@@ -424,19 +415,11 @@ class TestCanonicalConvenience:
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
 
-            @property
-            def event_template(self):
-                return RecordSpec(a=(), b=(), c=())
-
-            @property
-            def dtypes(self):
-                return {"a": jnp.float32, "b": jnp.float32, "c": jnp.float32}
-
-            @property
-            def supports(self):
+            def __init__(self, name):
                 from probpipe import positive
 
-                return {"a": positive, "b": positive, "c": positive}
+                leaf = NumericArraySpec((), "float32", positive)
+                super().__init__(name, RecordSpec(a=leaf, b=leaf, c=leaf))
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 from probpipe import NumericRecord
@@ -467,17 +450,9 @@ class TestCanonicalConvenience:
         from probpipe.core._specs import RecordSpec
 
         class TwoFieldSource(NumericRecordDistribution):
-            @property
-            def event_template(self):
-                return RecordSpec(s1=(), s2=())
-
-            @property
-            def dtypes(self):
-                return {"s1": jnp.float32, "s2": jnp.float32}
-
-            @property
-            def supports(self):
-                return {"s1": real, "s2": real}
+            def __init__(self, name):
+                leaf = NumericArraySpec((), "float32", real)
+                super().__init__(name, RecordSpec(s1=leaf, s2=leaf))
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
@@ -487,17 +462,9 @@ class TestCanonicalConvenience:
                 )
 
         class TwoFieldTarget(NumericRecordDistribution):
-            @property
-            def event_template(self):
-                return RecordSpec(t1=(), t2=())
-
-            @property
-            def dtypes(self):
-                return {"t1": jnp.float32, "t2": jnp.float32}
-
-            @property
-            def supports(self):
-                return {"t1": positive, "t2": positive}
+            def __init__(self, name):
+                leaf = NumericArraySpec((), "float32", positive)
+                super().__init__(name, RecordSpec(t1=leaf, t2=leaf))
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
@@ -514,6 +481,32 @@ class TestCanonicalConvenience:
         ):
             target._check_support_compatible(source)
 
+    def test_check_support_compatible_pairs_a_flattened_group_with_its_leaves(self):
+        """A source field that holds a flattened group, as a posterior holds a
+        nested component, is checked against each target leaf under its path.
+        """
+        from probpipe import Gamma, MultivariateNormal, ProductDistribution
+
+        def nested(leaf):
+            return ProductDistribution(
+                params=ProductDistribution(a=leaf("a"), b=leaf("b")), s=Normal("s", 0.0, 1.0)
+            )
+
+        def flat(name):
+            return ProductDistribution(
+                **{name: MultivariateNormal(name, jnp.zeros(2), cov=jnp.eye(2))},
+                s=Normal("s", 0.0, 1.0),
+            )
+
+        nested(lambda n: Normal(n, 0.0, 1.0))._check_support_compatible(flat("params"))
+        with pytest.raises(
+            ValueError,
+            match=r"field 'params' \(support=real\).*field 'params/a' \(support=positive\)",
+        ):
+            nested(lambda n: Gamma(n, 2.0, 1.0))._check_support_compatible(flat("params"))
+        with pytest.raises(ValueError, match="field-count mismatch"):
+            nested(lambda n: Normal(n, 0.0, 1.0))._check_support_compatible(flat("x"))
+
     def test_check_support_compatible_skips_non_nrd_source(self, scalar_normal):
         """Sources without per-field ``supports`` (non-NRD endpoints
         like an opaque ``EmpiricalDistribution`` with object-dtype
@@ -528,51 +521,6 @@ class TestCanonicalConvenience:
 
         scalar_normal._check_support_compatible(_NoSupportsSource())  # no raise
 
-    def test_check_support_compatible_skips_when_supports_not_implemented(
-        self,
-        scalar_normal,
-    ):
-        """A source whose ``supports`` property raises
-        ``NotImplementedError`` (the default for any
-        :class:`NumericRecordDistribution` subclass that hasn't
-        overridden it) is treated the same as the
-        ``AttributeError`` branch — the check returns silently.
-        Exercises the ``except NotImplementedError`` clause inside
-        ``_check_support_compatible`` (companion to the
-        ``AttributeError`` branch covered above).
-        """
-        from probpipe.core._numeric_record_distribution import (
-            NumericRecordDistribution,
-        )
-        from probpipe.core._specs import RecordSpec
-
-        class _UnimplSupportsSource(NumericRecordDistribution):
-            """Multi-field NRD that explicitly doesn't declare supports."""
-
-            @property
-            def event_template(self):
-                return RecordSpec(a=(), b=())
-
-            @property
-            def dtypes(self):
-                return {"a": jnp.float32, "b": jnp.float32}
-
-            # Inherits the base ``supports`` which raises
-            # ``NotImplementedError``.
-
-            def _sample(self, key, sample_shape=()):  # pragma: no cover
-                from probpipe import NumericRecord
-
-                return NumericRecord(
-                    "nr",
-                    a=jnp.zeros(sample_shape),
-                    b=jnp.zeros(sample_shape),
-                )
-
-        scalar_normal._check_support_compatible(
-            _UnimplSupportsSource(name="unimpl"),
-        )  # no raise
-
     def test_treedef_leaf_for_single_leaf(self, scalar_normal):
         """Single-leaf: ``treedef`` is the leaf treedef (one-leaf pytree)."""
         assert scalar_normal.treedef == jax.tree.structure(None)
@@ -580,7 +528,7 @@ class TestCanonicalConvenience:
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
         """Multi-leaf: ``treedef`` matches an operation-derived
         ``NumericRecord`` skeleton with the same field names — locks the
-        relationship between ``event_template`` and the sample pytree.
+        relationship between the declaration and the sample pytree.
         The pytree aux carries the record identity, so the skeleton must
         use the distribution's own name (``"two_field"``), which the
         treedef derives and marks auto."""

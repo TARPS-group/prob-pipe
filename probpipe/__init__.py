@@ -62,6 +62,7 @@ from probpipe.core._empirical import (
     RecordEmpiricalDistribution,
 )
 from probpipe.core._function_batch import FunctionBatch
+from probpipe.core._numeric import Numeric
 from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
@@ -196,6 +197,7 @@ from probpipe.distributions._distribution import (
     RETURN_APPROX_DIST,
     Distribution,
     DistributionSpec,
+    NumericDistribution,
     set_default_num_evaluations,
     set_return_approx_dist,
 )
@@ -287,9 +289,11 @@ __all__ = [
     "NamedTree",
     "NegativeBinomial",
     "Normal",
+    "Numeric",
     "NumericArray",
     "NumericArrayBatch",
     "NumericArraySpec",
+    "NumericDistribution",
     "NumericJointEmpirical",
     "NumericRandomMeasure",
     "NumericRecord",

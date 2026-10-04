@@ -16,6 +16,8 @@ import pytest
 from probpipe import (
     ApproximateDistribution,
     MultivariateNormal,
+    NumericArraySpec,
+    NumericRecordSpec,
     Record,
     RecordSpec,
     ResolutionError,
@@ -87,7 +89,7 @@ class TestSimpleModel:
             """A SupportsLogProb distribution that is not a RecordDistribution."""
 
             def __init__(self) -> None:
-                self._name = "log_prob_only"
+                super().__init__("log_prob_only", NumericArraySpec(()))
 
             def _log_prob(self, value):
                 return jnp.zeros(())
@@ -99,9 +101,10 @@ class TestSimpleModel:
         """SimpleModel always satisfies SupportsLogProb."""
         assert isinstance(model, SupportsLogProb)
 
-    def test_no_event_shape(self, model):
-        """SimpleModel does not define event_shape."""
-        assert not hasattr(model, "event_shape")
+    def test_event_shape_is_undefined_for_a_record_draw(self, model):
+        """A SimpleModel draws a record, and event_shape is defined only for one array."""
+        with pytest.raises(AttributeError, match="does not draw a single array"):
+            _ = model.event_shape
 
     def test_no_sample(self, model):
         """SimpleModel does not define _sample even if prior supports sampling."""
@@ -288,21 +291,21 @@ class _ValuesAwareLikelihood:
 
 
 class TestSimpleModelWithValues:
-    """SimpleModel propagates event_template and accepts Record data."""
+    """SimpleModel propagates the prior's declaration and accepts Record data."""
 
     @pytest.fixture
     def prior_with_template(self):
+        # A record view of the vector, whose declaration names its two entries.
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = RecordSpec(a=(), b=())
-        return prior
+        return prior.as_record_distribution(template=NumericRecordSpec(a=(), b=()))
 
     @pytest.fixture
     def likelihood(self):
         return _ValuesAwareLikelihood()
 
-    def test_event_template_propagated(self, prior_with_template, likelihood):
+    def test_the_prior_record_propagates(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        assert model.event_template is prior_with_template.event_template
+        assert model.event_spec.spec is prior_with_template.event_spec.spec
 
     def test_fields_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
@@ -351,12 +354,12 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior, GaussianLikelihood())
         assert "params" in model.fields
         assert model.parameter_names == ("params",)
-        assert model.event_template is not None
+        assert "params" in model.event_spec.components
 
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._event_template = RecordSpec(X=(), y=())
+        prior = prior.as_record_distribution(template=NumericRecordSpec(X=(), y=()))
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):

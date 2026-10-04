@@ -27,7 +27,16 @@ extension rarely constructs directly but may need to reference.
 `_sample()` returns a `Record` or `NumericRecord` respectively.
 `TFPDistribution` wraps an existing TFP `Distribution`.
 
+A subclass passes the declaration of one draw to `Distribution.__init__` as
+`event_spec`. A bare `RecordSpec` exposes its fields, and any other term spec
+is a whole term whose component defaults to the law's name. A law whose
+declaration is numeric is a
+`NumericDistribution`, which gives it the `dtypes`, `supports`, `dtype`, and
+`support` views.
+
 ::: probpipe.Distribution
+
+::: probpipe.NumericDistribution
 
 ::: probpipe.RecordDistribution
 

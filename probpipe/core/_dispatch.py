@@ -333,9 +333,11 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         TypeError
             If ``method.name`` is not a ``str``; if ``method.exact`` is not a
             ``bool``; if ``method.priority`` is not an ``int`` or ``None``, a
-            ``bool`` included; or if ``method.supported_types()`` does not
-            have the registry's arity shape; or if ``method.description`` is
-            not a ``str``.
+            ``bool`` included; if ``method.supported_types()`` does not
+            have the registry's arity shape, or lists a class whose
+            membership follows an instance's declaration rather than its class,
+            such as ``NumericDistribution``, which matching by class would miss;
+            or if ``method.description`` is not a ``str``.
         ValueError
             If ``method.name`` is empty or already registered.
         """
@@ -352,6 +354,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         priority = _validated_priority(name, method.priority)
         supported_types = method.supported_types()
         self._validate_supported_types(name, supported_types)
+        _refuse_declaration_markers(name, supported_types)
         description = method.description
         if not isinstance(description, str):
             raise TypeError(f"Method {name!r} description must be a str; got {description!r}")
@@ -783,6 +786,25 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def _format_key(self, key: Any) -> str:
         """``key`` as it appears in error messages, such as ``(Left, Right)``."""
         ...
+
+
+def _refuse_declaration_markers(name: str, supported_types: Any) -> None:
+    """Raise ``TypeError`` if *supported_types* lists a declaration-membership marker.
+
+    Such a class admits instances of classes that do not inherit it, so selection
+    by class distance would miss them. A marker says so in its own class body, and
+    a class that inherits it is an ordinary dispatch type.
+    """
+    stack = [supported_types]
+    while stack:
+        entry = stack.pop()
+        if isinstance(entry, tuple):
+            stack.extend(entry)
+        elif isinstance(entry, type) and vars(entry).get("_membership_follows_declaration"):
+            raise TypeError(
+                f"Method {name!r} lists {entry.__name__}, whose membership follows an "
+                f"instance's declaration rather than its class, so it is not a dispatch type"
+            )
 
 
 def _is_tuple_of_classes(value: Any) -> bool:

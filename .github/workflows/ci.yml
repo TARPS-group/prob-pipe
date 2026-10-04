@@ -407,7 +407,8 @@ jobs:
             BASE="${{ github.event.before }}"
           fi
           CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
-            -- 'probpipe/modeling/_stan.py' 'tests/modeling/test_stan_model.py' || true)
+            -- 'probpipe/modeling/_stan.py' 'tests/modeling/test_stan_model.py' \
+            'tests/distributions/test_event_declarations.py' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_STAN=false
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -461,8 +462,13 @@ jobs:
       - name: Run StanModel tests (real BridgeStan)
         if: steps.stan_check.outputs.skip != 'true'
         # -n 0 disables xdist so the module-scoped model fixtures compile once,
-        # not once per worker. The suite is small; serial is fine.
-        run: uv run pytest tests/modeling/test_stan_model.py -n 0 --cov-report=xml
+        # not once per worker. The suite is small; serial is fine. The -k
+        # expression adds the Stan rows of the event-declaration table test.
+        run: >-
+          uv run pytest tests/modeling/test_stan_model.py
+          tests/distributions/test_event_declarations.py
+          -k "test_stan_model or StanModel or UnconstrainedStanView"
+          -n 0 --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         # The main test job doesn't install [stan], so it measures _stan.py as

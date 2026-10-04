@@ -18,7 +18,6 @@ from probpipe import (
     expectation,
     sample,
 )
-from probpipe.core._specs import NumericArraySpec
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -293,9 +292,11 @@ class TestProperties:
         assert dist.event_shape == (5, 2)
 
     def test_generic_no_event_shape(self):
-        """Non-numeric BootstrapReplicateDistribution has no event_shape."""
+        """A non-numeric replicate is opaque, so it has no event_shape."""
         dist = BootstrapReplicateDistribution("x", ["a", "b", "c"])
-        assert not hasattr(dist, "event_shape") or "event_shape" not in type(dist).__dict__
+        assert "event_shape" not in type(dist).__dict__
+        with pytest.raises(AttributeError, match="does not draw a single array"):
+            _ = dist.event_shape
 
     def test_generic_no_dim(self):
         """Non-numeric BootstrapReplicateDistribution has no dim."""
@@ -497,12 +498,11 @@ class TestValuesEmpiricalDistribution:
         assert s["X"].shape == (5, 3)
         assert s["y"].shape == (5,)
 
-    def test_event_template(self, values_data):
+    def test_the_declaration_holds_each_field(self, values_data):
         emp = EmpiricalDistribution("x", values_data)
-        tpl = emp.event_template
-        assert tpl is not None
-        assert tpl["X"] == NumericArraySpec((3,))
-        assert tpl["y"] == NumericArraySpec(())
+        declared = emp.event_spec.spec
+        assert declared["X"].shape == (3,)
+        assert declared["y"].shape == ()
 
     def test_fields(self, values_data):
         emp = EmpiricalDistribution("x", values_data)
@@ -591,11 +591,14 @@ class TestValuesBootstrapReplicateDistribution:
         assert s["X"].shape == (4, 20, 3)
         assert s["y"].shape == (4, 20)
 
-    def test_event_template(self, bootstrap):
-        tpl = bootstrap.event_template
-        assert tpl is not None
-        assert tpl["X"] == NumericArraySpec((20, 3))
-        assert tpl["y"] == NumericArraySpec((20,))
+    def test_the_declaration_stacks_the_source_terms(self, bootstrap):
+        from probpipe.core.constraints import real
+
+        # Each of the source's declared terms, with the replicate axis in front.
+        declared = bootstrap.event_spec.spec
+        assert declared["X"].shape == (20, 3)
+        assert declared["y"].shape == (20,)
+        assert declared["X"].support == real
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")

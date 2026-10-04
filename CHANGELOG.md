@@ -9,6 +9,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
+  alone decides the packaging. The form with several keywords, which exposed a
+  record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
+  with `OutputSpec(RecordSpec(a=a_spec, b=b_spec))`.
+- `with_path_names` addresses a node by its exact path on `Record`,
+  `RecordSpec`, `RecordBatch`, and every `NamedTree`, so a single name addresses
+  a top-level node and a nested node takes its full path. A bare name no longer
+  resolves to a nested node: for a nested field `g/mu`, replace
+  `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
+  top-level node whose name recurs deeper, which no key could address, is
+  renamed by its name.
+- `event_template` is removed from every distribution, so a law's event
+  declaration is the one schema it records. Read the declaration instead:
+  replace `law.event_template` with `law.event_spec.spec` for a law that draws
+  a record, and read the names of its components from `law.fields`. The
+  declaration's array leaves state their dtypes and supports as well as their
+  shapes.
+  - `KDEDistribution`, `ApproximateDistribution`, and `make_posterior` take
+    `event_spec=` in place of `event_template=`. Each accepts an `OutputSpec` or
+    a bare `RecordSpec`, which exposes its fields. `KDEDistribution` completes
+    the declaration with the term it draws: a record gives the draws its
+    structure, and any other declaration is completed with the flat array one
+    draw is, so a whole term keeps its component and a type that does not unify
+    raises `ValueError`.
+  - `unflatten_value(flat, template=...)` takes a law's declared term. An array
+    spec reshapes the trailing axis, and a record spec rebuilds a
+    `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
+    a one-field record no longer comes back as a bare array. `treedef` follows
+    the same rule.
+  - A Function with an output template checks a returned distribution as it
+    checks a returned record. The record the law's components form must match
+    the template's fields and shapes, a dtype the template sets admits a
+    same-kind cast, and a support it sets must hold the law's. Before, the law's
+    `event_template` had to equal the template, and a parametric family's
+    template carried no dtype or support, so a template that set either
+    rejected such a law.
+  - The BayesFlow learners accept a prior whose declaration is numeric,
+    whatever its class, and raise `TypeError` for any other before simulating.
+- `NumericRecord.from_vector` and `NumericRecordBatch.from_vector` name their
+  second parameter `spec` rather than `template`, as `Numeric.from_vector`
+  does, so a call that passes it by keyword passes `spec=`.
+- A distribution stores the `OutputSpec` of one draw as its event declaration,
+  and every schema view reads it.
+  - `Distribution.__init__` takes the declaration as the required second
+    argument `event_spec`, and construction raises `TypeError` for a class that
+    leaves its event undeclared. A class that bypasses the base constructor
+    calls `_init_declaration`, and a `TFPDistribution` subclass that sets
+    `_tfp_dist` after `TFPDistribution.__init__` passes its own `event_spec`.
+  - A bare `RecordSpec` exposes its fields, even when it has one, and any other
+    term spec is a whole-term event whose component defaults to the law's
+    name. A law that draws one array, such as a parametric family, therefore
+    declares a whole term. A component name follows the rule for a record's
+    field names, so it is non-empty and has no `/`, and an `InputSpec` slot
+    name must still be a Python identifier. A name with a `/` therefore raises
+    `ValueError` for every law whose whole-term component defaults to its
+    name, which is new for laws such as an `EmpiricalDistribution` of opaque
+    atoms, a `SimpleGenerativeModel`, or a `MinibatchedDistribution`.
+  - `with_name` no longer moves the event component, so a renamed family keeps
+    its event component, and indexing it by that component still returns it.
+  - `event_shape` is defined only for a law that draws a single array. It raises
+    `ValueError` for unbound dimensions and `AttributeError` for any other draw,
+    so `hasattr(law, "event_shape")` is `False` for a law that draws a record. A
+    TFP-backed product no longer reports the flat shape of its blockwise
+    backend. An auto-wrapped empirical law, a posterior, and the Stan and PyMC
+    models keep their single-field or flat `event_shape` for now.
+  - `RecordEmpiricalDistribution` and `NumericRecordDistributionView` key
+    `event_shapes` by top-level field, as every record law does, where they
+    keyed a nested record's leaves by path. A nested field reports `()`, and
+    `flat_event_shapes` holds one entry per top-level field.
+  - `dtypes`, `supports`, `dtype`, and `support` belong to
+    `NumericDistribution`, so a law whose declaration is not numeric has none of
+    them and raises `AttributeError`. `dtypes` and `supports` are keyed by the
+    path of each array leaf, and `dtype` and `support` are the dtype and the
+    support every leaf shares, each `None` when the leaves differ, so `support`
+    no longer raises `TypeError` for a draw with several array leaves. Leaves
+    share a support when their constraints compare equal on concrete
+    parameters, so under `jax.jit` a support with traced parameters is not
+    shared. `supports` tells an unset leaf from leaves that differ. A family
+    defines `_event_support()` instead of overriding `support`.
+  - A `DistributionArray` declares the term its cells draw. It keeps a dtype or
+    a support only when every cell declares the same one, and a batched array
+    leaves unset a support that depends on a batched parameter, so the
+    `support` of an array of `Uniform` laws with different bounds is `None`.
+  - `NumericRecordDistribution` claims the `NumericDistribution` marker. It no
+    longer builds a template from `name` and `event_shape`, and its `dtypes`,
+    `supports`, and `event_shape` no longer raise `NotImplementedError`.
+  - `DistributionSpec` takes an `OutputSpec`, completing a bare `RecordSpec` to
+    the exposed form, and matches a law by unifying the two declarations. An
+    unset dtype accepts any dtype and a set one a same-kind cast, sizes agree,
+    and support is not compared. `DistributionSpec(RecordSpec(x=()))` therefore
+    no longer matches a `Normal` named `x`, which declares a whole term.
+  - `law[name]` returns a whole-term law itself under its component, as
+    `law[(name,)]` does, and raises `KeyError` under any other key.
+    `RecordSpec.infer_from` gives a distribution-valued field the law's own
+    `spec`.
+  - Fingerprints of distribution specs change, since they hash the packaging and
+    the component, so cached results keyed on these fingerprints are
+    invalidated.
 - A distribution's name is the required first argument of every constructor
   the design keeps, so `Normal("x", 0.0, 1.0)` replaces
   `Normal(0.0, 1.0, name="x")`. A keyword `name=` still binds.
@@ -389,6 +487,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Completing an `OutputSpec`.** A producer completes a declaration with the
+  spec of the term it returns.
+  - `with_spec(spec)` returns the declaration with its type set to `spec`. It
+    fills a pending type, raises `ValueError` for a declared spec that does not
+    unify with `spec`, and raises `TypeError` when an exposed record is given a
+    spec other than a `RecordSpec`.
+  - `OutputSpec.default(spec, component=c)` is the declaration a producer uses
+    when it is given none: `OutputSpec(spec)` if `spec` is a `RecordSpec`,
+    whose fields become the components, and `OutputSpec(**{c: spec})`
+    otherwise.
+  - `exposes_record` reports whether the components are a record's fields.
+  - `with_path_names` renames nodes by the declaration's paths, which start
+    with a component, so the field `beta` of a whole record under the component
+    `parameters` is `parameters/beta`, as it is when the record is exposed. A
+    key that is not a path raises `KeyError`, and a whole term's component is
+    renamed in place.
+- **`event_spec` on the parametric families.** Each TFP family takes a
+  keyword-only `OutputSpec` as `event_spec`, which names the component of one
+  draw, usually with its type pending. `Normal("prior", 0.0, 1.0,
+  event_spec=OutputSpec(beta=None))` is labeled `prior` and exports `beta`. The
+  family fills the pending type with its array, a declared type must unify with
+  that array, and a declaration that exposes a record raises `TypeError`. A
+  `DistributionArray` of such laws keeps the component they share when their
+  declarations differ otherwise.
+- **`Numeric`, the flat-vector interface of the numeric kinds.** `NumericArray`
+  and `NumericRecord` inherit the abstract base `probpipe.Numeric`, which
+  declares `vector_size`, `to_vector`, and `from_vector` and supplies coordinate
+  protocols that present `to_vector()` to NumPy and JAX. The batch forms are
+  not `Numeric`.
+  - `NumericArray` gains the three members. `to_vector()` returns the array's
+    elements as a 1-D vector in row-major order, and
+    `NumericArray.from_vector(name, spec, vec)` rebuilds the array that a
+    `NumericArraySpec` declares from such a vector. `from_vector` raises
+    `TypeError` for a vector that is not 1-D and `ValueError` for one whose
+    length is not `spec.vector_size`. Its coordinate protocols present the
+    array itself, so NumPy and JAX functions see its shape.
+  - `NumericRecord` keeps presenting its sole field to NumPy and JAX for now.
+- **The event declaration on `Distribution`.** `spec` holds a law's
+  `DistributionSpec` and `event_spec` its declaration of one draw, which
+  `event_shape` reads. `with_dim_sizes` binds and `with_dim_names` renames
+  symbolic dimensions of the declaration, each returning a copy of the same
+  class, and `with_dim_sizes` raises `ValueError` for a name that is not free.
+- **`NumericDistribution`.** `isinstance(law, NumericDistribution)` holds when
+  the declaration is numeric, and a class whose every instance is numeric, such
+  as `NumericRecordDistribution`, inherits the marker, which construction
+  checks. Every numeric law has its views `dtypes`, `supports`, `dtype`, and
+  `support`, whatever its class. The marker is not a dispatch type, so
+  registering a method that lists it raises `TypeError`.
 - **`registry_catalog` — one place to discover every registry (design II.7).**
   `print(probpipe.registry_catalog)` lists the cataloged registries,
   `"inference"`, `"converters"`, and `"bijectors"`, with a one-line
@@ -459,6 +605,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Contributors install pre-commit as a uv tool.** The hooks are installed
+  with `uv tool install pre-commit` and then `pre-commit install`, replacing
+  `uvx pre-commit install`: its hook called an interpreter in the uv cache, so
+  every commit failed once `uv cache clean` deleted it. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
+
 ### Removed (breaking)
 
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
@@ -482,6 +634,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A record view of a law with a joint support leaves each leaf's support
+  unset.** A record view of a `Dirichlet` gave every leaf `simplex`, which holds
+  for the joint vector only. A leaf keeps the source's support only when the
+  support holds piecewise, as a constraint with scalar parameters such as
+  `positive` does.
+- **A field view splits a slash path and takes a tuple key.** For a nested
+  product `p`, `p["a"]["b/c"]` and `p["a"][("b", "c")]` are `p["a/b/c"]`, where
+  they raised `KeyError` and `TypeError`.
+- **`iter(law)` raises `TypeError`.** Indexing made a law look like a sequence,
+  so iteration started and failed on the index `0`.
+- **A sequential joint leaves unset the support of a component that depends on
+  its parents.** The support was read off a prototype built at one draw of the
+  parents, so `x=lambda z: Uniform("x", z - 1, z + 1)` reported the interval
+  for that draw. `supports` reports `None` for such a leaf, before and after
+  conditioning, and keeps a support that takes no parameters, such as
+  `positive`.
 - **`blackjax_rwmh` adaptive warmup no longer collapses its proposal.**
   A warmup window in which the chain barely moves leaves a singular Welford
   covariance, and refitting the proposal to it stopped the chain for the rest

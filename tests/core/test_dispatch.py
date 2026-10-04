@@ -812,6 +812,28 @@ class TestExecute:
                 reg.execute(*arity.args, **kwargs)
 
 
+class TestDeclarationMarkers:
+    """A class whose membership follows an instance's declaration is not a dispatch type."""
+
+    def test_registering_the_numeric_marker_raises(self):
+        from probpipe import NumericDistribution
+
+        registry = UnaryDispatchRegistry()
+        with pytest.raises(TypeError, match="not a dispatch type"):
+            registry.register(FakeUnary("numeric", types=(NumericDistribution,)))
+        assert registry.list_methods() == []
+
+    def test_a_class_inheriting_the_marker_is_an_ordinary_dispatch_type(self):
+        from probpipe import NumericDistribution
+
+        class _Claims(NumericDistribution):
+            pass
+
+        registry = UnaryDispatchRegistry()
+        registry.register(FakeUnary("claims", types=(_Claims,)))
+        assert registry.list_methods() == ["claims"]
+
+
 class TestMathematicalDomainError:
     def test_is_a_value_error_and_not_a_resolution_error(self):
         assert issubclass(MathematicalDomainError, ValueError)

@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._specs import _components_record
 from ..core.node import function
 from ..core.protocols import GenerativeLikelihood, SupportsApproximateConditioning
 from ..custom_types import ArrayLike, PRNGKey
@@ -112,20 +113,16 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, tf
     """
     from ..distributions import bijector_for  # lazy: inference/ -> distributions/
 
-    try:
-        supports = prior.supports
-    except NotImplementedError:
-        if len(keys) > 1:
-            raise TypeError(
-                f"{type(prior).__name__} has {len(keys)} parameters but does not "
-                "implement per-field `supports`; cannot infer per-field constraints "
-                "from the single `support`. Implement `supports` on the prior."
-            ) from None
-        # Single-field priors: the whole-distribution support is the field's support.
-        supports = {k: prior.support for k in keys}
+    supports = prior.supports
     bijectors: dict[str, tfb.Bijector] = {}
     for k in keys:
         constraint = supports[k]
+        if constraint is None:
+            raise ValueError(
+                f"learn_amortized_posterior cannot handle prior parameter {k!r}: its "
+                "support is not declared, so no bijector to R^d can be chosen. Give the "
+                "prior a declared support, for example by building it from a family."
+            )
         try:
             bijectors[k] = bijector_for(constraint)
         except NotImplementedError as e:
@@ -177,7 +174,7 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
         self._simulator = simulator
         # Numeric leaves (slash paths for a nested prior; == fields for a flat
         # one) -- the column order the network emits, matching training.
-        self._leaf_keys = tuple(prior.event_template.leaf_shapes)
+        self._leaf_keys = tuple(_components_record(prior.event_spec).leaf_shapes)
         self._method = method
         self._data_dim = data_dim
         self._num_results = num_results
@@ -187,6 +184,8 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
         # The TrackedTerm metaclass check requires a non-empty name; the
         # derived default is an auto name.
         self._init_tracked(f"BayesFlowModel({method})")
+        # A law over the prior's parameters, declared as the prior declares them.
+        self._init_declaration(prior.event_spec)
 
     @property
     def prior(self) -> Distribution:
@@ -234,7 +233,7 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
         # ``out`` maps each internal theta key to ``(1, num_results, d_leaf)``.
         # Stays in jnp end-to-end: this is the latency-critical amortized path,
         # so no per-leaf host round-trips. Columns are concatenated in leaf order,
-        # which is the canonical flatten order the event_template unflattens by.
+        # which is the canonical flatten order the posterior's record unflattens by.
         cols = []
         for k, leaf in zip(_adapter_field_keys(self._leaf_keys), self._leaf_keys):
             draws = jnp.asarray(out[k])[0]
@@ -247,7 +246,7 @@ class BayesFlowModel(Distribution, SupportsApproximateConditioning):
             [flat],
             parents=(self._prior,),
             algorithm=f"bayesflow_{self._method}",
-            event_template=self._prior.event_template,
+            event_spec=self._prior.event_spec,
             num_results=num_results,
         )
 
@@ -287,7 +286,7 @@ def learn_amortized_posterior(
     Parameters
     ----------
     prior : Distribution
-        Prior over the model parameters.  Must be a ``RecordDistribution`` --
+        Prior over the model parameters.  Must be a numeric distribution --
         typically a ``ProductDistribution`` of named distributions (which may be
         nested), or a single named distribution for a one-parameter model.  It is
         sampled via the :func:`~probpipe.sample` op to draw training thetas; it is
@@ -347,13 +346,11 @@ def learn_amortized_posterior(
         If ``method`` is not one of ``"npe"`` / ``"fmpe"`` / ``"cmpe"``,
         ``sim_backend`` is not ``"jax"`` / ``"sequential"``, any of
         ``num_simulations`` / ``batch_size`` / ``epochs`` / ``num_results`` is
-        less than one, or a prior field's support admits no smooth bijector to
-        ``R^d`` (e.g. a discrete prior).
+        less than one, or a prior field's support is not declared or admits no
+        smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
         If a count parameter is not an integer, ``simulator`` lacks
-        ``generate_data``, ``prior`` is not a ``RecordDistribution`` (has no
-        ``event_template``), or a multi-field prior implements no per-field
-        ``supports`` accessor.
+        ``generate_data``, or ``prior`` is not a numeric distribution.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -361,7 +358,7 @@ def learn_amortized_posterior(
         raise ValueError(
             f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
         )
-    event_template = _validate_learn_inputs(
+    record = _validate_learn_inputs(
         prior,
         simulator,
         caller="learn_amortized_posterior",
@@ -375,7 +372,7 @@ def learn_amortized_posterior(
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
     # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
-    leaf_shapes = event_template.leaf_shapes
+    leaf_shapes = record.leaf_shapes
     leaf_keys = tuple(leaf_shapes)
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.

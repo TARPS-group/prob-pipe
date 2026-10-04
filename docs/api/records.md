@@ -35,16 +35,25 @@ inputs = InputSpec(data=NumericArraySpec(("n", "p")))
 whole_array = OutputSpec(beta=beta)
 pending_type = OutputSpec(beta=None)
 one_field_record = OutputSpec(RecordSpec(beta=beta))
-record_fields = OutputSpec(beta=beta, sigma=sigma)
+record_fields = OutputSpec(RecordSpec(beta=beta, sigma=sigma))
 whole_record = OutputSpec(parameters=RecordSpec(beta=beta, sigma=sigma))
 ```
 
-The single-keyword form describes the whole returned value; it inserts no
-single-field record. The positional record form exposes immediate children
-regardless of field count. `spec` and `components` are read-only derived views;
-nested records stay nested. Only a single named whole value can carry a `None`
-type hole. Replace that declaration with the same component name and a known
-spec when the type becomes available.
+The keyword form takes one keyword, which names the whole returned value.
+The positional record form exposes immediate
+children, while `spec`, `components`, and `exposes_record`
+are read-only derived views. Only a named whole
+value can carry a `None` type hole.
+
+A producer completes a declaration with the spec of the term it returns.
+`with_spec(spec)` returns the declaration with its type set to `spec`: it fills
+a pending type and checks a declared type against `spec`.
+`OutputSpec.default(spec, component=c)` is the declaration a producer uses when
+it is given none: `OutputSpec(spec)` if `spec` is a `RecordSpec`, whose fields
+become the components, and `OutputSpec(**{c: spec})` otherwise.
+A declaration's paths start with a component, so the `whole_record` declaration
+has the paths `parameters`, `parameters/beta`, and `parameters/sigma`.
+`with_path_names` renames nodes by these paths and keeps the packaging.
 
 Symbolic dimensions share one scope across nested specs and input slots.
 `TermSpec`, `InputSpec`, and `OutputSpec` provide `with_dim_sizes` to substitute
@@ -58,12 +67,12 @@ array shapes and dtypes. Binding from another spec uses only the information
 that declaration supplies. The same spec-binding rules apply directly and
 inside records, input slots, or batches.
 
-These shared declarations do not yet replace the legacy live `Function`
-input/output-template or distribution event-template constructor APIs.
+These shared declarations do not yet replace the `Function` input and output
+templates or the `event_template=` argument of the record constructors.
 
-`DistributionSpec` carries a record draw schema. Concrete value validation
-requires an exact schema match; dimension binding can learn sizes from a
-distribution's schema or another distribution declaration. `FunctionSpec`
+`DistributionSpec` carries the `OutputSpec` of a law's draw and matches a
+`Distribution` whose own declaration unifies with it. Dimension binding learns
+sizes from a law's declaration or from another `DistributionSpec`. `FunctionSpec`
 optionally declares the input and output of a callable. Its validity check is
 callability alone, while binding reads available declarations without running
 the callable. An undeclared callable side leaves its dimensions symbolic.
@@ -134,6 +143,8 @@ array they passed. And a batch of no elements is a batch: `OpaqueBatch("draws", 
 and `batch[0:0]` both give one, since zero is a count the level can carry. What a
 batch does need is an *axis* — a single object with none has no level to count
 along, and is refused.
+
+::: probpipe.Numeric
 
 ::: probpipe.NumericArray
 

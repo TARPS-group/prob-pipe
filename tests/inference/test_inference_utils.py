@@ -12,9 +12,12 @@ import pytest
 
 from probpipe import (
     Normal,
+    NumericArraySpec,
     NumericRecord,
+    OpaqueSpec,
     ProductDistribution,
     SimpleModel,
+    condition_on,
 )
 from probpipe.core.protocols import SupportsSampling
 from probpipe.distributions._distribution import Distribution
@@ -23,6 +26,7 @@ from probpipe.inference._inference_utils import (
     build_likelihood_flat,
     build_target_log_prob,
     build_target_log_prob_flat,
+    extract_event_spec,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -74,13 +78,13 @@ class TestBuildTargetLogProbFlat:
     def test_flat_target_matches_record_target(self, small_model):
         observed = jnp.zeros((4,))
         target_record = build_target_log_prob(small_model, observed)
-        target_flat, flat_init, template = build_target_log_prob_flat(
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(
             small_model,
             observed,
         )
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector("nr", template, flat_init)
+        record_init = NumericRecord.from_vector("nr", event_spec.spec, flat_init)
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -88,26 +92,26 @@ class TestBuildTargetLogProbFlat:
             atol=1e-6,
         )
 
-    def test_flat_init_dim_matches_template_vector_size(self, small_model):
-        _, flat_init, template = build_target_log_prob_flat(
+    def test_flat_init_dim_matches_the_declared_vector_size(self, small_model):
+        _, flat_init, event_spec = build_target_log_prob_flat(
             small_model,
             observed=None,
         )
         # Both fields are scalar Normals: vector_size == 2.
-        assert flat_init.shape == (template.vector_size,) == (2,)
+        assert flat_init.shape == (event_spec.spec.vector_size,) == (2,)
 
-    def test_template_field_order_preserved(self, small_model):
-        _, _, template = build_target_log_prob_flat(small_model, observed=None)
+    def test_the_declared_component_order_is_preserved(self, small_model):
+        _, _, event_spec = build_target_log_prob_flat(small_model, observed=None)
         # Insertion order from the ProductDistribution constructor.
-        assert template.fields == ("a", "b")
+        assert tuple(event_spec.components) == ("a", "b")
 
     def test_bare_distribution_falls_through_unwrapped(self):
         """A target with no Record-shaped prior round-trips its log-prob unchanged.
 
         For a bare ``SupportsLogProb`` whose ``_unnormalized_log_prob``
         already takes a flat array, ``build_target_log_prob_flat``
-        passes the callable through verbatim and returns
-        ``event_template=None``. This is the path BlackJAX MCMC uses
+        passes the callable through verbatim and returns no declaration.
+        This is the path BlackJAX MCMC uses
         for hand-rolled distributions that don't carry a Record-shaped
         prior.
         """
@@ -118,16 +122,52 @@ class TestBuildTargetLogProbFlat:
             def _unnormalized_log_prob(self, x):
                 return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
-        target_flat, flat_init, template = build_target_log_prob_flat(
+        target_flat, flat_init, event_spec = build_target_log_prob_flat(
             _FlatGaussian(),
             observed=None,
         )
-        assert template is None
+        assert event_spec is None
         assert flat_init.shape == (2,)
         np.testing.assert_allclose(
             float(target_flat(jnp.asarray([1.0, -1.0]))),
             -1.0,
         )
+
+
+class _FlatTarget(Distribution):
+    """A law over a flat array that has no flat-vector view of its own."""
+
+    def __init__(self):
+        super().__init__("target", NumericArraySpec((2,)))
+
+    def _log_prob(self, value):
+        return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
+
+    def _unnormalized_log_prob(self, value):
+        return self._log_prob(value)
+
+
+class TestExtractEventSpec:
+    def test_a_prior_with_a_flat_view_gives_its_declaration(self, small_model):
+        assert extract_event_spec(small_model) == small_model.prior.event_spec
+
+    def test_a_target_with_no_flat_view_gives_none(self):
+        assert extract_event_spec(_FlatTarget()) is None
+
+    @pytest.mark.parametrize("method", ["blackjax_nuts", "blackjax_rwmh", "tfp_nuts"])
+    def test_the_methods_agree_on_a_bare_target(self, method):
+        """Each names the posterior and draws it as build_target_log_prob_flat does."""
+        posterior = condition_on(
+            _FlatTarget(),
+            None,
+            method=method,
+            num_results=20,
+            num_warmup=20,
+            num_chains=1,
+            random_seed=0,
+        )
+        assert posterior.fields == ("posterior",)
+        assert isinstance(posterior.draws(), jax.Array)
 
 
 class TestGetPrior:
@@ -303,10 +343,8 @@ class _EventShapeOnlyDist(Distribution):
     ``SupportsSampling``) — exercises the Stan ``Uniform(-2, 2)`` fallback.
     """
 
-    event_shape = (3,)
-
     def __init__(self):
-        super().__init__(name="event_shape_only")
+        super().__init__("event_shape_only", NumericArraySpec((3,)))
 
     def _unnormalized_log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -318,7 +356,7 @@ class _NoInitHeuristicDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__(name="no_init_heuristic")
+        super().__init__("no_init_heuristic", OpaqueSpec())
 
     def _unnormalized_log_prob(self, value):
         return jnp.asarray(0.0)

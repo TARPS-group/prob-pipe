@@ -162,18 +162,23 @@ def to_named_posterior_dataset(
     leaf's full ``/``-path (flat posteriors keep their plain field names).
     ``InferenceData.to_netcdf()`` rejects ``/`` in variable names, so rename
     path-named variables before persisting a nested posterior to netCDF.
+
+    Raises
+    ------
+    ValueError
+        If the posterior has no chains.
     """
     import xarray as xr
 
     data_vars: dict[str, xr.DataArray] = {}
 
-    # One variable per leaf field, keyed by its full /-path (see ``_leaf_keys``
-    # for the nested-vs-duck-typed rule).
-    for field in _leaf_keys(posterior):
-        stacked = np.stack(
-            [np.asarray(posterior.draws(chain=i)[field]) for i in range(posterior.num_chains)],
-            axis=0,
-        )
+    # One variable per leaf field of the draws, keyed by its full /-path (see
+    # ``_leaf_keys`` for the nested-vs-duck-typed rule).
+    per_chain = [posterior.draws(chain=i) for i in range(posterior.num_chains)]
+    if not per_chain:
+        raise ValueError("to_named_posterior_dataset: the posterior has no chains")
+    for field in _leaf_keys(per_chain[0]):
+        stacked = np.stack([np.asarray(draws[field]) for draws in per_chain], axis=0)
         event_dims = [f"{field}_dim_{i}" for i in range(max(stacked.ndim - 2, 0))]
         data_vars[field] = xr.DataArray(
             stacked,

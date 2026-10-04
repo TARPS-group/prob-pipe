@@ -14,6 +14,7 @@ from probpipe import (
     EmpiricalDistribution,
     Function,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     NumericRecordDistribution,
@@ -42,19 +43,7 @@ class _GoldenBitsDistribution(NumericRecordDistribution, SupportsSampling):
 
     def __init__(self, sample_calls):
         self.sample_calls = sample_calls
-        super().__init__(name="bits")
-
-    @property
-    def event_shape(self):
-        return ()
-
-    @property
-    def dtypes(self):
-        return self._per_field_dict(jnp.dtype("float32"))
-
-    @property
-    def supports(self):
-        return self._per_field_dict(real)
+        super().__init__("bits", NumericArraySpec((), "float32", real))
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
