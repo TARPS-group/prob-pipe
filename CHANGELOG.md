@@ -1014,18 +1014,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The method is exact, so automatic selection tries it before the approximate
   methods and `exact_only=True` admits it. It evaluates the likelihood at every
   atom in one `jax.vmap` when the likelihood traces.
-- **Get started and the first three tutorials.** The documentation site gains
+- **Get started and the first five tutorials.** The documentation site gains
   an installation page, a quickstart that fits, checks, and forecasts the
-  Challenger O-ring model, and three tutorials on a Ricker model of the moose
-  counts of 1967 to 1988:
-  1. a first Bayesian analysis, which fits the model, checks it with MCMC
-     diagnostics and a posterior predictive check, and adds process noise when
-     the check fails;
-  2. a forecast of the population, with its uncertainty split into the parts
-     due to the parameters and to the process noise;
-  3. forecasts updated as each year's count arrives, by a particle filter that
-     `iterate` and `with_resampling` run, with the coverage of the one-year
-     forecast intervals.
+  Challenger O-ring model, and five tutorials that follow one analysis of a
+  Ricker model of the moose counts of 1967 to 1988:
+  1. a model of the counts, built from distributions and a conditional
+     distribution, with the operations that apply to each and the exact
+     distribution of the counts at fixed parameter values;
+  2. the fit to the counts, with MCMC diagnostics, a function lifted over the
+     prior and the posterior, and a posterior predictive check that fails;
+  3. the model revised with process noise as a stage of its own, and its
+     posterior checked with a second algorithm, with a setting of that
+     algorithm, and with the same model written in PyMC;
+  4. forecasts of the population under harvests held in a batch, the
+     probabilities of events, the sources of the forecast's uncertainty, and
+     how each result was computed;
+  5. forecasts updated as each year's count arrives, by a particle filter that
+     `iterate` runs with `with_resampling` or with `with_conversion` to a kernel
+     density estimate, and the coverage of the one-year forecast intervals.
 
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another

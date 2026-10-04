@@ -116,6 +116,6 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 ## Learn more
 
 - [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in ten minutes, with diagnostics and a predictive check.
-- [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) fit, check, and forecast a model of a moose population.
+- [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) follow one analysis of a moose population, from a first model to forecasts that update as each count arrives.
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) documents every public name.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).

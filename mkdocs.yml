@@ -84,9 +84,11 @@ nav:
     - Installation: get_started/installation.md
     - Quickstart: get_started/quickstart.ipynb
   - Tutorials:
-    - "1. A first Bayesian analysis": tutorials/01_first_analysis.ipynb
-    - "2. Forecasting with uncertainty": tutorials/02_forecasting.ipynb
-    - "3. Updating forecasts as data arrive": tutorials/03_updating.ipynb
+    - "1. A model of the moose counts": tutorials/01_first_analysis.ipynb
+    - "2. Fitting and checking the model": tutorials/02_fitting.ipynb
+    - "3. Revising and cross-checking the model": tutorials/03_revising.ipynb
+    - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
+    - "5. Updating forecasts as counts arrive": tutorials/05_updating.ipynb
   - User guide:
     - Ray via Prefect: user_guide/ray.md
   - API reference:
