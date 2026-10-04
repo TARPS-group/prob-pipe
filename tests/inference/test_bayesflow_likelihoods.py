@@ -304,7 +304,11 @@ class TestConditioning:
 
     def test_a_learned_likelihood_times_a_prior_runs_a_registered_method(self, nle):
         report = condition_on_operation.check(nle * _prior(), {"observation": jnp.zeros((1, 2))})
-        assert (report.route, report.method, report.exact) == ("bayes", "blackjax_nuts", False)
+        assert (report.route, report.method, report.exact) == (
+            "inference_methods",
+            "blackjax_nuts",
+            False,
+        )
 
     def test_nle_multi_observation_sharpens(self, nle):
         """n=8 i.i.d. rows: the posterior matches the analytic n-observation

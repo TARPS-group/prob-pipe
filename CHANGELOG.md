@@ -1879,6 +1879,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`condition_on`'s registry route is named `inference_methods`.** The route
+  that forms the unnormalized conditional by Bayes' rule and normalizes it
+  through the inference-method registry was named `bayes`, so a `check`
+  report and a result's provenance now name it, as in
+  `inference_methods/blackjax_nuts`.
 - **The documentation site is rebuilt around the current API.** The user-guide
   notebooks, the `getting_started` and `flexible_inference` tutorials, the
   earlier API pages, and `example_scripts/` are removed, since each used names

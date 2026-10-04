@@ -26,8 +26,9 @@ The routes, in selection order:
    part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
-4. ``bayes`` curries any given slots the given names, forms the unnormalized
-   conditional of the produced fields, and normalizes it. A kernel normalized
+4. ``inference_methods`` curries any given slots the given names, forms the
+   unnormalized conditional of the produced fields by Bayes' rule, and
+   normalizes it through the inference-method registry. A kernel normalized
    per value is curried and conditioned through the kernel whose laws it
    normalizes, so its result is normalized once.
 5. ``approximate_conditioning`` calls ``_condition_on`` on a law claiming
@@ -376,7 +377,9 @@ class _UnnormalizedConditional(Distribution):
         self._keyed = keyed
         self.with_provenance(
             Provenance.create(
-                "condition_on", parents=[joint], metadata={"stage": "exact", "route": "bayes"}
+                "condition_on",
+                parents=[joint],
+                metadata={"stage": "exact", "route": "inference_methods"},
             )
         )
 
@@ -837,29 +840,36 @@ def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
     if not keys:
-        return Feasibility(False, "route 'bayes' declined: the given is not field-keyed")
+        return Feasibility(
+            False, "route 'inference_methods' declined: the given is not field-keyed"
+        )
     slots = _slots_of(d)
     produced = [key for key in keys if _head(key) not in slots]
     if not produced:
-        return Feasibility(False, "route 'bayes' declined: the given names no produced field")
+        return Feasibility(
+            False, "route 'inference_methods' declined: the given names no produced field"
+        )
     components = set(d.event_spec.components)
     for key in produced:
         if _head(key) not in components:
             return Feasibility(
-                False, f"route 'bayes' declined: {key!r} is neither a given slot nor an event path"
+                False,
+                f"route 'inference_methods' declined: {key!r} is neither a given slot nor an event path",
             )
         if key not in components:
             return Feasibility(
                 False,
-                f"route 'bayes' declined: conditioning the interior path {key!r} is not implemented",
+                f"route 'inference_methods' declined: conditioning the interior path {key!r} is not implemented",
             )
     if any(_PATH_SEP in key for key in keys if _head(key) in slots):
         return Feasibility(
-            False, "route 'bayes' declined: binding part of a structured slot is not implemented"
+            False,
+            "route 'inference_methods' declined: binding part of a structured slot is not implemented",
         )
     if components <= set(produced):
         return Feasibility(
-            False, "route 'bayes' declined: the given names every produced field, leaving no law"
+            False,
+            "route 'inference_methods' declined: the given names every produced field, leaving no law",
         )
     return Feasibility(True)
 
@@ -1532,7 +1542,10 @@ condition_on.capability_route(
 )
 condition_on.register_route(
     _NormalizingRoute(
-        "bayes", source=RouteSource.REGISTRY, stage=_BAYES, registry=inference_method_registry
+        "inference_methods",
+        source=RouteSource.REGISTRY,
+        stage=_BAYES,
+        registry=inference_method_registry,
     )
 )
 condition_on.register_route(

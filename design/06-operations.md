@@ -67,7 +67,7 @@ marginal.capability_route("exact", operand="d", protocol=SupportsMarginals,
                           method="_marginal", check=_can_marginalize_path, exact=True)
 # An omitted capability guard means membership suffices on the declared domain.
 condition_on.structural_route("curry", check=_can_curry, execute=_curry, exact=True)
-condition_on.registry_route("bayes", registry=inference_method_registry)
+condition_on.registry_route("inference_methods", registry=inference_method_registry)
 ```
 
 **Primitive versus derived operations.** Some operations mean something in terms of others, and the interface keeps that definition visible. A **primitive** operation states its own contract and carries its own routes. A **derived** operation is instead defined by an identity over other operations; `mixture`, for example, is the reconstructed kernel output projected from a composed joint (VI.9), and `expectation` is the mean of a pushforward (VI.5). That identity is what the operation *means*, so its result rule, feasibility, and failure modes follow from the operations it is defined by. The identity is itself a route on the domain where its constituent operations are available, and a derived operation may carry routes that realize it **directly** besides: a Gaussian mixture computed in closed form need not compose and then marginalize. Direct routes rank above the identity when their fidelity and specificity warrant it; the identity is a fallback on its own domain (V.7), as the sampling lift is under `evaluate`. Either way the operation adds its own outer provenance record, and that record names the route that ran.

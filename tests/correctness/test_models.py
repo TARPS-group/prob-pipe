@@ -157,7 +157,7 @@ class TestGLM:
         """
         case = canonical.case("gaussian_linear")
         report = condition_on.check(case.model, case.data)
-        assert (report.route, report.method) == ("bayes", "blackjax_nuts")
+        assert (report.route, report.method) == ("inference_methods", "blackjax_nuts")
         posterior = condition_on.with_options(method_options=FIT)(case.model, case.data)
         assert_matches(posterior, case.reference, label="the default route on gaussian_linear")
 

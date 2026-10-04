@@ -525,7 +525,7 @@ class TestTargets:
         assert posterior.provenance.operation == "blackjax_nuts"
         (parent,) = posterior.provenance.parents
         assert parent.parent is target
-        assert target.provenance.metadata == {"stage": "exact", "route": "bayes"}
+        assert target.provenance.metadata == {"stage": "exact", "route": "inference_methods"}
 
 
 class _WithoutDensity(Distribution, SupportsSampling):

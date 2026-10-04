@@ -93,7 +93,7 @@ posterior mean of the slope: -0.182
 P(damage at 31°F), posterior mean: 0.962
 P(damage at 31°F), 90% interval: [0.82085985 0.9999324 ]
 mean of the prior: route closed_form, exact True
-posterior: route bayes, method blackjax_nuts, exact False
+posterior: route inference_methods, method blackjax_nuts, exact False
 risk: route sampling_lift, exact False
 ```
 

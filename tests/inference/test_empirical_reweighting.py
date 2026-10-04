@@ -72,7 +72,7 @@ class _NumpyKernel(ConditionalDistribution, SupportsConditionalLogProb):
 class TestTheRoute:
     def test_condition_on_selects_the_method_and_reports_it_exact(self):
         report = condition_on.check(_normal_kernel() * _grid_prior(), {"y": Y})
-        assert report.selected.method_name == "bayes/empirical_reweighting"
+        assert report.selected.method_name == "inference_methods/empirical_reweighting"
         assert report.selected.exact is True
 
     def test_exact_only_admits_the_method(self):
