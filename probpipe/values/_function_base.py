@@ -78,6 +78,24 @@ class FunctionSpec(TermSpec):
     sides. Missing declarations add no bindings. Incompatible slot names,
     output exposure, kinds, or dimensions raise ValueError. Labels are outside
     this spec; component names participate in declaration matching.
+
+    Examples
+    --------
+    A function's declaration binds a dimension that its sides share:
+
+    >>> from probpipe import FunctionSpec, InputSpec, NumericArraySpec, OutputSpec
+    >>> declared = FunctionSpec(
+    ...     InputSpec(x=NumericArraySpec(("n",))),
+    ...     OutputSpec(result=NumericArraySpec(("n",))),
+    ... )
+    >>> actual = FunctionSpec(
+    ...     InputSpec(x=NumericArraySpec((3,))),
+    ...     OutputSpec(result=NumericArraySpec((3,))),
+    ... )
+    >>> declared.bind_dims_from_spec(actual) == actual
+    True
+    >>> sorted(declared.free_dims)
+    ['n']
     """
 
     input_spec: InputSpec | None
@@ -569,8 +587,10 @@ class Function(Node, TrackedTerm, Annotated):
         named type hole is inferred independently for each call.
     output_label : str or None
         Result label. Defaults to the initial name and survives with_label.
-        Whole-term components default to this name, which must then be a Python
-        identifier; an explicit OutputSpec can supply a different component.
+        Whole-term components default to this name, which must then be
+        non-empty and contain no ``/``, so a label such as ``Model.fit`` or
+        ``<lambda>`` serves; an explicit OutputSpec can supply a different
+        component.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -620,6 +640,15 @@ class Function(Node, TrackedTerm, Annotated):
     NotImplementedError
         If a differentiability claim is given, which Function does not carry
         yet.
+
+    Warns
+    -----
+    FutureWarning
+        For the removed keywords ``func``, ``seed``, ``input_template``, and
+        ``output_template``, in one warning that names each one given and
+        points at the caller's line.
+    UserWarning
+        If ``max_workers`` is set with a dispatch other than ``"thread"``.
 
     Notes
     -----
@@ -847,6 +876,12 @@ class Function(Node, TrackedTerm, Annotated):
         constructor or an earlier view set. Raises TypeError for unknown
         controls, including construction metadata and seed. Invalid control
         values raise the same errors as construction.
+
+        Warns
+        -----
+        UserWarning
+            If the copy's ``max_workers`` is set with a dispatch other than
+            ``"thread"``, pointing at the caller's line.
         """
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown:
@@ -985,6 +1020,35 @@ class Function(Node, TrackedTerm, Annotated):
         return values, declared, deferred
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Call the function through the installed engine (V.1).
+
+        The arguments bind to the signature as in :meth:`apply`, and a law or a
+        batch passed where a value is expected lifts the call over it: a law is
+        broadcast and a batch is swept (V.5). The controls come from the
+        construction and :meth:`with_options`, never from the call's keywords,
+        which bind to the wrapped callable.
+
+        Returns
+        -------
+        TrackedTerm or Any
+            The result at the kind its declaration names, labeled by
+            ``output_label`` and carrying the call's provenance. A broadcast
+            returns the law of the results, and a sweep the batch of them on
+            the swept levels. Under the ``raw`` control the result is its raw
+            form, as its ``raw()`` gives it.
+
+        Raises
+        ------
+        TypeError
+            If an argument does not bind to the signature.
+        ApplicabilityError
+            If an argument's kind is not one its parameter accepts, or the
+            declarations conflict.
+        ResolutionError
+            If no route realizes the call.
+        ResultKindError, ResultSchemaError
+            If the result violates the completed declaration.
+        """
         return _call_engine(self, *args, **kwargs)
 
     def __repr__(self) -> str:

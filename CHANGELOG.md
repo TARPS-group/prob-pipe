@@ -43,27 +43,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
   top-level node whose name recurs deeper, which no key could address, is
   renamed by its name.
-- **Function declarations and engine migration (#448 B1).** Construct with
-  `Function(name, fn, *, input_spec=None, output_spec=None, output_name=None, ...)`.
-  The name is required; decorators default it to the Python callable's name.
-  `FunctionSpec` now stores `InputSpec` and `OutputSpec`. The old Function
-  template properties are removed. Legacy constructor keywords emit
-  `FutureWarning`: template parameters and `seed` are ignored, while `func`
-  overrides `fn`; the required `name` and `fn` arguments remain. Bare record
-  specs expose fields; other bare term specs declare one whole component under
-  `output_name`, which defaults to the initial function name and survives
-  `with_name`. Arrays remain arrays and single-field records remain records.
-  Type holes and symbolic output dimensions are completed per call. Existing
-  tracked returns are copied and relabeled by `__call__`; `apply` preserves them.
-  This includes operation wrappers: `sample(law)` uses the label `sample`,
-  independently of the law's component names and the result's batch levels.
-  `Function`/`FunctionSpec` live in `values/`, and workflow helpers move from
-  `core/_workflow_*` into `functions/`; old imports have no shims. Declaration
-  fingerprints and replay anchors change, so regenerate persisted artifacts.
-  `Module`, `AbstractModule`, and both method decorators are experimental.
-  Resolved output declarations survive sweeps and broadcasts, including type
-  holes, output-only dimensions, and returned Function contracts. Module methods
-  infer their returns normally and use the method name as their output label.
+- **A `Function` is constructed from its label and its callable, and declares
+  its sides with `InputSpec` and `OutputSpec`.** Construct with
+  `Function(label, fn, *, input_spec=None, output_spec=None, output_label=None, ...)`.
+  The label is required, and `@function` takes it from the decorated
+  callable's `__name__`. `FunctionSpec` stores an `InputSpec` and an
+  `OutputSpec`, and the Function template properties are removed. The removed
+  constructor keywords `input_template`, `output_template`, and `seed` are
+  ignored, and `func` replaces `fn`, with a `FutureWarning` that points at the
+  caller's line; `label` and `fn` stay required.
+  - A bare `RecordSpec` exposes its fields, and any other bare term spec
+    declares one whole component under `output_label`, which defaults to the
+    label given at construction and is kept by `with_label`. An array stays an
+    array, and a one-field record stays a record.
+  - Each call completes a type hole, the dtype and the support a declared
+    array leaves unset, and the symbolic output dimensions from the term it
+    returns. The completed declaration survives sweeps and broadcasts, a
+    returned function's declaration included. `__call__` copies and relabels a
+    returned tracked term, and `apply` returns it as it is.
+  - `Function` and `FunctionSpec` are defined in `probpipe.values`, and the
+    engine moves from `core/_workflow_*` into `probpipe.functions`, with no
+    shims for the old imports. `probpipe.core.node` keeps `Node` and
+    `InputFrozenError` and no longer exports `Function`, `function`, `Module`,
+    `AbstractModule`, `workflow_method`, or `abstract_workflow_method`: import
+    them from `probpipe`. The invocation logger is
+    `probpipe.functions._function`, so a handler or a filter configured for
+    `probpipe.core.node` names it instead.
+  - Declaration fingerprints and replay anchors change, so regenerate
+    persisted artifacts.
+  - `Module`, `AbstractModule`, and both method decorators are experimental. A
+    module method infers its return as a function does and labels its result
+    by the method's name.
 - **A replay anchor stores a function's declarations under
   `signature_and_declarations`.** The callable anchor that a call's provenance
   records for `replay_run` stored the function's signature and its input and
@@ -209,7 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. The live distribution template API retains its signature for its later migration.
+  renames symbols throughout nested declarations.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`
