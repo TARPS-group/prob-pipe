@@ -64,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Resolved output declarations survive sweeps and broadcasts, including type
   holes, output-only dimensions, and returned Function contracts. Module methods
   infer their returns normally and use the method name as their output label.
+- **A replay anchor stores a function's declarations under
+  `signature_and_declarations`.** The callable anchor that a call's provenance
+  records for `replay_run` stored the function's signature and its input and
+  output declarations under `signature_and_templates`. `replay_run` refuses an
+  anchor recorded before this change with `ReplayCompatibilityError`, as it
+  already refuses one recorded for a function that declares an output, since
+  that anchor's digest included the names its fingerprint now leaves out.
+  Record the call again to replay it. An anchor of another callable definition
+  ABI is refused before its fields are read, and the error names the ABI this
+  version reads.
 
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:

@@ -103,6 +103,10 @@ class TestReplayScope:
     def test_seeded_serialized_and_replay_of_replay_roundtrip(self):
         original = _draw(seed=17)
         restored = Provenance.from_dict(json.loads(json.dumps(original.provenance.to_dict())))
+        anchor = restored.controls["replay"]["callable"]
+        assert anchor["definition_abi"] == "probpipe.callable_definition/v1"
+        assert "signature_and_declarations" in anchor
+        assert "signature_and_templates" not in anchor
 
         with replay_run(restored):
             first = sample(Normal(loc=0.0, scale=1.0, label="value"))
@@ -264,6 +268,33 @@ class TestReplayOwnership:
 
 
 class TestReplayAdmission:
+    def test_unknown_callable_abi_is_rejected_before_fields_are_read(self):
+        payload = _draw().provenance.to_dict()
+        anchor = payload["controls"]["replay"]["callable"]
+        anchor["definition_abi"] = "probpipe.callable_definition/v99"
+        signature = anchor.pop("signature_and_declarations")
+        anchor["signature_and_templates"] = signature
+        signature["input_template"] = signature.pop("input_spec")
+        with (
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(ReplayCompatibilityError, match=r"callable definition ABI.*expected.*v1"),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("An unknown callable ABI was admitted")
+
+    def test_an_anchor_that_names_its_declarations_signature_and_templates_is_refused(self):
+        payload = _draw().provenance.to_dict()
+        anchor = payload["controls"]["replay"]["callable"]
+        anchor["signature_and_templates"] = anchor.pop("signature_and_declarations")
+        with (
+            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("A former anchor was admitted")
+
     def test_legacy_unknown_and_malformed_recipes_fail_at_entry(self):
         with (
             pytest.raises(ReplayCompatibilityError, match="RNG recipe"),
@@ -288,11 +319,11 @@ class TestReplayAdmission:
             pytest.param(("replay", "standalone"), id="standalone"),
             pytest.param(("replay", "callable"), id="callable"),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 id="callable-signature",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                ("replay", "callable", "signature_and_declarations", "parameters", 0),
                 id="callable-parameter",
             ),
             pytest.param(("replay", "plan"), id="plan"),
@@ -402,12 +433,12 @@ class TestReplayAdmission:
             pytest.param(("replay", "standalone"), "restriction", id="standalone"),
             pytest.param(("replay", "callable"), "sha256", id="callable"),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 "output_spec",
                 id="callable-signature",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                ("replay", "callable", "signature_and_declarations", "parameters", 0),
                 "annotation",
                 id="callable-parameter",
             ),
@@ -557,9 +588,9 @@ class TestReplayAdmission:
                 id="callable-module",
             ),
             pytest.param(
-                ("replay", "callable", "signature_and_templates"),
+                ("replay", "callable", "signature_and_declarations"),
                 [],
-                "signature_and_templates",
+                "signature_and_declarations",
                 id="callable-signature",
             ),
             pytest.param(
