@@ -140,7 +140,6 @@ from probpipe.families import (
     TFPDistribution,
     TruncatedNormal,
     Uniform,
-    UnnormalizedDistribution,
     VonMisesFisher,
     Wishart,
 )
@@ -320,7 +319,6 @@ __all__ = [
     "TruncatedNormal",
     "Uniform",
     "UnmanagedConcurrentWorkflowEntryError",
-    "UnnormalizedDistribution",
     "VonMisesFisher",
     "Weights",
     "Wishart",

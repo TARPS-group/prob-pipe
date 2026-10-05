@@ -2773,6 +2773,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
+  density alone, as it builds the law of any combination of a sampler and a
+  density: replace `UnnormalizedDistribution(label, f, event_spec)` with
+  `distribution(label, unnormalized_log_prob=f, event_spec=event_spec)`. The
+  density scores one value, which arrives as an array or a `Record` for a
+  numeric event, and returns a scalar; the law maps it over a batch's leading
+  axes.
 - **`tfp_hmc` is removed.** Its fixed ten-step trajectory resonates on a
   near-Gaussian posterior, so its chains mixed poorly and its variances came out
   low. `blackjax_hmc` jitters its trajectory length, and `tfp_nuts` remains for

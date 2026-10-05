@@ -93,7 +93,6 @@ from probpipe.families._gaussian import (
 from probpipe.families._programs import (
     PyMCModel,
     StanModel,
-    UnnormalizedDistribution,
     _StanPosterior,
     _UnconstrainedStanView,
 )
@@ -249,9 +248,6 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     PyMCModel: _pymc_model,
     _StanPosterior: _stan_model,
     _UnconstrainedStanView: _stan_view,
-    UnnormalizedDistribution: lambda: UnnormalizedDistribution(
-        "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
-    ),
     _FunctionLaw: lambda: distribution(
         "u",
         sample=_standard_normal_draw,

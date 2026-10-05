@@ -293,5 +293,3 @@ Each capability of a conditional distribution takes the given value `given` befo
 ::: probpipe.families.PyMCModel
     options:
       show_root_full_path: true
-
-::: probpipe.UnnormalizedDistribution
