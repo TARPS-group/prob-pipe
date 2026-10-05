@@ -6,6 +6,8 @@ per STYLE_GUIDE §8.6.
 
 from __future__ import annotations
 
+import os
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -21,6 +23,7 @@ from probpipe import (
     NumericRecordSpec,
     OutputSpec,
     RecordSpec,
+    conditional_distribution,
 )
 from probpipe.core.record import Record
 from probpipe.distributions import ConditionalDistribution
@@ -32,13 +35,18 @@ from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.validation import SBCResult, interval_coverage, simulation_based_calibration
 from probpipe.validation._calibration import (
     _component_names,
-    _flatten_point,
+    _flatten,
     _kolmogorov_sf,
     _ks_uniform,
     _ranks,
 )
 
 tfd = tfp.distributions
+
+#: The number of observations of the conjugate normal model, and the precision
+#: of its posterior under the prior N(0, 2²) and unit observation noise.
+_N = 5
+_PRECISION = 1 / 4 + _N
 
 
 class _BiasedMeanKernel(
@@ -73,12 +81,75 @@ class _BiasedMeanKernel(
         return shift + jax.random.normal(key, (*sample_shape, self._n))
 
 
+class _GridPosterior(ConditionalDistribution, SupportsConditionalSampling):
+    """The conjugate model's posterior as atoms on a grid, weighted by the posterior density.
+
+    The atoms span the prior's range at a spacing of 0.005, so their weighted law
+    is the posterior up to the grid's resolution. With ``weighted=False`` the
+    atoms are equally weighted, which gives the uniform law on the grid.
+    """
+
+    def __init__(self, *, weighted: bool = True):
+        super().__init__(
+            "posterior", {"y": NumericArraySpec((_N,))}, OutputSpec(mu=NumericArraySpec(()))
+        )
+        object.__setattr__(self, "_weighted", weighted)
+
+    def _law(self, given):
+        y = jnp.asarray(dict(given.children if isinstance(given, Record) else given)["y"])
+        grid = jnp.linspace(-10.0, 10.0, 4001)
+        if not self._weighted:
+            return EmpiricalDistribution("mu", grid)
+        log_density = -0.5 * _PRECISION * (grid - jnp.sum(y) / _PRECISION) ** 2
+        return EmpiricalDistribution("mu", grid, jnp.exp(log_density - jnp.max(log_density)))
+
+    def _condition_on(self, given, /, **options):
+        return self._law(given)
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return self._law(given)._sample(key, sample_shape)
+
+
 def _gaussian_glm(p: int = 2, n: int = 12, seed: int = 7):
     """A well-specified Gaussian linear model with an intercept: the joint of y and beta."""
     X = jax.random.normal(jax.random.PRNGKey(seed), (n, p - 1))
     design = jnp.concatenate([jnp.ones((n, 1)), X], axis=1)
     prior = MultivariateNormal(loc=jnp.zeros(p), cov=jnp.eye(p), label="beta")
     return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior
+
+
+def _conjugate_model():
+    """The joint of ``mu ~ N(0, 2²)`` and five observations ``y | mu ~ N(mu, 1)``."""
+    prior = Normal("mu", 0.0, 2.0)
+    likelihood = conditional_distribution(
+        "y_given_mu",
+        lambda mu: Normal("y", mu * jnp.ones(_N), 1.0),
+        given_spec=prior.event_spec.components,
+    )
+    return likelihood * prior
+
+
+def _posterior_at(y, scale_factor: float = 1.0):
+    """The conjugate model's posterior at *y*, ``N(Σy / τ, τ^(-1/2))``, its scale times *scale_factor*."""
+    return Normal("mu", jnp.sum(y) / _PRECISION, scale_factor / jnp.sqrt(_PRECISION))
+
+
+def _exact_posterior(scale_factor: float = 1.0):
+    """The kernel of :func:`_posterior_at`, whose one given slot is ``y``."""
+    return conditional_distribution(
+        "posterior",
+        lambda y: _posterior_at(y, scale_factor),
+        given_spec={"y": NumericArraySpec((_N,))},
+    )
+
+
+def _observation_posterior():
+    """The kernel of :func:`_posterior_at`, whose one given slot is ``observation``."""
+    return conditional_distribution(
+        "posterior",
+        lambda observation: _posterior_at(observation),
+        given_spec={"observation": NumericArraySpec((_N,))},
+    )
 
 
 class TestIntervalCoverage:
@@ -195,22 +266,32 @@ class TestRanks:
 class TestFlattening:
     """The multi-field θ★ flattening + component-naming that ranks rely on."""
 
-    def test_flatten_point_honors_field_order(self):
+    def test_flatten_honors_field_order(self):
         point = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array([3.0]))
         np.testing.assert_array_equal(
-            np.asarray(_flatten_point(point, OutputSpec(RecordSpec(a=(2,), b=(1,))))),
+            np.asarray(_flatten(point, OutputSpec(RecordSpec(a=(2,), b=(1,))))),
             [1.0, 2.0, 3.0],
         )
         # The posterior's field order is authoritative (b before a).
         np.testing.assert_array_equal(
-            np.asarray(_flatten_point(point, OutputSpec(RecordSpec(b=(1,), a=(2,))))),
+            np.asarray(_flatten(point, OutputSpec(RecordSpec(b=(1,), a=(2,))))),
             [3.0, 1.0, 2.0],
         )
 
-    def test_flatten_point_ravels_an_array_draw(self):
+    def test_flatten_ravels_an_array_draw(self):
         point = jnp.array([[1.0, 2.0], [3.0, 4.0]])
-        flat = _flatten_point(point, OutputSpec(theta=NumericArraySpec((2, 2))))
+        flat = _flatten(point, OutputSpec(theta=NumericArraySpec((2, 2))))
         np.testing.assert_array_equal(np.asarray(flat), [1.0, 2.0, 3.0, 4.0])
+
+    def test_a_batch_of_draws_flattens_row_by_row(self):
+        # A batch led by the draw axis gives one row per draw, each the flattening of its draw.
+        spec = OutputSpec(RecordSpec(a=(2,), b=()))
+        draws = {"a": jnp.arange(6.0).reshape(3, 2), "b": jnp.array([10.0, 11.0, 12.0])}
+        rows = _flatten(draws, spec, batch_ndim=1)
+        assert rows.shape == (3, 3)
+        for i in range(3):
+            row = _flatten({"a": draws["a"][i], "b": draws["b"][i]}, spec)
+            np.testing.assert_array_equal(np.asarray(rows[i]), np.asarray(row))
 
     def test_component_names_expand_per_field(self):
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
@@ -229,7 +310,261 @@ class TestFlattening:
         assert _component_names(emp) == ("m[0]", "m[1]")
 
 
-class TestSBC:
+class TestCoverage:
+    """``SBCResult.coverage``: the share of replications that cover ``θ★``, from the ranks."""
+
+    @staticmethod
+    def _calibrated(num_simulations: int = 400, num_draws: int = 99):
+        """Truths and draws of the same N(0, I) in two coordinates, with their ``SBCResult``."""
+        truth_key, draws_key = jax.random.split(jax.random.key(0))
+        truths = jax.random.normal(truth_key, (num_simulations, 2))
+        draws = jax.random.normal(draws_key, (num_simulations, num_draws, 2))
+        ranks = np.stack([np.asarray(_ranks(draws[s], truths[s])) for s in range(num_simulations)])
+        statistic, pvalue = _ks_uniform(ranks, num_draws)
+        return truths, draws, SBCResult(ranks, num_draws, ("a", "b"), statistic, pvalue)
+
+    def test_agrees_with_interval_coverage_on_the_same_draws(self):
+        """The shares are the mean of ``interval_coverage`` over the replications' draws.
+
+        The two differ only for a replication whose rank lies next to an end of
+        the interval: there ``jnp.quantile`` puts the end between the two draws on
+        either side of ``θ★``, at the rank ``⌊(L − 1) q⌋ + 1`` for the end's level ``q``.
+        """
+        truths, draws, result = self._calibrated()
+        num_draws = result.num_posterior_draws
+        shares = result.coverage((0.5, 0.9))
+        for level in (0.5, 0.9):
+            covered = np.stack(
+                [
+                    np.asarray(interval_coverage(draws[s], truths[s], levels=(level,))[level])
+                    for s in range(truths.shape[0])
+                ]
+            )
+            ends = [int((num_draws - 1) * q) + 1 for q in ((1 - level) / 2, (1 + level) / 2)]
+            next_to_an_end = np.isin(result.ranks, ends).mean(axis=0)
+            assert np.all(np.abs(shares[level] - covered.mean(axis=0)) <= next_to_an_end)
+
+    def test_a_share_per_level_and_parameter(self):
+        _, _, result = self._calibrated(num_simulations=50)
+        shares = result.coverage((0.8, 0.95))
+        assert set(shares) == {0.8, 0.95}
+        for level, share in shares.items():
+            assert isinstance(level, float)
+            assert share.shape == (2,)
+            assert np.all((share >= 0.0) & (share <= 1.0))
+        assert set(result.coverage()) == {0.5, 0.8, 0.9, 0.95}
+
+    def test_extreme_ranks_lie_outside_every_interval(self):
+        # Rank 0 and rank L have normalized ranks 0.5 / (L + 1) and 1 − 0.5 / (L + 1).
+        result = SBCResult(np.array([[0], [99], [50]]), 99, ("a",), np.zeros(1), np.ones(1))
+        shares = result.coverage((0.5, 0.95))
+        np.testing.assert_allclose(shares[0.5], [1 / 3])
+        np.testing.assert_allclose(shares[0.95], [1 / 3])
+
+    @pytest.mark.parametrize("levels", [(0.0,), (1.0,), (1.5,), (-0.1,), (float("nan"),)])
+    def test_rejects_a_level_outside_the_unit_interval(self, levels):
+        _, _, result = self._calibrated(num_simulations=10)
+        with pytest.raises(ValueError, match=r"\(0, 1\)"):
+            result.coverage(levels)
+
+    @pytest.mark.parametrize("levels", [0.9, "0.9", (True,), (None,)])
+    def test_rejects_levels_that_are_not_a_sequence_of_numbers(self, levels):
+        _, _, result = self._calibrated(num_simulations=10)
+        with pytest.raises(TypeError, match="level"):
+            result.coverage(levels)
+
+
+class TestSBCPosteriorKernel:
+    """Calibration of a posterior kernel, which each replication evaluates at its observed values."""
+
+    def test_the_exact_posterior_gives_uniform_ranks_and_nominal_coverage(self):
+        result = simulation_based_calibration(
+            _conjugate_model(),
+            observed="y",
+            posterior=_exact_posterior(),
+            num_simulations=200,
+            num_posterior_draws=99,
+            key=jax.random.key(0),
+        )
+        assert isinstance(result, SBCResult)
+        assert result.ranks.shape == (200, 1)
+        assert result.param_names == ("mu",)
+        assert result.num_posterior_draws == 99
+        assert result.ranks.min() >= 0 and result.ranks.max() <= 99
+        # Measured at keys 0-3 (S=200, L=99): KS p-values 0.15-0.57, and coverage
+        # 0.47-0.55 at level 0.5 and 0.905-0.92 at level 0.9.
+        assert float(result.ks_pvalue[0]) > 0.01
+        coverage = result.coverage((0.5, 0.9))
+        np.testing.assert_allclose(coverage[0.5], [0.5], atol=0.1)
+        np.testing.assert_allclose(coverage[0.9], [0.9], atol=0.06)
+
+    def test_a_posterior_of_half_the_scale_fails_both(self):
+        """Draws at half the posterior's scale reject uniformity and cover ``θ★`` too rarely.
+
+        A central interval of half the width covers a draw of the posterior with
+        probability ``P(|Z| ≤ z / 2)``: 0.26 at level 0.5 and 0.59 at level 0.9.
+        """
+        result = simulation_based_calibration(
+            _conjugate_model(),
+            observed="y",
+            posterior=_exact_posterior(scale_factor=0.5),
+            num_simulations=200,
+            num_posterior_draws=99,
+            key=jax.random.key(0),
+        )
+        # Measured at keys 0-3: KS p-values below 2e-5, and coverage 0.25-0.30 at
+        # level 0.5 and 0.58-0.64 at level 0.9.
+        assert float(result.ks_pvalue[0]) < 1e-3
+        coverage = result.coverage((0.5, 0.9))
+        assert float(coverage[0.5][0]) < 0.4
+        assert float(coverage[0.9][0]) < 0.75
+
+    def test_a_weighted_posterior_is_resampled_by_its_weights(self):
+        """The ranks of a weighted empirical posterior are uniform, and those of its atoms unweighted are not.
+
+        Equally weighted, the atoms are the uniform law on the grid, among whose
+        draws ``θ★ ~ N(0, 2²)`` ranks near the middle.
+        """
+        common = {
+            "observed": "y",
+            "num_simulations": 200,
+            "num_posterior_draws": 99,
+            "key": jax.random.key(0),
+        }
+        weighted = simulation_based_calibration(
+            _conjugate_model(), posterior=_GridPosterior(), **common
+        )
+        unweighted = simulation_based_calibration(
+            _conjugate_model(), posterior=_GridPosterior(weighted=False), **common
+        )
+        # Measured at keys 0-3: KS p-values 0.20-0.90 weighted and below 1e-14 unweighted.
+        assert float(weighted.ks_pvalue[0]) > 0.01
+        assert float(unweighted.ks_pvalue[0]) < 1e-3
+
+    def test_one_given_slot_takes_the_one_observed_field_whatever_its_name(self):
+        common = {
+            "observed": "y",
+            "num_simulations": 8,
+            "num_posterior_draws": 20,
+            "key": jax.random.key(3),
+        }
+        by_name = simulation_based_calibration(
+            _conjugate_model(), posterior=_exact_posterior(), **common
+        )
+        by_position = simulation_based_calibration(
+            _conjugate_model(), posterior=_observation_posterior(), **common
+        )
+        np.testing.assert_array_equal(by_position.ranks, by_name.ranks)
+
+    @pytest.mark.bayesflow
+    def test_an_amortized_posterior_takes_the_observed_field_in_its_observation_slot(self):
+        """A briefly trained amortized posterior calibrates, its ``observation`` slot taking ``y``.
+
+        The training is too short to calibrate the network, so the test checks
+        the ranks' shape and range, not their uniformity.
+        """
+        os.environ.setdefault("KERAS_BACKEND", "jax")
+        pytest.importorskip("bayesflow")
+        from probpipe import learn_amortized_posterior
+
+        prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        simulator = conditional_distribution(
+            "y_given_ab",
+            lambda a, b: Normal("y", jnp.stack([a + b, a - b]), 0.1),
+            given_spec=prior.event_spec.components,
+        )
+        amortized = learn_amortized_posterior(
+            prior,
+            simulator,
+            method="npe",
+            num_simulations=500,
+            epochs=2,
+            batch_size=128,
+            random_seed=0,
+            verbose=0,
+        )
+        assert list(amortized.given_spec) == ["observation"]
+        result = simulation_based_calibration(
+            simulator * prior,
+            observed="y",
+            posterior=amortized,
+            num_simulations=6,
+            num_posterior_draws=20,
+            key=jax.random.key(0),
+        )
+        assert result.ranks.shape == (6, 2)
+        assert result.param_names == ("a", "b")
+        assert result.ranks.min() >= 0 and result.ranks.max() <= 20
+
+    @pytest.mark.parametrize(
+        "options", [{"method": "blackjax_nuts"}, {"method_options": {"num_warmup": 10}}]
+    )
+    def test_rejects_a_method_beside_a_posterior(self, options):
+        with pytest.raises(ValueError, match="method"):
+            simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                posterior=_exact_posterior(),
+                num_simulations=2,
+                num_posterior_draws=10,
+                **options,
+            )
+
+    def test_rejects_a_posterior_that_is_not_a_kernel(self):
+        with pytest.raises(TypeError, match="ConditionalDistribution"):
+            simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                posterior=Normal("mu", 0.0, 1.0),
+                num_simulations=2,
+                num_posterior_draws=10,
+            )
+
+    def test_rejects_given_slots_that_do_not_take_the_observed_fields(self):
+        two_slots = conditional_distribution(
+            "posterior",
+            lambda y, z: Normal("mu", jnp.sum(y) + z, 1.0),
+            given_spec={"y": NumericArraySpec((_N,)), "z": NumericArraySpec(())},
+        )
+        with pytest.raises(ValueError, match=r"given slots \['y', 'z'\]"):
+            simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                posterior=two_slots,
+                num_simulations=2,
+                num_posterior_draws=10,
+            )
+
+    def test_one_given_slot_rejects_several_observed_fields(self):
+        model = _conjugate_model() * Normal("w", 0.0, 1.0)
+        with pytest.raises(ValueError, match=r"observed fields \['y', 'w'\]"):
+            simulation_based_calibration(
+                model,
+                observed=("y", "w"),
+                posterior=_observation_posterior(),
+                num_simulations=2,
+                num_posterior_draws=10,
+            )
+
+    def test_rejects_a_posterior_whose_draw_is_not_the_parameters(self):
+        other_fields = conditional_distribution(
+            "posterior",
+            lambda y: Normal("a", jnp.sum(y), 1.0) * Normal("b", 0.0, 1.0),
+            given_spec={"y": NumericArraySpec((_N,))},
+        )
+        with pytest.raises(ValueError, match="not the parameters"):
+            simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                posterior=other_fields,
+                num_simulations=2,
+                num_posterior_draws=10,
+            )
+
+
+class TestSBCFit:
+    """Calibration of an inference method, which each replication runs at its observed values."""
+
     def test_well_specified_ranks_uniform(self):
         model = _gaussian_glm()
         res = simulation_based_calibration(
@@ -237,7 +572,7 @@ class TestSBC:
             observed="y",
             num_simulations=32,
             num_posterior_draws=100,
-            num_warmup=100,
+            method_options={"num_warmup": 100, "num_results": 100},
             key=jax.random.PRNGKey(0),
         )
         assert isinstance(res, SBCResult)
@@ -246,12 +581,13 @@ class TestSBC:
         # param_names are per flattened component, aligned with the rank columns.
         assert res.param_names == ("beta[0]", "beta[1]")
         assert len(res.param_names) == res.ranks.shape[1]
-        # Well-specified model + NUTS → ranks ~ uniform. Measured across seeds 0–2
-        # (S=32, L=100): mean normalized rank ∈ [0.46, 0.52], median ks_pvalue ∈
-        # [0.58, 0.77]. Assert stable statistics, not a tail bound on the min.
+        # Well-specified model + NUTS → ranks ~ uniform. Measured across seeds 0–3
+        # (S=32, L=100 drawn from 4 chains of 100): mean normalized rank ∈
+        # [0.42, 0.58], median ks_pvalue ∈ [0.29, 0.69]. Assert stable statistics,
+        # not a tail bound on the min.
         u = (res.ranks + 0.5) / (res.num_posterior_draws + 1)
         assert np.all((u.mean(axis=0) > 0.35) & (u.mean(axis=0) < 0.65))
-        assert float(np.median(res.ks_pvalue)) > 0.2
+        assert float(np.median(res.ks_pvalue)) > 0.1
         # Rank histogram: (num_params, num_bins), each row sums to num_simulations.
         hist = res.rank_histogram(num_bins=10)
         assert hist.shape == (2, 10)
@@ -262,21 +598,35 @@ class TestSBC:
         # unmodeled +0.25 shift while the posterior SD is ≈ 0.31 (precision
         # 1/4 + 10 = 10.25), so the per-fit bias is only ≈ 0.8 posterior SD — yet
         # SBC rejects because the shift is *systematic* across simulations and
-        # accumulates. Measured ks_pvalue.max ≤ 0.001 and mean rank ≤ 0.34 over
-        # seeds 0–2 at S=48.
+        # accumulates. Measured ks_pvalue.max ≤ 0.002 and mean rank ≤ 0.36 over
+        # seeds 0–3 at S=48.
         model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, label="mu")
         res = simulation_based_calibration(
             model,
             observed="y",
             num_simulations=48,
             num_posterior_draws=100,
-            num_warmup=100,
+            method_options={"num_warmup": 100, "num_results": 100},
             key=jax.random.PRNGKey(0),
         )
         # Uniformity is rejected for every parameter — a clear miscalibration signal.
         assert float(res.ks_pvalue.max()) < 0.05
         # The upward bias pushes θ★ into the lower tail → mean rank below 0.5.
         assert ((res.ranks + 0.5) / (res.num_posterior_draws + 1)).mean() < 0.45
+
+    def test_a_pyabc_fit_takes_its_budget_in_method_options(self):
+        pytest.importorskip("pyabc")
+        result = simulation_based_calibration(
+            _conjugate_model(),
+            observed="y",
+            method="pyabc_smcabc",
+            method_options={"n_particles": 50, "max_populations": 2},
+            num_simulations=3,
+            num_posterior_draws=20,
+            key=jax.random.key(1),
+        )
+        assert result.ranks.shape == (3, 1)
+        assert result.ranks.min() >= 0 and result.ranks.max() <= 20
 
     def test_rejects_bad_num_simulations(self):
         model = _gaussian_glm()
@@ -285,11 +635,24 @@ class TestSBC:
                 model, observed="y", num_simulations=0, num_posterior_draws=50
             )
 
-    def test_rejects_random_seed_in_infer_kwargs(self):
-        model = _gaussian_glm()
-        with pytest.raises(ValueError, match="random_seed"):
+    def test_a_method_budget_is_no_keyword_of_its_own(self):
+        with pytest.raises(TypeError, match="num_warmup"):
             simulation_based_calibration(
-                model, observed="y", num_simulations=2, num_posterior_draws=50, random_seed=0
+                _gaussian_glm(),
+                observed="y",
+                num_simulations=2,
+                num_posterior_draws=50,
+                num_warmup=100,
+            )
+
+    def test_rejects_method_options_that_are_not_a_mapping(self):
+        with pytest.raises(TypeError, match="method_options"):
+            simulation_based_calibration(
+                _gaussian_glm(),
+                observed="y",
+                num_simulations=2,
+                num_posterior_draws=50,
+                method_options=[("num_warmup", 100)],
             )
 
     def test_rejects_an_observed_name_that_is_no_field(self):

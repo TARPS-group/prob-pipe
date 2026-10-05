@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`simulation_based_calibration` calibrates any posterior, and a fit's
+  budgets go in `method_options`.** Its signature is
+  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None, key=None)`.
+  A `posterior` kernel, such as an amortized posterior, is evaluated at each
+  replication's observed values, with no fit: its given slots take the observed
+  fields of their names, and a kernel with one given slot, such as an amortized
+  posterior's `observation`, takes the one observed field. Without `posterior`,
+  each replication fits `model` with
+  `condition_on.with_options(method=method, method_options=method_options)`.
+  A `method` or `method_options` beside `posterior` raises `ValueError`. Each
+  replication draws `num_posterior_draws` times from its posterior with
+  `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
+  by its weights. The fit and the draws take their seeds from a workflow scope
+  of the replication's own, which `key` seeds. A fixed `key` therefore
+  reproduces the ranks wherever the call runs, and a call without one claims one
+  event of the enclosing workflow scope.
+  - The keyword budgets are retired, and a keyword other than the named
+    parameters raises `TypeError`: replace
+    `simulation_based_calibration(model, ..., num_warmup=500)` with
+    `simulation_based_calibration(model, ..., method_options={"num_warmup": 500})`.
+  - `num_posterior_draws` sets the number of draws, and no longer sets an MCMC
+    method's `num_results`, so the chain length goes in `method_options`, as
+    `{"num_results": 2000}`. The draws are drawn at random from the chains'
+    atoms, and `SBCResult.num_posterior_draws` is `num_posterior_draws`, where
+    it counted every atom of every chain. The ranks need nearly independent
+    draws, so `num_posterior_draws` should not exceed the chains' effective
+    sample size.
+  - A `random_seed` entry of `method_options` fixes the seed of every
+    replication's fit, where a `random_seed` keyword raised `ValueError`.
 - **A result names each component by what its value means.**
   - `mean`, `variance`, and `quantile` name each component of the law's event
     by their call. The mean of a law over `mu` and `tau` is a record whose
@@ -1039,6 +1068,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **`SBCResult.coverage(levels)`** returns, for each credible level, the share
+  of the replications whose `θ★` lies in the central interval of that level, one
+  share per parameter. It reads the ranks alone: `θ★` lies in the interval when
+  its normalized rank `(r + 0.5) / (L + 1)` does. `interval_coverage` remains the
+  check of one posterior's draws.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the

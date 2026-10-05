@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import operator
+from contextlib import AbstractContextManager
 from typing import Any
+
+import jax
+import jax.numpy as jnp
+import numpy as np
 
 from ..custom_types import PRNGKey
 from ..functions import _broker
@@ -46,3 +51,13 @@ def _resolve_validation_key(
             provider_abi=provider_abi,
         ),
     )
+
+
+def _keyed_workflow_run(key: PRNGKey) -> AbstractContextManager[None]:
+    """A standalone workflow scope whose 64-bit seed is drawn from *key*.
+
+    The operations inside it take their keys from that seed and their positions
+    within the scope, so they reproduce from *key* wherever the scope opens.
+    """
+    high, low = (int(word) for word in np.asarray(jax.random.bits(key, (2,), jnp.uint32)))
+    return _broker._standalone_workflow_run(high << 32 | low)
