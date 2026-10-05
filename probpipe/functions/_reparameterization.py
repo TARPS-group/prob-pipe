@@ -24,6 +24,7 @@ from typing import Any
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
+from ..core._catalog import EntrySummary, registry_catalog
 from ..core._dispatch import MathematicalDomainError, ResolutionError
 from ..core.constraints import (
     Constraint,
@@ -329,3 +330,71 @@ register_bijector(
     _IntegerInterval,
     _no_smooth_bijector("the support is discrete; a continuous relaxation can stand in"),
 )
+
+
+# ---------------------------------------------------------------------------
+# The factory in the registry catalog
+# ---------------------------------------------------------------------------
+
+
+def _entry_name(key: type | Constraint) -> str:
+    """The catalog name of a registered key.
+
+    A constraint type is named by its class name with leading underscores
+    removed, as ``_Positive`` is named ``Positive``, and a constraint instance
+    by its ``repr``.
+    """
+    if isinstance(key, type):
+        return key.__name__.lstrip("_")
+    return repr(key)
+
+
+class _BijectorFactory:
+    """The constraint-to-bijector factory as the registry catalog lists it.
+
+    The factory maps a constraint, by instance and then by the nearest type in
+    its method-resolution order, to a function returning a bijector;
+    :func:`register_bijector` populates it and :func:`bijector_for` reads it.
+    This object implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` over those
+    registrations, with one entry per registered key in name order, and it is
+    cataloged as ``"bijectors"``. The factory does not rank its entries, so
+    each entry's ``priority`` and ``exact`` are ``None``.
+    """
+
+    name = "bijectors"
+    description = (
+        "Bijector factories onto each constrained support, by constraint instance and then type."
+    )
+    kind = "factory"
+
+    def entry_summaries(self) -> list[EntrySummary]:
+        """One :class:`~probpipe.core._catalog.EntrySummary` per registered key, in name order."""
+        summaries = [
+            EntrySummary(
+                name=_entry_name(key),
+                priority=None,
+                supported_types=(key,),
+                module_path=key.__module__ if isinstance(key, type) else type(key).__module__,
+            )
+            for key in _CONSTRAINT_BIJECTOR_REGISTRY
+        ]
+        return sorted(summaries, key=lambda summary: summary.name)
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """The :class:`~probpipe.core._catalog.EntrySummary` of the key named *name*.
+
+        Raises
+        ------
+        KeyError
+            If no registered key has that name.
+        """
+        summaries = self.entry_summaries()
+        for summary in summaries:
+            if summary.name == name:
+                return summary
+        available = ", ".join(summary.name for summary in summaries) or "(none)"
+        raise KeyError(f"No bijector entry named {name!r}. Available: {available}")
+
+
+registry_catalog.register(_BijectorFactory())

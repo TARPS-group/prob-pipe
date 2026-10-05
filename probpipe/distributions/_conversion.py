@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
@@ -766,5 +767,9 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         )
 
 
-converter_registry: ConverterRegistry = ConverterRegistry()
+converter_registry: ConverterRegistry = ConverterRegistry(
+    name="converters",
+    description="Converters between representations of a law, keyed on the source type and the target.",
+)
 """The global registry of converters, keyed on the source type and the requested target."""
+registry_catalog.register(converter_registry)

@@ -47,6 +47,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..core._batch import Batch
+from ..core._catalog import registry_catalog
 from ..core._dispatch import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
@@ -364,8 +365,12 @@ class _EvaluationRuleRegistry(BinaryDispatchRegistry[BinaryDispatchMethod]):
         return (tier + exactness, opt_in, priority)
 
 
-evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = _EvaluationRuleRegistry()
+evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = _EvaluationRuleRegistry(
+    name="evaluation_rules",
+    description="Evaluation rules for a map applied to a law or a batch, keyed on both types.",
+)
 """The routes of a lifted application, keyed on the map's and the operand's types."""
+registry_catalog.register(evaluation_rule_registry)
 evaluation_rule_registry.register(_SamplingLift())
 evaluation_rule_registry.register(_ElementwiseSweep())
 evaluation_rule_registry.register(_EmpiricalEnumeration())

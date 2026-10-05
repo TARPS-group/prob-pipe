@@ -3,7 +3,7 @@
 # Registries for extensions
 
 An extension implements a base class or a protocol of ProbPipe and registers an instance with a registry, and this page states, for each kind of extension, what to implement and where to register it.
-It also documents the dispatch registries, the operation registry, and the base classes these extensions implement.
+It also documents the dispatch registries, the operation registry, and the base classes these extensions implement, and its last section documents the registry catalog.
 The registries that users query are documented on the pages of their topics: `inference_method_registry` on [Inference methods](inference.md) and `converter_registry` on [Conversion](conversion.md).
 
 ## A new family
@@ -223,5 +223,54 @@ It ranks the methods that admit a call by four criteria, in decreasing precedenc
       show_root_full_path: true
 
 ::: probpipe.inference.BinarySupportedTypes
+    options:
+      show_root_full_path: true
+
+## The registry catalog
+
+`registry_catalog` lists every cataloged registry and its entries, where an entry is one registered item of a registry, such as an inference method or a converter.
+It answers three queries:
+
+- `print(registry_catalog)`: one row per registry, with its kind, its entry count, and its description;
+- `registry_catalog.describe("inference")`: one registry's entries in its own order, each with its priority and, where the registry declares it, its exactness, with a dispatch registry's opt-in-only methods in a section of their own;
+- `registry_catalog["inference"].describe_entry("blackjax_nuts")`: one entry, as an `EntrySummary`.
+
+The catalog holds five registries:
+
+- `"bijectors"`: the bijector factories that `bijector_for` selects from;
+- `"converters"`: `converter_registry`;
+- `"evaluation_rules"`: `evaluation_rule_registry`;
+- `"inference"`: `inference_method_registry`;
+- `"operations"`: `operation_registry`.
+
+A registry joins the catalog by implementing `SupportsRegistryCataloging` and by an explicit `registry_catalog.register(registry)`, which rejects an empty or duplicate name.
+Constructing a registry does not catalog it, so a registry that a test builds stays out of the catalog.
+A dispatch registry implements the protocol already, and it takes its catalog name and description at construction:
+
+```python
+from probpipe import registry_catalog
+from probpipe.inference import BinaryDispatchRegistry
+
+kl_registry = BinaryDispatchRegistry(name="kl", description="KL divergence between two laws.")
+registry_catalog.register(kl_registry)
+```
+
+A dispatch method may declare a one-line `description` class attribute, which the registry reads at registration and the catalog shows.
+
+::: probpipe.registry_catalog
+
+::: probpipe.RegistryCatalog
+    options:
+      show_root_full_path: true
+
+::: probpipe.SupportsRegistryCataloging
+    options:
+      show_root_full_path: true
+
+::: probpipe.EntrySummary
+    options:
+      show_root_full_path: true
+
+::: probpipe.RegistryInfo
     options:
       show_root_full_path: true

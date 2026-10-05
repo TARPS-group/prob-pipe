@@ -40,6 +40,13 @@ from probpipe.core._array_backend import (
     register_array_backend,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._catalog import (
+    EntrySummary,
+    RegistryCatalog,
+    RegistryInfo,
+    SupportsRegistryCataloging,
+    registry_catalog,
+)
 from probpipe.core._dispatch import MathematicalDomainError, ResolutionError
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric import Numeric
@@ -243,6 +250,7 @@ __all__ = [
     "DistributionBatch",
     "DistributionSpec",
     "EmpiricalDistribution",
+    "EntrySummary",
     "Exponential",
     "FullFactorialDesign",
     "Function",
@@ -290,6 +298,8 @@ __all__ = [
     "Record",
     "RecordBatch",
     "RecordSpec",
+    "RegistryCatalog",
+    "RegistryInfo",
     "ReplayCompatibilityError",
     "ReplayUnsupportedCallableError",
     "ResolutionError",
@@ -310,6 +320,7 @@ __all__ = [
     "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
+    "SupportsRegistryCataloging",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
@@ -374,6 +385,7 @@ __all__ = [
     "real",
     "register_array_backend",
     "register_bijector",
+    "registry_catalog",
     "replay_run",
     "rwmh",
     "sample",
