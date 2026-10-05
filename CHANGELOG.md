@@ -1073,6 +1073,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   share per parameter. It reads the ranks alone: `θ★` lies in the interval when
   its normalized rank `(r + 0.5) / (L + 1)` does. `interval_coverage` remains the
   check of one posterior's draws.
+- **`distribution` builds a law from a sampling function, a log-density, or
+  both.** `distribution("y", sample=simulate, event_spec=spec)` returns a law
+  whose draws are `simulate(key)`, and `log_prob=` or `unnormalized_log_prob=`
+  gives it a density of one value. The law claims `SupportsSampling`,
+  `SupportsLogProb`, or `SupportsUnnormalizedLogProb` for each function given,
+  over an event of any kind. A sample shape maps the sampler over split keys
+  with `jax.vmap`, and a sampler that does not trace in JAX, such as one that
+  calls NumPy, or that draws values that are not arrays, runs in a loop over
+  the keys. Construction draws nothing and scores no value: it checks each
+  function that traces against `event_spec` with `jax.eval_shape`, and a
+  failed check raises `ValueError`. A simulator's kernel is
+  `conditional_distribution` of a function that returns
+  `distribution(..., sample=...)`, which claims conditional sampling.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the
@@ -2794,6 +2807,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
+  density alone, as it builds the law of any combination of a sampler and a
+  density: replace `UnnormalizedDistribution(label, f, event_spec)` with
+  `distribution(label, unnormalized_log_prob=f, event_spec=event_spec)`. The
+  density scores one value, which arrives as an array or a `Record` for a
+  numeric event, and returns a scalar; the law maps it over a batch's leading
+  axes.
 - **`tfp_hmc` is removed.** Its fixed ten-step trajectory resonates on a
   near-Gaussian posterior, so its chains mixed poorly and its variances came out
   low. `blackjax_hmc` jitters its trajectory length, and `tfp_nuts` remains for

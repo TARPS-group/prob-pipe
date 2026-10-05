@@ -619,6 +619,31 @@ def conditional_distribution(
     # @conditional_distribution on a def labels the kernel after the function
 ```
 
+**A law from functions.** `distribution` builds a `Distribution` from a sampling function, a log-density, or both, as `conditional_distribution` builds a kernel from a function. It takes the law's label first and each function under the name of the operation it realizes: `sample(key)` returns one draw at a PRNG key, at the kind the event declaration names, and `log_prob` or `unnormalized_log_prob` scores one value and returns a real scalar. A density receives an array for an array event, a `Record` for a record event, and the value itself for any other event. A call gives at least one function, at most one density, and an `event_spec` of any kind a `Distribution` declares, and a missing or non-callable function raises `TypeError`, which names it. The law claims the capability that each function given realizes:
+
+- `sample`: `SupportsSampling`;
+- `log_prob`: `SupportsLogProb`, which provides the unnormalized density as a normalized family's does;
+- `unnormalized_log_prob`: `SupportsUnnormalizedLogProb`.
+
+A law of a density alone is therefore unnormalized (III.8). A non-empty sample shape maps `sample` over keys split from the draw's key with `jax.vmap`. A sampler that does not trace in JAX, such as one that calls NumPy or an external program, and a sampler of an event that is not numeric are called at one key at a time instead, and their draws stack into the batch form of the event's kind. A density scores a batch of values along its leading axes, with `jax.vmap` when it traces.
+
+Construction draws nothing and scores no value. It evaluates each function that traces abstractly, with `jax.eval_shape`: the abstract draw of `sample` must unify with `event_spec`, and each density must return a real scalar at a stand-in of one value of the event, or `ValueError` names the failed check. The abstract draw completes the declaration, as a family's parameters complete its own (III.7). A function whose `jax.eval_shape` fails does not trace, and construction reads nothing from it, so a declaration that no traced draw completes is complete as given, and a pending type raises `TypeError`.
+
+A kernel whose function returns `distribution(...)` reads the law's claims as for any law, so the kernel of a simulator, `conditional_distribution("y", lambda rate: distribution("y", sample=lambda key: jax.random.poisson(key, rate, (10,)), event_spec=counts), given_spec={"rate": positive_scalar})`, claims conditional sampling and no density.
+
+```python
+def distribution(
+    label: str,
+    /,
+    *,
+    sample: Callable[[Key], Any] | None = None,
+    log_prob: Callable[[Any], Array] | None = None,
+    unnormalized_log_prob: Callable[[Any], Array] | None = None,
+    event_spec: OutputSpec | TermSpec,
+) -> Distribution: ...
+    # at least one function and at most one density
+```
+
 **The numeric special cases.** A `ConditionalDistribution` has *two* sides, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** side numeric, `Numeric` before `Distribution` marks the **event** side numeric, and `FullyNumeric*` marks both. Each is a marker only, as `NumericDistribution` is.
 
 ```python
@@ -638,7 +663,7 @@ class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_va
 
 ### Rationale
 
-Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` claiming a conditioning capability is intended rather than a collision, and the names stay distinct where the meanings differ. The same rule is why the two conditioning capabilities are claimed by inheriting rather than structurally: whether `_condition_on` returns the conditional law or a stand-in for it is a claim about the result, which no check on method names can read, so two structural protocols declaring it would match the same classes. A kernel built from a function of its given values is written as that function, as a `Function` is (`C1 – Uniform interface to functions, distributions, and values`), and reading its claims from the law the function returns makes it advertise only what that law supports (`D3 – Capability-based operations`).
+Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` claiming a conditioning capability is intended rather than a collision, and the names stay distinct where the meanings differ. The same rule is why the two conditioning capabilities are claimed by inheriting rather than structurally: whether `_condition_on` returns the conditional law or a stand-in for it is a claim about the result, which no check on method names can read, so two structural protocols declaring it would match the same classes. A kernel built from a function of its given values is written as that function, as a `Function` is (`C1 – Uniform interface to functions, distributions, and values`), and reading its claims from the law the function returns makes it advertise only what that law supports (`D3 – Capability-based operations`). A law built from functions likewise claims only what its functions realize (`D3 – Capability-based operations`). Its construction checks each function that traces against the declaration, which every consumer of the law reads (`D5 – Explicit, carried structure`), and it draws nothing, so a kernel that builds a law at every binding calls the law's functions only when an operation asks for a draw or a density (`C3 – Computational detail hidden by default, available on demand`).
 
 ## III.10 — `DistributionBatch` and `ConditionalDistributionBatch`
 

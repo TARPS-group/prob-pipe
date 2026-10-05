@@ -23,6 +23,7 @@ from probpipe.distributions import (
     _distribution,
     _empirical,
     _factored,
+    _from_functions,
     _views,
 )
 
@@ -43,6 +44,7 @@ _MODULES = (
     _views,
     _capabilities,
     _conditional,
+    _from_functions,
     _batches,
     _factored,
     _conversion,

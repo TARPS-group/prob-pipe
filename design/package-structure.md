@@ -59,6 +59,7 @@ probpipe/
 │   ├── _views.py              #   FieldView (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
 │   ├── _conditional.py        #   ConditionalDistribution, its markers and spec, conditional_distribution (III.9)
+│   ├── _from_functions.py     #   distribution: a law from a sampler, a density, or both (III.9)
 │   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
 │   ├── _factored.py           #   SupportsFactors and the factored classes (IV.1)
 │   ├── _composition.py        #   the * engine behind __mul__ (IV.2)
@@ -107,7 +108,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VII.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VII.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VII.8)
-│   ├── _programs.py           #   StanModel, PyMCModel, UnnormalizedDistribution: program-defined laws (VII.9)
+│   ├── _programs.py           #   StanModel, PyMCModel: program-defined laws (VII.9)
 │   └── _converters.py         #   the shipped converters (IV.3)
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)
