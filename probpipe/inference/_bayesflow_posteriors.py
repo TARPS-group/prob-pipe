@@ -60,6 +60,7 @@ from ._bayesflow_common import (
     _observation_slot,
     _simulate_offline,
     _validate_learn_inputs,
+    _without_progress_bar,
 )
 
 if TYPE_CHECKING:
@@ -355,11 +356,12 @@ class _AmortizedPosterior(
 
     def _network_draws(self, observation: np.ndarray, count: int, seed: int) -> Array:
         """``count`` flat draws of the network at *observation*, in the prior's supports."""
-        out = self._approximator.sample(
-            num_samples=count,
-            conditions={_OBSERVATION_KEY: observation[None, :]},
-            seed=seed,
-        )
+        with _without_progress_bar():
+            out = self._approximator.sample(
+                num_samples=count,
+                conditions={_OBSERVATION_KEY: observation[None, :]},
+                seed=seed,
+            )
         # ``out`` maps each internal theta key to ``(1, count, d_leaf)``.
         # Stays in jnp end-to-end: this is the latency-critical amortized path,
         # so no per-leaf host round-trips. Columns are concatenated in leaf order,

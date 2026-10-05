@@ -257,6 +257,17 @@ class TestBayesFlowNPE:
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
 
+    def test_drawing_prints_no_progress_bar(self, npe_model, capfd):
+        """Drawing from the learned law prints none of BayesFlow's progress bars,
+        and BayesFlow's sampler keeps its own bar afterward."""
+        from bayesflow.approximators.helpers import samplers
+
+        bar = samplers.tqdm
+        post = condition_on(npe_model, {"observation": _observe(0.0, 0.0, 1)})
+        law_draws(post, 50)
+        assert "Sampling" not in capfd.readouterr().err
+        assert samplers.tqdm is bar
+
     def test_a_coupling_flow_posterior_has_the_flow_density(self, npe_model):
         """The kernel and its law claim the density, which equals the approximator's
         own ``log_prob`` for a batch of values and for each value alone."""

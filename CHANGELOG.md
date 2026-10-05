@@ -2782,6 +2782,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
+  sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
+  of a posterior from `learn_amortized_posterior` printed one, and a notebook
+  that summarized the posterior at many observations filled with bars.
 - **`predictive_check` takes observed data held in a pandas or xarray object.**
   It passed such an object to the statistics as given, while each replication
   is a JAX array, so a statistic written with `jax.numpy` failed on a pandas
