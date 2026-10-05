@@ -1194,6 +1194,35 @@ def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
             yield broker
 
 
+@contextmanager
+def _standalone_workflow_run(seed: int) -> Generator[None, None, None]:
+    """Run a block in a seeded root scope that no enclosing scope, call, or work item owns.
+
+    The block's workflow-owned events derive from *seed* and their positions
+    within the block, so the block reproduces from *seed* wherever it runs, as
+    the draws of an explicit key do. The enclosing scope commits no ordinal for
+    the block, and neither the active broker nor a managed work item records
+    its events.
+
+    Raises
+    ------
+    TypeError
+        If *seed* is not an integer or is a boolean.
+    ValueError
+        If *seed* is outside ``[0, 2**64 - 1]``.
+    ReplayCompatibilityError
+        If a replay is active, since a replay re-executes only its recorded events.
+    """
+    attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
+    broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
+    try:
+        with _context._WorkflowRunScope(seed, standalone=True):
+            yield
+    finally:
+        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
+        _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
+
+
 def _capture_active_broker() -> _AutomaticKeyBroker | None:
     """Capture the admitted parent broker for managed execution transport."""
     _context._assert_workflow_admission()
