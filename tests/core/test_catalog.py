@@ -328,6 +328,14 @@ class TestConstruction:
         with pytest.raises(ValueError, match="without a name"):
             RegistryCatalog().register(UnaryDispatchRegistry())
 
+    @pytest.mark.parametrize("attribute", ["name", "description"])
+    def test_the_catalog_identity_is_read_only(self, attribute: str) -> None:
+        """A cataloged registry keeps the name it is cataloged under."""
+        reg = UnaryDispatchRegistry(name="fixed", description="d")
+        with pytest.raises(AttributeError):
+            setattr(reg, attribute, "changed")
+        assert (reg.name, reg.description) == ("fixed", "d")
+
     def test_constructor_rejects_positional_args(self) -> None:
         with pytest.raises(TypeError):
             UnaryDispatchRegistry("inference")  # type: ignore[misc]
