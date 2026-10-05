@@ -1014,11 +1014,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     evaluation rules, the inference methods, and the operations, each under
     its own name.
   - **Dispatch registries:** `BaseDispatchRegistry` takes keyword-only `name`
-    and `description` and has `kind = "dispatch"`. Its `entry_summaries()`
+    and `description`, which are read-only, and has `kind = "dispatch"`. Its `entry_summaries()`
     reports each method's registered name, exactness, effective priority,
     supported types, and description as an `EntrySummary`, in `list_methods()`
     order. A method may declare a one-line `description`, which registration
-    reads and validates with its other declarations.
+    reads and validates with its other declarations, and each shipped converter
+    declares one.
   - **Operations:** `OperationSummary` is an `EntrySummary`, and
     `OperationRegistry` implements `SupportsRegistryCataloging`.
   - **Exports:** `probpipe` exports `registry_catalog` and the four classes
