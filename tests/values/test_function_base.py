@@ -14,6 +14,7 @@ import pytest
 from probpipe import (
     ApplicabilityError,
     DistributionSpec,
+    EmpiricalDistribution,
     Function,
     FunctionSpec,
     Gamma,
@@ -31,6 +32,7 @@ from probpipe import (
     Record,
     RecordSpec,
     function,
+    sample,
     workflow_method,
     workflow_run,
 )
@@ -485,6 +487,136 @@ class TestCompletedOutputDeclarations:
             assert declaration.spec is None
         else:
             assert declaration.spec.free_dims == {"width"}
+
+    @pytest.mark.parametrize(
+        "returned",
+        [[1.0, 2.0], (1.0, 2.0), [], jnp.ones(3, dtype="float32"), np.arange(3, dtype="int32")],
+        ids=["list", "tuple", "empty-list", "float32-array", "int32-array"],
+    )
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_a_type_hole_completes_as_an_undeclared_return_does(self, returned, dispatch):
+        """A type hole takes the type the kind-directed wrap gives the return, dtype included."""
+        undeclared = Function("f", lambda row: returned, output_label="items", dispatch=dispatch)
+        declared = Function(
+            "f",
+            lambda row: returned,
+            output_label="items",
+            output_spec=OutputSpec(items=None),
+            dispatch=dispatch,
+        )
+        rows = NumericRecordBatch(
+            "rows", {"x": jnp.arange(2.0)}, "row", element_spec=RecordSpec(x=())
+        )
+        operands = [0]
+        if dispatch != "jax" or not isinstance(returned, (list, tuple)):
+            # The mapped dispatch refuses a sequence row.
+            operands.append(rows)
+        for operand in operands:
+            expected = undeclared(operand)
+            result = declared(operand)
+            assert type(result) is type(expected)
+            assert result.spec == expected.spec
+        assert declared.output_spec.spec is None
+        assert declared.apply(0) is returned
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_a_lift_that_includes_its_inputs_completes_the_output_declaration(self, dispatch):
+        factory = Function(
+            "factory",
+            lambda x: jnp.stack([x, x + 1, x + 2]),
+            output_label="results",
+            output_spec=OutputSpec(component=NumericArraySpec(("width",))),
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+            include_inputs=True,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        assert result.label == "results"
+        assert result.event_spec.spec["component"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.spec.free_dims == {"width"}
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_an_enumerated_lift_that_includes_its_inputs_fills_a_type_hole(self, dispatch):
+        factory = Function(
+            "factory",
+            lambda x: jnp.stack([x, x + 1, x + 2]),
+            output_label="results",
+            output_spec=OutputSpec(component=None),
+            dispatch=dispatch,
+            include_inputs=True,
+        )
+        result = factory(EmpiricalDistribution("x", jnp.arange(3.0)))
+        assert result.label == "results"
+        assert result.event_spec.spec["component"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.spec is None
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("exposed", [False, True])
+    def test_a_lift_keeps_the_declared_record_exposure(self, dispatch, exposed):
+        record = RecordSpec(field=NumericArraySpec((2,), dtype="float32"))
+        declaration = OutputSpec(record) if exposed else OutputSpec(bundle=record)
+        factory = Function(
+            "factory",
+            lambda x: {"field": jnp.stack([x, x + 1])},
+            output_label="results",
+            output_spec=declaration,
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+            draws = sample(result, sample_shape=(4,))
+        assert result.event_spec == declaration
+        assert tuple(result.event_spec.components) == (("field",) if exposed else ("bundle",))
+        if not exposed:
+            assert result["bundle"] is result
+        column = np.asarray(draws["field"])
+        np.testing.assert_allclose(column[:, 1], column[:, 0] + 1, rtol=0, atol=0)
+        assert factory.output_spec is declaration
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "function",
+            "opaque",
+            "record",
+            pytest.param(
+                "batch",
+                marks=pytest.mark.pending(
+                    reason="the empirical law of a lifted function that returns a batch"
+                ),
+            ),
+        ],
+    )
+    def test_a_lift_keeps_a_non_numeric_component_kind(self, dispatch, kind):
+        stored = {
+            "function": lambda: Function("inner", lambda x: x + 1),
+            "opaque": lambda: Opaque("stored", "payload", spec=OpaqueSpec(meta="text")),
+            "record": lambda: Record("stored", field=Opaque("leaf", "payload")),
+            "batch": lambda: NumericArrayBatch(
+                "stored", jnp.arange(2.0), "row", element_spec=NumericArraySpec(())
+            ),
+        }[kind]()
+        declaration = OutputSpec(component=stored.spec)
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_label="results",
+            output_spec=declaration,
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        assert result.event_spec == declaration
+        assert result["component"] is result
+        assert result.num_atoms == 8
+        assert all(type(atom) is type(stored) for atom in result.atoms)
+        if kind == "function":
+            assert float(result.atoms[0].apply(2)) == 3
+        assert stored.label == ("inner" if kind == "function" else "stored")
 
     @pytest.mark.parametrize("tracked", [False, True])
     def test_type_hole_accepts_a_nested_record(self, tracked):

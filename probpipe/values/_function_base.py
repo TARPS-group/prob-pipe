@@ -26,7 +26,9 @@ from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
+from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -235,7 +237,7 @@ def _validate_function_output(
         return None
     spec = output_spec.spec
     if spec is None:
-        spec = RecordSpec.infer_from({"result": result}).children["result"]
+        spec = _produced_spec(result)
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
     if output_spec._component_name is not None:
@@ -261,8 +263,23 @@ def _validate_function_output(
             construction_bindings=result._bind if isinstance(result, Function) else {},
         )
     if not isinstance(actual_spec, TermSpec):
-        actual_spec = RecordSpec.infer_from({"result": result}).children["result"]
+        actual_spec = _produced_spec(result)
     return output_spec._with_spec(_complete_output_metadata(concrete, actual_spec))
+
+
+def _produced_spec(result: Any) -> TermSpec:
+    """The spec of the term that the kind-directed wrap makes of *result* (V.4).
+
+    A numeric host has the shape and the dtype that a ``NumericArray`` of it
+    declares. Any other value has the spec :meth:`RecordSpec.infer_from` gives a
+    field: a tracked term its own spec, and a mapping, a callable, or an opaque
+    value the spec of the record, function, or opaque term the wrap makes of it.
+    Completing a declaration from this spec keeps a returned array's dtype, as
+    an undeclared return keeps it.
+    """
+    if not isinstance(result, TrackedTerm) and _is_numeric_leaf(result):
+        return _inferred_spec(result)
+    return RecordSpec.infer_from({"result": result}).children["result"]
 
 
 def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:

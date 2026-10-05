@@ -583,7 +583,8 @@ class TestNumericArraySweep:
         assert isinstance(result, NumericArrayBatch)
         assert result.axis_groups == source.axis_groups
         assert result.level_names == source.level_names
-        assert result.element_spec == NumericArraySpec(())
+        # log_prob declares only the shape, so completion takes the produced dtype (II.2).
+        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
 
         shifted = Function(label="function", fn=lambda value: value + 1, dispatch="sequential")(

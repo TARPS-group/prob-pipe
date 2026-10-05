@@ -111,7 +111,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     from ..core._numeric_array_batch import _MappedBatchStore
     from ..core._record_batch import _MappedBatchColumns
     from ..core._spec_base import _unify_specs
-    from ..values._function_base import _complete_output_metadata
+    from ..values._function_base import _complete_output_metadata, _produced_spec
 
     spec = output_spec.spec
     bindings: dict[str, int] = {}
@@ -124,7 +124,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
                 else row.element_spec
             )
         else:
-            actual = RecordSpec.infer_from({"result": row}).children["result"]
+            actual = _produced_spec(row)
         if spec is None:
             spec = actual
         try:
