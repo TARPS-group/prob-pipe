@@ -18,9 +18,9 @@ form of the target produced by
 then lift the resulting chain back through the prior's declaration,
 so the posterior names its fields by the prior's components.
 
-The per-draw diagnostics (``acceptance_rate``, ``is_divergent``,
+The per-draw diagnostics (``acceptance_rate``, ``diverging``,
 ``energy``, ``num_integration_steps``) are read off the BlackJAX
-``info`` objects and packed into a dict consumed by
+``info`` objects, under ArviZ's names, and packed into a dict consumed by
 :func:`build_mcmc_datatree`, the same ArviZ converter the TFP path
 uses. The adapted ``step_size`` is not carried on those ``info``
 objects, so it is threaded out of the warmup separately and injected
@@ -273,8 +273,14 @@ def _extract_blackjax_sample_stats(
     not present on a given algorithm are silently skipped.
     """
     stats: dict[str, np.ndarray] = {}
-    for key in ("acceptance_rate", "is_divergent", "num_integration_steps", "energy"):
-        value = getattr(infos, key, None)
+    # Each info field under the name ArviZ gives it, so a divergence is "diverging".
+    for field, key in (
+        ("acceptance_rate", "acceptance_rate"),
+        ("is_divergent", "diverging"),
+        ("num_integration_steps", "num_integration_steps"),
+        ("energy", "energy"),
+    ):
+        value = getattr(infos, field, None)
         if value is not None:
             stats[key] = np.asarray(value)
     step_sizes = np.asarray(step_sizes)

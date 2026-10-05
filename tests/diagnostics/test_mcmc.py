@@ -390,6 +390,32 @@ class TestAddMcmcDiagnostics:
     def test_does_not_return_value(self, posterior):
         assert add_mcmc_diagnostics(posterior) is None
 
+    def test_a_run_without_divergence_statistics_records_no_count(self, posterior):
+        add_mcmc_diagnostics(posterior)
+        assert isinstance(posterior.diagnostics.mcmc.n_divergences, NotComputed)
+
+    def test_the_divergences_are_the_sum_of_diverging(self):
+        import jax.numpy as jnp
+
+        from probpipe import MultivariateNormal
+        from probpipe.inference._approximate_distribution import make_posterior
+        from probpipe.inference._inference_utils import build_mcmc_datatree
+
+        rng = np.random.default_rng(0)
+        chains = [jnp.asarray(rng.normal(size=(50, 2))) for _ in range(2)]
+        diverging = np.zeros((2, 50), dtype=bool)
+        diverging[0, [3, 7]] = True
+        diverging[1, 11] = True
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
+        posterior = make_posterior(
+            chains,
+            parents=(prior,),
+            method="test",
+            annotations=build_mcmc_datatree(chains, {"diverging": diverging}),
+        )
+        add_mcmc_diagnostics(posterior)
+        assert posterior.diagnostics.mcmc.n_divergences == 3
+
     def test_vector_parameter_diagnostics_are_written_by_component(self):
         posterior = _posterior_of_draws(_vector_draws())
 

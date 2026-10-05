@@ -100,6 +100,11 @@ from ._blackjax_rwmh import BlackJAXRWMHMethod
 inference_method_registry.register(BlackJAXRWMHMethod())
 inference_method_registry.register(BlackJAXESSMethod())
 
+# Exact Bayes' rule for an empirical prior, which reweights its atoms.
+from ._empirical_reweighting import EmpiricalReweightingMethod
+
+inference_method_registry.register(EmpiricalReweightingMethod())
+
 # BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGHMCMethod, BlackJAXSGLDMethod
 

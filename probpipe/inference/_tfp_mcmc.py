@@ -41,6 +41,7 @@ def _run_tfp_chains(
     num_warmup: int,
     num_chains: int,
     step_size: float,
+    target_accept_prob: float,
     random_seed: int,
 ) -> tuple[list[Array], dict[str, np.ndarray]]:
     """Run TFP-backed MCMC chains.
@@ -60,7 +61,7 @@ def _run_tfp_chains(
         kernel = tfp_mcmc.DualAveragingStepSizeAdaptation(
             inner_kernel=inner_kernel,
             num_adaptation_steps=num_adapt,
-            target_accept_prob=0.75,
+            target_accept_prob=target_accept_prob,
         )
     else:
         kernel = inner_kernel
@@ -108,6 +109,10 @@ def _extract_sample_stats(traces: Any, num_chains: int) -> dict[str, np.ndarray]
     if is_accepted is not None:
         stats["is_accepted"] = np.asarray(is_accepted)
 
+    has_divergence = getattr(results, "has_divergence", None)
+    if has_divergence is not None:
+        stats["diverging"] = np.asarray(has_divergence)
+
     return stats
 
 
@@ -144,6 +149,7 @@ class _TFPGradientMethod(InferenceMethod):
         "num_warmup",
         "random_seed",
         "step_size",
+        "target_accept_prob",
     )
 
     def __init__(self, algorithm: str, method_name: str, method_priority: int | None):
@@ -191,8 +197,19 @@ class _TFPGradientMethod(InferenceMethod):
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
-        """Chains of the TFP kernel on the target's unnormalized density."""
+        """Chains of the TFP kernel on the target's unnormalized density.
+
+        Raises
+        ------
+        ValueError
+            If ``target_accept_prob`` is not strictly between 0 and 1.
+        """
         self._check_options(kwargs)
+        target_accept_prob = kwargs.get("target_accept_prob", 0.75)
+        if not 0.0 < target_accept_prob < 1.0:
+            raise ValueError(
+                f"target_accept_prob must be strictly between 0 and 1, got {target_accept_prob!r}"
+            )
         random_seed = run_seed(kwargs, self.name)
         model, observed = observed_parts(target)
         density, init, event_spec = _chain_target(
@@ -212,6 +229,7 @@ class _TFPGradientMethod(InferenceMethod):
             num_warmup=num_warmup,
             num_chains=num_chains,
             step_size=kwargs.get("step_size", 0.1),
+            target_accept_prob=target_accept_prob,
             random_seed=random_seed,
         )
         chains = [constrain(chain) for chain in chains]
@@ -233,6 +251,13 @@ def TFPNutsMethod() -> _TFPGradientMethod:
 
     Runs only when the caller pins ``method="tfp_nuts"``; ``blackjax_nuts``
     is what automatic selection picks for the same targets.
+
+    Its ``method_options`` are the draw, warmup, and chain counts, the seed,
+    ``init``, the initial ``step_size``, and ``target_accept_prob``, the
+    acceptance probability that warmup's step-size adaptation targets, 0.75
+    unless set. A higher target adapts a smaller step, which removes the
+    divergent transitions of a posterior with regions of high curvature at the
+    cost of longer trajectories.
 
     Notes
     -----

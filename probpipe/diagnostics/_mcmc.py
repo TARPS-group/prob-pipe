@@ -590,15 +590,18 @@ def add_mcmc_diagnostics(
 ) -> None:
     """Compute MCMC diagnostics and attach to ``_annotations/diagnostics/mcmc/``.
 
-    Computes R-hat, bulk ESS, tail ESS, and MCSE by default.
-    Skips any metric already present unless ``force=True``.
+    Computes R-hat, bulk ESS, tail ESS, and MCSE by default, and records the
+    number of divergent transitions when the run's sample statistics hold the
+    ArviZ variable ``diverging``, which ``posterior.diagnostics.mcmc.n_divergences``
+    reads. Skips any metric already present unless ``force=True``.
 
     Parameters
     ----------
     posterior : EmpiricalDistribution
         The fitted posterior. Mutated in place.
     metrics : list of str or None
-        Subset to compute. ``None`` computes all: ``["rhat", "ess", "mcse"]``.
+        Subset to compute. ``None`` computes all:
+        ``["rhat", "ess", "mcse", "divergences"]``.
     rhat_method : str
         ArviZ R-hat variant: ``"rank"`` by default.
     rhat_threshold : float
@@ -608,7 +611,7 @@ def add_mcmc_diagnostics(
     force : bool
         Recompute even if metrics are already stored.
     """
-    compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse"}
+    compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse", "divergences"}
 
     if "rhat" in compute:
         add_rhat(
@@ -631,4 +634,26 @@ def add_mcmc_diagnostics(
             force=force,
         )
 
+    if "divergences" in compute:
+        _record_divergences(posterior)
+
     return None
+
+
+def _record_divergences(posterior: EmpiricalDistribution) -> None:
+    """Record the number of divergent transitions, when the run's sample statistics hold them.
+
+    The count is the sum of the ArviZ variable ``diverging`` over chains and
+    draws. A run whose method records no such variable is left without a
+    count, which the view reports as not recorded.
+    """
+    from ._datatree_store import _add_group, _get_or_create_mcmc_ds
+
+    annotations = getattr(posterior, "_annotations", None)
+    try:
+        diverging = annotations["arviz"]["sample_stats"]["diverging"]
+    except (KeyError, TypeError):
+        return
+    dataset = _get_or_create_mcmc_ds(posterior)
+    dataset.attrs["n_divergences"] = json.dumps(int(np.asarray(diverging.values).sum()))
+    _add_group(posterior, "diagnostics/mcmc", dataset)

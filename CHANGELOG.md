@@ -999,6 +999,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
+  warmup's step-size adaptation targets is a method option, 0.75 unless set,
+  so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
+  removes the divergent transitions of a posterior with regions of high
+  curvature. A target outside the open interval from 0 to 1 raises
+  `ValueError`.
+- **`condition_on` conditions an empirical prior exactly.** The inference method
+  `empirical_reweighting` applies Bayes' rule to a joint whose prior is an
+  `EmpiricalDistribution` over numeric atoms and whose likelihood has a
+  conditional log-density: the posterior keeps the prior's atoms, each weighted
+  by its prior weight times the likelihood of the given values there, so
+  `condition_on(likelihood * particles, {"y": y})` is a particle filter's update.
+  The method is exact, so automatic selection tries it before the approximate
+  methods and `exact_only=True` admits it. It evaluates the likelihood at every
+  atom in one `jax.vmap` when the likelihood traces.
+- **Get started and six tutorials.** The documentation site gains an
+  installation page, a quickstart that fits, checks, and forecasts the
+  Challenger O-ring model, and six tutorials that follow one analysis of a
+  Ricker model of the moose counts of 1967 to 1988:
+  1. a model of the counts, built from distributions and a conditional
+     distribution, with the operations that apply to each and the exact
+     distribution of the counts at fixed parameter values;
+  2. the fit to the counts, with MCMC diagnostics, a function lifted over the
+     prior and the posterior, and a posterior predictive check that fails;
+  3. the model revised with process noise as a stage of its own, and its
+     posterior checked with a second algorithm, with a setting of that
+     algorithm, and with the same model written in PyMC;
+  4. forecasts of the population under harvests held in a batch, the
+     probabilities of events, the sources of the forecast's uncertainty, and
+     how each result was computed;
+  5. forecasts updated as each year's count arrives, by a particle filter that
+     `iterate` runs with `with_resampling`, and the coverage of the one-year
+     forecast intervals;
+  6. a model of whole animals that can only be simulated, which `condition_on`
+     fits by SMC-ABC and `learn_amortized_posterior` fits by an amortized
+     posterior, whose intervals are checked on simulated counts.
+
+  Each notebook opens on Google Colab from its badge, and the notebook
+  job of CI gains a leg for `docs/get_started/`. A notebook links to another
+  page by its file, which the docs build rewrites to the page's URL and checks.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the
@@ -1854,6 +1894,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`condition_on`'s registry route is named `inference_methods`.** The route
+  that forms the unnormalized conditional by Bayes' rule and normalizes it
+  through the inference-method registry was named `bayes`, so a `check`
+  report and a result's provenance now name it, as in
+  `inference_methods/blackjax_nuts`.
 - **The documentation site is rebuilt around the current API.** The user-guide
   notebooks, the `getting_started` and `flexible_inference` tutorials, the
   earlier API pages, and `example_scripts/` are removed, since each used names
@@ -2740,6 +2785,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
+  sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
+  of a posterior from `learn_amortized_posterior` printed one, and a notebook
+  that summarized the posterior at many observations filled with bars.
+- **`predictive_check` takes observed data held in a pandas or xarray object.**
+  It passed such an object to the statistics as given, while each replication
+  is a JAX array, so a statistic written with `jax.numpy` failed on a pandas
+  `Series` or an xarray `DataArray`. It now converts a registered array host
+  to the JAX array a replication holds, whether the data are one value or a
+  mapping of the kernel's components.
+- **`add_mcmc_diagnostics` counts the divergent transitions.** It recorded no
+  count, so `posterior.diagnostics.mcmc.n_divergences` reported "not recorded by
+  this backend" for every method. It now records the sum of the ArviZ sample
+  statistic `diverging`, which the PyMC, Stan, and nutpie methods write.
+  `blackjax_nuts` and `blackjax_hmc` wrote the statistic as `is_divergent`, and
+  `tfp_nuts` wrote none; both now write `diverging`, so read
+  `annotations["arviz"]["sample_stats"]["diverging"]` in place of
+  `["is_divergent"]`.
 - **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
   checked that the declared spec unifies with the produced one and then stored
   the produced spec, so a declared dtype or support was lost wherever the

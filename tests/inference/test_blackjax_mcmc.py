@@ -183,6 +183,24 @@ class TestBlackJAXNuts:
         np.testing.assert_allclose(np.asarray(step_size), 0.05)
 
 
+class TestObservedDataInRawHosts:
+    """Observed data held in a pandas or xarray object condition as their array does."""
+
+    @pytest.mark.parametrize("host", ["pandas", "xarray"])
+    def test_the_draws_match_those_of_the_array(self, host):
+        y = np.array([0.4, 0.9, -0.1], dtype=np.float32)
+        if host == "pandas":
+            hosted = pytest.importorskip("pandas").Series(y, name="y")
+        else:
+            hosted = pytest.importorskip("xarray").DataArray(y, dims="observation")
+        model = _gaussian_mean(Normal("mu", 0.0, 1.0))
+        options = {"num_results": 50, "num_warmup": 50, "num_chains": 1, "random_seed": 0}
+        fit = condition_on.with_options(method="blackjax_nuts", method_options=options)
+        np.testing.assert_array_equal(
+            flat_draws(fit(model, {"y": hosted})), flat_draws(fit(model, {"y": jnp.asarray(y)}))
+        )
+
+
 class TestBlackJAXHmc:
     """End-to-end smoke + correctness checks for ``blackjax_hmc``."""
 
@@ -372,7 +390,7 @@ class TestSampleStats:
         expected = {
             "step_size",
             "acceptance_rate",
-            "is_divergent",
+            "diverging",
             "num_integration_steps",
             "energy",
         }
@@ -388,7 +406,7 @@ class TestSampleStats:
         ar = np.asarray(ds["acceptance_rate"])
         assert np.all(ar >= 0.0) and np.all(ar <= 1.0 + 1e-5)
 
-        div = np.asarray(ds["is_divergent"])
+        div = np.asarray(ds["diverging"])
         assert div.dtype == np.bool_
         # A well-adapted NUTS run on a Gaussian prior should rarely diverge.
         assert div.mean() < 0.05
@@ -414,6 +432,18 @@ class TestSampleStats:
         post_grp = arviz_data(posterior)["posterior"]
         assert post_grp.sizes["chain"] == num_chains
         assert arviz_data(posterior)["sample_stats"].sizes["chain"] == num_chains
+
+    def test_the_mcmc_diagnostics_count_the_divergences(self, small_model):
+        """``add_mcmc_diagnostics`` records the sum of ``diverging`` over chains and draws."""
+        from probpipe.diagnostics import add_mcmc_diagnostics
+
+        posterior = condition_on.with_options(
+            method="blackjax_nuts",
+            method_options={"num_results": 100, "num_warmup": 100, "num_chains": 2},
+        )(small_model, {"y": jnp.zeros((4,))})
+        add_mcmc_diagnostics(posterior)
+        expected = int(np.asarray(arviz_data(posterior)["sample_stats"]["diverging"]).sum())
+        assert posterior.diagnostics.mcmc.n_divergences == expected
 
 
 class TestCheckFeasibility:

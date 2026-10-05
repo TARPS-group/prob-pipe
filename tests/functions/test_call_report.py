@@ -55,7 +55,7 @@ class TestTheRegistryMethods:
         report = condition_on.check(Normal("a", 0.0, 1.0) * Normal("y", 0.0, 1.0), {"y": 1.0})
 
         (routes,) = report.methods
-        assert routes == "curry, slice, bayes"
+        assert routes == "curry, slice, inference_methods"
         assert "nutpie_nuts" in report.methods[routes]
         assert not any("Available" in info.description for info in report.routes)
 

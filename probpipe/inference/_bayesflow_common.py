@@ -13,9 +13,11 @@ not pull keras.
 
 from __future__ import annotations
 
+import functools
 import os
 import random
-from collections.abc import Mapping
+import sys
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal
@@ -153,6 +155,26 @@ def _isolated_keras_seeding(random_seed: int):
     finally:
         random.setstate(py_state)
         np.random.set_state(np_state)
+
+
+@contextmanager
+def _without_progress_bar() -> Iterator[None]:
+    """Turn off the progress bar of BayesFlow's sampler for the block.
+
+    BayesFlow's sampler draws a ``tqdm`` bar on every call and has no setting
+    that turns it off, so each draw of an amortized posterior would print one.
+    A BayesFlow whose sampler module has another layout keeps its bar.
+    """
+    samplers = sys.modules.get("bayesflow.approximators.helpers.samplers")
+    bar = getattr(samplers, "tqdm", None)
+    if bar is None:
+        yield
+        return
+    samplers.tqdm = functools.partial(bar, disable=True)
+    try:
+        yield
+    finally:
+        samplers.tqdm = bar
 
 
 def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:

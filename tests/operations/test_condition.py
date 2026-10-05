@@ -304,7 +304,7 @@ class TestCurry:
         (target,) = approximate_method.targets
         assert set(target.event_spec.components) == {"z"}
         assert set(target.joint.event_spec.components) == {"y", "z"}
-        assert condition_on.check(joint, {"mu": 1.0, "y": 0.0}).route == "bayes"
+        assert condition_on.check(joint, {"mu": 1.0, "y": 0.0}).route == "inference_methods"
 
 
 def _by_name(routes: Any) -> dict[str, Any]:
@@ -345,7 +345,7 @@ class TestSlice:
         report = condition_on.check(joint, {"b": 0.5})
         declined = _by_name(report.routes)["slice (exact methods)"]
         assert "conditions on ['a']" in declined.description
-        assert report.route == "bayes"
+        assert report.route == "inference_methods"
 
     def test_part_of_a_law_is_fixed_by_its_exact_conditioning(self):
         model = ExactPosterior("model")
@@ -389,7 +389,7 @@ class TestSlice:
     ):
         joint = Kernel("y", ("mu",)) * Gaussian("mu")
         report = condition_on.check(joint, {"y": 0.3})
-        assert (report.route, report.method) == ("bayes", "operations_suite_factored")
+        assert (report.route, report.method) == ("inference_methods", "operations_suite_factored")
         assert condition_on(joint, {"y": 0.3}).loc == 4.0
         assert approximate_method.options == [{}]
 
@@ -548,11 +548,11 @@ class TestMethodOptions:
         assert not unstated, unstated
 
 
-class TestBayes:
+class TestTheInferenceMethodsRoute:
     def test_an_exact_registered_method_outranks_the_approximate_capability(self, suite_methods):
         report = condition_on.check(_AmortizedConjugate("model"), {"y": 0.3})
         assert (report.route, report.method, report.exact) == (
-            "bayes",
+            "inference_methods",
             "operations_suite_exact",
             True,
         )
@@ -627,7 +627,7 @@ class TestTheExactStage:
 
     def test_unnormalized_is_selected_only_by_name(self, suite_methods):
         report = condition_on.check(_Conjugate("model"), {"y": 0.3})
-        assert report.route == "bayes"
+        assert report.route == "inference_methods"
         declined = _by_name(report.routes).get("unnormalized")
         assert declined is None or declined.feasible is False
 
@@ -668,7 +668,7 @@ class TestTheNormalizationStage:
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
         condition_on(joint, {"mu": 1.0, "y": 0.0})
         (target,) = approximate_method.targets
-        assert target.provenance.metadata == {"stage": "exact", "route": "bayes"}
+        assert target.provenance.metadata == {"stage": "exact", "route": "inference_methods"}
         (law,) = target.provenance.parents
         assert law.provenance.metadata == {"stage": "exact", "route": "curry"}
 
@@ -681,7 +681,10 @@ class TestTheNormalizationStage:
             False,
         )
         conditioned = view.check(_Conjugate("model"), {"y": 0.3})
-        assert (conditioned.route, conditioned.method) == ("bayes", "operations_suite_approximate")
+        assert (conditioned.route, conditioned.method) == (
+            "inference_methods",
+            "operations_suite_approximate",
+        )
 
     def test_a_named_method_does_not_run_on_a_normalized_result(self, suite_methods):
         view = condition_on.with_options(method="operations_suite_approximate")
@@ -792,7 +795,7 @@ class TestTheNormalizationStage:
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",)) * Kernel("w", ("mu",))
         kernel = condition_on(joint, {"y": 0.0})
         report = condition_on.check(kernel, {"mu": 1.0, "z": 0.5})
-        assert (report.route, report.method) == ("bayes", "operations_suite_factored")
+        assert (report.route, report.method) == ("inference_methods", "operations_suite_factored")
         assert approximate_method.targets == []
 
     def test_mixed_keys_of_a_per_value_kernel_bind_its_slots_then_condition_once(
@@ -890,7 +893,7 @@ class TestTheOperation:
             "curry",
             "slice",
             "exact_conditioning",
-            "bayes",
+            "inference_methods",
             "approximate_conditioning",
             "unnormalized",
         ]
@@ -1053,7 +1056,11 @@ class TestEndToEnd:
         joint, y = _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
         view = condition_on.with_options(method_options=_MCMC)
         report = view.check(joint, y)
-        assert (report.route, report.method, report.exact) == ("bayes", "blackjax_nuts", False)
+        assert (report.route, report.method, report.exact) == (
+            "inference_methods",
+            "blackjax_nuts",
+            False,
+        )
         posterior = view(joint, y)
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("beta",)
@@ -1115,7 +1122,7 @@ class TestEndToEnd:
             method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
         )
         report = view.check(kernel, given)
-        assert report.route == "bayes"
+        assert report.route == "inference_methods"
         assert report.method in ("nutpie_nuts", "pymc_nuts")
         posterior = view(kernel, given)
         assert _is_normalized(posterior)
@@ -1143,7 +1150,7 @@ class TestEndToEnd:
         with monkeypatch.context() as patched:
             patched.setattr(inference_method_registry, "execute", _refuse_to_execute)
             report = view.check(kernel, given)
-        assert report.route == "bayes"
+        assert report.route == "inference_methods"
         assert report.method in ("nutpie_nuts", "pymc_nuts")
         posterior = view(kernel, given)
         assert _is_normalized(posterior)
