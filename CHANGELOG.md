@@ -1014,9 +1014,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The method is exact, so automatic selection tries it before the approximate
   methods and `exact_only=True` admits it. It evaluates the likelihood at every
   atom in one `jax.vmap` when the likelihood traces.
-- **Get started and the first five tutorials.** The documentation site gains
-  an installation page, a quickstart that fits, checks, and forecasts the
-  Challenger O-ring model, and five tutorials that follow one analysis of a
+- **Get started and six tutorials.** The documentation site gains an
+  installation page, a quickstart that fits, checks, and forecasts the
+  Challenger O-ring model, and six tutorials that follow one analysis of a
   Ricker model of the moose counts of 1967 to 1988:
   1. a model of the counts, built from distributions and a conditional
      distribution, with the operations that apply to each and the exact
@@ -1030,8 +1030,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      probabilities of events, the sources of the forecast's uncertainty, and
      how each result was computed;
   5. forecasts updated as each year's count arrives, by a particle filter that
-     `iterate` runs with `with_resampling` or with `with_conversion` to a kernel
-     density estimate, and the coverage of the one-year forecast intervals.
+     `iterate` runs with `with_resampling`, and the coverage of the one-year
+     forecast intervals;
+  6. a model of whole animals that can only be simulated, which `condition_on`
+     fits by SMC-ABC and `learn_amortized_posterior` fits by an amortized
+     posterior, whose intervals are checked on simulated counts.
 
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another

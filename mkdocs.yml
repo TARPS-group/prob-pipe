@@ -89,6 +89,7 @@ nav:
     - "3. Revising and cross-checking the model": tutorials/03_revising.ipynb
     - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
     - "5. Updating forecasts as counts arrive": tutorials/05_updating.ipynb
+    - "6. Fitting a model that can only be simulated": tutorials/06_simulating.ipynb
   - User guide:
     - Ray via Prefect: user_guide/ray.md
   - API reference:
