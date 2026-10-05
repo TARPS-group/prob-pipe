@@ -664,7 +664,7 @@ class Function(Node, TrackedTerm, Annotated):
                 "Use fn, input_spec and output_spec instead; use workflow_run(seed=...) "
                 "or bind={'seed': ...} for a wrapped-function seed.",
                 FutureWarning,
-                stacklevel=2,
+                skip_file_prefixes=_WARNING_SKIP_PREFIXES,
             )
             fn = controls.pop("func", fn) if "func" in removed else fn
             for key in removed - {"func"}:

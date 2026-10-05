@@ -113,6 +113,49 @@ def test_legacy_func_alias_validates_the_effective_callable():
         Function("invalid", lambda: 1, func=3)
 
 
+@pytest.mark.parametrize("entrypoint", ["constructor", "decorator"])
+@pytest.mark.parametrize("option", ["seed", "input_template", "output_template", "func"])
+def test_legacy_option_warning_points_to_the_user_call(option, entrypoint):
+    def identity(x):
+        return x
+
+    value = (lambda x: x + 1) if option == "func" else object()
+    frame = inspect.currentframe()
+    assert frame is not None
+    with pytest.warns(FutureWarning) as caught:
+        if entrypoint == "decorator":
+            decorate = function(**{option: value})
+            line = frame.f_lineno + 1
+            wrapped = decorate(identity)
+        else:
+            line = frame.f_lineno + 1
+            wrapped = Function("identity", identity, **{option: value})
+    assert len(caught) == 1
+    assert repr([option]) in str(caught[0].message)
+    assert caught[0].filename == __file__
+    assert caught[0].lineno == line
+    assert float(wrapped(3)) == (4 if option == "func" else 3)
+
+
+def test_one_warning_names_every_legacy_option():
+    with pytest.warns(FutureWarning) as caught:
+        Function(
+            "identity",
+            lambda x: x,
+            func=lambda x: x,
+            seed=1,
+            input_template=object(),
+            output_template=object(),
+        )
+    assert len(caught) == 1
+    assert "['func', 'input_template', 'output_template', 'seed']" in str(caught[0].message)
+
+
+def test_func_does_not_replace_the_required_fn_argument():
+    with pytest.raises(TypeError, match="required positional argument: 'fn'"):
+        Function(label="identity", func=lambda x: x)
+
+
 def test_function_bind_can_still_supply_user_seed_parameter():
     def add_seed(x, seed):
         return x + seed
