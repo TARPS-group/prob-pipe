@@ -8,15 +8,32 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
 <!-- --8<-- [start:intro] -->
-ProbPipe is a Python framework for probabilistic pipelines with automated uncertainty quantification, in which the objects of probability theory are the objects of the program.
-A model is written as it is on paper, as distributions, conditional distributions, and functions, and mathematical operations such as composition, conditioning, and expectation combine them.
-Each object declares what it can compute, such as draws, a density, or exact moments, and each operation uses those capabilities: it computes its result exactly where it can, and otherwise it selects an approximate method, such as Markov chain Monte Carlo.
-Every result is another ProbPipe object, which records how it was computed.
+ProbPipe is a Python framework that makes it easy to build probabilistic pipelines with automated uncertainty quantification.
+Pipelines are built from the usual mathematical objects, such as distributions, conditional distributions, and functions, and the standard mathematical operations, such as composition, conditioning, and expectation.
+Each ProbPipe object declares the computational capabilities of its type, such as drawing random samples from a distribution, evaluating the density of a conditional distribution, or inverting a function.
+By default, ProbPipe hides computational complexity, but it provides access to the computational details when you need them.
 <!-- --8<-- [end:intro] -->
 
-## The approach
+## What you can do
+
+<!-- --8<-- [start:capabilities] -->
+Carrying out a probabilistic analysis means turning its mathematics into computation: choosing among algorithms with different trade-offs, and converting between the formats that different tools expect.
+ProbPipe takes on that work, so you can:
+
+- **Switch and compare algorithms without rewriting the model.** `condition_on` fits a model with an algorithm it selects, and one option, `with_options(method=...)`, swaps in another, such as TensorFlow Probability's NUTS or random-walk Metropolis. Comparing algorithms takes a loop, not a rewrite.
+- **Use the models and data you already have.** A model written in PyMC or Stan becomes a ProbPipe object that the same calls fit, data can arrive in pandas or xarray objects, and a sampler's draws come with ArviZ data for diagnostics and plots.
+- **Push uncertainty through any Python function.** A forecast or a decision rule written for fixed inputs, applied to a posterior, returns the distribution of its output.
+- **Get exact answers where they exist.** ProbPipe computes a result exactly when a formula or an exact algorithm applies, such as the update of a posterior held as weighted draws, and approximately otherwise.
+- **Know how each result was computed.** Every result records how it was computed and whether that computation is exact, and a seed reproduces its random draws.
+<!-- --8<-- [end:capabilities] -->
+
+## How it works
 
 <!-- --8<-- [start:approach] -->
+ProbPipe keeps the mathematics separate from the computation.
+A model states only the mathematics, and each operation chooses how to compute its result, so changing the algorithm never changes the model.
+Six ideas make this work:
+
 1. **Mathematical objects:** distributions, conditional distributions, functions, and values are ProbPipe objects, and each one names its components, such as the coefficients and the response of a regression. A batch holds several objects of one kind, such as a set of scenarios, on named axes.
 2. **One vocabulary of operations:** `*` composes a conditional distribution with a distribution into their joint distribution, `condition_on` conditions, and summaries such as `mean` and `quantile` describe a law. Each operation applies to every object that supports it mathematically and returns another ProbPipe object, so results compose.
 3. **Computation from capabilities:** an operation computes its result from what its inputs can do, by a closed form where one exists, and otherwise by an exact algorithm or an approximate method from a registry of backends such as BlackJAX, Stan, and PyMC. The choice is automatic, `check` reports it before a call runs, and `with_options` overrides it.
@@ -82,6 +99,32 @@ Multiplying them with `*` gives the model, and `condition_on` turns the model in
 The output also shows how ProbPipe computed each result.
 The prior's mean has a formula, so `mean` computed it exactly.
 The posterior of a logistic regression has none, so `condition_on` drew from it with BlackJAX's No-U-Turn Sampler, and the posterior is approximate: it is held as the sampler's draws.
+
+The model doesn't name an algorithm, so we can switch it.
+Here we fit the same model with three algorithms and compare the results:
+
+```python
+from probpipe.diagnostics import add_mcmc_diagnostics
+
+# The same model and data, conditioned with three algorithms.
+for method in ["blackjax_nuts", "tfp_nuts", "blackjax_rwmh"]:
+    with workflow_run(seed=0):
+        fit = condition_on.with_options(method=method)(model, {"damage": damage})
+    add_mcmc_diagnostics(fit)  # R-hat and effective sample sizes, recorded on the fit
+    slope = float(mean(fit["beta"]).raw()[1])
+    largest_rhat = max(fit.diagnostics.mcmc.rhat.values())
+    print(f"{method}: slope={slope:.3f}, largest R-hat={largest_rhat:.2f}")
+```
+
+```text
+blackjax_nuts: slope=-0.183, largest R-hat=1.01
+tfp_nuts: slope=-0.186, largest R-hat=1.00
+blackjax_rwmh: slope=-0.083, largest R-hat=1.97
+```
+
+BlackJAX's and TensorFlow Probability's implementations of the No-U-Turn Sampler agree on the slope.
+Random-walk Metropolis reports a different slope, and its R-hat near 2 says why: its chains never mixed, so we shouldn't trust its answer.
+Only `method` changed between the three fits, because the model states what to compute and ProbPipe decides how.
 
 Next, we forecast.
 The probability of damage at 31°F is a function of the coefficients, which we write in plain JAX:

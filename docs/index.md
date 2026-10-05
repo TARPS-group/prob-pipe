@@ -4,7 +4,11 @@
 
 --8<-- "README.md:intro"
 
-## The approach
+## What you can do
+
+--8<-- "README.md:capabilities"
+
+## How it works
 
 --8<-- "README.md:approach"
 
