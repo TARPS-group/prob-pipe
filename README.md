@@ -1,5 +1,3 @@
-> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
-
 # ProbPipe
 
 [![CI](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml/badge.svg)](https://github.com/TARPS-group/prob-pipe/actions/workflows/ci.yml)
@@ -8,45 +6,32 @@
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20683559-blue)](https://doi.org/10.5281/zenodo.20683559)
 
 <!-- --8<-- [start:intro] -->
-ProbPipe is a Python framework that makes it easy to build probabilistic pipelines with automated uncertainty quantification.
-Pipelines are built from the usual mathematical objects, such as distributions, conditional distributions, and functions, and the standard mathematical operations, such as composition, conditioning, and expectation.
-Each ProbPipe object declares the computational capabilities of its type, such as drawing random samples from a distribution, evaluating the density of a conditional distribution, or inverting a function.
-By default, ProbPipe hides computational complexity, but it provides access to the computational details when you need them.
+ProbPipe is a Python framework that makes it easy to build probabilistic workflows with automated uncertainty quantification.
+Workflows are built from familiar mathematical objects, such as distributions, conditional distributions, and functions, and standard operations such as composition, conditioning, and expectation.
+Each ProbPipe object declares its computational capabilities based on its type, such as drawing random samples for a distribution, evaluating the density for a conditional distribution, or inversion for a function.
+By default, ProbPipe hides computational details, but it provides access to them when you need it.
 <!-- --8<-- [end:intro] -->
 
 ## What you can do
 
 <!-- --8<-- [start:capabilities] -->
-Carrying out a probabilistic analysis means turning its mathematics into computation: choosing among algorithms with different trade-offs, and converting between the formats that different tools expect.
-ProbPipe takes on that work, so you can:
+Carrying out a probabilistic analysis means translating its mathematics into a computational procedure.
+In practice you have to choose among algorithms with different trade-offs and convert between the formats that different tools expect.
+ProbPipe streamlines and automates those tasks, so you can:
 
-- **Switch and compare algorithms without rewriting the model.** `condition_on` fits a model with an algorithm it selects, and one option, `with_options(method=...)`, swaps in another, such as TensorFlow Probability's NUTS or random-walk Metropolis. Comparing algorithms takes a loop, not a rewrite.
-- **Use the models and data you already have.** A model written in PyMC or Stan becomes a ProbPipe object that the same calls fit, data can arrive in pandas or xarray objects, and a sampler's draws come with ArviZ data for diagnostics and plots.
-- **Push uncertainty through any Python function.** A forecast or a decision rule written for fixed inputs, applied to a posterior, returns the distribution of its output.
-- **Get exact answers where they exist.** ProbPipe computes a result exactly when a formula or an exact algorithm applies, such as the update of a posterior held as weighted draws, and approximately otherwise.
-- **Know how each result was computed.** Every result records how it was computed and whether that computation is exact, and a seed reproduces its random draws.
+- **Switch and compare algorithms without rewriting the model.** The `condition_on(...)` operation computes a model posterior with an algorithm it selects, based on that model's capabilities (e.g., log density evaluation or forward sampling). Calling `condition_on.with_options(method=method)(...)` swaps in another algorithm named `method`, such as stochastic-gradient Langevin dynamics (for large data sets) or random-walk Metropolis (for a log density without gradients).
+- **Use the models and data you already have.** A model written in PyMC or Stan can be wrapped as a ProbPipe object that operations like `condition_on` can be used with. Data can be in pandas or xarray objects.
+- **Push uncertainty through any Python function.** Write a forecast or a decision rule in plain Python as a function of known inputs, such as one value of each parameter, and decorate it with `@function` to make it a ProbPipe-native function. Called on a posterior, or on any other distribution of its inputs, the function returns the distribution of its output, which ProbPipe computes by evaluating the function at draws from that distribution.
+- **Get exact answers when feasible.** ProbPipe computes a result exactly when a formula or an exact algorithm applies, such as the update to a discrete distribution, and approximately otherwise.
+- **Know how each result was computed.** Every result records how it was computed and whether that computation is exact. Moreover, uniform random seed control helps improve reproducibility.
 <!-- --8<-- [end:capabilities] -->
 
-## How it works
-
-<!-- --8<-- [start:approach] -->
-ProbPipe keeps the mathematics separate from the computation.
-A model states only the mathematics, and each operation chooses how to compute its result, so changing the algorithm never changes the model.
-Six ideas make this work:
-
-1. **Mathematical objects:** distributions, conditional distributions, functions, and values are ProbPipe objects, and each one names its components, such as the coefficients and the response of a regression. A batch holds several objects of one kind, such as a set of scenarios, on named axes.
-2. **One vocabulary of operations:** `*` composes a conditional distribution with a distribution into their joint distribution, `condition_on` conditions, and summaries such as `mean` and `quantile` describe a law. Each operation applies to every object that supports it mathematically and returns another ProbPipe object, so results compose.
-3. **Computation from capabilities:** an operation computes its result from what its inputs can do, by a closed form where one exists, and otherwise by an exact algorithm or an approximate method from a registry of backends such as BlackJAX, Stan, and PyMC. The choice is automatic, `check` reports it before a call runs, and `with_options` overrides it.
-4. **Lifting:** an ordinary Python function applied to distributions returns the distribution of its output, and applied to a batch it returns the batch of its outputs.
-5. **Traceable, reproducible results:** every result records the operation, the route, and the inputs that produced it, and `workflow_run(seed=...)` makes its random draws reproducible.
-6. **Native Python and existing packages:** functions are plain Python, typically JAX code, and data can arrive in pandas or xarray objects. A model written in PyMC or Stan becomes a ProbPipe object, and a sampler's draws are available as ArviZ data.
-<!-- --8<-- [end:approach] -->
-
-## Quick example
+## A short example
 
 <!-- --8<-- [start:quick-example] -->
-A Bayesian logistic regression on the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster) relates the temperature of 23 shuttle launches to whether an O-ring was damaged.
-Its posterior then gives the probability of damage at 31°F, far below the 53°F of the coldest of those launches.
+Consider a Bayesian logistic regression for the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster), which consists of temperatures of 23 shuttle launches and an indicator as to whether an O-ring was damaged.
+In January 1986, the Space Shuttle Challenger broke apart shortly after launch because an O-ring seal in one of its rocket boosters failed during unusually cold weather.
+Given the data from the 23 earlier launches, we forecast the probability of O-ring damage at the estimated temperature of 31°F near the rocket booster at the time of that launch.
 
 First, we specify the model and condition it on the data:
 
@@ -94,39 +79,40 @@ mean of the prior provenance: route=closed_form, exact=True
 posterior provenance: route=inference_methods, method=blackjax_nuts, exact=False
 ```
 
-The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients, which `glm_likelihood` builds for us.
-Multiplying them with `*` gives the model, and `condition_on` turns the model into the posterior.
-The output also shows how ProbPipe computed each result.
+The prior and the likelihood are both ProbPipe objects: a distribution of the coefficients, and a conditional distribution of the data given the coefficients (constructed with `glm_likelihood`).
+Multiplying them with `*` constructs the joint model, and `condition_on` computes the posterior.
+The output also tracks how ProbPipe computed each result.
 The prior's mean has a formula, so `mean` computed it exactly.
-The posterior of a logistic regression has none, so `condition_on` drew from it with BlackJAX's No-U-Turn Sampler, and the posterior is approximate: it is held as the sampler's draws.
+The posterior of a logistic regression has none, so `condition_on` generated approximate draws from the posterior using BlackJAX's No-U-Turn Sampler.
 
-The model doesn't name an algorithm, so we can switch it.
-Here we fit the same model with three algorithms and compare the results:
+We can easily compare many different posterior inference algorithms:
 
 ```python
 from probpipe.diagnostics import add_mcmc_diagnostics
 
-# The same model and data, conditioned with three algorithms.
+# Use the same code to get results from any available method.
+print(f"{'method':<15}{'slope mean':>12}{'largest R-hat':>16}")
 for method in ["blackjax_nuts", "tfp_nuts", "blackjax_rwmh"]:
     with workflow_run(seed=0):
-        fit = condition_on.with_options(method=method)(model, {"damage": damage})
-    add_mcmc_diagnostics(fit)  # R-hat and effective sample sizes, recorded on the fit
-    slope = float(mean(fit["beta"]).raw()[1])
-    largest_rhat = max(fit.diagnostics.mcmc.rhat.values())
-    print(f"{method}: slope={slope:.3f}, largest R-hat={largest_rhat:.2f}")
+        method_posterior = condition_on.with_options(method=method)(model, {"damage": damage})
+    # Adds R-hat and effective sample size diagnostics to the posterior object.
+    add_mcmc_diagnostics(method_posterior)
+    mean_slope = float(mean(method_posterior["beta"]).raw()[1])
+    largest_rhat = max(method_posterior.diagnostics.mcmc.rhat.values())
+    print(f"{method:<15}{mean_slope:>12.3f}{largest_rhat:>16.3f}")
 ```
 
 ```text
-blackjax_nuts: slope=-0.183, largest R-hat=1.01
-tfp_nuts: slope=-0.186, largest R-hat=1.00
-blackjax_rwmh: slope=-0.083, largest R-hat=1.97
+method           slope mean   largest R-hat
+blackjax_nuts        -0.183           1.009
+tfp_nuts             -0.186           1.003
+blackjax_rwmh        -0.083           1.973
 ```
 
-BlackJAX's and TensorFlow Probability's implementations of the No-U-Turn Sampler agree on the slope.
-Random-walk Metropolis reports a different slope, and its R-hat near 2 says why: its chains never mixed, so we shouldn't trust its answer.
-Only `method` changed between the three fits, because the model states what to compute and ProbPipe decides how.
+BlackJAX and TensorFlow Probability's implementations of the No-U-Turn Sampler give similar inferences about the slope.
+Random-walk Metropolis reports a different slope. But it shouldn't be trusted since the largest R-hat is nearly 2, indicating the chains didn't mix.
 
-Next, we forecast.
+Next, we illustrate how to forecast using the posterior.
 The probability of damage at 31°F is a function of the coefficients, which we write in plain JAX:
 
 ```python
@@ -137,30 +123,30 @@ from probpipe import function, quantile
 
 # The probability of damage at 31°F, for one pair of coefficients.
 @function
-def damage_probability(beta: jax.Array) -> jax.Array:
+def challenger_damage_probability(beta: jax.Array) -> jax.Array:
     return jax.nn.sigmoid(beta[0] + beta[1] * 31.0)
 
 
 # Called on the posterior, the function returns the distribution of the probability.
-with workflow_run(seed=1):
-    risk = damage_probability(posterior["beta"])
+with workflow_run(seed=2):
+    damage_prob = challenger_damage_probability(posterior["beta"])
 
-print("P(damage at 31°F), posterior mean:", round(float(mean(risk)), 3))
-print("P(damage at 31°F), 90% interval:", quantile(risk, jnp.array([0.05, 0.95])).raw())
+print("P(damage at 31°F), posterior mean:", round(float(mean(damage_prob)), 3))
+print("P(damage at 31°F), 90% interval:", quantile(damage_prob, jnp.array([0.05, 0.95])).raw())
 
-# The forecast records how it was computed, too.
-prov_meta = risk.provenance.metadata
-print(f"risk provenance: route={prov_meta['route']}, exact={prov_meta['exact']}")
+# The forecast records how it was computed.
+prov_meta = damage_prob.provenance.metadata
+print(f"forecast provenance: route={prov_meta['route']}, exact={prov_meta['exact']}")
 ```
 
 ```text
-P(damage at 31°F), posterior mean: 0.96
-P(damage at 31°F), 90% interval: [0.77571553 0.9999759 ]
-risk provenance: route=sampling_lift, exact=False
+P(damage at 31°F), posterior mean: 0.964
+P(damage at 31°F), 90% interval: [0.8174724  0.99998176]
+forecast provenance: route=sampling_lift, exact=False
 ```
 
-We wrote `damage_probability` for one pair of coefficients, and ProbPipe lifted it to the posterior: it evaluated the function at draws of the coefficients and returned the distribution of the results, so the forecast carries the posterior's uncertainty.
-Its provenance says it came from those draws, so it too is approximate, and running the code again with the same seeds reproduces it.
+We wrote `challenger_damage_probability` for one pair of coefficients, and ProbPipe automatically lifted it to operate on the posterior distribution: it evaluated the function at draws from the posterior distribution, and returned the distribution of the results.
+Its provenance shows it was generated using this sampling approach and that it is not exact.
 <!-- --8<-- [end:quick-example] -->
 
 ## Installation
@@ -179,3 +165,5 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 - [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) follow one analysis of a moose population, from a first model to forecasts that update as each count arrives.
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) documents every public name.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
+
+> **Human-validated** by Jonathan Huggins on 2026-10-04.
