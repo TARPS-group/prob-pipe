@@ -2,10 +2,12 @@
 
 # Distributions and families
 
-This page documents the distribution classes, the capabilities a distribution claims, and the families ProbPipe ships.
+This page documents the distribution classes, the factories that build a law or a kernel from functions, the capabilities a distribution claims, and the families ProbPipe ships.
 The distributions over functions and over distributions are on [Random functions](random_functions.md), and the operations on a distribution, such as `sample` and `mean`, are on [Operations](operations.md).
 
 ## Distributions
+
+::: probpipe.distribution
 
 ::: probpipe.Distribution
 

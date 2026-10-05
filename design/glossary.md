@@ -63,6 +63,7 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | the independent-draw shape prefix of `sample` | `sample_shape` |
 | a distribution's event declaration, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
+| a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |
 | a tracked term's identity, the required first argument of `Record` and of a distribution | `label` |
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |

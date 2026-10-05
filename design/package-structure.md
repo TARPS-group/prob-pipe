@@ -59,6 +59,7 @@ probpipe/
 │   ├── _views.py              #   FieldView (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
 │   ├── _conditional.py        #   ConditionalDistribution, its markers and spec, conditional_distribution (III.9)
+│   ├── _from_functions.py     #   distribution: a law from a sampler, a density, or both (III.9)
 │   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
 │   ├── _factored.py           #   SupportsFactors and the factored classes (IV.1)
 │   ├── _composition.py        #   the * engine behind __mul__ (IV.2)

@@ -110,6 +110,7 @@ from probpipe.distributions._distribution import (
     NumericDistribution,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.distributions._from_functions import distribution
 from probpipe.families import (
     Bernoulli,
     Beta,
@@ -334,6 +335,7 @@ __all__ = [
     "convert",
     "converter_registry",
     "cov",
+    "distribution",
     "elliptical_slice",
     "evaluate",
     "evaluation_rule_registry",

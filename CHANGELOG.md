@@ -1039,6 +1039,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **`distribution` builds a law from a sampling function, a log-density, or
+  both.** `distribution("y", sample=simulate, event_spec=spec)` returns a law
+  whose draws are `simulate(key)`, and `log_prob=` or `unnormalized_log_prob=`
+  gives it a density of one value. The law claims `SupportsSampling`,
+  `SupportsLogProb`, or `SupportsUnnormalizedLogProb` for each function given,
+  over an event of any kind. A sample shape maps the sampler over split keys
+  with `jax.vmap`, and a sampler that does not trace in JAX, such as one that
+  calls NumPy, or that draws values that are not arrays, runs in a loop over
+  the keys. Construction draws nothing and scores no value: it checks each
+  function that traces against `event_spec` with `jax.eval_shape`, and a
+  failed check raises `ValueError`. A simulator's kernel is
+  `conditional_distribution` of a function that returns
+  `distribution(..., sample=...)`, which claims conditional sampling.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the
