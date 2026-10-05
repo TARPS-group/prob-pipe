@@ -748,11 +748,11 @@ def _jax_traceability_error(
                     root = binding.root
                     from ..core._specs import _components_record
 
-                    template = _components_record(root.event_spec)
-                    if not isinstance(template, NumericRecordSpec) or not template.is_concrete:
+                    components = _components_record(root.event_spec)
+                    if not isinstance(components, NumericRecordSpec) or not components.is_concrete:
                         raise TypeError(
                             f"{type(root).__name__} does not declare a concrete numeric "
-                            "event template for side-effect-free JAX probing"
+                            "event for side-effect-free JAX probing"
                         )
                     try:
                         dtypes = root.dtypes
@@ -762,14 +762,14 @@ def _jax_traceability_error(
                             "side-effect-free JAX probing"
                         ) from error
                     columns = {}
-                    for path in template:
+                    for path in components:
                         dtype = dtypes.get(path)
                         if dtype is None:
                             dtype = dtypes.get(path.split("/", 1)[0])
                         if dtype is None:
                             dtype = _stored_dtype(root, path)
                         columns[path] = jax.ShapeDtypeStruct(
-                            (1, *template[path].shape),
+                            (1, *components[path].shape),
                             dtype,
                         )
                     # The stand-in draw is at the kind the law's event declaration
@@ -779,7 +779,7 @@ def _jax_traceability_error(
                             root.label,
                             columns,
                             "draw",
-                            element_spec=template,
+                            element_spec=components,
                             axes_per_level=(1,),
                         )
                     else:

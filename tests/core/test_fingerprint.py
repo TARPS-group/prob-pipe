@@ -14,6 +14,7 @@ import pytest
 
 from probpipe import (
     DistributionSpec,
+    Function,
     FunctionSpec,
     InputSpec,
     Normal,
@@ -30,7 +31,6 @@ from probpipe.core._fingerprint import (
     fingerprint,
 )
 from probpipe.core.provenance import ParentInfo, Provenance
-from probpipe.values._function_base import Function
 
 # ===========================================================================
 # 1. Return type and format
@@ -462,7 +462,7 @@ class TestFunctionHashing:
         wf2 = self._make_wf(add)
         assert fingerprint(wf1) == fingerprint(wf2)
 
-    def test_callable_fingerprint_tracks_template_declarations(self, full_provenance_mode):
+    def test_callable_fingerprint_tracks_its_declarations(self, full_provenance_mode):
         def identity(x):
             return x
 

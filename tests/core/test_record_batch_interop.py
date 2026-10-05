@@ -765,9 +765,9 @@ class TestFunctionValuedColumnsStack:
     def test_rows_holding_callable_fields_stack_by_raw_column(self):
         """A callable field presents as a FunctionBatch; the raw columns are
         what stack, and the presentation survives the aggregation."""
+        from probpipe import FunctionSpec
         from probpipe.core._function_batch import FunctionBatch
         from probpipe.functions._result import _make_stack
-        from probpipe.values._function_base import FunctionSpec
 
         rows = [
             RecordBatch(

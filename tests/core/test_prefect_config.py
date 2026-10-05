@@ -216,7 +216,7 @@ class TestEffectiveWorkflowKind:
         The shipped default is OFF regardless of Prefect importability,
         so this case subsumes the prior `prefect missing` variant.
         """
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -228,7 +228,7 @@ class TestEffectiveWorkflowKind:
         """Per-instance TASK beats global OFF."""
         prefect_config.workflow_kind = WorkflowKind.OFF
 
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -247,7 +247,7 @@ class TestEffectiveWorkflowKind:
         """Per-instance OFF beats global TASK."""
         prefect_config.workflow_kind = WorkflowKind.TASK
 
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -266,7 +266,7 @@ class TestEffectiveWorkflowKind:
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -289,7 +289,7 @@ class TestEffectiveWorkflowKind:
 
         prefect_config.workflow_kind = WorkflowKind.TASK
 
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -301,7 +301,7 @@ class TestEffectiveWorkflowKind:
         """Global FLOW → DEFAULT instance resolves to FLOW."""
         prefect_config.workflow_kind = WorkflowKind.FLOW
 
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -313,7 +313,7 @@ class TestEffectiveWorkflowKind:
 
     def test_config_change_after_construction(self):
         """Config change after WF creation takes effect (lazy resolution)."""
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -337,7 +337,7 @@ class TestWorkflowKindConstructorValidation:
     """Verify constructors reject old-style workflow_kind values."""
 
     def test_function_rejects_string(self):
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x
@@ -351,7 +351,7 @@ class TestWorkflowKindConstructorValidation:
             )
 
     def test_function_rejects_none(self):
-        from probpipe.values._function_base import Function
+        from probpipe import Function
 
         def noop(x):
             return x

@@ -1414,16 +1414,16 @@ class TestDynamicImplementation:
 
         assert run() == run()
 
-    def test_dynamic_fingerprint_tracks_signature_and_template_declarations(self):
+    def test_dynamic_fingerprint_tracks_signature_and_declarations(self):
         from probpipe.core._fingerprint import fingerprint
 
-        def build(signature, *, input_template=None, output_template=None):
+        def build(signature, *, input_spec=None, output_spec=None):
             return Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,
                 name="dynamic",
-                input_spec=None if input_template is None else InputSpec(input_template.children),
-                output_spec=output_template,
+                input_spec=None if input_spec is None else InputSpec(input_spec.children),
+                output_spec=output_spec,
             )
 
         base = inspect.Signature(
@@ -1460,14 +1460,14 @@ class TestDynamicImplementation:
         assert fingerprint(
             build(
                 base,
-                input_template=RecordSpec(x=()),
-                output_template=RecordSpec(y=()),
+                input_spec=RecordSpec(x=()),
+                output_spec=RecordSpec(y=()),
             )
         ) != fingerprint(
             build(
                 base,
-                input_template=RecordSpec(x=(1,)),
-                output_template=RecordSpec(y=(1,)),
+                input_spec=RecordSpec(x=(1,)),
+                output_spec=RecordSpec(y=(1,)),
             )
         )
 
