@@ -43,6 +43,8 @@ probpipe/
 │   ├── _function_base.py      #   Function itself (declared sides, identity, controls and with_options,
 │   │                          #     plain evaluation, install_call_engine), FunctionSpec, the function
 │   │                          #     capabilities, and is_differentiable
+│   ├── _binding.py            #   the frozen signature and the argument binding apply performs
+│   │                          #     without the engine (III.3, V.3)
 │   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.3)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
@@ -71,6 +73,7 @@ probpipe/
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
 │   │                          #     populated upward by the families (V.7)
+│   ├── _resolution.py         #   the selection among a Function's own routes, as an operation's (V.7, VI.0)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (V.9, V.10)
 │   ├── _sweep.py              #   the batch sweep (V.9, V.10)
 │   ├── _rng.py                #   structural event identity, the versioned key derivation (V.8)
@@ -150,10 +153,8 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `core/protocols.py` (`SupportsArrayBackend`) | `distributions/_capabilities.py` |
 | `core/node.py` (`Node`, `InputFrozenError`), `functions/_module.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
 | `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |
-| `values/_binding.py` | `values/`, beside `_function_base.py`, since `Function.apply` binds its arguments without the engine (III.3, V.3) |
 | `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan (V.4) |
 | `functions/_contract.py`, `functions/_descendants.py` | `functions/_plan.py`: the per-call binding of the declared inputs and the root-ancestor capture (V.5, V.6) |
-| `functions/_resolution.py` | `functions/`, where it selects among a `Function`'s own routes at step 6 (V.7, VI.0) |
 | `functions/_callable.py`, `functions/_recipe.py` | `functions/_replay.py`: the callable anchors and the recorded recipes (V.8) |
 | `functions/_managed.py` | `functions/_broker.py` (V.8, V.9) |
 | `functions/_execution_contract.py` | `functions/_execution.py` (V.9) |
