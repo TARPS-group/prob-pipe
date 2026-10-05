@@ -118,24 +118,28 @@ A distribution may have more than one representation, and an operation or a back
 
 **Check and execute.** A converter has an `execute` method to carry out the conversion and a `check` method to determine what `execute` would do if called. `check` returns a `ConversionInfo`: the promised target spec, the representation class when known, the capabilities guaranteed on the result, and, as pending requirements, whatever it cannot settle without the source's values. It never samples, fits, or evaluates a density. The registry's `check` returns a `ConversionInfo` in every state, so a planner reads one report type, and an infeasible report leaves `target_spec`, `target_class`, and `capabilities` at their empty defaults. A converter whose result cannot carry the source's event declaration reports itself infeasible at `check`, as a moment-matched fit does whose draws do not cast to the source's dtype or whose family has a fixed support other than the source's, and the registry then tries the next converter. A support that depends on the fitted parameters is checked when the fit runs. The registry raises `TypeError` for a converter whose `check` returns another type, and `ValueError` for a feasible promise that does not carry the source's declaration. The function stack plans through `check` at argument normalization and constructs through `execute` at execution (V.4, V.9), and `convert` exposes the same two steps to the user (VI.10).
 
+**Converter options.** The registry passes a call's converter options to the selected converter's `check` and `execute` as keywords, such as `num_samples` for a converter that draws, `check_support`, or the `event_spec` that declares a backend object's event, which carries no declaration of its own. A converter reads the options it names, and its `execute` refuses any other, so a misspelled option fails rather than being ignored. The parameter's `conversions` control supplies them at normalization (V.4). A report states with `samples` whether executing the conversion draws from the source, which is a workflow-owned random event (V.8).
+
 ```python
 @dataclass(frozen=True)
-class ConversionInfo(Feasibility):
-    target_spec: DistributionSpec | None = None   # None only while unresolved
+class ConversionInfo(MethodInfo):
+    target_spec: DistributionSpec | None = None   # None unless feasible
     target_class: type | None = None
     capabilities: tuple[type, ...] = ()           # capabilities guaranteed on the result
-    # pending requirements are inherited from Feasibility; exactness is the converter's declaration
+    samples: bool = False                         # whether executing the conversion draws from the source
+    # pending requirements are inherited from Feasibility; the registry fills method_name and exact
+    # from the registration, so a converter states only its promise
 
 class Converter(BinaryDispatchMethod):
     name: str
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (source, target) types
-    def check(self, source, target_type: type) -> ConversionInfo: ...
-    def execute(self, source, target_type: type) -> Distribution: ...             # the conversion itself
+    def check(self, source, target_type: type, **options) -> ConversionInfo: ...
+    def execute(self, source, target_type: type, **options) -> Distribution: ...   # the conversion itself
 
 class ConverterRegistry(BinaryDispatchRegistry[Converter]):
     # keyed on (type(source), target): the target is a distribution class, or a capability protocol (III.8)
-    def convert(self, source, target_type: type,
-                method: str | None = None, exact_only: bool = False) -> Distribution: ...
+    def convert(self, source, target_type: type, *,
+                method: str | None = None, exact_only: bool = False, **options) -> Distribution: ...
 
 converter_registry: ConverterRegistry   # the global instance
 ```
