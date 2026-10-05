@@ -328,14 +328,29 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             that is not cataloged.
         description : str
             A one-line description, which the registry catalog shows.
+
+        Notes
+        -----
+        ``name`` and ``description`` are read-only after construction, so the
+        name a registry is cataloged under stays its ``name``.
         """
-        self.name = name
-        self.description = description
+        self._name = name
+        self._description = description
         self._registrations: list[_Registration[M]] = []
         self._by_name: dict[str, _Registration[M]] = {}
         self._priority_overrides: dict[str, int | None] = {}
         self._type_cache: dict[Any, list[_Registration[M]]] = {}
         self._cache_token = abc.get_cache_token()
+
+    @property
+    def name(self) -> str:
+        """The registry's name in the registry catalog; empty for a registry that is not cataloged."""
+        return self._name
+
+    @property
+    def description(self) -> str:
+        """A one-line description of the registry, which the registry catalog shows."""
+        return self._description
 
     # -- registration -------------------------------------------------------
 
