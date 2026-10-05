@@ -2837,6 +2837,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tfp_nuts` wrote none; both now write `diverging`, so read
   `annotations["arviz"]["sample_stats"]["diverging"]` in place of
   `["is_divergent"]`.
+- **`pyabc_smcabc` documents its seed.** Its docstring said that `random_seed`
+  defaults to 0. An omitted `random_seed` makes the run's seed a workflow-owned
+  random event, which `workflow_run(seed=...)` fixes, as the docstring now
+  states.
 - **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
   checked that the declared spec unifies with the produced one and then stored
   the produced spec, so a declared dtype or support was lost wherever the
