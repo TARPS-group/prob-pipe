@@ -810,6 +810,24 @@ class Function(Node, TrackedTerm, Annotated):
         return self._output_label
 
     @property
+    def effective_workflow_kind(self) -> WorkflowKind:
+        """The orchestration mode a call of this function runs under.
+
+        The ``workflow_kind`` control decides it, and ``DEFAULT`` defers to the
+        global ``prefect_config.workflow_kind``, read each time the property is
+        read. When both are ``DEFAULT``, orchestration is ``OFF``. A requested
+        ``TASK`` or ``FLOW`` falls back to ``OFF`` when Prefect is not
+        installed. Until the call engine is installed, a call evaluates plainly,
+        so the mode is ``OFF``.
+
+        Warns
+        -----
+        UserWarning
+            If ``TASK`` or ``FLOW`` is requested and Prefect is not installed.
+        """
+        return _workflow_kind_engine(self)
+
+    @property
     def options(self) -> Mapping[str, Any]:
         """The effective engine controls, separate from domain arguments.
 
@@ -1119,10 +1137,15 @@ def _plain_invoke(
     )
 
 
+def _plain_workflow_kind(function: Function, /) -> WorkflowKind:
+    return WorkflowKind.OFF
+
+
 _call_engine: Callable[..., Any] = _plain_call
 _check_engine: Callable[..., Any] = _plain_check
 _apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext
 _invoke_engine: Callable[..., Any] = _plain_invoke
+_workflow_kind_engine: Callable[[Function], WorkflowKind] = _plain_workflow_kind
 
 
 def install_call_engine(engine: Callable[..., Any]) -> None:
@@ -1139,8 +1162,10 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
         Function. It may also provide ``check(function, *args, **kwargs)``,
         which serves :meth:`Function.check`; ``apply_scope()``, which returns
         the context manager :meth:`Function.apply` enters around plain
-        evaluation; and ``invoke(function, values, context)``, which realizes
-        the one point :meth:`Function.apply` evaluates.
+        evaluation; ``invoke(function, values, context)``, which realizes the
+        one point :meth:`Function.apply` evaluates; and
+        ``workflow_kind(function)``, which serves
+        :attr:`Function.effective_workflow_kind`.
 
     Raises
     ------
@@ -1150,7 +1175,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
         If a different engine is already installed. Installing the same engine
         again changes nothing.
     """
-    global _call_engine, _check_engine, _apply_scope, _invoke_engine
+    global _call_engine, _check_engine, _apply_scope, _invoke_engine, _workflow_kind_engine
     if not callable(engine):
         raise TypeError("The Function call engine must be callable")
     if _call_engine is not _plain_call and _call_engine is not engine:
@@ -1159,6 +1184,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
     _check_engine = getattr(engine, "check", _plain_check)
     _apply_scope = getattr(engine, "apply_scope", nullcontext)
     _invoke_engine = getattr(engine, "invoke", _plain_invoke)
+    _workflow_kind_engine = getattr(engine, "workflow_kind", _plain_workflow_kind)
 
 
 # ---------------------------------------------------------------------------

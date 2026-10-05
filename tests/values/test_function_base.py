@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    WorkflowKind,
     function,
     sample,
     workflow_method,
@@ -50,6 +52,81 @@ def _unnamed_callables():
             return x + 1
 
     return {"partial": partial(add, 1), "instance": AddOne()}
+
+
+class TestCallEngineInstallation:
+    @pytest.fixture
+    def base(self, monkeypatch):
+        """The value layer with no engine installed, restored after the test."""
+        import probpipe.values._function_base as base
+
+        monkeypatch.setattr(base, "_call_engine", base._plain_call)
+        monkeypatch.setattr(base, "_check_engine", base._plain_check)
+        monkeypatch.setattr(base, "_apply_scope", nullcontext)
+        monkeypatch.setattr(base, "_invoke_engine", base._plain_invoke)
+        monkeypatch.setattr(base, "_workflow_kind_engine", base._plain_workflow_kind)
+        return base
+
+    @pytest.fixture
+    def installation(self, base):
+        events = []
+
+        class Engine:
+            def __call__(self, function, /, *args, **kwargs):
+                events.append("call")
+                return function.apply(*args, **kwargs)
+
+            @staticmethod
+            @contextmanager
+            def apply_scope():
+                events.append("enter")
+                try:
+                    yield
+                finally:
+                    events.append("exit")
+
+            @staticmethod
+            def workflow_kind(function):
+                return WorkflowKind.TASK
+
+        engine = Engine()
+        base.install_call_engine(engine)
+        return base, engine, events
+
+    def test_installing_the_installed_engine_again_changes_nothing(self, installation):
+        base, engine, events = installation
+        base.install_call_engine(engine)
+        value = object()
+        wrapped = Function("value", lambda: value, workflow_kind=WorkflowKind.OFF)
+        assert wrapped() is value
+        assert wrapped.apply() is value
+        assert events == ["call", "enter", "exit", "enter", "exit"]
+        assert wrapped.effective_workflow_kind is WorkflowKind.TASK
+
+    @pytest.mark.parametrize(
+        ("replacement", "error", "message"),
+        [
+            (lambda function: None, RuntimeError, "already installed"),
+            (None, TypeError, "must be callable"),
+        ],
+        ids=["another-engine", "not-callable"],
+    )
+    def test_a_refused_installation_keeps_the_installed_engine(
+        self, installation, replacement, error, message
+    ):
+        base, _, events = installation
+        with pytest.raises(error, match=message):
+            base.install_call_engine(replacement)
+        wrapped = Function("value", lambda: 7)
+        assert wrapped() == 7
+        assert events == ["call", "enter", "exit"]
+        assert wrapped.effective_workflow_kind is WorkflowKind.TASK
+
+    def test_without_an_engine_a_call_evaluates_plainly_with_orchestration_off(self, base):
+        value = object()
+        wrapped = Function("value", lambda: value, workflow_kind=WorkflowKind.TASK)
+        assert wrapped.effective_workflow_kind is WorkflowKind.OFF
+        assert wrapped() is value
 
 
 class TestFunctionDeclarations:

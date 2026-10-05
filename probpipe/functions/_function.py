@@ -56,6 +56,7 @@ from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..values._function_base import (
+    _WARNING_SKIP_PREFIXES,
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
@@ -183,14 +184,12 @@ def function(
 
 
 def effective_workflow_kind(function: Function) -> WorkflowKind:
-    """Resolve the effective orchestration mode for this instance.
+    """The orchestration mode of *function*, as :attr:`Function.effective_workflow_kind` states it.
 
-    Per-instance ``workflow_kind`` takes precedence over the global config.
-    ``DEFAULT`` means "defer"; if both levels are ``DEFAULT``, orchestration is
-    disabled. Prefect orchestration is opt-in.
-
-    If ``TASK`` or ``FLOW`` is requested but Prefect is unavailable, the mode
-    falls back to ``OFF``.
+    The function's ``workflow_kind`` control takes precedence over the global
+    configuration, and ``DEFAULT`` defers to it; when both are ``DEFAULT``,
+    orchestration is ``OFF``. A requested ``TASK`` or ``FLOW`` falls back to
+    ``OFF``, with a warning, when Prefect is not installed.
     """
     raw = function.options["workflow_kind"]
 
@@ -205,7 +204,7 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
         warnings.warn(
             f"workflow_kind={kind!r} requested but Prefect is not installed. "
             "Falling back to OFF. Install with: pip install probpipe[prefect]",
-            stacklevel=2,
+            skip_file_prefixes=_WARNING_SKIP_PREFIXES,
         )
         return WorkflowKind.OFF
 
@@ -219,7 +218,7 @@ def _make_execution_config(
 ) -> _execution.WorkflowExecutionConfig:
     """Build resolved execution metadata for row-wise call dispatch."""
     if mode is None:
-        match effective_workflow_kind(function):
+        match function.effective_workflow_kind:
             case WorkflowKind.TASK:
                 mode = "prefect_task"
             case WorkflowKind.FLOW:
@@ -416,7 +415,7 @@ def _run_call(
             ),
         )
 
-    workflow_kind = effective_workflow_kind(function)
+    workflow_kind = function.effective_workflow_kind
     _broker._record_active_requested_execution(
         function.options["dispatch"],
         workflow_kind.value,
@@ -1266,6 +1265,11 @@ class _CallEngine:
     def apply_scope() -> AbstractContextManager[None]:
         """The scope plain evaluation runs in: workflow admission and RNG ownership."""
         return _apply_scope()
+
+    @staticmethod
+    def workflow_kind(function: Function) -> WorkflowKind:
+        """The orchestration mode that :attr:`Function.effective_workflow_kind` reports."""
+        return effective_workflow_kind(function)
 
 
 #: The installed engine.
