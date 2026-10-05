@@ -18,8 +18,11 @@ import pytest
 from probpipe import (
     Function,
     Normal,
+    NumericArraySpec,
+    OpaqueSpec,
     OutputSpec,
     Provenance,
+    RecordSpec,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
     UnmanagedConcurrentWorkflowEntryError,
@@ -992,8 +995,12 @@ class TestReplayPreflight:
         [
             ({"output_label": "a"}, {"output_label": "b"}),
             ({"output_spec": OutputSpec(a=None)}, {"output_spec": OutputSpec(b=None)}),
+            (
+                {"output_label": "a", "output_spec": NumericArraySpec(())},
+                {"output_label": "b", "output_spec": NumericArraySpec(())},
+            ),
         ],
-        ids=["output-label", "declared-component"],
+        ids=["output-label", "declared-component", "default-component"],
     )
     def test_a_renamed_output_replays_to_the_same_draws(self, before, after):
         """A rename changes no value, so the replay reproduces the draws under the new names."""
@@ -1014,6 +1021,42 @@ class TestReplayPreflight:
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert list(replayed.event_spec.components) == ["b"]
+
+    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    def test_output_contract_drift_fails_before_sampling(self, change):
+        record = RecordSpec(left=(), right=())
+        declaration = OutputSpec(bundle=record)
+        baseline = Function(
+            "identity",
+            replayable_identity,
+            output_label="result",
+            output_spec=declaration,
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        law = Normal("left", 0.0, 1.0) * Normal("right", 0.0, 1.0)
+        with workflow_run(seed=4):
+            original = baseline(value=law)
+        declarations = {
+            "shape": OutputSpec(bundle=RecordSpec(left=(2,), right=())),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(record),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity",
+            replayable_identity,
+            output_label="result",
+            output_spec=declarations[change],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+        with (
+            patch.object(law, "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayCompatibilityError, match="callable"),
+            replay_run(original.provenance),
+        ):
+            changed(value=law)
 
     def test_plan_drift_fails_before_distribution_sampling(self):
         workflow = Function(

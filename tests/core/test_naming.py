@@ -26,6 +26,8 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
+    condition_on,
+    convert,
     log_prob,
     mean,
     prob,
@@ -226,6 +228,47 @@ class TestAnOperationLabelsItsResultByItsLaw:
         given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape)
 
         assert given.label == "height"
+
+    @staticmethod
+    def _params():
+        return (Normal("x", 0.0, 1.0) * Normal("y", 2.0, 3.0)).with_label("params")
+
+    def test_a_record_mean_takes_the_laws_label_and_names_its_components(
+        self, full_provenance_mode
+    ):
+        law = self._params()
+        result = mean(law)
+        assert result.label == "params"
+        assert list(result.keys()) == ["mean(x)", "mean(y)"]
+        assert float(result["mean(x)"]) == 0.0
+        assert float(result["mean(y)"]) == 2.0
+        assert result.provenance.parents[0].parent is mean
+        assert result.provenance.parents[1].parent is law
+
+    def test_conditioning_on_a_factor_takes_the_label_of_the_factor_it_leaves(
+        self, full_provenance_mode
+    ):
+        """Fixing the whole event of a factor leaves the other factor (VI.6)."""
+        law = self._params()
+        result = condition_on(law, {"x": 1.0})
+        assert result.label == "y"
+        assert tuple(result.event_spec.components) == ("y",)
+        assert tuple(law.event_spec.components) == ("x", "y")
+        assert float(mean(result)) == 2.0
+        assert float(variance(result)) == 9.0
+        assert result.provenance.parents[0].parent is condition_on
+        assert result.provenance.parents[1].parent is law
+
+    def test_a_converted_law_keeps_its_label(self, full_provenance_mode):
+        law = Normal("theta", 2.0, 3.0)
+        result = convert(law, Normal)
+        assert result is not law
+        assert result.label == "theta"
+        assert tuple(result.event_spec.components) == ("theta",)
+        assert float(mean(result)) == 2.0
+        assert float(variance(result)) == 9.0
+        assert result.provenance.parents[0].parent is convert
+        assert result.provenance.parents[1].parent is law
 
 
 class TestTheOutputBoundaryNamesEveryKindAlike:

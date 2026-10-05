@@ -512,6 +512,41 @@ class TestFunctionHashing:
         assert fingerprint(build(before, label="renamed", output_label="relabeled")) == baseline
         assert fingerprint(build(OutputSpec(a=NumericArraySpec((3,))))) != baseline
 
+    @pytest.mark.parametrize(
+        "declaration",
+        [None, OutputSpec(value=NumericArraySpec(())), NumericArraySpec(())],
+        ids=["undeclared", "explicit-component", "default-component"],
+    )
+    def test_an_output_label_changes_no_identity(self, declaration):
+        """A component that defaults to the output label is a name, so it changes no value."""
+
+        def identity(value):
+            return value
+
+        first = Function("identity", identity, output_label="first", output_spec=declaration)
+        second = Function("identity", identity, output_label="second", output_spec=declaration)
+        assert fingerprint(first) == fingerprint(second)
+        assert fingerprint(first) == fingerprint(first.with_label("display"))
+
+    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    def test_output_contract_participates_in_function_fingerprint(self, change):
+        def identity(value):
+            return value
+
+        declaration = OutputSpec(bundle=RecordSpec(field=()))
+        baseline = Function("identity", identity, output_label="result", output_spec=declaration)
+        declarations = {
+            "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(RecordSpec(field=())),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity", identity, output_label="result", output_spec=declarations[change]
+        )
+        assert fingerprint(baseline) != fingerprint(changed)
+        assert fingerprint(baseline) == fingerprint(baseline.with_label("display"))
+
     def test_callable_fingerprint_tracks_frozen_signature_declaration(self):
         def build(signature: inspect.Signature) -> Function:
             def identity(x):

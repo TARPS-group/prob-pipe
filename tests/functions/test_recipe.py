@@ -19,10 +19,14 @@ from probpipe import (
     Function,
     InputSpec,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueSpec,
+    OutputSpec,
     Provenance,
     ProvenanceMode,
+    RecordSpec,
     ReplayCompatibilityError,
     replay_run,
     sample,
@@ -451,6 +455,52 @@ class TestWorkflowRecipeRecording:
 
 
 class TestWorkflowCallableAnchor:
+    @pytest.mark.parametrize(
+        "declaration",
+        [None, OutputSpec(value=NumericArraySpec(())), NumericArraySpec(())],
+        ids=["undeclared", "explicit-component", "default-component"],
+    )
+    def test_an_output_label_changes_no_anchor(self, declaration):
+        """A component that defaults to the output label is a name, so it changes no value."""
+        first = Function(
+            "identity", replayable_identity, output_label="first", output_spec=declaration
+        )
+        second = Function(
+            "identity", replayable_identity, output_label="second", output_spec=declaration
+        )
+        anchor = _callable.capture_function_anchor(first)
+        other = _callable.capture_function_anchor(second)
+        assert anchor.supported and other.supported
+        assert anchor.controls() == other.controls()
+        assert (
+            anchor.controls()
+            == _callable.capture_function_anchor(first.with_label("display")).controls()
+        )
+
+    @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
+    def test_output_contract_participates_in_callable_anchor(self, change):
+        declaration = OutputSpec(bundle=RecordSpec(field=()))
+        baseline = Function(
+            "identity", replayable_identity, output_label="result", output_spec=declaration
+        )
+        declarations = {
+            "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
+            "kind": OutputSpec(bundle=OpaqueSpec()),
+            "packaging": OutputSpec(RecordSpec(field=())),
+            "declaration": None,
+        }
+        changed = Function(
+            "identity", replayable_identity, output_label="result", output_spec=declarations[change]
+        )
+        anchor = _callable.capture_function_anchor(baseline)
+        other = _callable.capture_function_anchor(changed)
+        assert anchor.supported and other.supported
+        assert anchor.sha256 != other.sha256
+        assert (
+            anchor.controls()
+            == _callable.capture_function_anchor(baseline.with_label("display")).controls()
+        )
+
     def test_callable_canonical_json_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="Out of range float values"):
             _callable._canonical_json({"value": float("nan")})

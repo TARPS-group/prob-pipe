@@ -9,7 +9,7 @@ import pytest
 
 import probpipe
 import probpipe.functions as node
-from probpipe import EmpiricalDistribution, Function, Normal, function, workflow_run
+from probpipe import EmpiricalDistribution, Function, Normal, WorkflowKind, function, workflow_run
 
 
 def test_function_is_the_only_public_wrapper_api():
@@ -334,6 +334,42 @@ def test_bindable_workflow_control_name_does_not_override():
         result = wf(x=normal, n_broadcast_samples=4)
 
     assert result.num_atoms == 5
+
+
+def test_with_options_clears_workers_and_resets_sample_count():
+    wrapped = Function(
+        "identity", lambda x: x, dispatch="thread", max_workers=2, n_broadcast_samples=7
+    )
+    unchanged = wrapped.with_options(include_inputs=True)
+    assert unchanged.options["max_workers"] == 2
+    assert unchanged.options["n_broadcast_samples"] == 7
+
+    reset = wrapped.with_options(max_workers=None, n_broadcast_samples=None)
+    defaults = Function("defaults", lambda x: x, dispatch="thread")
+    assert reset.options == defaults.options
+    assert wrapped.options["max_workers"] == 2
+    assert wrapped.options["n_broadcast_samples"] == 7
+    with workflow_run(seed=3):
+        result = reset(Normal("x", 0, 1))
+    assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+
+
+@pytest.mark.parametrize(
+    ("control", "default", "error", "message"),
+    [
+        ("dispatch", "auto", ValueError, "dispatch must"),
+        ("workflow_kind", WorkflowKind.DEFAULT, TypeError, "WorkflowKind"),
+    ],
+)
+def test_a_view_resets_a_control_that_construction_refuses_as_none(
+    control, default, error, message
+):
+    """A view's None resets a control to its default (V.2); construction refuses it."""
+    wrapped = Function("identity", lambda x: x, dispatch="sequential")
+    configured = wrapped.with_options(workflow_kind=WorkflowKind.OFF)
+    assert configured.with_options(**{control: None}).options[control] == default
+    with pytest.raises(error, match=message):
+        Function("identity", lambda x: x, **{control: None})
 
 
 @pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "with_options"])
