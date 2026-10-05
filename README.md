@@ -157,15 +157,13 @@ ProbPipe requires Python 3.12 or later. It is not yet on PyPI, so it installs fr
 pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
 ```
 
-The [installation page](https://tarps-group.github.io/prob-pipe/get_started/installation/) gives the commands for Google Colab and uv, and the extras that add backends such as Stan and PyMC.
+The [installation page](https://tarps-group.github.io/prob-pipe/get_started/installation/) provides guidance for installing ProbPipe directly using uv or with Google Colab.
 
 ## Learn more
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
-- [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in ten minutes, with diagnostics and a predictive check.
-- [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) follow one analysis of a moose population, from a first model to forecasts that update as each count arrives, and they end with a model that can only be simulated.
-- [The API reference](https://tarps-group.github.io/prob-pipe/api/) documents every public name.
+- [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in more detail, including demonstrating how to use built-in diagnostics and perform a predictive check.
+- [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) work through a complete statistical analysis of a moose population, including model checks, model elaboration, forecasting, and fitting models with likelihood-free methods.
+- [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
 - [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
 
 > **Human-validated** by Jonathan Huggins on 2026-10-04.
