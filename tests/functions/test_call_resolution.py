@@ -74,8 +74,6 @@ def _resolve_call(
     *args,
     bind=None,
     module=None,
-    default_n_broadcast_samples=20,
-    default_include_inputs=False,
     **call_inputs,
 ):
     info = _binding.make_signature_info(func)
@@ -87,8 +85,6 @@ def _resolve_call(
         module=module,
         dependency_type=Node,
         function_name=getattr(func, "__name__", "workflow"),
-        default_n_broadcast_samples=default_n_broadcast_samples,
-        default_include_inputs=default_include_inputs,
     )
 
 
@@ -179,8 +175,8 @@ class TestWorkflowCallHelpers:
         }
 
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        assert _resolve_call(add_func, 1.0, 2.0).values == {"x": 1.0, "y": 2.0}
-        assert _resolve_call(add_func, 1.0, y=2.0).values == {"x": 1.0, "y": 2.0}
+        assert _resolve_call(add_func, 1.0, 2.0) == {"x": 1.0, "y": 2.0}
+        assert _resolve_call(add_func, 1.0, y=2.0) == {"x": 1.0, "y": 2.0}
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
         with pytest.raises(TypeError, match="multiple values"):
@@ -191,14 +187,14 @@ class TestWorkflowCallHelpers:
 
         call = _resolve_call(identity, x=1.0, scale=2.0)
 
-        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
+        assert call == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, kwargs={"scale": 2.0})
 
-        assert call.values == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
+        assert call == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -216,14 +212,12 @@ class TestWorkflowCallHelpers:
             seed=123,
         )
 
-        assert call.values == {
+        assert call == {
             "x": "value",
             "n_broadcast_samples": 6,
             "include_inputs": True,
             "seed": 123,
         }
-        assert call.overrides.n_broadcast_samples == 20
-        assert call.overrides.include_inputs is False
 
     def test_bind_module_and_function_defaults_resolve_in_precedence_order(self):
         dep = DataNode()
@@ -235,8 +229,8 @@ class TestWorkflowCallHelpers:
         call = _resolve_call(step, module=module, bind={"scale": 2.0})
         override = _resolve_call(step, module=module, bind={"scale": 2.0}, y=3.0)
 
-        assert call.values == {"dep": dep, "x": 5.0, "y": 7.0, "scale": 2.0}
-        assert override.values == {"dep": dep, "x": 5.0, "y": 3.0, "scale": 2.0}
+        assert call == {"dep": dep, "x": 5.0, "y": 7.0, "scale": 2.0}
+        assert override == {"dep": dep, "x": 5.0, "y": 3.0, "scale": 2.0}
 
     def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
         def step(dep: DataNode):
