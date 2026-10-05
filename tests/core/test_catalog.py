@@ -414,6 +414,13 @@ class TestConverterEntries:
             source_types, target_types = s.supported_types
             assert all(isinstance(t, type) for t in (*source_types, *target_types))
 
+    def test_each_shipped_converter_describes_itself(self) -> None:
+        summaries = converter_registry.entry_summaries()
+        assert {s.name for s in summaries} >= {"tfp", "empirical", "moment_match", "kde"}
+        for s in summaries:
+            assert s.description, f"converter {s.name!r} declares no description"
+            assert "\n" not in s.description
+
     def test_describe_entry_round_trips(self) -> None:
         [first, *_] = converter_registry.entry_summaries()
         assert converter_registry.describe_entry(first.name) == first
