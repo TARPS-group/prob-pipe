@@ -688,7 +688,7 @@ class TestApplyContract:
         assert result.level_names == ("row",)
         assert result.batch_shape == (2,)
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec.shape == (3,)
+        assert result.element_spec == NumericArraySpec((3,), dtype="float32")
         np.testing.assert_allclose(result.values, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
         with pytest.raises(ApplicabilityError, match="already bound"):
@@ -1019,7 +1019,7 @@ class TestSymbolicCalls:
         result = wrapped(rows)
 
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec.shape == (2,)
+        assert result.element_spec == NumericArraySpec((2,), dtype="float32")
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(
             result.values,

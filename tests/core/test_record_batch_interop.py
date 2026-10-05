@@ -1020,7 +1020,8 @@ class TestBatchValuedRowAggregation:
         result = collect(source)
         assert result.level_names == ("row", "inner")
         assert result.axis_groups == ((3,), (2,))
-        assert result.element_spec == inner.element_spec
+        # The rows are stored as one JAX array, whose dtype the declaration records.
+        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_array_equal(np.asarray(result), expected)
 
     def test_array_batch_rows_disagreeing_on_their_multiplicity_are_refused(self):

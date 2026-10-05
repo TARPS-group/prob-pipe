@@ -2819,6 +2819,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A sweep or a lift records the dtype its batch stores.** The rows of a sweep
+  and the evaluations of a lift are stacked into one JAX array, which holds
+  their canonical dtype, so while JAX's 64-bit mode is off a 64-bit NumPy row
+  is stored as a 32-bit one. A declared, inferred, or tracked 64-bit dtype was
+  recorded in the batch's element declaration and in a lift's event
+  declaration all the same. Each now records the stored dtype, an array
+  element always and a record field where its declaration states a dtype, so a
+  declaration of `float64` yields a batch that declares and holds `float32`
+  while 64-bit mode is off. A sequential sweep and a JAX sweep therefore agree
+  on the dtype when the records they sweep declare none, where the sequential
+  one recorded none.
 - **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
   sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
   of a posterior from `learn_amortized_posterior` printed one, and a notebook
