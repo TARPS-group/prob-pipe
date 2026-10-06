@@ -28,7 +28,20 @@ from ._inference_utils import (
 class PyMCNutsMethod(InferenceMethod):
     """PyMC NUTS, registered as ``pymc_nuts`` at priority 82.
 
-    Applies to a ``PyMCModel``.
+    Applies to a ``PyMCModel``. Its ``method_options`` are:
+
+    - ``num_results``: the number of draws of each chain, which is 1000 unless
+      set;
+    - ``num_warmup``: the number of warmup steps of each chain, which is 500
+      unless set;
+    - ``num_chains``: the number of chains, which is 4 unless set;
+    - ``random_seed``: the sampler's seed, which a workflow-owned random event
+      draws unless set;
+    - ``cores``: the number of chains sampled in parallel, which is the smaller
+      of the chain count and the CPU count unless set;
+    - ``progress_bar``: whether PyMC's sampler draws its progress bar. The
+      sampler receives the option as ``progressbar``, which is ``True`` unless
+      set.
 
     Notes
     -----
@@ -38,7 +51,14 @@ class PyMCNutsMethod(InferenceMethod):
     ``PyMCModel`` too when nutpie is installed.
     """
 
-    _method_options = ("cores", "num_chains", "num_results", "num_warmup", "random_seed")
+    _method_options = (
+        "cores",
+        "num_chains",
+        "num_results",
+        "num_warmup",
+        "progress_bar",
+        "random_seed",
+    )
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
@@ -95,6 +115,7 @@ class PyMCNutsMethod(InferenceMethod):
                 cores=cores,
                 mp_ctx="spawn" if cores > 1 else None,
                 random_seed=random_seed,
+                progressbar=kwargs.get("progress_bar", True),
                 return_inferencedata=True,
             )
 
@@ -120,11 +141,23 @@ class PyMCADVIMethod(InferenceMethod):
     """PyMC ADVI, registered as ``pymc_advi``, opt-in-only.
 
     Automatic Differentiation Variational Inference for a ``PyMCModel``;
-    runs only when the caller pins ``method="pymc_advi"``.
+    runs only when the caller pins ``method="pymc_advi"``. Its
+    ``method_options`` are:
+
+    - ``num_iterations``: the number of optimization steps, which is 30000
+      unless set;
+    - ``num_results``: the number of draws of an empirical result, which is
+      1000 unless set;
+    - ``vi_method``: the variational method of PyMC's ``fit``, which is
+      ``"advi"`` unless set;
+    - ``random_seed``: the seed of ``fit``, which a workflow-owned random event
+      draws unless set;
+    - ``progress_bar``: whether ``fit`` draws its progress bar. ``fit``
+      receives the option as ``progressbar``, which is ``True`` unless set.
 
     Notes
     -----
-    With ``vi_method="advi"``, the default, the result is the fitted
+    With ``vi_method="advi"``, the result is the fitted
     mean-field family: a ``FactoredDistribution`` with one factor per
     parameter, the Gaussian ADVI fitted to the parameter's unconstrained value
     pushed through the bijector equal to PyMC's transform of it. The family
@@ -139,7 +172,7 @@ class PyMCADVIMethod(InferenceMethod):
     ``pymc_nuts`` fails would silently substitute VI for MCMC.
     """
 
-    _method_options = ("num_iterations", "num_results", "random_seed", "vi_method")
+    _method_options = ("num_iterations", "num_results", "progress_bar", "random_seed", "vi_method")
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
@@ -182,7 +215,12 @@ class PyMCADVIMethod(InferenceMethod):
         param_names = dist._conditioned_param_names(model)
         event_spec = OutputSpec(dist._parameter_record_for(model, param_names))
         with model:
-            approx = pm.fit(n=num_iterations, method=vi_method, random_seed=random_seed)
+            approx = pm.fit(
+                n=num_iterations,
+                method=vi_method,
+                random_seed=random_seed,
+                progressbar=kwargs.get("progress_bar", True),
+            )
         name = f"pymc_{vi_method}"
         if vi_method == "advi":
             family = _mean_field_family(approx, model, param_names)
