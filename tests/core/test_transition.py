@@ -1,5 +1,7 @@
 """Tests for probpipe.core.transition — iterate, with_conversion, with_resampling."""
 
+import contextlib
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,6 +15,7 @@ from probpipe import (
     iterate,
     with_conversion,
     with_resampling,
+    workflow_run,
 )
 from probpipe.values._function_base import Function
 
@@ -213,6 +216,24 @@ class TestWithConversion:
 # with_resampling
 # ---------------------------------------------------------------------------
 
+#: The particle count of the resampling-randomness tests.
+_PARTICLES = 100
+
+
+def ten_heavy_particles(dist, inp):
+    """The particles 0 to 99, of which the first ten hold the weight equally, so ESS / N is 0.1."""
+    log_w = jnp.where(jnp.arange(_PARTICLES) < 10, 0.0, -100.0)
+    atoms = jnp.arange(_PARTICLES, dtype=jnp.float32).reshape(_PARTICLES, 1)
+    return EmpiricalDistribution("x", atoms, Weights(log_weights=log_w))
+
+
+def _resampled_atoms(step, seed=None):
+    """The atoms of one step of *step*, in ``workflow_run(seed=seed)`` when *seed* is given."""
+    initial = EmpiricalDistribution("x", jnp.zeros((_PARTICLES, 1)))
+    with contextlib.nullcontext() if seed is None else workflow_run(seed=seed):
+        dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
+    return np.asarray(dists[-1].atoms.values)
+
 
 class TestWithResampling:
     def test_returns_function(self):
@@ -274,28 +295,33 @@ class TestWithResampling:
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert isinstance(dists[-1], MultivariateNormal)
 
-    def test_deterministic_seed(self):
-        """Resampling is deterministic across repeated calls with same seed."""
-        n = 100
-        log_w = jnp.full(n, -100.0).at[0].set(0.0)
-        samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
-        def weighted_step(dist, inp):
-            return EmpiricalDistribution("x", samples, Weights(log_weights=log_w))
+class TestResamplingRandomness:
+    """Each resampling is a workflow-owned random event of the enclosing scope."""
 
-        initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
+    def test_a_seeded_scope_reproduces_the_resampling(self):
+        """One wrapper called in two scopes of one seed resamples the same particles."""
+        step = with_resampling(ten_heavy_particles)
+        np.testing.assert_array_equal(
+            _resampled_atoms(step, seed=0), _resampled_atoms(step, seed=0)
+        )
 
-        step1 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
-        dists1 = iterate(step_fn=step1, initial=initial, inputs=[0.0, 0.0])
+    def test_another_seed_resamples_other_particles(self):
+        first = _resampled_atoms(with_resampling(ten_heavy_particles), seed=0)
+        second = _resampled_atoms(with_resampling(ten_heavy_particles), seed=1)
+        assert not np.array_equal(first, second)
 
-        step2 = with_resampling(weighted_step, ess_threshold=0.5, seed=42)
-        dists2 = iterate(step_fn=step2, initial=initial, inputs=[0.0, 0.0])
+    def test_two_resamplings_in_one_scope_differ(self):
+        initial = EmpiricalDistribution("x", jnp.zeros((_PARTICLES, 1)))
+        step = with_resampling(ten_heavy_particles)
+        with workflow_run(seed=0):
+            dists = iterate(step_fn=step, initial=initial, inputs=[0.0, 0.0])
+        assert not np.array_equal(dists[1].atoms.values, dists[2].atoms.values)
 
-        # Both assertions use explicit field-access — the auto-wrap field
-        # name is ``"x"`` (set on the initial ``EmpiricalDistribution``),
-        # not whatever the post-resampling internal default would be.
-        assert jnp.allclose(dists1[1].atoms.values, dists2[1].atoms.values)
-        assert jnp.allclose(dists1[2].atoms.values, dists2[2].atoms.values)
+    def test_a_resampling_outside_any_scope_is_fresh(self):
+        first = _resampled_atoms(with_resampling(ten_heavy_particles))
+        second = _resampled_atoms(with_resampling(ten_heavy_particles))
+        assert not np.array_equal(first, second)
 
 
 # ---------------------------------------------------------------------------
