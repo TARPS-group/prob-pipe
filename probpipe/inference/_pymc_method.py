@@ -45,10 +45,12 @@ class PyMCNutsMethod(InferenceMethod):
 
     Notes
     -----
-    An optimised backend: native PyMC NUTS, tailored to ``PyMCModel``. Tied
-    with ``cmdstan_nuts`` (82), which applies to a disjoint model class, and
-    below ``nutpie_nuts`` (88), whose Rust gradients are faster on a
-    ``PyMCModel`` too when nutpie is installed.
+    The method runs PyMC's own NUTS implementation. It passes
+    ``nuts_sampler="pymc"`` to ``pm.sample``, which otherwise runs nutpie
+    wherever nutpie is installed, and ``nutpie_nuts`` runs nutpie. Tied with
+    ``cmdstan_nuts`` (82), which applies to a disjoint model class, and below
+    ``nutpie_nuts`` (88), whose Rust gradients are faster on a ``PyMCModel``
+    when nutpie is installed.
     """
 
     _method_options = (
@@ -117,6 +119,7 @@ class PyMCNutsMethod(InferenceMethod):
                 random_seed=random_seed,
                 progressbar=kwargs.get("progress_bar", True),
                 return_inferencedata=True,
+                nuts_sampler="pymc",
             )
 
         # Extract in the trace's natural order; field_order lets

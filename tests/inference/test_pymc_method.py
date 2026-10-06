@@ -62,3 +62,15 @@ class TestMethodOptions:
             condition_on.with_options(method=method, method_options=options)(
                 normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
             )
+
+
+def test_pymc_nuts_runs_pymcs_own_sampler_where_nutpie_is_installed(normal_mean):
+    """``pm.sample`` runs nutpie wherever nutpie is installed unless told otherwise."""
+    pytest.importorskip("nutpie")
+    options = {**_BUDGETS["pymc_nuts"], "progress_bar": False}
+    posterior = condition_on.with_options(method="pymc_nuts", method_options=options)(
+        normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
+    )
+    attrs = posterior.annotations["arviz"].posterior.attrs
+    assert attrs["inference_library"] == "pymc"
+    assert "nutpie" not in {attrs.get("sampling_package"), attrs.get("inference_library")}

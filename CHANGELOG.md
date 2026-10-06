@@ -2811,6 +2811,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ResultSchemaError` whenever the source declared a support, as converting a
   `Gamma` law to `Normal` did. The result now has the family's own support, as
   `converter_registry.convert(..., check_support=False)` returns it.
+- **`pymc_nuts` runs PyMC's own NUTS sampler.** It called `pm.sample` without
+  choosing a NUTS implementation, and PyMC 6 then runs nutpie wherever nutpie
+  is installed, so `pymc_nuts` ran the sampler that `nutpie_nuts` runs while its
+  result recorded `method="pymc_nuts"`. It now passes `nuts_sampler="pymc"`.
 - **`pymc_nuts` and `pymc_advi` read the `progress_bar` method option.** They
   refused it with `TypeError`, so
   `condition_on.with_options(method_options={"progress_bar": False})` on a
