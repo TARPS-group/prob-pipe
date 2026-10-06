@@ -156,7 +156,26 @@ def rate(x):
 # and binds "obs" to the actual output length on each call
 ```
 
-**The result of a lift.** A distributional lift plans a `DistributionSpec` over the function's output declaration. An exact rule may return a Gaussian or transformed law; the sampling route constructs an empirical approximation. The atoms of an empirical result lie on one level named after the function's `output_label`, since a call names the level it mints after itself (II.5) and the atoms hold the function's outputs; an output that is itself a batch keeps its own levels after that one (VII.2). With no output declaration, the kind and component exposure are inferred at return by the same rule as a plain call: a record exposes its fields, and any other return is a whole term under `output_label`. A sweep plans a batch of the declared output kind, retaining the swept levels. With no output declaration, the elements' results must agree on one inferred spec; an empty sweep requires an explicit declaration sufficient to construct the result, so a name-only type hole is insufficient. A nested sweep returns a batch of laws. An operation's result rule follows the same distinction between declared type and chosen representation (VI.0).
+**The result of a lift.** Planning declares the result of a lifted call from the function's output declaration. The route that resolution selects then chooses the representation that realizes the declaration (V.7). The kind of the result depends on the lift's regime (V.5):
+
+1. **A broadcast** returns a law over the function's outputs, declared as a `DistributionSpec` whose event declaration is the output declaration. A closed-form rule may return a parametric law, such as a Gaussian, and the sampling lift returns an `EmpiricalDistribution`. An empirical result holds the outputs as its atoms, on one level named after the function's `output_label`, which labels those outputs. An output that is itself a batch keeps its own levels within each atom, after the atom level (VII.2).
+2. **A sweep** returns a batch of the output kind on the swept levels, with one element for each element swept.
+3. **A nested sweep** returns a `DistributionBatch` on the swept levels, whose element at each position is the law that the broadcast at that position returns.
+
+Without an output declaration, the result's declaration completes at return from the outputs, by the rule that **The declared output** states. The elements of a sweep must then complete to one declaration, and elements that disagree raise `ResultSchemaError` (V.10). An empty sweep has no output to complete from, so its output declaration must already be complete, with every type stated and every dimension bound.
+
+```python
+@function
+def growth(interest, years):
+    return (1.0 + interest) ** years
+
+interest = Normal("interest", 0.05, 0.02)
+horizons = NumericArrayBatch("years", jnp.array([5.0, 10.0, 20.0]), "horizon")
+
+growth(interest, 10.0)      # a broadcast: an EmpiricalDistribution whose atoms lie on the level growth
+growth(0.05, horizons)      # a sweep: a NumericArrayBatch on the level horizon
+growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of laws whose atoms lie on growth
+```
 
 **Including the inputs.** With `include_inputs=True`, the sampling lift returns a joint empirical law over inputs and outputs. Each lifted parameter contributes one component containing its complete draw, named by the parameter. A record draw remains nested even when it has one field. The output contributes exactly the components its `OutputSpec` exposes (II.2); a record exposed under `parameters` remains under that name. Plain inputs contribute no fields, since provenance records them. A collision between parameter and output component names raises at planning when known and at return otherwise. This control selects only routes that produce the joint of inputs and outputs. Grouping determines co-sampling, and the parameters determine the layout.
 
