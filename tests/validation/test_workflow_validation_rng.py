@@ -14,8 +14,10 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    ReplayCompatibilityError,
     conditional_distribution,
     predictive_check,
+    replay_run,
     sample,
     workflow_run,
 )
@@ -140,19 +142,25 @@ class TestPredictiveCheckBroker:
 
 
 class _FakeConditionOn:
-    """A stand-in for ``condition_on`` that records the seed each fit reads and returns zero draws.
+    """A stand-in for ``condition_on`` that records its observed values and returns zero draws.
 
-    A fit reads its seed through ``run_seed``, as an inference method does, so
-    the seed is a key of the workflow scope the fit runs in.
+    A fit also records the seed it reads through ``run_seed``, as an inference
+    method does, so the seed is a key of the workflow scope the fit runs in.
+    The evaluation of a kernel reads no seed.
     """
 
     def __init__(self):
         self.seeds = []
+        self.observations = []
+
+    def __call__(self, d, given):
+        self.observations.append(np.asarray(given["y"]))
+        return EmpiricalDistribution("beta", jnp.zeros((4, 1)))
 
     def with_options(self, *, method=None, method_options=None):
-        def fit(model, data):
+        def fit(d, given):
             self.seeds.append(integer_seed(run_seed(method_options or {}, "fake")))
-            return EmpiricalDistribution("beta", jnp.zeros((4, 1)))
+            return self(d, given)
 
         return fit
 
@@ -179,13 +187,6 @@ def _conjugate_calibration(**options):
     )
 
 
-def _draw_after(run_first) -> float:
-    """The draw that follows *run_first* in a workflow scope seeded 7."""
-    with workflow_run(seed=7):
-        run_first()
-        return float(sample.with_options(raw=True)(Normal("z", 0.0, 1.0)))
-
-
 class TestSimulationBasedCalibrationBroker:
     @staticmethod
     def _model():
@@ -193,51 +194,88 @@ class TestSimulationBasedCalibrationBroker:
         prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), label="beta")
         return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
-    def test_a_seeded_call_is_reproducible_and_each_fit_reads_its_own_seed(self, monkeypatch):
+    def test_a_call_in_a_seeded_scope_reproduces_its_ranks(self):
+        with workflow_run(seed=7):
+            first = _conjugate_calibration().ranks
+        with workflow_run(seed=7):
+            second = _conjugate_calibration().ranks
+
+        np.testing.assert_array_equal(first, second)
+
+    def test_another_seed_changes_the_ranks(self):
+        with workflow_run(seed=7):
+            first = _conjugate_calibration().ranks
+        with workflow_run(seed=8):
+            other = _conjugate_calibration().ranks
+
+        assert not np.array_equal(first, other)
+
+    def test_an_unscoped_call_draws_afresh(self):
+        # Eight ranks in {0, …, 10} agree by chance with probability about 5e-9.
+        first = _conjugate_calibration(num_simulations=8).ranks
+        second = _conjugate_calibration(num_simulations=8).ranks
+
+        assert not np.array_equal(first, second)
+
+    def test_each_replication_fit_reads_its_own_seed(self, monkeypatch):
         fake_condition_on = _FakeConditionOn()
         monkeypatch.setattr("probpipe.validation._calibration.condition_on", fake_condition_on)
 
-        def run(num_simulations):
+        def seeds():
             fake_condition_on.seeds.clear()
             with workflow_run(seed=7):
-                result = simulation_based_calibration(
+                simulation_based_calibration(
+                    self._model(), observed="y", num_simulations=5, num_posterior_draws=4
+                )
+            return tuple(fake_condition_on.seeds)
+
+        first = seeds()
+
+        assert len(set(first)) == 5
+        assert seeds() == first
+
+    def test_the_replications_observe_the_first_draw_of_the_call_whatever_the_posterior(
+        self, monkeypatch
+    ):
+        """Every replication's ``y`` is a row of the draw of the joint that the call claims first.
+
+        A fit reads a seed and a kernel's evaluation does not, so the two routes
+        claim different numbers of events per replication and still see the same data.
+        """
+        fake_condition_on = _FakeConditionOn()
+        monkeypatch.setattr("probpipe.validation._calibration.condition_on", fake_condition_on)
+        kernel = conditional_distribution(
+            "posterior",
+            lambda y: MultivariateNormal(loc=y[:1], cov=jnp.eye(1), label="beta"),
+            given_spec={"y": NumericArraySpec((3,))},
+        )
+        with workflow_run(seed=7):
+            first_draw = sample.with_options(raw=True)(self._model(), sample_shape=(3,))
+
+        for posterior in (None, kernel):
+            fake_condition_on.observations.clear()
+            with workflow_run(seed=7):
+                simulation_based_calibration(
                     self._model(),
                     observed="y",
-                    num_simulations=num_simulations,
+                    posterior=posterior,
+                    num_simulations=3,
                     num_posterior_draws=4,
                 )
-            return result.ranks.copy(), tuple(fake_condition_on.seeds)
+            np.testing.assert_array_equal(
+                np.stack(fake_condition_on.observations), np.asarray(first_draw["y"])
+            )
 
-        first_ranks, first_seeds = run(2)
-        second_ranks, second_seeds = run(2)
-        _, larger_seeds = run(5)
+    def test_a_key_keyword_raises_type_error(self):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'key'"):
+            _conjugate_calibration(key=jax.random.key(0))
 
-        np.testing.assert_array_equal(first_ranks, second_ranks)
-        assert first_seeds == second_seeds
-        assert len(set(larger_seeds)) == 5
-        assert larger_seeds[:2] == first_seeds
-
-    def test_an_omitted_key_claims_one_event_of_the_enclosing_scope(self):
-        one_event = _draw_after(lambda: sample(Normal("w", 0.0, 1.0)))
-
-        assert _draw_after(_conjugate_calibration) == one_event
-        assert _draw_after(lambda: _conjugate_calibration(num_simulations=2)) == one_event
-
-    def test_an_explicit_key_claims_no_event_of_the_enclosing_scope(self):
-        no_event = _draw_after(lambda: None)
-
-        assert _draw_after(lambda: _conjugate_calibration(key=jax.random.key(11))) == no_event
-
-    def test_an_explicit_key_reproduces_the_ranks_wherever_the_call_runs(self):
-        outside = _conjugate_calibration(key=jax.random.key(11)).ranks
+    def test_a_call_inside_replay_run_raises(self):
         with workflow_run(seed=7):
-            first_in_scope = _conjugate_calibration(key=jax.random.key(11)).ranks
-        with workflow_run(seed=8):
-            sample(Normal("w", 0.0, 1.0))
-            later_in_scope = _conjugate_calibration(key=jax.random.key(11)).ranks
+            recorded = sample(Normal("z", 0.0, 1.0))
 
-        np.testing.assert_array_equal(first_in_scope, outside)
-        np.testing.assert_array_equal(later_in_scope, outside)
+        with pytest.raises(ReplayCompatibilityError), replay_run(recorded.provenance):
+            _conjugate_calibration()
 
     def test_numpy_integer_counts_are_normalized_before_event_commit(self, monkeypatch):
         monkeypatch.setattr("probpipe.validation._calibration.condition_on", _FakeConditionOn())

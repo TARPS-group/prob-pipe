@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`simulation_based_calibration` calibrates any posterior, and a fit's
-  budgets go in `method_options`.** Its signature is
-  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None, key=None)`.
+- **`simulation_based_calibration` calibrates any posterior, takes its
+  randomness from the enclosing workflow scope, and reads a fit's budgets from
+  `method_options`.** Its signature is
+  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None)`.
   A `posterior` kernel, such as an amortized posterior, is evaluated at each
   replication's observed values, with no fit: its given slots take the observed
   fields of their names, and a kernel with one given slot, such as an amortized
@@ -21,10 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A `method` or `method_options` beside `posterior` raises `ValueError`. Each
   replication draws `num_posterior_draws` times from its posterior with
   `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
-  by its weights. The fit and the draws take their seeds from a workflow scope
-  of the replication's own, which `key` seeds. A fixed `key` therefore
-  reproduces the ranks wherever the call runs, and a call without one claims one
-  event of the enclosing workflow scope.
+  by its weights. The function claims the workflow-owned random events of the
+  enclosing scope in program order: one
+  `sample(model, sample_shape=(num_simulations,))` draws the `θ★` and `y` of
+  every replication, and then each replication forms its posterior and draws
+  from it. A call inside `workflow_run(seed=...)` therefore reproduces its
+  ranks, and an unscoped call draws afresh.
+  - `key` is removed: replace
+    `simulation_based_calibration(model, ..., key=jax.random.key(0))` with the
+    call inside `with workflow_run(seed=0):`.
   - The keyword budgets are retired, and a keyword other than the named
     parameters raises `TypeError`: replace
     `simulation_based_calibration(model, ..., num_warmup=500)` with
