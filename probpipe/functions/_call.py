@@ -5,7 +5,8 @@ signature by Python's rules, and each bound argument is admitted against what
 its parameter accepts: the kinds its role names where the Function declares
 roles, as an operation does, and otherwise its input declaration and its
 annotation. A violation of the call contract raises
-:class:`ApplicabilityError`.
+:class:`ApplicabilityError`. The module also decides the form in which the body
+receives each argument (:func:`presented_arguments`).
 """
 
 from __future__ import annotations
@@ -323,6 +324,62 @@ def _expects_value(expected: Any) -> bool:
     if expected is Any:
         return False
     return not (_normalization.is_distribution_hint(expected) or _consumes_kernel(expected))
+
+
+def presented_arguments(
+    info: FunctionSignatureInfo, values: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """The arguments a body receives, in raw form where an annotation names the raw form's class.
+
+    A tracked argument is presented as its raw form when its parameter's
+    annotation names a class that the raw form is an instance of and the
+    argument is not. A body annotated ``pd.Series`` therefore receives the
+    ``Series`` that a record field holds, and one annotated ``jax.Array`` the
+    array that a ``NumericArray`` holds. A union annotation names the classes of
+    its arms, and a parametrized annotation, such as ``npt.NDArray[np.float64]``,
+    names the class it parametrizes. Every other argument is presented as it is,
+    as at an unannotated parameter or at one annotated ``Any`` or with the
+    argument's kind.
+
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    values : Mapping of str to Any
+        One point's arguments, shaped by the signature.
+
+    Returns
+    -------
+    Mapping of str to Any
+        The arguments, shaped by the signature, as the body receives them.
+    """
+    presented: dict[_binding.FunctionInputRef, Any] = {}
+    for ref in _binding.iter_input_refs(info, values):
+        value = _binding.input_ref_value(values, ref)
+        form = _raw_form_named(value, _binding.input_ref_hint(info, ref))
+        if form is not value:
+            presented[ref] = form
+    return _binding.replace_input_refs(values, presented) if presented else values
+
+
+def _raw_form_named(value: Any, hint: Any) -> Any:
+    """*value*'s raw form if *hint* names a class of that form and not of *value*, else *value*."""
+    if not isinstance(value, TrackedTerm) or hint is Any:
+        return value
+    classes = tuple(
+        named
+        for named in map(_normalization._hint_class, _normalization._arms(hint))
+        if isinstance(named, type)
+    )
+    try:
+        if not classes or isinstance(value, classes):
+            return value
+    except TypeError:
+        # A class that refuses an instance check, as a protocol that is not
+        # runtime checkable does, names no raw form.
+        return value
+    raw = value.raw()
+    return raw if isinstance(raw, classes) else value
 
 
 def arrived_kind(value: Any) -> type[TermSpec]:

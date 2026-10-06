@@ -131,6 +131,18 @@ def function(
     wrapped function whenever they can bind to that function. Use
     ``workflow.with_options(...)(...)`` for one-call ProbPipe controls.
 
+    A parameter annotated with a class of raw values, such as ``pd.Series`` or
+    ``jax.Array``, receives the raw form of an argument, or of each element or
+    draw that a lift passes to it, when that form is an instance of the class.
+    A function written for pandas therefore runs on a record field that holds
+    a ``Series``::
+
+        @function
+        def differences(c: pd.Series) -> jax.Array:
+            return jnp.asarray(c.diff().dropna().to_numpy())
+
+        differences(Record("r", c=pd.Series([1.0, 2.0, 4.0]))["c"])
+
     Parameters
     ----------
     _func : Callable or None
@@ -1206,12 +1218,28 @@ def _run_registered_rule(
 
 @contextmanager
 def _apply_scope() -> Generator[None, None, None]:
-    """Preserve workflow admission and RNG ownership around raw evaluation."""
+    """The scope of one :meth:`Function.apply` evaluation, which runs as a plain call's body runs.
+
+    The evaluation is the one point of a lazy invocation, in the active
+    workflow scope or in an ephemeral one outside any scope. Each
+    workflow-owned draw of the body is therefore its own event, in program
+    order, and an evaluation that draws nothing commits no occurrence of the
+    scope.
+
+    Raises
+    ------
+    ReplayCompatibilityError
+        Inside ``replay_run``.
+    UnmanagedConcurrentWorkflowEntryError
+        If the active workflow scope belongs to another process, thread, or
+        asyncio task, or has exited.
+    """
     _context._assert_workflow_admission()
     _replay._reject_function_apply()
     with (
         _context._ephemeral_workflow_run(),
-        _broker._function_stochastic_scope(),
+        _broker._function_stochastic_scope() as broker,
+        _execution.point_work_item_scope(broker),
     ):
         yield
 
@@ -1238,14 +1266,16 @@ class _CallEngine:
     ) -> Any:
         """The one point :meth:`Function.apply` evaluates, with no lifting, tracking, or provenance.
 
-        A Function's body runs on *values*. A Function realized by routes
+        A Function's body runs on *values*, each presented as
+        :func:`._call.presented_arguments` states. A Function realized by routes
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
         candidates = function._route_candidates(function.options)
         if candidates is None:
+            arguments = _call.presented_arguments(function._signature_info, values)
             return function._implementation.invoke(
-                _binding.values_to_bound_arguments(function.signature, values), context=context
+                _binding.values_to_bound_arguments(function.signature, arguments), context=context
             )
         _call.admit_arguments(
             function._signature_info,
@@ -1263,7 +1293,7 @@ class _CallEngine:
 
     @staticmethod
     def apply_scope() -> AbstractContextManager[None]:
-        """The scope plain evaluation runs in: workflow admission and RNG ownership."""
+        """The scope :meth:`Function.apply` runs in: one point of a lazy invocation."""
         return _apply_scope()
 
     @staticmethod

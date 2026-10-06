@@ -220,6 +220,15 @@ class TestEventCompletion:
         assert law.atoms.level_names == ("draw",)
         assert list(law.event_spec.components) == ["theta"]
 
+    def test_level_takes_a_name_that_is_no_identifier(self):
+        law = EmpiricalDistribution("theta", _VALUES, level="my level")
+        assert law.atoms.level_names == ("my level",)
+
+    def test_a_label_that_is_no_identifier_names_the_default_level(self):
+        law = EmpiricalDistribution("my law", _VALUES)
+        assert list(law.event_spec.components) == ["my law"]
+        assert law.atoms.level_names == ("my law",)
+
     def test_level_is_refused_with_a_batch(self):
         atoms = NumericArrayBatch("draws", _VALUES, "draw", element_spec=NumericArraySpec(()))
         with pytest.raises(TypeError, match="with_level_names"):
@@ -229,7 +238,8 @@ class TestEventCompletion:
         ("level", "error"),
         [
             pytest.param(3, TypeError, id="not-a-string"),
-            pytest.param("not a name", ValueError, id="not-an-identifier"),
+            pytest.param("a/b", ValueError, id="contains-a-slash"),
+            pytest.param("", ValueError, id="empty"),
         ],
     )
     def test_an_invalid_level_raises(self, level, error):

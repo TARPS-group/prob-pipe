@@ -514,6 +514,25 @@ class TestAddLoo:
         assert int(loo_ds["n_samples"]) == expected.n_samples
         assert int(loo_ds["n_data_points"]) == expected.n_data_points
 
+    def test_records_the_pointwise_contributions_to_elpd_loo(self):
+        rng = np.random.default_rng(123)
+        post = _FakePosterior(with_arviz_log_likelihood=False)
+        posterior_ds = xr.Dataset(
+            {"theta": xr.DataArray(rng.normal(size=(2, 80)), dims=["chain", "draw"])}
+        )
+        _add_group(post, "arviz/posterior", posterior_ds)
+
+        add_loo(post, log_likelihood=rng.normal(loc=-1.0, scale=0.1, size=(2, 80, 6)))
+
+        loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
+        assert loo_ds["loo_i"].dims == ("obs",)
+        assert loo_ds["loo_i"].shape == (6,)
+        # The LOO estimate of the expected log predictive density is the sum of
+        # its pointwise contributions. Measured gap over five seeds: 0.
+        np.testing.assert_allclose(
+            float(loo_ds["loo_i"].sum()), float(loo_ds["elpd_loo"]), rtol=1e-12
+        )
+
 
 # ---------------------------------------------------------------------------
 # _get_arviz_tree fallback paths
