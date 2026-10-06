@@ -967,22 +967,25 @@ def _logistic_joint():
 
 def _unnormalized_pair():
     """The unnormalized law of ``(a, b)`` with ``b | a ~ N(a, 1)`` and ``a ~ N(0, 1)``."""
-    from probpipe import NumericArraySpec
-    from probpipe.families import UnnormalizedDistribution
+    from probpipe import NumericArraySpec, distribution
 
-    return UnnormalizedDistribution(
+    def density(v: Any) -> Any:
+        return -0.5 * (jnp.asarray(v["a"]) ** 2 + (jnp.asarray(v["b"]) - v["a"]) ** 2)
+
+    return distribution(
         "pair",
-        lambda v: -0.5 * (jnp.asarray(v["a"]) ** 2 + (jnp.asarray(v["b"]) - v["a"]) ** 2),
-        OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))),
+        unnormalized_log_prob=density,
+        event_spec=OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))),
     )
 
 
 def _unnormalized_vector():
-    from probpipe import NumericArraySpec
-    from probpipe.families import UnnormalizedDistribution
+    from probpipe import NumericArraySpec, distribution
 
-    return UnnormalizedDistribution(
-        "u", lambda x: -0.5 * jnp.sum((x - 1.0) ** 2), OutputSpec(x=NumericArraySpec((2,)))
+    return distribution(
+        "u",
+        unnormalized_log_prob=lambda x: -0.5 * jnp.sum((x - 1.0) ** 2),
+        event_spec=OutputSpec(x=NumericArraySpec((2,))),
     )
 
 
@@ -999,11 +1002,13 @@ class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedL
         super().__init__("theta", {"s": REAL}, OutputSpec(theta=NumericArraySpec((2,))))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        from probpipe.families import UnnormalizedDistribution
+        from probpipe import distribution
 
         s = float(given["s"])
-        return UnnormalizedDistribution(
-            "theta", lambda x: -0.5 * jnp.sum((jnp.asarray(x) - s) ** 2), self.event_spec
+        return distribution(
+            "theta",
+            unnormalized_log_prob=lambda x: -0.5 * jnp.sum((jnp.asarray(x) - s) ** 2),
+            event_spec=self.event_spec,
         )
 
     def _conditional_unnormalized_log_prob(self, given: Any, value: Any) -> Any:

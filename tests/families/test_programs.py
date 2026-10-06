@@ -1,4 +1,4 @@
-"""Contracts of the program-defined families (VII.9): StanModel, PyMCModel, and UnnormalizedDistribution."""
+"""Contracts of the program-defined families (VII.9): StanModel and PyMCModel."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from probpipe.distributions._capabilities import (
     _is_normalized,
     _kernel_is_normalized,
 )
-from probpipe.families import PyMCModel, StanModel, UnnormalizedDistribution
+from probpipe.families import PyMCModel, StanModel
 
 _REGRESSION = """
 // A linear regression, whose coefficient count is a data entry.
@@ -374,27 +374,3 @@ class TestPyMCModel:
         model = PyMCModel("normal", _normal_model)
         restored = pickle.loads(pickle.dumps(model))
         assert (restored.label, restored.spec) == (model.label, model.spec)
-
-
-class TestUnnormalizedDistribution:
-    def _law(self):
-        return UnnormalizedDistribution(
-            "u", lambda x: -0.5 * jnp.sum(x**2), OutputSpec(x=NumericArraySpec((2,)))
-        )
-
-    def test_it_claims_the_unnormalized_density_alone(self):
-        law = self._law()
-        assert isinstance(law, SupportsUnnormalizedLogProb)
-        assert not isinstance(law, SupportsLogProb)
-        assert not isinstance(law, SupportsSampling)
-        assert not _is_normalized(law)
-
-    def test_its_density_is_the_users(self):
-        assert float(self._law()._unnormalized_log_prob(jnp.ones(2))) == pytest.approx(-1.0)
-
-    def test_a_log_density_that_is_not_callable_raises(self):
-        with pytest.raises(TypeError, match="callable"):
-            UnnormalizedDistribution("u", 1.0, OutputSpec(x=NumericArraySpec((2,))))
-
-    def test_the_package_exports_it(self):
-        assert probpipe.UnnormalizedDistribution is UnnormalizedDistribution

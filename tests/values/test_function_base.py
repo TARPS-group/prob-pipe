@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import pytest
 from probpipe import (
     ApplicabilityError,
     DistributionSpec,
+    EmpiricalDistribution,
     Function,
     FunctionSpec,
     Gamma,
@@ -30,7 +32,9 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    WorkflowKind,
     function,
+    sample,
     workflow_method,
     workflow_run,
 )
@@ -50,7 +54,170 @@ def _unnamed_callables():
     return {"partial": partial(add, 1), "instance": AddOne()}
 
 
+class TestFunctionSpecMatching:
+    @pytest.mark.parametrize("from_value", [False, True])
+    @pytest.mark.parametrize(
+        ("expected", "actual", "message"),
+        [
+            (
+                FunctionSpec(InputSpec(x=NumericArraySpec(()))),
+                Function("actual", lambda y: y, input_spec={"y": NumericArraySpec(())}),
+                "incompatible input slots",
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(left=None)),
+                Function("actual", lambda: 1, output_spec=OutputSpec(right=None)),
+                "incompatible output components",
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(component=None)),
+                Function("actual", lambda: {"component": 1}, output_spec=RecordSpec(component=())),
+                "incompatible output components",
+            ),
+            (
+                FunctionSpec(output_spec=OutputSpec(RecordSpec(left=()))),
+                Function("actual", lambda: {"right": 1}, output_spec=RecordSpec(right=())),
+                "incompatible output components",
+            ),
+        ],
+        ids=["slots", "component-names", "whole-vs-exposed", "exposed-fields"],
+    )
+    def test_incompatible_declarations_raise(self, expected, actual, message, from_value):
+        with pytest.raises(ValueError, match=message):
+            if from_value:
+                expected.bind_dims_from_value(actual)
+            else:
+                expected.bind_dims_from_spec(actual.spec)
+
+    def test_matching_declarations_bind_dimensions_without_changing_labels(self):
+        expected = FunctionSpec(
+            InputSpec(x=NumericArraySpec(("n",))),
+            OutputSpec(component=NumericArraySpec(("n",))),
+        )
+        actual = Function(
+            "display",
+            lambda x: x,
+            input_spec={"x": NumericArraySpec((3,))},
+            output_spec=OutputSpec(component=NumericArraySpec((3,))),
+        )
+        for value in (actual, actual.with_label("another")):
+            assert expected.bind_dims_from_value(value) == actual.spec
+            assert expected.bind_dims_from_spec(value.spec) == actual.spec
+        assert expected.free_dims == {"n"}
+        assert actual.label == "display"
+
+
+class TestCallEngineInstallation:
+    @pytest.fixture
+    def base(self, monkeypatch):
+        """The value layer with no engine installed, restored after the test."""
+        import probpipe.values._function_base as base
+
+        monkeypatch.setattr(base, "_call_engine", base._plain_call)
+        monkeypatch.setattr(base, "_check_engine", base._plain_check)
+        monkeypatch.setattr(base, "_apply_scope", nullcontext)
+        monkeypatch.setattr(base, "_invoke_engine", base._plain_invoke)
+        monkeypatch.setattr(base, "_workflow_kind_engine", base._plain_workflow_kind)
+        return base
+
+    @pytest.fixture
+    def installation(self, base):
+        events = []
+
+        class Engine:
+            def __call__(self, function, /, *args, **kwargs):
+                events.append("call")
+                return function.apply(*args, **kwargs)
+
+            @staticmethod
+            @contextmanager
+            def apply_scope():
+                events.append("enter")
+                try:
+                    yield
+                finally:
+                    events.append("exit")
+
+            @staticmethod
+            def workflow_kind(function):
+                return WorkflowKind.TASK
+
+        engine = Engine()
+        base.install_call_engine(engine)
+        return base, engine, events
+
+    def test_installing_the_installed_engine_again_changes_nothing(self, installation):
+        base, engine, events = installation
+        base.install_call_engine(engine)
+        value = object()
+        wrapped = Function("value", lambda: value, workflow_kind=WorkflowKind.OFF)
+        assert wrapped() is value
+        assert wrapped.apply() is value
+        assert events == ["call", "enter", "exit", "enter", "exit"]
+        assert wrapped.effective_workflow_kind is WorkflowKind.TASK
+
+    @pytest.mark.parametrize(
+        ("replacement", "error", "message"),
+        [
+            (lambda function: None, RuntimeError, "already installed"),
+            (None, TypeError, "must be callable"),
+        ],
+        ids=["another-engine", "not-callable"],
+    )
+    def test_a_refused_installation_keeps_the_installed_engine(
+        self, installation, replacement, error, message
+    ):
+        base, _, events = installation
+        with pytest.raises(error, match=message):
+            base.install_call_engine(replacement)
+        wrapped = Function("value", lambda: 7)
+        assert wrapped() == 7
+        assert events == ["call", "enter", "exit"]
+        assert wrapped.effective_workflow_kind is WorkflowKind.TASK
+
+    def test_without_an_engine_a_call_evaluates_plainly_with_orchestration_off(self, base):
+        value = object()
+        wrapped = Function("value", lambda: value, workflow_kind=WorkflowKind.TASK)
+        assert wrapped.effective_workflow_kind is WorkflowKind.OFF
+        assert wrapped() is value
+
+
 class TestFunctionDeclarations:
+    @pytest.mark.parametrize(
+        ("options", "message"),
+        [
+            ({"output_label": ""}, "output_label must be a non-empty string"),
+            ({"output_label": 3}, "output_label must be a non-empty string"),
+            ({"output_spec": 3}, "output_spec must be an OutputSpec, TermSpec, or None"),
+        ],
+    )
+    def test_invalid_output_options(self, options, message):
+        with pytest.raises(TypeError, match=message):
+            Function("value", lambda: 1, **options)
+
+    @pytest.mark.parametrize("component", ["", "group/value"])
+    def test_invalid_explicit_output_component(self, component):
+        with pytest.raises(ValueError, match="component names must be non-empty and contain no"):
+            Function(
+                "value", lambda: 1, output_spec=OutputSpec(**{component: NumericArraySpec(())})
+            )
+
+    def test_invalid_default_output_component_reports_its_name(self):
+        with pytest.raises(ValueError, match="got 'group/value'"):
+            Function("group/value", lambda: 1, output_spec=NumericArraySpec(()))
+
+    @pytest.mark.parametrize("label", ["Model.fit", "<lambda>"])
+    def test_non_identifier_output_component_is_allowed(self, label):
+        wrapped = Function(label, lambda: 1, output_spec=NumericArraySpec(()))
+        assert tuple(wrapped.output_spec.components) == (label,)
+        assert wrapped().label == label
+
+    def test_decorated_lambda_keeps_its_default_component(self):
+        wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
+        assert wrapped.label == "<lambda>"
+        assert wrapped.output_spec == OutputSpec(**{"<lambda>": NumericArraySpec(())})
+        assert float(wrapped()) == 1
+
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
         wrapped = function(label="add1")(_unnamed_callables()[kind])
@@ -100,6 +267,44 @@ class TestFunctionDeclarations:
         assert renamed.output_spec.components == {"score": NumericArraySpec(())}
         assert renamed(4).label == "score"
 
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("lift", ["sweep", "broadcast"])
+    def test_a_relabeled_lift_records_the_called_function(
+        self, dispatch, lift, full_provenance_mode
+    ):
+        original = Function(
+            "predict",
+            (lambda x: x["value"] + 1) if lift == "sweep" else (lambda x: x + 1),
+            output_label="prediction",
+            output_spec=OutputSpec(component=NumericArraySpec(())),
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        relabeled = original.with_label("display")
+        source = (
+            NumericRecordBatch(
+                "inputs", {"value": jnp.arange(3.0)}, "row", element_spec=RecordSpec(value=())
+            )
+            if lift == "sweep"
+            else Normal("x", 0.0, 1.0)
+        )
+
+        with workflow_run(seed=0):
+            result = relabeled(source)
+
+        assert result.label == "prediction"
+        assert result.provenance.parents[0].parent is relabeled
+        assert result.provenance.parents[1].parent is source
+        assert relabeled.output_spec is original.output_spec
+        assert (original.label, relabeled.label) == ("predict", "display")
+        assert original.output_label == relabeled.output_label == "prediction"
+        if lift == "sweep":
+            assert result.level_names == ("row",)
+            np.testing.assert_array_equal(np.asarray(result.values), [1.0, 2.0, 3.0])
+        else:
+            assert tuple(result.event_spec.components) == ("component",)
+            assert result.num_atoms == 8
+
     def test_decorator_can_be_reused_with_its_name_override(self):
         decorate = function(label="shared", output_label="value")
         first = decorate(lambda: 1)
@@ -145,6 +350,24 @@ class TestFunctionDeclarations:
         assert wrapped.apply() is stored
         assert result.spec == declared
         assert stored.element_spec.support is None
+
+    @pytest.mark.parametrize("invalid_value", [0.0, -1.0])
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_returned_array_batch_checks_every_value_against_support(self, invalid_value, raw):
+        from probpipe import BatchSpec
+
+        values = jnp.array([1.0, invalid_value])
+        stored = NumericArrayBatch("stored", values, "draw", element_spec=NumericArraySpec(()))
+        declaration = BatchSpec(
+            NumericArraySpec((), support=positive), stored.axis_groups, stored.level_names
+        )
+        wrapped = Function("load", lambda: stored, output_spec=declaration)
+        with pytest.raises(ValueError, match="output/load does not conform to declared support"):
+            (wrapped.apply if raw else wrapped)()
+        assert stored.element_spec.support is None
+        assert stored.label == "stored"
+        np.testing.assert_array_equal(stored.values, values)
+        assert wrapped.output_spec.spec == declaration
 
     def test_labels_are_outside_spec_equality(self):
         declaration = OutputSpec(mean=NumericArraySpec(()))
@@ -331,6 +554,65 @@ class TestLiftedNames:
             wrapped(rows)
 
 
+class TestLiftedInputDeclarations:
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    def test_a_declared_array_input_lifts_an_empirical_law_over_arrays(self, dispatch):
+        values = jnp.asarray([0.0, 1.0, 2.0])
+        law = EmpiricalDistribution("theta", values)
+        predict = Function(
+            "predict",
+            lambda theta: 2 * theta,
+            input_spec={"theta": NumericArraySpec(())},
+            dispatch=dispatch,
+        )
+        result = predict(theta=law)
+        assert result.num_atoms == 3
+        np.testing.assert_array_equal(np.asarray(result.atoms), 2 * values)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    def test_declared_functions_compose_over_a_law(self, dispatch):
+        first = Function(
+            "first",
+            lambda theta: theta + 1,
+            input_spec={"theta": NumericArraySpec(())},
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        second = Function(
+            "second",
+            lambda x: x * 2,
+            input_spec={"x": NumericArraySpec(())},
+            dispatch=dispatch,
+        )
+        with workflow_run(seed=114514):
+            intermediate = first(Normal("theta", 0.0, 1.0))
+            result = second(intermediate)
+        assert intermediate.num_atoms == 8
+        assert result.num_atoms == 8
+        np.testing.assert_array_equal(np.asarray(result.atoms), 2 * np.asarray(intermediate.atoms))
+
+    def test_a_law_over_one_field_records_lifts_only_into_a_record_slot(self):
+        """A one-field record stays a record (II.2), so an array slot refuses its law."""
+        atoms = NumericRecordBatch("atoms", {"theta": jnp.asarray([0.0, 1.0, 2.0])}, "draw")
+        law = EmpiricalDistribution("posterior", atoms)
+        as_array = Function(
+            "as_array",
+            lambda theta: 2 * theta,
+            input_spec={"theta": NumericArraySpec(())},
+            dispatch="sequential",
+        )
+        as_record = Function(
+            "as_record",
+            lambda theta: 2 * theta["theta"],
+            input_spec={"theta": RecordSpec(theta=())},
+            dispatch="sequential",
+        )
+        with pytest.raises(ApplicabilityError, match=r"'theta' accepts NumericArraySpec"):
+            as_array(theta=law)
+        result = as_record(theta=law)
+        np.testing.assert_array_equal(np.asarray(result.atoms), [0.0, 2.0, 4.0])
+
+
 class TestCompletedOutputDeclarations:
     @pytest.fixture
     def rows(self):
@@ -397,6 +679,20 @@ class TestCompletedOutputDeclarations:
         )
         with pytest.raises(
             ValueError, match=r"factory/a support real does not conform to positive"
+        ):
+            factory.apply()
+
+    def test_a_returned_law_over_a_whole_record_is_checked_field_by_field(self):
+        from probpipe import Distribution
+
+        joint = Normal("y", 0.0, 1.0) * Normal("z", 0.0, 1.0)
+        stored = Distribution("bundle", OutputSpec(bundle=joint.event_spec.spec))
+        declared = RecordSpec(y=NumericArraySpec((), support=positive), z=NumericArraySpec(()))
+        factory = Function(
+            "factory", lambda: stored, output_spec=DistributionSpec(OutputSpec(bundle=declared))
+        )
+        with pytest.raises(
+            ValueError, match=r"factory/bundle/y support real does not conform to positive"
         ):
             factory.apply()
 
@@ -485,6 +781,136 @@ class TestCompletedOutputDeclarations:
             assert declaration.spec is None
         else:
             assert declaration.spec.free_dims == {"width"}
+
+    @pytest.mark.parametrize(
+        "returned",
+        [[1.0, 2.0], (1.0, 2.0), [], jnp.ones(3, dtype="float32"), np.arange(3, dtype="int32")],
+        ids=["list", "tuple", "empty-list", "float32-array", "int32-array"],
+    )
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_a_type_hole_completes_as_an_undeclared_return_does(self, returned, dispatch):
+        """A type hole takes the type the kind-directed wrap gives the return, dtype included."""
+        undeclared = Function("f", lambda row: returned, output_label="items", dispatch=dispatch)
+        declared = Function(
+            "f",
+            lambda row: returned,
+            output_label="items",
+            output_spec=OutputSpec(items=None),
+            dispatch=dispatch,
+        )
+        rows = NumericRecordBatch(
+            "rows", {"x": jnp.arange(2.0)}, "row", element_spec=RecordSpec(x=())
+        )
+        operands = [0]
+        if dispatch != "jax" or not isinstance(returned, (list, tuple)):
+            # The mapped dispatch refuses a sequence row.
+            operands.append(rows)
+        for operand in operands:
+            expected = undeclared(operand)
+            result = declared(operand)
+            assert type(result) is type(expected)
+            assert result.spec == expected.spec
+        assert declared.output_spec.spec is None
+        assert declared.apply(0) is returned
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_a_lift_that_includes_its_inputs_completes_the_output_declaration(self, dispatch):
+        factory = Function(
+            "factory",
+            lambda x: jnp.stack([x, x + 1, x + 2]),
+            output_label="results",
+            output_spec=OutputSpec(component=NumericArraySpec(("width",))),
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+            include_inputs=True,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        assert result.label == "results"
+        assert result.event_spec.spec["component"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.spec.free_dims == {"width"}
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    def test_an_enumerated_lift_that_includes_its_inputs_fills_a_type_hole(self, dispatch):
+        factory = Function(
+            "factory",
+            lambda x: jnp.stack([x, x + 1, x + 2]),
+            output_label="results",
+            output_spec=OutputSpec(component=None),
+            dispatch=dispatch,
+            include_inputs=True,
+        )
+        result = factory(EmpiricalDistribution("x", jnp.arange(3.0)))
+        assert result.label == "results"
+        assert result.event_spec.spec["component"] == NumericArraySpec((3,), dtype="float32")
+        assert factory.output_spec.spec is None
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
+    @pytest.mark.parametrize("exposed", [False, True])
+    def test_a_lift_keeps_the_declared_record_exposure(self, dispatch, exposed):
+        record = RecordSpec(field=NumericArraySpec((2,), dtype="float32"))
+        declaration = OutputSpec(record) if exposed else OutputSpec(bundle=record)
+        factory = Function(
+            "factory",
+            lambda x: {"field": jnp.stack([x, x + 1])},
+            output_label="results",
+            output_spec=declaration,
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+            draws = sample(result, sample_shape=(4,))
+        assert result.event_spec == declaration
+        assert tuple(result.event_spec.components) == (("field",) if exposed else ("bundle",))
+        if not exposed:
+            assert result["bundle"] is result
+        column = np.asarray(draws["field"])
+        np.testing.assert_allclose(column[:, 1], column[:, 0] + 1, rtol=0, atol=0)
+        assert factory.output_spec is declaration
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto"])
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "function",
+            "opaque",
+            "record",
+            pytest.param(
+                "batch",
+                marks=pytest.mark.pending(
+                    reason="the empirical law of a lifted function that returns a batch"
+                ),
+            ),
+        ],
+    )
+    def test_a_lift_keeps_a_non_numeric_component_kind(self, dispatch, kind):
+        stored = {
+            "function": lambda: Function("inner", lambda x: x + 1),
+            "opaque": lambda: Opaque("stored", "payload", spec=OpaqueSpec(meta="text")),
+            "record": lambda: Record("stored", field=Opaque("leaf", "payload")),
+            "batch": lambda: NumericArrayBatch(
+                "stored", jnp.arange(2.0), "row", element_spec=NumericArraySpec(())
+            ),
+        }[kind]()
+        declaration = OutputSpec(component=stored.spec)
+        factory = Function(
+            "factory",
+            lambda x: stored,
+            output_label="results",
+            output_spec=declaration,
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+        with workflow_run(seed=4):
+            result = factory(Normal("x", 0.0, 1.0))
+        assert result.event_spec == declaration
+        assert result["component"] is result
+        assert result.num_atoms == 8
+        assert all(type(atom) is type(stored) for atom in result.atoms)
+        if kind == "function":
+            assert float(result.atoms[0].apply(2)) == 3
+        assert stored.label == ("inner" if kind == "function" else "stored")
 
     @pytest.mark.parametrize("tracked", [False, True])
     def test_type_hole_accepts_a_nested_record(self, tracked):

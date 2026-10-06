@@ -46,6 +46,11 @@ def _key_words(key) -> tuple[int, int]:
     return tuple(int(word) for word in jax.random.key_data(key))
 
 
+def _two_draws(value):
+    """Two workflow-owned keys of one event plan, claimed directly by a body."""
+    return _resolve_automatic_key(None, _plan()), _resolve_automatic_key(None, _plan())
+
+
 class TestStochasticEffectPlan:
     def test_plan_is_frozen_and_tuple_only(self):
         descriptor = ("descriptor", ("value", 1), None, True, b"bytes")
@@ -480,6 +485,55 @@ class TestFunctionBrokerScope:
             assert deterministic.apply(2) == 3
 
         urandom.assert_not_called()
+
+    def test_deterministic_apply_commits_no_occurrence_of_the_scope(self):
+        deterministic = Function(label="function", fn=lambda value: value + 1)
+
+        with workflow_run(seed=7):
+            scope = context_mod._ACTIVE_WORKFLOW_FRAME.get()
+            deterministic.apply(2)
+            committed = scope.ledger.next_ordinal
+
+        assert committed == 0
+
+    def test_each_draw_in_an_apply_body_claims_its_own_child_occurrence(self):
+        occurrence_paths = []
+        original_key_for = context_mod._WorkflowInvocation.key_for
+
+        def recording_key_for(invocation, *, stochastic_source_id, logical_unit_id):
+            occurrence_paths.append(invocation.occurrence_path)
+            return original_key_for(
+                invocation,
+                stochastic_source_id=stochastic_source_id,
+                logical_unit_id=logical_unit_id,
+            )
+
+        with (
+            patch.object(context_mod._WorkflowInvocation, "key_for", new=recording_key_for),
+            workflow_run(seed=7),
+        ):
+            scope = context_mod._ACTIVE_WORKFLOW_FRAME.get()
+            first, second = Function(label="function", fn=_two_draws).apply(0)
+            committed = scope.ledger.next_ordinal
+
+        assert _key_words(first) != _key_words(second)
+        # The evaluation commits one occurrence of the scope, and each draw is
+        # a child of it, numbered in program order.
+        assert committed == 1
+        assert occurrence_paths[0][:-1] == occurrence_paths[1][:-1]
+        assert [path[-1] for path in occurrence_paths] == [("child", 0), ("child", 1)]
+
+    def test_probed_apply_signals_its_draw_before_committing_an_occurrence(self):
+        with workflow_run(seed=7):
+            scope = context_mod._ACTIVE_WORKFLOW_FRAME.get()
+            with (
+                pytest.raises(context_mod._StochasticProbeSignal),
+                context_mod._workflow_probe(),
+            ):
+                Function(label="function", fn=_two_draws).apply(0)
+            committed = scope.ledger.next_ordinal
+
+        assert committed == 0
 
     def test_lifting_uses_the_active_function_broker(self):
         identity = Function(

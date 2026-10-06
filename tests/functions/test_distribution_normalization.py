@@ -16,6 +16,7 @@ from probpipe import (
     Distribution,
     DistributionBatch,
     EmpiricalDistribution,
+    Function,
     KDEDistribution,
     Normal,
     NumericArrayBatch,
@@ -33,7 +34,6 @@ from probpipe.functions._normalization import (
     normalize_distribution_values,
 )
 from probpipe.values._binding import make_signature_info_from_signature
-from probpipe.values._function_base import Function
 
 
 @pytest.fixture

@@ -349,6 +349,17 @@ def add_loo(
     Returns
     -------
     None
+
+    Raises
+    ------
+    ValueError
+        If *log_likelihood* holds a one-dimensional array, or if the
+        annotations hold no pointwise log likelihood and *model* and *data*
+        are not both given.
+    TypeError
+        If *model* at *data* has no likelihood factor that scores each
+        observation, or if *reff* is ``None`` and the annotations hold no
+        ArviZ ``posterior`` group to estimate it from.
     """
     if not force and _has_group(getattr(posterior, "_annotations", None), "diagnostics/runs/loo"):
         return None
@@ -435,7 +446,7 @@ def add_loo(
     good_k = _safe_float(_record_get(loo_result, "good_k", np.nan))
 
     pareto_k = _record_get(loo_result, "pareto_k", None)
-    loo_i = _record_get(loo_result, "loo_i", None)
+    loo_i = _record_get(loo_result, "loo_i", _record_get(loo_result, "elpd_i", None))
 
     pk_summary = _pareto_k_summary(
         pareto_k,

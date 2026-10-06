@@ -7,8 +7,9 @@ assemble inputs and interpret outputs outside this module.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from time import sleep
 from typing import Any, Literal
@@ -158,6 +159,39 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
         if parent_broker is not None:
             parent_broker.cancel_unstarted_managed_items(request.work_items)
             parent_broker.assert_managed_items_joined(request.work_items)
+
+
+@contextmanager
+def point_work_item_scope(
+    broker: _broker._AutomaticKeyBroker,
+) -> Generator[None, None, None]:
+    """Run the enclosed evaluation in place as the one point work item of *broker*'s invocation.
+
+    Inside the scope, each workflow-owned draw claims the next child occurrence
+    of the invocation, in program order, as each draw of a plain call's point
+    does under :func:`execute_many`. *broker* commits the invocation's own
+    occurrence at the first such draw, so an evaluation that draws nothing
+    commits none. Under a route probe or inside a JAX body the scope installs
+    nothing, as :func:`execute_many` installs nothing there, so a draw claims
+    its key from *broker* directly, which signals a probe before committing an
+    occurrence.
+
+    Parameters
+    ----------
+    broker : _AutomaticKeyBroker
+        The broker of the invocation, installed in the active workflow frame.
+    """
+    if _context._workflow_side_effects_forbidden():
+        yield
+        return
+    items = make_managed_work_items([{}], unit_segments=(point_unit_segment(),))
+    broker.register_managed_work_items(items)
+    try:
+        with _work_item_scope(items[0], _context._capture_active_workflow_frame(), broker):
+            yield
+    finally:
+        broker.cancel_unstarted_managed_items(items)
+        broker.assert_managed_items_joined(items)
 
 
 def execute_many_threaded(
@@ -558,6 +592,35 @@ def _validate_max_workers(max_workers: int | None) -> int | None:
     return max_workers
 
 
+@contextmanager
+def _work_item_scope(
+    item: ManagedWorkItem,
+    parent_frame: _context._WorkflowFrame | None,
+    parent_broker: _broker._AutomaticKeyBroker | None,
+) -> Generator[None, None, None]:
+    """Install the workflow frame of one work item and the item's attempt under *parent_broker*.
+
+    Inside, each workflow-owned draw claims the next child occurrence of
+    *parent_broker*'s invocation. Without a parent frame nothing is installed,
+    and without a parent broker only the frame is.
+    """
+    if parent_frame is None:
+        yield
+        return
+    with _context._managed_work_item_scope(
+        parent_frame,
+        item.frame.unit_segment,
+    ):
+        if parent_broker is None:
+            yield
+            return
+        with _broker._managed_work_item_stochastic_scope(
+            parent_broker,
+            item.frame,
+        ):
+            yield
+
+
 def _execute_work_item(
     func: Callable[..., Any],
     item: ManagedWorkItem,
@@ -565,19 +628,8 @@ def _execute_work_item(
     parent_broker: _broker._AutomaticKeyBroker | None = None,
 ) -> Any:
     """Execute one frozen work item without changing its canonical identity."""
-    if parent_frame is None:
+    with _work_item_scope(item, parent_frame, parent_broker):
         return func(**item.call_values())
-    with _context._managed_work_item_scope(
-        parent_frame,
-        item.frame.unit_segment,
-    ):
-        if parent_broker is None:
-            return func(**item.call_values())
-        with _broker._managed_work_item_stochastic_scope(
-            parent_broker,
-            item.frame,
-        ):
-            return func(**item.call_values())
 
 
 def _execute_prefect_payload(

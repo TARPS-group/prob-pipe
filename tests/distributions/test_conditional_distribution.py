@@ -1,4 +1,4 @@
-"""A kernel built from a function of its given values that returns a law (III.9).
+"""A kernel built from a function of its given values that returns a law (IV.4).
 
 ``conditional_distribution`` builds a ``ConditionalDistribution`` from a
 function, as ``function`` builds a ``Function``. Each parameter is a given
@@ -36,6 +36,7 @@ from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
     conditional_distribution,
+    distribution,
 )
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
@@ -44,7 +45,6 @@ from probpipe.distributions._capabilities import (
     SupportsSampling,
     _capability_guard,
 )
-from probpipe.families import UnnormalizedDistribution
 from tests._ops import EmpiricalDistribution, condition_on, log_prob, sample
 from tests.inference import canonical
 
@@ -157,8 +157,10 @@ class TestTheCapabilities:
     def test_a_law_with_an_unnormalized_density_gives_that_twin_alone(self):
         kernel = conditional_distribution(
             "x",
-            lambda mu: UnnormalizedDistribution(
-                "x", lambda x: -0.5 * (x - mu) ** 2, OutputSpec(x=REAL)
+            lambda mu: distribution(
+                "x",
+                unnormalized_log_prob=lambda x: -0.5 * (x - mu) ** 2,
+                event_spec=OutputSpec(x=REAL),
             ),
             given_spec={"mu": REAL},
         )
