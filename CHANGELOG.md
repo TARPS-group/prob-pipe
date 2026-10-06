@@ -1068,6 +1068,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **A user guide of eight chapters.** Each chapter explains one feature area on
+  small examples, and the guide's overview page lists them:
+  1. values and records;
+  2. distributions, including `distribution` from a sampler or a density;
+  3. joint models and conditional distributions;
+  4. functions on values, distributions, and batches;
+  5. conditioning and the inference methods, with a PyMC model and SMC-ABC;
+  6. MCMC diagnostics, predictive checks, leave-one-out comparison, and
+     simulation-based calibration;
+  7. empirical distributions, `convert`, resampling, and sequential updating;
+  8. routes, options, reproducible draws, and provenance.
+
+  Each chapter opens on Google Colab from its badge, and the user-guide leg
+  of the notebook job installs the `pymc` and `pyabc` extras for chapter 5.
 - **`SBCResult.coverage(levels)`** returns, for each credible level, the share
   of the replications whose `θ★` lies in the central interval of that level, one
   share per parameter. It reads the ranks alone: `θ★` lies in the interval when
