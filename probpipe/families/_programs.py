@@ -449,9 +449,19 @@ def _stanc(*, fetch: bool = True) -> Path:
 
     BridgeStan keeps its source tree in the directory ``$BRIDGESTAN`` names, or
     else under ``~/.bridgestan``, and its Makefile fetches the stanc3 binary into
-    the tree's ``bin/``. With *fetch*, a missing tree is downloaded and a missing
-    compiler is fetched with that Makefile's target, as BridgeStan does before
-    it first compiles a model. Without *fetch*, the compiler is only located.
+    the tree's ``bin/``.
+
+    Parameters
+    ----------
+    fetch : bool
+        Whether to download a missing source tree and fetch a missing compiler
+        with the Makefile's target, as BridgeStan does before it first compiles
+        a model. With ``False``, the compiler is only located.
+
+    Returns
+    -------
+    Path
+        The stanc executable in the source tree's ``bin/``.
 
     Raises
     ------
