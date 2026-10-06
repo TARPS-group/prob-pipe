@@ -1,4 +1,4 @@
-"""A kernel built from a function of its given values that returns a law (III.9).
+"""A kernel built from a function of its given values that returns a law (IV.4).
 
 ``conditional_distribution`` builds a ``ConditionalDistribution`` from a
 function, as ``function`` builds a ``Function``. Each parameter is a given
