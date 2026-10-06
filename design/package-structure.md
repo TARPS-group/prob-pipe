@@ -152,7 +152,7 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `core/_record_batch.py`, `core/_numeric_record_batch.py` | `values/_record_batch.py`, `values/_numeric_record_batch.py` (III.6) |
 | `core/protocols.py` (`SupportsArrayBackend`) | `distributions/_capabilities.py` |
 | `core/node.py` (`Node`, `InputFrozenError`), `functions/_module.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
-| `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |
+| `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | `inference/`: sequential updating, which folds a step such as `condition_on` over the data |
 | `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan (V.4) |
 | `functions/_contract.py`, `functions/_descendants.py` | `functions/_plan.py`: the per-call binding of the declared inputs and the root-ancestor capture (V.5, V.6) |
 | `functions/_callable.py`, `functions/_recipe.py` | `functions/_replay.py`: the callable anchors and the recorded recipes (V.8) |
@@ -164,7 +164,3 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `inference/_minibatch.py` | `inference/`, in place: `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
 | `_weights.py`, `_array_utils.py`, `_dtype.py`, `custom_types.py` | private helpers, unchanged |
 | `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its given slots, and reads its replications from their composition, as `mixture` does (VI.9) |
-
-### Open points
-
-- *Incremental conditioning.* Conditioning on data batches one at a time is a fold of `condition_on` over the batches; whether it is written as a derived operation or as a workflow recipe is settled together with `iterate`.
