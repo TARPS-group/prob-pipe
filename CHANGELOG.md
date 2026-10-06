@@ -2785,6 +2785,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Renaming an empirical law's paths returns an empirical law.**
+  `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
+  posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
+  repr showed the posterior's atoms under the old names. It now returns an
+  `EmpiricalDistribution` with the same label and weights whose atoms carry the
+  new paths, and a lift still draws it together with the original. A law that
+  renames at its boundary, such as a renamed `KDEDistribution`, reads as
+  `KDEDistribution(...).with_path_names({...})`.
 - **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
   sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
   of a posterior from `learn_amortized_posterior` printed one, and a notebook
