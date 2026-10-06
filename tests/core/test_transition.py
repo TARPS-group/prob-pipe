@@ -9,6 +9,7 @@ import pytest
 from probpipe import (
     Distribution,
     EmpiricalDistribution,
+    Function,
     MultivariateNormal,
     Normal,
     Provenance,
@@ -19,7 +20,6 @@ from probpipe import (
     with_resampling,
     workflow_run,
 )
-from probpipe.values._function_base import Function
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers

@@ -1,4 +1,4 @@
-"""Resolve workflow controls, bind arguments, and admit them for the call engine.
+"""Bind the arguments of a call and admit them for the call engine.
 
 Steps 2 and 3 of the call stack: the arguments bind to the wrapped function's
 signature by Python's rules, and each bound argument is admitted against what
@@ -269,68 +269,6 @@ def _html_row(cells: tuple[str, ...], *, selected: bool) -> str:
     return f"<tr{style}>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in cells) + "</tr>"
 
 
-@dataclass(frozen=True)
-class FunctionCallOptions:
-    """Optional call-time workflow controls outside user kwargs."""
-
-    n_broadcast_samples: int | None = None
-    include_inputs: bool | None = None
-
-
-@dataclass(frozen=True)
-class FunctionCallOverrides:
-    """Resolved call-time workflow settings consumed by ``Function``."""
-
-    n_broadcast_samples: int
-    include_inputs: bool
-
-
-@dataclass(frozen=True)
-class ResolvedFunctionCall:
-    """Fully resolved signature-shaped values plus workflow overrides."""
-
-    values: dict[str, Any]
-    overrides: FunctionCallOverrides
-
-
-def bind_call_inputs(
-    info: FunctionSignatureInfo,
-    args: tuple[Any, ...],
-    call_inputs: dict[str, Any],
-    *,
-    default_n_broadcast_samples: int,
-    default_include_inputs: bool,
-    options: FunctionCallOptions | None = None,
-) -> tuple[dict[str, Any], FunctionCallOverrides]:
-    """Bind user inputs and resolve workflow controls.
-
-    Call inputs bind exactly like the wrapped Python function. Workflow
-    controls come only from explicit ``options`` or construction defaults.
-    """
-    explicit_options = options if options is not None else FunctionCallOptions()
-
-    def resolve_option(name: str, default: Any = None) -> Any:
-        explicit_value = getattr(explicit_options, name)
-        if explicit_value is not None:
-            return explicit_value
-
-        return default
-
-    overrides = FunctionCallOverrides(
-        n_broadcast_samples=resolve_option(
-            "n_broadcast_samples",
-            default_n_broadcast_samples,
-        ),
-        include_inputs=resolve_option(
-            "include_inputs",
-            default_include_inputs,
-        ),
-    )
-
-    bound = info.signature.bind_partial(*args, **call_inputs)
-    return dict(bound.arguments), overrides
-
-
 def resolve_function_call(
     info: FunctionSignatureInfo,
     args: tuple[Any, ...],
@@ -340,28 +278,27 @@ def resolve_function_call(
     module: Any | None,
     dependency_type: type,
     function_name: str,
-    default_n_broadcast_samples: int,
-    default_include_inputs: bool,
-    options: FunctionCallOptions | None = None,
-) -> ResolvedFunctionCall:
-    """Resolve one ``Function`` call into values plus overrides."""
-    bound_inputs, overrides = bind_call_inputs(
+) -> dict[str, Any]:
+    """Bind one call's arguments to the signature and fill the inputs it omits.
+
+    The arguments bind by Python's rules, and an omitted input takes its value
+    from the construction bindings, the module, or the parameter's default.
+
+    Raises
+    ------
+    TypeError
+        If an argument does not bind to the signature, a required input stays
+        unbound, or the call overrides a dependency the module provides.
+    """
+    bound = info.signature.bind_partial(*args, **call_inputs)
+    return resolve_function_values(
         info,
-        args,
-        call_inputs,
-        default_n_broadcast_samples=default_n_broadcast_samples,
-        default_include_inputs=default_include_inputs,
-        options=options,
-    )
-    values = resolve_function_values(
-        info,
-        bound_inputs,
+        dict(bound.arguments),
         bind=bind,
         module=module,
         dependency_type=dependency_type,
         function_name=function_name,
     )
-    return ResolvedFunctionCall(values=values, overrides=overrides)
 
 
 def _consumes_kernel(expected: Any) -> bool:

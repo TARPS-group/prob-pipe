@@ -43,6 +43,8 @@ probpipe/
 │   ├── _function_base.py      #   Function itself (declared sides, identity, controls and with_options,
 │   │                          #     plain evaluation, install_call_engine), FunctionSpec, the function
 │   │                          #     capabilities, and is_differentiable
+│   ├── _binding.py            #   the frozen signature and the argument binding apply performs
+│   │                          #     without the engine (III.3, V.3)
 │   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.3)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
@@ -72,6 +74,7 @@ probpipe/
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
 │   │                          #     populated upward by the families (V.7)
+│   ├── _resolution.py         #   the selection among a Function's own routes, as an operation's (V.7, VI.0)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (V.9, V.10)
 │   ├── _sweep.py              #   the batch sweep (V.9, V.10)
 │   ├── _rng.py                #   structural event identity, the versioned key derivation (V.8)
@@ -133,76 +136,32 @@ A handful of private helper modules (dtypes, array utilities) support the packag
 
 ### Correspondence to the implementation
 
-Every module with a design contract, with where it goes; the target contracts above are authoritative.
+Every module with a design contract that is not yet where the tree places it, with where it goes; the target contracts above are authoritative. A module at the path the tree gives it is in place and has no row, as every module of `distributions/`, `families/`, and `operations/` is.
 
-The spec implementation in `core/` is divided into four files: `core/_spec_base.py`
-defines `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and shared
-dimension unification; `core/_record_spec.py` defines `RecordSpec` and
-`NumericRecordSpec`; `core/_kind_specs.py` defines `FunctionSpec`; and
-`core/_specs.py` defines `InputSpec` and `OutputSpec` and re-exports the public
-spec types of `core/`. `DistributionSpec` is defined beside `Distribution` in
-`distributions/_distribution.py`.
+The spec implementation in `core/` is divided into three files: `core/_spec_base.py` defines `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and shared dimension unification; `core/_record_spec.py` defines `RecordSpec` and `NumericRecordSpec`; and `core/_specs.py` defines `InputSpec` and `OutputSpec` and re-exports the public spec types of `core/`. `FunctionSpec` is defined beside `Function` in `values/_function_base.py`, and `DistributionSpec` beside `Distribution` in `distributions/_distribution.py`.
 
 | Today | Target |
 |---|---|
-| `core/node.py` (`Function`, the decorator, `with_options`) | `functions/_function.py` |
-| `core/node.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
-| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan |
-| `core/_workflow_plan.py` | `functions/_plan.py` |
-| `core/_function_contract.py` | split: construction-time validation of the declared sides to `values/_function_base.py`; per-call binding and the result declaration to `functions/_plan.py`; output validation and declared wrapping to `functions/_result.py` |
-| `core/_workflow_distribution_broadcast.py` | `functions/_broadcast.py` |
-| `core/_workflow_sweep.py` | `functions/_sweep.py` |
-| `core/_workflow_rng.py` | `functions/_rng.py` |
-| `core/_workflow_context.py` | `functions/_context.py` |
-| `core/_workflow_replay.py`, `core/_workflow_recipe.py` | `functions/_replay.py` |
-| `core/_workflow_broker.py`, `core/_workflow_managed.py` | `functions/_broker.py` |
-| `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
-| `core/_workflow_result.py` | `functions/_result.py` |
-| `core/ops.py` | `operations/`, one module per operation section (VI.1–VI.10), plus `_operation.py` for the declaration, route, and registry code |
-| `distributions/_distribution.py` | in place: `Distribution` and `DistributionSpec` (III.7) |
-| `core/protocols.py` | `distributions/_capabilities.py` |
-| `core/_distribution_array.py` | `distributions/_batches.py` (III.10) |
-| `core/_broadcast_distributions.py` | split: `BroadcastDistribution` is retired, the lift's joint result being an `EmpiricalDistribution` (V.10, VII.2); the row aggregator `_make_stack` to `functions/_result.py` (V.10); the mixture and record marginals to `operations/_marginal.py` and `families/_mixture.py` (VI.8, VII.3) |
-| `core/_empirical.py` | `distributions/_empirical.py` |
-| `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
-| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_dispatch.py` | `core/`, one module per II section; `Annotated` folds into `TrackedTerm` (II.4) |
-| `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
-| `core/_spec_base.py` | `TermSpec`, `NumericSpec`, `NumericArraySpec`, `OpaqueSpec`, and dimension unification stay in place, since `NumericArraySpec` subclasses `NumericSpec`, which subclasses `TermSpec` (II.1, II.3, III.1–III.2) |
-| `core/_record_spec.py` | in place: `RecordSpec`, `NumericRecordSpec`, and record unification (III.5) |
-| `core/_kind_specs.py` | `FunctionSpec` to `values/_function_base.py` (III.3) |
-| `core/_specs.py` | `InputSpec`, `OutputSpec`, and component projection contracts stay in place (II.2) |
+| `core/named_tree.py` | `core/_named_tree.py` (II.6) |
 | `core/constraints.py` | `core/_constraints.py` (II.3) |
-| `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
-| `core/_record_distribution.py` | `distributions/_views.py` (`FieldView`, III.7); `RecordDistribution` is retired, since draw structure is declared in `event_spec` (III.7) |
-| `core/_numeric_record_distribution.py` | the numeric marker to `distributions/_distribution.py` (III.7) and `BootstrapDistribution` to `families/_resampling.py` (VII.2); `FlatNumericRecordDistribution`, `FlattenedDistributionView`, and `NumericRecordDistributionView` are retired, the flat view being `evaluate(to_vector, d)` (III.7) |
-| `modeling/_stan.py`, `modeling/_pymc.py` | `families/_programs.py` (VII.9), retaining separate data inputs and declared event variables |
-| `modeling/_glm.py` | `families/_conditional.py` (VII.8) |
-| `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VII.9) or a factored joint (IV.1), and a learned likelihood is a `ConditionalDistribution` (III.9) |
-| `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
-| `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes the `exact` flag, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
-| `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.3) |
-| `expectation_method_registry` (`operations/_moments.py`) | retired: `expectation` is the derived operation `mean(evaluate(f, d))` (VI.5), and an integration method registers as an evaluation rule in `functions/_rules.py` (V.7) |
-| `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `distributions/_distribution.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` is replaced by `set_default_n_broadcast_samples`, which sets the default sample count every function reads (V.2) |
-| `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
-| `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
+| `core/tracked.py`, `core/provenance.py`, `core/_immutable.py`, `core/_fingerprint.py`, `core/_repr.py` | `core/_identity.py` (II.4); `Annotated` folds into `TrackedTerm` |
 | `core/config.py` | `core/_config.py` |
-| `core/_workflow_callable.py`, `core/_workflow_descendants.py` | `functions/_replay.py` for the callable anchors and `functions/_plan.py` for the root-ancestor capture (V.5, V.8) |
-| `core/_workflow_errors.py` | `functions/`, each error beside the step that raises it (V.1) |
-| `core/_random_functions.py`, `core/_random_measures.py` | `families/_random_functions.py` (VII.5) |
-| `distributions/_product.py`, `distributions/_sequential_joint.py`, `distributions/_joint_utils.py`, `distributions/joint.py` | `distributions/_factored.py` (IV.1): `ProductDistribution` and `SequentialJointDistribution` become `FactoredDistribution` |
-| `distributions/_joint_gaussian.py`, `distributions/gaussian_random_function.py` | `families/_gaussian.py` (VII.6): `JointGaussian` becomes `FactoredMultivariateGaussian` |
-| `distributions/_joint_empirical.py` | `distributions/_empirical.py` (VII.2): an empirical joint is an `EmpiricalDistribution` over a record event, and its conditioning, if kept, is a capability route of `condition_on` |
-| `distributions/_tfp_base.py` | `families/_backend.py` (VII.1) |
-| `distributions/continuous.py`, `distributions/discrete.py`, `distributions/multivariate.py` | `families/_continuous.py`, `families/_discrete.py`, `families/_multivariate.py` (VII.1) |
-| `distributions/kde.py` | `families/_resampling.py` (VII.2) |
-| `distributions/transformed.py` | `families/_transformed.py` (VII.4): `TransformedDistribution` becomes `BijectorTransformedDistribution`, and a backend bijector enters as a `Function` |
-| `distributions/_bijector_dispatch.py` | `functions/_reparameterization.py` (V.12) |
+| `core/_numeric_array.py`, `core/_numeric_array_batch.py` | `values/_numeric_array.py`, `values/_numeric_array_batch.py` (III.1) |
+| `core/_opaque.py`, `core/_opaque_batch.py`, `core/_object_batch.py` | `values/_opaque.py`, `values/_opaque_batch.py`, `values/_object_batch.py` (III.2) |
+| `core/_function_batch.py` | `values/_function_batch.py` (III.3) |
+| `core/record.py`, `core/_numeric_record.py` | `values/_record.py` (III.5) |
+| `core/_record_batch.py`, `core/_numeric_record_batch.py` | `values/_record_batch.py`, `values/_numeric_record_batch.py` (III.6) |
+| `core/protocols.py` (`SupportsArrayBackend`) | `distributions/_capabilities.py` |
+| `core/node.py` (`Node`, `InputFrozenError`), `functions/_module.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
+| `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | `inference/`: sequential updating, which folds a step such as `condition_on` over the data |
+| `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan (V.4) |
+| `functions/_contract.py`, `functions/_descendants.py` | `functions/_plan.py`: the per-call binding of the declared inputs and the root-ancestor capture (V.5, V.6) |
+| `functions/_callable.py`, `functions/_recipe.py` | `functions/_replay.py`: the callable anchors and the recorded recipes (V.8) |
+| `functions/_managed.py` | `functions/_broker.py` (V.8, V.9) |
+| `functions/_execution_contract.py` | `functions/_execution.py` (V.9) |
+| `functions/_errors.py` | `functions/`, each error beside the step that raises it (V.1) |
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
-| `inference/_approximate_distribution.py`, `inference/_minibatch.py` | `inference/`, in place: `ApproximateDistribution` becomes an `EmpiricalDistribution` carrying provenance and annotations (VII.7), and `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
-| `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |
-| `_weights.py`, `_array_utils.py`, `_dtype.py`, `_utils.py` | private helpers, unchanged |
+| `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
+| `inference/_minibatch.py` | `inference/`, in place: `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
+| `_weights.py`, `_array_utils.py`, `_dtype.py`, `custom_types.py` | private helpers, unchanged |
 | `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its given slots, and reads its replications from their composition, as `mixture` does (VI.9) |
-
-### Open points
-
-- *Incremental conditioning.* `IncrementalConditioner` (`modeling/_likelihood.py`) is a fold of `condition_on` over data batches; whether it is written as a derived operation or as a workflow recipe is settled together with `iterate`.

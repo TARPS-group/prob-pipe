@@ -111,7 +111,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     from ..core._numeric_array_batch import _MappedBatchStore
     from ..core._record_batch import _MappedBatchColumns
     from ..core._spec_base import _unify_specs
-    from ..values._function_base import _complete_output_metadata
+    from ..values._function_base import _complete_output_metadata, _produced_spec
 
     spec = output_spec.spec
     bindings: dict[str, int] = {}
@@ -124,7 +124,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
                 else row.element_spec
             )
         else:
-            actual = RecordSpec.infer_from({"result": row}).children["result"]
+            actual = _produced_spec(row)
         if spec is None:
             spec = actual
         try:
@@ -147,21 +147,14 @@ def _output_record_spec(output_spec: OutputSpec) -> RecordSpec | None:
     return None
 
 
-def _wrap_as_term(
-    value: Any, field_name: str, output_spec: OutputSpec | None = None, *, name: str | None = None
-) -> Any:
-    """Wrap a raw host as its tracked kind under the caller's result label.
+def _wrap_as_term(value: Any, result_name: str) -> Any:
+    """Wrap a raw host as its tracked kind under the result label *result_name*.
 
     Mappings become records, numeric values become NumericArray, callables
     become Function, and other values, a list, a tuple, or a set among them,
     become Opaque, since a batch is declared through ``output_spec``. Existing
     tracked terms are retained here and copied by the public result boundary.
     """
-    result_name = field_name if name is None else name
-    if output_spec is not None and output_spec.spec is not None:
-        return _wrap_declared_function_output(
-            value, function_name=result_name, output_spec=output_spec
-        )
     match value:
         case TrackedTerm():
             return value
@@ -576,7 +569,9 @@ def _make_stack(
     Returns
     -------
     Batch
-        The batch form of the rows' kind, on the given levels: a
+        The batch form of the rows' kind, on the given levels, whose element
+        declaration records the dtypes its store holds (see
+        :func:`_record_stored_dtypes`): a
         ``NumericArrayBatch``, a ``RecordBatch`` or ``NumericRecordBatch``, a
         ``DistributionBatch``, a ``FunctionBatch``, or an ``OpaqueBatch``.
 
@@ -589,6 +584,105 @@ def _make_stack(
         If rows have incompatible declarations, shapes, or batch levels, or
         the output shape does not match the requested batch shape and grouping.
     """
+    return _record_stored_dtypes(
+        _stack_rows(
+            inner_outputs,
+            batch_shape=batch_shape,
+            n=n,
+            level_names=level_names,
+            axis_groups=axis_groups,
+            name=name,
+            field_name=field_name,
+            output_template=output_template,
+            output_spec=output_spec,
+        )
+    )
+
+
+def _record_stored_dtypes(aggregate: Any) -> Any:
+    """*aggregate* with its element declaration recording the dtypes its store holds.
+
+    The rows of a sweep or a lift are stacked into one JAX array, which holds
+    their canonical dtype, so 64-bit rows are stored as 32-bit ones while JAX's
+    64-bit mode is off. A declared, inferred, or tracked row dtype may therefore
+    differ from the stored one, and the declaration takes the stored dtype:
+    an array element records it always, and a record's array field records it
+    where its declaration states a dtype. Any other aggregate is returned as it is.
+    """
+    if isinstance(aggregate, NumericArrayBatch):
+        element = _with_stored_dtypes(aggregate.element_spec, aggregate.values, fill=True)
+    elif isinstance(aggregate, RecordBatch):
+        element = _with_stored_dtypes(aggregate.element_spec, aggregate._raw_columns(), fill=False)
+    else:
+        return aggregate
+    if element != aggregate.element_spec:
+        object.__setattr__(aggregate, "_spec", replace(aggregate.spec, element_spec=element))
+    return aggregate
+
+
+def _with_stored_dtypes(spec: Any, store: Any, *, fill: bool, path: str = "") -> Any:
+    """*spec* with each array leaf's dtype set to the dtype its column of *store* holds.
+
+    *store* is one array for an array spec and the columns keyed by leaf path
+    for a record spec. A leaf that declares no dtype takes the stored one only
+    under *fill*, and a column with no single dtype leaves its leaf as it is.
+    """
+    if isinstance(spec, RecordSpec):
+        return RecordSpec(
+            {
+                key: _with_stored_dtypes(
+                    child, store, fill=fill, path=f"{path}/{key}" if path else key
+                )
+                for key, child in spec.children.items()
+            }
+        )
+    if not isinstance(spec, NumericArraySpec):
+        return spec
+    column = store[path] if path else store
+    stored = _numpy_dtype_of(column)
+    if stored is None or (spec.dtype is None and not fill) or spec.dtype == stored:
+        return spec
+    return replace(spec, dtype=stored)
+
+
+def _with_dtypes_of(spec: Any, reference: Any) -> Any:
+    """*spec* with each array leaf's dtype taken from the matching leaf of *reference*.
+
+    A leaf whose match in *reference* states no dtype keeps its own, so a law's
+    event declaration can take the dtypes its stored atoms hold.
+    """
+    if isinstance(spec, RecordSpec) and isinstance(reference, RecordSpec):
+        return RecordSpec(
+            {
+                key: _with_dtypes_of(child, reference.children[key])
+                if key in reference.children
+                else child
+                for key, child in spec.children.items()
+            }
+        )
+    if (
+        isinstance(spec, NumericArraySpec)
+        and isinstance(reference, NumericArraySpec)
+        and reference.dtype is not None
+        and spec.dtype != reference.dtype
+    ):
+        return replace(spec, dtype=reference.dtype)
+    return spec
+
+
+def _stack_rows(
+    inner_outputs: Any,
+    *,
+    batch_shape: tuple[int, ...] | None = None,
+    n: int | None = None,
+    level_names: tuple[str, ...],
+    axis_groups: tuple[tuple[int, ...], ...] | None = None,
+    name: str | None = None,
+    field_name: str,
+    output_template: RecordSpec | None = None,
+    output_spec: OutputSpec | None = None,
+) -> Any:
+    """The aggregate :func:`_make_stack` returns, before it records the stored dtypes."""
     result_name = field_name if name is None else name
 
     # Resolve batch_shape vs. n. Exactly one must be provided.

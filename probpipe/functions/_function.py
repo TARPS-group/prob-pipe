@@ -56,6 +56,7 @@ from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..values._function_base import (
+    _WARNING_SKIP_PREFIXES,
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
@@ -195,14 +196,12 @@ def function(
 
 
 def effective_workflow_kind(function: Function) -> WorkflowKind:
-    """Resolve the effective orchestration mode for this instance.
+    """The orchestration mode of *function*, as :attr:`Function.effective_workflow_kind` states it.
 
-    Per-instance ``workflow_kind`` takes precedence over the global config.
-    ``DEFAULT`` means "defer"; if both levels are ``DEFAULT``, orchestration is
-    disabled. Prefect orchestration is opt-in.
-
-    If ``TASK`` or ``FLOW`` is requested but Prefect is unavailable, the mode
-    falls back to ``OFF``.
+    The function's ``workflow_kind`` control takes precedence over the global
+    configuration, and ``DEFAULT`` defers to it; when both are ``DEFAULT``,
+    orchestration is ``OFF``. A requested ``TASK`` or ``FLOW`` falls back to
+    ``OFF``, with a warning, when Prefect is not installed.
     """
     raw = function.options["workflow_kind"]
 
@@ -217,7 +216,7 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
         warnings.warn(
             f"workflow_kind={kind!r} requested but Prefect is not installed. "
             "Falling back to OFF. Install with: pip install probpipe[prefect]",
-            stacklevel=2,
+            skip_file_prefixes=_WARNING_SKIP_PREFIXES,
         )
         return WorkflowKind.OFF
 
@@ -231,7 +230,7 @@ def _make_execution_config(
 ) -> _execution.WorkflowExecutionConfig:
     """Build resolved execution metadata for row-wise call dispatch."""
     if mode is None:
-        match effective_workflow_kind(function):
+        match function.effective_workflow_kind:
             case WorkflowKind.TASK:
                 mode = "prefect_task"
             case WorkflowKind.FLOW:
@@ -261,11 +260,10 @@ def _make_execution_config(
     )
 
 
-def _call_with_options(
+def _call_function(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.FunctionCallOptions,
 ) -> Any:
     _context._assert_workflow_admission()
     with _replay._function_replay_scope() as replay_call:
@@ -282,20 +280,19 @@ def _call_with_options(
                 broker.set_callable_anchor(anchor)
                 if replay_call is not None:
                     replay_call.validate_callable(anchor)
-            return _call_with_options_in_context(function, args, call_inputs, options)
+            return _call_function_in_context(function, args, call_inputs)
 
 
-def _call_with_options_in_context(
+def _call_function_in_context(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.FunctionCallOptions,
 ) -> Any:
     # A call made while a check probes, as a probe that runs an operation makes
     # one, selects and runs its routes as any call does.
     token = _call._CHECKING.set(False)
     try:
-        return _run_call(function, args, call_inputs, options)
+        return _run_call(function, args, call_inputs)
     finally:
         _call._CHECKING.reset(token)
 
@@ -360,9 +357,8 @@ def _run_call(
     function: Function,
     args: tuple[Any, ...],
     call_inputs: dict[str, Any],
-    options: _call.FunctionCallOptions,
 ) -> Any:
-    call = _call.resolve_function_call(
+    values = _call.resolve_function_call(
         function._signature_info,
         args,
         call_inputs,
@@ -370,13 +366,10 @@ def _run_call(
         module=function._module,
         dependency_type=Node,
         function_name=function._label,
-        default_n_broadcast_samples=function.options["n_broadcast_samples"],
-        default_include_inputs=function.options["include_inputs"],
-        options=options,
     )
 
     values = _normalization.normalize_distribution_values(
-        values=call.values,
+        values=values,
         signature_info=function._signature_info,
         conversions=function.options["conversions"],
     )
@@ -412,11 +405,11 @@ def _run_call(
         # A Function's routes take the method control, so a lifted call selects
         # its evaluation rule by rank.
         rule_method = None if candidates is not None else controls["method"]
-        route = _resolve_route(function, values, broadcast_plan, call.overrides, rule_method)
+        route = _resolve_route(function, values, broadcast_plan, rule_method)
     stochastic_plan = _plan.build_stochastic_plan(
         values,
         broadcast_plan,
-        call.overrides.n_broadcast_samples,
+        function.options["n_broadcast_samples"],
         enumerate_every_group=route.name != "sampling_lift",
     )
     stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
@@ -434,7 +427,7 @@ def _run_call(
             ),
         )
 
-    workflow_kind = effective_workflow_kind(function)
+    workflow_kind = function.effective_workflow_kind
     _broker._record_active_requested_execution(
         function.options["dispatch"],
         workflow_kind.value,
@@ -562,7 +555,7 @@ def _run_call(
         row_values: dict[str, Any],
         plan: _plan.StochasticPlan,
         logical_unit: _plan.LogicalUnit,
-        include_inputs: bool = call.overrides.include_inputs,
+        include_inputs: bool = function.options["include_inputs"],
         record_recipe: bool = True,
         route_metadata: Mapping[str, Any] = route.metadata,
     ):
@@ -633,7 +626,7 @@ def _run_call(
             function_name=function._label,
             output_label=label,
             output_spec=concrete_output_spec,
-            include_inputs=call.overrides.include_inputs,
+            include_inputs=function.options["include_inputs"],
             output_template=concrete_output_template,
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
@@ -766,11 +759,11 @@ def _jax_traceability_error(
                     root = binding.root
                     from ..core._specs import _components_record
 
-                    template = _components_record(root.event_spec)
-                    if not isinstance(template, NumericRecordSpec) or not template.is_concrete:
+                    components = _components_record(root.event_spec)
+                    if not isinstance(components, NumericRecordSpec) or not components.is_concrete:
                         raise TypeError(
                             f"{type(root).__name__} does not declare a concrete numeric "
-                            "event template for side-effect-free JAX probing"
+                            "event for side-effect-free JAX probing"
                         )
                     try:
                         dtypes = root.dtypes
@@ -780,14 +773,14 @@ def _jax_traceability_error(
                             "side-effect-free JAX probing"
                         ) from error
                     columns = {}
-                    for path in template:
+                    for path in components:
                         dtype = dtypes.get(path)
                         if dtype is None:
                             dtype = dtypes.get(path.split("/", 1)[0])
                         if dtype is None:
                             dtype = _stored_dtype(root, path)
                         columns[path] = jax.ShapeDtypeStruct(
-                            (1, *template[path].shape),
+                            (1, *components[path].shape),
                             dtype,
                         )
                     # The stand-in draw is at the kind the law's event declaration
@@ -797,7 +790,7 @@ def _jax_traceability_error(
                             root.label,
                             columns,
                             "draw",
-                            element_spec=template,
+                            element_spec=components,
                             axes_per_level=(1,),
                         )
                     else:
@@ -973,7 +966,6 @@ def _resolve_route(
     function: Function,
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
-    overrides: _call.FunctionCallOverrides,
     rule_method: str | None,
 ) -> _Route:
     """Select the route that realizes the call (step 6).
@@ -991,7 +983,7 @@ def _resolve_route(
         If ``method`` names no route, or no rule is feasible under the controls,
         naming each rule tried and what it lacked.
     """
-    info, route = _route_report(function, values, broadcast_plan, overrides, rule_method)
+    info, route = _route_report(function, values, broadcast_plan, rule_method)
     if route is None:
         if broadcast_plan.regime == "none":
             raise ResolutionError(info.description)
@@ -1011,7 +1003,6 @@ def _route_report(
     function: Function,
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
-    overrides: _call.FunctionCallOverrides,
     rule_method: str | None,
 ) -> tuple[MethodInfo, _Route | None]:
     """The report of the route that realizes the call, and the route when it is selected.
@@ -1034,11 +1025,7 @@ def _route_report(
     parameter = ref.parameter_name
     variadic = ref.subscript is not None
     fixed_args = {name: value for name, value in values.items() if variadic or name != parameter}
-    controls = {
-        **function.options,
-        "n_broadcast_samples": overrides.n_broadcast_samples,
-        "include_inputs": overrides.include_inputs,
-    }
+    controls = dict(function.options)
     registry = _rules.evaluation_rule_registry
     info = registry.check(
         function,
@@ -1082,7 +1069,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
     """
-    call = _call.resolve_function_call(
+    bound = _call.resolve_function_call(
         function._signature_info,
         args,
         kwargs,
@@ -1090,12 +1077,9 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         module=function._module,
         dependency_type=Node,
         function_name=function._label,
-        default_n_broadcast_samples=function.options["n_broadcast_samples"],
-        default_include_inputs=function.options["include_inputs"],
-        options=_call.FunctionCallOptions(),
     )
     values, conversions, waiting = _normalization.plan_distribution_values(
-        values=call.values,
+        values=bound,
         signature_info=function._signature_info,
         conversions=function.options["conversions"],
     )
@@ -1111,9 +1095,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     )
     candidates = function._route_candidates(function.options)
     if candidates is not None:
-        return _check_routes(
-            function, values, broadcast_plan, call, candidates, conversions, waiting
-        )
+        return _check_routes(function, values, broadcast_plan, candidates, conversions, waiting)
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
     _, bindings = _bind_planned_function_inputs(
         function_name=function._label,
@@ -1141,9 +1123,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
             lifted=lifted,
             conversions=MappingProxyType(conversions),
         )
-    info, _ = _route_report(
-        function, values, broadcast_plan, call.overrides, function.options["method"]
-    )
+    info, _ = _route_report(function, values, broadcast_plan, function.options["method"])
     return CallReport(
         routes=(info,),
         selected=None if info.feasible is None else info,
@@ -1158,7 +1138,6 @@ def _check_routes(
     function: Function,
     values: Mapping[str, Any],
     broadcast_plan: _plan.BroadcastPlan,
-    call: _call.ResolvedFunctionCall,
     candidates: tuple[Any, ...],
     conversions: Mapping[str, Any],
     waiting: tuple[str, ...],
@@ -1180,7 +1159,7 @@ def _check_routes(
             routes=(pending,), lifted=lifted, conversions=MappingProxyType(dict(conversions))
         )
     if broadcast_plan.regime != "none":
-        info, _ = _route_report(function, values, broadcast_plan, call.overrides, None)
+        info, _ = _route_report(function, values, broadcast_plan, None)
         if info.feasible is not True:
             return CallReport(
                 routes=(info,),
@@ -1269,7 +1248,7 @@ class _CallEngine:
     """The call stack of design Part V, installed as the call path of every Function."""
 
     def __call__(self, function: Function, /, *args: Any, **kwargs: Any) -> Any:
-        result = _call_with_options(function, args, kwargs, _call.FunctionCallOptions())
+        result = _call_function(function, args, kwargs)
         if not function.options["raw"]:
             return result
         if function._route_candidates(function.options) is not None:
@@ -1316,6 +1295,11 @@ class _CallEngine:
     def apply_scope() -> AbstractContextManager[None]:
         """The scope :meth:`Function.apply` runs in: one point of a lazy invocation."""
         return _apply_scope()
+
+    @staticmethod
+    def workflow_kind(function: Function) -> WorkflowKind:
+        """The orchestration mode that :attr:`Function.effective_workflow_kind` reports."""
+        return effective_workflow_kind(function)
 
 
 #: The installed engine.
