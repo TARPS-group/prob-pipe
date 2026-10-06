@@ -2785,6 +2785,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StanModel` constructs on a machine where BridgeStan has never compiled a
+  model.** Construction reads the program's declarations with BridgeStan's
+  stanc compiler, which BridgeStan fetches only when it first compiles a model,
+  so the first `StanModel` on a new machine raised `ImportError`. Construction
+  now downloads BridgeStan's source tree and fetches stanc with BridgeStan's own
+  Makefile target, as BridgeStan's first compile does, and a failed fetch names
+  the command that fetches the compiler.
 - **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
   sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
   of a posterior from `learn_amortized_posterior` printed one, and a notebook

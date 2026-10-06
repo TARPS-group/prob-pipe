@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import pickle
+import subprocess
+import types
+from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
@@ -32,7 +35,7 @@ from probpipe.distributions._capabilities import (
     _is_normalized,
     _kernel_is_normalized,
 )
-from probpipe.families import PyMCModel, StanModel, UnnormalizedDistribution
+from probpipe.families import PyMCModel, StanModel, UnnormalizedDistribution, _programs
 
 _REGRESSION = """
 // A linear regression, whose coefficient count is a data entry.
@@ -265,6 +268,84 @@ def _flat_regression(x=None, y=None):
         beta = pm.Flat("beta")
         pm.Normal("y", beta * x, 1.0, observed=y)
     return model
+
+
+def _fake_bridgestan(root, downloads):
+    """Modules standing in for bridgestan, whose source tree is *root*; each lookup's download flag is appended to *downloads*."""
+    compile_module = types.ModuleType("bridgestan.compile")
+    compile_module.MAKE = "make"
+    compile_module.IS_WINDOWS = False
+
+    def get_bridgestan_path(download=True):
+        downloads.append(download)
+        return str(root)
+
+    compile_module.get_bridgestan_path = get_bridgestan_path
+    package = types.ModuleType("bridgestan")
+    package.compile = compile_module
+    return {"bridgestan": package, "bridgestan.compile": compile_module}
+
+
+def _make_fetching_stanc(root, calls):
+    """A stand-in for ``subprocess.run`` that records its call and writes ``bin/stanc`` under *root*."""
+
+    def run(command, *, cwd, **kwargs):
+        calls.append((command, cwd))
+        (root / "bin").mkdir(exist_ok=True)
+        (root / "bin" / "stanc").write_text("")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    return run
+
+
+class TestTheStancCompiler:
+    """BridgeStan's stanc is fetched on first use, as BridgeStan fetches it before its first compile."""
+
+    def test_a_missing_compiler_is_fetched_with_bridgestans_make_target(
+        self, tmp_path, monkeypatch
+    ):
+        downloads, calls = [], []
+        monkeypatch.setattr(_programs.subprocess, "run", _make_fetching_stanc(tmp_path, calls))
+        with patch.dict("sys.modules", _fake_bridgestan(tmp_path, downloads)):
+            stanc = _programs._stanc()
+        assert stanc == tmp_path / "bin" / "stanc"
+        assert downloads == [True]
+        assert calls == [(["make", "bin/stanc"], str(tmp_path))]
+
+    def test_a_present_compiler_is_not_fetched(self, tmp_path, monkeypatch):
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "stanc").write_text("")
+        calls = []
+        monkeypatch.setattr(_programs.subprocess, "run", _make_fetching_stanc(tmp_path, calls))
+        with patch.dict("sys.modules", _fake_bridgestan(tmp_path, [])):
+            assert _programs._stanc() == tmp_path / "bin" / "stanc"
+        assert calls == []
+
+    def test_a_failed_fetch_raises_with_the_command(self, tmp_path, monkeypatch):
+        def failing_make(command, *, cwd, **kwargs):
+            return subprocess.CompletedProcess(command, 2, "", "curl: (6) Could not resolve host")
+
+        monkeypatch.setattr(_programs.subprocess, "run", failing_make)
+        with (
+            patch.dict("sys.modules", _fake_bridgestan(tmp_path, [])),
+            pytest.raises(
+                ImportError, match=r"`make -C .* bin/stanc`: curl: \(6\) Could not resolve"
+            ),
+        ):
+            _programs._stanc()
+
+    def test_without_fetching_a_missing_compiler_raises_with_the_command(
+        self, tmp_path, monkeypatch
+    ):
+        downloads, calls = [], []
+        monkeypatch.setattr(_programs.subprocess, "run", _make_fetching_stanc(tmp_path, calls))
+        with (
+            patch.dict("sys.modules", _fake_bridgestan(tmp_path, downloads)),
+            pytest.raises(ImportError, match=r"fetch it with `make -C .* bin/stanc`"),
+        ):
+            _programs._stanc(fetch=False)
+        assert downloads == [False]
+        assert calls == []
 
 
 def _penalized_regression(x=None, y=None):
