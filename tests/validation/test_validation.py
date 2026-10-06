@@ -15,6 +15,8 @@ from probpipe import (
     RecordSpec,
     conditional_distribution,
     predictive_check,
+    sample,
+    workflow_run,
 )
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.validation import predictive_check as pc_direct
@@ -73,36 +75,27 @@ class TestPredictiveCheck:
     """The result of one check and the record it appends to the law's annotations."""
 
     def test_prior_check_returns_replicated_statistics(self, prior, likelihood):
-        result = predictive_check(
-            likelihood, prior, sample_mean, num_replications=50, key=jax.random.key(0)
-        )
+        with workflow_run(seed=0):
+            result = predictive_check(likelihood, prior, sample_mean, num_replications=50)
         assert result["replicated_statistics"].num_atoms == 50
         assert result["test_fn_name"].value == "sample_mean"
         assert "observed_statistic" not in result
         assert "p_value" not in result
 
     def test_posterior_check_returns_p_value(self, prior, likelihood, observed_data):
-        result = predictive_check(
-            likelihood,
-            prior,
-            sample_mean,
-            observed_data,
-            num_replications=100,
-            key=jax.random.key(1),
-        )
+        with workflow_run(seed=1):
+            result = predictive_check(
+                likelihood, prior, sample_mean, observed_data, num_replications=100
+            )
         assert 0.0 <= float(result["p_value"]) <= 1.0
         assert float(result["observed_statistic"]) == pytest.approx(float(observed_data.mean()))
         assert result["replicated_statistics"].num_atoms == 100
 
     def test_several_statistics_give_one_result_each(self, prior, likelihood, observed_data):
-        result = predictive_check(
-            likelihood,
-            prior,
-            [sample_mean, sample_max],
-            observed_data,
-            num_replications=30,
-            key=jax.random.key(2),
-        )
+        with workflow_run(seed=2):
+            result = predictive_check(
+                likelihood, prior, [sample_mean, sample_max], observed_data, num_replications=30
+            )
         assert result["sample_mean/test_fn_name"].value == "sample_mean"
         assert result["sample_max/test_fn_name"].value == "sample_max"
         assert result.at_path("sample_max")["replicated_statistics"].num_atoms == 30
@@ -114,13 +107,10 @@ class TestPredictiveCheck:
         def sample_sum(data):
             return jnp.sum(data)
 
-        result = predictive_check(
-            likelihood,
-            prior,
-            [sample_mean, sample_sum],
-            num_replications=40,
-            key=jax.random.key(3),
-        )
+        with workflow_run(seed=3):
+            result = predictive_check(
+                likelihood, prior, [sample_mean, sample_sum], num_replications=40
+            )
         means = np.asarray(result["sample_mean/replicated_statistics"].atoms.values)
         sums = np.asarray(result["sample_sum/replicated_statistics"].atoms.values)
         np.testing.assert_allclose(sums, N * means, rtol=1e-5)
@@ -129,13 +119,10 @@ class TestPredictiveCheck:
         def host_mean(data):
             return float(np.mean(np.asarray(data)))
 
-        result = predictive_check(
-            likelihood,
-            prior,
-            [sample_mean, host_mean],
-            num_replications=25,
-            key=jax.random.key(4),
-        )
+        with workflow_run(seed=4):
+            result = predictive_check(
+                likelihood, prior, [sample_mean, host_mean], num_replications=25
+            )
         np.testing.assert_allclose(
             np.asarray(result["host_mean/replicated_statistics"].atoms.values),
             np.asarray(result["sample_mean/replicated_statistics"].atoms.values),
@@ -159,9 +146,8 @@ class TestPredictiveCheck:
         """predictive_check appends its result to the law's annotations."""
         assert prior.annotations is None or "predictive_check" not in prior.annotations
 
-        predictive_check(
-            likelihood, prior, sample_mean, num_replications=10, key=jax.random.key(10)
-        )
+        with workflow_run(seed=10):
+            predictive_check(likelihood, prior, sample_mean, num_replications=10)
         group = prior.annotations["predictive_check"]
         assert len(list(group.children)) == 1
         check_ds = group["check_0"].dataset
@@ -169,22 +155,15 @@ class TestPredictiveCheck:
         assert check_ds.attrs["test_fn_name"] == "sample_mean"
 
     def test_checks_accumulate_one_child_per_statistic(self, prior, likelihood, observed_data):
-        predictive_check(
-            likelihood,
-            prior,
-            sample_mean,
-            observed_data,
-            num_replications=10,
-            key=jax.random.key(20),
-        )
-        predictive_check(
-            likelihood,
-            prior,
-            [sample_variance, sample_max],
-            observed_data,
-            num_replications=10,
-            key=jax.random.key(21),
-        )
+        with workflow_run(seed=20):
+            predictive_check(likelihood, prior, sample_mean, observed_data, num_replications=10)
+            predictive_check(
+                likelihood,
+                prior,
+                [sample_variance, sample_max],
+                observed_data,
+                num_replications=10,
+            )
         group = prior.annotations["predictive_check"]
         names = [group[f"check_{i}"].dataset.attrs["test_fn_name"] for i in range(3)]
         assert names == ["sample_mean", "sample_variance", "sample_max"]
@@ -194,14 +173,9 @@ class TestPredictiveCheck:
         def failing(data):
             raise RuntimeError("statistic failed")
 
-        with pytest.raises(RuntimeError, match="statistic failed"):
+        with workflow_run(seed=22), pytest.raises(RuntimeError, match="statistic failed"):
             predictive_check(
-                likelihood,
-                prior,
-                [sample_mean, failing],
-                observed_data,
-                num_replications=5,
-                key=jax.random.key(22),
+                likelihood, prior, [sample_mean, failing], observed_data, num_replications=5
             )
         assert prior.annotations is None or "predictive_check" not in prior.annotations
 
@@ -355,17 +329,17 @@ class TestCalibration:
             if source == "empirical posterior":
                 draws = np.random.default_rng(7).normal(loc, scale, size=20_000)
                 law = EmpiricalDistribution("mu", jnp.asarray(draws, jnp.float32))
-        result = predictive_check(
-            _location_kernel(law),
-            law,
-            [sample_mean, sample_variance, sample_max],
-            jnp.asarray(y, jnp.float32),
-            num_replications=self.NUM_REPLICATIONS,
-            key=jax.random.key(11),
-        )
+        with workflow_run(seed=11):
+            result = predictive_check(
+                _location_kernel(law),
+                law,
+                [sample_mean, sample_variance, sample_max],
+                jnp.asarray(y, jnp.float32),
+                num_replications=self.NUM_REPLICATIONS,
+            )
         for name, exact in _exact_p_values(y, loc, scale).items():
             # Four Monte Carlo standard errors, plus the float32 rounding of the statistics.
-            # Observed across eight keys: the largest error is 0.62 of this tolerance.
+            # Observed across eight seeds: the largest error is 0.62 of this tolerance.
             tolerance = 4.0 * np.sqrt(exact * (1.0 - exact) / self.NUM_REPLICATIONS) + 2e-3
             assert float(result[f"{name}/p_value"]) == pytest.approx(exact, abs=tolerance), name
 
@@ -397,19 +371,14 @@ class TestCalibration:
             return data["a"] - jnp.mean(data["b"])
 
         observed = {"a": jnp.float32(1.5), "b": jnp.zeros(3, jnp.float32)}
-        result = predictive_check(
-            kernel, prior, contrast, observed, num_replications=4000, key=jax.random.key(5)
-        )
+        with workflow_run(seed=5):
+            result = predictive_check(kernel, prior, contrast, observed, num_replications=4000)
         exact = stats.norm.sf(1.5, 0.0, np.sqrt(1.0 + 4.0 / 3.0))
         assert float(result["p_value"]) == pytest.approx(exact, abs=0.03)
-        as_record = predictive_check(
-            kernel,
-            prior,
-            contrast,
-            Record("observed", **observed),
-            num_replications=4000,
-            key=jax.random.key(5),
-        )
+        with workflow_run(seed=5):
+            as_record = predictive_check(
+                kernel, prior, contrast, Record("observed", **observed), num_replications=4000
+            )
         assert float(as_record["p_value"]) == float(result["p_value"])
 
 
@@ -431,17 +400,14 @@ class TestForms:
 
     def test_a_record_posterior_and_a_whole_term_posterior_agree(self, observed_data):
         draws = jnp.asarray(np.random.default_rng(0).normal(size=200), jnp.float32)
-        results = [
-            predictive_check(
-                _location_kernel(law),
-                law,
-                sample_mean,
-                observed_data,
-                num_replications=40,
-                key=jax.random.key(0),
-            )
-            for law in _posteriors_of(draws, NumericArraySpec((), jnp.float32))
-        ]
+        results = []
+        for law in _posteriors_of(draws, NumericArraySpec((), jnp.float32)):
+            with workflow_run(seed=0):
+                results.append(
+                    predictive_check(
+                        _location_kernel(law), law, sample_mean, observed_data, num_replications=40
+                    )
+                )
         assert float(results[0]["p_value"]) == float(results[1]["p_value"])
         np.testing.assert_array_equal(
             results[0]["replicated_statistics"].atoms.values,
@@ -453,25 +419,22 @@ class TestForms:
         record, _ = _posteriors_of(draws, NumericArraySpec((), jnp.float32))
         kernel = _location_kernel(record)
         rows = NumericRecord("posterior", mu=np.asarray(draws))
-        result = predictive_check(
-            kernel, rows, sample_mean, observed_data, num_replications=40, key=jax.random.key(0)
-        )
-        expected = predictive_check(
-            kernel, record, sample_mean, observed_data, num_replications=40, key=jax.random.key(0)
-        )
+        with workflow_run(seed=0):
+            result = predictive_check(kernel, rows, sample_mean, observed_data, num_replications=40)
+        with workflow_run(seed=0):
+            expected = predictive_check(
+                kernel, record, sample_mean, observed_data, num_replications=40
+            )
         assert float(result["p_value"]) == float(expected["p_value"])
 
     def test_an_empirical_law_draws_its_atoms(self):
         """Each replication's parameter is an atom of the empirical law."""
         atoms = np.array([0.5, 1.0, 1.5, 2.0, 2.5], dtype=np.float32)
         law = EmpiricalDistribution("mu", jnp.asarray(atoms))
-        result = predictive_check(
-            _location_kernel(law, n=10, scale=1e-4),
-            law,
-            sample_mean,
-            num_replications=20,
-            key=jax.random.key(3),
-        )
+        with workflow_run(seed=3):
+            result = predictive_check(
+                _location_kernel(law, n=10, scale=1e-4), law, sample_mean, num_replications=20
+            )
         means = np.asarray(result["replicated_statistics"].atoms.values)
         nearest = np.abs(means[:, None] - atoms).argmin(axis=1)
         # The kernel's scale of 1e-4 puts each replication's mean within 1e-4 of its atom.
@@ -479,17 +442,14 @@ class TestForms:
         assert np.unique(nearest).size > 1
 
     def test_the_data_may_map_the_kernel_components(self, prior, likelihood, observed_data):
-        as_value = predictive_check(
-            likelihood, prior, sample_max, observed_data, num_replications=30, key=jax.random.key(9)
-        )
-        as_mapping = predictive_check(
-            likelihood,
-            prior,
-            sample_max,
-            {"y": observed_data},
-            num_replications=30,
-            key=jax.random.key(9),
-        )
+        with workflow_run(seed=9):
+            as_value = predictive_check(
+                likelihood, prior, sample_max, observed_data, num_replications=30
+            )
+        with workflow_run(seed=9):
+            as_mapping = predictive_check(
+                likelihood, prior, sample_max, {"y": observed_data}, num_replications=30
+            )
         assert float(as_mapping["observed_statistic"]) == float(as_value["observed_statistic"])
         assert float(as_mapping["p_value"]) == float(as_value["p_value"])
 
@@ -505,14 +465,59 @@ class TestForms:
             "xarray": xr.DataArray(values, dims="observation"),
             "xarray in a mapping": {"y": xr.DataArray(values, dims="observation")},
         }[host]
-        as_array = predictive_check(
-            likelihood, prior, sample_max, observed_data, num_replications=30, key=jax.random.key(9)
-        )
-        as_host = predictive_check(
-            likelihood, prior, sample_max, hosted, num_replications=30, key=jax.random.key(9)
-        )
+        with workflow_run(seed=9):
+            as_array = predictive_check(
+                likelihood, prior, sample_max, observed_data, num_replications=30
+            )
+        with workflow_run(seed=9):
+            as_host = predictive_check(likelihood, prior, sample_max, hosted, num_replications=30)
         assert float(as_host["observed_statistic"]) == float(as_array["observed_statistic"])
         assert float(as_host["p_value"]) == float(as_array["p_value"])
+
+
+# ---------------------------------------------------------------------------
+# Randomness
+# ---------------------------------------------------------------------------
+
+
+def _draw_after(run_first) -> float:
+    """The draw that follows *run_first* in a workflow scope seeded 7."""
+    with workflow_run(seed=7):
+        run_first()
+        return float(sample.with_options(raw=True)(Normal("z", 0.0, 1.0)))
+
+
+class TestRandomness:
+    """The replications are one workflow-owned random event of the enclosing workflow scope."""
+
+    @staticmethod
+    def _replications(likelihood, prior):
+        check = predictive_check(likelihood, prior, sample_mean, num_replications=20)
+        return np.asarray(check["replicated_statistics"].atoms.values)
+
+    def test_a_seed_reproduces_the_replications_and_another_seed_changes_them(
+        self, prior, likelihood
+    ):
+        def replications(seed):
+            with workflow_run(seed=seed):
+                return self._replications(likelihood, prior)
+
+        first = replications(3)
+        np.testing.assert_array_equal(replications(3), first)
+        assert not np.array_equal(replications(4), first)
+
+    def test_calls_outside_every_scope_draw_fresh_replications(self, prior, likelihood):
+        first = self._replications(likelihood, prior)
+        assert not np.array_equal(self._replications(likelihood, prior), first)
+
+    def test_a_call_claims_one_event_of_the_enclosing_scope(self, prior, likelihood):
+        after_check = _draw_after(lambda: self._replications(likelihood, prior))
+        assert after_check == _draw_after(lambda: sample(Normal("w", 0.0, 1.0)))
+        assert after_check != _draw_after(lambda: None)
+
+    def test_a_key_keyword_raises_type_error(self, prior, likelihood):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'key'"):
+            predictive_check(likelihood, prior, sample_mean, key=jax.random.key(0))
 
 
 # ---------------------------------------------------------------------------
@@ -532,15 +537,15 @@ class TestOptionalSlots:
         )
 
     def test_the_replications_take_the_default(self):
-        check = predictive_check(
-            self._scaled(), Normal("mu", 0.0, 1e-3), sample_variance, key=jax.random.key(0)
-        )
+        with workflow_run(seed=0):
+            check = predictive_check(self._scaled(), Normal("mu", 0.0, 1e-3), sample_variance)
         replicated = np.asarray(check["replicated_statistics"].atoms)
         np.testing.assert_allclose(replicated.mean(), 4.0, rtol=0.05)
 
     def test_the_replications_take_the_slot_the_law_produces(self):
         law = Normal("mu", 0.0, 1e-3) * Normal("scale", 3.0, 1e-3)
-        check = predictive_check(self._scaled(), law, sample_variance, key=jax.random.key(0))
+        with workflow_run(seed=0):
+            check = predictive_check(self._scaled(), law, sample_variance)
         replicated = np.asarray(check["replicated_statistics"].atoms)
         np.testing.assert_allclose(replicated.mean(), 9.0, rtol=0.05)
 
@@ -551,7 +556,7 @@ class TestOptionalSlots:
             given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
         )
         with pytest.raises(ValueError, match=r"does not produce the given slots \['sigma'\] "):
-            predictive_check(kernel, prior, sample_mean, observed_data, key=jax.random.key(0))
+            predictive_check(kernel, prior, sample_mean, observed_data)
 
 
 class TestErrors:
@@ -562,7 +567,7 @@ class TestErrors:
             given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
         )
         with pytest.raises(ValueError, match=r"does not produce the given slots \['sigma'\]"):
-            predictive_check(kernel, prior, sample_mean, observed_data, key=jax.random.key(0))
+            predictive_check(kernel, prior, sample_mean, observed_data)
 
     def test_a_simulator_in_place_of_the_kernel_raises(self, prior, observed_data):
         class _Simulator:
@@ -574,7 +579,7 @@ class TestErrors:
 
     def test_a_law_that_produces_the_observations_raises(self, prior, likelihood):
         with pytest.raises(ValueError, match="'y' is produced by both"):
-            predictive_check(likelihood, likelihood * prior, sample_mean, key=jax.random.key(0))
+            predictive_check(likelihood, likelihood * prior, sample_mean)
 
     @pytest.mark.parametrize(
         ("test_fns", "error", "match"),
@@ -586,7 +591,7 @@ class TestErrors:
     )
     def test_the_statistics_are_checked(self, prior, likelihood, test_fns, error, match):
         with pytest.raises(error, match=match):
-            predictive_check(likelihood, prior, test_fns, key=jax.random.key(0))
+            predictive_check(likelihood, prior, test_fns)
 
     def test_num_replications_must_be_positive(self, prior, likelihood):
         with pytest.raises(ValueError, match="positive integer"):

@@ -34,14 +34,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from ..custom_types import PRNGKey
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..functions import _broker, _context
@@ -58,7 +56,7 @@ from ._utils import (
     _json_dumps_safe,
     _safe_float,
 )
-from ._workflow_rng import _resolve_ppc_key
+from ._workflow_rng import _claim_ppc_key
 
 __all__ = [
     "add_ppc",
@@ -207,14 +205,14 @@ def _ppc_op(
     *,
     kernel: ConditionalDistribution,
     n_replications: int = 500,
-    key: PRNGKey | None = None,
 ) -> dict[str, Any]:
     """Pure PPC operation returning a payload dict.
 
     This function computes one or more posterior/prior predictive checks and
     returns a structured payload dict. It does not mutate ``posterior._annotations``.
     The replications are draws of the kernel's event from ``kernel * posterior``,
-    and every test statistic is computed on the same replications.
+    and every test statistic is computed on the same replications. They are one
+    workflow-owned random event of the enclosing workflow scope.
 
     Parameters
     ----------
@@ -235,9 +233,6 @@ def _ppc_op(
     n_replications : int
         Number of replicated datasets.
 
-    key : PRNGKey or None
-        JAX PRNG key.
-
     Returns
     -------
     dict
@@ -253,11 +248,9 @@ def _ppc_op(
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    stochastic_scope = _broker._managed_stochastic_scope() if key is None else nullcontext()
-    with stochastic_scope:
+    with _broker._managed_stochastic_scope():
         # One event draws the replications that every test statistic reads.
-        effect_key = _resolve_ppc_key(
-            key,
+        effect_key = _claim_ppc_key(
             source_index=0,
             n_replications=n_replications,
             provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
@@ -400,7 +393,6 @@ def add_ppc(
     *,
     kernel: ConditionalDistribution,
     n_replications: int = 500,
-    key: PRNGKey | None = None,
 ) -> None:
     """Compute a PPC and write results into ``posterior._annotations``.
 
@@ -409,6 +401,10 @@ def add_ppc(
     then returns ``None``. The replications are draws of the kernel's event
     from ``kernel * posterior``, as :func:`~probpipe.validation.predictive_check`
     draws them, and every test statistic is computed on the same replications.
+
+    The replications are one workflow-owned random event of the enclosing
+    workflow scope. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces them, and a call outside every scope draws fresh replications.
 
     Parameters
     ----------
@@ -425,19 +421,19 @@ def add_ppc(
         likelihood of a model ``likelihood * prior``.
     n_replications : int
         Number of replicated datasets.
-    key : PRNGKey or None
-        JAX PRNG key.
 
     Raises
     ------
     TypeError
         If *kernel* is not a ``ConditionalDistribution``, *posterior* does not
-        sample, or a test function is not callable.
+        sample, *test_fns* is neither a callable nor an iterable, a test
+        function is not callable, or *n_replications* is not an integer.
     ValueError
         If *posterior* does not produce every given slot of *kernel*, naming
-        the missing slots, or if two test functions have the same name. Use
-        distinct named functions instead of multiple lambdas so result keys
-        cannot collide.
+        the missing slots; if *posterior* produces a component that *kernel*
+        produces; if *test_fns* is empty or holds two test functions of the
+        same name; or if *n_replications* is not positive. Use distinct named
+        functions instead of multiple lambdas so result keys cannot collide.
     """
     payload = _ppc_op(
         posterior,
@@ -445,7 +441,6 @@ def add_ppc(
         observed_data=observed_data,
         kernel=kernel,
         n_replications=n_replications,
-        key=key,
     )
 
     _write_ppc_payload(posterior, payload)

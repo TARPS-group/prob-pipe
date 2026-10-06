@@ -84,16 +84,6 @@ class TestPredictiveCheckBroker:
 
         assert derive.call_count == 1
 
-    def test_an_explicit_key_claims_no_event(self):
-        likelihood, prior = _check_setup()
-
-        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
-            predictive_check(
-                likelihood, prior, jnp.mean, num_replications=3, key=jax.random.key(11)
-            )
-
-        commit.assert_not_called()
-
     def test_a_check_outside_a_workflow_run_draws_a_fresh_key(self):
         likelihood, prior = _check_setup()
 
@@ -343,72 +333,3 @@ class TestPosteriorScoreBroker:
             )
 
         commit.assert_not_called()
-
-    def test_explicit_key_does_not_shift_later_automatic_score(self):
-        approx, reference = self._inputs()
-        explicit = jax.random.key(11)
-
-        with workflow_run(seed=7):
-            expected = score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-            )
-
-        with workflow_run(seed=7):
-            score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-                key=explicit,
-            )
-            actual = score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-            )
-
-        np.testing.assert_array_equal(
-            actual["sliced_wasserstein"],
-            expected["sliced_wasserstein"],
-        )
-
-    def test_explicit_key_reaches_sliced_wasserstein_unchanged(self):
-        approx, reference = self._inputs()
-        explicit = jax.random.key(11)
-
-        with (
-            patch(
-                "probpipe.validation._comparison.sliced_wasserstein",
-                return_value=jnp.asarray(0.0),
-            ) as metric,
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-        ):
-            score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-                key=explicit,
-            )
-
-        assert metric.call_args.kwargs["key"] is explicit
-        commit.assert_not_called()
-
-    def test_missing_resolved_sliced_wasserstein_key_is_an_internal_error(self):
-        approx, reference = self._inputs()
-
-        with (
-            patch(
-                "probpipe.validation._comparison._resolve_validation_key",
-                return_value=None,
-            ),
-            patch("probpipe.validation._comparison.sliced_wasserstein") as metric,
-            pytest.raises(RuntimeError, match="resolved PRNG key"),
-        ):
-            score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-            )
-
-        metric.assert_not_called()

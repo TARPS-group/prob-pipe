@@ -38,7 +38,7 @@ from ..functions import _context
 from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ..operations._condition import condition_on
 from ._workflow_rng import (
-    _resolve_validation_key,
+    _claim_validation_key,
     _validate_positive_int,
 )
 
@@ -251,8 +251,7 @@ def simulation_based_calibration(
         raise ValueError(f"observing {list(observed)} leaves no parameter of {model.label!r}")
     if key is None:
         # The joint is a ProbPipe law, so its draws follow the distribution ABI.
-        key = _resolve_validation_key(
-            None,
+        key = _claim_validation_key(
             operation_kind="simulation-based-calibration",
             execution_mode="sampled",
             sample_shape=(num_simulations,),

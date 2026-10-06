@@ -19,7 +19,7 @@ from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..distributions._factored import FactoredConditionalDistribution, _event_of, _raw_record
 from ..functions import function
 from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
-from ._workflow_rng import _resolve_validation_key, _validate_positive_int
+from ._workflow_rng import _claim_validation_key, _validate_positive_int
 
 __all__ = ["predictive_check"]
 
@@ -32,7 +32,6 @@ def predictive_check[D](
     observed_data: D | None = None,
     *,
     num_replications: int = 500,
-    key: PRNGKey | None = None,
 ) -> dict:
     """Compare replicated data with the observed data through test statistics.
 
@@ -48,6 +47,10 @@ def predictive_check[D](
     event: a whole term is its value, such as an array, and an exposed record is
     the mapping of its fields. A statistic that JAX can trace is computed on
     every replication in one ``jax.vmap`` call, and any other in a loop.
+
+    The replications are one workflow-owned random event of the enclosing
+    workflow scope. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces them, and a call outside every scope draws fresh replications.
 
     Parameters
     ----------
@@ -69,9 +72,6 @@ def predictive_check[D](
         takes.
     num_replications : int
         The number of replications.
-    key : PRNGKey, optional
-        JAX PRNG key. When it is omitted, the workflow supplies the key, so a
-        call inside ``workflow_run(seed=...)`` is reproducible.
 
     Returns
     -------
@@ -94,12 +94,13 @@ def predictive_check[D](
     ------
     TypeError
         If *kernel* is not a ``ConditionalDistribution``, *law* does not
-        sample, or a statistic is not callable.
+        sample, *test_fns* is neither a callable nor an iterable, a statistic
+        is not callable, or *num_replications* is not an integer.
     ValueError
         If *law* does not produce every given slot of *kernel*, naming the
         missing slots; if *law* produces a component that *kernel* produces;
         if *test_fns* is empty or holds two statistics of the same name; or if
-        *num_replications* is not a positive integer.
+        *num_replications* is not positive.
 
     Notes
     -----
@@ -111,18 +112,16 @@ def predictive_check[D](
 
     Examples
     --------
-    >>> import jax
     >>> import jax.numpy as jnp
-    >>> from probpipe import Normal, conditional_distribution
+    >>> from probpipe import Normal, conditional_distribution, workflow_run
     >>> prior = Normal("mu", 0.0, 1.0)
     >>> likelihood = conditional_distribution(
     ...     "y_given_mu",
     ...     lambda mu: Normal("y", mu * jnp.ones(10), 1.0),
     ...     given_spec=prior.event_spec.components,
     ... )
-    >>> check = predictive_check(
-    ...     likelihood, prior, jnp.mean, jnp.zeros(10), key=jax.random.key(0)
-    ... )
+    >>> with workflow_run(seed=0):
+    ...     check = predictive_check(likelihood, prior, jnp.mean, jnp.zeros(10))
     >>> check["replicated_statistics"].num_atoms
     500
     >>> 0.0 <= float(check["p_value"]) <= 1.0
@@ -138,15 +137,13 @@ def predictive_check[D](
     joint = _predictive_joint(kernel, law, "predictive_check")
     observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
-    if key is None:
-        # The composition is a ProbPipe law, so its draws follow the distribution ABI.
-        key = _resolve_validation_key(
-            None,
-            operation_kind="predictive-check",
-            execution_mode="sampled",
-            sample_shape=(num_replications,),
-            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
-        )
+    # The composition is a ProbPipe law, so its draws follow the distribution ABI.
+    key = _claim_validation_key(
+        operation_kind="predictive-check",
+        execution_mode="sampled",
+        sample_shape=(num_replications,),
+        provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
+    )
     replicated = _replicated_statistics(joint, kernel, statistics, num_replications, key)
 
     results = {}

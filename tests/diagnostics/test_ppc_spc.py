@@ -9,7 +9,7 @@ import pytest
 import xarray as xr
 from scipy import stats
 
-from probpipe import Normal, conditional_distribution
+from probpipe import Normal, conditional_distribution, sample, workflow_run
 from probpipe.diagnostics._ppc_spc import (
     _dataset_from_payload,
     _observed_data_to_dataset,
@@ -156,14 +156,14 @@ class TestReplicatedStatisticsSummary:
 class TestAddPpc:
     def test_writes_ppc_group(self, posterior):
         observed = np.random.default_rng(0).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            kernel=_kernel(posterior),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         assert posterior._annotations is not None
         ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert "p_value" in ppc_ds.data_vars
@@ -173,14 +173,14 @@ class TestAddPpc:
 
     def test_p_value_in_range(self, posterior):
         observed = np.random.default_rng(1).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            kernel=_kernel(posterior),
-            n_replications=50,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=50,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert 0.0 <= view.p_values["_mean"] <= 1.0
 
@@ -190,14 +190,14 @@ class TestAddPpc:
         ``Normal(alpha, sqrt(1/5))``, so the p-value is the average of its tail
         probabilities over the posterior's equally weighted atoms.
         """
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=np.full(5, location),
-            kernel=_kernel(posterior, n=5),
-            n_replications=2000,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=np.full(5, location),
+                kernel=_kernel(posterior, n=5),
+                n_replications=2000,
+            )
 
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         atoms = np.ravel(np.asarray(posterior.atoms["alpha"].values))
@@ -208,40 +208,40 @@ class TestAddPpc:
 
     def test_multiple_test_fns(self, posterior):
         observed = np.random.default_rng(2).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=[_mean, _std],
-            observed_data=observed,
-            kernel=_kernel(posterior),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=[_mean, _std],
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert set(view.p_values.keys()) == {"_mean", "_std"}
 
     def test_observed_stored(self, posterior):
         observed = np.random.default_rng(3).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            kernel=_kernel(posterior),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert view.observed["_mean"] == pytest.approx(float(np.mean(observed)), rel=1e-5)
 
     def test_observed_data_may_map_the_kernel_components(self, posterior):
         observed = np.random.default_rng(3).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data={"y": observed},
-            kernel=_kernel(posterior),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data={"y": observed},
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert view.observed["_mean"] == pytest.approx(float(np.mean(observed)), rel=1e-5)
         arviz_observed = posterior._annotations["arviz"]["observed_data"].to_dataset()
@@ -249,25 +249,25 @@ class TestAddPpc:
 
     def test_returns_none(self, posterior):
         observed = np.ones(50)
-        result = add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            kernel=_kernel(posterior),
-            n_replications=5,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            result = add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=5,
+            )
         assert result is None
 
     def test_prior_predictive_without_observed_data(self, posterior):
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=None,
-            kernel=_kernel(posterior, n=7),
-            n_replications=5,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=None,
+                kernel=_kernel(posterior, n=7),
+                n_replications=5,
+            )
 
         ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert ppc_ds.attrs["has_observed_data"] is False
@@ -286,7 +286,7 @@ class TestAddPpc:
             },
         )
         with pytest.raises(ValueError, match=r"does not produce the given slots \['gamma'\]"):
-            add_ppc(posterior, _mean, np.zeros(5), kernel=kernel, key=jax.random.key(0))
+            add_ppc(posterior, _mean, np.zeros(5), kernel=kernel)
 
     def test_n_replications_must_be_positive(self, posterior):
         with pytest.raises(ValueError, match="positive integer"):
@@ -300,26 +300,26 @@ class TestAddPpc:
 
     def test_diagnostics_view_integration(self, posterior):
         observed = np.random.default_rng(4).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            kernel=_kernel(posterior),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.ppc.exists
 
     def test_ppc_op_returns_the_payload(self, posterior):
-        payload = _ppc_op(
-            posterior,
-            _mean,
-            observed_data=np.ones(50),
-            kernel=_kernel(posterior),
-            n_replications=4,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            payload = _ppc_op(
+                posterior,
+                _mean,
+                observed_data=np.ones(50),
+                kernel=_kernel(posterior),
+                n_replications=4,
+            )
 
         ds = _dataset_from_payload(payload)
         assert "p_value" in ds
@@ -342,3 +342,40 @@ class TestAddPpc:
         _write_ppc_payload(posterior, payload)
 
         assert "posterior_predictive" in posterior._annotations["arviz"].children
+
+
+def _draw_after(run_first) -> float:
+    """The draw that follows *run_first* in a workflow scope seeded 7."""
+    with workflow_run(seed=7):
+        run_first()
+        return float(sample.with_options(raw=True)(Normal("z", 0.0, 1.0)))
+
+
+class TestAddPpcRandomness:
+    """The replications are one workflow-owned random event of the enclosing workflow scope."""
+
+    @staticmethod
+    def _replicated_mean(posterior) -> float:
+        add_ppc(posterior, _mean, kernel=_kernel(posterior), n_replications=20)
+        return posterior.diagnostics.ppc.replicated_stat_mean["_mean"]
+
+    def test_a_seed_reproduces_the_replications_and_another_seed_changes_them(self, posterior):
+        def replicated_mean(seed):
+            with workflow_run(seed=seed):
+                return self._replicated_mean(posterior)
+
+        first = replicated_mean(3)
+        assert replicated_mean(3) == first
+        assert replicated_mean(4) != first
+
+    def test_calls_outside_every_scope_draw_fresh_replications(self, posterior):
+        assert self._replicated_mean(posterior) != self._replicated_mean(posterior)
+
+    def test_a_call_claims_one_event_of_the_enclosing_scope(self, posterior):
+        after_ppc = _draw_after(lambda: self._replicated_mean(posterior))
+        assert after_ppc == _draw_after(lambda: sample(Normal("w", 0.0, 1.0)))
+        assert after_ppc != _draw_after(lambda: None)
+
+    def test_a_key_keyword_raises_type_error(self, posterior):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'key'"):
+            add_ppc(posterior, _mean, kernel=_kernel(posterior), key=jax.random.key(0))
