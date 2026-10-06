@@ -474,9 +474,23 @@ class TestLevelNames:
     def test_the_same_new_name_from_both_forms_is_not_a_conflict(self, nested):
         assert nested.with_level_names({"chain": "a"}, chain="a").level_names == ("a", "draw")
 
-    def test_a_level_name_must_be_an_identifier(self):
-        with pytest.raises(ValueError, match="must be an identifier"):
-            _spec([(2,)], ["my level"])
+    @pytest.mark.parametrize("name", ["my level", "mean(mu)", "[model] | y", "3"])
+    def test_a_level_name_is_any_non_empty_string_without_a_slash(self, name):
+        """A level name follows the rule for component names."""
+        assert _spec([(2,)], [name]).level_names == (name,)
+
+    def test_a_level_name_containing_a_slash_raises(self):
+        with pytest.raises(ValueError, match="contain no '/'"):
+            _spec([(2,)], ["a/b"])
+
+    def test_a_new_name_with_a_space_renames_the_level(self, nested):
+        renamed = nested.with_level_names(chain="my chain")
+        assert renamed.level_names == ("my chain", "draw")
+        assert renamed[1].label == "b[my chain=1]"
+
+    def test_a_new_name_containing_a_slash_raises(self, nested):
+        with pytest.raises(ValueError, match="contain no '/'"):
+            nested.with_level_names(chain="a/b")
 
     def test_a_level_name_must_be_a_string(self):
         with pytest.raises(TypeError, match="level names are strings"):
@@ -551,6 +565,13 @@ class TestAtLevels:
     def test_an_unknown_level_raises(self, nested):
         with pytest.raises(KeyError, match="not levels of this batch"):
             nested.at_levels(nope=0)
+
+    def test_a_level_name_that_is_no_identifier_is_passed_in_a_mapping(self):
+        batch = _ListBatch(range(6), _spec([(2,), (3,)], ["my level", "draw"]))
+        inner = batch.at_levels(**{"my level": 1})
+        assert inner.level_names == ("draw",)
+        assert [element.value for element in inner] == [3, 4, 5]
+        assert inner.label == "b[my level=1]"
 
     def test_no_indexers_returns_an_equivalent_whole_view(self, nested):
         assert nested.at_levels().batch_shape == (2, 3)
