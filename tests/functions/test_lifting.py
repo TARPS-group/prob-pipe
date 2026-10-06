@@ -9,15 +9,19 @@ from it is lifted:
 - neither: a plain call.
 
 Lifted arguments group by root ancestor, so members of one group co-sample, and
-swept batches align by level name.
+swept batches align by level name. A parameter annotated with a class of raw
+values receives each argument, element, or draw in its raw form when that form
+is an instance of the class.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 import pytest
 
 from probpipe import (
@@ -26,6 +30,7 @@ from probpipe import (
     Distribution,
     Function,
     Normal,
+    NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     Record,
@@ -205,6 +210,122 @@ class TestTheDraw:
         assert "theta" not in law.event_spec.components
         assert isinstance(result, Distribution)
         assert all(set(draw.keys()) == {"a", "b"} for draw in seen)
+
+
+def _receiving(annotations: dict[str, Any], **controls: Any) -> tuple[Function, list[Any]]:
+    """A function of ``x`` annotated by *annotations*, and the list of what its body receives."""
+    seen: list[Any] = []
+
+    def body(x):
+        seen.append(x)
+        return 0.0
+
+    body.__annotations__ = annotations
+    return Function("body", body, **controls), seen
+
+
+class TestARawClassAnnotation:
+    def test_a_function_written_for_pandas_runs_on_a_record_field(self):
+        pd = pytest.importorskip("pandas")
+
+        def differences(c):
+            return jnp.asarray(c.diff().dropna().to_numpy())
+
+        differences.__annotations__ = {"c": pd.Series, "return": jax.Array}
+        record = Record("r", c=pd.Series([1.0, 2.0, 4.0]))
+
+        result = Function("differences", differences)(record["c"])
+
+        np.testing.assert_allclose(np.asarray(result), [1.0, 2.0])
+
+    def test_a_series_parameter_receives_the_series_a_record_field_holds(self):
+        pd = pytest.importorskip("pandas")
+        series = pd.Series([1.0, 2.0, 4.0])
+        wrapped, seen = _receiving({"x": pd.Series})
+
+        wrapped(Record("r", c=series)["c"])
+
+        assert len(seen) == 1 and seen[0] is series
+
+    def test_a_data_array_parameter_receives_the_data_array_a_record_field_holds(self):
+        xr = pytest.importorskip("xarray")
+        data = xr.DataArray(np.arange(3.0), dims=("t",))
+        wrapped, seen = _receiving({"x": xr.DataArray})
+
+        wrapped(Record("r", d=data)["d"])
+
+        assert len(seen) == 1 and seen[0] is data
+
+    def test_a_jax_array_parameter_receives_the_array_a_numeric_array_holds(self):
+        value = jnp.arange(3.0)
+        wrapped, seen = _receiving({"x": jax.Array})
+
+        wrapped(NumericArray("x", value))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_apply_presents_the_raw_form_as_a_call_does(self):
+        value = jnp.arange(3.0)
+        wrapped, seen = _receiving({"x": jax.Array})
+
+        wrapped.apply(NumericArray("x", value))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    def test_each_element_of_a_swept_batch_arrives_in_its_raw_form(self, dispatch):
+        wrapped, seen = _receiving({"x": jax.Array}, dispatch=dispatch)
+
+        wrapped(_batch([1.0, 2.0, 3.0]))
+
+        assert seen and all(isinstance(element, jax.Array) for element in seen)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    def test_each_draw_of_a_lifted_law_arrives_as_a_jax_array(self, dispatch):
+        wrapped, seen = _receiving({"x": jax.Array}, n_broadcast_samples=6, dispatch=dispatch)
+
+        with workflow_run(seed=0):
+            wrapped(standard_normal())
+
+        assert seen and all(isinstance(draw, jax.Array) for draw in seen)
+
+    @pytest.mark.parametrize(
+        ("annotation", "value"),
+        [(jax.Array | None, jnp.arange(3.0)), (npt.NDArray[np.float64], np.arange(3.0))],
+        ids=["optional", "parametrized"],
+    )
+    def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
+        wrapped, seen = _receiving({"x": annotation})
+
+        wrapped(NumericArray("x", value))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_each_argument_a_variadic_parameter_collects_arrives_in_its_raw_form(self):
+        values = (jnp.arange(2.0), jnp.arange(3.0))
+        seen: list[Any] = []
+
+        def body(*xs):
+            seen.extend(xs)
+            return 0.0
+
+        body.__annotations__ = {"xs": jax.Array}
+        Function("body", body)(*(NumericArray(f"x{i}", value) for i, value in enumerate(values)))
+
+        assert len(seen) == 2 and all(got is value for got, value in zip(seen, values))
+
+    @pytest.mark.parametrize(
+        "annotations",
+        [{}, {"x": Any}, {"x": NumericArray}, {"x": object}, {"x": np.ndarray}],
+        ids=["unannotated", "Any", "NumericArray", "object", "ndarray"],
+    )
+    def test_any_other_argument_arrives_as_it_is(self, annotations):
+        argument = NumericArray("x", jnp.arange(3.0))
+        wrapped, seen = _receiving(annotations)
+
+        wrapped(argument)
+
+        assert len(seen) == 1 and seen[0] is argument
 
 
 class TestGrouping:

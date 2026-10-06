@@ -130,6 +130,18 @@ def function(
     wrapped function whenever they can bind to that function. Use
     ``workflow.with_options(...)(...)`` for one-call ProbPipe controls.
 
+    A parameter annotated with a class of raw values, such as ``pd.Series`` or
+    ``jax.Array``, receives the raw form of an argument, or of each element or
+    draw that a lift passes to it, when that form is an instance of the class.
+    A function written for pandas therefore runs on a record field that holds
+    a ``Series``::
+
+        @function
+        def differences(c: pd.Series) -> jax.Array:
+            return jnp.asarray(c.diff().dropna().to_numpy())
+
+        differences(Record("r", c=pd.Series([1.0, 2.0, 4.0]))["c"])
+
     Parameters
     ----------
     _func : Callable or None
@@ -1259,14 +1271,16 @@ class _CallEngine:
     ) -> Any:
         """The one point :meth:`Function.apply` evaluates, with no lifting, tracking, or provenance.
 
-        A Function's body runs on *values*. A Function realized by routes
+        A Function's body runs on *values*, each presented as
+        :func:`._call.presented_arguments` states. A Function realized by routes
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
         candidates = function._route_candidates(function.options)
         if candidates is None:
+            arguments = _call.presented_arguments(function._signature_info, values)
             return function._implementation.invoke(
-                _binding.values_to_bound_arguments(function.signature, values), context=context
+                _binding.values_to_bound_arguments(function.signature, arguments), context=context
             )
         _call.admit_arguments(
             function._signature_info,

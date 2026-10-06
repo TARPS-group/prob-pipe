@@ -130,6 +130,8 @@ A `Function` compares each admitted argument against the kind its parameter expe
 
 Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names.
 
+A parameter annotated with a class of raw values, such as `pd.Series` or `jax.Array`, receives the raw form of an argument, or of each element or draw that a lift passes to it, when that form is an instance of the class, so a function written for pandas receives the `Series` that a record field holds.
+
 Explicit argument binding reads the draw's term spec, and the keyword names the receiving parameter: in `predict(theta=prior)`, the parameter `theta` receives the draws even when the prior's output component is `beta`. Name-based connection is composition's contract (IV.2).
 
 **Grouping and correlation.** The lifted arguments are grouped by **root ancestor**, transitively: sibling views of one parent, the same distribution passed twice, and a parent passed alongside its own view all fall in one group. Each group contributes one joint draw per repetition, so dependence between its members is preserved through `f`. A view lifts by sampling its parent, so its parent must itself sample. Groups with no common ancestor draw independently: the lift samples the **product law**, and, as a corollary, detached marginals of one joint lift independently while its views co-sample. For example, `f(d, d["x"])` forms one group, and each repetition evaluates `f` on a joint draw and its own projection, while `f(d1, d2)` for unrelated `d1` and `d2` samples the product of their laws. The number of lifted arguments changes only the grouping.
