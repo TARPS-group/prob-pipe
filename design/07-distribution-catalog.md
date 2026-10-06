@@ -39,7 +39,25 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 ### Contract
 
-An `EmpiricalDistribution` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments, when the event is numeric, are the moments of its weighted atoms, so the variance of n equally weighted atoms divides by n, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. A batch of atoms keeps its own levels, every batch axis indexing atoms in row-major order. A plain array indexes atoms along its leading axis, on one level named by `level`, which defaults to the law's component; `level` is refused with a batch, whose levels `with_level_names` renames. An explicit `event_spec` preserves component names and packaging, and atoms alone determine the returned term kind. Without a declaration, record atoms expose their fields and any other atoms form a whole-term event whose component defaults to the law's `name` (III.7); a type hole is filled from the atoms. It claims no log-density, since an empirical measure in general has no density.
+An `EmpiricalDistribution` is a finite set of atoms of any event type, each with a weight. Its capabilities read the atoms and the weights:
+
+1. **Sampling** draws atoms with probabilities equal to their weights.
+2. **Moments**, for a numeric event, are the weighted moments of the atoms, so the variance of n equally weighted atoms divides by n.
+3. **Marginals** are exact: the marginal at a path is the empirical law of the atoms' values there, under the same weights.
+
+It claims no log-density, since an empirical measure in general has no density.
+
+The atoms are stored in the batch form of the event's kind, such as a `NumericArrayBatch` for array atoms, and the weights are a parallel array with one weight per atom. The levels of the stored batch index the atoms in row-major order, which the weights follow. When the event is itself a batch, its declaration is a `BatchSpec` that names the event's own levels. Those levels trail the stored batch's other levels and belong to each atom, so only the levels before them index atoms. For example, the lift of a function `f` that returns a batch on the level `horizon` stores its atoms on the levels `f` and `horizon`: the level `f` indexes the atoms, and each atom is a batch on `horizon` (V.6).
+
+The constructor takes the atoms in one of two forms:
+
+1. **A batch** keeps its levels, which `with_level_names` renames, and passing `level` with a batch raises `TypeError`.
+2. **A plain array** holds one atom per entry of its leading axis, on one level named by `level`, which defaults to the law's component.
+
+The event declaration comes from `event_spec` when one is given, and from the atoms otherwise:
+
+1. **An explicit `event_spec`** names the components and the packaging, and the atoms fix the kind of a draw: a type hole takes the atoms' spec, and a declared type must unify with it.
+2. **Without `event_spec`**, record atoms expose their fields, and any other atoms form a whole-term event whose component defaults to the law's label (III.7).
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap, where an empirical source is resampled, and the parametric bootstrap, where a fitted law is redrawn, in one interface; `replicate_size` defaults to the source's atom count when the source is empirical and is required otherwise. A replicate's draws lie on one level named by `level`. It defaults to the source's atom level when the source is an empirical law with exactly one, and otherwise to the source's component when the source's event is a whole term; a source that exposes a record of several components requires it. A replicate of a dataset therefore keeps the dataset's level, so a statistic written for the data applies unchanged to every replicate.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in the event's batch form.
