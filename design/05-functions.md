@@ -230,7 +230,7 @@ with replay_run(result.provenance):      # re-runs one recorded call on its reco
 2. the **stochastic source**: which co-sampling group of V.5 is drawing;
 3. the **logical unit**: which broadcast repetition or sweep cell consumes the draw.
 
-Identity follows the workflow's logical structure: ordinals are fixed by program order, no key is drawn twice, and the same call produces the same draws under any dispatch mode, thread count, or orchestration.
+Identity follows the workflow's logical structure: ordinals are fixed by program order, no key is drawn twice, and the same call produces the same draws under any dispatch mode, thread count, or orchestration. Each draw in the body of an `apply` evaluation (III.3) is its own workflow-owned event, as in a plain call.
 
 **Consequences.** Because keys attach to structure, perturbing an input reuses the same keys, preserving common random numbers: comparisons across nearby inputs and reparameterization gradients keep a low variance. A fresh estimate or an independent stream is obtained by changing the seed. The one cost is that the streams are tied to the program's structure, so restructuring the computation reshuffles them.
 

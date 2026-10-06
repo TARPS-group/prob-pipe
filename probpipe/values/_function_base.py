@@ -887,6 +887,11 @@ class Function(Node, TrackedTerm, Annotated):
         raising ``ApplicabilityError`` for a kind its role refuses; runs the
         route the engine selects, raising ``ResolutionError`` when none
         applies; and returns the raw form of the result.
+
+        Each workflow-owned draw of the evaluation is its own random event, in
+        program order, as in a call of the Function. An evaluation that draws
+        nothing leaves the later draws of its workflow scope unchanged. Inside
+        ``replay_run`` it raises ``ReplayCompatibilityError``.
         """
         with _apply_scope():
             bound = self.signature.bind_partial(*args, **kwargs)

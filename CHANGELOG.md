@@ -2791,6 +2791,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Each draw in an `apply` body is its own workflow-owned random event.**
+  `Function.apply` gave all the draws its body made directly one shared
+  occurrence, so a body that drew twice in this way raised `RuntimeError` where
+  a call of the same function succeeded. `with_resampling(step).apply(...)`
+  raised it whenever `step` drew through `converter_registry.convert` and the
+  result was resampled. An `apply` body now draws as the body of a call does:
+  each draw is its own event, in program order, and `workflow_run(seed=...)`
+  reproduces it. The seeded draws of an `apply` body change, and they now equal
+  the draws of a call of the same function at the same position in the
+  workflow. An `apply` now takes at most one position in its workflow scope,
+  however many stochastic calls its body makes, so the draws after an `apply`
+  whose body made several can change too. An `apply` that draws nothing takes
+  no position.
 - **A parameter annotated with a raw class receives the raw form.** A function
   body received a tracked argument whatever its parameter's annotation, so
   `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a

@@ -1239,12 +1239,28 @@ def _run_registered_rule(
 
 @contextmanager
 def _apply_scope() -> Generator[None, None, None]:
-    """Preserve workflow admission and RNG ownership around raw evaluation."""
+    """The scope of one :meth:`Function.apply` evaluation, which runs as a plain call's body runs.
+
+    The evaluation is the one point of a lazy invocation, in the active
+    workflow scope or in an ephemeral one outside any scope. Each
+    workflow-owned draw of the body is therefore its own event, in program
+    order, and an evaluation that draws nothing commits no occurrence of the
+    scope.
+
+    Raises
+    ------
+    ReplayCompatibilityError
+        Inside ``replay_run``.
+    UnmanagedConcurrentWorkflowEntryError
+        If the active workflow scope belongs to another process, thread, or
+        asyncio task, or has exited.
+    """
     _context._assert_workflow_admission()
     _replay._reject_function_apply()
     with (
         _context._ephemeral_workflow_run(),
-        _broker._function_stochastic_scope(),
+        _broker._function_stochastic_scope() as broker,
+        _execution.point_work_item_scope(broker),
     ):
         yield
 
@@ -1298,7 +1314,7 @@ class _CallEngine:
 
     @staticmethod
     def apply_scope() -> AbstractContextManager[None]:
-        """The scope plain evaluation runs in: workflow admission and RNG ownership."""
+        """The scope :meth:`Function.apply` runs in: one point of a lazy invocation."""
         return _apply_scope()
 
 

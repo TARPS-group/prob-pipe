@@ -10,8 +10,10 @@ from probpipe import (
     Distribution,
     EmpiricalDistribution,
     MultivariateNormal,
+    Normal,
     Provenance,
     Weights,
+    converter_registry,
     iterate,
     with_conversion,
     with_resampling,
@@ -227,6 +229,13 @@ def ten_heavy_particles(dist, inp):
     return EmpiricalDistribution("x", atoms, Weights(log_weights=log_w))
 
 
+def drawn_heavy_particles(dist, inp):
+    """Draws of *dist* by the converter registry, of which the first ten hold the weight equally."""
+    drawn = converter_registry.convert(dist, EmpiricalDistribution, num_samples=_PARTICLES)
+    log_w = jnp.where(jnp.arange(_PARTICLES) < 10, 0.0, -100.0)
+    return EmpiricalDistribution("x", drawn.atoms.values, Weights(log_weights=log_w))
+
+
 def _resampled_atoms(step, seed=None):
     """The atoms of one step of *step*, in ``workflow_run(seed=seed)`` when *seed* is given."""
     initial = EmpiricalDistribution("x", jnp.zeros((_PARTICLES, 1)))
@@ -322,6 +331,19 @@ class TestResamplingRandomness:
         first = _resampled_atoms(with_resampling(ten_heavy_particles))
         second = _resampled_atoms(with_resampling(ten_heavy_particles))
         assert not np.array_equal(first, second)
+
+    def test_apply_resamples_after_a_step_that_draws(self):
+        """The step's draw and the resampling are two events of one ``apply`` evaluation."""
+        step = with_resampling(drawn_heavy_particles)
+        initial = Normal(loc=0.0, scale=1.0, label="x")
+        with workflow_run(seed=0):
+            first = step.apply(initial, 0.0)
+        with workflow_run(seed=0):
+            second = step.apply(initial, 0.0)
+
+        assert first.provenance.operation == "resample"
+        np.testing.assert_allclose(first.weights, 1.0 / _PARTICLES)
+        np.testing.assert_array_equal(first.atoms.values, second.atoms.values)
 
 
 # ---------------------------------------------------------------------------
