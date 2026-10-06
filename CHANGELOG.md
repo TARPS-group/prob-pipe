@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`with_resampling` takes its randomness from the workflow scope.** Its `seed`
+  parameter is removed: each resampling is a workflow-owned random event, so
+  `workflow_run(seed=...)` reproduces the resampled particles, and another seed
+  or an unscoped run resamples afresh. Replace
+  `iterate(with_resampling(step, seed=0), ...)` with
+  `iterate(with_resampling(step), ...)` inside `workflow_run(seed=0)`.
 - **A result names each component by what its value means.**
   - `mean`, `variance`, and `quantile` name each component of the law's event
     by their call. The mean of a law over `mu` and `tau` is a record whose
@@ -2785,6 +2791,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A parameter annotated with a raw class receives the raw form.** A function
+  body received a tracked argument whatever its parameter's annotation, so
+  `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a
+  `Series`. A parameter annotated with a class such as `pd.Series`,
+  `xr.DataArray`, or `jax.Array` now receives the argument's `raw()` when that is
+  an instance of the class, in a call, in `apply`, and for each element of a
+  sweep and each draw of a broadcast.
+- **A level name is any non-empty string without `/`.** A batch required a
+  Python identifier, while a level's default name comes from a label or a
+  component, so a Monte Carlo `mean`, `variance`, or `quantile` of a law
+  labeled `"my law"` raised, as did `EmpiricalDistribution("my law", array)`. A
+  level name now follows the rule for component names, and `at_levels` takes a
+  name that is no identifier in a mapping, as `at_levels(**{"my level": 0})`. A
+  bootstrap law checks its `level` by the same rule when it is constructed.
+- **`convert` fits a family on another support under `check_support=False`.**
+  Passing the option as
+  `convert.with_options(method_options={"check_support": False})` raised
+  `ResultSchemaError` whenever the source declared a support, as converting a
+  `Gamma` law to `Normal` did. The result now has the family's own support, as
+  `converter_registry.convert(..., check_support=False)` returns it.
+- **`pymc_nuts` and `pymc_advi` read the `progress_bar` method option.** They
+  refused it with `TypeError`, so
+  `condition_on.with_options(method_options={"progress_bar": False})` on a
+  `PyMCModel` failed wherever `pymc_nuts` was selected, as it is without
+  nutpie, and no option turned off PyMC's progress bars. Each now passes the
+  option to PyMC as `progressbar`, `True` unless set, as `nutpie_nuts` does.
+- **`posterior.diagnostics.to_dict()` works after `add_loo`.** It raised
+  `KeyError`, because a run's view selected each pointwise value by the string
+  form of its integer observation index. The views now read by position, so
+  `to_dict()` holds the LOO run, with `pareto_k` and `loo_i` keyed `"0"`, `"1"`,
+  and so on. `add_loo` also records `loo_i`, which ArviZ 1.x names `elpd_i`.
 - **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
   sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
   of a posterior from `learn_amortized_posterior` printed one, and a notebook
