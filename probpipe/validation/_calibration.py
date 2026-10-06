@@ -356,8 +356,8 @@ def simulation_based_calibration(
         as :func:`condition_on` does.
     method_options : Mapping, optional
         The options of each fit's method, such as ``{"num_warmup": 500,
-        "num_results": 2000}``. Without a ``random_seed`` entry, each fit's seed
-        is a workflow-owned random event of the enclosing scope.
+        "num_results": 2000}``. Each fit's seed is a workflow-owned random event
+        of the enclosing scope.
 
     Returns
     -------

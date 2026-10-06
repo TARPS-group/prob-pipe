@@ -42,8 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it counted every atom of every chain. The ranks need nearly independent
     draws, so `num_posterior_draws` should not exceed the chains' effective
     sample size.
-  - A `random_seed` entry of `method_options` fixes the seed of every
-    replication's fit, where a `random_seed` keyword raised `ValueError`.
 - **A result names each component by what its value means.**
   - `mean`, `variance`, and `quantile` name each component of the law's event
     by their call. The mean of a law over `mu` and `tau` is a record whose
@@ -2843,10 +2841,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tfp_nuts` wrote none; both now write `diverging`, so read
   `annotations["arviz"]["sample_stats"]["diverging"]` in place of
   `["is_divergent"]`.
-- **`pyabc_smcabc` documents its seed.** Its docstring said that `random_seed`
-  defaults to 0. An omitted `random_seed` makes the run's seed a workflow-owned
-  random event, which `workflow_run(seed=...)` fixes, as the docstring now
-  states.
 - **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
   checked that the declared spec unifies with the produced one and then stored
   the produced spec, so a declared dtype or support was lost wherever the

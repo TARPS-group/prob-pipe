@@ -475,7 +475,6 @@ class TestSBCPosteriorKernel:
             num_simulations=500,
             epochs=2,
             batch_size=128,
-            random_seed=0,
             verbose=0,
         )
         assert list(amortized.given_spec) == ["observation"]

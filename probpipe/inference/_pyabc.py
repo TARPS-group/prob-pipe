@@ -293,11 +293,9 @@ class PyABCSMCMethod(InferenceMethod):
             Additional stopping criteria forwarded to ``ABCSMC.run`` alongside
             ``max_populations`` (whichever is hit first stops the run); pyabc's
             defaults apply when omitted.
-        random_seed : int, optional
+        random_seed : int, default 0
             Seeds the JAX keys threaded into the prior and simulator and pyabc's
             own (numpy-global) proposal RNG, so repeated calls are reproducible.
-            Omitted, the run's seed is a workflow-owned random event, which
-            ``workflow_run(seed=...)`` fixes.
         summary_fn : callable, optional
             ``(batch, dim) -> (batch, summary_dim)`` applied to simulated and
             observed data before the distance.
