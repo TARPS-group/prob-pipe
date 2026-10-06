@@ -9,7 +9,9 @@ filled from the atoms. The law samples by weighted resampling, integrates any
 function exactly over its atoms, and has exact marginals, which are the
 empirical laws of the projected atoms under the same weights. A numeric event
 also has the weighted mean, variance, covariance, and per-coordinate quantiles,
-and no event has a density.
+and no event has a density. Renaming a field of record atoms keeps the family:
+the result is the empirical law of the atoms under the new paths, with the same
+weights.
 """
 
 from __future__ import annotations
@@ -53,6 +55,7 @@ from probpipe.distributions._capabilities import (
     _capability_subclass,
 )
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.distributions._views import _EventRenames
 from probpipe.linalg import DenseLinOp
 from probpipe.operations import expectation
 
@@ -666,6 +669,91 @@ class TestMarginals:
         law = EmpiricalDistribution("post", atoms)
         assert law._marginal("a").atoms.level_names == ("chain", "draw")
         assert law._marginal(("a", "b")).atoms.level_names == ("chain", "draw")
+
+
+# -- Renaming -----------------------------------------------------------------
+
+#: The fields of an MCMC posterior on the levels ``chain`` and ``draw``, and a rename
+#: that moves them into two groups.
+_POSTERIOR_COLUMNS = {
+    "mu": jnp.arange(6.0).reshape(2, 3),
+    "tau": jnp.arange(1.0, 7.0).reshape(2, 3),
+    "theta_tilde": jnp.arange(48.0).reshape(2, 3, 8),
+}
+_GROUPING = {"mu": "population/mu", "tau": "population/tau", "theta_tilde": "groups/theta_tilde"}
+
+
+def _posterior() -> EmpiricalDistribution:
+    atoms = NumericRecordBatch("draws", _POSTERIOR_COLUMNS, ("chain", "draw"))
+    return EmpiricalDistribution("posterior", atoms)
+
+
+class TestRenaming:
+    def test_renaming_the_fields_keeps_the_empirical_family(self):
+        law = _posterior()
+        renamed = law.with_path_names(_GROUPING)
+        assert isinstance(renamed, EmpiricalDistribution)
+        assert type(renamed) is type(law)
+        assert renamed.label == "posterior"
+        assert renamed.event_spec == law.event_spec.with_path_names(_GROUPING)
+        assert renamed.num_atoms == 6
+        assert renamed.provenance.operation == "with_path_names"
+
+    def test_the_atoms_carry_the_new_paths_on_the_same_levels(self):
+        atoms = _posterior().with_path_names(_GROUPING).atoms
+        assert tuple(atoms.element_spec.keys()) == tuple(_GROUPING.values())
+        assert atoms.level_names == ("chain", "draw")
+        for old, new in _GROUPING.items():
+            np.testing.assert_array_equal(np.asarray(atoms[new]), _POSTERIOR_COLUMNS[old])
+
+    def test_uniform_weights_stay_uniform(self):
+        renamed = _posterior().with_path_names(_GROUPING)
+        np.testing.assert_allclose(renamed.weights, np.full(6, 1 / 6))
+
+    def test_a_weighted_law_keeps_its_weights_and_its_weighted_moments(self):
+        renamed = _record_law().with_path_names({"a": "g/a"})
+        np.testing.assert_allclose(renamed.weights, _RECORD_WEIGHTS)
+        np.testing.assert_allclose(
+            renamed._mean()["g"]["a"], _weighted_sum(_RECORD_WEIGHTS, _A), rtol=1e-6
+        )
+
+    def test_a_draw_at_a_key_is_the_draw_of_the_law_under_the_new_paths(self, key):
+        law = _record_law()
+        draws = law.with_path_names({"a": "g/a"})._sample(key, (7,))
+        original = law._sample(key, (7,))
+        np.testing.assert_array_equal(draws["g"]["a"], original["a"])
+        np.testing.assert_array_equal(draws["b"], original["b"])
+
+    def test_a_field_of_a_whole_record_term_is_renamed_in_its_atoms(self):
+        law = EmpiricalDistribution("post", _record_atoms(), event_spec=OutputSpec(params=None))
+        renamed = law.with_path_names({"params/a": "params/alpha"})
+        assert isinstance(renamed, EmpiricalDistribution)
+        assert renamed.event_spec == law.event_spec.with_path_names({"params/a": "params/alpha"})
+        assert tuple(renamed.atoms.element_spec.keys()) == ("b", "alpha")
+        np.testing.assert_array_equal(np.asarray(renamed.atoms["alpha"]), _A)
+
+    def test_the_marginal_at_a_node_that_gathers_two_groups_is_exact(self):
+        xs, ys = jnp.array([1.0, 2.0, 4.0]), jnp.array([10.0, 20.0, 40.0])
+        spec = RecordSpec(p=RecordSpec(x=()), q=RecordSpec(y=()))
+        atoms = NumericRecordBatch("rows", {"p/x": xs, "q/y": ys}, "row", element_spec=spec)
+        renamed = EmpiricalDistribution("m", atoms).with_path_names({"p/x": "g/x", "q/y": "g/y"})
+        assert _capability_guard(renamed, "_marginal", "g") == Feasibility(True)
+        marginal = renamed._marginal("g")
+        assert marginal.event_spec == OutputSpec(g=RecordSpec(x=(), y=()))
+        np.testing.assert_allclose(marginal._mean()["x"], 7.0 / 3.0, rtol=1e-6)
+        np.testing.assert_allclose(marginal._mean()["y"], 70.0 / 3.0, rtol=1e-6)
+
+    def test_atoms_that_are_not_records_do_not_rebuild_the_law(self):
+        law = _array_law()
+        event = _EventRenames.of(law.event_spec, law.event_spec, {})
+        assert law._renamed_in_family(event) is None
+
+    def test_a_renamed_law_round_trips_through_pickle(self):
+        renamed = _record_law().with_path_names({"a": "g/a"})
+        restored = pickle.loads(pickle.dumps(renamed))
+        assert type(restored) is type(renamed)
+        assert restored.event_spec == renamed.event_spec
+        np.testing.assert_allclose(restored.weights, _RECORD_WEIGHTS)
 
 
 # -- Densities and capability classes -----------------------------------------------

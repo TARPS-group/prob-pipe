@@ -53,6 +53,7 @@ from ._views import _node_at
 if TYPE_CHECKING:
     from ..custom_types import Array, ArrayLike, PRNGKey
     from ..linalg import LinOp
+    from ._views import _EventRenames
 
 __all__ = ["EmpiricalDistribution"]
 
@@ -335,6 +336,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     to the law's *name*. An *event_spec* names the components and the packaging.
     ``OutputSpec.with_spec`` completes it with the atoms' spec: a type hole
     takes that spec, and a declared type must unify with it.
+
+    **Renaming.** For record atoms, ``with_path_names`` returns an
+    ``EmpiricalDistribution`` with the same label and weights, whose atoms are
+    these atoms with each field at its new path, on the same levels and in the
+    same order.
 
     **Capabilities.**
 
@@ -667,6 +673,21 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             element_spec=element,
             axes_per_level=_ranks(atoms),
         )
+
+    # -- renaming ---------------------------------------------------------------
+
+    def _renamed_in_family(self, event: _EventRenames) -> EmpiricalDistribution | None:
+        """The empirical law of the atoms with their fields at *event*'s new paths, or None.
+
+        The result keeps the label and the weights, and the atoms keep their
+        levels and their order, so its draw at a key is this law's draw at that
+        key under the new paths. Atoms that are not records have no fields to
+        move, which gives None.
+        """
+        if not isinstance(self._atoms, RecordBatch):
+            return None
+        atoms = event.draw(self._atoms)
+        return EmpiricalDistribution(self.label, atoms, self._w, event_spec=event.renamed)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The atoms as stored, and the weights when nonuniform."""

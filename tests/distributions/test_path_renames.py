@@ -1,10 +1,12 @@
 """Renaming event paths and given slots keeps the law and renames its values.
 
-``with_path_names`` on a law whose rename reaches a field of a record draw
-returns a law that holds the original and renames at its boundary: its draws,
-moments, and marginals carry the new names, and a scored value, a given, or a
-path under the new names reaches the original under the old ones. Renaming a
-whole term's component alone changes only the declaration. On a kernel, a
+``with_path_names`` on a law whose rename changes the path of a field of a
+record draw returns a law that holds the original and renames at its boundary,
+unless the law's family rebuilds itself under the new paths, as an empirical
+law over records does. Either way its draws, moments, and marginals carry the
+new names, and the law that holds the original translates a scored value, a
+given, or a path under the new names to the original's. Renaming a whole term's
+component alone changes only the declaration. On a kernel, a
 given-side target is the node's new path, so a rename may group slots or split
 a field out of a structured slot; binding the renamed kernel translates the
 given to the original slots and renames what the binding returns.
@@ -288,11 +290,20 @@ def _grouped_law() -> EmpiricalDistribution:
     return EmpiricalDistribution("grouped", atoms)
 
 
-def _whole_record_law() -> EmpiricalDistribution:
-    """The atoms of ``beta`` and ``sigma`` as a whole record under the component ``parameters``."""
-    spec = RecordSpec(beta=_SCALAR, sigma=_SCALAR)
-    atoms = NumericRecordBatch("rows", {"beta": _XS, "sigma": _YS}, "row", element_spec=spec)
-    return EmpiricalDistribution("p", atoms, event_spec=OutputSpec(parameters=None))
+def _grouped_selection() -> Distribution:
+    """The selection of both groups of the grouped law.
+
+    A view does not rebuild itself under new paths, so a rename of it holds it.
+    """
+    return _grouped_law()[("a", "b")]
+
+
+def _whole_record_view() -> Distribution:
+    """The group ``parameters`` of the atoms of ``beta`` and ``sigma``, viewed as a whole record."""
+    spec = RecordSpec(parameters=RecordSpec(beta=_SCALAR, sigma=_SCALAR))
+    columns = {"parameters/beta": _XS, "parameters/sigma": _YS}
+    atoms = NumericRecordBatch("rows", columns, "row", element_spec=spec)
+    return EmpiricalDistribution("p", atoms)["parameters"]
 
 
 # -- The renamed law ------------------------------------------------------------
@@ -443,7 +454,7 @@ class TestRenamedLawPaths:
         assert _capability_guard(renamed, "_mean") == _GuardedMeanLaw.REJECTED
 
     def test_the_marginal_guard_rejects_paths_whose_final_segments_collide(self):
-        renamed = _grouped_law().with_path_names({"b/y": "b/x"})
+        renamed = _grouped_selection().with_path_names({"b/y": "b/x"})
         report = _capability_guard(renamed, "_marginal", ("a/x", "b/x"))
         assert report.feasible is False
         assert "final segment" in report.description
@@ -526,7 +537,7 @@ class TestRenamedLawMoves:
         assert renamed._marginal("b").event_spec == OutputSpec(b=RecordSpec(y=_SCALAR))
 
     def test_the_marginal_at_a_group_that_gathers_several_nodes_is_rejected(self):
-        renamed = _grouped_law().with_path_names({"a/x": "g/x", "b/y": "g/y"})
+        renamed = _grouped_selection().with_path_names({"a/x": "g/x", "b/y": "g/y"})
         assert _capability_guard(renamed, "_marginal", "g").feasible is False
         with pytest.raises(ValueError, match="no single node"):
             renamed._marginal("g")
@@ -559,7 +570,7 @@ class TestRenamingARenamedLaw:
     """A renamed law applies a further rename to its parent, composed with its own."""
 
     def test_a_component_rename_after_a_field_rename_keeps_the_field_rename(self, key):
-        law = _whole_record_law()
+        law = _whole_record_view()
         renamed = law.with_path_names({"parameters/beta": "parameters/b"}).with_path_names(
             parameters="theta"
         )

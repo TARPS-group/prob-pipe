@@ -1,8 +1,14 @@
 """The root-ancestor capture of lifted arguments.
 
-A field view's root is its parent's, a batch element's is its stored law's, and
-a bijector-transformed law's is its base's, so a lift groups each with its root:
-the root draws once per repetition, and each member evaluates on that draw.
+A lifted law's root is the root of the law whose draws it reads:
+
+- a field view: its parent;
+- a batch element: its stored law;
+- a renamed law: the law it renames;
+- a bijector-transformed law: its base.
+
+A lift groups each law with its root, so the root draws once per repetition and
+each member evaluates on that draw.
 """
 
 from __future__ import annotations
@@ -257,6 +263,68 @@ class TestBatchElements:
 
         with pytest.raises(TypeError, match="Cyclic batch element"):
             _descendants.capture_stochastic_consumer(element)
+
+
+# -- Renamed laws --------------------------------------------------------------
+
+#: Moves both fields of the posterior into the group ``population``.
+_GROUPING = {"mu": "population/mu", "tau": "population/tau"}
+
+
+def _posterior():
+    """Twelve weighted record atoms over ``mu`` and ``tau``."""
+    columns = {"mu": jnp.arange(12.0), "tau": jnp.arange(12.0) + 100.0}
+    spec = NumericRecordSpec(mu=(), tau=())
+    atoms = NumericRecordBatch("draws", columns, "draw", element_spec=spec)
+    return EmpiricalDistribution("posterior", atoms, jnp.arange(1.0, 13.0))
+
+
+class TestRenamedLaws:
+    def test_a_renamed_empirical_law_captures_the_law_it_renames_as_root(self):
+        root = _posterior()
+        renamed = root.with_path_names(_GROUPING)
+        captured = _descendants.capture_stochastic_consumer(renamed)
+        index = jnp.array([3, 0, 11])
+
+        assert isinstance(renamed, EmpiricalDistribution)
+        assert captured.root is root
+        assert captured.descendant_descriptor[0] == "transformed-descendant"
+        drawn = captured.evaluator(root._atoms_at(index))["population"]
+        np.testing.assert_array_equal(drawn["mu"], [3.0, 0.0, 11.0])
+        np.testing.assert_array_equal(drawn["tau"], [103.0, 100.0, 111.0])
+        atoms = renamed._atoms_at(index)["population"]
+        np.testing.assert_array_equal(atoms["mu"], drawn["mu"])
+        np.testing.assert_array_equal(atoms["tau"], drawn["tau"])
+
+    def test_a_law_and_its_rename_form_one_plan_group(self):
+        root = _posterior()
+        plan = _stochastic_plan({"root": root, "renamed": root.with_path_names(_GROUPING)})
+
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is root
+
+    def test_the_raw_form_of_a_renamed_law_is_its_own_root(self):
+        detached = _posterior().with_path_names(_GROUPING).raw()
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+
+    def test_a_law_co_samples_with_its_rename_when_the_lift_samples(self):
+        """Twelve atoms exceed the eight samples, so the lift samples the root."""
+        root = _posterior()
+        workflow = Function(
+            "difference",
+            lambda a, b: a["mu"] - b.at_path("population")["mu"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+
+        renamed = root.with_path_names(_GROUPING)
+        assert workflow.check(root, renamed).selected.method_name == "sampling_lift"
+        with workflow_run(seed=37):
+            result = workflow(root, renamed)
+
+        assert result.num_atoms == 8
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
 
 
 # -- Bijector-transformed laws -------------------------------------------------
