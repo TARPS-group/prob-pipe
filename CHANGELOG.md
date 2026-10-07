@@ -2796,11 +2796,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renames. A factored joint rebuilt under the new paths and a rename of a whole
   term's component used to lift independently of the law they rename, and now
   draw with it too.
-- **A marginal lifts independently of the joint it marginalizes.** When
-  `marginal` returned a factor of a factored joint, the result kept the
-  factor's link to the batch it came from or to the law it renames, so a lift
-  drew the marginal together with that law. The marginal is now detached, and a
-  lift draws it independently.
+- **A marginal or a factor lifts independently of the joint it comes from.**
+  When `marginal` or `factor` returned a factor of a factored joint, the result
+  kept the factor's link to the batch it came from or to the law it renames, so
+  a lift drew the result together with that law. Both operations now detach
+  their result, and a lift draws it independently.
 - **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
   sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
   of a posterior from `learn_amortized_posterior` printed one, and a notebook

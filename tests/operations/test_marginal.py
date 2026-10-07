@@ -133,7 +133,7 @@ def _difference(fn):
 
 
 class TestDetachment:
-    """A lift draws a marginal independently of its joint, and a view together with it."""
+    """A lift draws a marginal or a factor independently of its joint, and a view together with it."""
 
     def test_the_marginal_of_a_renamed_joint_draws_independently_of_its_factor(self):
         """The marginal is the factor renamed, and the factor is the law the user composed."""
@@ -158,6 +158,27 @@ class TestDetachment:
             result = _difference(lambda x, y: x["c"] - y)(renamed, renamed["c"])
 
         np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
+
+    def test_the_factor_of_a_renamed_joint_draws_independently_of_the_original(self):
+        """The factor is the original renamed, and the original is the law the user composed."""
+        prior = Normal("a", 0.0, 1.0)
+        detached = factor((prior * Normal("b", 2.0, 1.0)).with_path_names(a="c"), "c")
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+        with workflow_run(seed=45):
+            result = _difference(lambda x, y: x - y)(prior, detached)
+        assert np.any(np.asarray(result.atoms) != 0.0)
+
+    def test_the_factor_of_a_joint_is_its_own_root(self):
+        detached = factor(Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0), "a")
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+
+    def test_the_factor_that_is_a_batch_element_is_its_own_root(self):
+        batch = DistributionBatch("laws", [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)], "law")
+        detached = factor(batch[0] * Normal("b", 2.0, 1.0), "a")
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
 
 
 class TestFactor:
