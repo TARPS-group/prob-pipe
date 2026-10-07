@@ -164,7 +164,7 @@ class TestDeclarationsAreImplemented:
 
 
 class TestTheParametricFamilies:
-    """VII.1: every family is a thin constructor taking its name first and an event_spec."""
+    """VII.1: every family is a thin constructor taking its label first and an event_spec."""
 
     def test_the_listing_names_every_family(self):
         assert len(_listed_families()) == 24

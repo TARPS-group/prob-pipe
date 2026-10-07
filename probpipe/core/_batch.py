@@ -409,7 +409,7 @@ class Batch[E](TrackedTerm, ABC):
     __slots__ = (
         "_label",
         "_provenance",
-        "_root_name",
+        "_root_label",
         "_root_selection",
         "_root_spec",
         "_spec",
@@ -437,7 +437,7 @@ class Batch[E](TrackedTerm, ABC):
         self,
         spec: BatchSpec,
         *,
-        name: str,
+        label: str,
         provenance: Provenance | None = None,
     ) -> None:
         """Store the batch's *spec* and identity (constructor helper).
@@ -458,7 +458,7 @@ class Batch[E](TrackedTerm, ABC):
         ----------
         spec : BatchSpec
             The batch's type, whose axis sizes must all be integers.
-        name : str
+        label : str
             The batch's label, from which its views derive theirs.
         provenance : Provenance, optional
             How this batch was produced.
@@ -481,10 +481,10 @@ class Batch[E](TrackedTerm, ABC):
                 f"describes. An element's own schema may stay polymorphic"
             )
         object.__setattr__(self, "_spec", spec)
-        object.__setattr__(self, "_root_name", name)
+        object.__setattr__(self, "_root_label", label)
         object.__setattr__(self, "_root_spec", spec)
         object.__setattr__(self, "_root_selection", _whole_of(spec))
-        self._init_tracked(name, provenance=provenance)
+        self._init_tracked(label, provenance=provenance)
 
     # -- the specification --------------------------------------------------
 
@@ -627,7 +627,7 @@ class Batch[E](TrackedTerm, ABC):
             If *label* is not a non-empty string.
         """
         renamed = super()._with_label(label)
-        object.__setattr__(renamed, "_root_name", label)
+        object.__setattr__(renamed, "_root_label", label)
         object.__setattr__(renamed, "_root_spec", renamed._spec)
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
         return renamed
@@ -823,14 +823,14 @@ class Batch[E](TrackedTerm, ABC):
     # -- the concrete-storage seam ------------------------------------------
 
     @abstractmethod
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The single element at a fully-integer positional *index*, as a view labeled *name*.
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> E:
+        """The single element at a fully-integer positional *index*, as a view labeled *label*.
 
-        *name* is the identity this class derived for the element view. A batch
+        *label* is the identity this class derived for the element view. A batch
         that *materializes* an element, as columnar storage builds a row, builds
-        a term of the element kind under *name* and gives it this batch's
+        a term of the element kind under *label* and gives it this batch's
         provenance through :meth:`_inherit_provenance`. A batch that *stores*
-        its elements returns a view of the stored object under *name*: a copy of
+        its elements returns a view of the stored object under *label*: a copy of
         a stored tracked term that shares its representation, or the stored
         value wrapped as a term of the element kind. That view's provenance
         records this batch and the stored term, and the stored object keeps its
@@ -841,7 +841,7 @@ class Batch[E](TrackedTerm, ABC):
         """
 
     @abstractmethod
-    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
+    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the sub-batch at a partial positional *index*.
 
         *index* is one entry per axis of this batch: a resolved position for an
@@ -852,7 +852,7 @@ class Batch[E](TrackedTerm, ABC):
 
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
-        *name* is the derived identity. A subclass
+        *label* is the derived identity. A subclass
         stores both as given rather than recomputing either; the root slots a
         further view derives its label from are re-pointed at this view's own
         root afterwards.
@@ -938,25 +938,25 @@ class Batch[E](TrackedTerm, ABC):
             )
 
         selection = self._compose_selection(normalized)
-        label = _render_index(self._root_spec, selection)
+        rendered = _render_index(self._root_spec, selection)
         if selection == self._root_selection:
-            name = self.label
-        elif label:
-            root = f"({self._root_name})" if is_expression(self._root_name) else self._root_name
-            name = f"{root}[{label}]"
+            label = self.label
+        elif rendered:
+            root = f"({self._root_label})" if is_expression(self._root_label) else self._root_label
+            label = f"{root}[{rendered}]"
         else:
-            name = self._root_name
+            label = self._root_label
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
-            return self._element_at(dropped, name=name)
+            return self._element_at(dropped, label=label)
 
         groups, names = self._surviving_levels(normalized)
         spec = replace(self._spec, axis_groups=groups, level_names=names)
         view = self._sub_batch_at(
-            tuple(_as_storage_slice(i) for i in normalized), spec=spec, name=name
+            tuple(_as_storage_slice(i) for i in normalized), spec=spec, label=label
         )
-        object.__setattr__(view, "_root_name", self._root_name)
+        object.__setattr__(view, "_root_label", self._root_label)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
         return self._inherit_provenance(view)
@@ -1043,7 +1043,7 @@ class Batch[E](TrackedTerm, ABC):
             taken = sorted({name for name in root_names if root_names.count(name) > 1})
             raise ValueError(
                 f"level name {taken[0]!r} is already used by a dropped level in this view's "
-                f"root selection; reusing it would make names of subsequent selections "
+                f"root selection; reusing it would make the labels of subsequent selections "
                 f"ambiguous. Rename the level on the original batch, or give it another name"
             )
 

@@ -123,9 +123,9 @@ class OpaqueBatch(_ObjectBatch[Any]):
         """The :class:`OpaqueSpec` every element satisfies — a view on ``spec``."""
         return cast(OpaqueSpec, self._spec.element_spec)
 
-    def _wrap_element(self, value: Any, name: str) -> Opaque:
-        """The stored *value* as an :class:`~probpipe.Opaque` labeled *name*."""
-        return Opaque(name, value, spec=self.element_spec)
+    def _wrap_element(self, value: Any, label: str) -> Opaque:
+        """The stored *value* as an :class:`~probpipe.Opaque` labeled *label*."""
+        return Opaque(label, value, spec=self.element_spec)
 
 
 register_kind(OpaqueSpec, term_class=Opaque, batch_class=OpaqueBatch)

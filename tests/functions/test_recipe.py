@@ -946,7 +946,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function._from_implementation(
             _PrivateImplementation(),
             signature=inspect.Signature(),
-            name="private",
+            label="private",
         )
 
         anchor = _callable.capture_function_anchor(workflow)

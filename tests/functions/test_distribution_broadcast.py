@@ -60,12 +60,12 @@ class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
         return Normal("x", given["z"], 0.01)._sample(key, sample_shape)
 
 
-def _empirical_of_rows(name: str, rows: Record, weights=None) -> EmpiricalDistribution:
+def _empirical_of_rows(label: str, rows: Record, weights=None) -> EmpiricalDistribution:
     """The empirical law of *rows*, a record whose leaves stack the atoms along their leading axis."""
     element = _reshaped_template(rows.event_template, lambda shape: shape[1:])
     columns = {path: rows[path] for path in rows.event_template}
-    atoms = _batch_class_for(element)(name, columns, "atom", element_spec=element)
-    return EmpiricalDistribution(name, atoms, weights)
+    atoms = _batch_class_for(element)(label, columns, "atom", element_spec=element)
+    return EmpiricalDistribution(label, atoms, weights)
 
 
 def _drawn(law: EmpiricalDistribution, path: str) -> np.ndarray:

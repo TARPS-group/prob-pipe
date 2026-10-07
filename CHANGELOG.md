@@ -1999,6 +1999,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Error messages and a repr call a term's label its label.** A `Record` built
+  without a label says it requires its label as the first positional argument,
+  and that every keyword argument, `name=` and `label=` included, is a field.
+  `conditional_distribution` given a callable without `__name__` asks for a
+  label, `with_level_names` on a view says a reused dropped level would make
+  the labels of later selections ambiguous, and the repr of the TFP batch
+  backend shows the cells' base label as `label=`.
 - **`condition_on`'s registry route is named `inference_methods`.** The route
   that forms the unnormalized conditional by Bayes' rule and normalizes it
   through the inference-method registry was named `bayes`, so a `check`
@@ -2897,6 +2904,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
+  constructors document `label` as the first parameter, but a keyword call
+  `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
+  call took `name`.
 - **A real-valued support rejects a complex value with a nonzero imaginary
   part.** JAX orders complex values lexicographically, so `positive.check(1j)`
   and `real.check(1j)` were true, and a function that declared a positive

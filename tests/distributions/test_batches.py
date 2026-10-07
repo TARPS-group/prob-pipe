@@ -64,9 +64,9 @@ class Kernel(ConditionalDistribution):
         return _Law(self.name, self.event_spec)
 
 
-def _laws(count: int, name: str = "x") -> list[Normal]:
+def _laws(count: int, label: str = "x") -> list[Normal]:
     """``count`` normal laws over one declaration, the law at position ``i`` with mean ``i``."""
-    return [Normal(name, float(i), 1.0) for i in range(count)]
+    return [Normal(label, float(i), 1.0) for i in range(count)]
 
 
 def _kernels(count: int, given=None, event=None) -> list[Kernel]:

@@ -889,7 +889,7 @@ def _argument(spec: TermSpec, slot: str, value: Any) -> Any:
     return value
 
 
-def _declared_law(law: Any, event_spec: OutputSpec, name: str) -> Distribution:
+def _declared_law(law: Any, event_spec: OutputSpec, label: str) -> Distribution:
     """*law*, the function's result, checked against the kernel's event declaration.
 
     Parameters
@@ -899,7 +899,7 @@ def _declared_law(law: Any, event_spec: OutputSpec, name: str) -> Distribution:
     event_spec : OutputSpec
         The kernel's event declaration, which the declaration of *law* must unify
         with.
-    name : str
+    label : str
         The kernel's label, which error messages name.
 
     Returns
@@ -915,10 +915,10 @@ def _declared_law(law: Any, event_spec: OutputSpec, name: str) -> Distribution:
         If its event declaration does not agree with *event_spec*.
     """
     if not isinstance(law, Distribution):
-        raise TypeError(f"the function of {name!r} returned a {type(law).__name__}, not a law")
+        raise TypeError(f"the function of {label!r} returned a {type(law).__name__}, not a law")
     if not DistributionSpec(event_spec).is_valid(law):
         raise ValueError(
-            f"the function of {name!r} returned a law that declares {law.event_spec!r}, and the "
+            f"the function of {label!r} returned a law that declares {law.event_spec!r}, and the "
             f"kernel declares {event_spec!r}"
         )
     return law
@@ -1114,7 +1114,7 @@ class _Probe:
     guards: Mapping[str, Feasibility]
 
 
-def _stand_in(spec: TermSpec, path: str, name: str) -> Any:
+def _stand_in(spec: TermSpec, path: str, label: str) -> Any:
     """The abstract stand-in of a value of *spec*: an array's shape and dtype, or a mapping of them.
 
     Parameters
@@ -1124,7 +1124,7 @@ def _stand_in(spec: TermSpec, path: str, name: str) -> Any:
     path : str
         The path of that slot or field within the given side, which error messages
         name.
-    name : str
+    label : str
         The kernel's label, which error messages name.
 
     Returns
@@ -1143,7 +1143,7 @@ def _stand_in(spec: TermSpec, path: str, name: str) -> Any:
     if isinstance(spec, NumericArraySpec):
         if spec.free_dims:
             raise TypeError(
-                f"the given slot {path!r} of {name!r} declares the free dimensions "
+                f"the given slot {path!r} of {label!r} declares the free dimensions "
                 f"{sorted(spec.free_dims)}; the kernel reads its law at a stand-in of each slot, "
                 f"which needs a concrete shape"
             )
@@ -1151,10 +1151,10 @@ def _stand_in(spec: TermSpec, path: str, name: str) -> Any:
         return jax.ShapeDtypeStruct(tuple(spec.shape), dtype)
     if isinstance(spec, RecordSpec):
         return {
-            key: _stand_in(child, f"{path}/{key}", name) for key, child in spec.children.items()
+            key: _stand_in(child, f"{path}/{key}", label) for key, child in spec.children.items()
         }
     raise TypeError(
-        f"the given slot {path!r} of {name!r} declares a {type(spec).__name__}; the kernel reads "
+        f"the given slot {path!r} of {label!r} declares a {type(spec).__name__}; the kernel reads "
         f"its law at a stand-in of each slot, which needs arrays or records of arrays"
     )
 
@@ -1174,7 +1174,7 @@ def _value_free(spec: TermSpec) -> TermSpec:
     return spec
 
 
-def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Probe:
+def _probe(label: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Probe:
     """The declaration and the guards of the law *fn* returns, evaluated abstractly.
 
     *fn* runs once under ``jax.eval_shape``, with a traced stand-in of each
@@ -1184,7 +1184,7 @@ def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pro
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label, which error messages name.
     fn : callable
         The function of the given values that returns a law.
@@ -1203,7 +1203,7 @@ def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pro
         If a slot has no stand-in, or *fn* returns something other than a law.
     """
     stand_ins = {
-        slot: _stand_in(spec, slot, name)
+        slot: _stand_in(spec, slot, label)
         for slot, spec in slots.items()
         if slot not in slots.optional
     }
@@ -1212,7 +1212,7 @@ def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pro
     def evaluate(values: Mapping[str, Any]) -> Any:
         law = fn(**{slot: _argument(slots[slot], slot, value) for slot, value in values.items()})
         if not isinstance(law, Distribution):
-            raise TypeError(f"the function of {name!r} returned a {type(law).__name__}, not a law")
+            raise TypeError(f"the function of {label!r} returned a {type(law).__name__}, not a law")
         found["event_spec"] = law.event_spec
         found["guards"] = {
             method: _capability_guard(law, method)
@@ -1227,7 +1227,7 @@ def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pro
 
 
 def _slots_of(
-    name: str, fn: Callable[..., Any], given_spec: InputSpec | Mapping[str, TermSpec] | None
+    label: str, fn: Callable[..., Any], given_spec: InputSpec | Mapping[str, TermSpec] | None
 ) -> InputSpec:
     """The given slots of the kernel of *fn*: one per parameter, declared by *given_spec* or its annotation.
 
@@ -1237,7 +1237,7 @@ def _slots_of(
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label, which error messages name.
     fn : callable
         The function whose parameters are the slots.
@@ -1265,18 +1265,18 @@ def _slots_of(
         signature = inspect.signature(fn)
     unknown = sorted(set(declared) - set(signature.parameters))
     if unknown:
-        raise TypeError(f"given_spec names {unknown}, which are not parameters of {name!r}")
+        raise TypeError(f"given_spec names {unknown}, which are not parameters of {label!r}")
     slots: dict[str, TermSpec] = {}
     optional: list[str] = []
     for parameter in signature.parameters.values():
         if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
             raise TypeError(
-                f"the parameter {parameter.name!r} of {name!r} is variadic; each given slot is "
+                f"the parameter {parameter.name!r} of {label!r} is variadic; each given slot is "
                 f"a named parameter"
             )
         if parameter.kind is parameter.POSITIONAL_ONLY:
             raise TypeError(
-                f"the parameter {parameter.name!r} of {name!r} is positional-only; each given "
+                f"the parameter {parameter.name!r} of {label!r} is positional-only; each given "
                 f"slot's value is passed by name"
             )
         spec = declared.get(parameter.name, parameter.annotation)
@@ -1286,7 +1286,7 @@ def _slots_of(
                 spec = RecordSpec.infer_from({"default": parameter.default}).children["default"]
         if not isinstance(spec, TermSpec):
             raise TypeError(
-                f"the given slot {parameter.name!r} of {name!r} declares no term spec. Pass "
+                f"the given slot {parameter.name!r} of {label!r} declares no term spec. Pass "
                 f"given_spec={{{parameter.name!r}: NumericArraySpec(())}} for a real scalar, or "
                 f"NumericArraySpec((n,)) for a vector of length n, or annotate the parameter "
                 f"with the spec"
@@ -1295,17 +1295,17 @@ def _slots_of(
     return InputSpec(slots).with_optional(*optional)
 
 
-def _agreed_event_spec(name: str, declared: OutputSpec | TermSpec, law: OutputSpec) -> OutputSpec:
+def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputSpec) -> OutputSpec:
     """*declared*, completed from *law*, the declaration of the law the function returns.
 
     Parameters
     ----------
-    name : str
+    label : str
         The kernel's label, which is the component of a bare term spec and which
         error messages name.
     declared : OutputSpec or TermSpec
         The event declaration the caller passed. A bare term spec declares a whole
-        term under the component *name*.
+        term under the component *label*.
     law : OutputSpec
         The event declaration of the law the function returns at the stand-ins.
 
@@ -1324,29 +1324,29 @@ def _agreed_event_spec(name: str, declared: OutputSpec | TermSpec, law: OutputSp
     declaration = (
         declared
         if isinstance(declared, OutputSpec)
-        else OutputSpec.default(declared, component=name)
+        else OutputSpec.default(declared, component=label)
     )
     if declaration.exposes_record != law.exposes_record or tuple(declaration.components) != tuple(
         law.components
     ):
         raise ValueError(
-            f"the event_spec of {name!r} declares the components {list(declaration.components)}, "
+            f"the event_spec of {label!r} declares the components {list(declaration.components)}, "
             f"and the law its function returns declares {list(law.components)}"
         )
     return declaration.with_spec(law.spec)
 
 
 def _function_kernel(
-    name: str | None,
+    label: str | None,
     fn: Any,
     given_spec: InputSpec | Mapping[str, TermSpec] | None,
     event_spec: OutputSpec | TermSpec | None,
 ) -> ConditionalDistribution:
-    """The kernel of *fn*, labeled *name* or after the function.
+    """The kernel of *fn*, labeled *label* or after the function.
 
     Parameters
     ----------
-    name : str or None
+    label : str or None
         The kernel's label. ``None`` takes the label from ``fn.__name__``.
     fn : callable
         The function of the given values that returns a law.
@@ -1373,11 +1373,12 @@ def _function_kernel(
     """
     if not callable(fn):
         raise TypeError(f"conditional_distribution takes a function, got {type(fn).__name__}")
-    label = getattr(fn, "__name__", None) if name is None else name
+    if label is None:
+        label = getattr(fn, "__name__", None)
     if not isinstance(label, str) or not label:
         raise TypeError(
-            f"conditional_distribution needs a name for a {type(fn).__name__}, which has no "
-            f"__name__ to take it from"
+            f"conditional_distribution needs a label for a {type(fn).__name__}, which has no "
+            f"__name__ to take it from; pass the label as the first argument"
         )
     slots = _slots_of(label, fn, given_spec)
     probe = _probe(label, fn, slots)

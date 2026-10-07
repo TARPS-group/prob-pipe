@@ -76,19 +76,19 @@ class TestGeneric:
         assert discrete_dist.label == "x"
 
 
-_NAMED_DISTS = {
-    "Bernoulli": lambda name: Bernoulli(probs=0.5, label=name),
-    "Binomial": lambda name: Binomial(total_count=10, probs=0.3, label=name),
-    "Poisson": lambda name: Poisson(rate=5.0, label=name),
-    "Categorical": lambda name: Categorical(probs=[0.2, 0.3, 0.5], label=name),
-    "NegativeBinomial": lambda name: NegativeBinomial(total_count=5, probs=0.4, label=name),
+_LABELED_DISTS = {
+    "Bernoulli": lambda label: Bernoulli(probs=0.5, label=label),
+    "Binomial": lambda label: Binomial(total_count=10, probs=0.3, label=label),
+    "Poisson": lambda label: Poisson(rate=5.0, label=label),
+    "Categorical": lambda label: Categorical(probs=[0.2, 0.3, 0.5], label=label),
+    "NegativeBinomial": lambda label: NegativeBinomial(total_count=5, probs=0.4, label=label),
 }
 
 
-@pytest.mark.parametrize("name", list(_NAMED_DISTS))
-def test_name_set(name):
-    """Every discrete distribution must store the ``name`` constructor arg."""
-    dist = _NAMED_DISTS[name](name="my_dist")
+@pytest.mark.parametrize("family", list(_LABELED_DISTS))
+def test_label_set(family):
+    """Every discrete distribution must store the ``label`` constructor arg."""
+    dist = _LABELED_DISTS[family](label="my_dist")
     assert dist.label == "my_dist"
 
 

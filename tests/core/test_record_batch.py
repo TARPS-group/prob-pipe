@@ -58,12 +58,12 @@ def _object_column(values: list) -> np.ndarray:
     return column
 
 
-def nested_batch(n: int = 3, name: str | None = None, **kwargs) -> NumericRecordBatch:
+def nested_batch(n: int = 3, label: str | None = None, **kwargs) -> NumericRecordBatch:
     """A `NumericRecordBatch` of *n* elements over `NESTED`."""
-    if name is None:
-        name = "batch"
+    if label is None:
+        label = "batch"
     return NumericRecordBatch(
-        name,
+        label,
         {
             "outer/a": jnp.arange(float(n)),
             "outer/b": jnp.arange(float(n)) * 2,
@@ -678,7 +678,7 @@ class TestStructuralTransforms:
     """
 
     def test_with_path_names_renames_within_every_element(self):
-        batch = nested_batch(name="post")
+        batch = nested_batch(label="post")
         renamed = batch.with_path_names({"outer/a": "outer/alpha"})
         assert tuple(renamed.event_template.keys()) == ("outer/alpha", "outer/b", "m")
         np.testing.assert_array_equal(
@@ -856,9 +856,9 @@ class TestStructuralTransforms:
             nested_batch().replace({"m": jnp.ones((3, 2))}, m=jnp.zeros((3, 2)))
 
     def test_a_transform_carries_the_name_and_whether_it_was_given(self):
-        """The transform restates both, rather than deriving a fresh name: an
-        auto name stays auto and a caller's stays the caller's."""
-        assert nested_batch(name="post").without("m").label == "post"
+        """The transform restates both, rather than deriving a fresh label: an
+        auto label stays auto and a caller's stays the caller's."""
+        assert nested_batch(label="post").without("m").label == "post"
         assert nested_batch().without("m").label == "batch"
 
 
@@ -893,20 +893,20 @@ class TestCollectionNotTree:
 
 
 # ---------------------------------------------------------------------------
-# Elements: materialized, named, and sharing the batch's spec
+# Elements: materialized, labeled, and sharing the batch's spec
 # ---------------------------------------------------------------------------
 
 
 class TestElements:
     def test_an_element_is_a_record_over_the_shared_template(self):
-        element = nested_batch(name="post")[1]
+        element = nested_batch(label="post")[1]
         assert isinstance(element, NumericRecord)
         assert element["outer/a"] == 1.0
         assert element["outer/b"] == 2.0
         assert element.event_template == NESTED
 
     def test_an_element_takes_the_derived_name(self):
-        element = nested_batch(name="post")[1]
+        element = nested_batch(label="post")[1]
         assert element.label == "post[draw=1]"
 
     def test_an_element_shares_the_batchs_spec_object(self):
@@ -932,7 +932,7 @@ class TestElements:
     def test_an_element_inherits_the_batchs_provenance(self):
         from probpipe import Provenance
 
-        batch = nested_batch(name="post")
+        batch = nested_batch(label="post")
         batch.with_provenance(Provenance.create("sample", parents=[]))
         assert batch[0].provenance is batch.provenance
 
@@ -977,13 +977,13 @@ class TestLevels:
         assert renamed[0]["outer/a"] == 0.0
 
     def test_a_renamed_batch_derives_view_names_under_the_new_name(self):
-        renamed = nested_batch(name="post").with_level_names(draw="sample")
+        renamed = nested_batch(label="post").with_level_names(draw="sample")
         assert renamed[0].label == "post[sample=0]"
 
     def test_a_descending_slice_is_presented_in_the_order_given(self):
         """The batch base requires storage to honor a reversed selection rather
-        than re-sort it, since a view's derived name is stated in that order."""
-        batch = nested_batch(4, name="post")
+        than re-sort it, since a view's derived label is stated in that order."""
+        batch = nested_batch(4, label="post")
         reversed_view = batch[::-1]
         np.testing.assert_array_equal(
             np.asarray(reversed_view["outer/a"]), np.asarray([3.0, 2.0, 1.0, 0.0])
@@ -996,7 +996,7 @@ class TestLevels:
         np.testing.assert_array_equal(np.asarray(batch[::2]["outer/a"]), np.asarray([0.0, 2.0]))
 
     def test_a_negative_index_names_the_position_it_resolves_to(self):
-        batch = nested_batch(4, name="post")
+        batch = nested_batch(4, label="post")
         assert batch[-1].label == "post[draw=3]"
         assert batch[-1]["outer/a"] == 3.0
 
@@ -1050,7 +1050,7 @@ class TestLevels:
 
 class TestSelect:
     def test_select_returns_single_field_views(self):
-        batch = nested_batch(name="post")
+        batch = nested_batch(label="post")
         selected = batch.select("m")
         assert set(selected) == {"m"}
         view = selected["m"]
@@ -1518,7 +1518,7 @@ class TestEqualityAndCopying:
         )
 
     def test_pickle_round_trip(self):
-        batch = nested_batch(name="post")
+        batch = nested_batch(label="post")
         rebuilt = pickle.loads(pickle.dumps(batch))
         assert rebuilt == batch
         assert rebuilt.label == "post"
@@ -1541,7 +1541,7 @@ class TestEqualityAndCopying:
 
 class TestPyTree:
     def test_flatten_unflatten_round_trip(self):
-        batch = nested_batch(name="post")
+        batch = nested_batch(label="post")
         leaves, treedef = jax.tree_util.tree_flatten(batch)
         assert len(leaves) == 3
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
@@ -1675,9 +1675,9 @@ class TestPyTreeRebuildContract:
     """
 
     @staticmethod
-    def _batch(shape, levels, name="batch", **kwargs):
+    def _batch(shape, levels, label="batch", **kwargs):
         return NumericRecordBatch(
-            name, {"x": jnp.zeros(shape)}, levels, element_spec=RecordSpec(x=()), **kwargs
+            label, {"x": jnp.zeros(shape)}, levels, element_spec=RecordSpec(x=()), **kwargs
         )
 
     REFUSAL = "keeps every batch axis or removes all of them"

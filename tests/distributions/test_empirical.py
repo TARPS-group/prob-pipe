@@ -4,7 +4,7 @@ An ``EmpiricalDistribution`` takes its atoms in the event's batch form, or as an
 array whose leading axis indexes array atoms, with weights that default to
 uniform and are normalized. Without a declaration, record atoms expose their
 fields and any other atoms form a whole-term event whose component defaults to
-the law's name; an ``event_spec`` names the components, and a type hole is
+the law's label; an ``event_spec`` names the components, and a type hole is
 filled from the atoms. The law samples by weighted resampling, integrates any
 function exactly over its atoms, and has exact marginals, which are the
 empirical laws of the projected atoms under the same weights. A numeric event

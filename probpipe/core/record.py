@@ -376,9 +376,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             # ``NumericRecord`` the user never wrote.
             if not args:
                 raise TypeError(
-                    "Record requires its name as the first positional argument, "
-                    "e.g. Record('my_record', x=...); the name= keyword and "
-                    "name-less forms were removed."
+                    "Record requires its label as the first positional argument, "
+                    "e.g. Record('my_record', x=...); every keyword argument, "
+                    "name= and label= included, is a field."
                 )
             event_template = kwargs.get("event_template")
             if len(args) > 1 and args[1] is not None:

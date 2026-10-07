@@ -293,7 +293,7 @@ class TestEditTemplateThreading:
 
     def test_edits_reuse_untouched_children_verbatim(self):
         # An untouched nested child already named by its field key survives
-        # an edit as the SAME object — class, name, and metadata preserved
+        # an edit as the SAME object — class, label, and metadata preserved
         # (never demoted to the outer record's class).
         child = NumericRecord("phys", x=1.0, y=2.0)
         r = Record("r", phys=child, obs="tag")

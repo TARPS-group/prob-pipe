@@ -393,7 +393,7 @@ def _output_atoms(
                 n=count,
                 level_names=(DRAW_LEVEL,),
                 field_name=output_label,
-                name=output_label,
+                label=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),
             )
@@ -601,7 +601,7 @@ def _sample_planned_source_groups(
     return sampled
 
 
-def _record_columns(draws: Any, name: str) -> Any:
+def _record_columns(draws: Any, label: str) -> Any:
     """*draws*, raw draws along a leading axis, with record draws held in a ``Record`` of columns.
 
     A record-valued law's raw draws are the nested mapping of its columns, and
@@ -609,7 +609,7 @@ def _record_columns(draws: Any, name: str) -> Any:
     draws are returned as they are.
     """
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
-        return Record(name, _raw_record(draws))
+        return Record(label, _raw_record(draws))
     return draws
 
 

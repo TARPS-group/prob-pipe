@@ -116,7 +116,7 @@ def execute_sweep(
             # by name with the batch it swept.
             level_names=plan.sweep_level_names,
             axis_groups=plan.sweep_axis_groups,
-            name=output_label,
+            label=output_label,
             field_name=output_label,
             output_spec=output_spec,
             output_template=output_template,
@@ -165,7 +165,7 @@ def execute_sweep(
         batch_shape=plan.sweep_batch_shape,
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
-        name=output_label,
+        label=output_label,
         field_name=output_label,
     )
     provenance = make_sweep_provenance(

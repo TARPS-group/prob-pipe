@@ -360,7 +360,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def _make_array_backend(
         cls,
         *,
-        name: str,
+        label: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _TFPArrayBackend:
@@ -372,7 +372,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         """
         return _TFPArrayBackend(
             dist_cls=cls,
-            name=name,
+            label=label,
             batch_shape=tuple(batch_shape),
             batched_params=dict(batched_params),
         )
@@ -383,8 +383,8 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 # ---------------------------------------------------------------------------
 
 
-_ARRAY_BACKEND_NAME_SUFFIX = "__array_backend"
-"""Suffix appended to a backend's base ``name`` when constructing the
+_ARRAY_BACKEND_LABEL_SUFFIX = "__array_backend"
+"""Suffix appended to a backend's base ``label`` when constructing the
 wrapped batched ``TFPDistribution``. Centralised so
 ``_TFPArrayBackend.__init__`` and ``tree_unflatten`` can't drift."""
 
@@ -392,7 +392,7 @@ wrapped batched ``TFPDistribution``. Centralised so
 def _construct_batched_dist(
     dist_cls: type[TFPDistribution],
     *,
-    name: str,
+    label: str,
     batched_params: dict[str, Any],
 ) -> TFPDistribution:
     """Construct the fused batched distribution in the separate-laws form,
@@ -405,7 +405,7 @@ def _construct_batched_dist(
     with _allow_batched_tfp_init():
         return dist_cls(
             **batched_params,
-            label=f"{name}{_ARRAY_BACKEND_NAME_SUFFIX}",
+            label=f"{label}{_ARRAY_BACKEND_LABEL_SUFFIX}",
         )
 
 
@@ -433,8 +433,8 @@ class _TFPArrayBackend:
     dist_cls : type[TFPDistribution]
         The concrete ``TFPDistribution`` subclass (e.g., ``Normal``).
         Used to materialise per-cell scalars.
-    name : str
-        Base label. Per-cell scalars auto-suffix as ``f"{name}_{flat}"``
+    label : str
+        Base label. Per-cell scalars auto-suffix as ``f"{label}_{flat}"``
         where ``flat`` is the row-major flat index over ``batch_shape``.
     batch_shape : tuple of int
         Leading shape of the batched parameters.
@@ -448,12 +448,12 @@ class _TFPArrayBackend:
         self,
         *,
         dist_cls: type[TFPDistribution],
-        name: str,
+        label: str,
         batch_shape: tuple[int, ...],
         batched_params: dict[str, Any],
     ) -> None:
         self._dist_cls = dist_cls
-        self._name = name
+        self._label = label
         self._batch_shape = tuple(batch_shape)
         # Single pass: validate every higher-rank param's leading
         # axes against the declared ``batch_shape``, broadcasting
@@ -485,7 +485,7 @@ class _TFPArrayBackend:
         self._batched_params = batched_params
         self._batched_dist: TFPDistribution = _construct_batched_dist(
             dist_cls,
-            name=name,
+            label=label,
             batched_params=batched_params,
         )
         # Final sanity check: TFP's inferred batch_shape must match
@@ -553,7 +553,7 @@ class _TFPArrayBackend:
         }
         cell = self._dist_cls(
             **scalar_params,
-            label=f"{self._name}_{flat}",
+            label=f"{self._label}_{flat}",
         )
         # The per-cell suffix is derived by the backend, not user-typed.
         return cell
@@ -613,7 +613,7 @@ class _TFPArrayBackend:
     def __repr__(self) -> str:
         return (
             f"_TFPArrayBackend({self._dist_cls.__name__}, "
-            f"batch_shape={self._batch_shape}, name={self._name!r})"
+            f"batch_shape={self._batch_shape}, label={self._label!r})"
         )
 
     # -- JAX pytree registration --------------------------------------------
@@ -631,7 +631,7 @@ class _TFPArrayBackend:
         """
         keys = tuple(self._batched_params.keys())
         children = tuple(self._batched_params[k] for k in keys)
-        aux = (self._dist_cls, self._name, self._batch_shape, keys)
+        aux = (self._dist_cls, self._label, self._batch_shape, keys)
         return children, aux
 
     @classmethod
@@ -647,15 +647,15 @@ class _TFPArrayBackend:
         round-trip; the wrapped ``_batched_dist`` is rebuilt directly
         from the leaves.
         """
-        dist_cls, name, batch_shape, keys = aux
+        dist_cls, label, batch_shape, keys = aux
         instance = cls.__new__(cls)
         instance._dist_cls = dist_cls
-        instance._name = name
+        instance._label = label
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
         instance._batched_dist = _construct_batched_dist(
             dist_cls,
-            name=name,
+            label=label,
             batched_params=instance._batched_params,
         )
         return instance
