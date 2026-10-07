@@ -15,15 +15,19 @@ of the central 90% interval of every coordinate, each read through the
 operation model's ``mean``, ``variance``, and ``quantile``.
 
 **Tolerances.** Every comparison is ``|estimate - reference| <= Z * MCSE`` with
-``Z = 4``, where the Monte Carlo standard error is estimated from the
+``Z = 5``, where the Monte Carlo standard error is estimated from the
 posterior's chains with their effective sample size: ArviZ's ``mcse`` of the
 mean and of the quantile, and for the variance the MCSE of the mean of the
 squared deviations, with their own effective sample size. A method whose draws
-target the posterior fails one comparison with probability about 6e-5, and a
-case's few dozen comparisons together with probability below 0.003, so a
-failure is a finding rather than noise. Each run is in a workflow scope of a
-fixed seed, so every outcome is reproducible. An MCSE is valid only for chains that have mixed, so a method
-that runs several chains must also reach a rank-normalized R-hat below 1.05.
+target the posterior fails one comparison with probability about 6e-7 and a
+case's few dozen comparisons together with probability about 2e-5. The suite
+runs several dozen cases on each Python version, so together they fail by
+chance with probability below 0.01, and a failure is a finding rather than
+noise. Each run is in a workflow scope of a fixed seed, so its outcome
+reproduces on one platform, while a platform whose floating point differs
+runs other chains, which the band allows for. An MCSE is valid only for chains
+that have mixed, so a method that runs several chains must also reach a
+rank-normalized R-hat below 1.05.
 
 **Kinds.** A *consistent* method's draws converge to the posterior as its
 budget grows, as an MCMC chain's do, and it meets every comparison above. A
@@ -69,7 +73,7 @@ __all__ = [
 ]
 
 #: The half-width of every comparison band, in Monte Carlo standard errors.
-Z = 4.0
+Z = 5.0
 
 #: The largest rank-normalized R-hat at which a several-chain result counts as mixed.
 RHAT_LIMIT = 1.05
@@ -133,8 +137,8 @@ PROFILES: dict[str, MethodProfile] = {
 #: as a pending test, so the suite stays green and the ledger lists it. A failure
 #: that depends on the workflow seed or on the platform's numerics is pending
 #: without strictness, since the same budget passes at some seeds and on some
-#: platforms. The comment above each entry states its failure rate over the
-#: workflow seeds it was measured at.
+#: platforms. The comment above each entry states its failure rate under the
+#: band of ``Z`` MCSE over the workflow seeds it was measured at.
 KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException], bool]] = {}
 
 _ABC_BUDGET = (
@@ -154,7 +158,7 @@ KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (
 )
 # Fails at one of workflow seeds 0 to 5.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError, False)
-# Fails at five of workflow seeds 0 to 5, and passes at seed 0.
+# Fails at four of workflow seeds 0 to 5, and passes at seed 0.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError, False)
 # Fails at every one of workflow seeds 0 to 5.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (
@@ -168,13 +172,7 @@ KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     AssertionError,
     False,
 )
-# Fails at one of workflow seeds 0 to 5.
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "dirichlet_multinomial")] = (
-    _ABC_BUDGET,
-    AssertionError,
-    False,
-)
-# Fails at 9 of workflow seeds 0 to 31.
+# Fails at three of workflow seeds 0 to 31, seed 0 among them.
 KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
     "the random walk's two chains of 4000 draws mix slowly over eight_schools, so a tail "
     "quantile of theta_tilde or mu, or a variance of theta_tilde, misses its bound at some "
@@ -182,7 +180,7 @@ KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
     AssertionError,
     False,
 )
-# Fails at two of workflow seeds 0 to 5.
+# Fails at three of workflow seeds 0 to 11, and passes at seed 0.
 KNOWN_FAILURES[("blackjax_sghmc", "probpipe", "gaussian_linear")] = (
     "SGHMC's fixed step size and friction at the harness's budget leave a coefficient's "
     "mean further from the reference than a quarter of its posterior sd at some seeds",
@@ -360,7 +358,7 @@ def assert_matches(
 ) -> None:
     """Assert that *posterior* matches *reference* under the contract of its kind.
 
-    A consistent result meets the four-MCSE band on every coordinate's mean,
+    A consistent result meets the band of ``Z`` MCSE on every coordinate's mean,
     variance, and interval endpoints, and mixes to an R-hat below 1.05 when it
     has several chains. A biased result meets the band widened by a quarter of
     a posterior standard deviation, on the means alone.

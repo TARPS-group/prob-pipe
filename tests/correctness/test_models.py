@@ -438,7 +438,7 @@ class TestUnnormalizedDensity:
         assert normalized.event_spec == law.event_spec
 
     def test_the_converted_law_has_the_moments_of_the_normalized_density(self):
-        """The empirical law of the chains has the Gaussian's moments to four MCSE."""
+        """The empirical law of the chains has the Gaussian's moments within the harness's band."""
         with workflow_run(seed=0):
             normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
                 _unnormalized(), EmpiricalDistribution
@@ -578,7 +578,8 @@ class TestLearnedKernels:
         The prior is the factored joint of two standard normals, so the law
         exposes the record ``{a, b}``. The law is a biased stand-in, held to the
         harness's biased contract: means within a quarter of a posterior
-        deviation beyond four MCSE. Training the network takes tens of seconds.
+        deviation beyond the harness's MCSE band. Training the network takes tens
+        of seconds.
         """
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
