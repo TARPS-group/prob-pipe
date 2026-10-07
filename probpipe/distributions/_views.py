@@ -5,8 +5,9 @@ Provides:
     below a law's whole term, or for a selection of several nodes, holding a
     reference to its parent.
   - the renamed law and the renamed kernel that ``with_path_names`` returns
-    when the values must carry new names, which this module installs on the
-    two distribution kinds at import.
+    when the values must carry new names and the family does not rebuild
+    itself under them, which this module installs on the two distribution
+    kinds at import.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import jax.numpy as jnp
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
+from ..core._repr import WIDTH, call_repr, mapping_repr, term_repr
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.named_tree import _unflatten_paths
@@ -59,7 +61,9 @@ from ._conditional import (
     _install_renamed_kernel,
 )
 from ._distribution import (
+    _RENAME_SOURCE,
     Distribution,
+    _detached_term,
     _install_field_view,
     _install_renamed_law,
     _whole_term_component,
@@ -317,11 +321,9 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
 
 
 def _detached(law: Distribution, label: str) -> Distribution:
-    """*law* detached from the workflow under *label*: no provenance and no annotations."""
-    clone = law._shallow_copy()
+    """*law* detached from the workflow under *label*, as :meth:`Distribution.raw` detaches a law."""
+    clone = _detached_term(law)
     object.__setattr__(clone, "_label", label)
-    object.__setattr__(clone, "_provenance", None)
-    object.__setattr__(clone, "_annotations", None)
     return clone
 
 
@@ -1325,7 +1327,11 @@ class _EventRenames:
         return None if order == list(range(len(order))) else order
 
     def draw(self, value: Any) -> Any:
-        """*value*, a raw value of the original declaration, under the new paths."""
+        """*value*, a raw value of the original declaration or a batch of them, under the new paths.
+
+        The fields of a batch of records take the new paths in the renamed
+        declaration's order, and the batch keeps its label and levels.
+        """
         return _moved_value(value, self._draw_moves)
 
     def undraw(self, value: Any) -> Any:
@@ -1719,15 +1725,16 @@ _RENAMED_CAPABILITIES: dict[type, Mapping[str, Callable[..., Any]]] = {
 class _RenamedDistribution(Distribution):
     """A parent law under renamed or moved event paths, which translates values at its boundary.
 
-    ``Distribution.with_path_names`` returns it for a rename that reaches a field
-    of a record draw, whose values must then carry the new paths. It claims each
-    of the parent's capabilities that a rename carries over: a draw, a moment,
-    a quantile, or a marginal is translated on the way out, and a scored value,
-    a given, or a path on the way in. A move reorders the flat coordinates, so
-    the covariance, and quantiles over the flat coordinates, are permuted into
-    the renamed declaration's order. Each capability carries the parent's
-    guard at the original nodes. A further rename of this law renames its
-    parent by both renames at once.
+    ``Distribution.with_path_names`` returns it for a rename that changes the
+    path of a field of a record draw when the parent's family does not rebuild
+    itself under the new paths. It claims each of the parent's capabilities
+    that a rename carries over: a draw, a moment, a quantile, or a marginal is
+    translated on the way out, and a scored value, a given, or a path on the
+    way in. A move reorders the flat coordinates, so the covariance, and
+    quantiles over the flat coordinates, are permuted into the renamed
+    declaration's order. Each capability carries the parent's guard at the
+    original nodes. A further rename of this law renames its parent by both
+    renames at once.
 
     Parameters
     ----------
@@ -1735,20 +1742,34 @@ class _RenamedDistribution(Distribution):
         The law whose values are translated.
     event : _EventRenames
         The renames from the parent's declaration to this law's.
+    renames : tuple of Mapping[str, str]
+        The renames applied to the parent, in order, each as its caller gave
+        it, which the repr shows.
     """
 
     _capability_table = _RENAMED_CAPABILITIES
 
-    def __new__(cls, parent: Distribution, event: _EventRenames) -> _RenamedDistribution:
+    def __new__(
+        cls,
+        parent: Distribution,
+        event: _EventRenames,
+        renames: tuple[Mapping[str, str], ...],
+    ) -> _RenamedDistribution:
         return object.__new__(
             _capability_subclass(_RenamedDistribution, _claimed(parent, _RENAMED_CAPABILITIES))
         )
 
-    def __init__(self, parent: Distribution, event: _EventRenames) -> None:
+    def __init__(
+        self,
+        parent: Distribution,
+        event: _EventRenames,
+        renames: tuple[Mapping[str, str], ...],
+    ) -> None:
         self._init_tracked(parent.label)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_event", event)
+        object.__setattr__(self, "_renames", tuple(dict(step) for step in renames))
         self._init_declaration(event.renamed)
 
     def with_path_names(
@@ -1803,51 +1824,122 @@ class _RenamedDistribution(Distribution):
         """
         return _original_nodes(self._event, self.event_spec, paths, self._parent.label)
 
+    def __repr__(self) -> str:
+        """The parent's repr followed by ``.with_path_names({...})`` for each rename.
+
+        Each rename shows the paths it changed, and a label that differs from
+        the parent's follows as ``.with_label(...)``. A reorder that changes no
+        path, which no rename can state, reads as a call of the parent's class
+        with the parent's arguments and this law's declaration.
+        """
+        renames = [{old: new for old, new in step.items() if old != new} for step in self._renames]
+        parent = self._parent
+        if not all(renames):
+            return term_repr(
+                self._repr_class_name(),
+                self.label,
+                [*parent._repr_arguments(), ("event_spec", repr(self.event_spec))],
+            )
+        text = repr(parent)
+        for step in renames:
+            mapping = mapping_repr({old: repr(new) for old, new in step.items()})
+            text = _method_call(text, "with_path_names", mapping)
+        if self.label != parent.label:
+            text = _method_call(text, "with_label", repr(self.label))
+        return text
+
     def _repr_class_name(self) -> str:
-        """The class of the law this one renames, which it presents under new paths."""
+        """The class of the law this one renames, which a law presenting this one names."""
         return self._parent._repr_class_name()
 
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The family parameters of the law this one renames."""
-        return self._parent._repr_arguments()
 
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The renamed declaration, by which this law differs from the one it renames."""
-        return [("event_spec", repr(self.event_spec))]
+def _method_call(receiver: str, method: str, argument: str) -> str:
+    """The repr ``receiver.method(argument)``, on the receiver's last line where the call fits.
+
+    A call that would pass the repr width lays its argument out on a line of its
+    own, as :func:`~probpipe.core._repr.call_repr` lays out a constructor call.
+    """
+    call = call_repr(f".{method}", [argument])
+    if "\n" not in call and len(receiver.rsplit("\n", 1)[-1]) + len(call) <= WIDTH:
+        return receiver + call
+    return call_repr(f"{receiver}.{method}", [argument])
 
 
 def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, str]) -> Distribution:
     """The law that translates the values of *law* by *event*, with the rename's provenance.
 
-    A renamed law's parent is translated by both renames at once.
+    A renamed law's parent is translated by both renames at once, and the result
+    keeps each rename's *arguments* for its repr.
     """
     if isinstance(law, _RenamedDistribution):
-        renamed = _RenamedDistribution(law._parent, law._event.followed_by(event))
+        renamed = _RenamedDistribution(
+            law._parent, law._event.followed_by(event), (*law._renames, arguments)
+        )
     else:
-        renamed = _RenamedDistribution(law, event)
+        renamed = _RenamedDistribution(law, event, (arguments,))
     renamed.with_provenance(
         Provenance.create("with_path_names", parents=[law], metadata=dict(arguments))
     )
     return renamed
 
 
+def _rename_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None:
+    """The law *law* renames, with the renames from its declaration to *law*'s, or None.
+
+    A law that translates its parent's values at its boundary holds its parent,
+    and every other law that ``with_path_names`` returns records the law it
+    renames. Each one reads that law's draws in a lift (V.5).
+    """
+    if isinstance(law, _RenamedDistribution):
+        return law._parent, law._event
+    return getattr(law, _RENAME_SOURCE, None)
+
+
+def _with_rename_source(
+    law: Distribution, parent: Distribution, renames: Mapping[str, str]
+) -> Distribution:
+    """*law*, which ``with_path_names`` returns for *parent*, recording *parent* as its source.
+
+    The record is *parent* with the renames from its declaration to *law*'s,
+    which :func:`_rename_source` reads. A factored joint orders its components
+    by its factors, so the renames end at *law*'s own declaration.
+    """
+    event = _EventRenames.of(parent.event_spec, law.event_spec, renames)
+    object.__setattr__(law, _RENAME_SOURCE, (parent, event))
+    return law
+
+
 def _renamed_law(
     parent: Distribution, event_spec: OutputSpec, renames: Mapping[str, str]
 ) -> Distribution:
-    """The law ``with_path_names`` returns for *parent* when a rename reaches a record field.
+    """The law ``with_path_names`` returns for *parent*, which reads the draw of *parent*.
 
-    A factored law renames through its factors where they carry the rename, and
-    regroups them where the rename gathers their components under new nodes.
-    Any other law, or a rename its factors cannot carry, is translated at the
-    boundary of the law that holds it.
+    A rename of a whole term's component alone changes only the declaration, so
+    the result is a copy of *parent*. A factored law renames through its factors
+    where they carry the rename, and regroups them where the rename gathers
+    their components under new nodes. A law whose family rebuilds itself under
+    the new paths returns the member that :meth:`Distribution._renamed_in_family`
+    gives. Any other law, or a rename its factors cannot carry, is translated at
+    the boundary of a law that holds *parent*. Each other result records
+    *parent* and the renames from its declaration to the result's, which a lift
+    reads to draw the result together with *parent* (V.5).
     """
+    if event_spec.spec == parent.event_spec.spec:
+        copy = parent._with_declaration(event_spec, "with_path_names", renames)
+        return _with_rename_source(copy, parent, renames)
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
         if joint is None:
             joint = _regrouped(parent, renames, event_spec)
         if joint is not None:
-            return joint
-    return _renamed(parent, _EventRenames.of(parent.event_spec, event_spec, renames), renames)
+            return _with_rename_source(joint, parent, renames)
+    event = _EventRenames.of(parent.event_spec, event_spec, renames)
+    member = parent._renamed_in_family(event)
+    if member is None:
+        return _renamed(parent, event, renames)
+    return _with_rename_source(member, parent, renames).with_provenance(
+        Provenance.create("with_path_names", parents=[parent], metadata=dict(renames))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2356,7 +2448,7 @@ def _renamed_conditional_marginal_guard(
     several nodes, whose final segments must differ.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    unreached = _unreached(self._event, self.event_spec, paths, self.label)
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):

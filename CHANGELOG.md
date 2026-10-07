@@ -2897,6 +2897,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   constructors document `label` as the first parameter, but a keyword call
   `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
   call took `name`.
+- **A real-valued support rejects a complex value with a nonzero imaginary
+  part.** JAX orders complex values lexicographically, so `positive.check(1j)`
+  and `real.check(1j)` were true, and a function that declared a positive
+  output accepted `1j`. Every built-in `Constraint` now contains a complex
+  value only where its imaginary part is zero and its real part is in the
+  support. A structured support, such as `simplex`, `sphere`, or
+  `positive_definite`, requires every entry of the event to be real. The
+  result keeps its shape, and the check still traces under `jax.jit`.
+- **Renaming an empirical law's paths returns an empirical law.**
+  `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
+  posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
+  repr showed the posterior's atoms under the old names. It now returns an
+  `EmpiricalDistribution` with the same label and weights whose atoms carry the
+  new paths. A law that renames at its boundary, such as a renamed
+  `KDEDistribution`, reads as `KDEDistribution(...).with_path_names({...})`. A
+  lift draws every law that `with_path_names` returns together with the law it
+  renames. A factored joint rebuilt under the new paths and a rename of a whole
+  term's component used to lift independently of the law they rename, and now
+  draw with it too.
+- **A marginal or a factor lifts independently of the joint it comes from.**
+  When `marginal` or `factor` returned a factor of a factored joint, the result
+  kept the factor's link to the batch it came from or to the law it renames, so
+  a lift drew the result together with that law. Both operations now detach
+  their result, and a lift draws it independently.
 - **A PyMC model draws its Cauchy and half-Cauchy variables with their location
   and scale.** The lock pinned PyTensor 3.0.4, whose sampler of a Cauchy
   variable returned location `loc / scale` and scale `1 / scale`, so a prior

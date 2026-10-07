@@ -169,6 +169,8 @@ class Constraint(ABC):
     def check(self, value: ArrayLike) -> Array: ...   # entrywise membership
 ```
 
+A support that is a subset of the reals contains a complex entry only where its imaginary part is zero and its real part is in the support.
+
 ### Rationale
 
 One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level, whether the event is one array or a named tree of them. Both are abstract bases rather than protocols, which keeps the pair symmetric and follows the rule the library uses throughout: an interface a closed set of ProbPipe kinds implements is a base, while an interface any object may implement is a structural protocol. The base also holds the shared coordinate protocols once rather than in each kind (`D6 – Single source of truth`). A constraint is data: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
