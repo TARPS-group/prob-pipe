@@ -29,6 +29,23 @@ def _event_of_kind(
 ) -> OutputSpec | TermSpec:
     """The event declaration of a law whose draws are of *kind*, with a hole filled by *default*.
 
+    Parameters
+    ----------
+    name : str
+        The law's label, which the error message names.
+    event_spec : OutputSpec or TermSpec or None
+        The declaration the constructor received, or None for the default.
+    kind : type of TermSpec
+        The class a declared type must be an instance of, such as ``FunctionSpec``.
+    default : TermSpec
+        The type of a draw when *event_spec* leaves it open.
+
+    Returns
+    -------
+    OutputSpec or TermSpec
+        The declaration to pass to ``Distribution``: *event_spec* with any type hole filled
+        by *default*, or *default* itself when *event_spec* is None.
+
     Raises
     ------
     TypeError
@@ -65,7 +82,7 @@ class RandomFunction(Distribution):
         The declaration of one draw, whose type is a ``FunctionSpec``; a bare
         term spec completes as for ``Distribution``. The type defaults to a
         callable whose input and output are unspecified, which also fills a
-        type hole, and the declaration to a whole term under *name*.
+        type hole, and the declaration to a whole term under *label*.
 
     Raises
     ------
@@ -100,7 +117,7 @@ class RandomMeasure(Distribution):
     event_spec : OutputSpec or TermSpec, optional
         The declaration of one draw, whose type is a ``DistributionSpec``. The
         type defaults to a law whose event is opaque, which also fills a type
-        hole, and the declaration to a whole term under *name*.
+        hole, and the declaration to a whole term under *label*.
 
     Raises
     ------

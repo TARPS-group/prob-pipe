@@ -167,6 +167,20 @@ def _rebuilt_backend_bijector(
 def _as_bijector(value: Any, image: Constraint | None = None) -> Function:
     """*value* as a bijector ``Function``: a backend bijector enters through the adapter.
 
+    Parameters
+    ----------
+    value : Function or tfb.Bijector
+        The bijector a factory returned.
+    image : Constraint or None
+        The support a backend bijector maps the real line onto, which the
+        adapter records; ``None`` takes the support the backend bijector is
+        known to map onto, when there is one.
+
+    Returns
+    -------
+    Function
+        *value* itself when it is a ``Function``, and otherwise the adapter.
+
     Raises
     ------
     TypeError
@@ -249,6 +263,16 @@ def bijector_for(constraint: Constraint) -> Function:
 
 def _factory(constraint: Constraint) -> BijectorFactory:
     """The factory registered for *constraint*, by instance and then by type.
+
+    Parameters
+    ----------
+    constraint : Constraint
+        The support whose factory is looked up.
+
+    Returns
+    -------
+    callable
+        The factory, which takes *constraint* and returns a bijector.
 
     Raises
     ------

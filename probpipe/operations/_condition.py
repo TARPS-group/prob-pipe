@@ -167,6 +167,11 @@ class InferenceMethod(UnaryDispatchMethod):
 
         A method whose ``_method_options`` is ``None`` admits every entry.
 
+        Parameters
+        ----------
+        options : Mapping of str to Any
+            The ``method_options`` entries the method received, by name.
+
         Raises
         ------
         TypeError
@@ -217,6 +222,25 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         The keyword options are the call's ``method_options``, which the
         selected method validates when it runs.
 
+        Parameters
+        ----------
+        *args : Any
+            The target of the normalization stage, or a model and the data it is
+            conditioned on, from which the installed builder forms the target.
+        method : str or None
+            A registered method name to run instead of auto-selecting.
+        exact_only : bool
+            If ``True``, approximate methods are excluded.
+        **kwargs : Any
+            The keyword options, passed to the selected method's ``check`` and
+            ``execute``.
+
+        Returns
+        -------
+        Distribution
+            The normalized law over the target's event that the selected method
+            returns.
+
         Raises
         ------
         TypeError
@@ -227,6 +251,18 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
     @staticmethod
     def _targets(args: tuple[Any, ...]) -> tuple[Any, ...]:
         """*args* with a model and its observed data replaced by their target.
+
+        Parameters
+        ----------
+        args : tuple of Any
+            The positional arguments of a registry call: a target, or a model and
+            the data it is conditioned on.
+
+        Returns
+        -------
+        tuple of Any
+            A one-element tuple of the target when *args* holds two arguments, and
+            *args* itself otherwise.
 
         Raises
         ------
@@ -784,6 +820,18 @@ class _ExactStage:
 def _can_curry(call: BoundCall) -> Feasibility:
     """Every key of the given names a given slot of a conditional distribution.
 
+    Parameters
+    ----------
+    call : BoundCall
+        The bound call of ``condition_on``, whose operands ``d`` and ``given``
+        the check reads.
+
+    Returns
+    -------
+    Feasibility
+        A feasible report, or a declined one whose description names the part
+        of the condition that fails.
+
     Raises
     ------
     NotImplementedError
@@ -916,6 +964,14 @@ def _never(call: BoundCall) -> bool:
 def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, frozenset[str]]]:
     """Whether the slice applies to the factored law *d* at *keys*, and what it fixes in each factor.
 
+    Parameters
+    ----------
+    d : Distribution
+        A joint law that claims ``SupportsFactors``, read through its
+        ``factors``.
+    keys : tuple of str
+        The field paths the given names.
+
     Returns
     -------
     tuple
@@ -1026,6 +1082,18 @@ def _slice(call: BoundCall) -> Any:
     curried at the fixed components it conditions on, receiving the call's
     ``method_options`` where evaluating it runs a method, as in currying. One
     factor kept is the result itself.
+
+    Parameters
+    ----------
+    call : BoundCall
+        The bound call of ``condition_on``, whose ``d`` is a factored law and
+        whose ``given`` fixes components of its factors.
+
+    Returns
+    -------
+    Distribution
+        A ``FactoredDistribution`` of the kept factors, or the one factor kept.
+        A result without a provenance gains one that records the slice.
 
     Raises
     ------
@@ -1683,6 +1751,23 @@ def _an_empirical_target(call: BoundCall) -> Feasibility:
 
 def _empirical_of(call: BoundCall, law: Any) -> Any:
     """The normalized *law* at the target, carrying the source's event declaration.
+
+    Parameters
+    ----------
+    call : BoundCall
+        The bound call of ``convert``, whose ``d`` is the source law and whose
+        ``target`` is the class or protocol requested.
+    law : Distribution
+        The normalized law that the selected inference method returned, with
+        ``atoms`` and ``weights``.
+
+    Returns
+    -------
+    Distribution
+        The first of *law* and *law* under the source's declaration that is an
+        instance of the target and declares the source's event. Otherwise, an
+        ``EmpiricalDistribution`` of *law*'s atoms and weights, under the
+        source's label and with *law*'s annotations.
 
     Raises
     ------

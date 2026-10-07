@@ -122,7 +122,7 @@ def _auto_detect_task_runner() -> Any:
 class PrefectConfig:
     """Global Prefect orchestration settings.
 
-    Parameters
+    Attributes
     ----------
     workflow_kind : WorkflowKind
         Default orchestration mode for all ``Function`` instances
@@ -210,7 +210,7 @@ class ProvenanceMode(Enum):
         small test workflows where full graph traversal is useful.
     LIGHTWEIGHT
         Store only lightweight :class:`~probpipe.core.provenance.ParentInfo`
-        descriptors — type name, distribution name, and an optional
+        descriptors — type name, label, and an optional
         fingerprint plus its strength classification. Parent objects are free
         to be garbage-collected once a workflow step completes. This is the
         default and scales to larger workflows.

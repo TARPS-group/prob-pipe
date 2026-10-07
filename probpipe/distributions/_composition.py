@@ -31,6 +31,14 @@ def _compose(
 ) -> FactoredDistribution | FactoredConditionalDistribution:
     """The joint ``left * right``, the most specific factored kind of the flat factor graph.
 
+    Parameters
+    ----------
+    left : Distribution or ConditionalDistribution
+        The left operand, whose given slots may consume the components *right*
+        produces.
+    right : Distribution or ConditionalDistribution
+        The right operand, whose unmet given slots remain unmet in the joint.
+
     Returns
     -------
     FactoredDistribution or FactoredConditionalDistribution

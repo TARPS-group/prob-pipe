@@ -216,10 +216,30 @@ class OperationRoute(Protocol):
 def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feasibility:
     """*report* as a Feasibility, quoting the condition *source*'s docstring states.
 
+    Parameters
+    ----------
+    report : bool, None, Feasibility, or CallReport
+        What *source* returned. A CallReport is the report of another
+        operation's ``check``, which a derived operation's identity check returns.
+    source : callable
+        The check or condition that returned *report*, whose docstring's first
+        paragraph states the condition.
+    owner : str
+        The checker that a declined or an unresolved report names, such as
+        ``route 'identity'``.
+
+    Returns
+    -------
+    Feasibility
+        A feasible report for ``True``, a declined report for ``False``, and an
+        unresolved report for ``None``, the last two quoting the condition. A
+        Feasibility is returned as it is, and a CallReport gives its selected
+        route's report, or else an unresolved report of its pending checks.
+
     Raises
     ------
     TypeError
-        If *report* is not a bool, ``None``, or a Feasibility.
+        If *report* is not a bool, ``None``, a Feasibility, or a CallReport.
     """
     if isinstance(report, Feasibility):
         return report
@@ -244,6 +264,15 @@ class _Route:
 
     A route reads the numerical budgets of a call from its ``method_options``
     control, which the method the route runs validates.
+
+    Parameters
+    ----------
+    name : str
+        The route's name, by which a ``method`` control selects it.
+    exact : bool or None
+        Whether the result denotes the requested mathematical object; ``None``
+        for a route whose exactness is that of the implementation it delegates
+        to.
 
     Raises
     ------
@@ -280,6 +309,22 @@ class _Route:
 
 class _CheckedRoute(_Route):
     """A route of any source given as a check and an execute function over the bound call.
+
+    Parameters
+    ----------
+    name : str
+        The route's name, by which a ``method`` control selects it.
+    source : RouteSource
+        Where the implementation comes from.
+    check : callable
+        ``check(call, result)``, which returns a bool, ``None``, or a
+        ``Feasibility``; the first paragraph of its docstring is the route's
+        condition.
+    execute : callable
+        ``execute(call, result)``, which returns the raw result.
+    exact : bool or None
+        Whether the result denotes the requested mathematical object; ``None``
+        for a route whose exactness is that of the implementations it runs.
 
     Raises
     ------
@@ -330,6 +375,25 @@ class _CapabilityRoute(_Route):
     in signature order, or by a given *execute*. An approximate capability also
     receives the call's ``method_options`` as keyword options, while an exact
     one computes its object with no budget and receives none.
+
+    Parameters
+    ----------
+    name : str
+        The route's name, by which a ``method`` control selects it.
+    operand : str
+        The parameter whose argument claims the capability.
+    protocol : type
+        The capability protocol, such as ``SupportsMean``.
+    method : str
+        The capability's implementation method, such as ``"_mean"``.
+    exact : bool
+        Whether the capability returns the requested mathematical object.
+    check : callable, optional
+        ``check(call, result)``, which reads the guard with the call's arguments
+        it takes, as a marginal's guard takes the path.
+    execute : callable, optional
+        ``execute(call, result)``, which calls the capability in place of the
+        call in signature order.
 
     Raises
     ------
@@ -422,6 +486,18 @@ class _RegistryRoute(_Route):
     call's ``method_options``. Its exactness is that of the
     method the registry selects, so the route is ranked twice: its exact methods
     with the exact routes and its approximate methods with the approximate ones.
+
+    Parameters
+    ----------
+    name : str
+        The route's name, by which a ``method`` control selects it.
+    registry : BaseDispatchRegistry
+        The registry whose selected method realizes the call.
+    arguments : callable, optional
+        ``arguments(call)``, which returns the registry's positional arguments.
+    options : callable, optional
+        ``options(call)``, which returns the keyword options of the registry's
+        methods.
 
     Raises
     ------
@@ -637,6 +713,15 @@ class _RouteTable:
     def add(self, route: Any, owner: str) -> None:
         """Append *route*.
 
+        Parameters
+        ----------
+        route : OperationRoute
+            An object with the members of :class:`OperationRoute`, whose
+            ``source`` is a RouteSource.
+        owner : str
+            The operation named in the error that a duplicate name raises, such
+            as ``operation 'mean'``.
+
         Raises
         ------
         TypeError
@@ -710,6 +795,25 @@ def _validated_roles(
     owner: str,
 ) -> dict[str, tuple[type[TermSpec], ...]]:
     """Each parameter's accepted kinds: the declared role, or else the annotation's kinds.
+
+    Parameters
+    ----------
+    signature : inspect.Signature
+        The operation's signature, whose every parameter receives an entry.
+    hints : Mapping of str to Any
+        The evaluated annotations by parameter name; an unannotated parameter
+        has no entry.
+    roles : Mapping of str to iterable of TermSpec subclasses, or None
+        The declared roles by parameter name, or ``None`` for none.
+    owner : str
+        The operation that an error names, such as ``operation 'mean'``.
+
+    Returns
+    -------
+    dict of str to tuple of type
+        The kinds by parameter name, in signature order, each kind named by its
+        spec class; an empty tuple marks a parameter that selects rather than
+        supplies.
 
     Raises
     ------
@@ -862,7 +966,7 @@ class Operation(Function):
         The label rule derives it where the operation has one. Otherwise the
         result takes the label of the primary operand, the first parameter's
         argument, and an argument that is not a tracked term leaves the
-        operation's own output name.
+        operation's own output label.
         """
         rule = self._label_rule
         if rule is not None:
@@ -901,6 +1005,17 @@ class Operation(Function):
 
     def register_route(self, route: OperationRoute) -> OperationRoute:
         """Register *route* after the routes already registered, and return it.
+
+        Parameters
+        ----------
+        route : OperationRoute
+            An object with the members of :class:`OperationRoute`, such as a
+            route that one of the construction helpers builds.
+
+        Returns
+        -------
+        OperationRoute
+            *route* itself.
 
         Raises
         ------
@@ -1122,6 +1237,18 @@ class Operation(Function):
         result detached, and ``method_options`` holds the budgets the selected
         method validates when it runs. ``None`` resets a control to its default.
 
+        Parameters
+        ----------
+        **controls : Any
+            The controls to revise, each passed under its name, such as
+            ``exact_only=True``.
+
+        Returns
+        -------
+        Operation
+            The view, which shares this operation's routes, so a route
+            registered later serves it as well.
+
         Raises
         ------
         TypeError
@@ -1154,6 +1281,17 @@ class Operation(Function):
 
         A ``method`` name resolves as :meth:`_named_candidates` states.
 
+        Parameters
+        ----------
+        controls : Mapping of str to Any
+            The call's resolved controls, whose ``method`` and ``exact_only``
+            entries restrict the candidates.
+
+        Returns
+        -------
+        tuple of _Candidate
+            The list :meth:`_candidates` returns, as a tuple.
+
         Raises
         ------
         ResolutionError
@@ -1166,6 +1304,26 @@ class Operation(Function):
         self, values: Mapping[str, Any], controls: Mapping[str, Any]
     ) -> tuple[BoundCall, OutputSpec | None, tuple[str, ...]]:
         """The bound call of one point, its result declaration, and the checks deferred to return.
+
+        Parameters
+        ----------
+        values : Mapping of str to Any
+            The point's arguments by parameter name, which become the bound
+            call's ``operands``.
+        controls : Mapping of str to Any
+            The call's resolved controls, which become the bound call's
+            ``controls``.
+
+        Returns
+        -------
+        call : BoundCall
+            The bound call over *values* and *controls*.
+        result : OutputSpec or None
+            The result's declaration, or ``None`` when the declarations leave it
+            open.
+        deferred : tuple of str
+            A description of each check that only the return can settle, such as
+            a condition that needs values not yet known.
 
         Raises
         ------
@@ -1180,6 +1338,12 @@ class Operation(Function):
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """Check the applicability conditions, then derive the result's declaration.
+
+        Parameters
+        ----------
+        call : BoundCall
+            The bound call of one point, whose ``declarations`` the conditions and
+            the result rule read.
 
         Returns
         -------
@@ -1219,6 +1383,19 @@ class Operation(Function):
 
         A ``method`` name resolves as :meth:`_named_candidates` states.
 
+        Parameters
+        ----------
+        controls : Mapping of str to Any
+            The call's resolved controls, whose ``method`` and ``exact_only``
+            entries restrict the candidates.
+
+        Returns
+        -------
+        list of _Candidate
+            The candidates, sorted by their ``rank``. Without a ``method`` name,
+            each route contributes one, and a registry route two: one for its
+            exact methods and one for its approximate ones.
+
         Raises
         ------
         ResolutionError
@@ -1246,6 +1423,21 @@ class Operation(Function):
         in the registry of the registry routes holding it; routes that share one
         registry are each a candidate with that method. The qualified form
         ``route/method`` selects the method within the named registry route.
+
+        Parameters
+        ----------
+        method : str
+            The ``method`` control, as a plain name or as ``route/method``.
+        exact_only : bool
+            The call's ``exact_only`` control, which a route that a plain name
+            selects must meet.
+
+        Returns
+        -------
+        list of _Candidate
+            The candidates the name selects. A registry route that a plain name
+            selects as a route contributes two: one for its exact methods and one
+            for its approximate ones.
 
         Raises
         ------
@@ -1354,8 +1546,12 @@ def _workflow_draws(
         The law to draw from.
     sample_shape : tuple of int
         The leading shape of the draws; ``()`` draws once.
-    operation_kind, execution_mode : str
-        The event's identity within the call, recorded in the stochastic plan.
+    operation_kind : str
+        The operation that draws, such as ``"sample"`` or ``"mean"``.
+    execution_mode : str
+        How the operation draws, such as ``"sampled"`` or ``"monte_carlo"``.
+        With *operation_kind*, it is the event's identity within the call,
+        recorded in the stochastic plan.
 
     Returns
     -------
@@ -1508,6 +1704,12 @@ class OperationRegistry:
     def register(self, op: Function) -> None:
         """Register the operation *op* under its name.
 
+        Parameters
+        ----------
+        op : Operation
+            The operation; :func:`operation` calls this method for each operation
+            it declares.
+
         Raises
         ------
         TypeError
@@ -1528,6 +1730,20 @@ class OperationRegistry:
     def describe(self, name: str | None = None) -> str:
         """The summaries as text, for the operation *name* or for all of them.
 
+        Parameters
+        ----------
+        name : str or None
+            An operation's name in the registry; ``None`` describes every
+            operation, in registration order.
+
+        Returns
+        -------
+        str
+            One block per operation, the blocks separated by a blank line. A block
+            opens with the signature and whether the operation is primitive or
+            derived, and then lists the description, the operands, and the routes
+            in selection order.
+
         Raises
         ------
         KeyError
@@ -1539,6 +1755,16 @@ class OperationRegistry:
 
     def __getitem__(self, name: str) -> Function:
         """The operation registered as *name*.
+
+        Parameters
+        ----------
+        name : str
+            The name of the operation's declaration, such as ``"mean"``.
+
+        Returns
+        -------
+        Operation
+            The registered object itself.
 
         Raises
         ------
@@ -1553,6 +1779,16 @@ class OperationRegistry:
 
     def describe_entry(self, name: str) -> OperationSummary:
         """The summary of the operation *name*.
+
+        Parameters
+        ----------
+        name : str
+            The name of the operation's declaration, such as ``"mean"``.
+
+        Returns
+        -------
+        OperationSummary
+            The operation's entry as :meth:`list` reports it.
 
         Raises
         ------

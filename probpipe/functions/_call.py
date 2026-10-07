@@ -284,6 +284,31 @@ def resolve_function_call(
     The arguments bind by Python's rules, and an omitted input takes its value
     from the construction bindings, the module, or the parameter's default.
 
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    args : tuple
+        The call's positional arguments.
+    call_inputs : dict of str to Any
+        The call's keyword arguments.
+    bind : Mapping of str to Any
+        The Function's construction bindings.
+    module : object or None
+        The shared-input container consulted for an input that the call and
+        *bind* omit, or ``None``.
+    dependency_type : type
+        The class that marks a parameter as a dependency when the parameter's
+        annotation is a subclass of it.
+    function_name : str
+        The function's label, which the messages name.
+
+    Returns
+    -------
+    dict of str to Any
+        The inputs by parameter name, where a variadic parameter's name holds
+        the arguments it collects.
+
     Raises
     ------
     TypeError
@@ -487,6 +512,21 @@ def _admit_by_role(
     the call lifts and the parameter is not annotated ``Any``, the kind of its
     elements or its draws.
 
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    ref : FunctionInputRef
+        The reference to the argument, which names its parameter.
+    value : Any
+        The argument bound at *ref*.
+    role : tuple of TermSpec subclasses
+        The kinds the parameter's role names.
+    function_name : str or None
+        The function's label, for the message.
+    lifts : bool
+        Whether the call may lift the argument.
+
     Raises
     ------
     ApplicabilityError
@@ -534,7 +574,7 @@ def admit_arguments(
     input_spec : InputSpec or None
         The declared slots, whose kinds the arguments are admitted against.
     function_name : str or None
-        The function's name, for the message.
+        The function's label, for the message.
     roles : Mapping of str to tuple of TermSpec subclasses, or None
         The kinds each parameter with a role accepts.
     lifts : bool

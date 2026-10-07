@@ -93,13 +93,27 @@ def _replicated_data_to_dataset(y_rep: Any, var_name: str = "y") -> xr.Dataset:
 
     - ``(draw,)``
     - ``(draw, obs)``
-    - ``(chain, draw)``
     - ``(chain, draw, obs)``
 
     If no chain dimension is present, a singleton chain dimension is added.
 
-    Important
-    ---------
+    Parameters
+    ----------
+    y_rep : array-like
+        The replicated observations. A two-dimensional array is read as
+        ``(draw, obs)``, and a three-dimensional one as ``(chain, draw, obs)``.
+    var_name : str
+        The name of the dataset's one variable.
+
+    Returns
+    -------
+    xr.Dataset
+        A dataset whose variable has the dims ``chain`` and ``draw``, followed
+        by ``obs`` for a two- or three-dimensional *y_rep*, or by ``obs_dim_0``,
+        ``obs_dim_1``, and so on for one of higher dimension.
+
+    Notes
+    -----
     This function should only be used for actual replicated observations, not
     replicated test statistics.
     """
@@ -203,7 +217,7 @@ def _dataset_from_payload(payload: Mapping[str, Any]) -> xr.Dataset:
 def _ppc_op(
     posterior: Distribution,
     test_fns: Callable | Sequence[Callable],
-    observed_data=None,
+    observed_data: Any | None = None,
     *,
     kernel: ConditionalDistribution,
     n_replications: int = 500,
@@ -396,7 +410,7 @@ def _write_ppc_payload(posterior: Distribution, payload: Mapping[str, Any]) -> N
 def add_ppc(
     posterior: Distribution,
     test_fns: Callable | Sequence[Callable],
-    observed_data=None,
+    observed_data: Any | None = None,
     *,
     kernel: ConditionalDistribution,
     n_replications: int = 500,

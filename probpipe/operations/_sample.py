@@ -60,6 +60,16 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
 def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
     """*sample_shape* as a tuple of sizes, a bare integer being one axis.
 
+    Parameters
+    ----------
+    sample_shape : int or tuple of int
+        The sample shape as the caller gave it.
+
+    Returns
+    -------
+    tuple of int
+        One non-negative Python ``int`` per axis; ``()`` for one draw.
+
     Raises
     ------
     ApplicabilityError
@@ -82,6 +92,19 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
 
     The returned kind is read from ``event_spec.spec``, so an array and a
     one-field record stay distinct under every sample shape.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration one draw takes.
+    sample_shape : int or tuple of int
+        The sample shape as the caller gave it.
+
+    Returns
+    -------
+    OutputSpec
+        ``d.event_spec`` for an empty shape, and otherwise that declaration with
+        its spec replaced by the batch spec over the sample axes.
 
     Raises
     ------

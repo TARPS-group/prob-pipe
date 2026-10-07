@@ -274,6 +274,16 @@ def _claims(components: Sequence[Distribution]) -> tuple[type, ...]:
 def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
     """*components* as a tuple, checked to be at least one law sharing one event declaration.
 
+    Parameters
+    ----------
+    components : Sequence[Distribution]
+        The component laws in mixture order, as the constructor received them.
+
+    Returns
+    -------
+    tuple of Distribution
+        The components in the order of *components*.
+
     Raises
     ------
     TypeError
@@ -332,6 +342,18 @@ def _weights(weights: ArrayLike, count: int) -> Array:
     """*weights* as a floating array, one nonnegative weight per component, summing to one.
 
     A traced array is not checked, since its values are unknown while tracing.
+
+    Parameters
+    ----------
+    weights : ArrayLike
+        The mixture weights, as the constructor received them.
+    count : int
+        The number of components, which fixes the shape ``(count,)``.
+
+    Returns
+    -------
+    Array
+        The weights, promoted to a floating dtype of at least single precision.
 
     Raises
     ------

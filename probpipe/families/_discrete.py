@@ -99,7 +99,7 @@ class Bernoulli(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     probs : array-like, optional
         Probability of a 1 outcome.  Exactly one of *probs* or *logits*
         must be provided.
@@ -108,7 +108,7 @@ class Bernoulli(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -176,7 +176,7 @@ class Binomial(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     total_count : array-like
         Number of trials.
     probs : array-like, optional
@@ -187,7 +187,7 @@ class Binomial(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -261,13 +261,13 @@ class Poisson(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     rate : array-like
         Rate parameter (must be positive).
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -304,7 +304,7 @@ class Categorical(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     probs : array-like, optional
         Probabilities for each category.  Exactly one of *probs* or
         *logits* must be provided.
@@ -313,7 +313,7 @@ class Categorical(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -387,7 +387,7 @@ class NegativeBinomial(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     total_count : array-like
         Number of successes before stopping.
     probs : array-like, optional
@@ -398,7 +398,7 @@ class NegativeBinomial(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------

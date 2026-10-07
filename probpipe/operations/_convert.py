@@ -65,6 +65,20 @@ class _Conversion(Operation):
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
         """The result rule's declaration, with each support open under ``check_support=False``.
 
+        Parameters
+        ----------
+        call : BoundCall
+            The bound call of one point, whose ``method_options`` control may set
+            ``check_support``.
+
+        Returns
+        -------
+        result : OutputSpec or None
+            The declaration, or ``None`` when the declarations leave it open.
+        deferred : tuple of str
+            The checks deferred to the return, as :meth:`Operation._plan` gives
+            them.
+
         Raises
         ------
         ApplicabilityError, TypeError

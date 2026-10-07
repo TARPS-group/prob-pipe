@@ -44,6 +44,17 @@ def register_kind(
     populated by importing the kind rather than by a central list that a new
     kind has to be added to.
 
+    Parameters
+    ----------
+    spec_type : type
+        The ``TermSpec`` subclass that identifies the kind. Its subclasses inherit
+        the registration unless they register their own.
+    term_class : type or None
+        The tracked class of a value of the kind, or ``None`` when it has none.
+    batch_class : type or None
+        The batch class of a collection of the kind's values, or ``None`` when it
+        has none.
+
     Raises
     ------
     ValueError

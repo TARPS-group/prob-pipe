@@ -144,6 +144,19 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
     the template regardless of the backend's variable order — nutpie, for
     instance, sorts ``data_vars`` alphabetically.
 
+    Parameters
+    ----------
+    trace : ArviZ-like trace
+        The backend's trace, whose ``posterior`` group lists its variables in
+        ``data_vars``.
+    keep : iterable of str
+        The names of the parameters to assemble.
+
+    Returns
+    -------
+    list of str
+        Each name of *keep* once, at its position in ``data_vars``.
+
     Raises
     ------
     ValueError
@@ -354,6 +367,16 @@ def flat_unflatten(law: Any) -> Callable[[Array], Any]:
     A draw of one array is the vector reshaped to the event, and an exposed
     numeric record's is the record whose leaves the vector lays out in
     canonical order.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law whose draws the flat vectors lay out.
+
+    Returns
+    -------
+    callable
+        The map, whose record draws carry *law*'s label.
 
     Raises
     ------
@@ -907,6 +930,17 @@ def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
     coordinates onto the support. A leaf of the reals, of no declared support,
     or of a support with no smooth bijector, such as a discrete one, keeps its
     coordinates.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law whose declaration lays out the flat state.
+
+    Returns
+    -------
+    UnconstrainedCoordinates
+        The maps of the whole flat state, which apply each leaf's map to its
+        segment.
 
     Raises
     ------

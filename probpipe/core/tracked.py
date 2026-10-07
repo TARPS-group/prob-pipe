@@ -64,7 +64,7 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     channel is written in place (see :class:`Annotated`), which is what makes a
     shared container observable. The rule itself lives with the state round-trip
     that also applies it (:func:`~probpipe.core._immutable.decoupled_container`),
-    so a rename and a reconstruction decouple the same way.
+    so a relabeling and a reconstruction decouple the same way.
     """
     return decoupled_container(annotations)
 
@@ -205,14 +205,14 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
         The copy is shallow: it shares its data with the original but has
         ``label`` set to *label*. The copy's :attr:`provenance`
-        records the rename, with the original as parent, so the lineage
+        records the relabeling, with the original as parent, so the lineage
         chain is preserved. On an ``Annotated`` host the annotations
         *container* is its own (its entries are shared), so annotations
-        written after the rename land on one object without appearing on the
+        written after the relabeling appear on one object and not on the
         other — :meth:`_shallow_copy` does that, from the host's own
         ``_decoupled_state`` declaration.
 
-        This renames the object *itself*. To rename the named fields inside a
+        This relabels the object *itself*. To rename the named fields inside a
         structured object, use ``with_path_names`` on the named-tree types.
 
         Parameters
@@ -245,6 +245,16 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
         A kind whose state derives from its label overrides this, so the state
         follows the label under ``with_label`` and at a result boundary alike.
+
+        Parameters
+        ----------
+        label : str
+            The copy's label, which must be a non-empty string.
+
+        Returns
+        -------
+        Self
+            The copy, which shares its data with this object.
 
         Raises
         ------
@@ -325,8 +335,8 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         which exists to *select* a class from constructor arguments and may
         require them — must not run again here.
 
-        Going through the round-trip rather than around it is what makes a
-        rename, a ``copy.copy``, and an unpickle agree: a memo is dropped by all
+        Going through the round-trip rather than around it makes a
+        relabeling, a ``copy.copy``, and an unpickle agree: a memo is dropped by all
         three, and an in-place store is decoupled by all three.
         """
         clone = object.__new__(type(self))

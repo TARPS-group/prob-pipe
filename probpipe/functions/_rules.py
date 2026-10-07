@@ -159,6 +159,20 @@ class _SamplingLift(_Floor):
     ) -> Feasibility:
         """Feasible when the call samples the operand and can draw from it or from its parent.
 
+        Parameters
+        ----------
+        f : Function
+            The map the call applies.
+        operand : Distribution
+            The law argument the registry dispatched on.
+        parameter : str or None
+            The name of the parameter the operand binds.
+        fixed_args : Mapping of str to Any, or None
+            The map's other arguments, by parameter name, which this rule does
+            not read.
+        controls : Mapping of str to Any, or None
+            The call's resolved controls, which this rule does not read.
+
         Returns
         -------
         Feasibility
@@ -226,6 +240,20 @@ class _ElementwiseSweep(_Floor):
         controls: Mapping[str, Any] | None = None,
     ) -> Feasibility:
         """Feasible when the call sweeps the operand and asks only for the outputs.
+
+        Parameters
+        ----------
+        f : Function
+            The map the call applies.
+        operand : Batch
+            The batch argument the registry dispatched on.
+        parameter : str or None
+            The name of the parameter the operand binds.
+        fixed_args : Mapping of str to Any, or None
+            The map's other arguments, by parameter name, which this rule does
+            not read.
+        controls : Mapping of str to Any, or None
+            The call's resolved controls, whose ``include_inputs`` the check reads.
 
         Returns
         -------
@@ -302,6 +330,22 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         elements, and registered descendants, so the decision does not depend
         on the order of the arguments. A call whose operand's root is not
         empirical is declined before any plan is built.
+
+        Parameters
+        ----------
+        f : Function
+            The map the call applies, whose own ``n_broadcast_samples`` applies
+            when *controls* sets none.
+        operand : Distribution
+            The law argument the registry dispatched on.
+        parameter : str or None
+            The name of the parameter the operand binds.
+        fixed_args : Mapping of str to Any, or None
+            The map's other arguments, by parameter name, with which the check
+            plans the call's lift.
+        controls : Mapping of str to Any, or None
+            The call's resolved controls, whose ``n_broadcast_samples`` bounds the
+            product of the groups' atom counts.
 
         Returns
         -------
