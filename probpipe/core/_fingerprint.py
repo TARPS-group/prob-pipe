@@ -114,10 +114,10 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
 
     Parameters
     ----------
-    obj:
+    obj : Any
         Any ProbPipe object or Python primitive. Unknown types fall back to a
         process-local identity hash.
-    max_array_bytes:
+    max_array_bytes : int or None
         Arrays whose byte size is at or below this threshold are hashed in
         full (zero-copy via ``memoryview``).  Larger arrays are sampled at
         evenly-spaced offsets.  Pass ``None`` to always hash the full buffer.

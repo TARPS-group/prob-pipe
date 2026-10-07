@@ -350,6 +350,18 @@ def _inferred_element_spec(values: Any, n_batch: int) -> NumericArraySpec:
     The remaining axes are the event shape, and the array's dtype is the
     elements' dtype.
 
+    Parameters
+    ----------
+    values : array-like
+        The stored array, whose leading axes are the batch axes.
+    n_batch : int
+        How many leading axes are batch axes.
+
+    Returns
+    -------
+    NumericArraySpec
+        The element spec, with the shape ``values.shape[n_batch:]``.
+
     Raises
     ------
     TypeError

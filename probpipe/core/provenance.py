@@ -147,6 +147,13 @@ class Provenance:
         recurse : bool
             If True, recursively serialize parent provenance chains via
             each parent's ``.provenance``.
+
+        Returns
+        -------
+        dict of str to Any
+            One entry per field, with each parent and each input as a dict of its
+            descriptor, and each metadata value that is not JSON-native as its
+            ``str``.
         """
 
         def serialize_info(p: ParentInfo) -> dict[str, Any]:
@@ -255,19 +262,26 @@ class Provenance:
 
         Parameters
         ----------
-        operation:
+        operation : str
             Provenance operation label (e.g. ``"broadcast"``).
-        parents:
+        parents : tuple or list
             Raw tracked parent objects, already ordered and deduplicated by the
             caller.
-        metadata:
+        metadata : dict, optional
             Optional mapping of scalar/string metadata.
-        inputs:
+        inputs : mapping of str to Any, optional
             Resolved plain inputs keyed by stable parameter label.
-        controls:
+        controls : mapping of str to Any, optional
             Exact JSON-native replay and execution controls.
-        diagnostics:
+        diagnostics : mapping of str to Any, optional
             Exact JSON-native non-semantic execution observations.
+
+        Returns
+        -------
+        Provenance or None
+            The node, with one descriptor per parent and per input; ``None`` when
+            the mode is ``OFF`` or the call runs inside a side-effect-free probe or
+            a JAX body.
         """
         from ..functions import _context
 

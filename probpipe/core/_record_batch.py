@@ -224,6 +224,15 @@ class RecordBatch(Batch[Record]):
         per element, so its column is walked entry by entry, as ``_ObjectBatch``
         walks the elements of a batch that stores them.
 
+        Parameters
+        ----------
+        store : dict of str to Any
+            The columns, keyed by leaf path.
+        template : RecordSpec
+            The element spec, whose field at each path the column must satisfy.
+        kind : str
+            The class name that each error message begins with.
+
         Raises
         ------
         TypeError
@@ -324,6 +333,18 @@ class RecordBatch(Batch[Record]):
         sub-batch over the columns beneath it, a view over the same storage with
         the same axis levels.
 
+        Parameters
+        ----------
+        path : tuple of str
+            The names along the path, one per segment.
+
+        Returns
+        -------
+        Any
+            The field's column as the batch form of its kind, such as a
+            ``NumericArrayBatch`` for an array field, or the sub-batch view under an
+            interior node.
+
         Raises
         ------
         KeyError
@@ -351,6 +372,17 @@ class RecordBatch(Batch[Record]):
         array field and the frozen object array for any other field. With
         *path*, a field gives its column and an interior node the nested mapping
         of the columns beneath it, as a record's ``raw(path)`` does.
+
+        Parameters
+        ----------
+        path : str or tuple of str, optional
+            The node's path, as a ``/``-joined string or a tuple of names. ``None``
+            selects the whole batch.
+
+        Returns
+        -------
+        Any
+            A column, or a nested ``dict`` of columns.
 
         Raises
         ------
@@ -477,6 +509,18 @@ class RecordBatch(Batch[Record]):
         operands by. Keywords remap, as on a record: ``select(x="r")`` keys the
         view of ``r`` under ``"x"``.
 
+        Parameters
+        ----------
+        *paths : str
+            Paths to select, each keyed by itself in the result.
+        **mapping : str
+            Paths to select, each keyed by its keyword in the result.
+
+        Returns
+        -------
+        dict of str to RecordBatch
+            One view per selected path, at this batch's levels.
+
         Raises
         ------
         KeyError
@@ -533,6 +577,14 @@ class RecordBatch(Batch[Record]):
         of :meth:`~probpipe.core.named_tree.NamedTree.with_path_names`. Each
         column is stored under its field's new key, so no stored value changes.
 
+        Parameters
+        ----------
+        mapping : Mapping of str to str, optional
+            The new path of each node of the elements, keyed by the node's path.
+        **kwargs : str
+            The new path of each top-level node of the elements, keyed by the node's
+            name.
+
         Returns
         -------
         Self
@@ -560,6 +612,16 @@ class RecordBatch(Batch[Record]):
         subtree beneath it. The surviving fields keep their order and their specs,
         and the batch axes are unchanged.
 
+        Parameters
+        ----------
+        *paths : str
+            The keys and partial paths to drop.
+
+        Returns
+        -------
+        Self
+            A batch over the surviving columns, at the same levels.
+
         Raises
         ------
         KeyError
@@ -579,6 +641,19 @@ class RecordBatch(Batch[Record]):
         in, not one element's value. Every path must already exist: this edits,
         it does not add. An untouched field keeps its spec; a replaced one takes
         the spec its new values imply.
+
+        Parameters
+        ----------
+        _updates : Mapping of str to Any, optional
+            The replacements keyed by field key, which may address a field at any
+            depth. Passing it together with keyword updates raises.
+        **updates : Any
+            The replacements keyed by the name of a top-level field.
+
+        Returns
+        -------
+        Self
+            A batch over the edited columns, at the same levels.
 
         Raises
         ------
@@ -619,6 +694,16 @@ class RecordBatch(Batch[Record]):
         the result's elements pair up one for one, and their field sets must not
         overlap. Each side keeps its own fields' specs.
 
+        Parameters
+        ----------
+        other : RecordBatch
+            The batch whose fields are added.
+
+        Returns
+        -------
+        Self
+            A batch over both sets of columns, with this batch's fields first.
+
         Raises
         ------
         TypeError
@@ -651,6 +736,20 @@ class RecordBatch(Batch[Record]):
         rather than one per element. A function that preserves the batch axes
         therefore yields a batch of the same shape; each field takes the spec its
         result implies.
+
+        Parameters
+        ----------
+        f : callable
+            Called as ``f(column, *args, **kwargs)`` on each field's stored column.
+        *args : Any
+            Further positional arguments of *f*, the same for every field.
+        **kwargs : Any
+            Further keyword arguments of *f*, the same for every field.
+
+        Returns
+        -------
+        Self
+            A batch over the results, at the same levels.
 
         Raises
         ------
@@ -862,6 +961,18 @@ def _leaf_keyed_columns(
 def _flat_columns(fields: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
     """*fields* as a flat dict keyed by leaf path, a nested mapping flattened.
 
+    Parameters
+    ----------
+    fields : Mapping of str to Any
+        The columns, keyed by leaf path or given as a nested mapping.
+    kind : str
+        The class name that each error message begins with.
+
+    Returns
+    -------
+    dict of str to Any
+        The columns in canonical order, which is depth-first over the paths.
+
     Raises
     ------
     TypeError
@@ -896,6 +1007,20 @@ def _inferred_element_spec(fields: Mapping[str, Any], n_batch: int, *, kind: str
     An array column's remaining axes are its field's event shape, and an object
     column's entries decide its field's spec, as :func:`_inferred_field_spec`
     reads them.
+
+    Parameters
+    ----------
+    fields : Mapping of str to Any
+        The columns, keyed by leaf path or given as a nested mapping.
+    n_batch : int
+        How many leading axes of each column are batch axes.
+    kind : str
+        The class name that each error message begins with.
+
+    Returns
+    -------
+    RecordSpec
+        The element spec, with one field per column.
 
     Raises
     ------
@@ -1024,6 +1149,20 @@ def _event_shape(spec: TermSpec, *, path: str, kind: str) -> tuple[int, ...]:
     A ``NumericArraySpec`` declares one; every other leaf kind exposes no shape, so its
     column is one entry per element and the batch axes are all of it.
 
+    Parameters
+    ----------
+    spec : TermSpec
+        The spec of the column's field in the element spec.
+    path : str
+        The field's key, which the error message names.
+    kind : str
+        The class name that the error message begins with.
+
+    Returns
+    -------
+    tuple of int
+        The declared shape, or ``()`` for a field that is not an array.
+
     Raises
     ------
     ValueError
@@ -1061,6 +1200,21 @@ def _batch_shape_of(store: dict[str, Any], template: RecordSpec, *, kind: str) -
     rather than passed on to fail somewhere that cannot say what went wrong. A
     disagreement names both fields, since which of the two is wrong is the
     caller's to know.
+
+    Parameters
+    ----------
+    store : dict of str to Any
+        The columns, keyed by leaf path.
+    template : RecordSpec
+        The element spec, whose field at each path declares the column's event
+        shape.
+    kind : str
+        The class name that each error message begins with.
+
+    Returns
+    -------
+    tuple of int
+        The batch shape, which has at least one axis.
 
     Raises
     ------

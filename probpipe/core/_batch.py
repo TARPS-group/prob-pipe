@@ -111,7 +111,8 @@ class BatchSpec(TermSpec):
     level_names : iterable of str
         One name per level, aligned with *axis_groups*. The names are unique
         within the batch. A level name follows the rule for component names, so
-        it is any non-empty string without ``/``.
+        it is any non-empty string without ``/``. Stored as a tuple, which keeps
+        the spec hashable.
 
     Attributes
     ----------
@@ -162,11 +163,6 @@ class BatchSpec(TermSpec):
         axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
     ) -> None:
-        """Store the element spec and the multiplicity, validating the levels.
-
-        The fields are the *stored* types; the iterables accepted here are
-        normalized to tuples before assignment, so a stored spec is hashable.
-        """
         if not isinstance(element_spec, TermSpec):
             raise TypeError(
                 f"BatchSpec.element_spec must be a TermSpec, got {type(element_spec).__name__}"
@@ -459,6 +455,15 @@ class Batch[E](TrackedTerm, ABC):
         afterwards, which is what makes a derived name independent of the route
         taken to it.
 
+        Parameters
+        ----------
+        spec : BatchSpec
+            The batch's type, whose axis sizes must all be integers.
+        name : str
+            The batch's label, from which its views derive theirs.
+        provenance : Provenance, optional
+            How this batch was produced.
+
         Raises
         ------
         TypeError
@@ -676,6 +681,12 @@ class Batch[E](TrackedTerm, ABC):
         ``batch["outer", "a"]`` a path of fields, which a batch whose elements have
         fields answers and others refuse.
 
+        Parameters
+        ----------
+        key : int, slice, str, or tuple
+            An integer, a slice, or a tuple of them addresses the batch axes, and a
+            string or a tuple of strings addresses a field path.
+
         Returns
         -------
         E or Self or Any
@@ -743,6 +754,11 @@ class Batch[E](TrackedTerm, ABC):
         ``at_levels(**{"my level": 0})``. The receiver is positional-only, so every
         level name is addressable as a keyword — including one that happens to
         spell a parameter of this method.
+
+        Parameters
+        ----------
+        **levels : int, slice, None, or tuple
+            One indexer per named level, keyed by the level's name.
 
         Returns
         -------
@@ -1115,6 +1131,19 @@ def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | 
 
     A constructor that infers its element spec reads the event axes as the axes
     past these, so this count fixes where the batch axes end.
+
+    Parameters
+    ----------
+    names : tuple of str
+        The level names, of which only the count is read.
+    axes_per_level : tuple or None
+        The axis count of each level, outermost first; ``None`` gives each level one
+        axis.
+
+    Returns
+    -------
+    int
+        The number of batch axes, which lead each stored array.
 
     Raises
     ------

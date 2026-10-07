@@ -158,6 +158,11 @@ def term_repr(
         The term's label, omitted for an object without one, such as a spec.
     keywords : iterable of (str, str)
         Each keyword argument's name and its formatted value, in order.
+
+    Returns
+    -------
+    str
+        A ``_Layout``, which an enclosing repr lays out again where its line starts.
     """
     return call_repr(class_name, [] if label is None else [repr(label)], keywords)
 

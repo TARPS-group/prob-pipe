@@ -245,6 +245,23 @@ def _validate_function_output(
     Each declared array's dtype admits a returned dtype of the same kind (bool,
     integer, floating, or complex) at any width, and its support must hold.
 
+    Parameters
+    ----------
+    function_name : str
+        The function's label, which error messages name.
+    output_spec : OutputSpec or None
+        The declared output; ``None`` declares nothing to check.
+    result : Any
+        The value the function's body returned.
+    bindings : Mapping of str to int
+        The sizes the inputs bound to symbolic dimensions, which the output shares.
+
+    Returns
+    -------
+    OutputSpec or None
+        The declaration completed from the result, or ``None`` when *output_spec*
+        is ``None``.
+
     Raises
     ------
     ValueError
@@ -343,6 +360,16 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     produced value (II.2). A law's declaration has no type hole, so both sides
     are concrete there. Supports are compared only where both are declared.
 
+    Parameters
+    ----------
+    expected : TermSpec
+        The declared spec.
+    actual : TermSpec
+        The spec of the returned term.
+    path : str
+        The location of the two specs in the output, which grows by one segment
+        per field or component the check descends into.
+
     Raises
     ------
     ValueError
@@ -407,6 +434,17 @@ def _validate_stacked_output(
 
     A traced point skips its support check, so a mapped call checks every
     stacked value once the map returns.
+
+    Parameters
+    ----------
+    function_name : str
+        The function's label, which error messages name.
+    output_spec : OutputSpec or None
+        The function's output declaration. The check runs only when it declares
+        a type.
+    batch : Any
+        The stacked results. A batch is checked against the supports of its own
+        ``BatchSpec``, and any other value passes.
 
     Raises
     ------
@@ -550,6 +588,11 @@ _REMOVED_KEYWORDS = frozenset({"seed", "input_template", "output_template", "fun
 
 def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
     """Refuse every keyword that is neither an engine control nor a removed keyword.
+
+    Parameters
+    ----------
+    controls : Mapping of str to Any
+        The keywords a constructor received beyond its named parameters.
 
     Raises
     ------
@@ -877,6 +920,17 @@ class Function(Node, TrackedTerm, Annotated):
         controls, including construction metadata and seed. Invalid control
         values raise the same errors as construction.
 
+        Parameters
+        ----------
+        **controls : Any
+            The revised controls, keyed by the control names that the class's
+            ``**controls`` entry lists.
+
+        Returns
+        -------
+        Self
+            A shallow copy, which shares the wrapped callable and the declarations.
+
         Warns
         -----
         UserWarning
@@ -906,8 +960,11 @@ class Function(Node, TrackedTerm, Annotated):
 
         Parameters
         ----------
-        *args, **kwargs : Any
-            The call's arguments, bound to the signature as the call binds them.
+        *args : Any
+            The call's positional arguments, bound to the signature as the call
+            binds them.
+        **kwargs : Any
+            The call's keyword arguments, bound the same way.
 
         Returns
         -------
@@ -1012,6 +1069,13 @@ class Function(Node, TrackedTerm, Annotated):
         A Function's call object is *values*, and its result declaration its
         ``output_spec``, whose type hole defers the type to the return.
 
+        Parameters
+        ----------
+        values : Mapping of str to Any
+            The point's argument values, keyed by parameter name.
+        controls : Mapping of str to Any
+            The call's effective controls, which a subclass realized by routes reads.
+
         Returns
         -------
         tuple
@@ -1032,6 +1096,13 @@ class Function(Node, TrackedTerm, Annotated):
         broadcast and a batch is swept (V.5). The controls come from the
         construction and :meth:`with_options`, never from the call's keywords,
         which bind to the wrapped callable.
+
+        Parameters
+        ----------
+        *args : Any
+            The positional arguments of the wrapped callable.
+        **kwargs : Any
+            The keyword arguments of the wrapped callable.
 
         Returns
         -------
@@ -1080,6 +1151,11 @@ class Function(Node, TrackedTerm, Annotated):
 def _check_sample_count(count: Any) -> None:
     """Refuse a sample count that is not a positive integer.
 
+    Parameters
+    ----------
+    count : Any
+        The candidate value of the ``n_broadcast_samples`` control.
+
     Raises
     ------
     TypeError
@@ -1126,6 +1202,23 @@ def _set_controls(
 
     Only set controls are stored, so a default is read when a control is read.
 
+    Parameters
+    ----------
+    defaults : Mapping of str to Any
+        Every control's default, which stands in for each control not set.
+    current : Mapping of str to Any
+        The controls already set.
+    revisions : Mapping of str to Any
+        The controls to set, which replace those of *current*.
+    signature : inspect.Signature
+        The wrapped callable's signature, whose parameters the ``conversions``
+        control must name.
+
+    Returns
+    -------
+    dict of str to Any
+        The validated values of the controls of *current* and *revisions*.
+
     Raises
     ------
     TypeError, ValueError
@@ -1138,6 +1231,20 @@ def _set_controls(
 
 def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) -> dict[str, Any]:
     """The controls with their values validated, and conversions frozen.
+
+    Parameters
+    ----------
+    options : Mapping of str to Any
+        A value for every control.
+    signature : inspect.Signature
+        The wrapped callable's signature, whose parameters the ``conversions``
+        control must name.
+
+    Returns
+    -------
+    dict of str to Any
+        A copy of *options* whose ``conversions`` and ``method_options`` are
+        read-only mappings.
 
     Raises
     ------

@@ -59,12 +59,10 @@ class NumericRecord(Record, Numeric):
     equality and hashing rules — and adds the array-only features described
     below.
 
-    The numeric-leaf invariant, and native storage
-    ----------------------------------------------
-    Every field must be numeric — a numeric array or container from
-    any supported backend (``jax.numpy``, ``numpy``, ``xarray.DataArray``, a
-    ``pandas`` object with numeric dtypes, or any type registered via
-    :func:`~probpipe.register_array_backend`), or a numeric Python scalar
+    **The numeric-leaf invariant, and native storage.** Every field must be numeric — a
+    numeric array or container from any supported backend (``jax.numpy``, ``numpy``,
+    ``xarray.DataArray``, a ``pandas`` object with numeric dtypes, or any type
+    registered via :func:`~probpipe.register_array_backend`), or a numeric Python scalar
     (``int``, ``float``, ``complex``, or ``bool``); interior nodes are
     themselves ``NumericRecord`` instances. Construction **validates without converting**: an
     array-like leaf is stored verbatim in its native form, reading only its
@@ -73,11 +71,9 @@ class NumericRecord(Record, Numeric):
     normalised to a 0-d ``jax.Array``. Any non-numeric leaf raises
     ``TypeError`` at construction, naming the offending field.
 
-    Lazy conversion at the compute boundary
-    ---------------------------------------
-    Navigation returns native leaves verbatim: ``record["x"]``,
-    :attr:`~Record.children`, and :meth:`~Record.at_path` never convert.
-    Conversion to ``jax.Array`` happens at the compute boundary — the JAX
+    **Lazy conversion at the compute boundary.** Navigation returns native leaves
+    verbatim: ``record["x"]``, :attr:`~Record.children`, and :meth:`~Record.at_path`
+    never convert. Conversion to ``jax.Array`` happens at the compute boundary — the JAX
     pytree flatten that ``jit`` / ``vmap`` / ``grad`` traverse,
     :meth:`to_vector`, and the single-field scalar shim — through a per-leaf
     cache. Concrete conversions are memoised per record instance; traced
@@ -88,29 +84,23 @@ class NumericRecord(Record, Numeric):
     / :meth:`~Record.with_path_names`) and pickling reuse the native leaves
     verbatim, so native types survive them.
 
-    Aliasing and mutation
-    ---------------------
-    Native leaves are stored **by reference**, exactly as a plain
-    :class:`Record` stores opaque leaves. Mutating a passed-in container in
+    **Aliasing and mutation.** Native leaves are stored **by reference**, exactly as a
+    plain :class:`Record` stores opaque leaves. Mutating a passed-in container in
     place after construction therefore reaches the record. Once the leaf has
     crossed a compute boundary, navigation and compute can disagree:
     navigation reflects the mutation, but compute reuses the ``jax.Array``
     snapshot cached at the first concrete conversion. Records assume their data
     is not externally mutated mid-pipeline; no defensive copies are made.
 
-    Equality, hashing, and lazy leaves
-    ----------------------------------
-    :meth:`~Record.__eq__` and content fingerprints compare converted values
-    (and native-container metadata such as coords / index), so computing them
-    on a record with lazy / disk-backed leaves forces materialisation on
-    demand. :meth:`~Record.__hash__` is a coarser **structural** hash over
-    shape and dtype only — it reads container metadata, never the values, so
+    **Equality, hashing, and lazy leaves.** :meth:`~Record.__eq__` and content
+    fingerprints compare converted values (and native-container metadata such as coords
+    / index), so computing them on a record with lazy / disk-backed leaves forces
+    materialisation on demand. :meth:`~Record.__hash__` is a coarser **structural** hash
+    over shape and dtype only — it reads container metadata, never the values, so
     hashing a lazy leaf does *not* materialise it (records differing only in
     values or coords hash equal, a legal collision).
 
-    The flat vector form
-    --------------------
-    Because every leaf is numeric, the record implements
+    **The flat vector form.** Because every leaf is numeric, the record implements
     :class:`~probpipe.Numeric`, and the whole value can be flattened into a
     single dense 1-D array. :meth:`to_vector` converts and ravels the leaves,
     in canonical order, into a vector of length :attr:`vector_size`;
@@ -119,12 +109,10 @@ class NumericRecord(Record, Numeric):
     ``list(record.values())``, which returns the ordered list of native
     fields and is supported by any ``Record``.
 
-    Single-field records as scalars
-    --------------------------------
-    A ``NumericRecord`` with exactly one field behaves like a thin wrapper
-    around that field's value: ``float(r)``, ``int(r)``, ``bool(r)``,
-    ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` / ``r.dtype``
-    / ``r.ndim`` attributes all forward to the sole leaf (only the value
+    **Single-field records as scalars.** A ``NumericRecord`` with exactly one field
+    behaves like a thin wrapper around that field's value: ``float(r)``, ``int(r)``,
+    ``bool(r)``, ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` /
+    ``r.dtype`` / ``r.ndim`` attributes all forward to the sole leaf (only the value
     coercions materialise it). A record with more than one field, or
     whose single child is a nested record — an interior node, not a field —
     raises ``TypeError`` from these conversions, since unwrapping one field of
@@ -142,16 +130,19 @@ class NumericRecord(Record, Numeric):
         Fields as a positional mapping — an alternative to keyword ``**fields``
         (passing both raises). As on :class:`Record`, use it when a field name
         would collide with the ``event_template`` keyword.
-    **fields
-        Named numeric values: a numeric array or container (``jax`` /
-        ``numpy`` / ``xarray`` / ``pandas`` / registered backends), a numeric
-        Python scalar, or a nested ``NumericRecord``. At least one field is
-        required.
     event_template : NumericRecordSpec, optional
         The value's authoritative numeric schema. When omitted it is inferred from
         the field data at construction; when supplied it is validated against
         the fields. Either way it is fixed for the life of the record, readable
         as :attr:`spec` or, for its structure, :attr:`event_template`.
+    _validate_leaves : bool
+        As on :class:`Record`: whether to check each leaf against a supplied
+        *event_template*. Each leaf is checked to be numeric either way.
+    **fields : array-like or NumericRecord
+        Named numeric values: a numeric array or container (``jax`` /
+        ``numpy`` / ``xarray`` / ``pandas`` / registered backends), a numeric
+        Python scalar, or a nested ``NumericRecord``. At least one field is
+        required.
 
     Raises
     ------
@@ -530,6 +521,24 @@ def _reconstruct_from_vector(
     :meth:`NumericRecord.from_vector` / :meth:`NumericRecordBatch.from_vector`;
     the template supplies only the leaf layout (shapes, order), never
     constructing the value itself.
+
+    Parameters
+    ----------
+    name : str
+        The label of the rebuilt value.
+    template : NumericRecordSpec
+        The schema of one value, whose leaves give the shape and the dtype of each
+        block of *vec*.
+    vec : Array
+        The flat values, of shape ``(*batch_shape, template.vector_size)``.
+    level_names : str or iterable of str
+        The level names of a rebuilt batch. A single name takes every leading axis
+        of *vec* as one level, and several names take one axis each.
+
+    Returns
+    -------
+    NumericRecord or NumericRecordBatch
+        The record, or the batch whose batch shape is ``vec.shape[:-1]``.
 
     Raises
     ------

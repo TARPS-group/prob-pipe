@@ -122,7 +122,7 @@ def _auto_detect_task_runner() -> Any:
 class PrefectConfig:
     """Global Prefect orchestration settings.
 
-    Parameters
+    Attributes
     ----------
     workflow_kind : WorkflowKind
         Default orchestration mode for all ``Function`` instances

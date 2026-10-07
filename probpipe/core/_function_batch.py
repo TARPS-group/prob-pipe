@@ -121,6 +121,18 @@ class FunctionBatch(_ObjectBatch[Callable]):
     def _wrap_element(self, value: Callable, name: str) -> Function:
         """The stored callable *value* as a ``Function`` named *name* under the batch's declarations.
 
+        Parameters
+        ----------
+        value : callable
+            The object stored at the element's position.
+        name : str
+            The label of the element view, derived from its position.
+
+        Returns
+        -------
+        Function
+            A new ``Function``, which the caller gives the view's provenance.
+
         Raises
         ------
         ValueError

@@ -168,18 +168,16 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     return the same stored object. A record is immutable and its :attr:`spec`
     is fixed at construction.
 
-    A named collection of values
-    ----------------------------
-    A ``Record`` is a :class:`~probpipe.core.named_tree.NamedTree`, so it inherits a
-    mapping/dictionary-like interface over the fields it stores: a field is
-    accessed as ``record["a"]``, and a nested field as ``record["a/b/c"]`` or
-    ``record["a", "b", "c"]``. In effect a record behaves like an ordered
-    ``dict`` keyed by the unique ``/``-path to each field — ``len(record)`` is
-    the number of fields, ``"a/b/c" in record`` tests membership, and
-    ``record.keys()`` / ``record.values()`` / ``record.items()`` iterate the
-    paths / field values / pairs. The canonical field order is depth-first in
-    insertion order. A record must have at least one field; an empty record is
-    not allowed. ::
+    **A named collection of values.** A ``Record`` is a
+    :class:`~probpipe.core.named_tree.NamedTree`, so it inherits a
+    mapping/dictionary-like interface over the fields it stores: a field is accessed as
+    ``record["a"]``, and a nested field as ``record["a/b/c"]`` or
+    ``record["a", "b", "c"]``. In effect a record behaves like an ordered ``dict`` keyed
+    by the unique ``/``-path to each field — ``len(record)`` is the number of fields,
+    ``"a/b/c" in record`` tests membership, and ``record.keys()`` / ``record.values()``
+    / ``record.items()`` iterate the paths / field values / pairs. The canonical field
+    order is depth-first in insertion order. A record must have at least one field; an
+    empty record is not allowed. ::
 
         r = Record("r", x=1.5, y=Record("y", a=0.0, b=2.0))
         r["x"]          # 1.5
@@ -189,10 +187,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         "y/a" in r      # True
         list(r.keys())  # ['x', 'y/a', 'y/b']
 
-    Tree structure
-    --------------
-    A ``Record`` can equally be viewed as a tree, with the fields at its
-    leaves. The *only* allowed internal node is a nested ``Record``; every
+    **Tree structure.** A ``Record`` can equally be viewed as a tree, with the fields at
+    its leaves. The *only* allowed internal node is a nested ``Record``; every
     other value is interpreted as a leaf. Names are unique within each node, so
     every field has a unique ``/``-path. The structure of a field
     ``record[key]`` is described by the matching spec
@@ -208,14 +204,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         dict(r.children)  # {'x': 1.5, 'y': Record(a=0.0, b=2.0)}
         r["y"]            # KeyError: 'y' is a subtree — use at_path()
 
-    Structure encoded by the event template
-    ----------------------------------------
-    :attr:`event_template` always reflects the structure of the stored value.
-    Because a :class:`RecordSpec` is itself a :class:`~probpipe.core.named_tree.NamedTree`, its tree
-    mirrors the record's exactly: each nested ``Record`` corresponds to a
-    nested ``RecordSpec``, and each field value corresponds to a value spec
-    (an array to an :class:`NumericArraySpec`, any non-array to an
-    :class:`OpaqueSpec`, and so on). ::
+    **Structure encoded by the event template.** :attr:`event_template` always reflects
+    the structure of the stored value. Because a :class:`RecordSpec` is itself a
+    :class:`~probpipe.core.named_tree.NamedTree`, its tree mirrors the record's exactly:
+    each nested ``Record`` corresponds to a nested ``RecordSpec``, and each field value
+    corresponds to a value spec (an array to an :class:`NumericArraySpec`, any non-array
+    to an :class:`OpaqueSpec`, and so on). ::
 
         r.event_template
         # NumericRecordSpec(x=(), y=NumericRecordSpec(a=(), b=()))
@@ -228,21 +222,17 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Record("r", vec=jnp.zeros(3), label="fox").event_template
         # RecordSpec(vec=(3,), label=OpaqueSpec(type=str))   — array -> NumericArraySpec
 
-    Metadata: identity and annotations
-    ----------------------------------
-    A record is a tracked term: it is :class:`~probpipe.core.tracked.TrackedTerm`,
-    carrying a human-readable :attr:`name` and, optionally, a :attr:`provenance`, the
-    :class:`~probpipe.core.provenance.Provenance` describing how it was
-    created, attached write-once via :meth:`with_provenance`. It is also
-    :class:`~probpipe.core.tracked.Annotated`, so free-form
-    :attr:`annotations` may be attached after construction.
+    **Metadata: identity and annotations.** A record is a tracked term: it is
+    :class:`~probpipe.core.tracked.TrackedTerm`, carrying a human-readable :attr:`name`
+    and, optionally, a :attr:`provenance`, the :class:`~probpipe.core.provenance.Provenance`
+    describing how it was created, attached write-once via :meth:`with_provenance`. It is
+    also :class:`~probpipe.core.tracked.Annotated`, so free-form :attr:`annotations` may
+    be attached after construction.
 
-    Construction and validation
-    ---------------------------
-    A record is built from a flat mapping of key/field pairs — either as keyword
-    arguments or as a single positional mapping, but not both. Mappings are
-    never leaves: a mapping value denotes tree structure, so a plain ``dict``
-    passed as a field value is materialised into a nested subtree — never
+    **Construction and validation.** A record is built from a flat mapping of key/field
+    pairs — either as keyword arguments or as a single positional mapping, but not both.
+    Mappings are never leaves: a mapping value denotes tree structure, so a plain
+    ``dict`` passed as a field value is materialised into a nested subtree — never
     stored as a leaf — whether it appears as a keyword value or nested inside a
     positional mapping. When every leaf is a numeric array (so
     the carried template is a :class:`NumericRecordSpec`), ``Record(...)``
@@ -268,11 +258,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Record("r", a=1.0, event_template=RecordSpec(a=(), b=()))
         # ValueError: event_template fields ['a', 'b'] do not match record fields ['a'] ...
 
-    Equality and hashing
-    --------------------
-    Two records are equal when they share a concrete class (both ``Record``, or
-    both ``NumericRecord``), have equal :attr:`event_template`\\ s, and are
-    field-by-field equal. Because equality includes the template, whether an
+    **Equality and hashing.** Two records are equal when they share a concrete class
+    (both ``Record``, or both ``NumericRecord``), have equal :attr:`event_template`\\ s,
+    and are field-by-field equal. Because equality includes the template, whether an
     identity transform round-trips to an equal record depends on how it treats
     the template. A transform that **threads the template through** — ``replace``
     / ``merge`` / ``without``, or reconstruction via
@@ -308,13 +296,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         ``event_template`` keyword. Positional-only (the
         leading underscore keeps it from shadowing a field literally named
         ``fields``).
-    **fields
-        Named values, stored unchanged: ``jax`` / ``numpy`` arrays, Python
-        scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
-        or any opaque object. At least one field is required. A nested record
-        takes its name from the field key it sits under. A ``Mapping`` value
-        (e.g. a ``dict``) is never a leaf — it is materialised into a nested
-        subtree.
     event_template : RecordSpec, optional
         The value's authoritative schema and kind spec. When omitted it is
         inferred from the field data (via :meth:`RecordSpec.infer_from`); when
@@ -322,6 +303,17 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         value — it is validated against the field names. Either way it is fixed
         for the life of the record; read it back via :attr:`spec`, or its
         structure via :attr:`event_template`.
+    _validate_leaves : bool
+        Whether to check each leaf against a supplied *event_template*, binding the
+        template's symbolic dimensions. Internal: the pytree unflatten and a caller
+        that has already checked the leaves pass ``False``.
+    **fields : Any
+        Named values, stored unchanged: ``jax`` / ``numpy`` arrays, Python
+        scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
+        or any opaque object. At least one field is required. A nested record
+        takes its name from the field key it sits under. A ``Mapping`` value
+        (e.g. a ``dict``) is never a leaf — it is materialised into a nested
+        subtree.
 
     Raises
     ------
@@ -664,6 +656,19 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         transform leaves when it maps the leaves to ``None``, is returned as it
         is, and :meth:`raw` returns the stored leaf.
 
+        Parameters
+        ----------
+        key : str
+            The field's key, which the view takes as its label.
+        leaf : Any
+            The value stored at *key*, which is a JAX tracer inside a trace.
+
+        Returns
+        -------
+        Any
+            The field's view, or the stored value as it is when it is traced or no
+            value of the field's declared kind.
+
         Raises
         ------
         ValueError
@@ -726,6 +731,18 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
             predict(**params.select("r", "K"), x=x_grid)
             predict(**params.select(growth_rate="r"), x=x_grid)
+
+        Parameters
+        ----------
+        *fields : str
+            Paths to select, each keyed by itself in the result.
+        **mapping : str
+            Paths to select, each keyed by its keyword in the result.
+
+        Returns
+        -------
+        dict of str to Any
+            The field or subtree at each path, with the positional selections first.
 
         Raises
         ------
@@ -920,6 +937,18 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         ``with_label`` renames the record itself, and the result carries no
         provenance.
 
+        Parameters
+        ----------
+        mapping : Mapping of str to str, optional
+            The new path of each node, keyed by the node's path.
+        **kwargs : str
+            The new path of each top-level node, keyed by the node's name.
+
+        Returns
+        -------
+        Record
+            A record over the same leaves at their new paths.
+
         Raises
         ------
         KeyError
@@ -979,6 +1008,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Nested ``Record`` children recurse — every level becomes a
         ``NumericRecord``. On a value that is already a ``NumericRecord``
         this is the identity (returns ``self``).
+
+        Returns
+        -------
+        NumericRecord
+            A new record with this record's label and leaves, whose spec is inferred
+            from the leaves.
 
         Raises
         ------

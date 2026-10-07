@@ -246,6 +246,16 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         A kind whose state derives from its label overrides this, so the state
         follows the label under ``with_label`` and at a result boundary alike.
 
+        Parameters
+        ----------
+        label : str
+            The copy's label, which must be a non-empty string.
+
+        Returns
+        -------
+        Self
+            The copy, which shares its data with this object.
+
         Raises
         ------
         TypeError

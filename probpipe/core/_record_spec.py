@@ -59,6 +59,16 @@ def _to_spec(spec: _FieldSpecInput) -> TermSpec:
     A bare shape ``tuple`` becomes a :class:`NumericArraySpec`, and a built spec,
     a nested :class:`RecordSpec` included, passes through.
 
+    Parameters
+    ----------
+    spec : tuple or TermSpec
+        One field's constructor input.
+
+    Returns
+    -------
+    TermSpec
+        The field's spec, ready to store.
+
     Raises
     ------
     TypeError
@@ -122,9 +132,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     context can thus be a structured Python object, with structure described by
     the ``RecordSpec``.
 
-    Terminology
-    -----------
-    Used precisely throughout this class:
+    **Terminology.** Used precisely throughout this class:
 
     - **field** — one named object in the collection (here, a value spec),
       addressed by its full ``/``-delimited **key** (path from the root, e.g.
@@ -150,11 +158,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
       leaves in it, and
       :attr:`~NumericRecordSpec.leaf_shapes` is keyed by it.
 
-    JAX pytree contract
-    -------------------
-    A ``RecordSpec`` is **not** a registered JAX pytree node — its value specs
-    are atomic, so ``jax.tree_util.tree_leaves(template) == [template]``. It is
-    the *schema* of the value pytrees it describes, not a pytree itself (think of
+    **JAX pytree contract.** A ``RecordSpec`` is **not** a registered JAX pytree node —
+    its value specs are atomic, so ``jax.tree_util.tree_leaves(template) == [template]``.
+    It is the *schema* of the value pytrees it describes, not a pytree itself (think of
     it as an enriched ``PyTreeDef`` that also carries each leaf's kind / shape).
 
     For a value ``v`` it describes (a :class:`~probpipe.Record`): a nested
@@ -170,7 +176,11 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
 
     Parameters
     ----------
-    **field_specs
+    _field_specs : Mapping or RecordSpec, optional
+        The fields as a positional mapping, keyed by name or by ``/``-joined path,
+        or a ``RecordSpec`` whose fields are copied. Passing it together with
+        keyword fields raises.
+    **field_specs : tuple, TermSpec, or Mapping
         Fields with non-empty names. Each value is one of:
 
         - ``tuple[int | str, ...]`` — fixed or symbolic shape of a numeric array

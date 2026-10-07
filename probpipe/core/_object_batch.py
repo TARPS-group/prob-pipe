@@ -161,6 +161,18 @@ class _ObjectBatch[E](Batch[E]):
         batch and, for a stored term, that term as its source, with the position
         in the metadata.
 
+        Parameters
+        ----------
+        index : tuple of int
+            One position per batch axis.
+        name : str
+            The label of the view, derived from its position.
+
+        Returns
+        -------
+        E
+            A tracked term of the element kind.
+
         Raises
         ------
         TypeError
@@ -182,6 +194,18 @@ class _ObjectBatch[E](Batch[E]):
 
         A batch whose elements are always tracked terms, as a batch of laws is,
         keeps this default, which refuses a raw value.
+
+        Parameters
+        ----------
+        value : Any
+            The raw value stored at the element's position.
+        name : str
+            The label of the element view, derived from its position.
+
+        Returns
+        -------
+        Any
+            The element term that an override builds; this default raises instead.
 
         Raises
         ------
