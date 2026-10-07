@@ -1,12 +1,26 @@
-"""Contract tests of convert: an unchanged source under fresh identity, or a registered converter."""
+"""Contract tests of convert: an unchanged source, a registered converter, and the support check."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError
+from probpipe import (
+    ApplicabilityError,
+    EmpiricalDistribution,
+    Exponential,
+    Gamma,
+    LogNormal,
+    Normal,
+    NumericArraySpec,
+    mean,
+    real,
+    variance,
+)
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._capabilities import SupportsSampling
@@ -158,3 +172,53 @@ class TestConvert:
     def test_the_target_is_a_class(self):
         with pytest.raises(ApplicabilityError, match="distribution class or a capability protocol"):
             convert(Gaussian("g"), "Gaussian")
+
+
+def _tau() -> Gamma:
+    """A law on the positive half-line with mean 100 / 10 = 10 and variance 100 / 10**2 = 1."""
+    return Gamma("tau", concentration=100.0, rate=10.0)
+
+
+class TestTheSupportCheck:
+    """A conversion keeps the source's support unless ``check_support=False`` is set."""
+
+    def test_a_family_on_another_support_is_refused(self):
+        refusal = (
+            "moment_match: Normal is supported on real, and 'tau' declares the support positive; "
+            "pass check_support=False to the converter registry to fit it anyway"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(refusal)):
+            convert(_tau(), Normal)
+
+    @pytest.mark.parametrize("options", [{}, {"check_support": True}])
+    def test_with_the_check_on_the_planned_support_is_the_source_support(self, options):
+        report = convert.with_options(method_options=options).check(_tau(), LogNormal)
+        assert report.result == OutputSpec(DistributionSpec(_tau().event_spec))
+
+    def test_the_override_fits_the_family_on_its_own_support(self):
+        fitted = convert.with_options(method_options={"check_support": False})(_tau(), Normal)
+        assert isinstance(fitted, Normal)
+        assert fitted.label == "tau"
+        assert fitted.support == real
+        assert fitted.event_spec.components["tau"].support == real
+        # Moment matching reads the Gamma law's closed-form mean and variance,
+        # so the fit matches them up to rounding.
+        np.testing.assert_allclose(
+            [float(mean(fitted)), float(variance(fitted))], [10.0, 1.0], rtol=1e-6
+        )
+
+    def test_the_override_leaves_the_planned_support_open(self):
+        declared = _tau().event_spec.spec
+        report = convert.with_options(method_options={"check_support": False}).check(_tau(), Normal)
+        assert report.result == OutputSpec(
+            DistributionSpec(OutputSpec(tau=NumericArraySpec(declared.shape, declared.dtype)))
+        )
+
+    def test_an_empirical_law_whose_atoms_leave_the_support_converts_under_the_override(self):
+        source = EmpiricalDistribution("x", jnp.array([0.0, 1.0, 2.0, 3.0]))
+        with pytest.raises(ValueError, match="its atoms lie outside that support"):
+            convert(source, Exponential)
+        fitted = convert.with_options(method_options={"check_support": False})(source, Exponential)
+        assert isinstance(fitted, Exponential)
+        # The fit's mean is the atoms' mean of 1.5.
+        np.testing.assert_allclose(float(mean(fitted)), 1.5, rtol=1e-6)

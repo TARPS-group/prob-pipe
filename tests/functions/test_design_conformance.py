@@ -65,7 +65,7 @@ _MODULES = (
 )
 
 #: Names the code blocks define as worked examples rather than as declarations.
-_EXAMPLES = frozenset({"predict", "predict_impl", "rate"})
+_EXAMPLES = frozenset({"growth", "predict", "predict_impl", "rate"})
 
 #: Declarations the implementation does not match yet, with the change each awaits.
 _PENDING = {

@@ -9,7 +9,7 @@ import pytest
 
 import probpipe
 import probpipe.functions as node
-from probpipe import EmpiricalDistribution, Function, Normal, function, workflow_run
+from probpipe import EmpiricalDistribution, Function, Normal, WorkflowKind, function, workflow_run
 
 
 def test_function_is_the_only_public_wrapper_api():
@@ -111,6 +111,49 @@ def test_legacy_func_alias_validates_the_effective_callable():
         pytest.raises(TypeError, match="fn must be callable"),
     ):
         Function("invalid", lambda: 1, func=3)
+
+
+@pytest.mark.parametrize("entrypoint", ["constructor", "decorator"])
+@pytest.mark.parametrize("option", ["seed", "input_template", "output_template", "func"])
+def test_legacy_option_warning_points_to_the_user_call(option, entrypoint):
+    def identity(x):
+        return x
+
+    value = (lambda x: x + 1) if option == "func" else object()
+    frame = inspect.currentframe()
+    assert frame is not None
+    with pytest.warns(FutureWarning) as caught:
+        if entrypoint == "decorator":
+            decorate = function(**{option: value})
+            line = frame.f_lineno + 1
+            wrapped = decorate(identity)
+        else:
+            line = frame.f_lineno + 1
+            wrapped = Function("identity", identity, **{option: value})
+    assert len(caught) == 1
+    assert repr([option]) in str(caught[0].message)
+    assert caught[0].filename == __file__
+    assert caught[0].lineno == line
+    assert float(wrapped(3)) == (4 if option == "func" else 3)
+
+
+def test_one_warning_names_every_legacy_option():
+    with pytest.warns(FutureWarning) as caught:
+        Function(
+            "identity",
+            lambda x: x,
+            func=lambda x: x,
+            seed=1,
+            input_template=object(),
+            output_template=object(),
+        )
+    assert len(caught) == 1
+    assert "['func', 'input_template', 'output_template', 'seed']" in str(caught[0].message)
+
+
+def test_func_does_not_replace_the_required_fn_argument():
+    with pytest.raises(TypeError, match="required positional argument: 'fn'"):
+        Function(label="identity", func=lambda x: x)
 
 
 def test_function_bind_can_still_supply_user_seed_parameter():
@@ -291,6 +334,42 @@ def test_bindable_workflow_control_name_does_not_override():
         result = wf(x=normal, n_broadcast_samples=4)
 
     assert result.num_atoms == 5
+
+
+def test_with_options_clears_workers_and_resets_sample_count():
+    wrapped = Function(
+        "identity", lambda x: x, dispatch="thread", max_workers=2, n_broadcast_samples=7
+    )
+    unchanged = wrapped.with_options(include_inputs=True)
+    assert unchanged.options["max_workers"] == 2
+    assert unchanged.options["n_broadcast_samples"] == 7
+
+    reset = wrapped.with_options(max_workers=None, n_broadcast_samples=None)
+    defaults = Function("defaults", lambda x: x, dispatch="thread")
+    assert reset.options == defaults.options
+    assert wrapped.options["max_workers"] == 2
+    assert wrapped.options["n_broadcast_samples"] == 7
+    with workflow_run(seed=3):
+        result = reset(Normal("x", 0, 1))
+    assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
+
+
+@pytest.mark.parametrize(
+    ("control", "default", "error", "message"),
+    [
+        ("dispatch", "auto", ValueError, "dispatch must"),
+        ("workflow_kind", WorkflowKind.DEFAULT, TypeError, "WorkflowKind"),
+    ],
+)
+def test_a_view_resets_a_control_that_construction_refuses_as_none(
+    control, default, error, message
+):
+    """A view's None resets a control to its default (V.2); construction refuses it."""
+    wrapped = Function("identity", lambda x: x, dispatch="sequential")
+    configured = wrapped.with_options(workflow_kind=WorkflowKind.OFF)
+    assert configured.with_options(**{control: None}).options[control] == default
+    with pytest.raises(error, match=message):
+        Function("identity", lambda x: x, **{control: None})
 
 
 @pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "with_options"])

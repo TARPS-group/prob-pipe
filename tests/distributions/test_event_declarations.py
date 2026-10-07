@@ -60,6 +60,7 @@ from probpipe import (
     Uniform,
     VonMisesFisher,
     Wishart,
+    distribution,
     sample,
 )
 from probpipe.distributions import (
@@ -69,6 +70,7 @@ from probpipe.distributions import (
 )
 from probpipe.distributions._capabilities import SupportsSampling
 from probpipe.distributions._factored import _SoleField
+from probpipe.distributions._from_functions import _FunctionLaw
 from probpipe.distributions._views import _RenamedDistribution
 from probpipe.families import (
     BernoulliFamily,
@@ -91,7 +93,6 @@ from probpipe.families._gaussian import (
 from probpipe.families._programs import (
     PyMCModel,
     StanModel,
-    UnnormalizedDistribution,
     _StanPosterior,
     _UnconstrainedStanView,
 )
@@ -179,6 +180,10 @@ def _standard_normal_density(x):
     return -0.5 * jnp.sum(jnp.asarray(x) ** 2)
 
 
+def _standard_normal_draw(key):
+    return jax.random.normal(key, (2,))
+
+
 def _zero_mean(X):
     return jnp.zeros(X.shape[0])
 
@@ -243,8 +248,11 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     PyMCModel: _pymc_model,
     _StanPosterior: _stan_model,
     _UnconstrainedStanView: _stan_view,
-    UnnormalizedDistribution: lambda: UnnormalizedDistribution(
-        "u", _standard_normal_density, OutputSpec(x=probpipe.NumericArraySpec((2,)))
+    _FunctionLaw: lambda: distribution(
+        "u",
+        sample=_standard_normal_draw,
+        log_prob=_standard_normal_density,
+        event_spec=OutputSpec(x=probpipe.NumericArraySpec((2,))),
     ),
     FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),

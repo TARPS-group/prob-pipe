@@ -126,19 +126,13 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
             raise TypeError(
                 f"NumericArray holds one numeric array; {type(value).__name__} is not a numeric leaf"
             )
-        # Normalise Python scalars and their subclasses, but preserve NumPy
-        # scalars: np.float64 and np.complex128 also inherit float and complex.
-        if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
-            stored = _to_jax_array(value)
-        else:
-            stored = value
-        shape, dtype = _event_shape_of(stored), _numpy_dtype_of(stored)
+        stored = _stored(value)
         if spec is None:
-            spec = NumericArraySpec(shape=shape, dtype=dtype)
+            spec = _inferred_spec(stored)
         elif not spec.is_valid(stored):
             raise ValueError(
-                f"the array does not satisfy its declaration: shape {shape} and "
-                f"dtype {dtype} against {spec}"
+                f"the array does not satisfy its declaration: shape {_event_shape_of(stored)} "
+                f"and dtype {_numpy_dtype_of(stored)} against {spec}"
             )
         object.__setattr__(self, "_value", stored)
         object.__setattr__(self, "_spec", spec)
@@ -155,10 +149,8 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         would refuse a value the container holds. A Python scalar is normalized as
         the constructor normalizes it.
         """
-        if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
-            value = _to_jax_array(value)
         view = object.__new__(cls)
-        object.__setattr__(view, "_value", value)
+        object.__setattr__(view, "_value", _stored(value))
         object.__setattr__(view, "_spec", spec)
         view._init_tracked(name, provenance=provenance)
         return view
@@ -339,6 +331,28 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     def __iter__(self):
         return iter(self._value)
+
+
+def _stored(value: Any) -> Any:
+    """*value* as a ``NumericArray`` stores it.
+
+    A Python numeric scalar, a subclass included, becomes a 0-d ``jax.Array``,
+    and any other value is kept as it is. A NumPy scalar keeps its form, since
+    ``np.float64`` and ``np.complex128`` also inherit ``float`` and ``complex``.
+    """
+    if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
+        return _to_jax_array(value)
+    return value
+
+
+def _inferred_spec(value: Any) -> NumericArraySpec:
+    """The spec a ``NumericArray`` of the numeric leaf *value* declares when it is given none.
+
+    The spec states the shape and the dtype of the stored value and leaves the
+    support unset.
+    """
+    stored = _stored(value)
+    return NumericArraySpec(shape=_event_shape_of(stored), dtype=_numpy_dtype_of(stored))
 
 
 def _unwrap(other: Any) -> Any:

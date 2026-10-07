@@ -1,4 +1,4 @@
-"""The program-defined families: laws that a backend program or a user's density defines (VII.9).
+"""The program-defined families: laws that a backend program defines (VII.9).
 
 A program-defined model exposes the law its program defines, in the kind that
 law has, and its variable names determine its output components.
@@ -9,9 +9,7 @@ Provides:
     construction that binds every data variable returns the posterior itself;
   - ``PyMCModel`` – the joint law a PyMC model-building function defines over
     its free variables, the parameters and the observed variables alike, and a
-    kernel over the arguments no observed variable receives;
-  - ``UnnormalizedDistribution`` – the law of a user-supplied unnormalized
-    log-density over a declared event.
+    kernel over the arguments no observed variable receives.
 
 Each claims its density as its program supplies it, and ``condition_on``
 normalizes a law that claims only an unnormalized one through the
@@ -65,7 +63,7 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 
-__all__ = ["PyMCModel", "StanModel", "UnnormalizedDistribution"]
+__all__ = ["PyMCModel", "StanModel"]
 
 
 #: Make arguments for a Stan model library: TBB without its malloc proxy.
@@ -85,54 +83,6 @@ def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any)
     if unknown:
         raise KeyError(f"{unknown} are not given slots of {owner!r}")
     return values
-
-
-# ---------------------------------------------------------------------------
-# UnnormalizedDistribution
-# ---------------------------------------------------------------------------
-
-
-class UnnormalizedDistribution(Distribution, SupportsUnnormalizedLogProb):
-    """The law of a user-supplied unnormalized log-density over a declared event.
-
-    It claims ``SupportsUnnormalizedLogProb`` alone, so it is unnormalized, and
-    ``sample``, ``convert``, and ``condition_on`` normalize it through the
-    inference-method registry.
-
-    Parameters
-    ----------
-    label : str
-        The law's label.
-    log_density : callable
-        ``log_density(value)``, the log-density of a draw of the event up to an
-        additive constant.
-    event_spec : OutputSpec
-        The declaration of one draw.
-
-    Raises
-    ------
-    TypeError
-        If *log_density* is not callable, or as ``Distribution`` raises.
-    """
-
-    def __init__(
-        self, label: str, log_density: Callable[[Any], Array], event_spec: OutputSpec
-    ) -> None:
-        if not callable(log_density):
-            raise TypeError(
-                f"UnnormalizedDistribution needs a callable log_density; got "
-                f"{type(log_density).__name__}"
-            )
-        super().__init__(label, event_spec)
-        self._log_density = log_density
-
-    def _unnormalized_log_prob(self, value: Any) -> Array:
-        """The user's log-density at *value*, known up to an additive constant."""
-        return jnp.asarray(self._log_density(value))
-
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The log-density, by its name."""
-        return [("log_density", format_value(self._log_density))]
 
 
 # ---------------------------------------------------------------------------
@@ -444,27 +394,60 @@ def _dimension(expression: str, name: str, axis: int, data: Mapping[str, Any]) -
     return f"{name}_{axis}"
 
 
-def _stanc() -> Path:
-    """The path of BridgeStan's stanc compiler.
+def _stanc(*, fetch: bool = True) -> Path:
+    """The path of BridgeStan's stanc compiler, fetched on first use when *fetch* is true.
+
+    BridgeStan keeps its source tree in the directory ``$BRIDGESTAN`` names, or
+    else under ``~/.bridgestan``, and its Makefile fetches the stanc3 binary into
+    the tree's ``bin/``.
+
+    Parameters
+    ----------
+    fetch : bool
+        Whether to download a missing source tree and fetch a missing compiler
+        with the Makefile's target, as BridgeStan does before it first compiles
+        a model. With ``False``, the compiler is only located.
+
+    Returns
+    -------
+    Path
+        The stanc executable in the source tree's ``bin/``.
 
     Raises
     ------
     ImportError
-        If ``bridgestan`` is not installed, or its stanc compiler is absent.
+        If ``bridgestan`` is not installed, or its stanc compiler is absent and
+        *fetch* is false or the fetch fails. The message gives the command that
+        fetches the compiler.
     """
     try:
-        from bridgestan.compile import get_bridgestan_path
+        from bridgestan.compile import IS_WINDOWS, MAKE, get_bridgestan_path
     except ImportError as e:
         raise ImportError(
             "StanModel reads its program's declarations with stanc, which bridgestan provides. "
             "Install it with: pip install bridgestan"
         ) from e
-    root = get_bridgestan_path(download=False)
-    stanc = Path(root) / "bin" / "stanc" if root else None
-    if stanc is None or not stanc.exists():
+    root = get_bridgestan_path(download=fetch)
+    if not root:
         raise ImportError(
-            "BridgeStan's stanc compiler is not installed; BridgeStan downloads it when it "
-            "first compiles a model, as bridgestan.compile_model does"
+            "BridgeStan's source tree is not installed; StanModel downloads it to "
+            "~/.bridgestan on first use, or set $BRIDGESTAN to an existing tree"
+        )
+    target = "bin/stanc.exe" if IS_WINDOWS else "bin/stanc"
+    stanc = Path(root) / target
+    command = f"{MAKE} -C {root} {target}"
+    if not stanc.exists() and fetch:
+        completed = subprocess.run(
+            [MAKE, target], cwd=root, capture_output=True, text=True, check=False
+        )
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout).strip()
+            raise ImportError(
+                f"BridgeStan could not fetch its stanc compiler with `{command}`: {message}"
+            )
+    if not stanc.exists():
+        raise ImportError(
+            f"BridgeStan's stanc compiler is not installed; fetch it with `{command}`"
         )
     return stanc
 
@@ -549,7 +532,8 @@ class _StanProgram:
         Raises
         ------
         ImportError
-            If BridgeStan's stanc compiler is not installed.
+            If ``bridgestan`` is not installed, or its stanc compiler is absent
+            and cannot be fetched.
         ValueError
             If stanc rejects the program, the program declares no parameters,
             or a declaration cannot be read.
@@ -787,7 +771,8 @@ class StanModel(
     and ``condition_on`` normalizes it with a method such as Stan's NUTS. The
     declarations are read at construction from ``stanc --info`` and the
     program's text, and BridgeStan compiles the program when a density is
-    first evaluated.
+    first evaluated. The first construction on a machine downloads BridgeStan's
+    source tree and its stanc compiler, as BridgeStan's first compile does.
 
     Parameters
     ----------
@@ -803,7 +788,8 @@ class StanModel(
     Raises
     ------
     ImportError
-        If BridgeStan's stanc compiler is not installed.
+        If ``bridgestan`` is not installed, or its stanc compiler is absent
+        and cannot be fetched.
     KeyError
         If *data* names a variable the data block does not declare.
     ValueError

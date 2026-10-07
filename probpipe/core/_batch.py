@@ -74,7 +74,7 @@ from typing import Any, Self, cast
 from ._record_spec import RecordSpec, _check_kind_of
 from ._repr import format_levels, is_expression, public_class_name, term_repr
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
-from ._specs import TermSpec
+from ._specs import TermSpec, _check_component_name
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -109,8 +109,9 @@ class BatchSpec(TermSpec):
         level holds at least one axis, and there is at least one axis in all.
         Stored as a tuple of tuples, which is what makes the spec hashable.
     level_names : iterable of str
-        One name per level, aligned with *axis_groups*. Each is a non-empty
-        identifier, unique within the batch.
+        One name per level, aligned with *axis_groups*. The names are unique
+        within the batch. A level name follows the rule for component names, so
+        it is any non-empty string without ``/``.
 
     Attributes
     ----------
@@ -127,7 +128,7 @@ class BatchSpec(TermSpec):
     ValueError
         If there are no batch axes, a level holds no axes, an axis size is
         negative, the number of names does not match the number of levels, or a
-        level name is empty, not an identifier, or duplicated.
+        level name is empty, contains ``/``, or is duplicated.
 
     Notes
     -----
@@ -207,13 +208,7 @@ class BatchSpec(TermSpec):
                 raise TypeError(
                     f"level names are strings, got {type(level_name).__name__}: {level_name!r}"
                 )
-            if not level_name:
-                raise ValueError("level names must be non-empty")
-            if not level_name.isidentifier():
-                raise ValueError(
-                    f"level name {level_name!r} must be an identifier, since at_levels "
-                    f"addresses a level by keyword"
-                )
+            _check_component_name(level_name, context="level names")
         if len(set(names)) != len(names):
             raise ValueError(
                 f"level names must be unique within a batch; got {names}. An operation "
@@ -559,7 +554,7 @@ class Batch[E](TrackedTerm, ABC):
             If a name to rename is not a level of this batch.
         ValueError
             If a level is renamed twice with different names, or a new name is
-            empty, not an identifier, collides with a level that is being kept, is
+            empty, contains ``/``, collides with a level that is being kept, is
             the target of two renames, or belongs to a dropped root level still
             used to name subsequent selections from a view.
         TypeError
@@ -591,8 +586,7 @@ class Batch[E](TrackedTerm, ABC):
             # them as empty names would describe the wrong problem.
             if not isinstance(new, str):
                 raise TypeError(f"level names are strings, got {type(new).__name__}: {new!r}")
-            if not new:
-                raise ValueError("level names must be non-empty")
+            _check_component_name(new, context="level names")
 
         renamed = tuple(renames.get(old, old) for old in self.level_names)
         if len(set(renamed)) != len(renamed):
@@ -745,8 +739,10 @@ class Batch[E](TrackedTerm, ABC):
         whole, and a level whose axes are all dropped is removed, yielding the
         inner batch or element just as positional indexing does.
 
-        The receiver is positional-only, so every level name is addressable as a
-        keyword — including one that happens to spell a parameter of this method.
+        A level name that is no Python identifier is passed in a mapping, as
+        ``at_levels(**{"my level": 0})``. The receiver is positional-only, so every
+        level name is addressable as a keyword — including one that happens to
+        spell a parameter of this method.
 
         Returns
         -------
@@ -1046,8 +1042,8 @@ def _axis_size(size: Any) -> int | str:
     """An axis size as an ``int``, or a symbolic dimension name as a ``str``.
 
     The two spellings ``NumericArraySpec.shape`` accepts, for the same reason: a
-    declaration may defer a size while fixing the rank. A name must be a
-    non-empty identifier, as a level name must be.
+    declaration may defer a size while fixing the rank. A name must be an
+    identifier.
     """
     if isinstance(size, str):
         if not size.isidentifier():
