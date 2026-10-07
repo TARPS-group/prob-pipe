@@ -137,17 +137,17 @@ class TestPredictiveCheckBroker:
 
 
 class _FakeConditionOn:
-    """A stand-in for ``condition_on`` that records each fit's seed and returns zero draws.
+    """A stand-in for ``condition_on`` that records each fit's options and returns zero draws.
 
     A fit reads its budgets from ``method_options``, as the operation's methods do.
     """
 
     def __init__(self):
-        self.seeds = []
+        self.options = []
 
     def with_options(self, *, method=None, method_options):
         def fit(model, data):
-            self.seeds.append(method_options["random_seed"])
+            self.options.append(dict(method_options))
             return EmpiricalDistribution("beta", jnp.zeros((method_options["num_results"], 1)))
 
         return fit
@@ -160,16 +160,16 @@ class TestSimulationBasedCalibrationBroker:
         prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), label="beta")
         return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
-    def test_seeded_sbc_claims_one_event_and_derives_inference_seeds(self, monkeypatch):
+    def test_seeded_sbc_claims_one_event_and_passes_no_seed_to_a_fit(self, monkeypatch):
         fake_condition_on = _FakeConditionOn()
-        inference_seeds = fake_condition_on.seeds
+        fit_options = fake_condition_on.options
         monkeypatch.setattr(
             "probpipe.validation._calibration.condition_on",
             fake_condition_on,
         )
 
         def run(num_simulations):
-            inference_seeds.clear()
+            fit_options.clear()
             with (
                 patch(
                     "probpipe.functions._context._commit_stochastic_invocation",
@@ -183,15 +183,15 @@ class TestSimulationBasedCalibrationBroker:
                     num_simulations=num_simulations,
                     num_posterior_draws=4,
                 )
-            return result.ranks.copy(), tuple(inference_seeds), commit
+            return result.ranks.copy(), list(fit_options), commit
 
-        first_ranks, first_seeds, first_commit = run(2)
-        second_ranks, second_seeds, second_commit = run(2)
-        _, larger_seeds, larger_commit = run(5)
+        first_ranks, first_options, first_commit = run(2)
+        second_ranks, _, second_commit = run(2)
+        _, larger_options, larger_commit = run(5)
 
         np.testing.assert_array_equal(first_ranks, second_ranks)
-        assert first_seeds == second_seeds
-        assert len(larger_seeds) == 5
+        assert first_options == [{"num_results": 4}] * 2
+        assert len(larger_options) == 5
         first_commit.assert_called_once_with("operation")
         second_commit.assert_called_once_with("operation")
         larger_commit.assert_called_once_with("operation")

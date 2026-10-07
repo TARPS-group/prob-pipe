@@ -183,13 +183,15 @@ def elliptical_slice(
     num_warmup: int = 500,
     num_chains: int = 4,
     init: ArrayLike | None = None,
-    random_seed: int | None = None,
 ) -> EmpiricalDistribution:
     """Elliptical slice sampling of a joint with a Gaussian prior, at observed fields.
 
     The joint is a factored one, such as ``likelihood * prior``. The factors that
     produce the observed fields are the likelihood, and the others are the
     prior, which must be Gaussian, as :func:`_gaussian_prior_params` recognizes.
+    The run's key is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the chains, and an unscoped call runs
+    fresh ones.
 
     Parameters
     ----------
@@ -203,9 +205,6 @@ def elliptical_slice(
     init
         Initial chain state in the flat parameter vector. Defaults to
         a sample from the prior.
-    random_seed
-        Seed for chain initialisation and sampling RNG. Omitted, the run's
-        seed is a workflow-owned random event, which ``workflow_run`` fixes.
 
     Returns
     -------
@@ -227,7 +226,7 @@ def elliptical_slice(
         num_warmup=num_warmup,
         num_chains=num_chains,
         init=init,
-        random_seed=run_seed({"random_seed": random_seed}, "blackjax_ess"),
+        random_seed=run_seed("blackjax_ess"),
     )
 
 
@@ -303,7 +302,7 @@ class BlackJAXESSMethod(InferenceMethod):
     ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82–88).
     """
 
-    _method_options = ("init", "num_chains", "num_results", "num_warmup", "random_seed")
+    _method_options = ("init", "num_chains", "num_results", "num_warmup")
 
     @property
     def name(self) -> str:
@@ -358,5 +357,5 @@ class BlackJAXESSMethod(InferenceMethod):
             num_warmup=kwargs.get("num_warmup", 500),
             num_chains=kwargs.get("num_chains", 4),
             init=kwargs.get("init"),
-            random_seed=run_seed(kwargs, self.name),
+            random_seed=run_seed(self.name),
         )

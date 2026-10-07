@@ -80,6 +80,7 @@ __all__ = [
     "parallel_chain_map",
     "parameter_given",
     "posterior_var_order",
+    "refuse_seed_keywords",
     "run_chain_scan",
     "run_seed",
     "unconstrained_chain",
@@ -200,18 +201,25 @@ def as_prng_key(seed: int | Array) -> Array:
 _RUN_SEED_ABI = "probpipe.inference.run_seed/v1"
 
 
-def run_seed(options: Mapping[str, Any], method: str) -> int | Array:
-    """The seed of one run of the inference method *method*: its ``random_seed``, or a workflow key.
+def run_seed(method: str) -> Array:
+    """The workflow-owned key that seeds one run of the inference method *method*.
 
-    A ``random_seed`` the call's options set is returned as it is. Otherwise
-    the run's randomness is a workflow-owned random event (V.8), whose key the
-    enclosing scope derives from its root seed and the call's structure, so
-    ``workflow_run(seed=...)`` reproduces the run, and scopes with different
-    seeds, or two unscoped calls, run different chains.
+    The enclosing scope derives the key from its root seed and the call's
+    structure (V.8), so ``workflow_run(seed=...)`` reproduces the run, and
+    scopes with different seeds, or two unscoped calls, run different chains.
+    A run calls it once, and each of the run's helpers that draws receives the
+    key, or a seed derived from it, as an argument.
+
+    Parameters
+    ----------
+    method : str
+        The name of the method, which the event records as its provider.
+
+    Returns
+    -------
+    Array
+        A JAX PRNG key.
     """
-    seed = options.get("random_seed")
-    if seed is not None:
-        return seed
     from ..functions import _broker
 
     return _broker._resolve_automatic_key(
@@ -224,6 +232,38 @@ def run_seed(options: Mapping[str, Any], method: str) -> int | Array:
             provider_abi=f"probpipe.inference.{method}/v1",
         ),
     )
+
+
+#: The keywords that would seed a backend, which a run takes from :func:`run_seed`.
+_SEED_KEYWORDS = ("random_seed", "seed")
+
+
+def refuse_seed_keywords(caller: str, keywords: Mapping[str, Any]) -> None:
+    """Refuse a seed among the keywords that the function *caller* passes to its backend.
+
+    A run's seed is drawn from a workflow-owned random event, so a
+    ``random_seed`` or ``seed`` keyword raises the ``TypeError`` of an
+    unexpected keyword of *caller*. A backend that received such a keyword
+    would drop it or seed itself from it.
+
+    Parameters
+    ----------
+    caller : str
+        The name of the public function, which the error names.
+    keywords : Mapping[str, Any]
+        The keywords the function passes on.
+
+    Raises
+    ------
+    TypeError
+        If *keywords* holds ``random_seed`` or ``seed``.
+    """
+    for name in _SEED_KEYWORDS:
+        if name in keywords:
+            raise TypeError(
+                f"{caller}() got an unexpected keyword argument {name!r}; its seed is drawn "
+                "from a workflow-owned random event, which workflow_run(seed=...) fixes"
+            )
 
 
 def integer_seed(seed: int | Array) -> int:

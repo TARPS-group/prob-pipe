@@ -95,7 +95,6 @@ _SGMCMC_OPTIONS = (
     "init",
     "num_results",
     "num_warmup",
-    "random_seed",
     "step_size",
     "with_replacement",
 )
@@ -175,7 +174,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
         step_size: float = kwargs.get("step_size", 1e-3)
-        random_seed: int | PRNGKey = run_seed(kwargs, self.name)
+        random_seed: PRNGKey = run_seed(self.name)
         with_replacement: bool = kwargs.get("with_replacement", False)
 
         # The minibatched random measure supplies the stochastic gradients from

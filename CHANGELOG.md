@@ -29,6 +29,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or an unscoped run resamples afresh. Replace
   `iterate(with_resampling(step, seed=0), ...)` with
   `iterate(with_resampling(step), ...)` inside `workflow_run(seed=0)`.
+- **Every inference method takes its seed from the workflow scope.** Each run of
+  an inference method, and each training of an amortized learner, draws its
+  seed from a workflow-owned random event. `workflow_run(seed=...)` therefore
+  reproduces it, and another seed or an unscoped call runs afresh.
+  - The `random_seed` method option is removed from `blackjax_nuts`,
+    `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`,
+    `blackjax_sgld`, `blackjax_sghmc`, `tfp_nuts`, `nutpie_nuts`, `pymc_nuts`,
+    `pymc_advi`, `cmdstan_nuts`, and `pyabc_smcabc`, and setting it raises the
+    `TypeError` of an unknown option.
+  - The `random_seed` parameter is removed from `rwmh`, `elliptical_slice`,
+    `condition_on_nutpie`, `learn_amortized_posterior`,
+    `learn_amortized_likelihood`, and `learn_amortized_ratio`, so the learners
+    no longer train at the seed 0 by default. A `random_seed=` or `seed=`
+    keyword raises the `TypeError` of an unexpected keyword, including in the
+    keywords that `condition_on_nutpie` passes to `nutpie.sample` and the
+    learners pass to `approximator.fit`.
+  - `pymc_advi` seeds the draws of an empirical result from the run's key, so
+    `workflow_run(seed=...)` reproduces them.
+  - `simulation_based_calibration` passes no seed to its fits, so its `key`
+    fixes the parameters and the data alone, and `workflow_run(seed=...)` fixes
+    the fits.
+
+  Replace
+  `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.with_options(method_options={"num_results": 500})(model, data)`
+  inside `workflow_run(seed=0)`, and
+  `learn_amortized_posterior(prior, simulator, random_seed=0)` with
+  `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
 - **A result names each component by what its value means.**
   - `mean`, `variance`, and `quantile` name each component of the law's event
     by their call. The mean of a law over `mu` and `tau` is a record whose
@@ -441,9 +469,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anonymous, and nested `workflow_run` scopes derive keys from stable call,
   source, and logical-unit identities. All omitted-key sampling, conversion,
   validation, and diagnostics routes use the same broker. Explicit sampling
-  keys and inference `random_seed` arguments remain caller-owned, are passed
-  through unchanged, and do not advance the workflow stream. A wrapped user
-  callable's own `seed` parameter is still an ordinary input.
+  keys remain caller-owned, are passed through unchanged, and do not advance
+  the workflow stream. Each run of an inference method draws its seed from the
+  stream, as the entry "Every inference method takes its seed from the
+  workflow scope" states. A wrapped user callable's own `seed` parameter is
+  still an ordinary input.
 
   `score_posterior(..., key=None)` no longer uses a fixed
   `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows

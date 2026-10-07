@@ -208,9 +208,10 @@ def simulation_based_calibration(
     method
         Inference method name for :func:`condition_on` (``None`` = auto-select).
     key
-        JAX PRNG key (auto-generated if ``None``). Controls θ★, the data, and the
-        per-fit MCMC seed, so a fixed key makes the whole run reproducible. Do not
-        also pass ``random_seed`` in ``infer_kwargs``.
+        JAX PRNG key of the draws of θ★ and the data. ``None`` draws it from a
+        workflow-owned random event. Each fit draws its seed from a
+        workflow-owned random event of its own, so ``workflow_run(seed=...)``
+        reproduces the whole run, and a fixed key alone fixes θ★ and the data.
     **infer_kwargs
         Further budgets of the inference method, such as ``num_warmup`` or
         ``num_chains``, which each fit passes in its ``method_options``.
@@ -222,7 +223,8 @@ def simulation_based_calibration(
     Raises
     ------
     TypeError
-        If *model* does not sample.
+        If *model* does not sample, or the inference method refuses an entry of
+        *infer_kwargs*.
     ValueError
         If an *observed* name is not a field of a draw, or no parameter is left.
     """
@@ -232,11 +234,6 @@ def simulation_based_calibration(
         "num_posterior_draws",
         num_posterior_draws,
     )
-    if "random_seed" in infer_kwargs:
-        raise ValueError(
-            "simulation_based_calibration manages the per-fit random_seed; "
-            "do not pass random_seed in infer_kwargs"
-        )
     if not callable(getattr(model, "_sample", None)):
         raise TypeError(f"{type(model).__name__} does not support SBC joint sampling")
     observed = (observed,) if isinstance(observed, str) else tuple(observed)
@@ -263,12 +260,11 @@ def simulation_based_calibration(
     component_names: tuple[str, ...] | None = None
     draws = None
     for _ in range(num_simulations):
-        key, k_draw, k_mcmc = jax.random.split(key, 3)
+        key, k_draw = jax.random.split(key)
         draw = _raw_record(model._sample(k_draw, ()))
         theta_star = {name: draw[name] for name in parameters}
         y = {name: draw[name] for name in observed}
-        seed = int(jax.random.randint(k_mcmc, (), 0, 2_000_000_000))
-        budgets = {"num_results": num_posterior_draws, "random_seed": seed, **infer_kwargs}
+        budgets = {"num_results": num_posterior_draws, **infer_kwargs}
         posterior = condition_on.with_options(method=method, method_options=budgets)(model, y)
         draws = _coordinates(posterior)  # (L, p)
         if component_names is None:

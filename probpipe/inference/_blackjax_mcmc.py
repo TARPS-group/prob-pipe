@@ -305,7 +305,6 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         "num_integration_steps",
         "num_results",
         "num_warmup",
-        "random_seed",
         "step_size",
     )
 
@@ -351,7 +350,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
         self._check_options(kwargs)
-        random_seed = run_seed(kwargs, self.name)
+        random_seed = run_seed(self.name)
         model, observed = observed_parts(target)
         target_flat, flat_init, event_spec = build_target_log_prob_flat(
             model,

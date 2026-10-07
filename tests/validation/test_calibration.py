@@ -21,6 +21,7 @@ from probpipe import (
     NumericRecordSpec,
     OutputSpec,
     RecordSpec,
+    workflow_run,
 )
 from probpipe.core.record import Record
 from probpipe.distributions import ConditionalDistribution
@@ -232,26 +233,28 @@ class TestFlattening:
 class TestSBC:
     def test_well_specified_ranks_uniform(self):
         model = _gaussian_glm()
-        res = simulation_based_calibration(
-            model,
-            observed="y",
-            num_simulations=32,
-            num_posterior_draws=100,
-            num_warmup=100,
-            key=jax.random.PRNGKey(0),
-        )
+        with workflow_run(seed=0):
+            res = simulation_based_calibration(
+                model,
+                observed="y",
+                num_simulations=32,
+                num_posterior_draws=100,
+                num_warmup=100,
+            )
         assert isinstance(res, SBCResult)
         assert res.ranks.shape == (32, 2)
         assert res.ranks.min() >= 0 and res.ranks.max() <= res.num_posterior_draws
         # param_names are per flattened component, aligned with the rank columns.
         assert res.param_names == ("beta[0]", "beta[1]")
         assert len(res.param_names) == res.ranks.shape[1]
-        # Well-specified model + NUTS → ranks ~ uniform. Measured across seeds 0–2
-        # (S=32, L=100): mean normalized rank ∈ [0.46, 0.52], median ks_pvalue ∈
-        # [0.58, 0.77]. Assert stable statistics, not a tail bound on the min.
+        # Well-specified model + NUTS → ranks ~ uniform. Measured across workflow
+        # seeds 0–6, 2000, and 3000 (S=32, L=100): mean normalized rank ∈
+        # [0.43, 0.60], median ks_pvalue ∈ [0.16, 0.92]. Assert stable statistics,
+        # not a tail bound on the min: under uniform ranks the median of the two
+        # p-values falls below 0.05 with probability 0.005.
         u = (res.ranks + 0.5) / (res.num_posterior_draws + 1)
         assert np.all((u.mean(axis=0) > 0.35) & (u.mean(axis=0) < 0.65))
-        assert float(np.median(res.ks_pvalue)) > 0.2
+        assert float(np.median(res.ks_pvalue)) > 0.05
         # Rank histogram: (num_params, num_bins), each row sums to num_simulations.
         hist = res.rank_histogram(num_bins=10)
         assert hist.shape == (2, 10)
@@ -262,17 +265,17 @@ class TestSBC:
         # unmodeled +0.25 shift while the posterior SD is ≈ 0.31 (precision
         # 1/4 + 10 = 10.25), so the per-fit bias is only ≈ 0.8 posterior SD — yet
         # SBC rejects because the shift is *systematic* across simulations and
-        # accumulates. Measured ks_pvalue.max ≤ 0.001 and mean rank ≤ 0.34 over
-        # seeds 0–2 at S=48.
+        # accumulates. Measured ks_pvalue.max ≤ 3e-5 and mean rank 0.27–0.30 over
+        # four workflow seeds at S=48.
         model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, label="mu")
-        res = simulation_based_calibration(
-            model,
-            observed="y",
-            num_simulations=48,
-            num_posterior_draws=100,
-            num_warmup=100,
-            key=jax.random.PRNGKey(0),
-        )
+        with workflow_run(seed=0):
+            res = simulation_based_calibration(
+                model,
+                observed="y",
+                num_simulations=48,
+                num_posterior_draws=100,
+                num_warmup=100,
+            )
         # Uniformity is rejected for every parameter — a clear miscalibration signal.
         assert float(res.ks_pvalue.max()) < 0.05
         # The upward bias pushes θ★ into the lower tail → mean rank below 0.5.
@@ -285,12 +288,32 @@ class TestSBC:
                 model, observed="y", num_simulations=0, num_posterior_draws=50
             )
 
-    def test_rejects_random_seed_in_infer_kwargs(self):
+    def test_the_method_refuses_a_random_seed_in_infer_kwargs(self):
+        """Each fit's seed is a workflow event, so no method reads a ``random_seed`` budget."""
         model = _gaussian_glm()
-        with pytest.raises(ValueError, match="random_seed"):
+        with pytest.raises(TypeError, match=r"\['random_seed'\] are not options"):
             simulation_based_calibration(
                 model, observed="y", num_simulations=2, num_posterior_draws=50, random_seed=0
             )
+
+    def test_the_workflow_scope_seeds_each_fit(self):
+        model = _gaussian_glm()
+
+        def ranks(seed, key=None):
+            with workflow_run(seed=seed):
+                return simulation_based_calibration(
+                    model,
+                    observed="y",
+                    num_simulations=3,
+                    num_posterior_draws=40,
+                    num_warmup=40,
+                    num_chains=1,
+                    key=key,
+                ).ranks
+
+        key = jax.random.PRNGKey(5)
+        np.testing.assert_array_equal(ranks(0), ranks(0))
+        assert not np.array_equal(ranks(0, key), ranks(1, key))
 
     def test_rejects_an_observed_name_that_is_no_field(self):
         with pytest.raises(ValueError, match="are not fields"):

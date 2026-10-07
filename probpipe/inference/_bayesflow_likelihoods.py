@@ -51,6 +51,7 @@ from ._bayesflow_common import (
     _simulate_offline,
     _validate_learn_inputs,
 )
+from ._inference_utils import integer_seed, run_seed
 
 if TYPE_CHECKING:
     from bayesflow.approximators import ContinuousApproximator, RatioApproximator
@@ -403,7 +404,6 @@ def _train_offline(
     epochs: int,
     batch_size: int,
     sim_backend: SimBackend,
-    random_seed: int,
     theta_role: str,
     build_approximator: Any,
     optimizer: str | KerasOptimizer,
@@ -416,7 +416,34 @@ def _train_offline(
     -- ``"inference_conditions"`` for NLE, ``"inference_variables"`` for NRE --
     with the observation taking the other slot. With ``dequantize``, U[0,1)
     jitter is added to the simulated observations after simulation (the
-    simulator stays untouched). Returns ``(approximator, d_y)``.
+    simulator stays untouched). Once the inputs are valid, the training's seed
+    is drawn from a workflow-owned random event, and it seeds the simulation,
+    the jitter, and keras.
+
+    Parameters
+    ----------
+    prior, simulator
+        The learner's prior and simulator.
+    caller : str
+        The name of the public learner, which the error messages name and the
+        seed's event records as its provider.
+    num_simulations, epochs, batch_size, sim_backend, optimizer
+        The learner's arguments of those names.
+    theta_role : str
+        The adapter slot of the theta fields.
+    build_approximator : callable
+        ``build_approximator(bf, adapter, data_dim)``, the BayesFlow
+        approximator to train.
+    fit_kwargs : dict
+        The keyword arguments of ``approximator.fit``.
+    dequantize : bool
+        Whether to add ``U[0,1)`` jitter to the simulated observations.
+
+    Returns
+    -------
+    tuple
+        ``(approximator, d_y)``: the trained approximator and the flattened
+        size of one observation.
     """
     record = _validate_learn_inputs(
         prior,
@@ -428,12 +455,14 @@ def _train_offline(
             ("batch_size", batch_size),
             ("epochs", epochs),
         ),
+        fit_kwargs=fit_kwargs,
     )
     # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
     # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
     leaf_keys = tuple(record.leaf_shapes)
 
     bf = _import_bayesflow()
+    random_seed = integer_seed(run_seed(caller))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         k_jitter = None
@@ -494,7 +523,6 @@ def learn_amortized_likelihood(
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
     dequantize: bool = False,
-    random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
 ) -> BayesFlowLikelihood:
@@ -507,6 +535,13 @@ def learn_amortized_likelihood(
     then runs a registered gradient-based MCMC method (BlackJAX/TFP NUTS) for
     datasets of any size, since per-row scores sum under conditional
     independence. The network conditions on the raw constrained ``theta``.
+
+    The training's seed is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the trained network, and an unscoped
+    call trains afresh. The seed fixes the offline simulation, the
+    dequantization jitter, and keras's network initialization and training.
+    The caller's global NumPy and Python random states are restored after
+    training.
 
     Parameters
     ----------
@@ -555,9 +590,6 @@ def learn_amortized_likelihood(
         needed, prefer :func:`learn_amortized_ratio`, whose classifier
         consumes discrete observations natively (cf. MNLE, Boelts et al.,
         2022, for the mixed-data approach in the torch ``sbi`` ecosystem).
-    random_seed : int
-        Seeds simulation, network init, and training; the caller's global
-        NumPy / Python RNG state is restored afterwards.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -578,7 +610,8 @@ def learn_amortized_likelihood(
         simulated observations reach ``2**23``.
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
-        that samples, or ``prior`` is not a numeric distribution.
+        that samples, ``prior`` is not a numeric distribution, or
+        ``fit_kwargs`` holds ``random_seed`` or ``seed``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -602,7 +635,6 @@ def learn_amortized_likelihood(
         epochs=epochs,
         batch_size=batch_size,
         sim_backend=sim_backend,
-        random_seed=random_seed,
         theta_role="inference_conditions",
         build_approximator=_build,
         optimizer=optimizer,
@@ -623,7 +655,6 @@ def learn_amortized_ratio(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: KerasLayer | None = None,
-    random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
 ) -> BayesFlowRatio:
@@ -639,6 +670,12 @@ def learn_amortized_ratio(
     absolute-likelihood uses (model comparison, LOO/WAIC); see the class
     docstring. The classifier handles discrete-valued observations and
     one-dimensional data natively.
+
+    The training's seed is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the trained classifier, and an
+    unscoped call trains afresh. The seed fixes the offline simulation and
+    keras's network initialization and training. The caller's global NumPy and
+    Python random states are restored after training.
 
     Parameters
     ----------
@@ -659,9 +696,6 @@ def learn_amortized_ratio(
     inference_network : keras.Layer or None
         The classifier body (defaults to ``bayesflow.networks.MLP()``); the
         ``RatioApproximator`` adds its own scalar projection head.
-    random_seed : int
-        Seeds simulation, network init, and training; the caller's global
-        NumPy / Python RNG state is restored afterwards.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -678,7 +712,8 @@ def learn_amortized_ratio(
         (no minimum observation dimension, unlike NLE).
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
-        that samples, or ``prior`` is not a numeric distribution.
+        that samples, ``prior`` is not a numeric distribution, or
+        ``fit_kwargs`` holds ``random_seed`` or ``seed``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -695,7 +730,6 @@ def learn_amortized_ratio(
         epochs=epochs,
         batch_size=batch_size,
         sim_backend=sim_backend,
-        random_seed=random_seed,
         theta_role="inference_variables",
         build_approximator=_build,
         optimizer=optimizer,

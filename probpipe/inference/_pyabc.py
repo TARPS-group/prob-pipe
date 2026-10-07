@@ -207,7 +207,6 @@ class PyABCSMCMethod(InferenceMethod):
         "min_acceptance_rate",
         "minimum_epsilon",
         "n_particles",
-        "random_seed",
         "sampler",
         "summary_fn",
         "transitions",
@@ -265,6 +264,13 @@ class PyABCSMCMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
 
+        The run's seed is drawn from a workflow-owned random event, so
+        ``workflow_run(seed=...)`` reproduces the run, and an unscoped call
+        runs afresh. The seed fixes the JAX keys of the prior's draws and of
+        the simulator. It also seeds numpy's global generator for the duration
+        of the run, and pyabc draws its perturbations from that generator. The
+        caller's numpy state is restored afterwards.
+
         Parameters
         ----------
         target : Distribution
@@ -293,9 +299,6 @@ class PyABCSMCMethod(InferenceMethod):
             Additional stopping criteria forwarded to ``ABCSMC.run`` alongside
             ``max_populations`` (whichever is hit first stops the run); pyabc's
             defaults apply when omitted.
-        random_seed : int, default 0
-            Seeds the JAX keys threaded into the prior and simulator and pyabc's
-            own (numpy-global) proposal RNG, so repeated calls are reproducible.
         summary_fn : callable, optional
             ``(batch, dim) -> (batch, summary_dim)`` applied to simulated and
             observed data before the distance.
@@ -306,10 +309,15 @@ class PyABCSMCMethod(InferenceMethod):
             adaptive/weighted distances are not used; supply a custom
             ``summary_fn``/``distance_fn`` pair for bespoke weighting.
         sampler : pyabc sampler, optional
-            Defaults to ``SingleCoreSampler``. pyabc's multicore samplers
+            Defaults to ``SingleCoreSampler``, which simulates in this process,
+            so the run's seed fixes every draw. A sampler whose workers run in
+            other processes, such as pyabc's multicore samplers, draws outside
+            ProbPipe's control. Each worker reseeds numpy's generator from fresh
+            entropy, so the run does not reproduce, and each worker starts from
+            a copy of the run's JAX keys, so the workers repeat one another's
+            prior draws and simulation keys. pyabc's multicore samplers also
             ``fork()``, which can deadlock alongside JAX's threads (the same
-            reason the PyMC backend avoids forking); pass an explicit sampler to
-            opt into local-multicore parallelism.
+            reason the PyMC backend avoids forking).
 
         Returns
         -------
@@ -334,7 +342,7 @@ class PyABCSMCMethod(InferenceMethod):
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
         eps_alpha = float(kwargs.get("eps_alpha", 0.5))
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        random_seed = integer_seed(run_seed(self.name))
         summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
         distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()

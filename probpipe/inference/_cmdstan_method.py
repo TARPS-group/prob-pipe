@@ -46,7 +46,7 @@ class CmdStanNutsMethod(InferenceMethod):
     applies to a disjoint model class.
     """
 
-    _method_options = ("num_chains", "num_results", "num_warmup", "random_seed")
+    _method_options = ("num_chains", "num_results", "num_warmup")
 
     @property
     def name(self) -> str:
@@ -80,7 +80,7 @@ class CmdStanNutsMethod(InferenceMethod):
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 1000)
         num_chains = kwargs.get("num_chains", 4)
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        random_seed = integer_seed(run_seed(self.name))
 
         model = cmdstanpy.CmdStanModel(stan_file=target.stan_file)
         fit = model.sample(

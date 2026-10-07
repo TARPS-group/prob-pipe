@@ -582,7 +582,6 @@ def rwmh(
     n_windows: int = 4,
     proposal_cov: ArrayLike | None = None,
     init: ArrayLike | None = None,
-    random_seed: int | None = None,
 ) -> EmpiricalDistribution:
     """Gradient-free random-walk Metropolis-Hastings (BlackJAX-backed).
 
@@ -593,6 +592,10 @@ def rwmh(
       state;
     * an eager Python-loop fallback otherwise (BridgeStan / scipy /
       external-simulator likelihoods).
+
+    The run's key is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the chains, and an unscoped call runs
+    fresh ones.
 
     Parameters
     ----------
@@ -638,10 +641,6 @@ def rwmh(
         Initial chain state. Resolved by
         :func:`~probpipe.inference._inference_utils.get_init_state`
         when ``None``.
-    random_seed
-        Seed for chain initialisation, warmup, and sampling RNG. Omitted,
-        the run's seed is a workflow-owned random event, which
-        ``workflow_run`` fixes.
 
     Returns
     -------
@@ -685,7 +684,53 @@ def rwmh(
             f"{type(dist).__name__} does not support log_prob "
             "(does not implement SupportsUnnormalizedLogProb)"
         )
+    return _rwmh(
+        dist,
+        data,
+        log_prob_fn=log_prob_fn,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        step_size=step_size,
+        adapt=adapt,
+        n_windows=n_windows,
+        proposal_cov=proposal_cov,
+        init=init,
+        random_seed=run_seed("blackjax_rwmh"),
+    )
 
+
+def _rwmh(
+    dist: SupportsUnnormalizedLogProb,
+    data: ArrayLike | None,
+    *,
+    log_prob_fn: Any | None,
+    num_results: int,
+    num_warmup: int,
+    num_chains: int,
+    step_size: float,
+    adapt: bool,
+    n_windows: int,
+    proposal_cov: ArrayLike | None,
+    init: ArrayLike | None,
+    random_seed: Array,
+) -> EmpiricalDistribution:
+    """The random-walk chains of :func:`rwmh` on *dist*, drawn from the run's key.
+
+    It returns, raises, and warns as :func:`rwmh` does, apart from the check
+    of *dist*'s density, which its callers make.
+
+    Parameters
+    ----------
+    dist, data, log_prob_fn, init
+        The target, its data, its log-likelihood, and the initial state, as
+        :func:`rwmh` takes them.
+    num_results, num_warmup, num_chains, step_size, adapt, n_windows, proposal_cov
+        The budgets and the proposal settings of :func:`rwmh`.
+    random_seed : Array
+        The run's key, from which the initial state, the warmup, and the
+        chains draw.
+    """
     # Adaptation needs warmup samples to fit the proposal covariance.
     # With ``num_warmup == 0`` there is nothing to adapt on, so the
     # proposal silently falls back to ``step_size * I`` — warn rather
@@ -696,7 +741,7 @@ def rwmh(
             "covariance; falling back to sigma = step_size * I. Pass "
             "num_warmup > 0 to adapt, or adapt=False to silence this "
             "warning.",
-            stacklevel=2,
+            stacklevel=3,
         )
 
     if log_prob_fn is not None and data is not None:
@@ -706,7 +751,6 @@ def rwmh(
     else:
         target_log_prob = flat_density(dist)
 
-    random_seed = run_seed({"random_seed": random_seed}, "blackjax_rwmh")
     init_state = get_init_state(dist, init, random_seed=random_seed)
     if log_prob_fn is None or data is None:
         target_log_prob, init_state, constrain = unconstrained_chain(
@@ -789,7 +833,6 @@ class BlackJAXRWMHMethod(InferenceMethod):
         "num_results",
         "num_warmup",
         "proposal_cov",
-        "random_seed",
         "step_size",
     )
 
@@ -823,14 +866,10 @@ class BlackJAXRWMHMethod(InferenceMethod):
         """Random-walk chains on the target's parameters, scored by its prior and likelihood."""
         self._check_options(kwargs)
         dist, observed = observed_parts(target)
-        random_seed = run_seed(kwargs, self.name)
-        init = kwargs.get("init")
-        if init is None:
-            init = get_init_state(dist, None, random_seed=random_seed)
-
-        return rwmh(
+        return _rwmh(
             dist,
             observed,
+            log_prob_fn=None,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),
             num_chains=kwargs.get("num_chains", 4),
@@ -838,6 +877,6 @@ class BlackJAXRWMHMethod(InferenceMethod):
             adapt=kwargs.get("adapt", True),
             n_windows=kwargs.get("n_windows", 4),
             proposal_cov=kwargs.get("proposal_cov"),
-            init=init,
-            random_seed=random_seed,
+            init=kwargs.get("init"),
+            random_seed=run_seed(self.name),
         )

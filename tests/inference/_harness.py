@@ -21,8 +21,8 @@ mean and of the quantile, and for the variance the MCSE of the mean of the
 squared deviations, with their own effective sample size. A method whose draws
 target the posterior fails one comparison with probability about 6e-5, and a
 case's few dozen comparisons together with probability below 0.003, so a
-failure is a finding rather than noise. The keys are fixed, so every outcome is
-reproducible. An MCSE is valid only for chains that have mixed, so a method
+failure is a finding rather than noise. Each run is in a workflow scope of a
+fixed seed, so every outcome is reproducible. An MCSE is valid only for chains that have mixed, so a method
 that runs several chains must also reach a rank-normalized R-hat below 1.05.
 
 **Kinds.** A *consistent* method's draws converge to the posterior as its
@@ -91,8 +91,7 @@ class MethodProfile:
         Whether the method's draws converge to the posterior, which selects the
         contract it is held to.
     method_options : Mapping[str, Any]
-        The ``method_options`` control ``condition_on.with_options`` receives,
-        budgets and seed included.
+        The ``method_options`` control ``condition_on.with_options`` receives.
     """
 
     representation: str
@@ -102,13 +101,13 @@ class MethodProfile:
 
 #: The budget of a gradient-based sampler: two chains of 2000 draws after 1000
 #: warmup steps, which gives every case well over a thousand effective draws.
-_GRADIENT = {"num_results": 2000, "num_warmup": 1000, "num_chains": 2, "random_seed": 0}
+_GRADIENT = {"num_results": 2000, "num_warmup": 1000, "num_chains": 2}
 
 #: The budget of the random walk, whose draws are more autocorrelated.
-_RANDOM_WALK = {"num_results": 4000, "num_warmup": 2000, "num_chains": 2, "random_seed": 0}
+_RANDOM_WALK = {"num_results": 4000, "num_warmup": 2000, "num_chains": 2}
 
 #: The budget of a stochastic-gradient sampler, which needs a minibatch size.
-_STOCHASTIC = {"num_results": 2000, "num_warmup": 1000, "batch_size": 10, "random_seed": 0}
+_STOCHASTIC = {"num_results": 2000, "num_warmup": 1000, "batch_size": 10}
 
 #: Each registered method's profile. The tolerances do not depend on the
 #: budgets, since the MCSE scales with them.
@@ -122,11 +121,9 @@ PROFILES: dict[str, MethodProfile] = {
     "tfp_nuts": MethodProfile("probpipe", True, _GRADIENT),
     "nutpie_nuts": MethodProfile("pymc", True, _GRADIENT),
     "pymc_nuts": MethodProfile("pymc", True, {**_GRADIENT, "cores": 1}),
-    "pymc_advi": MethodProfile(
-        "pymc", False, {"num_results": 2000, "num_iterations": 20000, "random_seed": 0}
-    ),
+    "pymc_advi": MethodProfile("pymc", False, {"num_results": 2000, "num_iterations": 20000}),
     "cmdstan_nuts": MethodProfile("stan", True, _GRADIENT),
-    "pyabc_smcabc": MethodProfile("probpipe", False, {"n_particles": 200, "random_seed": 0}),
+    "pyabc_smcabc": MethodProfile("probpipe", False, {"n_particles": 200}),
 }
 
 
@@ -134,8 +131,10 @@ PROFILES: dict[str, MethodProfile] = {
 #: library bug or a limit of the harness's run, with the reason, the exception
 #: the failure raises, and whether it fails on every platform. Each is collected
 #: as a pending test, so the suite stays green and the ledger lists it. A failure
-#: that depends on the platform's numerics is pending without strictness, since
-#: the same seeded run passes on some platforms.
+#: that depends on the workflow seed or on the platform's numerics is pending
+#: without strictness, since the same budget passes at some seeds and on some
+#: platforms. The comment above each entry states its failure rate over the
+#: workflow seeds it was measured at.
 KNOWN_FAILURES: dict[tuple[str, str, str], tuple[str, type[BaseException], bool]] = {}
 
 _ABC_BUDGET = (
@@ -147,22 +146,48 @@ _ABC_RAW_OUTCOMES = (
     "tolerance of two mismatched outcomes the ABC posterior favors a theta near 0, where "
     "the eleven observed failures are matched most often"
 )
+# Fails at four of workflow seeds 0 to 5.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gaussian_linear")] = (
     _ABC_BUDGET,
     AssertionError,
     False,
 )
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError, True)
-KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError, True)
+# Fails at one of workflow seeds 0 to 5.
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "eight_schools")] = (_ABC_BUDGET, AssertionError, False)
+# Fails at five of workflow seeds 0 to 5, and passes at seed 0.
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "gamma_poisson")] = (_ABC_BUDGET, AssertionError, False)
+# Fails at every one of workflow seeds 0 to 5.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (
     _ABC_BUDGET,
     AssertionError,
     True,
 )
+# Fails at four of workflow seeds 0 to 5, seed 0 among them.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     _ABC_RAW_OUTCOMES,
     AssertionError,
-    True,
+    False,
+)
+# Fails at one of workflow seeds 0 to 5.
+KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "dirichlet_multinomial")] = (
+    _ABC_BUDGET,
+    AssertionError,
+    False,
+)
+# Fails at 9 of workflow seeds 0 to 31.
+KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
+    "the random walk's two chains of 4000 draws mix slowly over eight_schools, so a tail "
+    "quantile of theta_tilde or mu, or a variance of theta_tilde, misses its bound at some "
+    "seeds",
+    AssertionError,
+    False,
+)
+# Fails at two of workflow seeds 0 to 5.
+KNOWN_FAILURES[("blackjax_sghmc", "probpipe", "gaussian_linear")] = (
+    "SGHMC's fixed step size and friction at the harness's budget leave a coefficient's "
+    "mean further from the reference than a quarter of its posterior sd at some seeds",
+    AssertionError,
+    False,
 )
 
 
@@ -472,7 +497,8 @@ def validate_method(
         report = view.check(model, data)
         if report.feasible is not True:
             pytest.skip(f"{name} does not apply to {case_name}: {_skip_reason(report)}")
-        posterior = view(model, data)
+        with workflow_run(seed=0):
+            posterior = view(model, data)
         assert_matches(
             posterior,
             case.reference,
@@ -507,11 +533,12 @@ def calibration_ranks(
     """The SBC ranks of *method* on *case*: one row per replication, one column per coordinate.
 
     Each replication draws the parameters and the observations from the
-    model's joint under its own seeded workflow, conditions the model on the
-    drawn observations with *method*, or by the route ``condition_on`` selects
-    when *method* is ``None``, thins the posterior's draws to *draws* evenly
-    spaced ones, and ranks each drawn parameter coordinate among them. Under a
-    calibrated method each rank is uniform on ``{0, ..., draws}``.
+    model's joint under a seeded workflow of its own. Under a second seeded
+    workflow, it conditions the model on the drawn observations with *method*,
+    or by the route ``condition_on`` selects when *method* is ``None``. It thins
+    the posterior's draws to *draws* evenly spaced ones and ranks each drawn
+    parameter coordinate among them. Under a calibrated method each rank is
+    uniform on ``{0, ..., draws}``.
     """
     observed = tuple(case.data)
     rows = []
@@ -521,11 +548,9 @@ def calibration_ranks(
         given = {name: joint_draw[name] for name in observed}
         view = condition_on
         if method is not None:
-            view = condition_on.with_options(
-                method=method,
-                method_options={**(method_options or {}), "random_seed": replication},
-            )
-        posterior = view(case.model, given)
+            view = condition_on.with_options(method=method, method_options=method_options or {})
+        with workflow_run(seed=replication):
+            posterior = view(case.model, given)
         ranks = []
         for path, leaf in case.reference.leaves.items():
             truth = np.ravel(np.asarray(_at(joint_draw, path), dtype=np.float64))

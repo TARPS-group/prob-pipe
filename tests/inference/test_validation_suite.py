@@ -2,8 +2,8 @@
 
 NUTS recovers the conjugate model's closed-form posterior within measured
 tolerances, and the metrics detect the covariance bias of vanilla fixed-step
-``blackjax_sgld``. Tolerances are measured across seeds 0–2 per STYLE_GUIDE
-§8.6.
+``blackjax_sgld``. Tolerances are measured across four workflow seeds per
+STYLE_GUIDE §8.6.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from probpipe import condition_on
+from probpipe import condition_on, workflow_run
 from probpipe.validation import relative_cov_error, score_posterior
 
 
@@ -20,8 +20,9 @@ class TestNUTSReproducesReference:
         self, conjugate_linear_model, conjugate_nuts_posterior
     ):
         # score_posterior on an analytic (moments-only) reference scores the moment
-        # metrics and skips the sample/score ones. Measured across seeds 0–2:
-        # relative_cov_error ∈ [0.04, 0.08], standardized_mean_error ∈ [0.007, 0.021].
+        # metrics and skips the sample/score ones. Measured across four workflow
+        # seeds: relative_cov_error ∈ [0.03, 0.05], standardized_mean_error ∈
+        # [0.014, 0.020].
         card = score_posterior(conjugate_nuts_posterior, conjugate_linear_model.reference)
         assert {"ksd", "mmd", "sliced_wasserstein"}.isdisjoint(card)  # no draws/score_fn
         assert float(card["relative_cov_error"]) < 0.15
@@ -31,21 +32,21 @@ class TestNUTSReproducesReference:
 class TestSGLDCovarianceBias:
     def test_sgld_overdisperses_vs_nuts(self, conjugate_linear_model, conjugate_nuts_posterior):
         m = conjugate_linear_model
-        sgld = condition_on.with_options(
-            method="blackjax_sgld",
-            method_options={
-                "batch_size": 20,
-                "num_results": 5000,
-                "num_warmup": 2000,
-                "step_size": 1e-3,
-                "random_seed": 0,
-            },
-        )(m.model, {"y": m.data})
+        with workflow_run(seed=0):
+            sgld = condition_on.with_options(
+                method="blackjax_sgld",
+                method_options={
+                    "batch_size": 20,
+                    "num_results": 5000,
+                    "num_warmup": 2000,
+                    "step_size": 1e-3,
+                },
+            )(m.model, {"y": m.data})
         rce_nuts = float(relative_cov_error(conjugate_nuts_posterior, m.reference))
         rce_sgld = float(relative_cov_error(sgld, m.reference))
         # Vanilla fixed-step SGLD mis-estimates the posterior covariance. Measured
-        # across seeds 0–2: SGLD rce ∈ [0.18, 0.35] vs NUTS [0.04, 0.08], a 2.7–6×
-        # gap.
+        # across four workflow seeds: SGLD rce ∈ [0.22, 0.43] vs NUTS [0.03, 0.05],
+        # a 4.8–11× gap.
         assert rce_sgld > 2.0 * rce_nuts
         assert rce_sgld > 0.12
 
@@ -58,7 +59,8 @@ class TestNUTSReproducesNonGaussianReference:
         # The reference is markedly non-Gaussian — a right-skewed Beta posterior.
         assert m.posterior_skewness > 0.5  # Gaussian skewness is 0; measured ≈ 0.7
         # NUTS captures the shape: the distributional metrics sit near the sampling
-        # floor. Measured across seeds 0–2: mmd ≤ 0.001, sliced_W ≤ 0.009.
+        # floor. Measured across four workflow seeds: mmd ≤ 0.001, sliced_W ≤ 0.007,
+        # relative_cov_error ≤ 0.03.
         nuts = score_posterior(
             beta_bernoulli_nuts_posterior,
             m.reference,

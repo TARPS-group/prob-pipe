@@ -32,6 +32,7 @@ from ..custom_types import Array, PRNGKey
 from ..distributions._capabilities import SupportsConditionalSampling
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, NumericDistribution
+from ._inference_utils import refuse_seed_keywords
 
 if TYPE_CHECKING:
     from ..values import Function
@@ -112,9 +113,36 @@ def _validate_learn_inputs(
     caller: str,
     sim_backend: SimBackend,
     counts: tuple[tuple[str, Any], ...],
+    fit_kwargs: Mapping[str, Any],
 ) -> Any:
     """Shared train-time validation for the amortized learners; returns the
-    record the prior's components form. Raises before any simulation runs."""
+    record the prior's components form. Raises before any simulation runs.
+
+    Parameters
+    ----------
+    prior, simulator
+        The learner's prior and simulator.
+    caller : str
+        The name of the public learner, which the error messages name.
+    sim_backend : {"jax", "sequential"}
+        The learner's simulation backend.
+    counts : tuple of (str, Any)
+        Each count argument's name and value, which must be a positive integer.
+    fit_kwargs : Mapping[str, Any]
+        The keywords the learner passes to ``approximator.fit``, which name no
+        seed, since the training's seed is drawn from a workflow-owned random
+        event.
+
+    Raises
+    ------
+    ValueError
+        If *sim_backend* is unknown or a count is less than one.
+    TypeError
+        If a count is not an integer, *fit_kwargs* holds ``random_seed`` or
+        ``seed``, *simulator* is not a kernel that samples, or *prior* is not
+        a numeric distribution.
+    """
+    refuse_seed_keywords(caller, fit_kwargs)
     if sim_backend not in ("jax", "sequential"):
         raise ValueError(f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'.")
     for _name, _val in counts:
