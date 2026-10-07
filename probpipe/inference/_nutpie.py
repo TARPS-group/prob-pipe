@@ -76,6 +76,34 @@ def _nutpie_posterior(
 ) -> EmpiricalDistribution:
     """nutpie's posterior of *model* at *data*, whose provenance names *parent*.
 
+    Parameters
+    ----------
+    model : Any
+        The program: a ``StanModel``, a Stan program's posterior, or a
+        ``PyMCModel``.
+    data : Any
+        A ``StanModel``'s data, as a dict, or the observed values of a
+        ``PyMCModel``; a Stan program's posterior ignores it, since its data
+        are bound.
+    parent : Any
+        The term the posterior's provenance names as its parent.
+    num_results : int
+        Number of draws each chain keeps, which nutpie takes as ``draws``.
+    num_warmup : int
+        Number of tuning steps each chain runs, which nutpie takes as ``tune``.
+    num_chains : int
+        Number of chains.
+    random_seed : int
+        The seed nutpie's sampler takes.
+    **kwargs : Any
+        Further options of ``nutpie.sample``, such as ``progress_bar``.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The posterior on the levels ``chain`` and ``draw``, whose annotations
+        hold nutpie's trace.
+
     Raises
     ------
     ImportError

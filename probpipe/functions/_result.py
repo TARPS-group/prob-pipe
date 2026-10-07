@@ -102,6 +102,19 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     the leading axis JAX added. Empty outputs leave the declaration unchanged.
     Row-wise results share dimension bindings so incompatible rows are refused.
 
+    Parameters
+    ----------
+    output_spec : OutputSpec
+        The declaration to complete.
+    outputs : Any
+        The validated rows: a list of row-wise results, or one mapped output.
+
+    Returns
+    -------
+    OutputSpec
+        *output_spec* with its spec completed by the rows and its shared
+        dimensions bound.
+
     Raises
     ------
     ResultSchemaError
@@ -563,8 +576,20 @@ def _make_stack(
         takes the name to give it, since operands align by level name and only
         the caller knows what the axes range over. A sweep passes the names of
         the levels it swept, so the aggregate aligns with the input it came from.
+    axis_groups : tuple of tuple of int, optional
+        The sizes of the axes each level spans, which partition
+        ``batch_shape``; ``None`` gives every axis to one level.
     name : str, optional
         Name for the resulting aggregate.
+    field_name : str
+        The label a wrapped row takes, and the aggregate's label when *name* is
+        ``None``.
+    output_template : RecordSpec, optional
+        The declared record of a row, by which each row is wrapped and the
+        columns are laid out.
+    output_spec : OutputSpec, optional
+        The completed output declaration, whose spec is the element
+        declaration of an empty sweep's batch and of a batch of objects.
 
     Returns
     -------
@@ -1106,6 +1131,20 @@ def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
     *value*'s leading axes as its levels, and an undeclared result wraps by
     the kind-directed table.
 
+    Parameters
+    ----------
+    value : Any
+        The result a route returned for the point.
+    declared : OutputSpec or None
+        The point's result declaration, or ``None`` when the point declares none.
+    label : str
+        The call's result label, which names a term wrapped from a raw *value*.
+
+    Returns
+    -------
+    TrackedTerm
+        The result term, which under a batch declaration is a batch on its levels.
+
     Raises
     ------
     ResultSchemaError
@@ -1135,6 +1174,21 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
     batch form of their element kind, whose element declaration is read from
     the value and unified with the declared one, and an object array becomes
     the batch form the kind table records for the declared element.
+
+    Parameters
+    ----------
+    value : Any
+        The route's result, such as a batch or a ``Record`` of stacked columns.
+    spec : BatchSpec
+        The batch declaration, whose levels and element declaration a batch
+        built from *value* takes.
+    label : str
+        The label of a batch built from *value*, which the messages also name.
+
+    Returns
+    -------
+    Batch
+        A batch whose leading axes are *spec*'s batch shape.
 
     Raises
     ------

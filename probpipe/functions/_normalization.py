@@ -145,6 +145,15 @@ def plan_distribution_values(
 ) -> tuple[dict[str, Any], dict[str, ConversionInfo], tuple[str, ...]]:
     """Plan the conversions :func:`normalize_distribution_values` executes, executing none.
 
+    Parameters
+    ----------
+    values : dict
+        The bound arguments, keyed by parameter.
+    signature_info : FunctionSignatureInfo
+        The signature and the annotations of the function.
+    conversions : Mapping, optional
+        Each parameter's entry of the ``conversions`` control.
+
     Returns
     -------
     tuple
@@ -199,6 +208,23 @@ def _entry(
 ) -> tuple[str | None, bool, dict[str, Any]]:
     """The controls and the options of *parameter*'s ``conversions`` entry.
 
+    Parameters
+    ----------
+    conversions : Mapping or None
+        The ``conversions`` control, keyed by parameter name.
+    parameter : str
+        The parameter whose entry is read.
+
+    Returns
+    -------
+    method : str or None
+        The converter the entry names, or ``None``, which lets the registry
+        select one.
+    exact_only : bool
+        Whether the conversion admits only exact converters, ``False`` by default.
+    options : dict of str to Any
+        The entry's other settings, which the converter receives as its options.
+
     Raises
     ------
     TypeError
@@ -243,6 +269,24 @@ def _convert_hinted_distribution(
 
     The registry returns a law that already satisfies *target* as it is.
 
+    Parameters
+    ----------
+    value : Any
+        The distribution argument: a law or a backend distribution object.
+    target : type
+        The class or capability protocol the parameter names, as
+        :func:`_conversion_target` returns it.
+    entry : tuple of (str or None, bool, dict)
+        The parameter's converter, ``exact_only`` setting, and options, as
+        :func:`_entry` returns them.
+    label : str
+        The label of the argument's reference, which the message names.
+
+    Returns
+    -------
+    Distribution
+        The converted law, which replaces *value* among the arguments.
+
     Raises
     ------
     ResolutionError
@@ -269,6 +313,22 @@ def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
     object converts to the class named, or enters ProbPipe as its law where the
     named class admits every numeric law. A backend object at a parameter that
     names no distribution enters ProbPipe as its law.
+
+    Parameters
+    ----------
+    value : Any
+        The argument, which converts only when the converter registry
+        recognizes it as a distribution.
+    expected : Any
+        The annotation that governs lifting at the argument's parameter.
+    label : str
+        The label of the argument's reference, which the message names.
+
+    Returns
+    -------
+    type or None
+        ``None`` when the argument converts to nothing, and ``Distribution``
+        when a backend object enters ProbPipe as its law.
 
     Raises
     ------

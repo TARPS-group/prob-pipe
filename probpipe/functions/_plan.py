@@ -503,6 +503,18 @@ def build_array_zip_groups(
     what those axes are; a disagreement is a mistake about which multiplicity is
     which rather than a product to be formed silently.
 
+    Parameters
+    ----------
+    values : Mapping of str to Any
+        The call's arguments, by parameter name.
+    refs : sequence of FunctionInputRef
+        The references to the swept batches, in argument order.
+
+    Returns
+    -------
+    tuple of ArrayBroadcastGroup
+        One group per tuple of level names, in argument order.
+
     Raises
     ------
     ApplicabilityError

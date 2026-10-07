@@ -322,6 +322,19 @@ def mapped_storage(batch: Batch, n_rows: int) -> Any:
     sweep's cells. A batch of arrays is read as its store, and a batch of records
     as one column per field, keyed by the field's path.
 
+    Parameters
+    ----------
+    batch : Batch
+        The swept batch.
+    n_rows : int
+        The number of rows, which is the product of *batch*'s batch shape.
+
+    Returns
+    -------
+    jax.Array or dict of str to jax.Array
+        The store or the columns by path, as JAX arrays whose leading axis of
+        length *n_rows* precedes the element's axes.
+
     Raises
     ------
     TypeError

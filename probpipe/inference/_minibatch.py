@@ -69,6 +69,17 @@ __all__ = ["MinibatchedDistribution"]
 def _data_size(data: Any) -> int:
     """The number of observations in *data*, the length of its leading axis.
 
+    Parameters
+    ----------
+    data : array-like
+        The observed value of the likelihood's event.
+
+    Returns
+    -------
+    int
+        The dataset size ``N``, which bounds the minibatch size and scales a
+        minibatch's log-likelihood by ``N / b``.
+
     Raises
     ------
     ValueError
