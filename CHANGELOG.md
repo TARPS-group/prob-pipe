@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     learners pass to `approximator.fit`.
   - `pymc_advi` seeds the draws of an empirical result from the run's key, so
     `workflow_run(seed=...)` reproduces them.
+  - `pyabc_smcabc` with a sampler whose workers run in other processes gives
+    each worker its own JAX keys, folded from the worker's numpy generator, so
+    the workers no longer repeat one another's prior draws and simulations.
 
   Replace
   `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`

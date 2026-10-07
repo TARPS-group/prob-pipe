@@ -476,3 +476,32 @@ class TestPyABCSupport:
 # ---------------------------------------------------------------------------
 
 test_pyabc_smcabc_canonical = validate_method("pyabc_smcabc")
+
+
+class TestProcessKeys:
+    """A key stream differs in each process and is unchanged in the one that made it."""
+
+    def test_the_owning_process_draws_the_split_keys(self):
+        from probpipe.inference._pyabc import _ProcessKeys
+
+        keys = _ProcessKeys(jax.random.PRNGKey(3))
+        expected, first = jax.random.split(jax.random.PRNGKey(3))
+        _, second = jax.random.split(expected)
+        np.testing.assert_array_equal(keys.next(), first)
+        np.testing.assert_array_equal(keys.next(), second)
+
+    def test_another_process_draws_keys_of_its_own(self, monkeypatch):
+        from probpipe.inference import _pyabc
+
+        parent = _pyabc._ProcessKeys(jax.random.PRNGKey(3))
+        workers = []
+        for pid, seed in ((10_001, 1), (10_002, 2)):
+            worker = _pyabc._ProcessKeys(jax.random.PRNGKey(3))
+            monkeypatch.setattr(_pyabc.os, "getpid", lambda pid=pid: pid)
+            np.random.seed(seed)
+            workers.append(np.asarray(worker.next()))
+        monkeypatch.undo()
+        own = np.asarray(parent.next())
+
+        assert not np.array_equal(workers[0], workers[1])
+        assert not np.array_equal(workers[0], own)
