@@ -3,7 +3,7 @@
 ``marginal(d, field)`` returns the detached marginal of a field or field
 group, a standalone law with no reference back to ``d``, unlike the
 correlation-preserving view ``d[field]``. ``factor(d, component_name)`` returns
-the building-block factor of a joint that produces the named component.
+the detached building-block factor of a joint that produces the named component.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec, _detached_term
 from ..distributions._factored import SupportsFactors, _joined_label
 from ..distributions._views import _node_at
 from ..functions._call import ApplicabilityError
@@ -137,6 +137,9 @@ def _closed_factors(d: Any, components: tuple[Any, ...]) -> list[Any] | None:
 def marginal(d: Distribution, field: str):
     """The detached marginal of *d* at *field*, a standalone law with no reference back to *d*.
 
+    A lift draws the marginal independently of *d* and of the laws *d* is
+    built from (V.5).
+
     Parameters
     ----------
     d : Distribution
@@ -164,6 +167,18 @@ def _can_marginalize_path(call: BoundCall, result: OutputSpec | None) -> Any:
     return _capability_guard(call.operands["d"], "_marginal", call.operands["field"])
 
 
+def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distribution:
+    """The law's exact marginal at the path, detached as a law's raw form is.
+
+    A marginal can be a factor of a factored joint, and a factor can record a
+    batch it was an element of or a law it renames, which a lift reads to draw
+    it with that law. The detached marginal records neither, so a lift draws it
+    independently of the joint (V.5). The result boundary then records the
+    call's provenance on it.
+    """
+    return _detached_term(call.operands["d"]._marginal(call.operands["field"]))
+
+
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
     """The empirical marginal of projected draws is not implemented, so no call selects the route.
 
@@ -185,6 +200,7 @@ marginal.capability_route(
     protocol=SupportsMarginals,
     method="_marginal",
     check=_can_marginalize_path,
+    execute=_detached_marginal,
     exact=True,
 )
 marginal.fallback_route("monte_carlo", check=_can_sample, execute=_empirical_marginal, exact=False)
@@ -213,7 +229,7 @@ def _factor_of(d: Any, component_name: str) -> Any:
 
 
 def _factor_label(d: Any, component_name: str) -> str:
-    """The factor's own label, since the result is the factor itself; the joint's without one."""
+    """The factor's own label, which the detached factor keeps; the joint's without one."""
     part = _factor_of(d, component_name)
     return d.label if part is None else part.label
 
@@ -226,6 +242,9 @@ def _factor_label(d: Any, component_name: str) -> str:
 )
 def factor(d: Distribution, component_name: str):
     """The complete factor of the joint *d* that produces the component *component_name*.
+
+    The factor is detached from *d*, so a lift draws a factor that is a law
+    independently of *d* and of the laws *d* is built from (V.5, VI.8).
 
     Parameters
     ----------
@@ -254,9 +273,15 @@ def _can_find_factor(call: BoundCall, result: OutputSpec | None) -> Any:
     return _factor_of(call.operands["d"], call.operands["component_name"]) is not None
 
 
-def _factor_producing(call: BoundCall, result: OutputSpec | None) -> Any:
-    """The factor whose event declaration has the named component."""
-    return _factor_of(call.operands["d"], call.operands["component_name"])
+def _detached_factor(call: BoundCall, result: OutputSpec | None) -> Any:
+    """The factor whose event declaration has the named component, detached as a raw form is.
+
+    A factor can record a batch it was an element of or a law it renames, which
+    a lift reads to draw it with that law. The detached factor, a law or a
+    kernel, records neither. The result boundary then records the call's
+    provenance on it.
+    """
+    return _detached_term(_factor_of(call.operands["d"], call.operands["component_name"]))
 
 
 factor.capability_route(
@@ -265,6 +290,6 @@ factor.capability_route(
     protocol=SupportsFactors,
     method="factors",
     check=_can_find_factor,
-    execute=_factor_producing,
+    execute=_detached_factor,
     exact=True,
 )

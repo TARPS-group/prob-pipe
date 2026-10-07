@@ -11,10 +11,13 @@ import pytest
 from probpipe import (
     EmpiricalDistribution,
     Function,
+    Gamma,
     InputSpec,
+    KDEDistribution,
     Normal,
     NumericArray,
     NumericArraySpec,
+    NumericRecordBatch,
     Opaque,
     OpaqueSpec,
     OutputSpec,
@@ -38,6 +41,12 @@ def _schools() -> RecordBatch:
         level_name="school",
         label="schools",
     )
+
+
+def _two_fields() -> NumericRecordBatch:
+    """Two record atoms over the fields ``a`` and ``b``."""
+    columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
+    return NumericRecordBatch("rows", columns, "row")
 
 
 class TestValuesAndBatches:
@@ -126,6 +135,27 @@ class TestDistributions:
         assert repr(law).startswith(
             "EmpiricalDistribution(\n    'e',\n    atoms=NumericArrayBatch("
         )
+
+    def test_a_renamed_empirical_law_reads_by_its_renamed_atoms(self):
+        renamed = EmpiricalDistribution("e", _two_fields()).with_path_names({"a": "g/a"})
+        assert repr(renamed) == (
+            "EmpiricalDistribution('e', atoms=NumericRecordBatch('rows', levels={'row': 2}, "
+            "fields=('b', 'g/a')))"
+        )
+
+    def test_a_rename_that_holds_its_law_reads_as_that_law_renamed(self):
+        """A kernel density estimate does not rebuild itself, so its rename holds it."""
+        kde = KDEDistribution("kde", _two_fields())
+        renamed = kde.with_path_names({"a": "g/a"})
+        assert repr(renamed) == repr(kde) + ".with_path_names({'a': 'g/a'})"
+        assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
+
+    def test_a_reordered_marginal_reads_as_the_joint_under_its_declaration(self):
+        """No rename states a reorder, so the repr shows the reordered declaration."""
+        joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+        reordered = repr(joint._marginal(("b", "a")))
+        assert reordered.startswith("FactoredDistribution(\n    'a·b',\n    factors=(")
+        assert reordered.index("b=NumericArraySpec") < reordered.index("a=NumericArraySpec")
 
 
 class TestFunctionsAndOperators:
