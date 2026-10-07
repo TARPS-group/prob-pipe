@@ -485,6 +485,18 @@ def _identity(value: Any) -> Any:
 def _renamed_descent(renamed: Distribution) -> _Descent:
     """A renamed law's descent: the draws of the law it renames, moved to the renamed paths.
 
+    Parameters
+    ----------
+    renamed : Distribution
+        A law that ``with_path_names`` returned, which records the law it renames
+        and the renames.
+
+    Returns
+    -------
+    _Descent
+        The law that *renamed* renames as the ancestor, and the map that moves a
+        batch of its draws to the renamed paths.
+
     Raises
     ------
     TypeError
