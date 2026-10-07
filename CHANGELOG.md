@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A relabeled or dimension-bound copy of a law draws together with the law
+  it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
+  `with_dim_sizes` returns together with the law it is made from, as it draws a
+  law that `with_path_names` returns. Each method returns the same law under a
+  new label, new dimension names, or bound dimensions. So
+  `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
+  where it drew two independent values before, and
+  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  from a `Record` field draws with the law the record stores, so
+  `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
+  values, construct the law twice.
+- **A distribution is immutable, as every tracked term is.** Assigning to or
+  deleting an attribute of a constructed law raises `AttributeError`, naming
+  its class, and an operation that changes a law returns a new one. A
+  subclass's `__init__` assigns its attributes as before. Replace an
+  assignment after construction as follows:
+  - Pass the value to the constructor and build a new law with it.
+  - Write a diagnostic or a validation result into the `annotations` store,
+    which stays writable.
+  - In a test, patch a method on the law's class:
+    replace `patch.object(law, "_sample", ...)` with
+    `patch.object(type(law), "_sample", ...)`.
 - **`simulation_based_calibration` calibrates any posterior, takes its
   randomness from the enclosing workflow scope, and reads a fit's budgets from
   `method_options`.** Its signature is
@@ -2004,6 +2027,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Error messages and a repr call a term's label its label.** A `Record` built
+  without a label says it requires its label as the first positional argument,
+  and that every keyword argument, `name=` and `label=` included, is a field.
+  `conditional_distribution` given a callable without `__name__` asks for a
+  label, `with_level_names` on a view says a reused dropped level would make
+  the labels of later selections ambiguous, and the repr of the TFP batch
+  backend shows the cells' base label as `label=`.
 - **`condition_on`'s registry route is named `inference_methods`.** The route
   that forms the unnormalized conditional by Bayes' rule and normalizes it
   through the inference-method registry was named `bayes`, so a `check`
@@ -2902,6 +2932,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
+  constructors document `label` as the first parameter, but a keyword call
+  `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
+  call took `name`.
+- **A real-valued support rejects a complex value with a nonzero imaginary
+  part.** JAX orders complex values lexicographically, so `positive.check(1j)`
+  and `real.check(1j)` were true, and a function that declared a positive
+  output accepted `1j`. Every built-in `Constraint` now contains a complex
+  value only where its imaginary part is zero and its real part is in the
+  support. A structured support, such as `simplex`, `sphere`, or
+  `positive_definite`, requires every entry of the event to be real. The
+  result keeps its shape, and the check still traces under `jax.jit`.
 - **Renaming an empirical law's paths returns an empirical law.**
   `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
   posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its

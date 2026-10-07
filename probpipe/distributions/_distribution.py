@@ -35,7 +35,7 @@ from ._capabilities import _check_guards
 # ---------------------------------------------------------------------------
 
 
-def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
+def _complete_event_spec(event_spec: Any, label: str) -> OutputSpec:
     """Complete *event_spec* into the output declaration of one draw.
 
     Parameters
@@ -43,8 +43,8 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
     event_spec : OutputSpec or TermSpec
         The declaration a constructor supplies. A ``RecordSpec`` exposes its
         fields, even when it has one; any other term spec is a whole term whose
-        component defaults to *name*; an ``OutputSpec`` is kept as given.
-    name : str
+        component defaults to *label*; an ``OutputSpec`` is kept as given.
+    label : str
         The law's label, which is the default component of a whole-term event.
 
     Returns
@@ -58,19 +58,19 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
         If *event_spec* is neither an ``OutputSpec`` nor a ``TermSpec``.
     ValueError
         If the declaration has a type hole, since filling one is the
-        constructor's job, or *name* is not a valid component name.
+        constructor's job, or *label* is not a valid component name.
     """
     if isinstance(event_spec, OutputSpec):
         declaration = event_spec
     elif isinstance(event_spec, TermSpec):
-        declaration = OutputSpec.default(event_spec, component=name)
+        declaration = OutputSpec.default(event_spec, component=label)
     else:
         raise TypeError(
             f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
         )
     if declaration.spec is None:
         raise ValueError(
-            f"the event declaration of {name!r} has a type hole; a distribution stores "
+            f"the event declaration of {label!r} has a type hole; a distribution stores "
             f"only a complete declaration"
         )
     return declaration
@@ -84,10 +84,10 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
     return component
 
 
-def _is_default_declaration(declaration: OutputSpec, name: str) -> bool:
-    """Whether *declaration* is the one a bare spec completes to under the label *name* (III.7)."""
+def _is_default_declaration(declaration: OutputSpec, label: str) -> bool:
+    """Whether *declaration* is the one a bare spec completes to under *label* (III.7)."""
     try:
-        return declaration == OutputSpec.default(declaration.spec, component=name)
+        return declaration == OutputSpec.default(declaration.spec, component=label)
     except ValueError:
         # Only a label that is a valid component has a default whole-term declaration.
         return False
@@ -166,6 +166,28 @@ def _install_renamed_law(factory: Callable[[Any, OutputSpec, Mapping[str, str]],
     _renamed_law_factory = factory
 
 
+#: The function that records the law a copy is made from, installed by the views
+#: module at import.
+_copy_source_recorder: Callable[[Any, Any, Mapping[str, str]], Any] | None = None
+
+
+def _install_copy_source(recorder: Callable[[Any, Any, Mapping[str, str]], Any]) -> None:
+    """Install the function that records the law a copy is made from, with the renames.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _copy_source_recorder
+    _copy_source_recorder = recorder
+
+
+def _recorded_copy(copy: Any, law: Any) -> Any:
+    """*copy*, which ``with_label`` or a dimension transform returns, recording *law* as its source."""
+    if _copy_source_recorder is None:
+        raise RuntimeError("the copy source is not installed; import probpipe")
+    return _copy_source_recorder(copy, law, {})
+
+
 #: The field view that indexing returns, installed by the views module at import.
 _field_view_factory: Callable[[Any, Any], Any] | None = None
 
@@ -186,12 +208,13 @@ def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
 #: (V.5). Detaching the copy deletes the attribute.
 _ELEMENT_SOURCE = "_element_source"
 
-#: ``with_path_names`` sets this attribute of each law it returns that does not hold
-#: the law it renames as its parent. The value is the pair of that law and the
-#: renames from its declaration to the result's. A lift reads it to draw the result
-#: together with the law it renames (V.5). Detaching the result deletes the
-#: attribute.
-_RENAME_SOURCE = "_rename_source"
+#: ``with_path_names``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
+#: this attribute of each law they return that does not hold the law it is made from
+#: as its parent. The value is the pair of that law and the renames from its
+#: declaration to the result's, which are the identity for a relabeling and for a
+#: dimension transform. A lift reads it to draw the result together with that law
+#: (V.5). Detaching the result deletes the attribute.
+_COPY_SOURCE = "_copy_source"
 
 
 def _detached_term(term: Any) -> Any:
@@ -199,11 +222,11 @@ def _detached_term(term: Any) -> Any:
 
     The copy shares the representation, and it carries no provenance, no
     annotations, and no reference to a container or a parent, such as a batch
-    it was an element of or a law it renames.
+    it was an element of or a law it is a copy of.
     """
     clone = term._shallow_copy()
     object.__setattr__(clone, "_provenance", None)
-    for workflow_state in ("_annotations", _ELEMENT_SOURCE, _RENAME_SOURCE):
+    for workflow_state in ("_annotations", _ELEMENT_SOURCE, _COPY_SOURCE):
         clone.__dict__.pop(workflow_state, None)
     return clone
 
@@ -313,31 +336,6 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         record and *label* is not a valid component name.
     """
 
-    # -- Immutability: deferred for this layer ------------------------------
-
-    def __delattr__(self, name: str) -> None:
-        """Permit deletion, for the reason :meth:`__setattr__` gives.
-
-        Goes with that method: removing the exemption means removing both.
-        """
-        object.__delattr__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Permit assignment, which :class:`TrackedTerm` otherwise refuses.
-
-        Interim, and the only exemption from the rule that a tracked term is
-        immutable. It stands because the contract for a *fitted* mapping is not
-        settled: the documented way to build an emulator is to subclass a random
-        function and train it in place, and until fitting has a contract that
-        produces a new term instead, enforcing immutability here would break that
-        pattern without offering a replacement.
-
-        Deleting this method **and** :meth:`__delattr__` turns the guard on for
-        the whole distribution layer. Both, or the layer keeps half an
-        exemption: a trainer that clears what it fitted would still raise.
-        """
-        object.__setattr__(self, name, value)
-
     def __init__(
         self,
         label: str,
@@ -377,7 +375,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
         reference to a container or a parent, such as a batch it was an element
-        of or a law it renames. A field view returns its detached marginal
+        of or a law it is a copy of. A field view returns its detached marginal
         instead, and a backend adapter its wrapped backend distribution.
         """
         return _detached_term(self)
@@ -457,10 +455,39 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             )
         return view.__get__(self, type(self))
 
+    # -- copies ---------------------------------------------------------------
+
+    def with_label(self, label: str) -> Self:
+        """Return a copy of this law under a new label.
+
+        The copy shares the representation and records the relabeling in its
+        provenance, as :meth:`TrackedTerm.with_label` states. It is this law
+        under a new label, so a lift draws it together with this law (V.5).
+
+        Parameters
+        ----------
+        label : str
+            The new label, a non-empty string.
+
+        Returns
+        -------
+        Self
+            A copy of the same class under *label*; the original is unchanged.
+
+        Raises
+        ------
+        TypeError
+            If *label* is not a non-empty string.
+        """
+        return _recorded_copy(super().with_label(label), self)
+
     # -- dimension transforms -------------------------------------------------
 
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions of the declaration.
+
+        The result is this law with its dimensions bound, so a lift draws it
+        together with this law (V.5).
 
         Parameters
         ----------
@@ -487,12 +514,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
                 f"{type(self).__name__} {self.label!r} has no free dimensions "
                 f"{sorted(unbound)} to bind"
             )
-        return self._with_declaration(
+        copy = self._with_declaration(
             self.event_spec.with_dim_sizes(**sizes), "with_dim_sizes", sizes
         )
+        return _recorded_copy(copy, self)
 
     def with_dim_names(self, **names: str) -> Self:
         """Rename symbolic dimensions of the declaration, simultaneously.
+
+        The result is this law under the new dimension names, so a lift draws it
+        together with this law (V.5).
 
         Parameters
         ----------
@@ -505,9 +536,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             A copy of the same class and label whose declaration has the
             dimensions renamed; the original is unchanged.
         """
-        return self._with_declaration(
+        copy = self._with_declaration(
             self.event_spec.with_dim_names(**names), "with_dim_names", names
         )
+        return _recorded_copy(copy, self)
 
     def with_path_names(
         self, mapping: Mapping[str, str] | None = None, /, **kwargs: str

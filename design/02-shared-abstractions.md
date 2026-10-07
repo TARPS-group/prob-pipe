@@ -169,6 +169,8 @@ class Constraint(ABC):
     def check(self, value: ArrayLike) -> Array: ...   # entrywise membership
 ```
 
+A support that is a subset of the reals contains a complex entry only where its imaginary part is zero and its real part is in the support.
+
 ### Rationale
 
 One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level, whether the event is one array or a named tree of them. Both are abstract bases rather than protocols, which keeps the pair symmetric and follows the rule the library uses throughout: an interface a closed set of ProbPipe kinds implements is a base, while an interface any object may implement is a structural protocol. The base also holds the shared coordinate protocols once rather than in each kind (`D6 – Single source of truth`). A constraint is data: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
@@ -305,7 +307,7 @@ class Batch[E](TrackedTerm):
 
 **Level names.** Each level carries a name, listed in order by `level_names`. Names are unique within a batch and follow the rule for component names, so a level name is any non-empty string without `/` (II.2). `at_levels` takes a level's name as a keyword, and a name that is not a Python identifier is passed in a mapping, as `at_levels(**{"my model": 0})`. An operation names the level it mints after itself, and a constructor such as `stack` takes the name to give it. A name already in use raises, as does a rename onto one, so the caller renames first or supplies another. `with_level_names` renames levels while preserving the object's label, shapes, and elements; subsequent views use the renamed levels. Renaming a *view* is refused when the new name collides with a level in its root selection that it no longer carries; `with_label` gives it a new label and view root. Operations align batched operands by their level names (VI.11), which are independent of the field names within an element.
 
-**View identity.** A view of a batch, whether an element or a sub-batch, derives its name from the batch it was taken from and the positions it selects, naming the level each selection addresses. Take a batch named `posterior`, with a `chain` level of `(4,)` over a `draw` level of `(1000,)`:
+**View identity.** A view of a batch, whether an element or a sub-batch, derives its label from the batch it was taken from and the positions it selects, naming the level each selection addresses. Take a batch labeled `posterior`, with a `chain` level of `(4,)` over a `draw` level of `(1000,)`:
 
 ```python
 posterior.at_levels(chain=0).label          # "posterior[chain=0]"          — a sub-batch of draws
@@ -313,7 +315,7 @@ posterior.at_levels(chain=0, draw=7).label  # "posterior[chain=0, draw=7]"  — 
 posterior.at_levels(draw=slice(1, 3)).label # "posterior[draw=1:3]"         — both levels kept
 ```
 
-The derived name states what was selected. Levels selected whole are left out, so selecting all of a batch derives the batch's own name, and the levels that appear are listed in the batch's own order; hence two ways of indexing one selection read alike, and two different selections read differently. Whether a batch *stores* an element outright or *materializes* it on demand, as columnar storage builds a row, indexing returns a view (II.4); storage is invisible to access. A *sub-batch* is a view in the same way, being the batch's own selection.
+The derived label states what was selected. Levels selected whole are left out, so selecting all of a batch derives the batch's own label, and the levels that appear are listed in the batch's own order; hence two ways of indexing one selection read alike, and two different selections read differently. Whether a batch *stores* an element outright or *materializes* it on demand, as columnar storage builds a row, indexing returns a view (II.4); storage is invisible to access. A *sub-batch* is a view in the same way, being the batch's own selection.
 
 **Selecting by level.** `at_levels(**levels)` indexes a batch along its named levels as the by-name counterpart of positional `[]`. It is distinct from `select`, which splats a `Record`'s fields, and it returns an element only when the selection indexes down to one. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order: an integer drops its axis, and a slice or `None` keeps it. `None` stands for the whole axis here and only here, since a keyword cannot take a `:` literal and positional `[]` refuses `None`. A shorter tuple fills the leading axes and leaves the rest whole, so `draw=i` on a two-axis `draw` level means `draw=(i, None)`. A level whose axes are all dropped is removed, yielding the inner batch or element as positional indexing does; a level left unnamed is kept whole.
 

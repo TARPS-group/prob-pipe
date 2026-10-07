@@ -185,7 +185,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(self, "_columns", store)
         self._init_batch(
             BatchSpec(spec, groups, names),
-            name=label,
+            label=label,
             provenance=provenance,
         )
 
@@ -277,13 +277,13 @@ class RecordBatch(Batch[Record]):
 
     # -- the storage seam ---------------------------------------------------
 
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> Record:
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> Record:
         """The record at a fully-integer positional *index*, built from the columns.
 
         A row of columnar storage does not exist until it is built, so this is
         the *materializing* side of both rules
         :meth:`~probpipe.core._batch.Batch._element_at` states: the element takes
-        the derived *name*, and inherits this batch's provenance.
+        the derived *label*, and inherits this batch's provenance.
 
         The element is constructed against :attr:`element_spec` itself, so it
         stores the very object this batch stores rather than an equal copy: a
@@ -294,7 +294,7 @@ class RecordBatch(Batch[Record]):
         row = {path: column[index] for path, column in self._columns.items()}
         return self._inherit_provenance(
             Record(
-                name,
+                label,
                 row,
                 event_template=self.element_spec,
                 # The columns were checked against the element spec at
@@ -304,7 +304,7 @@ class RecordBatch(Batch[Record]):
             )
         )
 
-    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
+    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same columns, indexed on the batch axes as given.
 
         *index* addresses the leading (batch) axes only, so each column keeps its
@@ -320,7 +320,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
-        view._init_batch(spec, name=name)
+        view._init_batch(spec, label=label)
         return view
 
     def _at_fields(self, path: tuple[str, ...]) -> Any:
@@ -451,7 +451,7 @@ class RecordBatch(Batch[Record]):
             column_cls._over_store(
                 column,
                 spec=BatchSpec(spec, self.axis_groups, self.level_names),
-                name=key,
+                label=key,
             )
         )
 
@@ -473,7 +473,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
             BatchSpec(template, self.axis_groups, self.level_names),
-            name=path,
+            label=path,
         )
         return self._inherit_provenance(view)
 
@@ -493,7 +493,7 @@ class RecordBatch(Batch[Record]):
                 self.axis_groups,
                 self.level_names,
             ),
-            name=key,
+            label=key,
         )
         return self._inherit_provenance(view)
 
@@ -1404,7 +1404,7 @@ def _unflatten_with(cls: type[RecordBatch]):
     """
 
     def _unflatten(aux: tuple[BatchSpec, str], children: list) -> RecordBatch | Record:
-        spec, name = aux
+        spec, label = aux
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
         # otherwise truncate the columns silently, leaving a value whose own spec
@@ -1445,7 +1445,7 @@ def _unflatten_with(cls: type[RecordBatch]):
                 for path, column in columns.items()
             }
             return Record(
-                name,
+                label,
                 element,
                 event_template=element_spec,
                 _validate_leaves=False,
@@ -1468,7 +1468,7 @@ def _unflatten_with(cls: type[RecordBatch]):
             )
         batch = object.__new__(cls)
         object.__setattr__(batch, "_columns", columns)
-        batch._init_batch(spec, name=name)
+        batch._init_batch(spec, label=label)
         return batch
 
     return _unflatten
@@ -1619,11 +1619,11 @@ class _MappedBatchColumns:
     return and unwraps it in the same call, so this never reaches a caller.
     """
 
-    __slots__ = ("axis_groups", "columns", "element_spec", "level_names", "name")
+    __slots__ = ("axis_groups", "columns", "element_spec", "label", "level_names")
 
     def __init__(
         self,
-        name: str,
+        label: str,
         columns: dict[str, Any],
         /,
         *,
@@ -1635,7 +1635,7 @@ class _MappedBatchColumns:
         self.element_spec = element_spec
         self.level_names = level_names
         self.axis_groups = axis_groups
-        self.name = name
+        self.label = label
 
     @classmethod
     def of(cls, batch: RecordBatch) -> _MappedBatchColumns:
@@ -1671,16 +1671,16 @@ def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
         carried.element_spec,
         carried.level_names,
         carried.axis_groups,
-        carried.name,
+        carried.label,
     )
 
 
 def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
-    paths, element_spec, level_names, axis_groups, name = aux
+    paths, element_spec, level_names, axis_groups, label = aux
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
     return _MappedBatchColumns(
-        name,
+        label,
         dict(zip(paths, children, strict=True)),
         element_spec=element_spec,
         level_names=level_names,

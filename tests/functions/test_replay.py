@@ -921,7 +921,7 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
@@ -957,7 +957,7 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayUnsupportedCallableError, match="lambda"),
             replay_run(original.provenance),
         ):
@@ -984,7 +984,7 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayCompatibilityError, match="definition changed"),
             replay_run(original.provenance),
         ):
@@ -1052,7 +1052,7 @@ class TestReplayPreflight:
             n_broadcast_samples=8,
         )
         with (
-            patch.object(law, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(law), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayCompatibilityError, match="callable"),
             replay_run(original.provenance),
         ):
@@ -1070,7 +1070,7 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
             replay_run(original.provenance),
         ):
@@ -1090,7 +1090,7 @@ class TestReplayPreflight:
             loc=2.0, scale=1.0, label="y"
         )
         with (
-            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate_root), "_sample", side_effect=AssertionError("sampled")),
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
@@ -1181,7 +1181,7 @@ class TestReplayPreflight:
         )
         candidate = Normal(loc=0.0, scale=1.0, label="value")
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayUnsupportedCallableError, match="module-level"),
             replay_run(original.provenance),
         ):
@@ -1196,7 +1196,7 @@ class TestReplayPreflight:
         changed = _mutate_provenance(original.provenance, mutate)
         candidate = Normal(loc=0.0, scale=1.0, label="value")
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayCompatibilityError, match="sampling ABI"),
             replay_run(changed),
         ):
@@ -1257,7 +1257,7 @@ class TestReplayEventRegistry:
         changed = _mutate_provenance(original.provenance, mutate)
         candidate = Normal(loc=0.0, scale=1.0, label="value")
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayCompatibilityError, match=r"unexpected|provider ABI"),
             replay_run(changed),
         ):

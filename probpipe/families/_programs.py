@@ -844,15 +844,15 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 class _StanModelMeta(type(ConditionalDistribution)):
     """The metaclass of ``StanModel``: binding every data-block variable returns the posterior."""
 
-    def __call__(cls, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
+    def __call__(cls, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         unknown = sorted(set(bound) - set(program.data_entries))
         if unknown:
             raise KeyError(f"{unknown} are not data-block variables of {stan_file}")
         if set(program.data_entries) <= set(bound):
-            return _StanPosterior(name, program, bound)
-        return super().__call__(name, stan_file, data=data)
+            return _StanPosterior(label, program, bound)
+        return super().__call__(label, stan_file, data=data)
 
 
 class StanModel(
@@ -1182,11 +1182,11 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
 class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
-    def __call__(cls, name: str, model_fn: Callable[..., Any]) -> Any:
+    def __call__(cls, label: str, model_fn: Callable[..., Any]) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         if program.given:
-            return _PyMCKernel(name, program)
-        return super().__call__(name, program)
+            return _PyMCKernel(label, program)
+        return super().__call__(label, program)
 
 
 class PyMCModel(Distribution, metaclass=_PyMCModelMeta):

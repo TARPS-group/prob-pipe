@@ -117,7 +117,7 @@ class TestConstruction:
         assert labels.label == "s"
 
     def test_a_constructor_keeps_a_derived_name(self):
-        """The shape an operation deriving a batch name needs: named, but re-derivable."""
+        """The shape an operation deriving a batch label needs: labeled, but re-derivable."""
         batch = OpaqueBatch("given", ["a"], "site")
 
         assert batch.label == "given"
@@ -369,10 +369,10 @@ class TestElements:
         assert functions[1](5) == 10
 
     def test_a_tracked_element_is_a_view_under_the_derived_name(self):
-        """A stored tracked term comes back as a view named by its position.
+        """A stored tracked term comes back as a view labeled by its position.
 
         The view shares the stored term's representation and records it as its
-        source, and the stored term keeps its own name.
+        source, and the stored term keeps its own label.
         """
 
         class _Named(TrackedTerm):

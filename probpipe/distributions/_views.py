@@ -61,9 +61,10 @@ from ._conditional import (
     _install_renamed_kernel,
 )
 from ._distribution import (
-    _RENAME_SOURCE,
+    _COPY_SOURCE,
     Distribution,
     _detached_term,
+    _install_copy_source,
     _install_field_view,
     _install_renamed_law,
     _whole_term_component,
@@ -320,16 +321,16 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     return project
 
 
-def _detached(law: Distribution, name: str) -> Distribution:
-    """*law* detached from the workflow under *name*, as :meth:`Distribution.raw` detaches a law."""
+def _detached(law: Distribution, label: str) -> Distribution:
+    """*law* detached from the workflow under *label*, as :meth:`Distribution.raw` detaches a law."""
     clone = _detached_term(law)
-    object.__setattr__(clone, "_label", name)
+    object.__setattr__(clone, "_label", label)
     return clone
 
 
-def _labeled(law: Distribution, name: str) -> Distribution:
-    """*law* under the label *name*, which a marginal takes from the law it is a marginal of."""
-    return law if law.label == name else law.with_label(name)
+def _labeled(law: Distribution, label: str) -> Distribution:
+    """*law* under *label*, which a marginal takes from the law it is a marginal of."""
+    return law if law.label == label else law.with_label(label)
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
@@ -1326,6 +1327,15 @@ class _EventRenames:
         ]
         return None if order == list(range(len(order))) else order
 
+    @property
+    def keeps_paths(self) -> bool:
+        """Whether every leaf keeps its path and every field of a draw its position.
+
+        The renames of a relabeling or a dimension transform keep the paths, and
+        their ``draw`` returns its value.
+        """
+        return self._draw_moves is None and all(old == new for old, new in self.leaves.items())
+
     def draw(self, value: Any) -> Any:
         """*value*, a raw value of the original declaration or a batch of them, under the new paths.
 
@@ -1883,29 +1893,31 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
     return renamed
 
 
-def _rename_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None:
-    """The law *law* renames, with the renames from its declaration to *law*'s, or None.
+def _copy_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None:
+    """The law *law* is made from, with the renames from its declaration to *law*'s, or None.
 
-    A law that translates its parent's values at its boundary holds its parent,
-    and every other law that ``with_path_names`` returns records the law it
-    renames. Each one reads that law's draws in a lift (V.5).
+    A law that translates its parent's values at its boundary holds its parent.
+    Every other law that ``with_path_names``, ``with_label``, ``with_dim_names``,
+    or ``with_dim_sizes`` returns records the law it is made from, and the
+    renames of a relabeling or a dimension transform are the identity. Each one
+    reads that law's draws in a lift (V.5).
     """
     if isinstance(law, _RenamedDistribution):
         return law._parent, law._event
-    return getattr(law, _RENAME_SOURCE, None)
+    return getattr(law, _COPY_SOURCE, None)
 
 
-def _with_rename_source(
+def _with_copy_source(
     law: Distribution, parent: Distribution, renames: Mapping[str, str]
 ) -> Distribution:
-    """*law*, which ``with_path_names`` returns for *parent*, recording *parent* as its source.
+    """*law*, a copy or a rename of *parent*, recording *parent* as its source.
 
     The record is *parent* with the renames from its declaration to *law*'s,
-    which :func:`_rename_source` reads. A factored joint orders its components
+    which :func:`_copy_source` reads. A factored joint orders its components
     by its factors, so the renames end at *law*'s own declaration.
     """
     event = _EventRenames.of(parent.event_spec, law.event_spec, renames)
-    object.__setattr__(law, _RENAME_SOURCE, (parent, event))
+    object.__setattr__(law, _COPY_SOURCE, (parent, event))
     return law
 
 
@@ -1926,18 +1938,18 @@ def _renamed_law(
     """
     if event_spec.spec == parent.event_spec.spec:
         copy = parent._with_declaration(event_spec, "with_path_names", renames)
-        return _with_rename_source(copy, parent, renames)
+        return _with_copy_source(copy, parent, renames)
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
         if joint is None:
             joint = _regrouped(parent, renames, event_spec)
         if joint is not None:
-            return _with_rename_source(joint, parent, renames)
+            return _with_copy_source(joint, parent, renames)
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     member = parent._renamed_in_family(event)
     if member is None:
         return _renamed(parent, event, renames)
-    return _with_rename_source(member, parent, renames).with_provenance(
+    return _with_copy_source(member, parent, renames).with_provenance(
         Provenance.create("with_path_names", parents=[parent], metadata=dict(renames))
     )
 
@@ -2729,6 +2741,7 @@ def _renamed_kernel(
     return kernel
 
 
+_install_copy_source(_with_copy_source)
 _install_field_view(FieldView)
 _install_renamed_law(_renamed_law)
 _install_renamed_kernel(_renamed_kernel)
