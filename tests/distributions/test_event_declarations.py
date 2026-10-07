@@ -277,11 +277,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
-    _RenamedDistribution: lambda: EmpiricalDistribution(
-        "e",
+    # A kernel density estimate does not rebuild itself under new paths.
+    _RenamedDistribution: lambda: KDEDistribution(
+        "kde",
         NumericRecordBatch(
             "rows",
-            {"a": jnp.zeros(2), "b": jnp.ones(2)},
+            {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])},
             "row",
             element_spec=NumericRecordSpec(a=(), b=()),
         ),
