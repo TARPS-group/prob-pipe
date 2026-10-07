@@ -776,18 +776,9 @@ modules (`_*.py`) whose symbols are re-exported through the package
 ### 9.2 Immutability
 
 Design II.4 owns the immutability rule and its one writable store, the
-append-only `annotations`. Every tracked term other than a distribution
+append-only `annotations`. Every tracked term, a distribution included,
 enforces the rule: assignment and deletion raise `AttributeError`, naming the
-class.
-
-**Distributions do not enforce it yet.** `Distribution` overrides both
-`__setattr__` and `__delattr__` to permit them, because the documented way to
-build an emulator is to subclass a random function and train it in place, and
-fitting has no contract yet that returns a new fitted term instead. Write new
-code as though the guard were on — an operation returns a new distribution — and
-do not add assignment to a distribution outside its constructor. The exemption
-lifts by removing both overrides, once fitting has that contract; removing one
-would leave a trainer that clears what it fitted still raising.
+class, and an operation that changes a term returns a new one.
 
 **A memo** holds what a term computes lazily. It is a `_memo` dictionary that
 `transient_memo` in `probpipe/core/_immutable.py` creates on first use, and the

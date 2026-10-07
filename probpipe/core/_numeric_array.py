@@ -140,7 +140,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     @classmethod
     def _view(
-        cls, name: str, value: Any, spec: NumericArraySpec, provenance: Provenance | None
+        cls, label: str, value: Any, spec: NumericArraySpec, provenance: Provenance | None
     ) -> NumericArray:
         """The array *value* under *spec*, as a container's view of it, without validation.
 
@@ -152,7 +152,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         view = object.__new__(cls)
         object.__setattr__(view, "_value", _stored(value))
         object.__setattr__(view, "_spec", spec)
-        view._init_tracked(name, provenance=provenance)
+        view._init_tracked(label, provenance=provenance)
         return view
 
     # -- what it holds ------------------------------------------------------
@@ -371,8 +371,8 @@ def _operand_label(operand: Any) -> str:
     return format_value(operand)
 
 
-def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
-    """The operator's *value* as a ``NumericArray`` labeled *name*.
+def _tracked_result(value: Any, label: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
+    """The operator's *value* as a ``NumericArray`` labeled *label*.
 
     Its tracked *operands* are its parents. The result declares its value's
     shape, and its value's dtype when every tracked operand declares a dtype, so
@@ -389,7 +389,7 @@ def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[A
     )
     dtype = _numpy_dtype_of(value) if declared else None
     return NumericArray(
-        name,
+        label,
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),

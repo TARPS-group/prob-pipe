@@ -112,7 +112,7 @@ class ObservationKernel(
 ):
     """The kernel of an observation vector whose law a backend distribution gives at its givens.
 
-    Its event is the response, a whole term under the kernel's name, and its law
+    Its event is the response, a whole term under the kernel's label, and its law
     at a value of every given slot is ``build(**values)``, a backend distribution
     whose event is the response. It claims conditional sampling and the
     normalized conditional density, so a joint of it and normalized priors is

@@ -133,6 +133,64 @@ class TestConstraints:
         assert "interval" in repr(interval(0, 1))
 
 
+# Each real-valued constraint with one real value inside its support.
+REAL_SUPPORT_MEMBERS = [
+    pytest.param(real, 1.0, id="real"),
+    pytest.param(positive, 2.0, id="positive"),
+    pytest.param(non_negative, 0.0, id="non_negative"),
+    pytest.param(non_negative_integer, 3.0, id="non_negative_integer"),
+    pytest.param(boolean, 1.0, id="boolean"),
+    pytest.param(unit_interval, 0.5, id="unit_interval"),
+    pytest.param(interval(-2.0, 3.0), 1.0, id="interval"),
+    pytest.param(greater_than(5.0), 6.0, id="greater_than"),
+    pytest.param(integer_interval(0, 4), 2.0, id="integer_interval"),
+    pytest.param(simplex, [0.3, 0.7], id="simplex"),
+    pytest.param(sphere, [0.6, 0.8], id="sphere"),
+    pytest.param(positive_definite, [[2.0, 0.0], [0.0, 1.0]], id="positive_definite"),
+]
+
+
+class TestComplexValues:
+    """A real-valued support contains a complex value only where it is real and inside."""
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_a_complex_value_with_zero_imaginary_part_is_inside(self, constraint, member):
+        assert bool(jnp.all(constraint.check(jnp.asarray(member, dtype=jnp.complex64))))
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_a_nonzero_imaginary_part_is_outside(self, constraint, member):
+        value = jnp.asarray(member, dtype=jnp.complex64) + 0.5j
+        assert not bool(jnp.any(constraint.check(value)))
+
+    def test_an_ordered_support_rejects_a_purely_imaginary_value(self):
+        assert not bool(positive.check(jnp.asarray(1j)))
+        assert not bool(real.check(jnp.asarray(1j)))
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_the_result_has_the_shape_of_the_real_check(self, constraint, member):
+        real_values = jnp.stack([jnp.asarray(member)] * 3)
+        offset = jnp.zeros(3).at[1].set(0.5).reshape((3,) + (1,) * (real_values.ndim - 1))
+        result = constraint.check(real_values + 1j * offset)
+        assert result.shape == constraint.check(real_values).shape
+        assert result.tolist() == [True, False, True]
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_the_check_is_traceable_under_jit(self, constraint, member):
+        real_values = jnp.stack([jnp.asarray(member)] * 2)
+        offset = jnp.array([0.0, 0.5]).reshape((2,) + (1,) * (real_values.ndim - 1))
+        result = jax.jit(constraint.check)(real_values + 1j * offset)
+        assert result.tolist() == [True, False]
+
+    def test_a_declared_positive_output_rejects_an_imaginary_value(self):
+        from probpipe import Function
+
+        load = Function(
+            "load", lambda: jnp.asarray(1j), output_spec=NumericArraySpec((), support=positive)
+        )
+        with pytest.raises(ValueError, match="output/load does not conform to declared support"):
+            load()
+
+
 # ── Section 2: Support compatibility tests ────────────────────────────────────
 
 

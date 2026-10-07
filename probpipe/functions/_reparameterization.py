@@ -157,11 +157,11 @@ class _BackendBijector(Function, SupportsInverse, SupportsLogDetJacobian):
 
 
 def _rebuilt_backend_bijector(
-    bijector: tfb.Bijector, image: Constraint | None, name: str
+    bijector: tfb.Bijector, image: Constraint | None, label: str
 ) -> _BackendBijector:
-    """The backend-bijector Function of *bijector* under the label *name*, for unpickling."""
+    """The backend-bijector Function of *bijector* under *label*, for unpickling."""
     rebuilt = _BackendBijector(bijector, image)
-    return rebuilt if rebuilt.label == name else rebuilt.with_label(name)
+    return rebuilt if rebuilt.label == label else rebuilt.with_label(label)
 
 
 def _as_bijector(value: Any, image: Constraint | None = None) -> Function:

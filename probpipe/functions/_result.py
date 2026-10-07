@@ -270,7 +270,7 @@ def _packed_object_column(values: list) -> np.ndarray:
 
 
 def _stack_declared_columns(
-    name: str,
+    label: str,
     records: list[Record] | Record,
     /,
     *,
@@ -334,7 +334,7 @@ def _stack_declared_columns(
 
     cls = _batch_class_for(template)
     return cls(
-        name,
+        label,
         columns,
         level_names,
         element_spec=template,
@@ -343,7 +343,7 @@ def _stack_declared_columns(
 
 
 def _empty_declared_stack(
-    name: str,
+    label: str,
     batch_shape: tuple[int, ...],
     /,
     *,
@@ -368,7 +368,7 @@ def _empty_declared_stack(
             columns[path] = np.empty(batch_shape, dtype=object)
     cls = _batch_class_for(template)
     return cls(
-        name,
+        label,
         columns,
         level_names,
         element_spec=template,
@@ -403,7 +403,7 @@ DRAW_LEVEL = "draw"
 
 
 def _batch_over_swept_columns(
-    name: str,
+    label: str,
     columns: dict[str, Any],
     /,
     *,
@@ -424,7 +424,7 @@ def _batch_over_swept_columns(
     parallel.
     """
     return _batch_class_for(element_spec)(
-        name,
+        label,
         {path: column.reshape(batch_shape + column.shape[1:]) for path, column in columns.items()},
         (*sweep_level_names, *inner_level_names),
         element_spec=element_spec,
@@ -525,7 +525,7 @@ def _batch_from_declared_sequence(
         batch_shape=batch_shape,
         level_names=tuple(spec.level_names),
         axis_groups=axis_groups,
-        name=function_name,
+        label=function_name,
         field_name=function_name,
         output_template=element if is_record else None,
         # The aggregator reads only the declared element spec, so the component
@@ -541,7 +541,7 @@ def _make_stack(
     n: int | None = None,
     level_names: tuple[str, ...],
     axis_groups: tuple[tuple[int, ...], ...] | None = None,
-    name: str | None = None,
+    label: str | None = None,
     field_name: str,
     output_template: RecordSpec | None = None,
     output_spec: OutputSpec | None = None,
@@ -579,10 +579,10 @@ def _make_stack(
     axis_groups : tuple of tuple of int, optional
         The sizes of the axes each level spans, which partition
         ``batch_shape``; ``None`` gives every axis to one level.
-    name : str, optional
+    label : str, optional
         The resulting aggregate's label.
     field_name : str
-        The label a wrapped row takes, and the aggregate's label when *name* is
+        The label a wrapped row takes, and the aggregate's label when *label* is
         ``None``.
     output_template : RecordSpec, optional
         The declared record of a row, by which each row is wrapped and the
@@ -616,7 +616,7 @@ def _make_stack(
             n=n,
             level_names=level_names,
             axis_groups=axis_groups,
-            name=name,
+            label=label,
             field_name=field_name,
             output_template=output_template,
             output_spec=output_spec,
@@ -702,13 +702,13 @@ def _stack_rows(
     n: int | None = None,
     level_names: tuple[str, ...],
     axis_groups: tuple[tuple[int, ...], ...] | None = None,
-    name: str | None = None,
+    label: str | None = None,
     field_name: str,
     output_template: RecordSpec | None = None,
     output_spec: OutputSpec | None = None,
 ) -> Any:
     """The aggregate :func:`_make_stack` returns, before it records the stored dtypes."""
-    result_name = field_name if name is None else name
+    result_name = field_name if label is None else label
 
     # Resolve batch_shape vs. n. Exactly one must be provided.
     if batch_shape is None:
@@ -1239,7 +1239,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
             axis_groups=tuple(spec.axis_groups),
             level_names=levels,
             field_name=label,
-            name=label,
+            label=label,
         )
     if _is_numeric_leaf(value):
         shape = tuple(_event_shape_of(value))

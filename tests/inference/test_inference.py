@@ -962,7 +962,7 @@ class TestPosteriorFieldView:
         assert tuple(posterior.event_spec.components) == ("K", "phi", "r")
 
     def test_a_posterior_without_a_target_is_a_whole_term(self):
-        """Without a target, each draw is one array under the result's name."""
+        """Without a target, each draw is one array under the result's label."""
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = posterior_of([chain], label="x")
         assert tuple(dist.event_spec.components) == ("x",)

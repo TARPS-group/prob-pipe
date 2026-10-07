@@ -505,13 +505,13 @@ def _value_treedef(template: NumericRecordSpec) -> jax.tree_util.PyTreeDef:
 
 
 def _reconstruct_from_vector(
-    name: str,
+    label: str,
     template: NumericRecordSpec,
     vec: Array,
     *,
     level_names: str | Iterable[str] = "sample",
 ) -> NumericRecord | Any:
-    """Reconstruct a numeric value from its flat vector, under *name*.
+    """Reconstruct a numeric value from its flat vector, under *label*.
 
     Splits *vec* along its trailing axis into *template*'s leaves (canonical
     leaf order) and reshapes each to its event shape. A leaf whose spec declares
@@ -522,7 +522,7 @@ def _reconstruct_from_vector(
 
     Parameters
     ----------
-    name : str
+    label : str
         The label of the rebuilt value.
     template : NumericRecordSpec
         The schema of one value, whose leaves give the shape and the dtype of each
@@ -591,14 +591,14 @@ def _reconstruct_from_vector(
         # ``level_names`` parameter a lie for every caller who named two.
         names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
         return NumericRecordBatch(
-            name,
+            label,
             dict(zip(template.keys(), leaves, strict=True)),
             names,
             element_spec=template,
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
-    object.__setattr__(value, "_label", name)
+    object.__setattr__(value, "_label", label)
     return value
 
 
