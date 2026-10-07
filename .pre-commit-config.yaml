@@ -38,11 +38,14 @@ repos:
   # and the return value (STYLE_GUIDE.md §3.3). It runs as a flake8 plugin, and
   # `--select=DOC` reports its codes alone. The plugin lets the hook ignore
   # DOC105, which compares a docstring's types with the annotations, because a
-  # docstring states its types in words, such as "array-like". DOC202 flags a
-  # Returns section in a function without a return statement, and an
-  # operation's declaration in probpipe/operations/ has no body, since its
-  # routes compute what its Returns section describes. The CI lint job runs
-  # this hook over the whole tree, so its options here are the only copy.
+  # docstring states its types in words, such as "array-like". In
+  # probpipe/operations/ it also ignores two codes that an operation's
+  # declaration breaks by design: DOC107 flags an unannotated parameter, which
+  # an operation leaves unannotated so that a law or a batch at it lifts (design
+  # V.5), and DOC202 flags a Returns section in a function without a return
+  # statement, while a declaration has no body, since its routes compute what
+  # its Returns section describes. The CI lint job runs this hook over the
+  # whole tree, so its options here are the only copy.
   - repo: https://github.com/pycqa/flake8
     rev: 7.4.1
     hooks:
@@ -54,7 +57,7 @@ repos:
         args:
           - --select=DOC
           - --extend-ignore=DOC105
-          - --per-file-ignores=probpipe/operations/*.py:DOC202
+          - --per-file-ignores=probpipe/operations/*.py:DOC107,DOC202
           - --style=numpy
           - --skip-checking-raises=True
           - --check-return-types=False
