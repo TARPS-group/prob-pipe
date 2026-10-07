@@ -305,11 +305,11 @@ class TestLevels:
         "level_names",
         [
             pytest.param(("row", "row"), id="duplicate"),
-            pytest.param(("the row", "col"), id="not-an-identifier"),
+            pytest.param(("a/row", "col"), id="contains-a-slash"),
             pytest.param(("row",), id="too-few"),
         ],
     )
-    def test_level_names_are_unique_identifiers_one_per_level(self, level_names):
+    def test_level_names_are_unique_names_without_a_slash_one_per_level(self, level_names):
         with pytest.raises(ValueError):
             DistributionBatch("grid", _objects(_laws(6), shape=(2, 3)), level_names)
 

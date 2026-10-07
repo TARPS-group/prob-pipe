@@ -11,8 +11,8 @@ moments bounded by four standard errors.
 - ``PyMCModel``: the prior predictive, covariates as given slots, the
   normalized density against PyMC's ``logp``, and the unnormalized density
   and the posterior of a model with a potential;
-- ``UnnormalizedDistribution``: sampling, conversion, and conditioning through
-  a method of the inference-method registry;
+- a law of an unnormalized density from ``distribution``: sampling, conversion,
+  and conditioning through a method of the inference-method registry;
 - factored joints: ancestral sampling moments, summed log-densities, and the
   moments and marginals the factor graph admits;
 - ``StanModel`` and the learned kernels, where the local toolchain allows.
@@ -36,10 +36,15 @@ from probpipe import (
     NumericArraySpec,
     OutputSpec,
     RecordSpec,
+    distribution,
     workflow_run,
 )
 from probpipe.core._dispatch import ResolutionError
-from probpipe.distributions import ConditionalDistribution, FactoredConditionalDistribution
+from probpipe.distributions import (
+    ConditionalDistribution,
+    Distribution,
+    FactoredConditionalDistribution,
+)
 from probpipe.distributions._capabilities import (
     SupportsLogProb,
     SupportsMean,
@@ -51,7 +56,6 @@ from probpipe.families import (
     GaussianFamily,
     PoissonFamily,
     PyMCModel,
-    UnnormalizedDistribution,
     glm_likelihood,
 )
 from tests._ops import (
@@ -363,7 +367,7 @@ class TestPyMCModel:
 
 
 # ---------------------------------------------------------------------------
-# UnnormalizedDistribution
+# A law of an unnormalized density
 # ---------------------------------------------------------------------------
 
 #: The precision and the location of the Gaussian whose density the law knows up to a constant.
@@ -376,9 +380,11 @@ def _gaussian_density(theta):
     return -0.5 * centred @ jnp.asarray(_PRECISION, jnp.float32) @ centred + 3.0
 
 
-def _unnormalized() -> UnnormalizedDistribution:
-    return UnnormalizedDistribution(
-        "theta", _gaussian_density, OutputSpec(theta=NumericArraySpec((2,), jnp.float32))
+def _unnormalized() -> Distribution:
+    return distribution(
+        "theta",
+        unnormalized_log_prob=_gaussian_density,
+        event_spec=OutputSpec(theta=NumericArraySpec((2,), jnp.float32)),
     )
 
 
@@ -387,7 +393,7 @@ def _gaussian_reference():
     return exact_reference(_LOCATION, np.diag(cov), path="theta")
 
 
-class TestUnnormalizedDistribution:
+class TestUnnormalizedDensity:
     def test_sampling_selects_a_method_that_normalizes_the_law(self):
         report = sample.check(_unnormalized(), sample_shape=(10,))
         assert (report.feasible, report.route, report.method) == (
@@ -439,7 +445,11 @@ class TestUnnormalizedDistribution:
             mu, y = jnp.asarray(value["mu"]), jnp.asarray(value["y"])
             return -0.5 * mu**2 - 0.5 * (y - mu) ** 2 + 7.0
 
-        joint = UnnormalizedDistribution("joint", density, OutputSpec(RecordSpec(mu=REAL, y=REAL)))
+        joint = distribution(
+            "joint",
+            unnormalized_log_prob=density,
+            event_spec=OutputSpec(RecordSpec(mu=REAL, y=REAL)),
+        )
         posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
             joint, {"y": 1.4}
         )

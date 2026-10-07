@@ -45,12 +45,23 @@ def _check_slot(name: str, spec: TermSpec) -> None:
     _check_term(name, spec, allow_hole=False)
 
 
-def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+def _check_component_name(name: str, *, context: str = "component names") -> None:
+    """Check that *name* follows the rule for component names: a non-empty string without ``/``.
+
+    *context* is the subject of the error message, such as ``"level names"``.
+
+    Raises
+    ------
+    ValueError
+        If *name* is not a string, is empty, or contains ``/``.
+    """
     # A component follows the rule for a record's field names.
     if not isinstance(name, str) or not name or _PATH_SEP in name:
-        raise ValueError(
-            f"component names must be non-empty and contain no {_PATH_SEP!r}, got {name!r}"
-        )
+        raise ValueError(f"{context} must be non-empty and contain no {_PATH_SEP!r}, got {name!r}")
+
+
+def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+    _check_component_name(name)
     _check_term(name, spec, allow_hole=allow_hole)
 
 

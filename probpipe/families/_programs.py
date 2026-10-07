@@ -1,4 +1,4 @@
-"""The program-defined families: laws that a backend program or a user's density defines (VII.9).
+"""The program-defined families: laws that a backend program defines (VII.9).
 
 A program-defined model exposes the law its program defines, in the kind that
 law has, and its variable names determine its output components.
@@ -9,9 +9,7 @@ Provides:
     construction that binds every data variable returns the posterior itself;
   - ``PyMCModel`` – the joint law a PyMC model-building function defines over
     its free variables, the parameters and the observed variables alike, and a
-    kernel over the arguments no observed variable receives;
-  - ``UnnormalizedDistribution`` – the law of a user-supplied unnormalized
-    log-density over a declared event.
+    kernel over the arguments no observed variable receives.
 
 Each claims its density as its program supplies it, and ``condition_on``
 normalizes a law that claims only an unnormalized one through the
@@ -65,7 +63,7 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 
-__all__ = ["PyMCModel", "StanModel", "UnnormalizedDistribution"]
+__all__ = ["PyMCModel", "StanModel"]
 
 
 #: Make arguments for a Stan model library: TBB without its malloc proxy.
@@ -85,54 +83,6 @@ def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any)
     if unknown:
         raise KeyError(f"{unknown} are not given slots of {owner!r}")
     return values
-
-
-# ---------------------------------------------------------------------------
-# UnnormalizedDistribution
-# ---------------------------------------------------------------------------
-
-
-class UnnormalizedDistribution(Distribution, SupportsUnnormalizedLogProb):
-    """The law of a user-supplied unnormalized log-density over a declared event.
-
-    It claims ``SupportsUnnormalizedLogProb`` alone, so it is unnormalized, and
-    ``sample``, ``convert``, and ``condition_on`` normalize it through the
-    inference-method registry.
-
-    Parameters
-    ----------
-    label : str
-        The law's label.
-    log_density : callable
-        ``log_density(value)``, the log-density of a draw of the event up to an
-        additive constant.
-    event_spec : OutputSpec
-        The declaration of one draw.
-
-    Raises
-    ------
-    TypeError
-        If *log_density* is not callable, or as ``Distribution`` raises.
-    """
-
-    def __init__(
-        self, label: str, log_density: Callable[[Any], Array], event_spec: OutputSpec
-    ) -> None:
-        if not callable(log_density):
-            raise TypeError(
-                f"UnnormalizedDistribution needs a callable log_density; got "
-                f"{type(log_density).__name__}"
-            )
-        super().__init__(label, event_spec)
-        self._log_density = log_density
-
-    def _unnormalized_log_prob(self, value: Any) -> Array:
-        """The user's log-density at *value*, known up to an additive constant."""
-        return jnp.asarray(self._log_density(value))
-
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The log-density, by its name."""
-        return [("log_density", format_value(self._log_density))]
 
 
 # ---------------------------------------------------------------------------
