@@ -383,6 +383,30 @@ class TestPyMCModel:
         )
         assert float(model._log_prob(value)) == pytest.approx(expected, rel=1e-6)
 
+    def test_draws_of_cauchy_priors_have_their_location_and_scale(self):
+        """Prior draws of a half-Cauchy and a Cauchy variable have their quartiles."""
+        import pymc as pm
+
+        def build():
+            with pm.Model() as model:
+                pm.HalfCauchy("tau", beta=5.0)
+                pm.Cauchy("mu", alpha=2.0, beta=3.0)
+            return model
+
+        with probpipe.workflow_run(seed=0):
+            draws = probpipe.sample(PyMCModel("prior", build), sample_shape=(4000,))
+        quartiles = np.array([0.25, 0.5, 0.75])
+        np.testing.assert_allclose(
+            np.quantile(draws["tau"].raw(), quartiles),
+            5.0 * np.tan(np.pi * quartiles / 2),
+            rtol=0.15,
+        )
+        np.testing.assert_allclose(
+            np.quantile(draws["mu"].raw(), quartiles),
+            2.0 + 3.0 * np.tan(np.pi * (quartiles - 0.5)),
+            atol=0.6,
+        )
+
     def test_the_event_carries_the_variables_dtypes_and_supports(self):
         spec = PyMCModel("m", _constrained_model).event_spec.spec
         assert spec["a"] == NumericArraySpec((), _FLOAT, real)

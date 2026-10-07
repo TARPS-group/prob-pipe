@@ -2883,6 +2883,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A PyMC model draws its Cauchy and half-Cauchy variables with their location
+  and scale.** The lock pinned PyTensor 3.0.4, whose sampler of a Cauchy
+  variable returned location `loc / scale` and scale `1 / scale`, so a prior
+  `HalfCauchy(5)` drew as `HalfCauchy(0.2)` in `sample`, in prior and
+  prior-predictive draws, and in the Monte Carlo moments; densities, and hence
+  NUTS posteriors, were unaffected. The `pymc` extra now requires `pymc>=6.2`
+  and `pytensor>=3.2.4`, the first PyTensor release with the upstream fix, and
+  the lock moves to PyMC 6.3.2 and PyTensor 3.3.3.
 - **`StanModel` constructs on a machine where BridgeStan has never compiled a
   model.** Construction reads the program's declarations with BridgeStan's
   stanc compiler, which BridgeStan fetches only when it first compiles a model,
