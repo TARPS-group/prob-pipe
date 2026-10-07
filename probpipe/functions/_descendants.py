@@ -1,15 +1,22 @@
 """The root-ancestor capture of lifted arguments (V.5).
 
 A lifted argument is a law, and the law whose draws it reads, transitively, is
-its **root**. An element of a batch of laws reads its stored law's draw, a field
-view reads its parent's draw and projects its node, and a law registered as a
-descendant type reads its ancestor's draw and maps it, as a bijector-transformed
-law pushes its base's draw through its bijector and a renamed law moves its
-parent's draw to the new paths. The lift groups the arguments by root, so each
-group contributes one root draw per repetition and every member evaluates on
-it. Hence sibling views co-sample, two accesses of one batch element co-sample,
-a law co-samples with its own transform and its own rename, and the empirical
-enumeration enumerates a renamed empirical law's atoms as the law's.
+its **root**. Each of these laws reads another law's draw:
+
+- an element of a batch of laws: its stored law's draw;
+- a field view: its parent's draw, projected onto its node;
+- every law that ``with_path_names`` returns: the draw of the law it renames,
+  moved to the new paths;
+- a law of a registered descendant type: its ancestor's draw, mapped as a
+  bijector-transformed law pushes its base's draw through its bijector.
+
+A law that renames at its boundary holds the law it renames, and every other
+result of ``with_path_names`` records it. The lift groups the arguments by root,
+so each group contributes one root draw per repetition and every member
+evaluates on it. Hence sibling views co-sample, two accesses of one batch
+element co-sample, a law co-samples with its own transform and its own rename,
+and the empirical enumeration enumerates a renamed empirical law's atoms as the
+law's.
 
 The capture of an argument records its root, the root's sampler, the event
 path a projection reads, a canonical descriptor of the descendant graph between
@@ -32,7 +39,7 @@ import jax.numpy as jnp
 from ..distributions._batches import _element_source
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
-from ..distributions._views import FieldView, _projector, _RenamedDistribution
+from ..distributions._views import FieldView, _projector, _rename_source, _RenamedDistribution
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _DESCRIPTOR_DOMAIN = b"ProbPipe-descendant-descriptor-v1\0"
@@ -212,15 +219,21 @@ def _capture_stochastic_consumer(
     *,
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
-    """The capture of *value*: a batch element's, a field view's, or a registered descendant's.
+    """The capture of *value* as a batch element, a field view, a renamed law, or a descendant.
 
-    A law that is none of these is its own root.
+    A descendant is a law of a registered descendant type, and a law that is
+    none of these is its own root.
     """
     source = _element_source(value)
     if source is not None:
         return _capture_element(value, source, session=session)
     if isinstance(value, FieldView):
         return _capture_field_view(value, session=session)
+    if _rename_source(value) is not None:
+        # A result of ``with_path_names`` captures as the law that renames at its
+        # boundary, so one rename gives one descriptor and one evaluator whatever
+        # class the result has.
+        return _capture_descendant(value, _RenamedDistribution, _renamed_descent, session=session)
     rule = _descent_rule(value)
     if rule is not None:
         return _capture_descendant(value, *rule, session=session)
@@ -469,14 +482,32 @@ def _identity(value: Any) -> Any:
     return value
 
 
-def _renamed_descent(renamed: _RenamedDistribution) -> _Descent:
-    """A renamed law's descent: its parent's draws, moved to the renamed paths."""
-    event = renamed._event
+def _renamed_descent(renamed: Distribution) -> _Descent:
+    """A renamed law's descent: the draws of the law it renames, moved to the renamed paths.
+
+    Parameters
+    ----------
+    renamed : Distribution
+        A law that ``with_path_names`` returned, which records the law it renames
+        and the renames.
+
+    Returns
+    -------
+    _Descent
+        The law that *renamed* renames as the ancestor, and the map that moves a
+        batch of its draws to the renamed paths.
+
+    Raises
+    ------
+    TypeError
+        If *renamed* renames no law.
+    """
+    source = _rename_source(renamed)
+    if source is None:  # pragma: no cover - the capture reads the source before it descends
+        raise TypeError(f"{type(renamed).__name__} renames no law")
+    parent, event = source
     return _Descent(
-        ancestor=renamed._parent,
+        ancestor=parent,
         forward=event.draw,
         descriptor=("renamed", tuple(sorted(event.leaves.items()))),
     )
-
-
-_register_descendant_type(_RenamedDistribution, _renamed_descent)
