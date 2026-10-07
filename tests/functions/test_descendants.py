@@ -35,6 +35,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     NumericRecordSpec,
+    Record,
     RecordSpec,
     SupportsSampling,
     iterate,
@@ -531,6 +532,17 @@ class TestCopies:
         assert renamed_first.event_spec == bound_first.event_spec
         assert _descendants.capture_stochastic_consumer(renamed_first).root is law
         assert _descendants.capture_stochastic_consumer(bound_first).root is law
+
+    @pytest.mark.parametrize("stored_label", ["x", "mu"])
+    def test_a_law_read_from_a_record_field_co_samples_with_the_stored_law(self, stored_label):
+        stored = Normal(stored_label, 0.0, 1.0)
+        record = Record("laws", x=stored)
+
+        assert _descendants.capture_stochastic_consumer(record["x"]).root is stored
+        with workflow_run(seed=42):
+            result = _difference()(record["x"], record["x"])
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(16))
 
     @pytest.mark.parametrize(
         "detach",

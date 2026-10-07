@@ -649,7 +649,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         array field gives a ``NumericArray``, an opaque field an ``Opaque``, and
         a callable field a ``Function``. A stored term other than an array or an
         opaque value, such as a law or a function, gives a copy of itself under
-        the key. The view's provenance
+        the key, and a law's copy draws with the stored law in a lift (V.5). The
+        view's provenance
         records this record and the stored term. A term presents as its raw
         representation inside a JAX trace (II.4), so a traced field is its
         stored leaf. A leaf that is no value of the field's declared kind, as a
@@ -683,7 +684,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         source = leaf if isinstance(leaf, TrackedTerm) else None
         provenance = Provenance.of_view(self, source, metadata={"path": key})
         if isinstance(leaf, TrackedTerm) and not isinstance(leaf, NumericArray | Opaque):
-            view = leaf.with_label(key) if leaf.label != key else leaf._shallow_copy()
+            view = leaf.with_label(key)
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         value = _leaf_value(leaf)

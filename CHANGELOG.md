@@ -17,8 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
   where it drew two independent values before, and
   `d.with_path_names(x="y").with_dim_sizes(n=3)` and
-  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. To draw two
-  independent values, construct the law twice.
+  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  from a `Record` field draws with the law the record stores, so
+  `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
+  values, construct the law twice.
 - **`simulation_based_calibration` calibrates any posterior, takes its
   randomness from the enclosing workflow scope, and reads a fit's budgets from
   `method_options`.** Its signature is
