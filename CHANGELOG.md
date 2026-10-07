@@ -2883,6 +2883,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StanModel` constructs on a machine where BridgeStan has never compiled a
+  model.** Construction reads the program's declarations with BridgeStan's
+  stanc compiler, which BridgeStan fetches only when it first compiles a model,
+  so the first `StanModel` on a new machine raised `ImportError`. Construction
+  now downloads BridgeStan's source tree and fetches stanc with BridgeStan's own
+  Makefile target, as BridgeStan's first compile does, and a failed fetch names
+  the command that fetches the compiler.
 - **A sweep or a lift records the dtype its batch stores.** The rows of a sweep
   and the evaluations of a lift are stacked into one JAX array, which holds
   their canonical dtype, so while JAX's 64-bit mode is off a 64-bit NumPy row
