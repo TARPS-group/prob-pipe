@@ -60,10 +60,13 @@ def condition_on_nutpie(
     data : Mapping or None
         The data that bind a Stan program, or the observed values of a PyMC
         model.
-    num_results, num_warmup, num_chains : int
-        The draws per chain, the tuning steps per chain, and the number of
-        chains.
-    **kwargs
+    num_results : int
+        The number of draws per chain.
+    num_warmup : int
+        The number of tuning steps per chain.
+    num_chains : int
+        The number of chains.
+    **kwargs : Any
         Further keyword arguments of ``nutpie.sample``, such as
         ``progress_bar``; its ``seed`` is the run's.
 
@@ -106,6 +109,34 @@ def _nutpie_posterior(
     **kwargs: Any,
 ) -> EmpiricalDistribution:
     """nutpie's posterior of *model* at *data*, whose provenance names *parent*.
+
+    Parameters
+    ----------
+    model : Any
+        The program: a ``StanModel``, a Stan program's posterior, or a
+        ``PyMCModel``.
+    data : Any
+        A ``StanModel``'s data, as a dict, or the observed values of a
+        ``PyMCModel``; a Stan program's posterior ignores it, since its data
+        are bound.
+    parent : Any
+        The term the posterior's provenance names as its parent.
+    num_results : int
+        Number of draws each chain keeps, which nutpie takes as ``draws``.
+    num_warmup : int
+        Number of tuning steps each chain runs, which nutpie takes as ``tune``.
+    num_chains : int
+        Number of chains.
+    random_seed : int
+        The seed nutpie's sampler takes.
+    **kwargs : Any
+        Further options of ``nutpie.sample``, such as ``progress_bar``.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The posterior on the levels ``chain`` and ``draw``, whose annotations
+        hold nutpie's trace.
 
     Raises
     ------

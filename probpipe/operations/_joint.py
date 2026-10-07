@@ -44,9 +44,11 @@ def joint(A: Any, B: Any, **align: str):
 
     Parameters
     ----------
-    A, B : Distribution or ConditionalDistribution
-        The factors, composed conditional-first, so *A* may condition on what
-        *B* produces.
+    A : Distribution or ConditionalDistribution
+        The first factor, which may condition on what *B* produces, since the
+        factors are composed conditional-first.
+    B : Distribution or ConditionalDistribution
+        The second factor, whose paths *align* renames.
     **align : str
         Renames of *B*'s paths, ``old=new``, as ``with_path_names`` takes them.
 

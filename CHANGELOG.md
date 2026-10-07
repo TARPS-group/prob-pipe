@@ -1173,7 +1173,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Checks of the contributor conventions.** The `no-issue-numbers` pre-commit
   hook rejects an issue or PR number in `probpipe/`, and ruff's
   `required-imports` setting requires the future import in each module of
-  `probpipe/`. `tests/docs/test_changelog.py` checks that each release has one
+  `probpipe/`. The `pydoclint` pre-commit hook checks that a docstring with a
+  section documents each parameter and the returned value, and the CI lint job
+  runs it over `probpipe/`, whose docstrings pass it.
+  `tests/docs/test_changelog.py` checks that each release has one
   heading per change type, so the Unreleased section merges its repeated
   headings, and `tests/test_version.py` checks that the two `pyproject.toml`
   files share one version. CI runs the conformance tests when `design/`

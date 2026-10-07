@@ -61,13 +61,16 @@ class PyABCDistribution(pyabc.Distribution):
     dict-like, picklable ``pyabc.Distribution`` keyed by ``pN`` names, which
     give pyabc the parameter names and the coordinates its perturbation kernel
     moves.
+
+    Parameters
+    ----------
+    prior : Distribution
+        The ProbPipe prior, which samples and has a joint density.
+    key : PRNGKey
+        The JAX key threaded through :meth:`rvs`, split per draw.
     """
 
     def __init__(self, prior: Distribution, key: PRNGKey):
-        """Wrap *prior* as a joint pyabc prior over its unconstrained coordinates.
-
-        ``key`` is the JAX key threaded through :meth:`rvs`, split per draw.
-        """
         self._prior = prior
         self._key = key
         self._d = unconstrained_coordinates(prior).size
@@ -279,45 +282,43 @@ class PyABCSMCMethod(InferenceMethod):
             joint density, a likelihood kernel that samples, the simulator, and
             the observed value, flattened (after ``summary_fn``) to the target
             vector.
-        n_particles : int, default 100
-            SMC population size.
-        max_populations : int, default 4
-            Number of SMC generations.
-        eps_alpha : float, default 0.5
-            ``QuantileEpsilon`` alpha for the default epsilon schedule; ignored
-            if ``eps`` is given.
-        eps : pyabc epsilon, optional
-            Epsilon (acceptance-threshold) strategy. Defaults to
-            ``QuantileEpsilon(alpha=eps_alpha)``; pass any pyabc epsilon (e.g.
-            ``MedianEpsilon``, ``ListEpsilon``, ``AcceptanceRateScheduler``) to
-            override.
-        transitions : pyabc transition, optional
-            Perturbation kernel over the prior's unconstrained coordinates.
-            Defaults to pyabc's own, a multivariate-normal transition; pass a
-            custom one to override.
-        minimum_epsilon, min_acceptance_rate, max_total_nr_simulations, max_walltime : optional
-            Additional stopping criteria forwarded to ``ABCSMC.run`` alongside
-            ``max_populations`` (whichever is hit first stops the run); pyabc's
-            defaults apply when omitted.
-        summary_fn : callable, optional
-            ``(batch, dim) -> (batch, summary_dim)`` applied to simulated and
-            observed data before the distance.
-        distance_fn : callable, optional
-            ``(x, x0) -> float`` over the ``{"y": vector}`` sumstat dicts;
-            defaults to Euclidean. Note: summary statistics are passed as a
-            single flat vector under the ``"y"`` key, so pyabc's multi-statistic
-            adaptive/weighted distances are not used; supply a custom
-            ``summary_fn``/``distance_fn`` pair for bespoke weighting.
-        sampler : pyabc sampler, optional
-            Defaults to ``SingleCoreSampler``, which simulates in this process,
-            so the run's seed fixes every draw. A sampler whose workers run in
-            other processes, such as pyabc's multicore samplers, draws outside
-            ProbPipe's control. Each worker reseeds numpy's generator from fresh
-            entropy, so the run does not reproduce, and each worker starts from
-            a copy of the run's JAX keys, so the workers repeat one another's
-            prior draws and simulation keys. pyabc's multicore samplers also
-            ``fork()``, which can deadlock alongside JAX's threads (the same
-            reason the PyMC backend avoids forking).
+        **kwargs : Any
+            The call's ``method_options``:
+
+            - ``n_particles`` (int, default 100): SMC population size.
+            - ``max_populations`` (int, default 4): number of SMC generations.
+            - ``eps_alpha`` (float, default 0.5): ``QuantileEpsilon`` alpha for
+              the default epsilon schedule; ignored if ``eps`` is given.
+            - ``eps`` (pyabc epsilon): epsilon (acceptance-threshold) strategy.
+              Defaults to ``QuantileEpsilon(alpha=eps_alpha)``; pass any pyabc
+              epsilon (e.g. ``MedianEpsilon``, ``ListEpsilon``,
+              ``AcceptanceRateScheduler``) to override.
+            - ``transitions`` (pyabc transition): perturbation kernel over the
+              prior's unconstrained coordinates. Defaults to pyabc's own, a
+              multivariate-normal transition; pass a custom one to override.
+            - ``minimum_epsilon``, ``min_acceptance_rate``,
+              ``max_total_nr_simulations``, ``max_walltime``: additional
+              stopping criteria forwarded to ``ABCSMC.run`` alongside
+              ``max_populations`` (whichever is hit first stops the run);
+              pyabc's defaults apply when omitted.
+            - ``summary_fn`` (callable): ``(batch, dim) -> (batch, summary_dim)``
+              applied to simulated and observed data before the distance.
+            - ``distance_fn`` (callable): ``(x, x0) -> float`` over the
+              ``{"y": vector}`` sumstat dicts; defaults to Euclidean. Note:
+              summary statistics are passed as a single flat vector under the
+              ``"y"`` key, so pyabc's multi-statistic adaptive/weighted
+              distances are not used; supply a custom
+              ``summary_fn``/``distance_fn`` pair for bespoke weighting.
+            - ``sampler`` (pyabc sampler): defaults to ``SingleCoreSampler``,
+              which simulates in this process, so the run's seed fixes every
+              draw. A sampler whose workers run in other processes, such as
+              pyabc's multicore samplers, draws outside ProbPipe's control.
+              Each worker reseeds numpy's generator from fresh entropy, so the
+              run does not reproduce, and each worker starts from a copy of
+              the run's JAX keys, so the workers repeat one another's prior
+              draws and simulation keys. pyabc's multicore samplers also
+              ``fork()``, which can deadlock alongside JAX's threads (the same
+              reason the PyMC backend avoids forking).
 
         Returns
         -------

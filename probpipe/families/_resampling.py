@@ -80,6 +80,16 @@ _PATH_SEP = "/"
 def _sampling_source(source: Any) -> Distribution:
     """*source*, checked to be a law that samples.
 
+    Parameters
+    ----------
+    source : Any
+        The bootstrap's source, as the constructor received it.
+
+    Returns
+    -------
+    Distribution
+        *source* itself, which implements ``SupportsSampling``.
+
     Raises
     ------
     TypeError
@@ -96,6 +106,19 @@ def _replicate_size(source: Distribution, replicate_size: Any) -> int:
     """The number of draws in one replicate of *source*.
 
     It defaults to the atom count of an empirical source.
+
+    Parameters
+    ----------
+    source : Distribution
+        The bootstrap's source, whose atom count is the default for an empirical law.
+    replicate_size : Any
+        The requested number of draws as the constructor received it, or None for the
+        default.
+
+    Returns
+    -------
+    int
+        A positive integer: *replicate_size* as an ``int``, or the source's atom count.
 
     Raises
     ------
@@ -131,6 +154,18 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     It defaults to the atom level of an empirical source with exactly one, and
     otherwise to the source's component when the source has one component, as a
     whole-term event does.
+
+    Parameters
+    ----------
+    source : Distribution
+        The bootstrap's source, whose atom level or component gives the default.
+    level : str or None
+        The requested level name, or None for the default.
+
+    Returns
+    -------
+    str
+        The name of that level, which is *level* itself when it is given.
 
     Raises
     ------
@@ -184,7 +219,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     **The event declaration.** One draw is a batch of the source's event term on
     the replicate's level, so a replicate keeps the source's term kind. The
     declaration is the law's own, derived from the source and the replicate
-    size: its component defaults to the law's *name*, and an *event_spec* names
+    size: its component defaults to the law's label, and an *event_spec* names
     another.
 
     Parameters
@@ -258,6 +293,13 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
         """Draw replicates, each ``replicate_size`` iid draws of the source.
 
+        Parameters
+        ----------
+        key : PRNGKey
+            The key of the draws.
+        sample_shape : tuple of int, optional
+            The batch axes of the replicates.
+
         Returns
         -------
         Any
@@ -279,7 +321,21 @@ def _replicate_spec(source: Distribution, size: int, level: str) -> TermSpec:
 
 
 def _completed(term: TermSpec, event_spec: OutputSpec | None) -> OutputSpec | TermSpec:
-    """*term* under *event_spec*'s component, or a whole term under the law's name.
+    """*term* under *event_spec*'s component, or a whole term whose component defaults to the label.
+
+    Parameters
+    ----------
+    term : TermSpec
+        The type of one draw, derived from the source.
+    event_spec : OutputSpec or None
+        The declaration the constructor received, or None for the default.
+
+    Returns
+    -------
+    OutputSpec or TermSpec
+        *event_spec* completed with *term* by :meth:`OutputSpec.with_spec`, or *term*
+        itself when *event_spec* is None, which ``Distribution`` declares as a whole term
+        whose component defaults to the law's label.
 
     Raises
     ------
@@ -308,7 +364,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     **The event declaration.** One draw is declared as a law carrying the
     source's complete event declaration, so its component names and packaging
     are the source's. The measure's own declaration is distinct: its component
-    defaults to the law's *name*, and an *event_spec* names another.
+    defaults to the law's label, and an *event_spec* names another.
 
     **Capabilities.** The measure samples, and its mean, the marginalized law
     ``E[D](A)`` of a draw ``D``, is the source itself, since each atom of a
@@ -381,6 +437,13 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
         """Draw empirical measures, each of one replicate of the source.
 
+        Parameters
+        ----------
+        key : PRNGKey
+            The key of the draws.
+        sample_shape : tuple of int, optional
+            The batch axes of the measures.
+
         Returns
         -------
         EmpiricalDistribution or numpy.ndarray
@@ -413,6 +476,18 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 def _flat_centers(centers: ArrayLike | NumericRecordBatch) -> Array:
     """The centers as an array ``(n, *event)``, with a record batch flattened to ``(n, d)``.
 
+    Parameters
+    ----------
+    centers : ArrayLike or NumericRecordBatch
+        One center per atom along the leading axis, or a batch of numeric records on one
+        batch axis.
+
+    Returns
+    -------
+    Array
+        The centers in their own dtype when that is floating, and in the default floating
+        dtype otherwise.
+
     Raises
     ------
     ValueError
@@ -441,6 +516,18 @@ def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> A
 
     Each field of *scales* is matched to the centers' field at the same leaf
     path and broadcast over that field's coordinates.
+
+    Parameters
+    ----------
+    scales : NumericRecord
+        One scale per field of the centers, each broadcastable over that field's shape.
+    fields : NumericRecordSpec or None
+        The element spec of record centers, or None for array centers.
+
+    Returns
+    -------
+    Array
+        A vector of length ``d``, which concatenates the fields' raveled scales.
 
     Raises
     ------
@@ -481,8 +568,20 @@ def _flat_scales(
 ) -> Array:
     """The scales broadcast to the centers' shape ``(n, *event)``.
 
-    *fields* is the element spec of record centers, and ``None`` for array
-    centers. A record of scales is matched to it by :func:`_record_scales`.
+    Parameters
+    ----------
+    scales : ArrayLike or NumericRecord
+        One scale, one per coordinate, or one per center and coordinate; a record of
+        scales is matched to *fields* by :func:`_record_scales`.
+    centers : Array
+        The centers as :func:`_flat_centers` returns them.
+    fields : NumericRecordSpec or None
+        The element spec of record centers, or None for array centers.
+
+    Returns
+    -------
+    Array
+        The scales in the dtype of *centers*.
 
     Raises
     ------
@@ -560,6 +659,13 @@ class SmoothingKernel(ABC):
         cls, centers: ArrayLike | NumericRecordBatch, scales: ArrayLike | NumericRecord
     ) -> SmoothingKernel:
         """The bank of copies placed at *centers* with *scales*, one copy per center.
+
+        Parameters
+        ----------
+        centers : ArrayLike or NumericRecordBatch
+            One center per atom along the leading axis, as for :class:`SmoothingKernel`.
+        scales : ArrayLike or NumericRecord
+            The scales, broadcast against the centers as for :class:`SmoothingKernel`.
 
         Returns
         -------
@@ -718,6 +824,20 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     record, with a floating dtype and the real line as each leaf's support,
     since a smoothed draw is any real value.
 
+    Parameters
+    ----------
+    atoms : Any
+        The atoms the constructor received: a numeric array whose leading axis indexes
+        them, or a ``NumericRecordBatch``.
+
+    Returns
+    -------
+    stored : Array or NumericRecordBatch
+        The atoms to store, which are an array cast to a floating dtype or the record batch
+        as it is.
+    atom_spec : TermSpec
+        The term spec of one draw.
+
     Raises
     ------
     TypeError
@@ -772,6 +892,20 @@ def _selected_bandwidth(rule: str, centers: Array, weights: Weights) -> Array:
     standard deviation of coordinate ``j``, ``d`` the number of coordinates, and
     ``n_eff = (Σwᵢ)²/Σwᵢ²`` Kish's effective sample size.
 
+    Parameters
+    ----------
+    rule : str
+        The name of the rule, ``"scott"`` or ``"silverman"``.
+    centers : Array
+        The centers ``(n, *event)``, as :func:`_flat_centers` returns them.
+    weights : Weights
+        The atoms' weights, which give the weighted spread and the effective sample size.
+
+    Returns
+    -------
+    Array
+        An array of the centers' event shape.
+
     Raises
     ------
     ValueError
@@ -820,7 +954,7 @@ class KDEDistribution(
     effective sample size, so they stay sensible under importance weights.
 
     **The event declaration.** Record atoms expose their fields, and array atoms
-    form a whole-term event whose component defaults to the law's *name*. An
+    form a whole-term event whose component defaults to the law's label. An
     *event_spec* names the components, as for ``EmpiricalDistribution``. Every
     leaf is declared floating, on the real line.
 
@@ -950,6 +1084,17 @@ class KDEDistribution(
         A record value's leaves are read by the KDE's leaf paths, so a batch of
         records whose fields are declared in another order is read correctly.
 
+        Parameters
+        ----------
+        value : Any
+            A value or a batch of values: an array for an array event, and a record in raw
+            form or a batch of records for a record event.
+
+        Returns
+        -------
+        Array
+            The coordinates in the dtype of the centers.
+
         Raises
         ------
         TypeError
@@ -984,6 +1129,14 @@ class KDEDistribution(
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
         """Draw an atom by weight, then a draw from the copy placed at it.
 
+        Parameters
+        ----------
+        key : PRNGKey
+            The key of the draws, split into a key that picks the atoms and a key that draws
+            from their copies.
+        sample_shape : tuple of int, optional
+            The batch axes of the draws.
+
         Returns
         -------
         Any
@@ -997,6 +1150,12 @@ class KDEDistribution(
 
     def _log_prob(self, value: Any) -> Array:
         """``log Σᵢ wᵢ Kₕ(x − xᵢ)``, the weighted log-sum-exp of the copies' log-densities.
+
+        Parameters
+        ----------
+        value : Any
+            A value or a batch of values along leading axes: an array for an array event,
+            and a record in raw form or a batch of records for a record event.
 
         Returns
         -------

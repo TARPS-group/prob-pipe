@@ -599,21 +599,26 @@ def rwmh(
 
     Parameters
     ----------
-    dist
+    dist : SupportsUnnormalizedLogProb
         Distribution providing ``_unnormalized_log_prob``. RWMH uses
         only the unnormalized density because the missing log
         normalizer cancels out of every accept/reject step.
-    data
+    data : array-like or None
         Observed data forwarded to ``log_prob_fn`` when supplied.
-    log_prob_fn
+    log_prob_fn : callable or None
         ``log_prob_fn(params, data) -> float`` combined with
         ``dist._unnormalized_log_prob(params)`` to form the target.
-    num_results, num_warmup, num_chains
-        MCMC tuning parameters.
-    step_size
+    num_results : int
+        Number of draws each chain keeps.
+    num_warmup : int
+        Number of warmup steps each chain runs before the draws it keeps,
+        on which ``adapt`` fits the proposal.
+    num_chains : int
+        Number of chains, which all start at the initial state.
+    step_size : float
         Diagonal proposal scale used when ``proposal_cov=None`` and
         either ``adapt=False`` or ``num_warmup == 0``.
-    adapt
+    adapt : bool
         When ``True`` (default), runs a window-style adaptive warmup:
         geometrically growing windows that each sample with the current
         proposal Cholesky and accumulate Welford statistics on
@@ -623,21 +628,21 @@ def rwmh(
         Roberts-Gelman-Gilks scaling to the last refit covariance
         ``Sigma``. When ``False``, skips adaptation and uses
         ``sigma = step_size * I`` throughout.
-    n_windows
+    n_windows : int
         Maximum number of geometric warmup windows when ``adapt=True``.
         Windows are added only while each holds at least 25 steps, so a
         warmup shorter than 74 steps runs as a single window: a fixed
         RGG-scaled identity proposal throughout, refit once at the end.
         Default ``4``; ``n_windows <= 1`` always gives the single window.
         Ignored when ``adapt=False``.
-    proposal_cov
+    proposal_cov : array-like or None
         Explicit ``(d, d)`` proposal Cholesky factor, where ``d`` is the
         dimension of the chain's state, whose coordinates are unconstrained
         for a leaf on a constrained support. Overrides both the adaptive fit and
         ``step_size``. Useful when the user has a precomputed covariance
         estimate from elsewhere. A wrong-shape matrix raises
         ``ValueError``.
-    init
+    init : array-like or None
         Initial chain state. Resolved by
         :func:`~probpipe.inference._inference_utils.get_init_state`
         when ``None``.
@@ -722,14 +727,40 @@ def _rwmh(
 
     Parameters
     ----------
-    dist, data, log_prob_fn, init
-        The target, its data, its log-likelihood, and the initial state, as
-        :func:`rwmh` takes them.
-    num_results, num_warmup, num_chains, step_size, adapt, n_windows, proposal_cov
-        The budgets and the proposal settings of :func:`rwmh`.
+    dist : SupportsUnnormalizedLogProb
+        The target, as :func:`rwmh` takes it.
+    data : array-like or None
+        The observed data that *log_prob_fn* receives.
+    log_prob_fn : callable or None
+        The log-likelihood of *data*, as :func:`rwmh` takes it.
+    num_results : int
+        The number of draws each chain keeps.
+    num_warmup : int
+        The number of warmup steps each chain runs.
+    num_chains : int
+        The number of chains.
+    step_size : float
+        The diagonal proposal scale when the proposal is neither given nor
+        adapted.
+    adapt : bool
+        Whether the warmup fits the proposal covariance.
+    n_windows : int
+        The largest number of warmup windows that the adaptation uses.
+    proposal_cov : array-like or None
+        A proposal Cholesky factor, which replaces the adaptation and
+        *step_size*.
+    init : array-like or None
+        The initial state, which
+        :func:`~probpipe.inference._inference_utils.get_init_state` draws
+        from the run's key when it is ``None``.
     random_seed : Array
         The run's key, from which the initial state, the warmup, and the
         chains draw.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The chains, as :func:`rwmh` returns them.
     """
     # Adaptation needs warmup samples to fit the proposal covariance.
     # With ``num_warmup == 0`` there is nothing to adapt on, so the

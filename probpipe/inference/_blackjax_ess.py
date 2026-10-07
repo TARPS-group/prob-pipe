@@ -200,9 +200,13 @@ def elliptical_slice(
         ``MultivariateNormal``, a ``Normal``, or a factored joint over those.
     data : Record or Mapping[str, Any]
         The observed values, keyed by the fields they bind.
-    num_results, num_warmup, num_chains
-        MCMC tuning parameters.
-    init
+    num_results : int
+        Number of draws each chain keeps.
+    num_warmup : int
+        Number of steps each chain runs before the draws it keeps.
+    num_chains : int
+        Number of chains, which all start at the initial state.
+    init : array-like or None
         Initial chain state in the flat parameter vector. Defaults to
         a sample from the prior.
 

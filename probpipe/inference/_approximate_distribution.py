@@ -54,8 +54,13 @@ def _spec_size(spec: NumericArraySpec | RecordSpec) -> int:
 
     Parameters
     ----------
-    spec
+    spec : NumericArraySpec or RecordSpec
         One field's spec, as returned by :meth:`RecordSpec.__getitem__`.
+
+    Returns
+    -------
+    int
+        The width of the field's column block.
 
     Raises
     ------
@@ -96,6 +101,21 @@ def _column_permutation(
     chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
     lays the columns out in template-field order, so the columns of each field
     are read by name rather than by position.
+
+    Parameters
+    ----------
+    record : RecordSpec
+        The target's record, whose fields' flat sizes give the width of each
+        column block.
+    field_order : list of str
+        The order of the flat chain's column blocks, which permutes
+        ``record.fields``.
+
+    Returns
+    -------
+    list of int
+        The permutation ``perm``, which holds the source column of each column of
+        the result.
 
     Raises
     ------
@@ -140,6 +160,21 @@ def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericAr
     Each draw takes the shape the term declares, so a scalar term's draws are
     scalars, and the dtype the term declares.
 
+    Parameters
+    ----------
+    name : str
+        The batch's label.
+    stacked : Array
+        The draws of every chain, stacked along the leading axis.
+    term : NumericArraySpec
+        The target's array term; a term of symbolic shape takes the draws'
+        trailing shape.
+
+    Returns
+    -------
+    NumericArrayBatch
+        The atoms on the levels ``chain`` and ``draw``, which take one axis each.
+
     Raises
     ------
     ValueError
@@ -167,6 +202,21 @@ def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecor
 
     The columns follow the record's canonical leaf order, nested groups
     included, and each leaf takes the shape and dtype the record declares.
+
+    Parameters
+    ----------
+    name : str
+        The batch's label.
+    stacked : Array
+        The draws of every chain, stacked along the leading axis.
+    record : RecordSpec
+        The target's record declaration.
+
+    Returns
+    -------
+    NumericRecordBatch
+        The atoms on the levels ``chain`` and ``draw``, with one column per leaf
+        path.
 
     Raises
     ------
@@ -245,6 +295,16 @@ def _chain_columns(law: EmpiricalDistribution) -> dict[str, Array]:
 
     A whole-term result has one entry, under its component.
 
+    Parameters
+    ----------
+    law : EmpiricalDistribution
+        The inference result.
+
+    Returns
+    -------
+    dict of str to Array
+        One entry per leaf path, in the order the law stores its columns.
+
     Raises
     ------
     ValueError
@@ -271,6 +331,17 @@ def _flat_chains(law: EmpiricalDistribution) -> Array:
 
     The columns follow the leaf order of the result's components, nested groups
     included, as the method's chains did.
+
+    Parameters
+    ----------
+    law : EmpiricalDistribution
+        The inference result.
+
+    Returns
+    -------
+    Array
+        The columns of :func:`_chain_columns`, each flattened after the chain and
+        draw axes and concatenated along the last axis.
 
     Raises
     ------

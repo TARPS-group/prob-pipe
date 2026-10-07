@@ -195,8 +195,9 @@ class BijectorTransformedDistribution(Distribution):
     estimate the others by their Monte Carlo fallback.
 
     One draw is an array whose shape and dtype are those of the bijector's
-    output at a draw of the base, declared as a whole term under the law's
-    name; its support is the one the bijector maps onto when that is known.
+    output at a draw of the base, declared as a whole term whose component
+    defaults to the law's label; its support is the one the bijector maps onto
+    when that is known.
 
     Parameters
     ----------

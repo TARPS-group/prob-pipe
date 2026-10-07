@@ -195,6 +195,19 @@ class _TFPGradientMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Chains of the TFP kernel on the target's unnormalized density.
 
+        Parameters
+        ----------
+        target : Distribution
+            The law to sample: a law with an unnormalized density, or an
+            unnormalized conditional at data its joint does not declare as fields.
+        **kwargs : Any
+            The call's ``method_options``, which :func:`TFPNutsMethod` lists.
+
+        Returns
+        -------
+        EmpiricalDistribution
+            The posterior, with its atoms on the levels ``chain`` and ``draw``.
+
         Raises
         ------
         ValueError

@@ -35,7 +35,7 @@ def _evaluate_result(f: Any, v: Any, fixed_args: Any) -> OutputSpec | None:
 
 
 def _map_output_label(f: Any) -> str:
-    """The map's output name, which the map's own result takes (V.10)."""
+    """The map's output label, which the map's own result takes (V.10)."""
     return f.output_label if isinstance(f, Function) else "evaluate"
 
 
@@ -61,7 +61,7 @@ def evaluate(f: Any, v: Any, fixed_args: Mapping[str, Any] | None = None):
     -------
     TrackedTerm
         ``f(v)`` for a value, the pushforward law for a distribution, and the
-        elementwise result for a batch, labeled by the map's output name.
+        elementwise result for a batch, labeled by the map's output label.
 
     Raises
     ------
@@ -72,6 +72,20 @@ def evaluate(f: Any, v: Any, fixed_args: Mapping[str, Any] | None = None):
 
 def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     """The one parameter of *f* that *fixed_args* leaves open, which the operand binds.
+
+    Parameters
+    ----------
+    f : Function
+        The map, whose signature lists its parameters.
+    fixed_args : Mapping of str to Any or None
+        The arguments of the map's other parameters, by name; ``None`` fixes
+        none.
+
+    Returns
+    -------
+    str
+        The parameter's name. An open parameter is one without a default that
+        is neither fixed nor variadic.
 
     Raises
     ------

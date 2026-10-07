@@ -48,6 +48,23 @@ def _score_declaration(
 
     A batch of values is swept, so the rule reads one element's spec.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, against whose event declaration *value* is unified.
+    value : TermSpec
+        The spec of the value scored, or of one draw where a law at the value
+        lifts the call.
+    component : str
+        The score's component name, which also opens each error message.
+    spec : NumericArraySpec
+        The term spec of one score.
+
+    Returns
+    -------
+    OutputSpec
+        A declaration that names the score as one whole term.
+
     Raises
     ------
     ApplicabilityError
@@ -68,6 +85,19 @@ def _score_declaration(
 def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     """A scalar log-density per value, under the component ``log_prob``.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration ``OutputSpec(log_prob=NumericArraySpec(()))``.
+
     Raises
     ------
     ApplicabilityError
@@ -78,6 +108,19 @@ def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
 
 def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     """A scalar unnormalized log-density per value, under ``unnormalized_log_prob``.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration ``OutputSpec(unnormalized_log_prob=NumericArraySpec(()))``.
 
     Raises
     ------
@@ -90,6 +133,19 @@ def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> Outpu
 def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     """A non-negative scalar density per value, under the component ``prob``.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration ``OutputSpec(prob=NumericArraySpec((), support=non_negative))``.
+
     Raises
     ------
     ApplicabilityError
@@ -100,6 +156,20 @@ def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
 
 def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     """A non-negative scalar unnormalized density per value, under ``unnormalized_prob``.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the value conforms to.
+    value : TermSpec
+        The spec of one value: for a lifted argument, the spec of one element
+        of the batch or one draw of the law.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration
+        ``OutputSpec(unnormalized_prob=NumericArraySpec((), support=non_negative))``.
 
     Raises
     ------
@@ -204,6 +274,16 @@ def _unnormalized_log_prob_applies(d: Any, value: Any) -> CallReport:
 def prob(d: Distribution, value):
     """The density of *value* under *d*, defined as ``exp ∘ log_prob``.
 
+    Parameters
+    ----------
+    d : Distribution
+        A law claiming ``SupportsLogProb``, or any other law that ``log_prob``
+        has a route for.
+    value : Any
+        One value conforming to ``d.event_spec.spec``, or a batch of them. A law
+        over such values lifts the call, which then returns the law of the
+        density at its draws.
+
     Returns
     -------
     NumericArray or NumericArrayBatch
@@ -222,6 +302,16 @@ def prob(d: Distribution, value):
 @operation(result=_unnormalized_prob_result, identity_check=_unnormalized_log_prob_applies)
 def unnormalized_prob(d: Distribution, value):
     """The density of *value* under *d* up to a factor, defined as ``exp ∘ unnormalized_log_prob``.
+
+    Parameters
+    ----------
+    d : Distribution
+        A law claiming ``SupportsUnnormalizedLogProb``, or any other law that
+        ``unnormalized_log_prob`` has a route for.
+    value : Any
+        One value conforming to ``d.event_spec.spec``, or a batch of them. A law
+        over such values lifts the call, which then returns the law of the
+        unnormalized density at its draws.
 
     Returns
     -------
@@ -245,6 +335,11 @@ def random_log_prob(M: Distribution):
     The density at a point is that random function called at the point, so the
     operation takes no value.
 
+    Parameters
+    ----------
+    M : Distribution
+        A random measure, which is a law whose draws ``D`` are distributions.
+
     Returns
     -------
     Distribution
@@ -265,6 +360,11 @@ random_log_prob.capability_route(
 @operation(result=_random_unnormalized_log_prob_result)
 def random_unnormalized_log_prob(M: Distribution):
     """The law of ``x ↦ log D̃(x)`` for ``D ~ M``, with ``D̃`` the unnormalized density of ``D``.
+
+    Parameters
+    ----------
+    M : Distribution
+        A random measure, which is a law whose draws ``D`` are distributions.
 
     Returns
     -------

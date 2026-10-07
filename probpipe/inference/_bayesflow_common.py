@@ -120,8 +120,11 @@ def _validate_learn_inputs(
 
     Parameters
     ----------
-    prior, simulator
-        The learner's prior and simulator.
+    prior : Distribution
+        The learner's prior, which must declare a numeric event.
+    simulator : ConditionalDistribution
+        The learner's simulator, a kernel from the prior's fields to one
+        observation, which must sample.
     caller : str
         The name of the public learner, which the error messages name.
     sim_backend : {"jax", "sequential"}
@@ -132,6 +135,11 @@ def _validate_learn_inputs(
         The keywords the learner passes to ``approximator.fit``, which name no
         seed, since the training's seed is drawn from a workflow-owned random
         event.
+
+    Returns
+    -------
+    Any
+        The record that the components of the prior's event form.
 
     Raises
     ------

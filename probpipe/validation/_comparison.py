@@ -142,6 +142,24 @@ class Reference:
     ) -> Reference:
         """Build a reference from high-precision analytic/empirical moments.
 
+        Parameters
+        ----------
+        mean : array-like
+            Reference mean ``μ_ref``, shape ``(d,)``.
+        cov : array-like
+            Reference covariance ``Σ_ref``, shape ``(d, d)``.
+        draws : array-like or EmpiricalDistribution, optional
+            Reference draws for the sample-based distances: a raw ``(n_ref, d)``
+            array, or an empirical law whose atoms' flat coordinates are the draws.
+        score_fn : callable, optional
+            ``θ ↦ ∇ log π(θ)`` for a ``(d,)`` input, for :func:`ksd`.
+
+        Returns
+        -------
+        Reference
+            The reference, with *mean* and *cov* as JAX arrays and *draws* as an
+            ``(n_ref, d)`` array.
+
         Raises
         ------
         ValueError
