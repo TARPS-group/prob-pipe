@@ -2790,9 +2790,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
   repr showed the posterior's atoms under the old names. It now returns an
   `EmpiricalDistribution` with the same label and weights whose atoms carry the
-  new paths, and a lift still draws it together with the original. A law that
-  renames at its boundary, such as a renamed `KDEDistribution`, reads as
-  `KDEDistribution(...).with_path_names({...})`.
+  new paths. A law that renames at its boundary, such as a renamed
+  `KDEDistribution`, reads as `KDEDistribution(...).with_path_names({...})`. A
+  lift draws every law that `with_path_names` returns together with the law it
+  renames. A factored joint rebuilt under the new paths and a rename of a whole
+  term's component used to lift independently of the law they rename, and now
+  draw with it too.
 - **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
   sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
   of a posterior from `learn_amortized_posterior` printed one, and a notebook

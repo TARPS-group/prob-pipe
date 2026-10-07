@@ -4,7 +4,7 @@ A lifted law's root is the root of the law whose draws it reads:
 
 - a field view: its parent;
 - a batch element: its stored law;
-- a renamed law: the law it renames;
+- every law that ``with_path_names`` returns: the law it renames;
 - a bijector-transformed law: its base.
 
 A lift groups each law with its root, so the root draws once per repetition and
@@ -27,6 +27,7 @@ from probpipe import (
     DistributionBatch,
     EmpiricalDistribution,
     Function,
+    KDEDistribution,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -35,7 +36,7 @@ from probpipe import (
     iterate,
     workflow_run,
 )
-from probpipe.distributions import FieldView
+from probpipe.distributions import FactoredDistribution, FieldView
 from probpipe.functions import _descendants
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
@@ -279,6 +280,73 @@ def _posterior():
     return EmpiricalDistribution("posterior", atoms, jnp.arange(1.0, 13.0))
 
 
+def _normal():
+    return Normal("x", 0.0, 1.0)
+
+
+def _kde():
+    """A kernel density estimate over ``a`` and ``b``, which renames at its boundary."""
+    columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
+    return KDEDistribution("kde", NumericRecordBatch("rows", columns, "row"))
+
+
+#: A law, a rename that copies it or rebuilds it as a factored joint, the class of
+#: the result, and the difference of the field the rename moves.
+_COPIES_AND_REBUILDS = [
+    pytest.param(
+        _normal, lambda law: law.with_path_names(x="z"), Normal, lambda a, b: a - b, id="copy"
+    ),
+    pytest.param(
+        _joint,
+        lambda law: law.with_path_names(x="u"),
+        FactoredDistribution,
+        lambda a, b: a["x"] - b["u"],
+        id="through-factors",
+    ),
+    pytest.param(
+        _joint,
+        lambda law: law.with_path_names({"x": "g/x"}),
+        FactoredDistribution,
+        lambda a, b: a["x"] - b["g/x"],
+        id="regrouped",
+    ),
+]
+
+#: A law and two renames in a row, one for each kind of law that a rename returns.
+_RENAMES_OF_RENAMES = [
+    pytest.param(_normal, lambda law: law.with_path_names(x="y").with_path_names(y="z"), id="copy"),
+    pytest.param(
+        _joint, lambda law: law.with_path_names(x="u").with_path_names(u="v"), id="factored"
+    ),
+    pytest.param(
+        _posterior,
+        lambda law: law.with_path_names(_GROUPING).with_path_names({"population/mu": "mu"}),
+        id="empirical",
+    ),
+    pytest.param(
+        _kde,
+        lambda law: law.with_path_names({"a": "g/a"}).with_path_names({"b": "g/b"}),
+        id="boundary",
+    ),
+]
+
+
+def _renamed_view():
+    joint = _joint()
+    return joint["x"].with_path_names(x="z"), joint
+
+
+def _renamed_element():
+    root = Normal("n", 0.0, 1.0)
+    batch = DistributionBatch("laws", [root, Normal("n", 5.0, 1.0)], "law")
+    return batch[0].with_path_names(n="m"), root
+
+
+def _renamed_transform():
+    base = Normal("x", 0.0, 1.0)
+    return BijectorTransformedDistribution("t", base, tfb.Exp()).with_path_names(t="z"), base
+
+
 class TestRenamedLaws:
     def test_a_renamed_empirical_law_captures_the_law_it_renames_as_root(self):
         root = _posterior()
@@ -325,6 +393,55 @@ class TestRenamedLaws:
 
         assert result.num_atoms == 8
         np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
+
+    @pytest.mark.parametrize(("make", "rename", "kind", "difference"), _COPIES_AND_REBUILDS)
+    def test_a_copy_or_a_rebuilt_joint_forms_one_plan_group_with_its_law(
+        self, make, rename, kind, difference
+    ):
+        law = make()
+        renamed = rename(law)
+        plan = _stochastic_plan({"law": law, "renamed": renamed})
+
+        assert isinstance(renamed, kind)
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is law
+
+    @pytest.mark.parametrize(("make", "rename", "kind", "difference"), _COPIES_AND_REBUILDS)
+    def test_a_copy_or_a_rebuilt_joint_co_samples_with_its_law(
+        self, make, rename, kind, difference
+    ):
+        law = make()
+        workflow = Function("difference", difference, dispatch="sequential", n_broadcast_samples=8)
+
+        with workflow_run(seed=39):
+            result = workflow(law, rename(law))
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
+
+    @pytest.mark.parametrize(("make", "rename"), _RENAMES_OF_RENAMES)
+    def test_a_rename_of_a_rename_captures_the_original_as_root(self, make, rename):
+        law = make()
+
+        assert _descendants.capture_stochastic_consumer(rename(law)).root is law
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(_renamed_view, id="view"),
+            pytest.param(_renamed_element, id="element"),
+            pytest.param(_renamed_transform, id="transform"),
+        ],
+    )
+    def test_a_renamed_view_element_or_transform_keeps_its_root(self, build):
+        renamed, root = build()
+
+        assert _descendants.capture_stochastic_consumer(renamed).root is root
+
+    def test_the_raw_form_of_a_view_of_a_rebuilt_joint_is_its_own_root(self):
+        """The view's marginal is a renamed factor, and detaching it drops the factor it renames."""
+        detached = _joint().with_path_names(x="u")["u"].raw()
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
 
 
 # -- Bijector-transformed laws -------------------------------------------------

@@ -63,6 +63,7 @@ from ._conditional import (
 from ._distribution import (
     _RENAME_SOURCE,
     Distribution,
+    _detached_term,
     _install_field_view,
     _install_renamed_law,
     _whole_term_component,
@@ -272,11 +273,9 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
 
 
 def _detached(law: Distribution, name: str) -> Distribution:
-    """*law* detached from the workflow under *name*: no provenance and no annotations."""
-    clone = law._shallow_copy()
+    """*law* detached from the workflow under *name*, as :meth:`Distribution.raw` detaches a law."""
+    clone = _detached_term(law)
     object.__setattr__(clone, "_label", name)
-    object.__setattr__(clone, "_provenance", None)
-    object.__setattr__(clone, "_annotations", None)
     return clone
 
 
@@ -1671,38 +1670,57 @@ def _rename_source(law: Distribution) -> tuple[Distribution, _EventRenames] | No
     """The law *law* renames, with the renames from its declaration to *law*'s, or None.
 
     A law that translates its parent's values at its boundary holds its parent,
-    and a member of a family that ``with_path_names`` rebuilt records the law it
-    renames. Either one reads that law's draws in a lift (V.5).
+    and every other law that ``with_path_names`` returns records the law it
+    renames. Each one reads that law's draws in a lift (V.5).
     """
     if isinstance(law, _RenamedDistribution):
         return law._parent, law._event
     return getattr(law, _RENAME_SOURCE, None)
 
 
+def _with_rename_source(
+    law: Distribution, parent: Distribution, renames: Mapping[str, str]
+) -> Distribution:
+    """*law*, which ``with_path_names`` returns for *parent*, recording *parent* as its source.
+
+    The record is *parent* with the renames from its declaration to *law*'s,
+    which :func:`_rename_source` reads. A factored joint orders its components
+    by its factors, so the renames end at *law*'s own declaration.
+    """
+    event = _EventRenames.of(parent.event_spec, law.event_spec, renames)
+    object.__setattr__(law, _RENAME_SOURCE, (parent, event))
+    return law
+
+
 def _renamed_law(
     parent: Distribution, event_spec: OutputSpec, renames: Mapping[str, str]
 ) -> Distribution:
-    """The law ``with_path_names`` returns for *parent* when a rename changes the path of a field.
+    """The law ``with_path_names`` returns for *parent*, which reads the draw of *parent*.
 
-    A factored law renames through its factors where they carry the rename, and
-    regroups them where the rename gathers their components under new nodes. A
-    family that rebuilds itself under the new paths returns its member, which
-    records *parent* as the law it renames, so a lift draws the two together.
-    Any other law, or a rename its factors cannot carry, is translated at the
-    boundary of the law that holds it.
+    A rename of a whole term's component alone changes only the declaration, so
+    the result is a copy of *parent*. A factored law renames through its factors
+    where they carry the rename, and regroups them where the rename gathers
+    their components under new nodes. A law whose family rebuilds itself under
+    the new paths returns the member that :meth:`Distribution._renamed_in_family`
+    gives. Any other law, or a rename its factors cannot carry, is translated at
+    the boundary of a law that holds *parent*. Each other result records
+    *parent* and the renames from its declaration to the result's, which a lift
+    reads to draw the result together with *parent* (V.5).
     """
+    if event_spec.spec == parent.event_spec.spec:
+        copy = parent._with_declaration(event_spec, "with_path_names", renames)
+        return _with_rename_source(copy, parent, renames)
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
         if joint is None:
             joint = _regrouped(parent, renames, event_spec)
         if joint is not None:
-            return joint
+            return _with_rename_source(joint, parent, renames)
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     member = parent._renamed_in_family(event)
     if member is None:
         return _renamed(parent, event, renames)
-    object.__setattr__(member, _RENAME_SOURCE, (parent, event))
-    return member.with_provenance(
+    return _with_rename_source(member, parent, renames).with_provenance(
         Provenance.create("with_path_names", parents=[parent], metadata=dict(renames))
     )
 

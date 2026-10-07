@@ -5,17 +5,18 @@ its **root**. Each of these laws reads another law's draw:
 
 - an element of a batch of laws: its stored law's draw;
 - a field view: its parent's draw, projected onto its node;
-- a renamed law: the draw of the law it renames, moved to the new paths;
+- every law that ``with_path_names`` returns: the draw of the law it renames,
+  moved to the new paths;
 - a law of a registered descendant type: its ancestor's draw, mapped as a
   bijector-transformed law pushes its base's draw through its bijector.
 
-A renamed law either holds the law it renames or is the member of a family that
-``with_path_names`` rebuilt, which records the law it renames. The lift groups
-the arguments by root, so each group contributes one root draw per repetition
-and every member evaluates on it. Hence sibling views co-sample, two accesses of
-one batch element co-sample, a law co-samples with its own transform and its
-own rename, and the empirical enumeration enumerates a renamed empirical law's
-atoms as the law's.
+A law that renames at its boundary holds the law it renames, and every other
+result of ``with_path_names`` records it. The lift groups the arguments by root,
+so each group contributes one root draw per repetition and every member
+evaluates on it. Hence sibling views co-sample, two accesses of one batch
+element co-sample, a law co-samples with its own transform and its own rename,
+and the empirical enumeration enumerates a renamed empirical law's atoms as the
+law's.
 
 The capture of an argument records its root, the root's sampler, the event
 path a projection reads, a canonical descriptor of the descendant graph between
@@ -229,8 +230,9 @@ def _capture_stochastic_consumer(
     if isinstance(value, FieldView):
         return _capture_field_view(value, session=session)
     if _rename_source(value) is not None:
-        # A rebuilt member of a family captures as the law that renames at its
-        # boundary, so the two give one descriptor and one evaluator.
+        # A result of ``with_path_names`` captures as the law that renames at its
+        # boundary, so one rename gives one descriptor and one evaluator whatever
+        # class the result has.
         return _capture_descendant(value, _RenamedDistribution, _renamed_descent, session=session)
     rule = _descent_rule(value)
     if rule is not None:
