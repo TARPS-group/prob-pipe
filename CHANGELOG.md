@@ -2886,6 +2886,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A function whose returned overall kind differs from its output declaration
+  raises `ResultKindError`. A result of the declared kind with an incompatible
+  schema raises `ResultSchemaError`. The distinction applies to lifted calls
+  and operation routes. A call with `raw=True` validates its result before
+  detachment. `apply` reports output declaration violations as `ValueError`.
 - **A real-valued support rejects a complex value with a nonzero imaginary
   part.** JAX orders complex values lexicographically, so `positive.check(1j)`
   and `real.check(1j)` were true, and a function that declared a positive

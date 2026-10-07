@@ -12,6 +12,7 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    BatchSpec,
     EmpiricalDistribution,
     FunctionBatch,
     NumericArrayBatch,
@@ -19,6 +20,7 @@ from probpipe import (
     OpaqueSpec,
     Record,
     RecordSpec,
+    ResultKindError,
     ResultSchemaError,
     TrackedTerm,
     workflow_run,
@@ -897,6 +899,40 @@ def _untracked(tree: Any) -> bool:
 
 
 class TestRawResults:
+    @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
+    @pytest.mark.parametrize(
+        "spec", [NumericArraySpec(()), BatchSpec(NumericArraySpec(()), ((2,),), ("row",))]
+    )
+    def test_a_route_returning_the_wrong_kind_is_refused(self, mode, spec):
+        toy = _toy(result=lambda d: OutputSpec(toy=spec))
+        toy.structural_route(
+            "wrong_kind",
+            check=lambda call, result: True,
+            execute=lambda call, result: "text",
+            exact=True,
+        )
+        invoke = toy.apply if mode == "apply" else toy.with_options(raw=mode == "raw")
+
+        with pytest.raises(ValueError if mode == "apply" else ResultKindError):
+            invoke(Gaussian("g"))
+
+    @pytest.mark.parametrize("error", [TypeError("route failed"), ValueError("route failed")])
+    @pytest.mark.parametrize("mode", ["plain", "apply"])
+    def test_an_exception_from_the_route_is_propagated_unchanged(self, error, mode):
+        def execute(call, result):
+            raise error
+
+        toy = _toy(result=_event)
+        toy.structural_route(
+            "failure", check=lambda call, result: True, execute=execute, exact=True
+        )
+        invoke = toy.apply if mode == "apply" else toy
+
+        with pytest.raises(type(error)) as raised:
+            invoke(Gaussian("g"))
+
+        assert raised.value is error
+
     def test_a_raw_record_is_the_nested_mapping_of_its_raw_leaves(self):
         result = center.with_options(raw=True)(Pair("p"))
         assert type(result) is dict and set(result) == {"a", "b"}

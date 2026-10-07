@@ -61,6 +61,7 @@ from ..values._function_base import (
     _bind_function_inputs,
     _FunctionInvocationContext,
     _refuse_unknown_controls,
+    _ResultKindMismatch,
     _validate_function_output,
     install_call_engine,
 )
@@ -341,6 +342,8 @@ def _realized_point(
     values: Mapping[str, Any],
     controls: Mapping[str, Any],
     candidates: tuple[Any, ...],
+    *,
+    kind_error: type[Exception] = _result.ResultKindError,
 ) -> Any:
     """One point of a call realized by the route selected among *candidates*, as a term.
 
@@ -358,6 +361,8 @@ def _realized_point(
         The call's resolved controls, which planning and selection read.
     candidates : tuple
         The Function's routes, in selection order.
+    kind_error : type of Exception
+        The error for a wrong overall return kind, passed to ``declared_term``.
 
     Returns
     -------
@@ -371,13 +376,15 @@ def _realized_point(
         If an applicability condition fails.
     ResolutionError
         If no candidate is feasible, or the first one that is not is unresolved.
-    ResultSchemaError
-        If the result does not satisfy the declaration.
+    ResultKindError, ResultSchemaError
+        If the result violates the declaration, using *kind_error* for its kind.
     """
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
-    term = _result.declared_term(value, result, _result_label(function, values))
+    term = _result.declared_term(
+        value, result, _result_label(function, values), kind_error=kind_error
+    )
     return _keeping_route_record(term, value)
 
 
@@ -527,6 +534,8 @@ def _run_call(
                 result=result,
                 bindings=context.dimension_bindings,
             )
+        except _ResultKindMismatch as error:
+            raise _result.ResultKindError(str(error)) from error
         except ValueError as error:
             raise _result.ResultSchemaError(str(error)) from error
         if point_output_spec is not None:
@@ -1347,7 +1356,9 @@ class _CallEngine:
         )
         token = _call._CHECKING.set(False)
         try:
-            term = _realized_point(function, values, function.options, candidates)
+            term = _realized_point(
+                function, values, function.options, candidates, kind_error=_ResultKindMismatch
+            )
         finally:
             _call._CHECKING.reset(token)
         return _result.raw_form(term)
