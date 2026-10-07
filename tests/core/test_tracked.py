@@ -255,7 +255,7 @@ class TestWithName:
         # Post-rename annotation writes must not show through on the
         # original (the container is copied; entry values are shared).
         n = Normal(loc=0.0, scale=1.0, label="x")
-        n._annotations = {"fit": "exact"}
+        object.__setattr__(n, "_annotations", {"fit": "exact"})
         m = n.with_label("y")
         m.annotations["check"] = "added-on-copy"
         assert "check" not in n.annotations
@@ -264,7 +264,7 @@ class TestWithName:
     def test_with_name_decouples_datatree_annotations(self):
         xr = pytest.importorskip("xarray")
         n = Normal(loc=0.0, scale=1.0, label="x")
-        n._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
+        object.__setattr__(n, "_annotations", xr.DataTree.from_dict({"arviz": xr.Dataset()}))
         m = n.with_label("y")
         m.annotations["diagnostics"] = xr.DataTree()
         assert "diagnostics" not in n.annotations.children
@@ -433,13 +433,13 @@ class TestAnnotated:
 
     def test_annotations_accepts_plain_mapping(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
-        n._annotations = {"note": "fitted by hand"}
+        object.__setattr__(n, "_annotations", {"note": "fitted by hand"})
         assert n.annotations == {"note": "fitted by hand"}
 
     def test_annotations_accepts_datatree(self):
         xr = pytest.importorskip("xarray")
         n = Normal(loc=0.0, scale=1.0, label="x")
-        n._annotations = xr.DataTree.from_dict({"diagnostics": xr.Dataset()})
+        object.__setattr__(n, "_annotations", xr.DataTree.from_dict({"diagnostics": xr.Dataset()}))
         assert "diagnostics" in n.annotations.children
 
     def test_annotations_on_record_via_object_setattr(self):
