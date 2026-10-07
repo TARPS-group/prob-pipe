@@ -165,20 +165,6 @@ KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     True,
 )
 
-# Measured over seeds 0 to 14: under PyMC 6.3.2 and PyTensor 3.3.3, 3 of the 15
-# runs fail one comparison by 4.1 to 4.3 MCSE (seeds 0, 2, and 13); under PyMC
-# 6.0.1 and PyTensor 3.0.4, none of the 15 fails.
-_PYMC_NUTS_FUNNEL = (
-    "pm.sample runs nutpie here, which leaves two or three divergent transitions in the "
-    "funnel of eight schools, so a seeded run can fall outside the four-MCSE band on a tail "
-    "quantile of theta_tilde or on the variance of tau"
-)
-KNOWN_FAILURES[("pymc_nuts", "pymc", "eight_schools")] = (
-    _PYMC_NUTS_FUNNEL,
-    AssertionError,
-    False,
-)
-
 
 # ---------------------------------------------------------------------------
 # The posterior's draws and summaries
