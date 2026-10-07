@@ -26,6 +26,7 @@ from probpipe.functions import (
 from probpipe.values import _binding
 
 _WORKFLOW_MODULES = (
+    _binding,
     _broker,
     _call,
     _callable,
@@ -108,7 +109,7 @@ def _workflow_dataclasses(*, frozen: bool) -> tuple[type, ...]:
 def test_immutable_workflow_dataclasses_do_not_request_slots() -> None:
     classes = _workflow_dataclasses(frozen=True)
 
-    assert classes
+    assert {_binding.FunctionInputRef, _binding.FunctionSignatureInfo} <= set(classes)
     assert [
         f"{candidate.__module__}.{candidate.__qualname__}"
         for candidate in classes

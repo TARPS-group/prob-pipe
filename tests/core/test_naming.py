@@ -22,9 +22,12 @@ from probpipe import (
     NumericRecordBatch,
     Opaque,
     OpaqueBatch,
+    OutputSpec,
     Record,
     RecordBatch,
     RecordSpec,
+    condition_on,
+    convert,
     log_prob,
     mean,
     prob,
@@ -36,7 +39,6 @@ from probpipe import (
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
 from probpipe.functions._call import ApplicabilityError
-from probpipe.functions._result import _wrap_as_term
 
 KEY = jax.random.PRNGKey(0)
 ELEMENT = NumericRecordSpec(a=())
@@ -227,6 +229,47 @@ class TestAnOperationLabelsItsResultByItsLaw:
 
         assert given.label == "height"
 
+    @staticmethod
+    def _params():
+        return (Normal("x", 0.0, 1.0) * Normal("y", 2.0, 3.0)).with_label("params")
+
+    def test_a_record_mean_takes_the_laws_label_and_names_its_components(
+        self, full_provenance_mode
+    ):
+        law = self._params()
+        result = mean(law)
+        assert result.label == "params"
+        assert list(result.keys()) == ["mean(x)", "mean(y)"]
+        assert float(result["mean(x)"]) == 0.0
+        assert float(result["mean(y)"]) == 2.0
+        assert result.provenance.parents[0].parent is mean
+        assert result.provenance.parents[1].parent is law
+
+    def test_conditioning_on_a_factor_takes_the_label_of_the_factor_it_leaves(
+        self, full_provenance_mode
+    ):
+        """Fixing the whole event of a factor leaves the other factor (VI.6)."""
+        law = self._params()
+        result = condition_on(law, {"x": 1.0})
+        assert result.label == "y"
+        assert tuple(result.event_spec.components) == ("y",)
+        assert tuple(law.event_spec.components) == ("x", "y")
+        assert float(mean(result)) == 2.0
+        assert float(variance(result)) == 9.0
+        assert result.provenance.parents[0].parent is condition_on
+        assert result.provenance.parents[1].parent is law
+
+    def test_a_converted_law_keeps_its_label(self, full_provenance_mode):
+        law = Normal("theta", 2.0, 3.0)
+        result = convert(law, Normal)
+        assert result is not law
+        assert result.label == "theta"
+        assert tuple(result.event_spec.components) == ("theta",)
+        assert float(mean(result)) == 2.0
+        assert float(variance(result)) == 9.0
+        assert result.provenance.parents[0].parent is convert
+        assert result.provenance.parents[1].parent is law
+
 
 class TestTheOutputBoundaryNamesEveryKindAlike:
     """Whatever kind a body returns, the result takes the function's name."""
@@ -377,17 +420,23 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
 
 
 class TestRawDrawNaming:
-    @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
-    def test_a_declared_raw_result_takes_the_requested_name(self, value):
-        from probpipe import OutputSpec
-
-        template = RecordSpec(x=NumericArraySpec(()))
-        declaration = (
-            OutputSpec(template) if isinstance(value, dict) else OutputSpec(x=template["x"])
-        )
-        result = _wrap_as_term(value, "sample", declaration, name="law")
+    @pytest.mark.parametrize(
+        ("value", "declaration", "completed"),
+        [
+            (2.0, OutputSpec(x=NumericArraySpec(())), NumericArraySpec((), dtype="float32")),
+            ({"x": 2.0}, OutputSpec(RecordSpec(x=NumericArraySpec(()))), RecordSpec(x=())),
+        ],
+        ids=["scalar", "mapping"],
+    )
+    def test_a_declared_function_result_takes_the_requested_name(
+        self, value, declaration, completed
+    ):
+        wrapped = Function("producer", lambda: value, output_spec=declaration, output_label="law")
+        result = wrapped()
+        assert wrapped.apply() is value
         assert result.label == "law"
-        assert result.spec == declaration.spec
+        # The declaration leaves the dtype open, so the result takes the returned one (II.2).
+        assert result.spec == completed
         assert float(result["x"] if isinstance(result, Record) else result) == 2.0
 
 

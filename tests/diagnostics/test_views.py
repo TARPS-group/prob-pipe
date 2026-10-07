@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import json
 
+import jax
+import jax.numpy as jnp
+import numpy as np
 import pytest
 import xarray as xr
 
+from probpipe import Normal, NumericArraySpec, OutputSpec
+from probpipe.diagnostics import add_loo, add_mcmc_diagnostics, add_ppc
 from probpipe.diagnostics._view_base import NotComputed
 from probpipe.diagnostics._views import (
     DiagnosticsView,
@@ -14,10 +19,43 @@ from probpipe.diagnostics._views import (
     MCMCView,
     PPCView,
 )
+from probpipe.families import PoissonFamily, glm_likelihood
+from probpipe.inference._approximate_distribution import make_posterior
+from probpipe.inference._inference_utils import build_mcmc_datatree
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def poisson_regression():
+    """A Poisson regression of 20 counts on two coefficients, with an inference result.
+
+    The fixture is the tuple ``(likelihood, model, data, posterior)``, where
+    *model* is ``likelihood * prior`` and *posterior* is an inference result of
+    two chains of 500 seeded draws whose annotations hold the ArviZ groups an
+    MCMC method records.
+    """
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal(20)
+    design = jnp.asarray(np.stack([np.ones(20), x], axis=1), dtype=jnp.float32)
+    y = jnp.asarray(rng.poisson(np.exp(0.5 + 0.3 * x)), dtype=jnp.int32)
+    likelihood = glm_likelihood("y", PoissonFamily(), X=design)
+    prior = Normal("beta", jnp.zeros(2), jnp.ones(2))
+    chains = [rng.normal([0.5, 0.3], 0.1, size=(500, 2)).astype(np.float32) for _ in range(2)]
+    posterior = make_posterior(
+        chains,
+        parents=(prior,),
+        method="test",
+        annotations=build_mcmc_datatree(chains, {"diverging": np.zeros((2, 500), dtype=bool)}),
+        event_spec=OutputSpec(beta=NumericArraySpec((2,))),
+    )
+    return likelihood, likelihood * prior, {"y": y}, posterior
+
+
+def total_count(y: jax.Array) -> jax.Array:
+    return jnp.sum(y)
 
 
 def _mcmc_tree(
@@ -398,6 +436,56 @@ class TestDiagnosticsView:
     def test_to_dict_json_serialisable(self):
         view = self._view_with_mcmc()
         json.dumps(view.to_dict())
+
+    def test_to_dict_after_add_loo_holds_every_loo_variable(self, poisson_regression):
+        _, model, data, posterior = poisson_regression
+        add_loo(posterior, model=model, data=data)
+
+        summary = posterior.diagnostics.to_dict()
+
+        assert json.loads(json.dumps(summary)) == summary
+        (run,) = summary["runs"]
+        assert run["name"] == "loo"
+        recorded = posterior.annotations["diagnostics"]["runs"]["loo"].to_dataset()
+        assert set(run["result"]) == set(recorded.data_vars)
+        for field in ("pareto_k", "loo_i"):
+            assert list(run["result"][field]) == [str(i) for i in range(20)]
+            np.testing.assert_array_equal(
+                list(run["result"][field].values()), recorded[field].values
+            )
+        # The LOO estimate of the expected log predictive density is the sum of
+        # its pointwise contributions. Measured gap over five seeds: 0.
+        np.testing.assert_allclose(
+            sum(run["result"]["loo_i"].values()), summary["loo"]["elpd_loo"], rtol=1e-12
+        )
+
+    def test_to_dict_after_mcmc_ppc_and_loo_holds_every_diagnostic(self, poisson_regression):
+        likelihood, model, data, posterior = poisson_regression
+        add_mcmc_diagnostics(posterior)
+        add_ppc(
+            posterior,
+            total_count,
+            data,
+            kernel=likelihood,
+            n_replications=20,
+            key=jax.random.key(0),
+        )
+        add_loo(posterior, model=model, data=data)
+
+        summary = posterior.diagnostics.to_dict()
+
+        assert json.loads(json.dumps(summary)) == summary
+        for field in ("rhat", "ess_bulk", "ess_tail", "mcse_mean", "mcse_sd"):
+            assert set(summary["mcmc"][field]) == {"beta[0]", "beta[1]"}
+        assert summary["mcmc"]["n_divergences"] == 0
+        assert set(summary["ppc"]) == {"total_count"}
+        assert isinstance(summary["loo"]["elpd_loo"], float)
+        runs = posterior.annotations["diagnostics"]["runs"]
+        results = {run["name"]: run["result"] for run in summary["runs"]}
+        assert {name: set(result) for name, result in results.items()} == {
+            name: set(runs[name].to_dataset().data_vars) for name in ("ppc", "loo")
+        }
+        assert list(results["loo"]["pareto_k"]) == [str(i) for i in range(20)]
 
     def test_warnings_aggregates_mcmc_and_loo(self):
         view = self._view_with_mcmc()

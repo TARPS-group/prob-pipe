@@ -688,7 +688,7 @@ class TestApplyContract:
         assert result.level_names == ("row",)
         assert result.batch_shape == (2,)
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec == NumericArraySpec((3,))
+        assert result.element_spec == NumericArraySpec((3,), dtype="float32")
         np.testing.assert_allclose(result.values, np.asarray(data) + 1, rtol=0, atol=0)
         assert wrapped.input_spec.free_dims == {"n"}
         with pytest.raises(ApplicabilityError, match="already bound"):
@@ -936,7 +936,8 @@ class TestTemplateDeclarationContract:
             output_spec=NumericArraySpec(("new",)),
         )
         result = wrapped(jnp.ones(3))
-        assert result.spec == NumericArraySpec((3,))
+        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        assert result.spec == NumericArraySpec((3,), dtype="float32")
         assert wrapped.output_spec.spec.free_dims == {"new"}
 
     def test_type_errors_for_non_templates(self):
@@ -961,8 +962,8 @@ class TestSymbolicCalls:
         first = regression_function(np.ones((3, 2)), np.ones((2,)))
         second = regression_function(np.ones((5, 4)), np.ones((4,)))
 
-        assert first.spec == NumericArraySpec((3,))
-        assert second.spec == NumericArraySpec((5,))
+        assert first.spec == NumericArraySpec((3,), dtype="float64")
+        assert second.spec == NumericArraySpec((5,), dtype="float64")
         assert regression_function.input_spec is declaration
         assert declaration == InputSpec(RecordSpec(X=("obs", "p"), p=("p",)).children)
 
@@ -1018,7 +1019,7 @@ class TestSymbolicCalls:
         result = wrapped(rows)
 
         assert isinstance(result, NumericArrayBatch)
-        assert result.element_spec == NumericArraySpec((2,))
+        assert result.element_spec == NumericArraySpec((2,), dtype="float32")
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(
             result.values,
@@ -1136,7 +1137,8 @@ class TestSymbolicCalls:
 
         result = wrapped(rows)
 
-        assert result.element_spec == template["y"]
+        # The declaration leaves the dtype open, so completion takes the produced one (II.2).
+        assert result.element_spec == NumericArraySpec((), dtype="float32", support=positive)
         np.testing.assert_allclose(result.values, np.arange(3.0) + 1)
 
     @pytest.mark.parametrize(("shift", "holds"), [(1.0, True), (-5.0, False)])
@@ -1412,16 +1414,16 @@ class TestDynamicImplementation:
 
         assert run() == run()
 
-    def test_dynamic_fingerprint_tracks_signature_and_template_declarations(self):
+    def test_dynamic_fingerprint_tracks_signature_and_declarations(self):
         from probpipe.core._fingerprint import fingerprint
 
-        def build(signature, *, input_template=None, output_template=None):
+        def build(signature, *, input_spec=None, output_spec=None):
             return Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,
                 name="dynamic",
-                input_spec=None if input_template is None else InputSpec(input_template.children),
-                output_spec=output_template,
+                input_spec=None if input_spec is None else InputSpec(input_spec.children),
+                output_spec=output_spec,
             )
 
         base = inspect.Signature(
@@ -1458,14 +1460,14 @@ class TestDynamicImplementation:
         assert fingerprint(
             build(
                 base,
-                input_template=RecordSpec(x=()),
-                output_template=RecordSpec(y=()),
+                input_spec=RecordSpec(x=()),
+                output_spec=RecordSpec(y=()),
             )
         ) != fingerprint(
             build(
                 base,
-                input_template=RecordSpec(x=(1,)),
-                output_template=RecordSpec(y=(1,)),
+                input_spec=RecordSpec(x=(1,)),
+                output_spec=RecordSpec(y=(1,)),
             )
         )
 

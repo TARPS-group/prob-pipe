@@ -30,7 +30,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **name**: the identifier of a matched part or a registry entry: a component name, a field name, or a level name (II.2, II.5, II.6), a method's or a route's name, and an operation's key in `operation_registry`. A tracked term's own identifier is its label.
 - **normalized and unnormalized**: a law is normalized when it claims a capability defined only for a probability law, such as sampling or a normalized density, and unnormalized otherwise (III.8). Step 3 of a call is argument normalization (V.4).
 - **operation**: a `Function` that fronts many implementations with one call, such as `mean(d)`, by adding operand roles, a result rule with its applicability conditions, and a set of routes (VI.0).
-- **optional slot**: an input slot that a binding may omit, which then takes its default; a parameter with a default of a kernel's function is one, and in a joint a factor that produces a component of its name meets it (II.2, III.9, IV.2).
+- **optional slot**: an input slot that a binding may omit, which then takes its default; a parameter with a default of a kernel's function is one, and in a joint a factor that produces a component of its name meets it (II.2, IV.2, IV.4).
 - **packaging**: whether a declaration exposes a record's fields as its components or names one whole term, which the two forms of `OutputSpec` decide (II.2).
 - **path**: a `/`-joined sequence of names that addresses one node of a named tree, either a field or an interior node (II.6); II.2 fixes the paths of a declaration. The occurrence path of a random event is its call's position in the workflow (V.8).
 - **provenance**: the record of how a tracked term was produced, which holds its operation, its tracked parents, its resolved controls, and its plain inputs (II.4).
@@ -63,6 +63,7 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | the independent-draw shape prefix of `sample` | `sample_shape` |
 | a distribution's event declaration, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
+| a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |
 | a tracked term's identity, the required first argument of `Record` and of a distribution | `label` |
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |

@@ -9,7 +9,7 @@
   target's paths.
 - Each model family conditions to a posterior over record-valued parameters:
   a GLM with its dispersion, a ``PyMCModel`` with a mean and a scale, a
-  ``StanModel`` with coefficients and a scale, an ``UnnormalizedDistribution``
+  ``StanModel`` with coefficients and a scale, a law of an unnormalized density
   over a nested record, and the factored joint above.
 
 The references of the families with a scale are scale mixtures: given the
@@ -34,10 +34,11 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    distribution,
     workflow_run,
 )
 from probpipe.distributions._factored import _raw_record
-from probpipe.families import GaussianFamily, PyMCModel, UnnormalizedDistribution, glm_likelihood
+from probpipe.families import GaussianFamily, PyMCModel, glm_likelihood
 from tests._ops import (
     EmpiricalDistribution,
     FieldView,
@@ -391,7 +392,9 @@ class TestFamiliesWithRecordParameters:
 
     def test_an_unnormalized_law_over_a_nested_record_converts_with_its_declaration(self):
         """Conversion through a method returns an empirical law that keeps the nested record."""
-        law = UnnormalizedDistribution("theta", _nested_density, OutputSpec(_NESTED))
+        law = distribution(
+            "theta", unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED)
+        )
         normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
             law, EmpiricalDistribution
         )
@@ -399,7 +402,9 @@ class TestFamiliesWithRecordParameters:
         assert set(leaf_paths(normalized.event_spec.spec)) == {"theta/a", "theta/b"}
 
     def test_the_converted_nested_law_has_the_gaussian_moments_at_its_paths(self):
-        law = UnnormalizedDistribution("theta", _nested_density, OutputSpec(_NESTED))
+        law = distribution(
+            "theta", unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED)
+        )
         normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
             law, EmpiricalDistribution
         )
@@ -407,7 +412,9 @@ class TestFamiliesWithRecordParameters:
 
     def test_the_views_and_marginals_of_the_converted_nested_law_agree(self):
         """A view and a marginal at a nested path read the converted law's draws at that path."""
-        law = UnnormalizedDistribution("theta", _nested_density, OutputSpec(_NESTED))
+        law = distribution(
+            "theta", unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED)
+        )
         normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
             law, EmpiricalDistribution
         )

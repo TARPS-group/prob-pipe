@@ -677,6 +677,16 @@ class TestTheReplicateLevel:
             Normal("x", 0.0, 1.0).event_spec.spec, ((3,),), ("obs",)
         )
 
+    def test_a_level_follows_the_rule_for_component_names(self):
+        replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 3, level="my level")
+        assert replicate.event_spec.spec.level_names == ("my level",)
+
+    @pytest.mark.parametrize("law", [BootstrapReplicateDistribution, BootstrapDistribution])
+    @pytest.mark.parametrize("level", ["", "a/b"])
+    def test_an_invalid_level_raises_at_construction(self, law, level):
+        with pytest.raises(ValueError, match="level names"):
+            law("b", Normal("x", 0.0, 1.0), 3, level=level)
+
 
 # ---------------------------------------------------------------------------
 # The bootstrap random measure

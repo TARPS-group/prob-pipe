@@ -20,8 +20,7 @@ import numpy as np
 import pytest
 
 import probpipe.functions._broker as broker_mod
-from probpipe import EmpiricalDistribution, Normal, WorkflowKind, sample, workflow_run
-from probpipe.values._function_base import Function
+from probpipe import EmpiricalDistribution, Function, Normal, WorkflowKind, sample, workflow_run
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
 prefect_test_harness = prefect_testing.prefect_test_harness

@@ -12,6 +12,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import probpipe
 from probpipe import (
     EmpiricalDistribution,
+    Function,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -29,7 +30,6 @@ from probpipe.core._specs import NumericArraySpec, OutputSpec
 from probpipe.core.provenance import ParentInfo
 from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
 from probpipe.families import BijectorTransformedDistribution
-from probpipe.values._function_base import Function
 from tests._ops import condition_on as condition_on_operation
 
 

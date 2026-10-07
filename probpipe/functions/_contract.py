@@ -49,7 +49,7 @@ def _bind_planned_function_inputs(
     context = f"Function {function_name!r} input"
     if input_spec.keys() != values.keys():
         raise ApplicabilityError(
-            f"{context} fields {sorted(values)} do not match template fields {sorted(input_spec)}"
+            f"{context} slots {sorted(values)} do not match the declared slots {sorted(input_spec)}"
         )
     bindings: dict[str, int] = {}
     try:
