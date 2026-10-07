@@ -1376,8 +1376,8 @@ def _function_kernel(
     label = getattr(fn, "__name__", None) if name is None else name
     if not isinstance(label, str) or not label:
         raise TypeError(
-            f"conditional_distribution needs a name for a {type(fn).__name__}, which has no "
-            f"__name__ to take it from"
+            f"conditional_distribution needs a label for a {type(fn).__name__}, which has no "
+            f"__name__ to take it from; pass the label as the first argument"
         )
     slots = _slots_of(label, fn, given_spec)
     probe = _probe(label, fn, slots)

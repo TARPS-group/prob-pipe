@@ -1043,7 +1043,7 @@ class Batch[E](TrackedTerm, ABC):
             taken = sorted({name for name in root_names if root_names.count(name) > 1})
             raise ValueError(
                 f"level name {taken[0]!r} is already used by a dropped level in this view's "
-                f"root selection; reusing it would make names of subsequent selections "
+                f"root selection; reusing it would make the labels of subsequent selections "
                 f"ambiguous. Rename the level on the original batch, or give it another name"
             )
 

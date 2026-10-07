@@ -613,7 +613,7 @@ class _TFPArrayBackend:
     def __repr__(self) -> str:
         return (
             f"_TFPArrayBackend({self._dist_cls.__name__}, "
-            f"batch_shape={self._batch_shape}, name={self._name!r})"
+            f"batch_shape={self._batch_shape}, label={self._name!r})"
         )
 
     # -- JAX pytree registration --------------------------------------------

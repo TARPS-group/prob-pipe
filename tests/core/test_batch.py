@@ -1007,7 +1007,7 @@ class TestRenamingAView:
         """A dropped root level still participates in naming subsequent selections."""
         view = nested[1]
         assert view.level_names == ("draw",)
-        with pytest.raises(ValueError, match="names of subsequent selections ambiguous"):
+        with pytest.raises(ValueError, match="labels of subsequent selections ambiguous"):
             view.with_level_names(draw="chain")
 
     def test_the_same_rename_is_fine_once_the_view_is_its_own_root(self, nested):

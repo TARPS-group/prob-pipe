@@ -124,7 +124,7 @@ class TestNameLifecycle:
         # class, so a name-less call reports ``Record`` and its custom message
         # — not the promoted ``NumericRecord`` nor the bare Python "missing
         # positional argument" a reverted guard would leave.
-        with pytest.raises(TypeError, match="Record requires its name"):
+        with pytest.raises(TypeError, match="Record requires its label"):
             Record(a=1.0)
 
     def test_record_keeps_operation_name(self):
