@@ -125,6 +125,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The scope derives the call's key from the seed and the call's position in the
   scope, so the result differs from the one the old key gave.
+  `score_posterior` raises `TypeError` before claiming an event when sliced
+  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
+  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
+  supported, including their composition, and mapped calls share random
+  projections across the batch. For staged computation, use
+  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  skipping sliced Wasserstein when the reference has no draws, remains
+  compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
