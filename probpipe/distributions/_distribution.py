@@ -44,7 +44,7 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
         fields, even when it has one; any other term spec is a whole term whose
         component defaults to *name*; an ``OutputSpec`` is kept as given.
     name : str
-        The law's name, the default component of a whole-term event.
+        The law's label, which is the default component of a whole-term event.
 
     Returns
     -------
@@ -186,7 +186,7 @@ _ELEMENT_SOURCE = "_element_source"
 
 
 def _detached_term(term: Any) -> Any:
-    """*term*, a law or a kernel, detached from the workflow under its own name.
+    """*term*, a law or a kernel, detached from the workflow under its own label.
 
     The copy shares the representation, and it carries no provenance, no
     annotations, and no reference to a batch it was an element of.
@@ -214,7 +214,7 @@ class _DistributionMeta(_TrackedTermMeta):
     """The metaclass of every distribution.
 
     Construction checks that the instance holds its event declaration, as the
-    tracked-term metaclass checks its name: a class that bypasses
+    tracked-term metaclass checks its label: a class that bypasses
     ``Distribution.__init__`` calls ``_init_declaration`` itself.
 
     Membership in a marker registered in ``_DECLARATION_MARKERS`` is read from an
@@ -352,7 +352,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def _init_declaration(self, event_spec: OutputSpec | TermSpec) -> None:
         """Complete *event_spec* and store it as this law's declaration.
 
-        The constructor calls this after setting the name; a class that bypasses
+        The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
         """
         object.__setattr__(
@@ -362,7 +362,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- the representation ---------------------------------------------------
 
     def raw(self) -> Distribution:
-        """This law detached from the workflow, under its name and declaration.
+        """This law detached from the workflow, under its label and declaration.
 
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
@@ -460,7 +460,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and name whose declaration has the sizes
+            A copy of the same class and label whose declaration has the sizes
             substituted; the original is unchanged.
 
         Raises
@@ -492,7 +492,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and name whose declaration has the
+            A copy of the same class and label whose declaration has the
             dimensions renamed; the original is unchanged.
         """
         return self._with_declaration(
@@ -530,7 +530,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Distribution
-            The renamed law under the same name; the original is unchanged.
+            The renamed law under the same label; the original is unchanged.
 
         Raises
         ------

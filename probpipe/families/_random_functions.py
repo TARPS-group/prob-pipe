@@ -82,7 +82,7 @@ class RandomFunction(Distribution):
         The declaration of one draw, whose type is a ``FunctionSpec``; a bare
         term spec completes as for ``Distribution``. The type defaults to a
         callable whose input and output are unspecified, which also fills a
-        type hole, and the declaration to a whole term under *name*.
+        type hole, and the declaration to a whole term under *label*.
 
     Raises
     ------
@@ -117,7 +117,7 @@ class RandomMeasure(Distribution):
     event_spec : OutputSpec or TermSpec, optional
         The declaration of one draw, whose type is a ``DistributionSpec``. The
         type defaults to a law whose event is opaque, which also fills a type
-        hole, and the declaration to a whole term under *name*.
+        hole, and the declaration to a whole term under *label*.
 
     Raises
     ------

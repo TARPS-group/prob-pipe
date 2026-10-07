@@ -1003,7 +1003,7 @@ class FieldView(Distribution):
         return _named_as(selection, [_final_segment(each) for each in key])
 
     def raw(self) -> Distribution:
-        """The parent's detached marginal at the path, under the view's name.
+        """The parent's detached marginal at the path, under the view's label.
 
         Returns
         -------
@@ -1044,7 +1044,7 @@ class FieldView(Distribution):
         Returns
         -------
         FieldView
-            The view, under the same name, of the parent with the sizes bound.
+            The view, under the same label, of the parent with the sizes bound.
 
         Raises
         ------
@@ -1069,13 +1069,13 @@ class FieldView(Distribution):
         Returns
         -------
         FieldView
-            The view, under the same name, of the parent with the dimensions
+            The view, under the same label, of the parent with the dimensions
             renamed.
         """
         return self._viewed(self._parent.with_dim_names(**names))
 
     def _viewed(self, parent: Distribution) -> FieldView:
-        """The view of *parent* at this view's path, under this view's name."""
+        """The view of *parent* at this view's path, under this view's label."""
         view = FieldView(parent, self._path)
         return view if view.label == self.label else view.with_label(self.label)
 
@@ -1887,7 +1887,7 @@ def _renamed_through_factors(
     """*joint* renamed by *pairs* through its factors, or None when the factors cannot carry it.
 
     The result is the factored joint of the renamed factors over the same
-    graph, under the joint's name. Its components follow the factors, so a
+    graph, under the joint's label. Its components follow the factors, so a
     moved node joins its factor's components rather than the end of the joint's.
     The factors cannot carry a rename that changes a factor's packaging, as
     moving a whole term's component into a group does, that places components of

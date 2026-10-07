@@ -392,8 +392,8 @@ class NamedTree[L]:
         hook. *node_name* is the field key the node sits under for a nested
         node and ``None`` for the root. The default constructs through
         :meth:`_rebuild_class` and ignores *node_name*; a family whose
-        constructor requires a name (the value types) overrides this to
-        supply it — a nested node is named by its field key, and the root
+        constructor requires a label (the value types) overrides this to
+        supply it — a nested node is labeled by its field key, and the root
         follows the transform's identity rule.
         """
         return self._rebuild_class()(leaves)
@@ -1028,7 +1028,7 @@ class NamedTree[L]:
         """Return a same-family tree with the given nodes renamed or moved, ``old -> new``.
 
         Acts on the nodes *within* the tree, leaves or whole subtrees; the object
-        itself is renamed by ``with_label`` on the tracked value types. Each key is
+        itself is relabeled by ``with_label`` on the tracked value types. Each key is
         the exact path of a node, so a keyword addresses a top-level node and the
         positional mapping any node. Each target is the node's new exact path,
         so a bare name is a top-level path::

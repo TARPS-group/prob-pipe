@@ -629,8 +629,8 @@ class Function(Node, TrackedTerm, Annotated):
         any other bare term spec declares a whole term under output_label. A
         named type hole is inferred independently for each call.
     output_label : str or None
-        Result label. Defaults to the initial name and survives with_label.
-        Whole-term components default to this name, which must then be
+        Result label. Defaults to the initial label and survives with_label.
+        Whole-term components default to this label, which must then be
         non-empty and contain no ``/``, so a label such as ``Model.fit`` or
         ``<lambda>`` serves; an explicit OutputSpec can supply a different
         component.
@@ -698,7 +698,7 @@ class Function(Node, TrackedTerm, Annotated):
     Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
     ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
-    wrapped callable's seed parameter. ``name`` and ``fn`` remain required.
+    wrapped callable's seed parameter. ``label`` and ``fn`` remain required.
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 

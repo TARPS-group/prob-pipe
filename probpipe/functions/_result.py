@@ -580,7 +580,7 @@ def _make_stack(
         The sizes of the axes each level spans, which partition
         ``batch_shape``; ``None`` gives every axis to one level.
     name : str, optional
-        Name for the resulting aggregate.
+        The resulting aggregate's label.
     field_name : str
         The label a wrapped row takes, and the aggregate's label when *name* is
         ``None``.
@@ -902,8 +902,8 @@ def _stack_rows(
                 flat = None
             if flat is not None:
                 # No early return for the one-level case: the reshape below is
-                # an identity there, and ``stack`` named the batch after its own
-                # class, where every aggregation names it for the function that
+                # an identity there, and ``stack`` labeled the batch after its own
+                # class, where every aggregation labels it for the function that
                 # produced the rows.
                 n_cur = len(flat.batch_shape)
                 return NumericRecordBatch(

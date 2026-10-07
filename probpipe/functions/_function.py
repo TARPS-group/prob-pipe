@@ -311,7 +311,7 @@ def _call_function_in_context(
 def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     """The label of the result of a call of *function* on the arguments *values* (V.10).
 
-    A function's result takes its output name, and an operation's result the
+    A function's result takes its output label, and an operation's result the
     label its operands give it (II.4).
     """
     derive = getattr(function, "_derived_label", None)

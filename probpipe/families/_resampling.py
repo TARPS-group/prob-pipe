@@ -219,7 +219,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     **The event declaration.** One draw is a batch of the source's event term on
     the replicate's level, so a replicate keeps the source's term kind. The
     declaration is the law's own, derived from the source and the replicate
-    size: its component defaults to the law's *name*, and an *event_spec* names
+    size: its component defaults to the law's label, and an *event_spec* names
     another.
 
     Parameters
@@ -364,7 +364,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     **The event declaration.** One draw is declared as a law carrying the
     source's complete event declaration, so its component names and packaging
     are the source's. The measure's own declaration is distinct: its component
-    defaults to the law's *name*, and an *event_spec* names another.
+    defaults to the law's label, and an *event_spec* names another.
 
     **Capabilities.** The measure samples, and its mean, the marginalized law
     ``E[D](A)`` of a draw ``D``, is the source itself, since each atom of a
@@ -954,7 +954,7 @@ class KDEDistribution(
     effective sample size, so they stay sensible under importance weights.
 
     **The event declaration.** Record atoms expose their fields, and array atoms
-    form a whole-term event whose component defaults to the law's *name*. An
+    form a whole-term event whose component defaults to the law's label. An
     *event_spec* names the components, as for ``EmpiricalDistribution``. Every
     leaf is declared floating, on the real line.
 

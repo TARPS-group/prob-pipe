@@ -966,7 +966,7 @@ class Operation(Function):
         The label rule derives it where the operation has one. Otherwise the
         result takes the label of the primary operand, the first parameter's
         argument, and an argument that is not a tracked term leaves the
-        operation's own output name.
+        operation's own output label.
         """
         rule = self._label_rule
         if rule is not None:

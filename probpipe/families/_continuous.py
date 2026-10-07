@@ -259,7 +259,7 @@ class Normal(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like
         Mean of the distribution.
     scale : array-like
@@ -267,7 +267,7 @@ class Normal(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -309,7 +309,7 @@ class Beta(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     alpha : array-like
         First concentration parameter (> 0).
     beta : array-like
@@ -317,7 +317,7 @@ class Beta(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -363,7 +363,7 @@ class Gamma(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     concentration : array-like
         Shape parameter (> 0).
     rate : array-like
@@ -371,7 +371,7 @@ class Gamma(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -426,7 +426,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     concentration : array-like
         Shape parameter (> 0).
     scale : array-like
@@ -434,7 +434,7 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -488,13 +488,13 @@ class Exponential(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     rate : array-like
         Rate parameter (> 0).
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -530,7 +530,7 @@ class LogNormal(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -538,7 +538,7 @@ class LogNormal(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -588,7 +588,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     df : array-like
         Degrees of freedom (> 0).
     loc : array-like
@@ -598,7 +598,7 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -657,7 +657,7 @@ class Uniform(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     low : array-like
         Lower bound.
     high : array-like
@@ -665,7 +665,7 @@ class Uniform(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -710,7 +710,7 @@ class Cauchy(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -718,7 +718,7 @@ class Cauchy(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -790,7 +790,7 @@ class Laplace(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -798,7 +798,7 @@ class Laplace(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -842,13 +842,13 @@ class HalfNormal(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     scale : array-like
         Scale parameter (> 0).
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -887,7 +887,7 @@ class HalfCauchy(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like
         Location parameter.
     scale : array-like
@@ -895,7 +895,7 @@ class HalfCauchy(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -969,7 +969,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     concentration : array-like
         Tail index (shape parameter, > 0).
     scale : array-like
@@ -977,7 +977,7 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -1031,7 +1031,7 @@ class TruncatedNormal(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like
         Mean of the underlying normal distribution.
     scale : array-like
@@ -1043,7 +1043,7 @@ class TruncatedNormal(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------

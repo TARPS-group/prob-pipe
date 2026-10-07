@@ -11,7 +11,7 @@ Provides:
 A GLM likelihood conditions on the slots ``X`` of shape ``("obs",
 "features")``, ``beta`` of shape ``("features",)``, and ``dispersion`` when
 its family takes one, and its event is the response vector of shape
-``("obs",)``. Its law at a given value is ``family.build(name, link⁻¹(X @
+``("obs",)``. Its law at a given value is ``family.build(label, link⁻¹(X @
 beta), dispersion)``, so changing the family or the link changes the model
 without a new class.
 """
@@ -810,7 +810,7 @@ def glm_likelihood(
     The kernel's given slots are ``X`` of shape ``("obs", "features")``,
     ``beta`` of shape ``("features",)``, and ``dispersion`` when the family has
     one, and its event is the response vector of shape ``("obs",)``. Its law at
-    a given value is ``family.build(name, link⁻¹(X @ beta), dispersion,
+    a given value is ``family.build(label, link⁻¹(X @ beta), dispersion,
     event_spec=event_spec)``: ``GaussianFamily`` with the identity link is linear
     regression, ``BernoulliFamily`` with the logit is logistic regression, and
     ``PoissonFamily`` with the logarithm is Poisson regression. A value of ``X``

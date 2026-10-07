@@ -574,7 +574,7 @@ def admit_arguments(
     input_spec : InputSpec or None
         The declared slots, whose kinds the arguments are admitted against.
     function_name : str or None
-        The function's name, for the message.
+        The function's label, for the message.
     roles : Mapping of str to tuple of TermSpec subclasses, or None
         The kinds each parameter with a role accepts.
     lifts : bool

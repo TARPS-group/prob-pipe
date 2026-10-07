@@ -506,7 +506,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     ) -> None:
         """Complete both declarations and store them as this kernel's spec.
 
-        The constructor calls this after setting the name; a class that bypasses
+        The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
         """
         object.__setattr__(
@@ -520,7 +520,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     # -- the representation -------------------------------------------------
 
     def raw(self) -> ConditionalDistribution:
-        """This kernel detached from the workflow, under its name and declarations.
+        """This kernel detached from the workflow, under its label and declarations.
 
         A kernel is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
@@ -558,7 +558,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Returns
         -------
         Self
-            A copy of the same class and name with the sizes substituted on
+            A copy of the same class and label with the sizes substituted on
             both sides; the original is unchanged.
 
         Raises
@@ -593,7 +593,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Returns
         -------
         Self
-            A copy of the same class and name with the dimensions renamed on
+            A copy of the same class and label with the dimensions renamed on
             both sides; the original is unchanged.
         """
         return self._with_declarations(
@@ -630,7 +630,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Returns
         -------
         ConditionalDistribution
-            The renamed kernel under the same name; the original is unchanged.
+            The renamed kernel under the same label; the original is unchanged.
 
         Raises
         ------
@@ -1413,7 +1413,7 @@ def conditional_distribution(
     for each optional slot left unbound, and returns the law the call returns;
     binding fewer slots curries the kernel over the rest.
 
-    The call form takes the name first and the function second::
+    The call form takes the label first and the function second::
 
         likelihood = conditional_distribution(
             "y", lambda mu, tau: Normal("y", mu, tau), given_spec={"mu": real, "tau": scale}
@@ -1431,7 +1431,7 @@ def conditional_distribution(
         fixed = counts * Normal("r", 0.0, 1.0)                           # n0 is 50
         uncertain = counts * (Normal("r", 0.0, 1.0) * LogNormal("n0", 4.0, 0.3))
 
-    and the decorator form names the kernel after the function, or as given::
+    and the decorator form labels the kernel after the function, or as given::
 
         @conditional_distribution(given_spec=prior.event_spec.components)
         def y(population, groups):

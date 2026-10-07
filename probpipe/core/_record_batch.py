@@ -61,8 +61,8 @@ class RecordBatch(Batch[Record]):
     Parameters
     ----------
     label : str
-        The batch's name. Required, as it is for every batch: a batch is a value a
-        caller holds, and a name derived from its class says nothing about what it
+        The batch's label. Required, as it is for every batch: a batch is a value a
+        caller holds, and a label derived from its class says nothing about what it
         holds.
     fields : Mapping of str to array
         The field columns, keyed by **leaf path** (``"outer/a"``) or given as a
@@ -309,7 +309,7 @@ class RecordBatch(Batch[Record]):
 
         *index* addresses the leading (batch) axes only, so each column keeps its
         event axes and array indexing yields a view rather than a copy. Built
-        without ``__init__``, since the spec and the name are already decided and
+        without ``__init__``, since the spec and the label are already decided and
         re-deriving them from the view's own shape would lose the levels a
         dropped axis came from.
         """
@@ -771,7 +771,7 @@ class RecordBatch(Batch[Record]):
         numeric is a ``NumericRecordBatch``, so an edit that removes the last
         non-numeric field promotes and one that introduces a non-numeric field
         demotes — which also makes a mixed ``merge`` give the same answer whichever
-        way round it is written. The **name** is preserved by every structural
+        way round it is written. The **label** is preserved by every structural
         transform.
         """
         return _batch_class_for(template)(
@@ -808,9 +808,9 @@ class RecordBatch(Batch[Record]):
             shared declaration, with each opaque field typed by what its values
             share, as an ``OpaqueBatch`` types its elements.
         label : str, optional
-            The batch's name. Taken from the first record when omitted — a batch of ``draw`` records is about ``draw``, so the name is
-            derived from what is being stacked rather than invented. A caller with
-            a better name passes one.
+            The batch's label. Taken from the first record when omitted — a batch of
+            ``draw`` records is about ``draw``, so the label is derived from what is
+            being stacked rather than invented. A caller with a better label passes one.
 
         Returns
         -------
@@ -1355,8 +1355,8 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, st
 
     Children are the columns in the template's canonical order, so they realign
     with the aux spec on unflatten. The static aux is the
-    ``(spec, name)`` pair, matching ``Record``: the batch's own
-    type and its name survive a round-trip, while provenance does not cross a
+    ``(spec, label)`` pair, matching ``Record``: the batch's own
+    type and its label survive a round-trip, while provenance does not cross a
     JAX transform boundary.
     """
     # ``_columns`` is already in the template's canonical order at every

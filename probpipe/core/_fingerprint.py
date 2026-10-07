@@ -22,9 +22,9 @@ Supported types
   ``Weights`` are hashed by content
 - ``Function`` — frozen signature, input declaration, and output declaration
   without its component names, plus either plain-callable bytecode, referenced
-  names, and captured/default values or a private implementation type, so a
-  rename of the function, its output label, or its output's components keeps
-  the digest
+  names, and captured/default values or a private implementation type, so
+  relabeling the function or its output, or renaming its output's components,
+  keeps the digest
 - Closure-free Python functions — module + qualified name + bytecode +
   defaults. Closure-bearing functions and every other callable kind are
   process-local identities.
@@ -733,7 +733,7 @@ def _update_distribution(
     """Hash a distribution by class name and parameters.
 
     The label names the law for display and records nothing about what it
-    computes, so a relabeled law keeps its fingerprint, as a renamed function does.
+    computes, so a relabeled law keeps its fingerprint, as a relabeled function does.
 
     For TFP-backed distributions (those with a ``_tfp_dist`` attribute) the
     TFP parameter dict is hashed directly — this covers every concrete

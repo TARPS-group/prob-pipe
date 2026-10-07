@@ -163,7 +163,7 @@ class MinibatchedDistribution(
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.

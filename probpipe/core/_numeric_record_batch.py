@@ -223,7 +223,7 @@ class NumericRecordBatch(RecordBatch):
         Parameters
         ----------
         label : str
-            The reconstructed batch's name (user-given).
+            The reconstructed batch's label.
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
             Every leaf must be a NumericArraySpec.

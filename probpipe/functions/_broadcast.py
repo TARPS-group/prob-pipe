@@ -158,10 +158,10 @@ def execute_distribution_broadcast(
         Callback used only for explicit JAX dispatch to raise a clear tracing
         error before executing.
     function_name : str
-        Human-readable workflow name recorded in provenance metadata.
+        The function's label, which provenance metadata records.
     output_label : str or None
         The result's label, and the component of an undeclared whole-term
-        output; the workflow name by default.
+        output; the function's label by default.
     output_spec : OutputSpec or None
         The function's output declaration with the call's shared dimensions
         bound, which the outputs complete.

@@ -728,7 +728,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _selection_batch(self, selected: tuple[_Selected, ...]) -> RecordBatch:
         """The atoms projected onto the selected nodes, one field per node under its final segment.
 
-        The batch is named by the stored atoms' name indexed by the selected paths.
+        The batch's label is the stored atoms' label indexed by the selected paths.
         """
         atoms = self._atoms
         is_record = isinstance(self.event_spec.spec, RecordSpec)

@@ -383,7 +383,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
 
 
 _mixture_factory: Callable[[str, list[Distribution], Any], Distribution] | None = None
-"""The finite mixture ``(name, components, weights)``, which the mixture family installs."""
+"""The finite mixture ``(label, components, weights)``, which the mixture family installs."""
 
 
 def _install_mixture(factory: Callable[[str, list[Distribution], Any], Distribution]) -> None:

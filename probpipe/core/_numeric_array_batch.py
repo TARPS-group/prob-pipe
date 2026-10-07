@@ -38,9 +38,9 @@ class NumericArrayBatch(Batch[NumericArray]):
     Parameters
     ----------
     label : str
-        The batch's name, **required**, as a :class:`~probpipe.Record`'s and an
-        :class:`~probpipe.Opaque`'s are. A batch is what an operation hands back,
-        and the name is what says which one it is; a class-name default would name
+        The batch's label, **required**, as a :class:`~probpipe.Record`'s and an
+        :class:`~probpipe.Opaque`'s are. A batch is what an operation returns,
+        and the label is what says which one it is; a class-name default would label
         every batch in a pipeline alike.
     values : array-like
         One array holding every element, shaped ``(*batch_shape, *event_shape)``.
@@ -85,7 +85,7 @@ class NumericArrayBatch(Batch[NumericArray]):
     -----
     Selection yields the element kind, as it does for every batch:
     ``batch[i]`` is a :class:`NumericArray`. It materializes, so each element
-    takes the derived name and inherits this batch's lineage.
+    takes the derived label and inherits this batch's lineage.
     """
 
     _values: Any
@@ -262,7 +262,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         *index* addresses the leading axes only, so the event axes are untouched
         and selection yields a view rather than a copy. It goes through the
         value's backend, since ``[]`` is not positional on every container. Built without
-        ``__init__`` for the reason ``RecordBatch`` gives: the spec and the name
+        ``__init__`` for the reason ``RecordBatch`` gives: the spec and the label
         are already decided, and re-deriving them from the view's own shape
         would lose the levels a dropped axis came from.
         """

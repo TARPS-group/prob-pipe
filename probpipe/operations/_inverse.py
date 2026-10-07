@@ -45,7 +45,7 @@ def inverse(f: Any):
     Returns
     -------
     Function
-        The map ``y ↦ f⁻¹(y)``, whose name derives from *f*'s.
+        The map ``y ↦ f⁻¹(y)``, whose label derives from *f*'s.
 
     Raises
     ------

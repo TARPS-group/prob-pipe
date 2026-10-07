@@ -362,14 +362,14 @@ class NumericRecord(Record, Numeric):
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
         spec's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
         in canonical leaf order, and returns a ``NumericRecord`` carrying
-        *spec* as its authoritative schema under the user-given *name*.
+        *spec* as its authoritative schema under the user-given *label*.
         The reconstructed leaves are bare ``jax.Array``\\ s — a flat vector
         carries no native container to restore.
 
         Parameters
         ----------
         label : str
-            Name for the reconstructed record (user-given).
+            The reconstructed record's label.
         spec : NumericRecordSpec
             The flat layout supplying field names, shapes, and order. Every
             leaf must be a NumericArraySpec.
@@ -494,7 +494,7 @@ def _value_treedef(template: NumericRecordSpec) -> jax.tree_util.PyTreeDef:
                 fields[name] = _build(spec)
             else:
                 fields[name] = jnp.broadcast_to(numeric_fill, spec.shape)
-        # A template carries no name; the caller renames the reconstructed
+        # A template carries no label; the caller relabels the reconstructed
         # value. Skip leaf validation: the placeholder fill is float32 and the
         # template may pin another dtype (int32 / bool) — this skeleton exists
         # only to capture the treedef structure, and the real leaves are cast
@@ -621,7 +621,7 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
     compute boundary where native containers materialise. Nested
     ``NumericRecord`` children pass through whole; JAX recurses into them via
     their own registration. The static aux is the
-    ``(spec, name)`` pair; provenance, annotations,
+    ``(spec, label)`` pair; provenance, annotations,
     and the native container types do not cross a JAX transform boundary.
     """
     children = [

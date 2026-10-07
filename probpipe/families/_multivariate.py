@@ -133,7 +133,7 @@ class MultivariateNormal(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     loc : array-like, shape ``(..., d)``
         Mean vector, or one per row.
     scale_tril : array-like, shape ``(..., d, d)``, optional
@@ -145,7 +145,7 @@ class MultivariateNormal(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -310,13 +310,13 @@ class Dirichlet(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     concentration : array-like, shape ``(..., k)``
         Positive concentration (alpha) parameters, or one vector per row.
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -371,7 +371,7 @@ class Multinomial(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     total_count : int or array-like
         Number of trials, or one per row.
     probs : array-like, shape ``(..., k)``, optional
@@ -381,7 +381,7 @@ class Multinomial(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -455,7 +455,7 @@ class Wishart(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     df : float or array-like
         Degrees of freedom (must be >= dimension), or one per row.
     scale_tril : array-like, shape ``(..., d, d)``, optional
@@ -465,7 +465,7 @@ class Wishart(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------
@@ -543,7 +543,7 @@ class VonMisesFisher(TFPDistribution):
     Parameters
     ----------
     label : str
-        Distribution name.
+        Distribution label.
     mean_direction : array-like, shape ``(..., d)``
         Unit vector giving the mean direction, or one per row.
     concentration : float or array-like
@@ -551,7 +551,7 @@ class VonMisesFisher(TFPDistribution):
     event_spec : OutputSpec, optional
         The declaration of one draw, which names its component. The family
         fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is ``name``.
+        component is *label*.
 
     Raises
     ------

@@ -70,7 +70,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     record of many fields. It is the batch form of ``DistributionSpec``-valued
     terms, and what a sweep of a kernel over a batch of given values produces.
     The batch stores its elements, and ``batch[i]`` is a view of the stored law:
-    a copy under the name derived from the position, such as ``"laws[law=1]"``,
+    a copy under the label derived from the position, such as ``"laws[law=1]"``,
     sharing the stored law's representation, whose provenance records the batch
     and the stored law. A lift groups an element with its stored law, so every
     access of one element draws together.
@@ -78,7 +78,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     Parameters
     ----------
     label : str
-        The batch's name.
+        The batch's label.
     elements : numpy.ndarray or iterable of Distribution
         The laws, as an object array of any shape or a flat iterable.
     level_names : str or iterable of str
@@ -208,13 +208,13 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     The elements share one given declaration and one event declaration. It is
     the batch form of ``ConditionalDistributionSpec``-valued terms. As for
     :class:`DistributionBatch`, ``batch[i]`` is a view of the stored kernel under
-    the name derived from the position, with provenance recording the batch and
+    the label derived from the position, with provenance recording the batch and
     the stored kernel.
 
     Parameters
     ----------
     label : str
-        The batch's name.
+        The batch's label.
     elements : numpy.ndarray or iterable of ConditionalDistribution
         The kernels, as an object array of any shape or a flat iterable.
     level_names : str or iterable of str

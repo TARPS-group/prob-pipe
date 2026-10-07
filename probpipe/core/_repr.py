@@ -249,7 +249,7 @@ def public_class_name(cls: type) -> str:
 # Derived labels
 # ---------------------------------------------------------------------------
 
-#: The symbol each binary operator writes in the name its result derives.
+#: The symbol each binary operator writes in the label its result derives.
 BINARY_SYMBOLS = {
     "add": "+", "sub": "-", "mul": "*", "matmul": "@", "truediv": "/", "floordiv": "//",
     "mod": "%", "pow": "**", "lshift": "<<", "rshift": ">>", "and": "&", "xor": "^", "or": "|",
@@ -294,7 +294,7 @@ def grouped_label(label: str) -> str:
 
     An expression is parenthesized, so the derived label states the order of
     evaluation. Any other label with a top-level space, such as a user's label
-    ``other effect``, is bracketed, so it reads as one name, and a label with
+    ``other effect``, is bracketed, so it reads as one label, and a label with
     none is used as it is.
     """
     if is_expression(label):

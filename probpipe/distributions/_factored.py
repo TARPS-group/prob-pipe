@@ -1912,7 +1912,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the bound factors, under the same name.
+            The joint of the bound factors, under the same label.
 
         Raises
         ------
@@ -1932,7 +1932,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the renamed factors, under the same name.
+            The joint of the renamed factors, under the same label.
         """
         return _rebuilt(self, "with_dim_names", names)
 
@@ -2024,7 +2024,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the bound factors, under the same name.
+            The joint of the bound factors, under the same label.
 
         Raises
         ------
@@ -2044,7 +2044,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         Returns
         -------
         Self
-            The joint of the renamed factors, under the same name.
+            The joint of the renamed factors, under the same label.
         """
         return _rebuilt(self, "with_dim_names", names)
 

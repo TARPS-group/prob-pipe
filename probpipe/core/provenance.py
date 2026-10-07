@@ -102,7 +102,7 @@ class Provenance:
         descriptors participate in ancestry traversal.
     metadata : dict
         Optional scalar/string metadata about the operation (e.g. the old
-        and new names of a rename). Serialized alongside the operation by
+        and new labels of a relabeling). Serialized alongside the operation by
         :meth:`to_dict`.
     inputs : mapping of str to ParentInfo
         Descriptors of resolved plain inputs, keyed by stable parameter label.
@@ -370,13 +370,13 @@ def _parent_key(p: Any) -> Any:
     """Stable dedup key for a parent node.
 
     Uses live-object identity in FULL mode (``p.parent`` is set), and a
-    ``(type_name, name, id(provenance))`` tuple in LIGHTWEIGHT mode.  The
+    ``(type_name, label, id(provenance))`` tuple in LIGHTWEIGHT mode. The
     parent's ``.provenance`` node is the same object on every path to the
     same ancestor, so its id is stable even though each path holds a
     distinct ``ParentInfo`` instance.
 
     Two distinct *root* parents (``provenance is None``) that share a type
-    and name collapse to one key in LIGHTWEIGHT — an accepted limitation of
+    and label collapse to one key in LIGHTWEIGHT — an accepted limitation of
     dropping object identity; FULL keeps them distinct via ``id(p.parent)``.
     """
     if isinstance(p, ParentInfo):
@@ -425,7 +425,7 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
 def provenance_dag(node: ProvenanceNode):
     """Build a Graphviz ``Digraph`` of the provenance chain rooted at *node*.
 
-    Each node is labelled with its type and name.  Edges point from parent
+    Each node is labelled with its type and label. Edges point from parent
     to child and are labelled with the operation that produced the child.
     Works in all modes that attach provenance (FULL and LIGHTWEIGHT).
 

@@ -146,7 +146,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         Returns
         -------
         FactoredMultivariateGaussian
-            The joint of the remaining factors, under the same name.
+            The joint of the remaining factors, under the same label.
 
         Raises
         ------

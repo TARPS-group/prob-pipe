@@ -447,7 +447,7 @@ def _dimension(expression: str, name: str, axis: int, data: Mapping[str, Any]) -
 
 
 def _stanc(*, fetch: bool = True) -> Path:
-    """The path of BridgeStan's stanc compiler, fetched on first use when *fetch* is true.
+    """The location of BridgeStan's stanc compiler, fetched on first use when *fetch* is true.
 
     BridgeStan keeps its source tree in the directory ``$BRIDGESTAN`` names, or
     else under ``~/.bridgestan``, and its Makefile fetches the stanc3 binary into
