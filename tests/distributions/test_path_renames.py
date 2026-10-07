@@ -39,6 +39,7 @@ from probpipe.distributions import (
 )
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
+    SupportsConditionalMarginals,
     SupportsConditionalMean,
     SupportsConditionalSampling,
     SupportsCovariance,
@@ -250,7 +251,7 @@ class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, Supports
         super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        return _Law(self.name, self.event_spec)
+        return _Law(self.label, self.event_spec)
 
     def _conditional_mean(self, given: Any) -> Any:
         return Record("mean", y=jnp.asarray(given["mu"]), z=jnp.asarray(0.0))
@@ -270,10 +271,31 @@ class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
         super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        return _Law(self.name, self.event_spec)
+        return _Law(self.label, self.event_spec)
 
     def _conditional_log_prob(self, given: Any, value: Any) -> Any:
         return -((value["y"] - given["mu"]) ** 2) - 2.0 * value["z"] ** 2
+
+
+class _MarginalKernel(ConditionalDistribution, SupportsConditionalMarginals):
+    """``(y, z) | mu`` whose conditional marginal at a field is ``Normal(mu, 1)`` named by the field.
+
+    It records the given and the path of each conditional marginal, and the
+    law it returns.
+    """
+
+    def __init__(self, label: str = "k") -> None:
+        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+        self.marginal_calls: list[tuple[dict[str, Any], Any]] = []
+        self.marginals: list[Distribution] = []
+
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
+        return _Law(self.label, self.event_spec)
+
+    def _conditional_marginal(self, given: Any, path: str | tuple[str, ...]) -> Distribution:
+        self.marginal_calls.append((dict(given), path))
+        self.marginals.append(Normal(path, given["mu"], 1.0))
+        return self.marginals[-1]
 
 
 def _product() -> Distribution:
@@ -802,3 +824,17 @@ class TestRenamedKernelCapabilities:
             {"mu": 1.0}, {"y": jnp.asarray(2.0), "z": jnp.asarray(0.5)}
         )
         assert jnp.allclose(renamed._conditional_log_prob({"loc": 1.0}, value), expected)
+
+    def test_the_conditional_marginal_at_a_renamed_path_is_the_parent_marginal(self):
+        parent = _MarginalKernel()
+        renamed = parent.with_path_names({"y": "g/y"})
+        assert _capability_guard(renamed, "_conditional_marginal", "g/y") == Feasibility(True)
+        marginal = renamed._conditional_marginal({"mu": 2.0}, "g/y")
+        assert parent.marginal_calls == [({"mu": 2.0}, "y")]
+        assert marginal is parent.marginals[0]
+
+    def test_the_conditional_marginal_guard_names_the_kernel_at_a_path_it_lacks(self):
+        renamed = _MarginalKernel().with_path_names({"y": "g/y"})
+        report = _capability_guard(renamed, "_conditional_marginal", "y")
+        assert report.feasible is False
+        assert "'y' is not an event path of 'k'" in report.description

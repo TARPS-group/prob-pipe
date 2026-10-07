@@ -2179,7 +2179,7 @@ def _renamed_conditional_marginal_guard(
     several nodes, whose final segments must differ.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
-    unreached = _unreached(self._event, self.event_spec, paths, self.name)
+    unreached = _unreached(self._event, self.event_spec, paths, self.label)
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):
