@@ -35,7 +35,7 @@ from ._capabilities import _check_guards
 # ---------------------------------------------------------------------------
 
 
-def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
+def _complete_event_spec(event_spec: Any, label: str) -> OutputSpec:
     """Complete *event_spec* into the output declaration of one draw.
 
     Parameters
@@ -43,8 +43,8 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
     event_spec : OutputSpec or TermSpec
         The declaration a constructor supplies. A ``RecordSpec`` exposes its
         fields, even when it has one; any other term spec is a whole term whose
-        component defaults to *name*; an ``OutputSpec`` is kept as given.
-    name : str
+        component defaults to *label*; an ``OutputSpec`` is kept as given.
+    label : str
         The law's label, which is the default component of a whole-term event.
 
     Returns
@@ -58,19 +58,19 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
         If *event_spec* is neither an ``OutputSpec`` nor a ``TermSpec``.
     ValueError
         If the declaration has a type hole, since filling one is the
-        constructor's job, or *name* is not a valid component name.
+        constructor's job, or *label* is not a valid component name.
     """
     if isinstance(event_spec, OutputSpec):
         declaration = event_spec
     elif isinstance(event_spec, TermSpec):
-        declaration = OutputSpec.default(event_spec, component=name)
+        declaration = OutputSpec.default(event_spec, component=label)
     else:
         raise TypeError(
             f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
         )
     if declaration.spec is None:
         raise ValueError(
-            f"the event declaration of {name!r} has a type hole; a distribution stores "
+            f"the event declaration of {label!r} has a type hole; a distribution stores "
             f"only a complete declaration"
         )
     return declaration
@@ -84,10 +84,10 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
     return component
 
 
-def _is_default_declaration(declaration: OutputSpec, name: str) -> bool:
-    """Whether *declaration* is the one a bare spec completes to under the label *name* (III.7)."""
+def _is_default_declaration(declaration: OutputSpec, label: str) -> bool:
+    """Whether *declaration* is the one a bare spec completes to under *label* (III.7)."""
     try:
-        return declaration == OutputSpec.default(declaration.spec, component=name)
+        return declaration == OutputSpec.default(declaration.spec, component=label)
     except ValueError:
         # Only a label that is a valid component has a default whole-term declaration.
         return False
@@ -312,31 +312,6 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         If *event_spec* has a type hole, or it is a bare term spec other than a
         record and *label* is not a valid component name.
     """
-
-    # -- Immutability: deferred for this layer ------------------------------
-
-    def __delattr__(self, name: str) -> None:
-        """Permit deletion, for the reason :meth:`__setattr__` gives.
-
-        Goes with that method: removing the exemption means removing both.
-        """
-        object.__delattr__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Permit assignment, which :class:`TrackedTerm` otherwise refuses.
-
-        Interim, and the only exemption from the rule that a tracked term is
-        immutable. It stands because the contract for a *fitted* mapping is not
-        settled: the documented way to build an emulator is to subclass a random
-        function and train it in place, and until fitting has a contract that
-        produces a new term instead, enforcing immutability here would break that
-        pattern without offering a replacement.
-
-        Deleting this method **and** :meth:`__delattr__` turns the guard on for
-        the whole distribution layer. Both, or the layer keeps half an
-        exemption: a trainer that clears what it fitted would still raise.
-        """
-        object.__setattr__(self, name, value)
 
     def __init__(
         self,

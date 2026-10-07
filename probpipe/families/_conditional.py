@@ -304,7 +304,7 @@ class GLMFamily(ABC):
 
     def _build_canonical(
         self,
-        name: str,
+        label: str,
         predictor: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -321,7 +321,7 @@ class GLMFamily(ABC):
         with one entry per observation.
         """
         mean = self.canonical_link._inverse(predictor)
-        return self.build(name, mean, dispersion, event_spec=event_spec)
+        return self.build(label, mean, dispersion, event_spec=event_spec)
 
     def _dispersion(self, dispersion: ArrayLike | None, mean: Array) -> Array | None:
         """The dispersion checked against ``has_dispersion``, in the floating dtype of *mean*.
@@ -413,7 +413,7 @@ class BernoulliFamily(GLMFamily):
 
     def _build_canonical(
         self,
-        name: str,
+        label: str,
         predictor: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -424,7 +424,7 @@ class BernoulliFamily(GLMFamily):
             predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
         )
         self._dispersion(dispersion, logits)
-        return Bernoulli(name, logits=logits, event_spec=event_spec)
+        return Bernoulli(label, logits=logits, event_spec=event_spec)
 
 
 class PoissonFamily(GLMFamily):
@@ -457,7 +457,7 @@ class PoissonFamily(GLMFamily):
 
     def _build_canonical(
         self,
-        name: str,
+        label: str,
         predictor: Array,
         dispersion: ArrayLike | None = None,
         *,
@@ -468,7 +468,7 @@ class PoissonFamily(GLMFamily):
             predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
         )
         self._dispersion(dispersion, log_rate)
-        return _LogRatePoisson(name, log_rate, event_spec=event_spec)
+        return _LogRatePoisson(label, log_rate, event_spec=event_spec)
 
 
 # ---------------------------------------------------------------------------

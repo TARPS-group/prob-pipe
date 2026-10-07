@@ -44,10 +44,10 @@ from probpipe.core._specs import NumericRecordSpec
 ELEMENT = NumericRecordSpec(a=(), b=(2,))
 
 
-def _draws(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
+def _draws(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
     """*n* draws of a two-field numeric element, over a single ``draw`` level."""
     return NumericRecordBatch(
-        name,
+        label,
         {"a": jnp.arange(n, dtype=float), "b": jnp.ones((n, 2))},
         "draw",
         element_spec=ELEMENT,
@@ -55,9 +55,9 @@ def _draws(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
     )
 
 
-def _one_field(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
+def _one_field(n: int = 4, *, label: str = "draws") -> NumericRecordBatch:
     return NumericRecordBatch(
-        name,
+        label,
         {"x": jnp.arange(n, dtype=float)},
         "draw",
         element_spec=NumericRecordSpec(x=()),

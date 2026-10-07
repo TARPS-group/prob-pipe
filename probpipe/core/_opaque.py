@@ -88,7 +88,7 @@ class Opaque(TrackedTerm, Annotated):
 
     @classmethod
     def _view(
-        cls, name: str, value: Any, spec: OpaqueSpec, provenance: Provenance | None
+        cls, label: str, value: Any, spec: OpaqueSpec, provenance: Provenance | None
     ) -> Opaque:
         """The opaque *value* under *spec*, as a container's view of it, without validation.
 
@@ -97,7 +97,7 @@ class Opaque(TrackedTerm, Annotated):
         view = object.__new__(cls)
         object.__setattr__(view, "_value", value)
         object.__setattr__(view, "_spec", spec)
-        view._init_tracked(name, provenance=provenance)
+        view._init_tracked(label, provenance=provenance)
         return view
 
     @property

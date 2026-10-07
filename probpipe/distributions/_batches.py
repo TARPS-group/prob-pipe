@@ -148,15 +148,15 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
 
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> Distribution:
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> Distribution:
         """The stored law at *index*, as a view that records the stored law as its source.
 
-        The view is the stored law under the derived *name*, as every object
+        The view is the stored law under the derived *label*, as every object
         batch presents an element. Its source is the root the lift's capture
         follows, so two accesses of one element, and an element and its stored
         law, draw together (V.5).
         """
-        view = super()._element_at(index, name=name)
+        view = super()._element_at(index, label=label)
         object.__setattr__(view, _ELEMENT_SOURCE, self._store[index])
         return view
 
