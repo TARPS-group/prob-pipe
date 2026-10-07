@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`simulation_based_calibration` calibrates any posterior, takes its
+  randomness from the enclosing workflow scope, and reads a fit's budgets from
+  `method_options`.** Its signature is
+  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None)`.
+  A `posterior` kernel, such as an amortized posterior, is evaluated at each
+  replication's observed values, with no fit: its given slots take the observed
+  fields of their names, and a kernel with one given slot, such as an amortized
+  posterior's `observation`, takes the one observed field. Without `posterior`,
+  each replication fits `model` with
+  `condition_on.with_options(method=method, method_options=method_options)`.
+  A `method` or `method_options` beside `posterior` raises `ValueError`. Each
+  replication draws `num_posterior_draws` times from its posterior with
+  `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
+  by its weights. The function claims the workflow-owned random events of the
+  enclosing scope in program order: one
+  `sample(model, sample_shape=(num_simulations,))` draws the `θ★` and `y` of
+  every replication, and then each replication forms its posterior and draws
+  from it. A call inside `workflow_run(seed=...)` therefore reproduces its
+  ranks, and an unscoped call draws afresh.
+  - `key` is removed: replace
+    `simulation_based_calibration(model, ..., key=jax.random.key(0))` with the
+    call inside `with workflow_run(seed=0):`.
+  - The keyword budgets are retired, and a keyword other than the named
+    parameters raises `TypeError`: replace
+    `simulation_based_calibration(model, ..., num_warmup=500)` with
+    `simulation_based_calibration(model, ..., method_options={"num_warmup": 500})`.
+  - `num_posterior_draws` sets the number of draws, and no longer sets an MCMC
+    method's `num_results`, so the chain length goes in `method_options`, as
+    `{"num_results": 2000}`. The draws are drawn at random from the chains'
+    atoms, and `SBCResult.num_posterior_draws` is `num_posterior_draws`, where
+    it counted every atom of every chain. The ranks need nearly independent
+    draws, so `num_posterior_draws` should not exceed the chains' effective
+    sample size.
 - **A tracked term's identity is its `label`.** A term's label is read as
   `.label` and replaced with `with_label`, whose provenance records
   `old_label` and `new_label`. Every constructor takes the label as its first
@@ -1079,6 +1112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **`SBCResult.coverage(levels)`** returns, for each credible level, the share
+  of the replications whose `θ★` lies in the central interval of that level, one
+  share per parameter. It reads the ranks alone: `θ★` lies in the interval when
+  its normalized rank `(r + 0.5) / (L + 1)` does. `interval_coverage` remains the
+  check of one posterior's draws.
 - **`distribution` builds a law from a sampling function, a log-density, or
   both.** `distribution("y", sample=simulate, event_spec=spec)` returns a law
   whose draws are `simulate(key)`, and `log_prob=` or `unnormalized_log_prob=`
