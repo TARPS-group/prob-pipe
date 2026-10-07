@@ -256,6 +256,22 @@ def _cov_result(d: DistributionSpec) -> OutputSpec | None:
 def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     """One level returns the event's kind, and plural levels add a level named quantile.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration the quantile's declaration
+        follows.
+    q : TermSpec
+        The spec of the levels: a scalar for one level, or an array whose shape
+        gives the axes of the ``quantile`` level.
+
+    Returns
+    -------
+    OutputSpec
+        The event's declaration in its packaging, with the event's shapes and
+        each component ``x`` named ``quantile(x)``. Plural levels give its batch
+        form.
+
     Raises
     ------
     ApplicabilityError
@@ -430,6 +446,16 @@ def _check_levels(q: Any) -> Any:
 
     A traced *q*, as under ``jit``, is not checked.
 
+    Parameters
+    ----------
+    q : float or array-like
+        One level, or an array of levels.
+
+    Returns
+    -------
+    jax.Array
+        The levels as a JAX array of *q*'s shape.
+
     Raises
     ------
     MathematicalDomainError
@@ -472,6 +498,12 @@ def mean(d: Distribution):
     function's is its mean function, and a random measure's is the
     marginalized law.
 
+    Parameters
+    ----------
+    d : Distribution
+        The law, whose ``_mean`` gives the closed form, and whose draws the
+        Monte Carlo fallback averages otherwise.
+
     Returns
     -------
     TrackedTerm
@@ -498,6 +530,12 @@ mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=F
 @operation(result=_variance_result, conditions=(_event_typed_variance,))
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
+
+    Parameters
+    ----------
+    d : Distribution
+        The law, whose ``_variance`` gives the closed form, and whose draws the
+        Monte Carlo fallback uses otherwise.
 
     Returns
     -------
@@ -530,6 +568,12 @@ variance.fallback_route(
 @operation(result=_cov_result, conditions=(_numeric_event,))
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
+
+    Parameters
+    ----------
+    d : Distribution
+        A law with a numeric event, whose ``_cov`` gives the closed form, and
+        whose draws the Monte Carlo fallback uses otherwise.
 
     Returns
     -------

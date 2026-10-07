@@ -29,6 +29,18 @@ _PATH_SEP = "/"
 def _node(d: DistributionSpec, path: str) -> Any:
     """The term spec at *path* in the law's event declaration.
 
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration holds the node.
+    path : str
+        A path that starts with a component and may name an interior node.
+
+    Returns
+    -------
+    TermSpec
+        A leaf's spec, or the record spec of the fields under an interior node.
+
     Raises
     ------
     ApplicabilityError
@@ -45,6 +57,20 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
 
     A tuple of paths selects several nodes, the law's event an exposed record
     of them.
+
+    Parameters
+    ----------
+    d : DistributionSpec
+        The law's spec, whose event declaration holds the selected nodes.
+    field : str or tuple of str
+        An event path, or a tuple of paths whose nodes the marginal draws
+        jointly.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration of the marginal law as one whole term, whose spec is a
+        ``DistributionSpec`` over the selected nodes.
 
     Raises
     ------

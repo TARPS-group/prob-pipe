@@ -131,6 +131,16 @@ def _ks_uniform(ranks: np.ndarray, num_draws: int) -> tuple[np.ndarray, np.ndarr
 def _credible_levels(levels: Iterable[float]) -> tuple[float, ...]:
     """*levels* as floats, each a credible level in ``(0, 1)``.
 
+    Parameters
+    ----------
+    levels : iterable of float
+        The credible levels the caller gave, such as ``(0.5, 0.9)``.
+
+    Returns
+    -------
+    tuple of float
+        The levels, in the order given.
+
     Raises
     ------
     TypeError
@@ -161,6 +171,19 @@ def _slot_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) ->
     names a slot and every required slot is observed. Otherwise a kernel with one
     given slot takes the one observed field, whatever its name.
 
+    Parameters
+    ----------
+    kernel : ConditionalDistribution
+        The posterior kernel, whose given slots take the observed fields.
+    observed : tuple of str
+        The names of the observed fields of the model's draw.
+
+    Returns
+    -------
+    dict of str to str
+        The observed field's name by slot name, which is the identity map when
+        the slots take the fields of their names.
+
     Raises
     ------
     ValueError
@@ -183,6 +206,15 @@ def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label
 
     A draw that exposes a record holds the parameters as its components, and a
     whole-term draw is the value of the one parameter.
+
+    Parameters
+    ----------
+    event_spec : OutputSpec
+        The posterior's event declaration.
+    parameters : tuple of str
+        The names of the model's unobserved fields.
+    label : str
+        The posterior's label, which the error names.
 
     Raises
     ------

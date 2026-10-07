@@ -73,6 +73,20 @@ def evaluate(f: Any, v: Any, fixed_args: Mapping[str, Any] | None = None):
 def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     """The one parameter of *f* that *fixed_args* leaves open, which the operand binds.
 
+    Parameters
+    ----------
+    f : Function
+        The map, whose signature lists its parameters.
+    fixed_args : Mapping of str to Any or None
+        The arguments of the map's other parameters, by name; ``None`` fixes
+        none.
+
+    Returns
+    -------
+    str
+        The parameter's name. An open parameter is one without a default that
+        is neither fixed nor variadic.
+
     Raises
     ------
     ApplicabilityError
