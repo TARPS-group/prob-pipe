@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ._batches import DistributionBatch
     from ._conditional import ConditionalDistribution
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
+    from ._views import _EventRenames
 
 from ..core._record_spec import RecordSpec
 from ..core._repr import public_class_name, term_repr
@@ -151,8 +152,7 @@ def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
     _composition_engine = engine
 
 
-#: The law that ``with_path_names`` returns for a rename that reaches a field of a
-#: record draw, installed by the views module at import.
+#: The law that ``with_path_names`` returns, installed by the views module at import.
 _renamed_law_factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any] | None = None
 
 
@@ -180,20 +180,30 @@ def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
     _field_view_factory = factory
 
 
-#: The attribute a batch of laws sets on an element view to name the law it stores,
-#: which detachment removes as a reference to a container.
+#: Indexing a ``DistributionBatch`` returns a copy of the stored law under a derived
+#: label and sets this attribute of the copy to the stored law. A lift reads it to
+#: draw two accesses of one element, or an element and its stored law, together
+#: (V.5). Detaching the copy deletes the attribute.
 _ELEMENT_SOURCE = "_element_source"
+
+#: ``with_path_names`` sets this attribute of each law it returns that does not hold
+#: the law it renames as its parent. The value is the pair of that law and the
+#: renames from its declaration to the result's. A lift reads it to draw the result
+#: together with the law it renames (V.5). Detaching the result deletes the
+#: attribute.
+_RENAME_SOURCE = "_rename_source"
 
 
 def _detached_term(term: Any) -> Any:
     """*term*, a law or a kernel, detached from the workflow under its own label.
 
     The copy shares the representation, and it carries no provenance, no
-    annotations, and no reference to a batch it was an element of.
+    annotations, and no reference to a container or a parent, such as a batch
+    it was an element of or a law it renames.
     """
     clone = term._shallow_copy()
     object.__setattr__(clone, "_provenance", None)
-    for workflow_state in ("_annotations", _ELEMENT_SOURCE):
+    for workflow_state in ("_annotations", _ELEMENT_SOURCE, _RENAME_SOURCE):
         clone.__dict__.pop(workflow_state, None)
     return clone
 
@@ -341,9 +351,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
-        reference to a batch it was an element of. A field view returns its
-        detached marginal instead, and a backend adapter its wrapped backend
-        distribution.
+        reference to a container or a parent, such as a batch it was an element
+        of or a law it renames. A field view returns its detached marginal
+        instead, and a backend adapter its wrapped backend distribution.
         """
         return _detached_term(self)
 
@@ -489,11 +499,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         rename, and the result is the factored joint of the renamed factors over
         the same graph. A rename that gathers components under a new node
         regroups the factors that produce them into a packaged sub-joint, one
-        factor of the result whose event is the node. Any other rename that
-        reaches a field of a record draw, including a gathering whose groups
-        condition on one another in a cycle, returns a law that holds this one
-        and renames values at its boundary: draws, moments, and marginals on the
-        way out, and scored values, givens, and paths on the way in.
+        factor of the result whose event is the node. A family whose parameters
+        carry the event's paths rebuilds itself under the new paths: an
+        empirical law over records returns the empirical law of its atoms with
+        their fields at the new paths, under the same weights. Any other rename
+        that changes the path of a field of a record draw, including a gathering
+        whose groups condition on one another in a cycle, returns a law that
+        holds this one and renames values at its boundary: draws, moments, and
+        marginals on the way out, and scored values, givens, and paths on the
+        way in. A lift draws the result together with this law, as it draws a
+        view with its parent (V.5).
 
         Parameters
         ----------
@@ -516,11 +531,22 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """
         renamed = self.event_spec.with_path_names(mapping, **kwargs)
         renames = {**dict(mapping or {}), **kwargs}
-        if renamed.spec == self.event_spec.spec:
-            return self._with_declaration(renamed, "with_path_names", renames)
         if _renamed_law_factory is None:
             raise RuntimeError("the renamed law is not installed; import probpipe")
         return _renamed_law_factory(self, renamed, renames)
+
+    def _renamed_in_family(self, event: _EventRenames) -> Distribution | None:
+        """The member of this law's family that holds its values under *event*'s new paths, or None.
+
+        ``with_path_names`` calls this for a rename that changes the path of a
+        field of a record draw, and returns a law that renames this one's values
+        at its boundary when it gives None. A family whose parameters carry the
+        event's paths overrides it to return the member that declares
+        ``event.renamed`` and whose draw at a key is this law's draw at that key
+        under the new paths, as an empirical law over records does. The base
+        class returns None.
+        """
+        return None
 
     def _with_declaration(
         self, event_spec: OutputSpec, operation: str, arguments: Mapping[str, Any]

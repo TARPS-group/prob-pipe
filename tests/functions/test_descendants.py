@@ -1,8 +1,14 @@
 """The root-ancestor capture of lifted arguments.
 
-A field view's root is its parent's, a batch element's is its stored law's, and
-a bijector-transformed law's is its base's, so a lift groups each with its root:
-the root draws once per repetition, and each member evaluates on that draw.
+A lifted law's root is the root of the law whose draws it reads:
+
+- a field view: its parent;
+- a batch element: its stored law;
+- every law that ``with_path_names`` returns: the law it renames;
+- a bijector-transformed law: its base.
+
+A lift groups each law with its root, so the root draws once per repetition and
+each member evaluates on that draw.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from probpipe import (
     DistributionBatch,
     EmpiricalDistribution,
     Function,
+    KDEDistribution,
     MultivariateNormal,
     Normal,
     NumericRecord,
@@ -29,7 +36,7 @@ from probpipe import (
     iterate,
     workflow_run,
 )
-from probpipe.distributions import FieldView
+from probpipe.distributions import FactoredDistribution, FieldView
 from probpipe.functions import _descendants
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
@@ -257,6 +264,184 @@ class TestBatchElements:
 
         with pytest.raises(TypeError, match="Cyclic batch element"):
             _descendants.capture_stochastic_consumer(element)
+
+
+# -- Renamed laws --------------------------------------------------------------
+
+#: Moves both fields of the posterior into the group ``population``.
+_GROUPING = {"mu": "population/mu", "tau": "population/tau"}
+
+
+def _posterior():
+    """Twelve weighted record atoms over ``mu`` and ``tau``."""
+    columns = {"mu": jnp.arange(12.0), "tau": jnp.arange(12.0) + 100.0}
+    spec = NumericRecordSpec(mu=(), tau=())
+    atoms = NumericRecordBatch("draws", columns, "draw", element_spec=spec)
+    return EmpiricalDistribution("posterior", atoms, jnp.arange(1.0, 13.0))
+
+
+def _normal():
+    return Normal("x", 0.0, 1.0)
+
+
+def _kde():
+    """A kernel density estimate over ``a`` and ``b``, which renames at its boundary."""
+    columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
+    return KDEDistribution("kde", NumericRecordBatch("rows", columns, "row"))
+
+
+#: A law, a rename that copies it or rebuilds it as a factored joint, the class of
+#: the result, and the difference of the field the rename moves.
+_COPIES_AND_REBUILDS = [
+    pytest.param(
+        _normal, lambda law: law.with_path_names(x="z"), Normal, lambda a, b: a - b, id="copy"
+    ),
+    pytest.param(
+        _joint,
+        lambda law: law.with_path_names(x="u"),
+        FactoredDistribution,
+        lambda a, b: a["x"] - b["u"],
+        id="through-factors",
+    ),
+    pytest.param(
+        _joint,
+        lambda law: law.with_path_names({"x": "g/x"}),
+        FactoredDistribution,
+        lambda a, b: a["x"] - b["g/x"],
+        id="regrouped",
+    ),
+]
+
+#: A law and two renames in a row, one for each kind of law that a rename returns.
+_RENAMES_OF_RENAMES = [
+    pytest.param(_normal, lambda law: law.with_path_names(x="y").with_path_names(y="z"), id="copy"),
+    pytest.param(
+        _joint, lambda law: law.with_path_names(x="u").with_path_names(u="v"), id="factored"
+    ),
+    pytest.param(
+        _posterior,
+        lambda law: law.with_path_names(_GROUPING).with_path_names({"population/mu": "mu"}),
+        id="empirical",
+    ),
+    pytest.param(
+        _kde,
+        lambda law: law.with_path_names({"a": "g/a"}).with_path_names({"b": "g/b"}),
+        id="boundary",
+    ),
+]
+
+
+def _renamed_view():
+    joint = _joint()
+    return joint["x"].with_path_names(x="z"), joint
+
+
+def _renamed_element():
+    root = Normal("n", 0.0, 1.0)
+    batch = DistributionBatch("laws", [root, Normal("n", 5.0, 1.0)], "law")
+    return batch[0].with_path_names(n="m"), root
+
+
+def _renamed_transform():
+    base = Normal("x", 0.0, 1.0)
+    return BijectorTransformedDistribution("t", base, tfb.Exp()).with_path_names(t="z"), base
+
+
+class TestRenamedLaws:
+    def test_a_renamed_empirical_law_captures_the_law_it_renames_as_root(self):
+        root = _posterior()
+        renamed = root.with_path_names(_GROUPING)
+        captured = _descendants.capture_stochastic_consumer(renamed)
+        index = jnp.array([3, 0, 11])
+
+        assert isinstance(renamed, EmpiricalDistribution)
+        assert captured.root is root
+        assert captured.descendant_descriptor[0] == "transformed-descendant"
+        drawn = captured.evaluator(root._atoms_at(index))["population"]
+        np.testing.assert_array_equal(drawn["mu"], [3.0, 0.0, 11.0])
+        np.testing.assert_array_equal(drawn["tau"], [103.0, 100.0, 111.0])
+        atoms = renamed._atoms_at(index)["population"]
+        np.testing.assert_array_equal(atoms["mu"], drawn["mu"])
+        np.testing.assert_array_equal(atoms["tau"], drawn["tau"])
+
+    def test_a_law_and_its_rename_form_one_plan_group(self):
+        root = _posterior()
+        plan = _stochastic_plan({"root": root, "renamed": root.with_path_names(_GROUPING)})
+
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is root
+
+    def test_the_raw_form_of_a_renamed_law_is_its_own_root(self):
+        detached = _posterior().with_path_names(_GROUPING).raw()
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+
+    def test_a_law_co_samples_with_its_rename_when_the_lift_samples(self):
+        """Twelve atoms exceed the eight samples, so the lift samples the root."""
+        root = _posterior()
+        workflow = Function(
+            "difference",
+            lambda a, b: a["mu"] - b.at_path("population")["mu"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
+
+        renamed = root.with_path_names(_GROUPING)
+        assert workflow.check(root, renamed).selected.method_name == "sampling_lift"
+        with workflow_run(seed=37):
+            result = workflow(root, renamed)
+
+        assert result.num_atoms == 8
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
+
+    @pytest.mark.parametrize(("make", "rename", "kind", "difference"), _COPIES_AND_REBUILDS)
+    def test_a_copy_or_a_rebuilt_joint_forms_one_plan_group_with_its_law(
+        self, make, rename, kind, difference
+    ):
+        law = make()
+        renamed = rename(law)
+        plan = _stochastic_plan({"law": law, "renamed": renamed})
+
+        assert isinstance(renamed, kind)
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is law
+
+    @pytest.mark.parametrize(("make", "rename", "kind", "difference"), _COPIES_AND_REBUILDS)
+    def test_a_copy_or_a_rebuilt_joint_co_samples_with_its_law(
+        self, make, rename, kind, difference
+    ):
+        law = make()
+        workflow = Function("difference", difference, dispatch="sequential", n_broadcast_samples=8)
+
+        with workflow_run(seed=39):
+            result = workflow(law, rename(law))
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
+
+    @pytest.mark.parametrize(("make", "rename"), _RENAMES_OF_RENAMES)
+    def test_a_rename_of_a_rename_captures_the_original_as_root(self, make, rename):
+        law = make()
+
+        assert _descendants.capture_stochastic_consumer(rename(law)).root is law
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(_renamed_view, id="view"),
+            pytest.param(_renamed_element, id="element"),
+            pytest.param(_renamed_transform, id="transform"),
+        ],
+    )
+    def test_a_renamed_view_element_or_transform_keeps_its_root(self, build):
+        renamed, root = build()
+
+        assert _descendants.capture_stochastic_consumer(renamed).root is root
+
+    def test_the_raw_form_of_a_view_of_a_rebuilt_joint_is_its_own_root(self):
+        """The view's marginal is a renamed factor, and detaching it drops the factor it renames."""
+        detached = _joint().with_path_names(x="u")["u"].raw()
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
 
 
 # -- Bijector-transformed laws -------------------------------------------------
