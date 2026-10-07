@@ -394,27 +394,60 @@ def _dimension(expression: str, name: str, axis: int, data: Mapping[str, Any]) -
     return f"{name}_{axis}"
 
 
-def _stanc() -> Path:
-    """The path of BridgeStan's stanc compiler.
+def _stanc(*, fetch: bool = True) -> Path:
+    """The path of BridgeStan's stanc compiler, fetched on first use when *fetch* is true.
+
+    BridgeStan keeps its source tree in the directory ``$BRIDGESTAN`` names, or
+    else under ``~/.bridgestan``, and its Makefile fetches the stanc3 binary into
+    the tree's ``bin/``.
+
+    Parameters
+    ----------
+    fetch : bool
+        Whether to download a missing source tree and fetch a missing compiler
+        with the Makefile's target, as BridgeStan does before it first compiles
+        a model. With ``False``, the compiler is only located.
+
+    Returns
+    -------
+    Path
+        The stanc executable in the source tree's ``bin/``.
 
     Raises
     ------
     ImportError
-        If ``bridgestan`` is not installed, or its stanc compiler is absent.
+        If ``bridgestan`` is not installed, or its stanc compiler is absent and
+        *fetch* is false or the fetch fails. The message gives the command that
+        fetches the compiler.
     """
     try:
-        from bridgestan.compile import get_bridgestan_path
+        from bridgestan.compile import IS_WINDOWS, MAKE, get_bridgestan_path
     except ImportError as e:
         raise ImportError(
             "StanModel reads its program's declarations with stanc, which bridgestan provides. "
             "Install it with: pip install bridgestan"
         ) from e
-    root = get_bridgestan_path(download=False)
-    stanc = Path(root) / "bin" / "stanc" if root else None
-    if stanc is None or not stanc.exists():
+    root = get_bridgestan_path(download=fetch)
+    if not root:
         raise ImportError(
-            "BridgeStan's stanc compiler is not installed; BridgeStan downloads it when it "
-            "first compiles a model, as bridgestan.compile_model does"
+            "BridgeStan's source tree is not installed; StanModel downloads it to "
+            "~/.bridgestan on first use, or set $BRIDGESTAN to an existing tree"
+        )
+    target = "bin/stanc.exe" if IS_WINDOWS else "bin/stanc"
+    stanc = Path(root) / target
+    command = f"{MAKE} -C {root} {target}"
+    if not stanc.exists() and fetch:
+        completed = subprocess.run(
+            [MAKE, target], cwd=root, capture_output=True, text=True, check=False
+        )
+        if completed.returncode != 0:
+            message = (completed.stderr or completed.stdout).strip()
+            raise ImportError(
+                f"BridgeStan could not fetch its stanc compiler with `{command}`: {message}"
+            )
+    if not stanc.exists():
+        raise ImportError(
+            f"BridgeStan's stanc compiler is not installed; fetch it with `{command}`"
         )
     return stanc
 
@@ -499,7 +532,8 @@ class _StanProgram:
         Raises
         ------
         ImportError
-            If BridgeStan's stanc compiler is not installed.
+            If ``bridgestan`` is not installed, or its stanc compiler is absent
+            and cannot be fetched.
         ValueError
             If stanc rejects the program, the program declares no parameters,
             or a declaration cannot be read.
@@ -737,7 +771,8 @@ class StanModel(
     and ``condition_on`` normalizes it with a method such as Stan's NUTS. The
     declarations are read at construction from ``stanc --info`` and the
     program's text, and BridgeStan compiles the program when a density is
-    first evaluated.
+    first evaluated. The first construction on a machine downloads BridgeStan's
+    source tree and its stanc compiler, as BridgeStan's first compile does.
 
     Parameters
     ----------
@@ -753,7 +788,8 @@ class StanModel(
     Raises
     ------
     ImportError
-        If BridgeStan's stanc compiler is not installed.
+        If ``bridgestan`` is not installed, or its stanc compiler is absent
+        and cannot be fetched.
     KeyError
         If *data* names a variable the data block does not declare.
     ValueError

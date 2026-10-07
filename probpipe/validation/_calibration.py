@@ -1,26 +1,27 @@
 """Simulation-based calibration (SBC) and interval coverage for method validation.
 
 Where :mod:`probpipe.validation._comparison` scores an approximation against a
-*reference*, these check an inference *method* for self-consistency with the
-model that generated the data:
+*reference*, these check a posterior for self-consistency with the model that
+generated the data, whether the posterior is a method's fit or a kernel such as
+an amortized posterior:
 
-- :func:`simulation_based_calibration` (Talts et al. 2018) draws ``θ★ ~ prior``,
-  ``y ~ p(·|θ★)``, and the posterior ``π(θ|y)``; the rank of each ``θ★``
-  component among the posterior draws is Uniform on ``{0, …, L}`` iff the
-  posterior is calibrated. Non-uniform ranks expose a biased / mis-tuned sampler.
-- :func:`interval_coverage` is the companion frequentist check — does a central
-  credible interval contain the truth at its nominal rate?
+- :func:`simulation_based_calibration` (Talts et al. 2018) draws ``θ★`` and
+  ``y`` from the joint, forms the posterior at ``y``, and ranks each ``θ★``
+  component among the posterior's draws. The ranks are uniform on
+  ``{0, …, L}`` when the posterior is calibrated, so non-uniform ranks expose a
+  biased or mis-tuned method.
+- :func:`interval_coverage` is the companion frequentist check of one posterior:
+  whether a central credible interval contains the truth.
 
-These orchestrate inference through a **Python loop over** :func:`condition_on`,
-so they work for every backend (blackjax, Stan, PyMC, …); they are therefore not
-themselves jit-compatible, though the per-fit MCMC inside the loop is
-JAX-accelerated where the backend allows. The model is a joint that samples
-and conditions on its observed fields, such as a GLM likelihood times its prior.
+Calibration runs a Python loop over its replications, which works with every
+backend, such as blackjax, Stan, PyMC, or a trained network. The loop itself is
+not jit-compatible. The model is a joint that samples, such as a GLM likelihood
+times its prior.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,17 +31,15 @@ import numpy as np
 
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
-from ..custom_types import Array, ArrayLike, PRNGKey
-from ..distributions._distribution import _array_leaves
+from ..custom_types import Array, ArrayLike
+from ..distributions._conditional import ConditionalDistribution
+from ..distributions._distribution import Distribution, _array_leaves
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..distributions._factored import _raw_record
 from ..functions import _context
-from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ..operations._condition import condition_on
-from ._workflow_rng import (
-    _resolve_validation_key,
-    _validate_positive_int,
-)
+from ..operations._sample import sample
+from ._workflow_rng import _validate_positive_int
 
 __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 
@@ -48,25 +47,28 @@ __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 # -- helpers ----------------------------------------------------------------
 
 
-def _flatten_point(point: Any, event_spec: OutputSpec) -> Array:
-    """Flatten one parameter draw to the flat layout of the posterior's atoms.
+def _flatten(value: Any, event_spec: OutputSpec, batch_ndim: int = 0) -> Array:
+    """Flatten a parameter value, or a batch of them, to the flat layout of the posterior's draws.
 
     The posterior's event declaration *event_spec* gives the layout. An array
-    draw is raveled, and a record draw, a ``Record`` or the nested mapping of
+    value is raveled, and a record value, a ``Record`` or the nested mapping of
     its leaves, has its leaves raveled and concatenated in the declaration's
-    leaf order.
+    leaf order. The *batch_ndim* leading axes of a batch are kept, so one value
+    gives a ``(p,)`` array and a batch of ``n`` draws an ``(n, p)`` array.
     """
     spec = event_spec.spec
-    if not isinstance(spec, RecordSpec):
-        return jnp.ravel(jnp.asarray(point))
-    raw = _raw_record(point)
-    leaves = []
-    for path in spec:
-        leaf = raw
-        for segment in path.split("/"):
-            leaf = leaf[segment]
-        leaves.append(jnp.ravel(jnp.asarray(leaf)))
-    return jnp.concatenate(leaves)
+    if isinstance(spec, RecordSpec):
+        raw = _raw_record(value)
+        leaves = []
+        for path in spec:
+            leaf = raw
+            for segment in path.split("/"):
+                leaf = leaf[segment]
+            leaves.append(jnp.asarray(leaf))
+    else:
+        leaves = [jnp.asarray(value)]
+    lead = leaves[0].shape[:batch_ndim]
+    return jnp.concatenate([jnp.reshape(leaf, (*lead, -1)) for leaf in leaves], axis=-1)
 
 
 def _ranks(draws: Array, point: Array) -> Array:
@@ -126,6 +128,81 @@ def _ks_uniform(ranks: np.ndarray, num_draws: int) -> tuple[np.ndarray, np.ndarr
     return d, pvals
 
 
+def _credible_levels(levels: Iterable[float]) -> tuple[float, ...]:
+    """*levels* as floats, each a credible level in ``(0, 1)``.
+
+    Raises
+    ------
+    TypeError
+        If *levels* is not an iterable of numbers.
+    ValueError
+        If a level is not in ``(0, 1)``.
+    """
+    if isinstance(levels, str) or not isinstance(levels, Iterable):
+        raise TypeError(f"levels must be a sequence of credible levels; got {levels!r}")
+    checked = []
+    for level in levels:
+        if isinstance(level, bool):
+            raise TypeError(f"a credible level is a number in (0, 1); got {level!r}")
+        try:
+            value = float(level)
+        except (TypeError, ValueError):
+            raise TypeError(f"a credible level is a number in (0, 1); got {level!r}") from None
+        if not 0.0 < value < 1.0:
+            raise ValueError(f"a credible level lies in (0, 1); got {level!r}")
+        checked.append(value)
+    return tuple(checked)
+
+
+def _slot_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) -> dict[str, str]:
+    """The observed field that each given slot of *kernel* takes, keyed by the slot.
+
+    The slots take the observed fields of their names when every observed field
+    names a slot and every required slot is observed. Otherwise a kernel with one
+    given slot takes the one observed field, whatever its name.
+
+    Raises
+    ------
+    ValueError
+        If neither rule binds the slots.
+    """
+    slots = tuple(kernel.given_spec)
+    if set(observed) <= set(slots) and set(kernel.given_spec.required) <= set(observed):
+        return {name: name for name in observed}
+    if len(slots) == 1 and len(observed) == 1:
+        return {slots[0]: observed[0]}
+    raise ValueError(
+        f"the given slots {list(slots)} of the posterior {kernel.label!r} do not take the "
+        f"observed fields {list(observed)}: the slots take the observed fields of their "
+        "names, and a kernel with one given slot takes the one observed field"
+    )
+
+
+def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label: str) -> None:
+    """Raise unless a draw of the posterior holds the parameters.
+
+    A draw that exposes a record holds the parameters as its components, and a
+    whole-term draw is the value of the one parameter.
+
+    Raises
+    ------
+    ValueError
+        If the components of an exposed record are not the parameters, or a
+        whole-term draw meets several parameters.
+    """
+    if event_spec.exposes_record:
+        if set(event_spec.components) != set(parameters):
+            raise ValueError(
+                f"the posterior {label!r} draws the fields {list(event_spec.components)}, "
+                f"which are not the parameters {list(parameters)}"
+            )
+    elif len(parameters) != 1:
+        raise ValueError(
+            f"the posterior {label!r} draws one whole term, so it cannot hold the "
+            f"parameters {list(parameters)}"
+        )
+
+
 # -- simulation-based calibration -------------------------------------------
 
 
@@ -142,11 +219,12 @@ class SBCResult:
         draws (ties are measure-zero for a continuous posterior, but would bias
         ranks low for a discrete-valued parameter).
     num_posterior_draws : int
-        ``L`` — the rank upper bound (the actual number of posterior draws used).
+        ``L``: the number of posterior draws of each replication, which is the
+        largest rank.
     param_names : tuple[str, ...] or None
-        Per-flattened-component names aligned with the columns of ``ranks`` /
-        ``ks_*`` (``field`` for a scalar field, ``field[i]`` otherwise), in
-        posterior field order; ``None`` if the posterior exposes no field names.
+        The name of each column of ``ranks`` and ``ks_*``: ``field`` for a
+        scalar leaf, and ``field[i]`` for each entry of a larger leaf, in the
+        posterior's leaf order.
     ks_statistic : np.ndarray
         Per-parameter KS distance of the normalized ranks from ``Uniform[0, 1]``.
     ks_pvalue : np.ndarray
@@ -172,61 +250,182 @@ class SBCResult:
         edges = np.linspace(0.0, 1.0, num_bins + 1)
         return np.stack([np.histogram(u[:, j], bins=edges)[0] for j in range(u.shape[1])])
 
+    def coverage(self, levels: Sequence[float] = (0.5, 0.8, 0.9, 0.95)) -> dict[float, np.ndarray]:
+        """The share of replications whose ``θ★`` lies in the central interval of each level.
+
+        ``θ★`` lies in the central ``level`` interval of its posterior when its
+        normalized rank ``u = (r + 0.5) / (L + 1)`` lies in
+        ``[(1 − level) / 2, (1 + level) / 2]``, so the shares are computed from
+        the ranks alone. Under a calibrated posterior the expected share is the
+        level, within ``1 / (L + 1)``. The shares match the mean of
+        :func:`interval_coverage` over the replications' posterior draws, except
+        at a rank next to an end of the interval, where
+        :func:`interval_coverage` interpolates between two draws.
+
+        Parameters
+        ----------
+        levels : sequence of float
+            The credible levels, each in ``(0, 1)``.
+
+        Returns
+        -------
+        dict of float to np.ndarray
+            For each level, the share of replications that cover ``θ★``, one per
+            parameter, of shape ``(num_params,)``.
+
+        Raises
+        ------
+        TypeError
+            If *levels* is not a sequence of numbers.
+        ValueError
+            If a level is not in ``(0, 1)``.
+        """
+        u = (self.ranks + 0.5) / (self.num_posterior_draws + 1)
+        shares: dict[float, np.ndarray] = {}
+        for level in _credible_levels(levels):
+            lo, hi = (1.0 - level) / 2.0, (1.0 + level) / 2.0
+            shares[level] = np.mean((u >= lo) & (u <= hi), axis=0)
+        return shares
+
 
 def simulation_based_calibration(
-    model: Any,
+    model: Distribution,
     *,
     observed: str | Sequence[str],
     num_simulations: int,
     num_posterior_draws: int,
+    posterior: ConditionalDistribution | None = None,
     method: str | None = None,
-    key: PRNGKey | None = None,
-    **infer_kwargs: Any,
+    method_options: Mapping[str, Any] | None = None,
 ) -> SBCResult:
-    """Simulation-based calibration of an inference method (Talts et al. 2018).
+    """Simulation-based calibration of a posterior (Talts et al. 2018).
 
-    For each of ``num_simulations`` draws of the joint *model*: split the draw
-    into the parameters ``θ★`` and the *observed* fields ``y``, fit the posterior
-    with :func:`condition_on` at ``y``, and record the rank of each flattened
-    ``θ★`` component among the ``num_posterior_draws`` posterior draws. Under
-    correct calibration each rank is ``Uniform{0, …, L}``; the per-parameter KS
-    distance from uniform and its p-value summarize the fit.
+    Each of *num_simulations* replications draws the parameters ``θ★`` and the
+    *observed* fields ``y`` from the joint *model*, forms the posterior at
+    ``y``, draws from it, and ranks each flattened ``θ★`` component among the
+    draws. Under a calibrated posterior each rank is uniform on
+    ``{0, …, num_posterior_draws}``. The result summarizes each parameter's
+    ranks by their KS distance from uniform and its p-value.
+
+    The posterior at ``y`` is formed in one of two ways:
+
+    1. with *posterior*, it is the kernel's law at ``y``, which
+       ``condition_on(posterior, {slot: y})`` returns without a fit, as for an
+       amortized posterior or a closed-form posterior;
+    2. otherwise, it is the fit of *model* at ``y`` that
+       ``condition_on.with_options(method=method, method_options=method_options)(model, y)``
+       returns.
+
+    *posterior*'s given slots take the observed fields of their names, and a
+    kernel with one given slot, such as an amortized posterior's
+    ``observation``, takes the one observed field. The draws are
+    ``sample(posterior_at_y, sample_shape=(num_posterior_draws,))`` for every
+    kind of posterior: the atoms of a weighted empirical law, such as SMC-ABC's
+    particles, are resampled by weight, a network posterior is evaluated, and an
+    MCMC posterior's atoms are drawn at random.
+
+    The calibration takes its randomness from the enclosing workflow scope,
+    whose workflow-owned random events it claims in program order: one
+    ``sample(model, sample_shape=(num_simulations,))`` draws the ``θ★`` and
+    ``y`` of every replication, and then each replication forms its posterior
+    and draws from it. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces its ranks, and an unscoped call draws afresh.
 
     Parameters
     ----------
-    model
-        A joint that samples and that :func:`condition_on` conditions on its
-        observed fields, such as ``likelihood * prior``.
-    observed
-        The fields of a draw that the posterior conditions on; the others are the
-        parameters.
-    num_simulations
-        Number of ``(θ★, y, posterior)`` replications.
-    num_posterior_draws
-        Posterior draws per fit, the ``num_results`` entry of the fit's
-        ``method_options``.
-    method
-        Inference method name for :func:`condition_on` (``None`` = auto-select).
-    key
-        JAX PRNG key of the draws of θ★ and the data. ``None`` draws it from a
-        workflow-owned random event. Each fit draws its seed from a
-        workflow-owned random event of its own, so ``workflow_run(seed=...)``
-        reproduces the whole run, and a fixed key alone fixes θ★ and the data.
-    **infer_kwargs
-        Further budgets of the inference method, such as ``num_warmup`` or
-        ``num_chains``, which each fit passes in its ``method_options``.
+    model : Distribution
+        A joint that samples, over the parameters and the *observed* fields,
+        such as ``likelihood * prior``.
+    observed : str or sequence of str
+        The fields of a draw that the posterior conditions on; the others are
+        the parameters.
+    num_simulations : int
+        The number of replications.
+    num_posterior_draws : int
+        The number of draws of each replication's posterior, which is the
+        largest rank. The ranks assume nearly independent draws, so for an
+        empirical posterior, such as MCMC chains or weighted particles, it
+        should not exceed the effective sample size of the atoms. For an MCMC
+        method, set the chain length in *method_options* to make it so.
+    posterior : ConditionalDistribution, optional
+        A posterior kernel from the observed fields to the parameters, such as
+        the amortized posterior that ``learn_amortized_posterior`` returns.
+        Without it, each replication fits *model* at its observed values.
+    method : str, optional
+        The inference method of each fit, by name; ``None`` selects the method
+        as :func:`condition_on` does.
+    method_options : Mapping, optional
+        The options of each fit's method, such as ``{"num_warmup": 500,
+        "num_results": 2000}``. Each fit's seed is a workflow-owned random event
+        of the enclosing scope.
 
     Returns
     -------
     SBCResult
+        The ranks, of shape ``(num_simulations, num_params)``, with the KS
+        statistic and p-value of each parameter.
 
     Raises
     ------
     TypeError
-        If *model* does not sample, or the inference method refuses an entry of
-        *infer_kwargs*.
+        If *model* does not sample; if *posterior* is not a
+        ``ConditionalDistribution``; if a count is not an integer; or if
+        *method* is not a non-empty string or *method_options* is not a mapping
+        of option names. A method's ``TypeError`` for an option it does not
+        read propagates.
     ValueError
-        If an *observed* name is not a field of a draw, or no parameter is left.
+        If a count is not positive; if an *observed* name is not a field of a
+        draw, or no parameter is left; if *method* or *method_options* is given
+        with *posterior*; if *posterior*'s given slots do not take the observed
+        fields; or if the posterior's draw does not hold the parameters: a draw
+        that exposes a record names other fields, or a whole-term draw meets
+        several parameters.
+    ResolutionError
+        If no route of :func:`condition_on` forms the posterior at ``y``, or
+        that posterior does not sample.
+    ReplayCompatibilityError
+        If a ``replay_run`` scope is active, since a replay accepts one
+        top-level ``Function`` call and the calibration makes several.
+
+    Notes
+    -----
+    The draws of ``θ★`` and ``y`` are one event, which the call claims first,
+    so they do not depend on the posterior or the method. Two calls with the
+    same *model* and *num_simulations*, at the same position of scopes with the
+    same seed, therefore rank their posteriors' draws against the same ``θ★``
+    and ``y``.
+
+    Examples
+    --------
+    The exact posterior kernel of a conjugate normal model covers ``θ★`` at
+    about the nominal rates:
+
+    >>> import jax.numpy as jnp
+    >>> from probpipe import Normal, NumericArraySpec, conditional_distribution, workflow_run
+    >>> prior = Normal("mu", 0.0, 2.0)
+    >>> likelihood = conditional_distribution(
+    ...     "y_given_mu",
+    ...     lambda mu: Normal("y", mu * jnp.ones(5), 1.0),
+    ...     given_spec=prior.event_spec.components,
+    ... )
+    >>> precision = 1 / 4 + 5
+    >>> exact = conditional_distribution(
+    ...     "posterior",
+    ...     lambda y: Normal("mu", jnp.sum(y) / precision, precision**-0.5),
+    ...     given_spec={"y": NumericArraySpec((5,))},
+    ... )
+    >>> with workflow_run(seed=0):
+    ...     result = simulation_based_calibration(
+    ...         likelihood * prior,
+    ...         observed="y",
+    ...         posterior=exact,
+    ...         num_simulations=100,
+    ...         num_posterior_draws=99,
+    ...     )
+    >>> result.ranks.shape
+    (100, 1)
+    >>> result.coverage((0.5, 0.9))
+    {0.5: array([0.53]), 0.9: array([0.87])}
     """
     _context._assert_workflow_admission()
     num_simulations = _validate_positive_int("num_simulations", num_simulations)
@@ -234,6 +433,20 @@ def simulation_based_calibration(
         "num_posterior_draws",
         num_posterior_draws,
     )
+    if posterior is not None:
+        if method is not None or method_options is not None:
+            raise ValueError(
+                "simulation_based_calibration evaluates the posterior kernel at each "
+                "replication's observed values and fits nothing, so it takes no method "
+                "or method_options beside posterior"
+            )
+        if not isinstance(posterior, ConditionalDistribution):
+            raise TypeError(
+                "posterior must be a ConditionalDistribution from the observed fields to "
+                f"the parameters; got {type(posterior).__name__}"
+            )
+    # Configured before any draw, so a malformed method or option fails first.
+    fit = condition_on.with_options(method=method, method_options=method_options)
     if not callable(getattr(model, "_sample", None)):
         raise TypeError(f"{type(model).__name__} does not support SBC joint sampling")
     observed = (observed,) if isinstance(observed, str) else tuple(observed)
@@ -246,42 +459,35 @@ def simulation_based_calibration(
     parameters = tuple(name for name in components if name not in observed)
     if not parameters:
         raise ValueError(f"observing {list(observed)} leaves no parameter of {model.label!r}")
-    if key is None:
-        # The joint is a ProbPipe law, so its draws follow the distribution ABI.
-        key = _resolve_validation_key(
-            None,
-            operation_kind="simulation-based-calibration",
-            execution_mode="sampled",
-            sample_shape=(num_simulations,),
-            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
-        )
+    binding: dict[str, str] = {}
+    if posterior is not None:
+        binding = _slot_binding(posterior, observed)
+        _check_parameters(posterior.event_spec, parameters, posterior.label)
 
+    simulations = _raw_record(sample.with_options(raw=True)(model, sample_shape=(num_simulations,)))
     rank_rows: list[np.ndarray] = []
     component_names: tuple[str, ...] | None = None
-    draws = None
-    for _ in range(num_simulations):
-        key, k_draw = jax.random.split(key)
-        draw = _raw_record(model._sample(k_draw, ()))
+    for index in range(num_simulations):
+        draw = jax.tree.map(lambda column, i=index: column[i], simulations)
         theta_star = {name: draw[name] for name in parameters}
-        y = {name: draw[name] for name in observed}
-        budgets = {"num_results": num_posterior_draws, **infer_kwargs}
-        posterior = condition_on.with_options(method=method, method_options=budgets)(model, y)
-        draws = _coordinates(posterior)  # (L, p)
+        if posterior is None:
+            law = fit(model, {name: draw[name] for name in observed})
+        else:
+            law = condition_on(posterior, {slot: draw[field] for slot, field in binding.items()})
+        draws = sample.with_options(raw=True)(law, sample_shape=(num_posterior_draws,))
         if component_names is None:
-            component_names = _component_names(posterior)
-        point = theta_star
-        if not posterior.event_spec.exposes_record and len(theta_star) == 1:
-            # A whole-term posterior's draw is its one parameter's value.
-            (point,) = theta_star.values()
-        theta_flat = _flatten_point(point, posterior.event_spec)  # (p,)
-        rank_rows.append(np.asarray(_ranks(draws, theta_flat)))
+            _check_parameters(law.event_spec, parameters, law.label)
+            component_names = _component_names(law)
+        # A whole-term posterior's draw is its one parameter's value.
+        point = theta_star if law.event_spec.exposes_record else next(iter(theta_star.values()))
+        flat_draws = _flatten(draws, law.event_spec, batch_ndim=1)  # (L, p)
+        rank_rows.append(np.asarray(_ranks(flat_draws, _flatten(point, law.event_spec))))
 
     ranks = np.stack(rank_rows).astype(int)  # (num_simulations, p)
-    num_draws = int(draws.shape[0])  # actual total draws (handles multi-chain)
-    ks_stat, ks_pvalue = _ks_uniform(ranks, num_draws)
+    ks_stat, ks_pvalue = _ks_uniform(ranks, num_posterior_draws)
     return SBCResult(
         ranks=ranks,
-        num_posterior_draws=num_draws,
+        num_posterior_draws=num_posterior_draws,
         param_names=component_names,
         ks_statistic=ks_stat,
         ks_pvalue=ks_pvalue,

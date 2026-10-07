@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`simulation_based_calibration` calibrates any posterior, takes its
+  randomness from the enclosing workflow scope, and reads a fit's budgets from
+  `method_options`.** Its signature is
+  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None)`.
+  A `posterior` kernel, such as an amortized posterior, is evaluated at each
+  replication's observed values, with no fit: its given slots take the observed
+  fields of their names, and a kernel with one given slot, such as an amortized
+  posterior's `observation`, takes the one observed field. Without `posterior`,
+  each replication fits `model` with
+  `condition_on.with_options(method=method, method_options=method_options)`.
+  A `method` or `method_options` beside `posterior` raises `ValueError`. Each
+  replication draws `num_posterior_draws` times from its posterior with
+  `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
+  by its weights. The function claims the workflow-owned random events of the
+  enclosing scope in program order: one
+  `sample(model, sample_shape=(num_simulations,))` draws the `θ★` and `y` of
+  every replication, and then each replication forms its posterior and draws
+  from it. A call inside `workflow_run(seed=...)` therefore reproduces its
+  ranks, and an unscoped call draws afresh.
+  - `key` is removed: replace
+    `simulation_based_calibration(model, ..., key=jax.random.key(0))` with the
+    call inside `with workflow_run(seed=0):`.
+  - The keyword budgets are retired, and a keyword other than the named
+    parameters raises `TypeError`: replace
+    `simulation_based_calibration(model, ..., num_warmup=500)` with
+    `simulation_based_calibration(model, ..., method_options={"num_warmup": 500})`.
+  - `num_posterior_draws` sets the number of draws, and no longer sets an MCMC
+    method's `num_results`, so the chain length goes in `method_options`, as
+    `{"num_results": 2000}`. The draws are drawn at random from the chains'
+    atoms, and `SBCResult.num_posterior_draws` is `num_posterior_draws`, where
+    it counted every atom of every chain. The ranks need nearly independent
+    draws, so `num_posterior_draws` should not exceed the chains' effective
+    sample size.
 - **A tracked term's identity is its `label`.** A term's label is read as
   `.label` and replaced with `with_label`, whose provenance records
   `old_label` and `new_label`. Every constructor takes the label as its first
@@ -47,9 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     learners pass to `approximator.fit`.
   - `pymc_advi` seeds the draws of an empirical result from the run's key, so
     `workflow_run(seed=...)` reproduces them.
-  - `simulation_based_calibration` passes no seed to its fits, so its `key`
-    fixes the parameters and the data alone, and `workflow_run(seed=...)` fixes
-    the fits.
 
   Replace
   `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
@@ -1109,6 +1139,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **`SBCResult.coverage(levels)`** returns, for each credible level, the share
+  of the replications whose `θ★` lies in the central interval of that level, one
+  share per parameter. It reads the ranks alone: `θ★` lies in the interval when
+  its normalized rank `(r + 0.5) / (L + 1)` does. `interval_coverage` remains the
+  check of one posterior's draws.
 - **`distribution` builds a law from a sampling function, a log-density, or
   both.** `distribution("y", sample=simulate, event_spec=spec)` returns a law
   whose draws are `simulate(key)`, and `log_prob=` or `unnormalized_log_prob=`
@@ -2875,6 +2910,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A PyMC model draws its Cauchy and half-Cauchy variables with their location
+  and scale.** The lock pinned PyTensor 3.0.4, whose sampler of a Cauchy
+  variable returned location `loc / scale` and scale `1 / scale`, so a prior
+  `HalfCauchy(5)` drew as `HalfCauchy(0.2)` in `sample`, in prior and
+  prior-predictive draws, and in the Monte Carlo moments; densities, and hence
+  NUTS posteriors, were unaffected. The `pymc` extra now requires `pymc>=6.2`
+  and `pytensor>=3.2.4`, the first PyTensor release with the upstream fix, and
+  the lock moves to PyMC 6.3.2 and PyTensor 3.3.3.
+- **`StanModel` constructs on a machine where BridgeStan has never compiled a
+  model.** Construction reads the program's declarations with BridgeStan's
+  stanc compiler, which BridgeStan fetches only when it first compiles a model,
+  so the first `StanModel` on a new machine raised `ImportError`. Construction
+  now downloads BridgeStan's source tree and fetches stanc with BridgeStan's own
+  Makefile target, as BridgeStan's first compile does, and a failed fetch names
+  the command that fetches the compiler.
 - **A sweep or a lift records the dtype its batch stores.** The rows of a sweep
   and the evaluations of a lift are stacked into one JAX array, which holds
   their canonical dtype, so while JAX's 64-bit mode is off a 64-bit NumPy row
