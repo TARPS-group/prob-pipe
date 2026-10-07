@@ -447,13 +447,13 @@ class ModelFactors(NamedTuple):
     observed: Any
 
 
-def _joint_of(name: str, factors: list[Any]) -> Any:
+def _joint_of(label: str, factors: list[Any]) -> Any:
     """The joint of *factors*, the one factor itself when there is one."""
     if len(factors) == 1:
         return factors[0]
     if _factor_graph(tuple(factors)).unmet is None:
-        return FactoredDistribution(name, factors)
-    return FactoredConditionalDistribution(name, factors)
+        return FactoredDistribution(label, factors)
+    return FactoredConditionalDistribution(label, factors)
 
 
 def model_factors(target: Any) -> ModelFactors | None:

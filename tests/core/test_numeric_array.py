@@ -11,11 +11,11 @@ from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec
 from probpipe.core.provenance import Provenance
 
 
-def _batch(values=None, level_names="draw", name="draws", **kwargs) -> NumericArrayBatch:
+def _batch(values=None, level_names="draw", label="draws", **kwargs) -> NumericArrayBatch:
     if values is None:
         values = jnp.arange(12.0).reshape(4, 3)
     kwargs.setdefault("element_spec", NumericArraySpec(shape=(3,), dtype=jnp.float32))
-    return NumericArrayBatch(name, values, level_names, **kwargs)
+    return NumericArrayBatch(label, values, level_names, **kwargs)
 
 
 class TestNumericArrayHoldsOneValue:
@@ -65,7 +65,7 @@ class TestNumericArrayHoldsOneValue:
 class TestNumericArrayStoresNativeForm:
     """Construction validates without converting, as `NumericRecord` does.
 
-    A lazy or disk-backed value is not materialised merely to be named, and a
+    A lazy or disk-backed value is not materialised merely to be labeled, and a
     container's own metadata is not discarded.
     """
 
@@ -229,7 +229,7 @@ class TestNumericArrayStoresNativeForm:
 
 
 class TestNumericArrayCarriesIdentity:
-    def test_a_name_is_kept(self):
+    def test_a_label_is_kept(self):
         value = NumericArray(
             "draw",
             jnp.arange(3.0),
@@ -237,13 +237,13 @@ class TestNumericArrayCarriesIdentity:
 
         assert value.label == "draw"
 
-    def test_a_name_is_required(self):
-        """A value carries no fields to describe it, so the name is what says
-        which one it is; a class-name default would name every array alike."""
+    def test_a_label_is_required(self):
+        """A value carries no fields to describe it, so the label is what says
+        which one it is; a class-name default would label every array alike."""
         with pytest.raises(TypeError, match="label"):
             NumericArray()
 
-    def test_a_derived_name_is_kept(self):
+    def test_a_derived_label_is_kept(self):
         """Set by an operation that derives one, as the output boundary does."""
         value = NumericArray("outer", jnp.arange(3.0))
 
@@ -292,7 +292,7 @@ class TestNumericArrayComputesAsAnArray:
     """The full array surface, because with no fields `arr + 1` has one meaning."""
 
     @pytest.mark.parametrize(
-        ("compute", "name"),
+        ("compute", "label"),
         [
             (lambda v: v + 1, "v + 1"),
             (lambda v: 1 + v, "1 + v"),
@@ -304,16 +304,16 @@ class TestNumericArrayComputesAsAnArray:
             (lambda v: v**2, "v ** 2"),
         ],
     )
-    def test_arithmetic_returns_a_term_named_in_evaluation_order(self, compute, name):
-        """III.1: arithmetic returns a tracked term under an evaluation-order name."""
+    def test_arithmetic_returns_a_term_labeled_in_evaluation_order(self, compute, label):
+        """III.1: arithmetic returns a tracked term under an evaluation-order label."""
         result = compute(NumericArray("v", jnp.arange(3.0)))
 
         assert isinstance(result, NumericArray)
-        assert result.label == name
+        assert result.label == label
         assert isinstance(result.raw(), jax.Array)
 
     @pytest.mark.parametrize(
-        ("compute", "name"),
+        ("compute", "label"),
         [
             (lambda v, w: v + w, "v + [other value]"),
             (lambda v, w: -w, "-[other value]"),
@@ -323,12 +323,12 @@ class TestNumericArrayComputesAsAnArray:
             (lambda v, w: abs(w) + 1, "abs(other value) + 1"),
         ],
     )
-    def test_each_operand_reads_as_one_unit_in_the_name(self, compute, name):
+    def test_each_operand_reads_as_one_unit_in_the_label(self, compute, label):
         """An expression operand is parenthesized, and a user's label with a space is bracketed."""
         v = NumericArray("v", jnp.arange(3.0))
         w = NumericArray("other value", jnp.ones(3))
 
-        assert compute(v, w).label == name
+        assert compute(v, w).label == label
 
     def test_an_element_of_a_batch_labeled_by_an_expression_groups_it(self):
         batch = NumericArrayBatch("model | y", jnp.zeros(3), "dataset")
@@ -558,7 +558,7 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
         assert batch.dtype == jnp.float32
 
     def test_the_repr_states_the_levels_and_the_element_spec(self):
-        assert repr(_batch(name="x")) == (
+        assert repr(_batch(label="x")) == (
             "NumericArrayBatch('x', levels={'draw': 4}, "
             "element_spec=NumericArraySpec(shape=(3,), dtype=float32))"
         )
@@ -606,8 +606,8 @@ class TestNumericArrayBatchSelection:
         assert isinstance(element, NumericArray)
         np.testing.assert_array_equal(np.asarray(element), np.array([3.0, 4.0, 5.0]))
 
-    def test_an_element_takes_the_derived_name(self):
-        element = _batch(name="posterior")[1]
+    def test_an_element_takes_the_derived_label(self):
+        element = _batch(label="posterior")[1]
 
         assert element.label == "posterior[draw=1]"
         pass
@@ -641,7 +641,7 @@ class TestNumericArrayBatchSelection:
         assert type(derived[1:3]) is NumericArrayBatch
 
     def test_a_slice_is_a_sub_batch(self):
-        sub = _batch(name="posterior")[1:3]
+        sub = _batch(label="posterior")[1:3]
 
         assert isinstance(sub, NumericArrayBatch)
         assert sub.batch_shape == (2,)
@@ -933,20 +933,20 @@ class TestNumericArrayIsAPyTree:
         assert rebuilt.provenance is None
 
 
-class TestABatchIsNamed:
-    """A batch's name is required, as a `Record`'s and an `Opaque`'s are.
+class TestABatchIsLabeled:
+    """A batch's label is required, as a `Record`'s and an `Opaque`'s are.
 
-    The signature itself — the name first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
+    The signature itself — the label first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
     """
 
-    def test_a_given_name_is_marked_user_given(self):
-        batch = _batch(name="posterior")
+    def test_a_given_label_is_marked_user_given(self):
+        batch = _batch(label="posterior")
 
         assert batch.label == "posterior"
 
-    def test_a_derived_name_says_so(self):
-        """A view derives its name, and marks it, rather than defaulting."""
-        sub = _batch(name="posterior")[1:3]
+    def test_a_derived_label_says_so(self):
+        """A view derives its label, and marks it, rather than defaulting."""
+        sub = _batch(label="posterior")[1:3]
 
         assert sub.label == "posterior[draw=1:3]"
 
@@ -958,7 +958,7 @@ class TestNumericArrayBatchIsAPyTree:
     """
 
     def test_it_round_trips_unchanged(self):
-        batch = _batch(name="posterior")
+        batch = _batch(label="posterior")
 
         rebuilt = jax.tree_util.tree_map(lambda x: x, batch)
 

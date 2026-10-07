@@ -321,16 +321,16 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     return project
 
 
-def _detached(law: Distribution, name: str) -> Distribution:
-    """*law* detached from the workflow under *name*, as :meth:`Distribution.raw` detaches a law."""
+def _detached(law: Distribution, label: str) -> Distribution:
+    """*law* detached from the workflow under *label*, as :meth:`Distribution.raw` detaches a law."""
     clone = _detached_term(law)
-    object.__setattr__(clone, "_label", name)
+    object.__setattr__(clone, "_label", label)
     return clone
 
 
-def _labeled(law: Distribution, name: str) -> Distribution:
-    """*law* under the label *name*, which a marginal takes from the law it is a marginal of."""
-    return law if law.label == name else law.with_label(name)
+def _labeled(law: Distribution, label: str) -> Distribution:
+    """*law* under *label*, which a marginal takes from the law it is a marginal of."""
+    return law if law.label == label else law.with_label(label)
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:

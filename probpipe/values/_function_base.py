@@ -778,7 +778,7 @@ class Function(Node, TrackedTerm, Annotated):
         self,
         implementation: _FunctionImplementation,
         signature_info: Any,
-        name: str,
+        label: str,
         *,
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
@@ -794,10 +794,10 @@ class Function(Node, TrackedTerm, Annotated):
             raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
         if differentiable is not None:
             raise NotImplementedError("Function.__init__: the differentiability claim")
-        if not isinstance(name, str) or not name:
+        if not isinstance(label, str) or not label:
             raise TypeError("Function requires a non-empty label")
         if output_label is None:
-            output_label = name
+            output_label = label
         if not isinstance(output_label, str) or not output_label:
             raise TypeError("Function output_label must be a non-empty string")
         if input_spec is not None and not isinstance(input_spec, InputSpec):
@@ -807,7 +807,7 @@ class Function(Node, TrackedTerm, Annotated):
         output_spec = _complete_output_spec(output_spec, output_label)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
-            function_name=name,
+            function_name=label,
             signature=signature_info.signature,
             input_spec=input_spec,
             construction_bindings=construction_bindings,
@@ -819,7 +819,7 @@ class Function(Node, TrackedTerm, Annotated):
         }
         options = _set_controls(self._control_defaults(), {}, given, signature_info.signature)
         set_attribute = partial(object.__setattr__, self)
-        self._init_tracked(name)
+        self._init_tracked(label)
         set_attribute("_annotations", {})
         set_attribute("_implementation", implementation)
         set_attribute("_signature_info", signature_info)
@@ -829,8 +829,8 @@ class Function(Node, TrackedTerm, Annotated):
         set_attribute("_bind", MappingProxyType(construction_bindings))
         set_attribute("_module", module)
         set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
-        set_attribute("__name__", name)
-        set_attribute("__qualname__", getattr(metadata_source, "__qualname__", name))
+        set_attribute("__name__", label)
+        set_attribute("__qualname__", getattr(metadata_source, "__qualname__", label))
         set_attribute(
             "__module__", getattr(metadata_source, "__module__", None) or type(self).__module__
         )
@@ -842,7 +842,7 @@ class Function(Node, TrackedTerm, Annotated):
         implementation: _FunctionImplementation,
         *,
         signature: inspect.Signature,
-        name: str,
+        label: str,
         **kwargs: Any,
     ) -> Function:
         """Construct a Function from a private payload and explicit signature."""
@@ -852,7 +852,7 @@ class Function(Node, TrackedTerm, Annotated):
             )
         instance = object.__new__(Function)
         instance._initialize(
-            implementation, make_signature_info_from_signature(signature), name, **kwargs
+            implementation, make_signature_info_from_signature(signature), label, **kwargs
         )
         return instance
 

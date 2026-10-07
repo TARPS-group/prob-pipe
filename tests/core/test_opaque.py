@@ -94,7 +94,7 @@ class TestOpaqueCarriesIdentity:
         assert wrapped.label == "model"
 
     def test_a_name_is_required(self):
-        """The name is what says which opaque value this is."""
+        """The label is what says which opaque value this is."""
         with pytest.raises(TypeError):
             Opaque(_Payload())
 
