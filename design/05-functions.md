@@ -130,6 +130,8 @@ A `Function` compares each admitted argument against the kind its parameter expe
 
 Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names.
 
+A parameter annotated with a class of raw values, such as `pd.Series` or `jax.Array`, receives the raw form of an argument, or of each element or draw that a lift passes to it, when that form is an instance of the class, so a function written for pandas receives the `Series` that a record field holds.
+
 Explicit argument binding reads the draw's term spec, and the keyword names the receiving parameter: in `predict(theta=prior)`, the parameter `theta` receives the draws even when the prior's output component is `beta`. Name-based connection is composition's contract (IV.2).
 
 **Grouping and correlation.** The lifted arguments are grouped by **root ancestor**, transitively: sibling views of one parent, the same distribution passed twice, and a parent passed alongside its own view all fall in one group. Each group contributes one joint draw per repetition, so dependence between its members is preserved through `f`. A view lifts by sampling its parent, so its parent must itself sample. Groups with no common ancestor draw independently: the lift samples the **product law**, and, as a corollary, detached marginals of one joint lift independently while its views co-sample. For example, `f(d, d["x"])` forms one group, and each repetition evaluates `f` on a joint draw and its own projection, while `f(d1, d2)` for unrelated `d1` and `d2` samples the product of their laws. The number of lifted arguments changes only the grouping.
@@ -156,7 +158,26 @@ def rate(x):
 # and binds "obs" to the actual output length on each call
 ```
 
-**The result of a lift.** A distributional lift plans a `DistributionSpec` over the function's output declaration. An exact rule may return a Gaussian or transformed law; the sampling route constructs an empirical approximation. With no output declaration, the kind and component exposure are inferred at return by the same rule as a plain call: a record exposes its fields, and any other return is a whole term under `output_label`. A sweep plans a batch of the declared output kind, retaining the swept levels. With no output declaration, the elements' results must agree on one inferred spec; an empty sweep requires an explicit declaration sufficient to construct the result, so a name-only type hole is insufficient. A nested sweep returns a batch of laws. An operation's result rule follows the same distinction between declared type and chosen representation (VI.0).
+**The result of a lift.** Planning declares the result of a lifted call from the function's output declaration. The route that resolution selects then chooses the representation that realizes the declaration (V.7). The kind of the result depends on the lift's regime (V.5):
+
+1. **A broadcast** returns a law over the function's outputs, declared as a `DistributionSpec` whose event declaration is the output declaration. A closed-form rule may return a parametric law, such as a Gaussian, and the sampling lift returns an `EmpiricalDistribution`. An empirical result holds the outputs as its atoms, on one level named after the function's `output_label`, which labels those outputs. An output that is itself a batch keeps its own levels within each atom, after the atom level (VII.2).
+2. **A sweep** returns a batch of the output kind on the swept levels, with one element for each element swept.
+3. **A nested sweep** returns a `DistributionBatch` on the swept levels, whose element at each position is the law that the broadcast at that position returns.
+
+Without an output declaration, the result's declaration completes at return from the outputs, by the rule that **The declared output** states. The elements of a sweep must then complete to one declaration, and elements that disagree raise `ResultSchemaError` (V.10). An empty sweep has no output to complete from, so its output declaration must already be complete, with every type stated and every dimension bound.
+
+```python
+@function
+def growth(interest, years):
+    return (1.0 + interest) ** years
+
+interest = Normal("interest", 0.05, 0.02)
+horizons = NumericArrayBatch("years", jnp.array([5.0, 10.0, 20.0]), "horizon")
+
+growth(interest, 10.0)      # a broadcast: an EmpiricalDistribution whose atoms lie on the level growth
+growth(0.05, horizons)      # a sweep: a NumericArrayBatch on the level horizon
+growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of laws whose atoms lie on growth
+```
 
 **Including the inputs.** With `include_inputs=True`, the sampling lift returns a joint empirical law over inputs and outputs. Each lifted parameter contributes one component containing its complete draw, named by the parameter. A record draw remains nested even when it has one field. The output contributes exactly the components its `OutputSpec` exposes (II.2); a record exposed under `parameters` remains under that name. Plain inputs contribute no fields, since provenance records them. A collision between parameter and output component names raises at planning when known and at return otherwise. This control selects only routes that produce the joint of inputs and outputs. Grouping determines co-sampling, and the parameters determine the layout.
 
@@ -228,7 +249,7 @@ with replay_run(result.provenance):      # re-runs one recorded call on its reco
 2. the **stochastic source**: which co-sampling group of V.5 is drawing;
 3. the **logical unit**: which broadcast repetition or sweep cell consumes the draw.
 
-Identity follows the workflow's logical structure: ordinals are fixed by program order, no key is drawn twice, and the same call produces the same draws under any dispatch mode, thread count, or orchestration.
+Identity follows the workflow's logical structure: ordinals are fixed by program order, no key is drawn twice, and the same call produces the same draws under any dispatch mode, thread count, or orchestration. Each draw in the body of an `apply` evaluation (III.3) is its own workflow-owned event, as in a plain call.
 
 **Consequences.** Because keys attach to structure, perturbing an input reuses the same keys, preserving common random numbers: comparisons across nearby inputs and reparameterization gradients keep a low variance. A fresh estimate or an independent stream is obtained by changing the seed. The one cost is that the streams are tied to the program's structure, so restructuring the computation reshuffles them.
 

@@ -60,6 +60,8 @@ from ._result import (
     _aggregate_output_spec,
     _make_stack,
     _output_record_spec,
+    _record_stored_dtypes,
+    _with_dtypes_of,
 )
 
 MIN_BROADCAST_SAMPLES = 5
@@ -336,8 +338,8 @@ def _output_atoms(
         point = tuple(jnp.shape(outputs.value)[1:])
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
-        atoms: Batch = NumericArrayBatch(
-            output_label, outputs.value, DRAW_LEVEL, element_spec=element
+        atoms: Batch = _record_stored_dtypes(
+            NumericArrayBatch(output_label, outputs.value, DRAW_LEVEL, element_spec=element)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -362,7 +364,9 @@ def _output_atoms(
         _validate_stacked_output(function_name=output_label, output_spec=output_spec, batch=atoms)
     except ValueError as error:
         raise ResultSchemaError(str(error)) from error
-    return atoms, output_spec.with_spec(atoms.element_spec)
+    # The declaration records the dtypes the atoms hold, as the atoms' own does.
+    declaration = output_spec.with_spec(atoms.element_spec)
+    return atoms, declaration._with_spec(_with_dtypes_of(declaration.spec, atoms.element_spec))
 
 
 def _rows_of(outputs: Any, output_label: str) -> Any:

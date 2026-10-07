@@ -1,4 +1,4 @@
-"""A law built from a sampling function, a log-density, or both (III.9).
+"""A law built from a sampling function, a log-density, or both (IV.4).
 
 ``distribution(label, sample=..., log_prob=..., event_spec=...)`` returns the
 law of the functions it is given. The law claims the capability each function

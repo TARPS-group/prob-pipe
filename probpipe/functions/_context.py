@@ -165,23 +165,16 @@ class _StochasticProbeSignal(RuntimeError):
 
 
 class _WorkflowRunScope:
-    """Synchronous context-manager implementation for ``workflow_run``.
-
-    A standalone scope is a root inside an enclosing scope too: it starts an
-    occurrence structure of its own, for which the enclosing scope commits no
-    ordinal, and it keeps the enclosing scope's provenance mode.
-    """
+    """Synchronous context-manager implementation for ``workflow_run``."""
 
     def __init__(
         self,
         seed: int | None,
         *,
         root_kind: Literal["anonymous", "ephemeral"] = "anonymous",
-        standalone: bool = False,
     ):
         self._seed = seed
         self._root_kind: Literal["anonymous", "ephemeral"] = root_kind
-        self._standalone = standalone
         self._frame: _WorkflowFrame | None = None
         self._token: Token[_WorkflowFrame | None] | None = None
 
@@ -194,9 +187,8 @@ class _WorkflowRunScope:
             from ._errors import ReplayCompatibilityError
 
             raise ReplayCompatibilityError("workflow_run cannot be nested inside replay_run")
-        enclosing = _ACTIVE_WORKFLOW_FRAME.get()
-        _assert_workflow_admission(enclosing)
-        parent = None if self._standalone else enclosing
+        parent = _ACTIVE_WORKFLOW_FRAME.get()
+        _assert_workflow_admission(parent)
         seed_words = None if self._seed is None else seed_to_root_words(self._seed)
         if parent is None:
             kind: _WorkflowContextKind = "seeded" if seed_words is not None else self._root_kind
@@ -205,9 +197,7 @@ class _WorkflowRunScope:
         frame = _WorkflowFrame(
             kind=kind,
             seed_words=seed_words,
-            provenance_mode=(
-                provenance_config.mode if enclosing is None else enclosing.provenance_mode
-            ),
+            provenance_mode=(provenance_config.mode if parent is None else parent.provenance_mode),
             parent=parent,
             owner=_current_workflow_owner(),
             state=_WorkflowFrameState(path_prefix=() if parent is None else None),

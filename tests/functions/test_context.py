@@ -21,13 +21,11 @@ from probpipe import (
     Function,
     Normal,
     ProvenanceMode,
-    ReplayCompatibilityError,
     UnmanagedConcurrentWorkflowEntryError,
     sample,
     workflow_run,
 )
 from probpipe.functions import _context
-from probpipe.functions._broker import _standalone_workflow_run
 from probpipe.functions._context import (
     _commit_stochastic_invocation,
     _ephemeral_workflow_run,
@@ -55,11 +53,6 @@ def _nested_draw(value):
 
 def _nested_seeded_draw(value):
     with workflow_run(seed=42):
-        return sample(Normal(loc=value, scale=1.0, label="draw"))
-
-
-def _standalone_draw(value):
-    with _standalone_workflow_run(42):
         return sample(Normal(loc=value, scale=1.0, label="draw"))
 
 
@@ -441,66 +434,3 @@ class TestWorkflowOccurrences:
             second = _claim_key_words()
 
         assert (first, second) == baseline
-
-
-class TestStandaloneWorkflowRun:
-    """A standalone scope starts its own occurrence structure inside any enclosing scope."""
-
-    def test_its_events_are_those_of_a_top_level_scope_of_its_seed(self):
-        with workflow_run(seed=42):
-            top_level = (_claim_key_words(), _claim_key_words())
-        with _standalone_workflow_run(42):
-            alone = (_claim_key_words(), _claim_key_words())
-        with workflow_run(seed=7):
-            _claim_key_words()
-            with _standalone_workflow_run(42):
-                in_a_seeded_scope = (_claim_key_words(), _claim_key_words())
-        with workflow_run(), workflow_run(seed=3), _standalone_workflow_run(42):
-            in_a_nested_scope = (_claim_key_words(), _claim_key_words())
-
-        assert alone == top_level
-        assert in_a_seeded_scope == top_level
-        assert in_a_nested_scope == top_level
-        assert top_level[0] != top_level[1]
-
-    def test_it_commits_no_occurrence_of_the_enclosing_scope(self):
-        with workflow_run(seed=7):
-            baseline = (_claim_key_words(), _claim_key_words())
-
-        with workflow_run(seed=7):
-            first = _claim_key_words()
-            with _standalone_workflow_run(42):
-                _claim_key_words()
-            second = _claim_key_words()
-
-        assert (first, second) == baseline
-
-    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
-    def test_inside_a_managed_function_it_ignores_the_outer_root_and_work_item(self, dispatch):
-        workflow = Function(label="_standalone_draw", fn=_standalone_draw, dispatch=dispatch)
-        with workflow_run(seed=42):
-            expected = float(sample(Normal(loc=0.0, scale=1.0, label="draw")))
-
-        values = []
-        for outer_seed in (1, 2):
-            with workflow_run(seed=outer_seed):
-                values.append(float(workflow(0.0)))
-
-        assert values == [expected, expected]
-
-    def test_it_keeps_the_enclosing_provenance_mode(self):
-        with workflow_run(seed=7):
-            enclosing = _context._capture_active_workflow_frame()
-            with _standalone_workflow_run(42):
-                frame = _context._capture_active_workflow_frame()
-
-        assert frame.parent is None
-        assert frame.provenance_mode is enclosing.provenance_mode
-
-    def test_it_refuses_an_active_replay(self):
-        with (
-            patch("probpipe.functions._replay._replay_is_active", return_value=True),
-            pytest.raises(ReplayCompatibilityError),
-            _standalone_workflow_run(42),
-        ):
-            pass

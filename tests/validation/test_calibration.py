@@ -24,6 +24,7 @@ from probpipe import (
     OutputSpec,
     RecordSpec,
     conditional_distribution,
+    workflow_run,
 )
 from probpipe.core.record import Record
 from probpipe.distributions import ConditionalDistribution
@@ -378,25 +379,25 @@ class TestSBCPosteriorKernel:
     """Calibration of a posterior kernel, which each replication evaluates at its observed values."""
 
     def test_the_exact_posterior_gives_uniform_ranks_and_nominal_coverage(self):
-        result = simulation_based_calibration(
-            _conjugate_model(),
-            observed="y",
-            posterior=_exact_posterior(),
-            num_simulations=200,
-            num_posterior_draws=99,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            result = simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                posterior=_exact_posterior(),
+                num_simulations=200,
+                num_posterior_draws=99,
+            )
         assert isinstance(result, SBCResult)
         assert result.ranks.shape == (200, 1)
         assert result.param_names == ("mu",)
         assert result.num_posterior_draws == 99
         assert result.ranks.min() >= 0 and result.ranks.max() <= 99
-        # Measured at keys 0-3 (S=200, L=99): KS p-values 0.15-0.57, and coverage
-        # 0.47-0.55 at level 0.5 and 0.905-0.92 at level 0.9.
+        # Measured at seeds 0-3 (S=200, L=99): KS p-values 0.051-0.80, and coverage
+        # 0.485-0.52 at level 0.5 and 0.87-0.935 at level 0.9.
         assert float(result.ks_pvalue[0]) > 0.01
         coverage = result.coverage((0.5, 0.9))
         np.testing.assert_allclose(coverage[0.5], [0.5], atol=0.1)
-        np.testing.assert_allclose(coverage[0.9], [0.9], atol=0.06)
+        np.testing.assert_allclose(coverage[0.9], [0.9], atol=0.07)
 
     def test_a_posterior_of_half_the_scale_fails_both(self):
         """Draws at half the posterior's scale reject uniformity and cover ``θ★`` too rarely.
@@ -404,16 +405,16 @@ class TestSBCPosteriorKernel:
         A central interval of half the width covers a draw of the posterior with
         probability ``P(|Z| ≤ z / 2)``: 0.26 at level 0.5 and 0.59 at level 0.9.
         """
-        result = simulation_based_calibration(
-            _conjugate_model(),
-            observed="y",
-            posterior=_exact_posterior(scale_factor=0.5),
-            num_simulations=200,
-            num_posterior_draws=99,
-            key=jax.random.key(0),
-        )
-        # Measured at keys 0-3: KS p-values below 2e-5, and coverage 0.25-0.30 at
-        # level 0.5 and 0.58-0.64 at level 0.9.
+        with workflow_run(seed=0):
+            result = simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                posterior=_exact_posterior(scale_factor=0.5),
+                num_simulations=200,
+                num_posterior_draws=99,
+            )
+        # Measured at seeds 0-3: KS p-values below 4e-5, and coverage 0.23-0.285 at
+        # level 0.5 and 0.565-0.625 at level 0.9.
         assert float(result.ks_pvalue[0]) < 1e-3
         coverage = result.coverage((0.5, 0.9))
         assert float(coverage[0.5][0]) < 0.4
@@ -425,35 +426,29 @@ class TestSBCPosteriorKernel:
         Equally weighted, the atoms are the uniform law on the grid, among whose
         draws ``θ★ ~ N(0, 2²)`` ranks near the middle.
         """
-        common = {
-            "observed": "y",
-            "num_simulations": 200,
-            "num_posterior_draws": 99,
-            "key": jax.random.key(0),
-        }
-        weighted = simulation_based_calibration(
-            _conjugate_model(), posterior=_GridPosterior(), **common
-        )
-        unweighted = simulation_based_calibration(
-            _conjugate_model(), posterior=_GridPosterior(weighted=False), **common
-        )
-        # Measured at keys 0-3: KS p-values 0.20-0.90 weighted and below 1e-14 unweighted.
-        assert float(weighted.ks_pvalue[0]) > 0.01
+        common = {"observed": "y", "num_simulations": 200, "num_posterior_draws": 99}
+        with workflow_run(seed=0):
+            weighted = simulation_based_calibration(
+                _conjugate_model(), posterior=_GridPosterior(), **common
+            )
+        with workflow_run(seed=0):
+            unweighted = simulation_based_calibration(
+                _conjugate_model(), posterior=_GridPosterior(weighted=False), **common
+            )
+        # Measured at seeds 0-3: KS p-values 0.0145-0.69 weighted and below 3e-14 unweighted.
+        assert float(weighted.ks_pvalue[0]) > 0.005
         assert float(unweighted.ks_pvalue[0]) < 1e-3
 
     def test_one_given_slot_takes_the_one_observed_field_whatever_its_name(self):
-        common = {
-            "observed": "y",
-            "num_simulations": 8,
-            "num_posterior_draws": 20,
-            "key": jax.random.key(3),
-        }
-        by_name = simulation_based_calibration(
-            _conjugate_model(), posterior=_exact_posterior(), **common
-        )
-        by_position = simulation_based_calibration(
-            _conjugate_model(), posterior=_observation_posterior(), **common
-        )
+        common = {"observed": "y", "num_simulations": 8, "num_posterior_draws": 20}
+        with workflow_run(seed=3):
+            by_name = simulation_based_calibration(
+                _conjugate_model(), posterior=_exact_posterior(), **common
+            )
+        with workflow_run(seed=3):
+            by_position = simulation_based_calibration(
+                _conjugate_model(), posterior=_observation_posterior(), **common
+            )
         np.testing.assert_array_equal(by_position.ranks, by_name.ranks)
 
     @pytest.mark.bayesflow
@@ -480,18 +475,17 @@ class TestSBCPosteriorKernel:
             num_simulations=500,
             epochs=2,
             batch_size=128,
-            random_seed=0,
             verbose=0,
         )
         assert list(amortized.given_spec) == ["observation"]
-        result = simulation_based_calibration(
-            simulator * prior,
-            observed="y",
-            posterior=amortized,
-            num_simulations=6,
-            num_posterior_draws=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            result = simulation_based_calibration(
+                simulator * prior,
+                observed="y",
+                posterior=amortized,
+                num_simulations=6,
+                num_posterior_draws=20,
+            )
         assert result.ranks.shape == (6, 2)
         assert result.param_names == ("a", "b")
         assert result.ranks.min() >= 0 and result.ranks.max() <= 20
@@ -567,14 +561,14 @@ class TestSBCFit:
 
     def test_well_specified_ranks_uniform(self):
         model = _gaussian_glm()
-        res = simulation_based_calibration(
-            model,
-            observed="y",
-            num_simulations=32,
-            num_posterior_draws=100,
-            method_options={"num_warmup": 100, "num_results": 100},
-            key=jax.random.PRNGKey(0),
-        )
+        with workflow_run(seed=0):
+            res = simulation_based_calibration(
+                model,
+                observed="y",
+                num_simulations=32,
+                num_posterior_draws=100,
+                method_options={"num_warmup": 100, "num_results": 100},
+            )
         assert isinstance(res, SBCResult)
         assert res.ranks.shape == (32, 2)
         assert res.ranks.min() >= 0 and res.ranks.max() <= res.num_posterior_draws
@@ -583,11 +577,11 @@ class TestSBCFit:
         assert len(res.param_names) == res.ranks.shape[1]
         # Well-specified model + NUTS → ranks ~ uniform. Measured across seeds 0–3
         # (S=32, L=100 drawn from 4 chains of 100): mean normalized rank ∈
-        # [0.42, 0.58], median ks_pvalue ∈ [0.29, 0.69]. Assert stable statistics,
+        # [0.47, 0.57], median ks_pvalue ∈ [0.14, 0.59]. Assert stable statistics,
         # not a tail bound on the min.
         u = (res.ranks + 0.5) / (res.num_posterior_draws + 1)
         assert np.all((u.mean(axis=0) > 0.35) & (u.mean(axis=0) < 0.65))
-        assert float(np.median(res.ks_pvalue)) > 0.1
+        assert float(np.median(res.ks_pvalue)) > 0.05
         # Rank histogram: (num_params, num_bins), each row sums to num_simulations.
         hist = res.rank_histogram(num_bins=10)
         assert hist.shape == (2, 10)
@@ -598,17 +592,17 @@ class TestSBCFit:
         # unmodeled +0.25 shift while the posterior SD is ≈ 0.31 (precision
         # 1/4 + 10 = 10.25), so the per-fit bias is only ≈ 0.8 posterior SD — yet
         # SBC rejects because the shift is *systematic* across simulations and
-        # accumulates. Measured ks_pvalue.max ≤ 0.002 and mean rank ≤ 0.36 over
+        # accumulates. Measured ks_pvalue.max ≤ 8e-5 and mean rank ≤ 0.32 over
         # seeds 0–3 at S=48.
         model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, label="mu")
-        res = simulation_based_calibration(
-            model,
-            observed="y",
-            num_simulations=48,
-            num_posterior_draws=100,
-            method_options={"num_warmup": 100, "num_results": 100},
-            key=jax.random.PRNGKey(0),
-        )
+        with workflow_run(seed=0):
+            res = simulation_based_calibration(
+                model,
+                observed="y",
+                num_simulations=48,
+                num_posterior_draws=100,
+                method_options={"num_warmup": 100, "num_results": 100},
+            )
         # Uniformity is rejected for every parameter — a clear miscalibration signal.
         assert float(res.ks_pvalue.max()) < 0.05
         # The upward bias pushes θ★ into the lower tail → mean rank below 0.5.
@@ -616,15 +610,15 @@ class TestSBCFit:
 
     def test_a_pyabc_fit_takes_its_budget_in_method_options(self):
         pytest.importorskip("pyabc")
-        result = simulation_based_calibration(
-            _conjugate_model(),
-            observed="y",
-            method="pyabc_smcabc",
-            method_options={"n_particles": 50, "max_populations": 2},
-            num_simulations=3,
-            num_posterior_draws=20,
-            key=jax.random.key(1),
-        )
+        with workflow_run(seed=1):
+            result = simulation_based_calibration(
+                _conjugate_model(),
+                observed="y",
+                method="pyabc_smcabc",
+                method_options={"n_particles": 50, "max_populations": 2},
+                num_simulations=3,
+                num_posterior_draws=20,
+            )
         assert result.ranks.shape == (3, 1)
         assert result.ranks.min() >= 0 and result.ranks.max() <= 20
 

@@ -31,20 +31,15 @@ import numpy as np
 
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, ArrayLike
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution, _array_leaves
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..distributions._factored import _raw_record
 from ..functions import _context
-from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ..operations._condition import condition_on
 from ..operations._sample import sample
-from ._workflow_rng import (
-    _keyed_workflow_run,
-    _resolve_validation_key,
-    _validate_positive_int,
-)
+from ._workflow_rng import _validate_positive_int
 
 __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 
@@ -302,7 +297,6 @@ def simulation_based_calibration(
     posterior: ConditionalDistribution | None = None,
     method: str | None = None,
     method_options: Mapping[str, Any] | None = None,
-    key: PRNGKey | None = None,
 ) -> SBCResult:
     """Simulation-based calibration of a posterior (Talts et al. 2018).
 
@@ -330,6 +324,13 @@ def simulation_based_calibration(
     particles, are resampled by weight, a network posterior is evaluated, and an
     MCMC posterior's atoms are drawn at random.
 
+    The calibration takes its randomness from the enclosing workflow scope,
+    whose workflow-owned random events it claims in program order: one
+    ``sample(model, sample_shape=(num_simulations,))`` draws the ``θ★`` and
+    ``y`` of every replication, and then each replication forms its posterior
+    and draws from it. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces its ranks, and an unscoped call draws afresh.
+
     Parameters
     ----------
     model : Distribution
@@ -355,15 +356,8 @@ def simulation_based_calibration(
         as :func:`condition_on` does.
     method_options : Mapping, optional
         The options of each fit's method, such as ``{"num_warmup": 500,
-        "num_results": 2000}``. Without a ``random_seed`` entry, each fit takes
-        its seed from its replication's workflow scope.
-    key : PRNGKey, optional
-        JAX PRNG key. Each replication splits a key from it, which draws ``θ★``
-        and ``y`` and seeds a workflow scope of the replication's own. The fit
-        and the posterior draws take their keys from that scope, so a fixed key
-        reproduces every replication wherever the call runs. When it is
-        omitted, one workflow-owned random event of the enclosing scope supplies
-        the key, so a call inside ``workflow_run(seed=...)`` is reproducible.
+        "num_results": 2000}``. Each fit's seed is a workflow-owned random event
+        of the enclosing scope.
 
     Returns
     -------
@@ -389,15 +383,25 @@ def simulation_based_calibration(
     ResolutionError
         If no route of :func:`condition_on` forms the posterior at ``y``, or
         that posterior does not sample.
+    ReplayCompatibilityError
+        If a ``replay_run`` scope is active, since a replay accepts one
+        top-level ``Function`` call and the calibration makes several.
+
+    Notes
+    -----
+    The draws of ``θ★`` and ``y`` are one event, which the call claims first,
+    so they do not depend on the posterior or the method. Two calls with the
+    same *model* and *num_simulations*, at the same position of scopes with the
+    same seed, therefore rank their posteriors' draws against the same ``θ★``
+    and ``y``.
 
     Examples
     --------
     The exact posterior kernel of a conjugate normal model covers ``θ★`` at
     about the nominal rates:
 
-    >>> import jax
     >>> import jax.numpy as jnp
-    >>> from probpipe import Normal, NumericArraySpec, conditional_distribution
+    >>> from probpipe import Normal, NumericArraySpec, conditional_distribution, workflow_run
     >>> prior = Normal("mu", 0.0, 2.0)
     >>> likelihood = conditional_distribution(
     ...     "y_given_mu",
@@ -410,18 +414,18 @@ def simulation_based_calibration(
     ...     lambda y: Normal("mu", jnp.sum(y) / precision, precision**-0.5),
     ...     given_spec={"y": NumericArraySpec((5,))},
     ... )
-    >>> result = simulation_based_calibration(
-    ...     likelihood * prior,
-    ...     observed="y",
-    ...     posterior=exact,
-    ...     num_simulations=100,
-    ...     num_posterior_draws=99,
-    ...     key=jax.random.key(0),
-    ... )
+    >>> with workflow_run(seed=0):
+    ...     result = simulation_based_calibration(
+    ...         likelihood * prior,
+    ...         observed="y",
+    ...         posterior=exact,
+    ...         num_simulations=100,
+    ...         num_posterior_draws=99,
+    ...     )
     >>> result.ranks.shape
     (100, 1)
     >>> result.coverage((0.5, 0.9))
-    {0.5: array([0.51]), 0.9: array([0.89])}
+    {0.5: array([0.53]), 0.9: array([0.87])}
     """
     _context._assert_workflow_admission()
     num_simulations = _validate_positive_int("num_simulations", num_simulations)
@@ -459,30 +463,18 @@ def simulation_based_calibration(
     if posterior is not None:
         binding = _slot_binding(posterior, observed)
         _check_parameters(posterior.event_spec, parameters, posterior.label)
-    if key is None:
-        # The joint is a ProbPipe law, so its draws follow the distribution ABI.
-        key = _resolve_validation_key(
-            None,
-            operation_kind="simulation-based-calibration",
-            execution_mode="sampled",
-            sample_shape=(num_simulations,),
-            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
-        )
 
+    simulations = _raw_record(sample.with_options(raw=True)(model, sample_shape=(num_simulations,)))
     rank_rows: list[np.ndarray] = []
     component_names: tuple[str, ...] | None = None
-    for _ in range(num_simulations):
-        key, k_draw, k_scope = jax.random.split(key, 3)
-        draw = _raw_record(model._sample(k_draw, ()))
+    for index in range(num_simulations):
+        draw = jax.tree.map(lambda column, i=index: column[i], simulations)
         theta_star = {name: draw[name] for name in parameters}
-        with _keyed_workflow_run(k_scope):
-            if posterior is None:
-                law = fit(model, {name: draw[name] for name in observed})
-            else:
-                law = condition_on(
-                    posterior, {slot: draw[field] for slot, field in binding.items()}
-                )
-            draws = sample.with_options(raw=True)(law, sample_shape=(num_posterior_draws,))
+        if posterior is None:
+            law = fit(model, {name: draw[name] for name in observed})
+        else:
+            law = condition_on(posterior, {slot: draw[field] for slot, field in binding.items()})
+        draws = sample.with_options(raw=True)(law, sample_shape=(num_posterior_draws,))
         if component_names is None:
             _check_parameters(law.event_spec, parameters, law.label)
             component_names = _component_names(law)

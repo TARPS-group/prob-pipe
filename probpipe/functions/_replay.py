@@ -51,7 +51,7 @@ _SUPPORTED_CALLABLE_FIELDS = frozenset(
         "qualname",
         "definition_abi",
         "sha256",
-        "signature_and_templates",
+        "signature_and_declarations",
         "python_replay_abi",
         "probpipe_replay_abi",
     }
@@ -822,6 +822,14 @@ def replay_run(provenance: Provenance) -> _ReplayRunScope:
     call before deriving keys. It does not load user code or inputs from the
     provenance record. The caller must invoke the same supported Function
     definition with compatible arguments inside the scope.
+
+    The definition matches when the code, the signature, and the types of the
+    declarations do. A rename of the function, of its output label, or of its
+    output's components changes no value, so a renamed function replays the
+    call to the same draws under its new names (V.8). Replay validates the
+    definition, the stochastic plan, and the events the call consumes, and not
+    the values of its arguments, so an accepted replay of a call with other
+    arguments of the same structure runs on the recorded draws.
     """
     return _ReplayRunScope(provenance)
 
@@ -960,6 +968,14 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         raise ReplayCompatibilityError("unknown or missing workflow RNG recipe schema")
     if replay.get("schema") != _REPLAY_ANCHOR_ABI:
         raise ReplayCompatibilityError("recorded replay anchor schema is incompatible")
+    # The callable anchor's fields belong to its definition ABI, so an anchor of
+    # another ABI is refused before its fields are read.
+    callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
+    if callable_anchor.get("definition_abi") != _CALLABLE_DEFINITION_ABI:
+        raise ReplayCompatibilityError(
+            f"recorded callable definition ABI {callable_anchor.get('definition_abi')!r} "
+            f"is incompatible; expected {_CALLABLE_DEFINITION_ABI!r}. Record the call again."
+        )
     _validate_version_one_structure(controls)
     if randomness.get("rng_abi") != _RNG_ABI:
         raise ReplayCompatibilityError("recorded workflow RNG ABI is incompatible")
@@ -991,9 +1007,6 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
             )
         raise ReplayCompatibilityError("recorded standalone replay eligibility is invalid")
 
-    callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
-    if callable_anchor.get("definition_abi") != _CALLABLE_DEFINITION_ABI:
-        raise ReplayCompatibilityError("recorded callable definition ABI is incompatible")
     if callable_anchor.get("supported") is not True:
         form = callable_anchor.get("form", "unsupported")
         raise ReplayUnsupportedCallableError(
@@ -1005,9 +1018,9 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     for field_name in ("module", "qualname", "python_replay_abi", "sha256"):
         if not isinstance(callable_anchor.get(field_name), str):
             raise ReplayCompatibilityError(f"recorded callable anchor has invalid {field_name}")
-    if not isinstance(callable_anchor.get("signature_and_templates"), dict):
+    if not isinstance(callable_anchor.get("signature_and_declarations"), dict):
         raise ReplayCompatibilityError(
-            "recorded callable anchor has invalid signature_and_templates"
+            "recorded callable anchor has invalid signature_and_declarations"
         )
 
     plan_anchor = _mapping(replay.get("plan"), "replay.plan")
@@ -1131,20 +1144,20 @@ def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
     _require_version_one_fields(callable_anchor, callable_fields, "replay.callable")
     if callable_anchor.get("supported") is not False:
         signature = _version_one_record(
-            callable_anchor.get("signature_and_templates"),
+            callable_anchor.get("signature_and_declarations"),
             _CALLABLE_SIGNATURE_FIELDS,
-            "replay.callable.signature_and_templates",
+            "replay.callable.signature_and_declarations",
         )
         for index, parameter in enumerate(
             _list(
                 signature.get("parameters"),
-                "replay.callable.signature_and_templates.parameters",
+                "replay.callable.signature_and_declarations.parameters",
             )
         ):
             _version_one_record(
                 parameter,
                 _CALLABLE_PARAMETER_FIELDS,
-                f"replay.callable.signature_and_templates.parameters[{index}]",
+                f"replay.callable.signature_and_declarations.parameters[{index}]",
             )
 
     plan = _version_one_record(replay.get("plan"), _PLAN_FIELDS, "replay.plan")

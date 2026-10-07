@@ -198,6 +198,13 @@ class TestMean:
             estimate = mean.with_options(n_broadcast_samples=_DRAWS)(law)
         assert abs(_value(estimate) - 2.0) < 0.1
 
+    def test_the_fallback_takes_a_law_whose_label_is_no_identifier(self):
+        """The draws lie on a level named after the law's component, here ``my law``."""
+        with workflow_run(seed=1):
+            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(Sampler("my law", 2.0))
+        # Observed across seeds 0-5: errors of 0.001 to 0.020; the standard error is 0.016.
+        np.testing.assert_allclose(_value(estimate), 2.0, atol=0.05)
+
     def test_the_fallback_averages_record_draws_per_field(self):
         with workflow_run(seed=2):
             estimate = mean.with_options(n_broadcast_samples=_DRAWS)(ExactPosterior("post"))

@@ -36,7 +36,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 #: The sections the distribution layer realizes, in the order the reference gives them.
-_SECTIONS = ("III.7", "III.8", "III.9", "III.10", "IV.1", "IV.2", "IV.3", "VII.2")
+_SECTIONS = ("III.7", "III.8", "III.9", "III.10", "IV.1", "IV.2", "IV.3", "IV.4", "VII.2")
 
 #: The modules a declared name is looked up in, first match winning.
 _MODULES = (

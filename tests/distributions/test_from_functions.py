@@ -1,4 +1,4 @@
-"""A law built from a sampling function, a log-density, or both (III.9).
+"""A law built from a sampling function, a log-density, or both (IV.4).
 
 ``distribution`` builds a ``Distribution`` that claims the capability of each
 function it is given. Construction draws nothing and scores no value: it

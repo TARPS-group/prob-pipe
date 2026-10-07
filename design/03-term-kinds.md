@@ -153,7 +153,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its output declaration names its component; a constructor given only a codomain shape declares the output as a whole term whose component defaults to the operator's `output_name` (III.3). Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. The operator reads its spaces from these declarations alone. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws takes them as bare arrays. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its output declaration names its component; a constructor given only a codomain shape declares the output as a whole term whose component defaults to the operator's `output_label` (III.3). Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. The operator reads its spaces from these declarations alone. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws takes them as bare arrays. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
 
 Its schemas are always concrete, and construction from a schema with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
@@ -191,7 +191,7 @@ A `LinOp` claims `SupportsInverse` and `SupportsLogDetJacobian` (III.3) with a g
 
 **The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators that defer to their parts: `ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` exchanges the term specs of the two sides: its one input slot accepts the original output's packaging, and its output is the original input, offered whole under that slot's name. Each side keeps its own declaration type, since an `InputSpec` and an `OutputSpec` are different contracts (II.2). Composite operators are tracked terms like any other, with names derived from their operands.
 
-**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape as a whole term whose component defaults to the operator's `output_name`, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VII.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization:
+**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape as a whole term whose component defaults to the operator's `output_label`, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VII.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization:
 - `DenseLinOp`: the matrix;
 - `DiagonalLinOp`: the diagonal;
 - `TriangularLinOp`: the triangular matrix, whose flags name the triangle;
@@ -598,51 +598,7 @@ The conditional vocabulary is closed by one rule: every unconditional capability
 
 A conditional capability receives one given value, as its signature declares, so a caller with a batch of givens maps the capability over them. A joint samples a dependent factor this way, with one given and one key per draw of the factor's producers, vectorized for numeric givens and one draw at a time otherwise.
 
-**A kernel from a function.** `conditional_distribution` builds a `ConditionalDistribution` from a function of its given values that returns a law, as `function` builds a `Function` (V.1). Its call form takes the kernel's name and then the function, as in `conditional_distribution("y", lambda mu, tau: Normal("y", mu, tau), given_spec=...)`, and its decorator form on a `def` names the kernel after the function. Each parameter of the function is a given slot, and its spec is its entry in `given_spec` or else its annotation, which must then be a term spec. A parameter with a default is an optional slot (II.2), which holds a constant of the model, and its default's value declares it when neither does. A parameter with no default and no declaration raises `TypeError`, whose message gives the `given_spec` entry that declares it. Construction evaluates the function once, abstractly, at a stand-in of each required slot's type and at the default of each optional slot, and reads three things from the law it returns:
-
-1. the event declaration: the kernel declares the law's, or an explicit `event_spec` that names the law's components and unifies with its type, and a support that a given value sets is left undeclared;
-2. the claims: the kernel claims `SupportsConditionalSampling`, `SupportsConditionalLogProb`, and `SupportsConditionalUnnormalizedLogProb` exactly when the law claims the capability each one twins;
-3. the guards: each twin's guard reports what the law's guard of the capability reported.
-
-Binding every required slot calls the function with each given value as the argument of that name, at the kind its slot declares, as a function's body receives a draw (V.5), and with its default for each optional slot left unbound. It returns the law the call returns, which must agree with the kernel's event declaration, so a law that departs from it raises `ValueError`. Binding fewer slots curries the kernel over the rest. In a joint, a factor that produces a component named as an optional slot meets it (IV.2), so one kernel serves a model with the constant and a model with a prior on it.
-
-```python
-def conditional_distribution(
-    label: str | Callable[..., Distribution] | None = None,
-    fn: Callable[..., Distribution] | None = None,
-    /,
-    *,
-    given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
-    event_spec: OutputSpec | TermSpec | None = None,
-) -> ConditionalDistribution | Callable[[Callable[..., Distribution]], ConditionalDistribution]: ...
-    # conditional_distribution(label, fn) is the kernel of fn; without fn it is a decorator, and
-    # @conditional_distribution on a def labels the kernel after the function
-```
-
-**A law from functions.** `distribution` builds a `Distribution` from a sampling function, a log-density, or both, as `conditional_distribution` builds a kernel from a function. It takes the law's label first and each function under the name of the operation it realizes: `sample(key)` returns one draw at a PRNG key, at the kind the event declaration names, and `log_prob` or `unnormalized_log_prob` scores one value and returns a real scalar. A density receives an array for an array event, a `Record` for a record event, and the value itself for any other event. A call gives at least one function, at most one density, and an `event_spec` of any kind a `Distribution` declares, and a missing or non-callable function raises `TypeError`, which names it. The law claims the capability that each function given realizes:
-
-- `sample`: `SupportsSampling`;
-- `log_prob`: `SupportsLogProb`, which provides the unnormalized density as a normalized family's does;
-- `unnormalized_log_prob`: `SupportsUnnormalizedLogProb`.
-
-A law of a density alone is therefore unnormalized (III.8). A non-empty sample shape maps `sample` over keys split from the draw's key with `jax.vmap`. A sampler that does not trace in JAX, such as one that calls NumPy or an external program, and a sampler of an event that is not numeric are called at one key at a time instead, and their draws stack into the batch form of the event's kind. A density scores a batch of values along its leading axes, with `jax.vmap` when it traces.
-
-Construction draws nothing and scores no value. It evaluates each function that traces abstractly, with `jax.eval_shape`: the abstract draw of `sample` must unify with `event_spec`, and each density must return a real scalar at a stand-in of one value of the event, or `ValueError` names the failed check. The abstract draw completes the declaration, as a family's parameters complete its own (III.7). A function whose `jax.eval_shape` fails does not trace, and construction reads nothing from it, so a declaration that no traced draw completes is complete as given, and a pending type raises `TypeError`.
-
-A kernel whose function returns `distribution(...)` reads the law's claims as for any law, so the kernel of a simulator, `conditional_distribution("y", lambda rate: distribution("y", sample=lambda key: jax.random.poisson(key, rate, (10,)), event_spec=counts), given_spec={"rate": positive_scalar})`, claims conditional sampling and no density.
-
-```python
-def distribution(
-    label: str,
-    /,
-    *,
-    sample: Callable[[Key], Any] | None = None,
-    log_prob: Callable[[Any], Array] | None = None,
-    unnormalized_log_prob: Callable[[Any], Array] | None = None,
-    event_spec: OutputSpec | TermSpec,
-) -> Distribution: ...
-    # at least one function and at most one density
-```
+`conditional_distribution` builds a kernel from a function of its given values that returns a law (IV.4).
 
 **The numeric special cases.** A `ConditionalDistribution` has *two* sides, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** side numeric, `Numeric` before `Distribution` marks the **event** side numeric, and `FullyNumeric*` marks both. Each is a marker only, as `NumericDistribution` is.
 
@@ -663,7 +619,7 @@ class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_va
 
 ### Rationale
 
-Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` claiming a conditioning capability is intended rather than a collision, and the names stay distinct where the meanings differ. The same rule is why the two conditioning capabilities are claimed by inheriting rather than structurally: whether `_condition_on` returns the conditional law or a stand-in for it is a claim about the result, which no check on method names can read, so two structural protocols declaring it would match the same classes. A kernel built from a function of its given values is written as that function, as a `Function` is (`C1 – Uniform interface to functions, distributions, and values`), and reading its claims from the law the function returns makes it advertise only what that law supports (`D3 – Capability-based operations`). A law built from functions likewise claims only what its functions realize (`D3 – Capability-based operations`). Its construction checks each function that traces against the declaration, which every consumer of the law reads (`D5 – Explicit, carried structure`), and it draws nothing, so a kernel that builds a law at every binding calls the law's functions only when an operation asks for a draw or a density (`C3 – Computational detail hidden by default, available on demand`).
+Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` claiming a conditioning capability is intended rather than a collision, and the names stay distinct where the meanings differ. The same rule is why the two conditioning capabilities are claimed by inheriting rather than structurally: whether `_condition_on` returns the conditional law or a stand-in for it is a claim about the result, which no check on method names can read, so two structural protocols declaring it would match the same classes.
 
 ## III.10 — `DistributionBatch` and `ConditionalDistributionBatch`
 

@@ -40,7 +40,7 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, TermSpec
-from ..core._specs import OutputSpec
+from ..core._specs import OutputSpec, _check_component_name
 from ..core.constraints import real
 from ..core.named_tree import _unflatten_paths
 from ..distributions._capabilities import (
@@ -137,12 +137,13 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     TypeError
         If *level* is not a string.
     ValueError
-        If *level* is omitted for a source that exposes a record of several
-        components.
+        If *level* is empty or contains ``/``, or is omitted for a source that
+        exposes a record of several components.
     """
     if level is not None:
         if not isinstance(level, str):
             raise TypeError(f"level is the name of a level, got {type(level).__name__}")
+        _check_component_name(level, context="level names")
         return level
     if isinstance(source, EmpiricalDistribution) and len(source.atoms.level_names) == 1:
         return source.atoms.level_names[0]
