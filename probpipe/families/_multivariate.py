@@ -243,6 +243,16 @@ class MultivariateNormal(TFPDistribution):
     def _log_prob(self, value: ArrayLike) -> Array:
         """The normal log-density, keeping the leading axes of *value*.
 
+        Parameters
+        ----------
+        value : ArrayLike
+            A draw, or a batch of draws along leading axes.
+
+        Returns
+        -------
+        Array
+            The log-density, which is ``nan`` when a traced covariance is singular.
+
         Raises
         ------
         MathematicalDomainError

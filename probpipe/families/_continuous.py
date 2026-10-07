@@ -82,6 +82,15 @@ _CLOSED_FORM = frozenset({SupportsMean, SupportsVariance, SupportsCovariance, Su
 def _no_moment(law: TFPDistribution, moment: str, reason: str) -> NoReturn:
     """Raise that the *moment* of *law* is undefined, for *reason*.
 
+    Parameters
+    ----------
+    law : TFPDistribution
+        The law whose label the error message names.
+    moment : str
+        The name of the moment, such as ``"mean"`` or ``"covariance"``.
+    reason : str
+        Why the moment does not exist, which ends the error message.
+
     Raises
     ------
     MathematicalDomainError
@@ -95,6 +104,17 @@ def _require_moment(law: TFPDistribution, holds: Array, moment: str, reason: str
 
     A traced *holds* decides nothing before the computation runs, so the
     capability then returns the backend's value.
+
+    Parameters
+    ----------
+    law : TFPDistribution
+        The law whose moment is checked, passed to :func:`_no_moment`.
+    holds : Array
+        Whether the moment exists, as a boolean for each coordinate.
+    moment : str
+        The name of the moment, passed to :func:`_no_moment`.
+    reason : str
+        Why the moment can fail to exist, passed to :func:`_no_moment`.
 
     Raises
     ------
@@ -131,6 +151,12 @@ class _TailBoundedMoments:
     def _mean(self) -> Array:
         """The backend's mean, ``inf`` at each coordinate where it diverges.
 
+        Returns
+        -------
+        Array
+            The mean of each coordinate, which is ``nan`` where it is undefined and the
+            parameter is traced.
+
         Raises
         ------
         MathematicalDomainError
@@ -151,6 +177,21 @@ class _TailBoundedMoments:
     def _variance_values(self, moment: str, reason: str) -> Array:
         """The variance, ``inf`` where the parameter lies between one and two.
 
+        Parameters
+        ----------
+        moment : str
+            The name of the moment the caller computes, ``"variance"`` or ``"covariance"``,
+            for the error message.
+        reason : str
+            Why that moment is undefined where the parameter is at most one, for the error
+            message.
+
+        Returns
+        -------
+        Array
+            The variance of each coordinate, which is ``nan`` where the parameter is at most
+            one and traced.
+
         Raises
         ------
         MathematicalDomainError
@@ -164,6 +205,12 @@ class _TailBoundedMoments:
 
     def _variance(self) -> Array:
         """The backend's variance, ``inf`` at each coordinate where it diverges.
+
+        Returns
+        -------
+        Array
+            The variance of each coordinate, which is ``nan`` where it is undefined and the
+            parameter is traced.
 
         Raises
         ------
@@ -180,6 +227,12 @@ class _TailBoundedMoments:
 
     def _cov(self) -> LinOp:
         """The diagonal covariance of the independent coordinates, ``inf`` where the variance is.
+
+        Returns
+        -------
+        LinOp
+            A ``DiagonalLinOp`` over the flattened coordinates, whose diagonal is ``nan`` where
+            the variance is undefined and the parameter is traced.
 
         Raises
         ------

@@ -100,6 +100,9 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
+    _scope : Mapping[str, int], optional
+        The sizes already bound in the joint's dimension scope, by dimension name, which a
+        joint rebuilt from its factors passes on.
     _component : str, optional
         The one component under which a packaged joint declares its record.
 
@@ -200,6 +203,26 @@ def _declarations(
     The event is a function, so a declared event type is a ``FunctionSpec`` whose
     output side names the drawn function's output component. A type hole in the
     event, or in the function's output side, is filled with the output declaration.
+
+    Parameters
+    ----------
+    name : str
+        The random function's label, which both declarations take as their default
+        component.
+    output_spec : OutputSpec or None
+        The declaration of the drawn function's output, or None for a type hole under
+        *name*.
+    event_spec : OutputSpec or None
+        The declaration of the function-valued event, or None for a ``FunctionSpec`` under
+        *name*.
+
+    Returns
+    -------
+    output : OutputSpec
+        The output declaration, which names one component.
+    event : OutputSpec
+        The event declaration, whose ``FunctionSpec`` names that component on its output
+        side.
 
     Raises
     ------
@@ -324,6 +347,16 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         The values are flattened in row-major order of ``(n, *output_shape)``,
         so the point index varies slowest.
 
+        Parameters
+        ----------
+        X : Array
+            The ``n`` input points, stacked along the leading axis.
+
+        Returns
+        -------
+        LinOp
+            A square operator whose size is ``n`` times the size of one output value.
+
         Raises
         ------
         NotImplementedError
@@ -338,6 +371,17 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
     def __call__(self, X: Array) -> Normal | MultivariateNormal:
         """The finite-dimensional law of the drawn function's value at the stacked inputs *X*.
+
+        Parameters
+        ----------
+        X : Array
+            The input points, stacked along the leading axis.
+
+        Returns
+        -------
+        Normal or MultivariateNormal
+            A ``MultivariateNormal`` over the flattened values when the member evaluates
+            jointly and there is more than one value, and a ``Normal`` otherwise.
 
         Raises
         ------
@@ -708,6 +752,18 @@ class _ScaledGRF(GaussianRandomFunction):
 
 def _summed(left: Array, right: Array) -> Array:
     """``left + right`` for the values of two members at the same points.
+
+    Parameters
+    ----------
+    left : Array
+        The first member's mean or variance at the stacked points.
+    right : Array
+        The second member's mean or variance at the same points.
+
+    Returns
+    -------
+    Array
+        The sum, in the shape the two values share.
 
     Raises
     ------
