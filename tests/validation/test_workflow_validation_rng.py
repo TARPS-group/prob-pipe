@@ -22,7 +22,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.families import GaussianFamily, glm_likelihood
-from probpipe.functions import _context
+from probpipe.functions import _context, _rng
 from probpipe.inference._inference_utils import integer_seed, run_seed
 from probpipe.validation import (
     Reference,
@@ -385,6 +385,32 @@ class TestPosteriorScoreBroker:
         np.testing.assert_array_equal(first, second)
         first_commit.assert_called_once_with("operation")
         second_commit.assert_called_once_with("operation")
+
+    def test_sliced_wasserstein_inside_the_callers_jit_raises(self, monkeypatch):
+        monkeypatch.setattr(_rng, "_JAX_KEY_ADAPTER_STATE", _rng._JAXKeyAdapterState())
+        approx, reference = self._inputs()
+
+        def score(draws):
+            return score_posterior(draws, reference, metrics=("sliced_wasserstein",))
+
+        with pytest.raises(RuntimeError, match="'score-posterior' operation"):
+            jax.jit(score)(approx)
+
+        assert not _rng._JAX_KEY_ADAPTER_STATE.certified
+
+    def test_an_explicit_key_scores_inside_the_callers_jit(self):
+        approx, reference = self._inputs()
+        key = jax.random.key(3)
+
+        def score(draws, key):
+            scores = score_posterior(draws, reference, metrics=("sliced_wasserstein",), key=key)
+            return scores["sliced_wasserstein"]
+
+        np.testing.assert_allclose(
+            np.asarray(jax.jit(score)(approx, key)),
+            np.asarray(score(approx, key)),
+            rtol=1e-5,
+        )
 
     def test_nonrandom_or_unavailable_metrics_claim_no_event(self):
         approx, reference = self._inputs()

@@ -242,7 +242,7 @@ with replay_run(result.provenance):      # re-runs one recorded call on its reco
 
 **Scopes.** `workflow_run(seed)` opens a scope whose root the seed fixes; entering it again with the same stochastic structure reproduces its workflow-owned events. `workflow_run()` with no seed opens an anonymous scope rooted in fresh entropy, and a bare call outside any scope gets its own equivalent ephemeral scope, so unscoped code is fresh rather than repeatable. Scopes nest, a nested scope extending the enclosing structure rather than restarting it, and a scope fixes the run's provenance mode (II.4) at entry. A scope is thread- and task-local: work crosses into another thread or task only through the engine's managed work items, and entering a copied scope unmanaged raises rather than silently forking the stream.
 
-**Keys.** A fixed stream is obtained by fixing the scope's seed, and an implementer's `_sample` receives the derived key (III.8).
+**Keys.** A fixed stream is obtained by fixing the scope's seed, and an implementer's `_sample` receives the derived key (III.8). A workflow-owned random event claimed inside a JAX transformation that the caller opens, such as `jax.jit` or `jax.vmap`, raises, because a key drawn while tracing becomes a constant of the compiled function.
 
 **Structural event identity.** A workflow-owned key is a pure function of the scope's root seed and the event's identity, three structural coordinates:
 1. the **occurrence path**: the invocation's position in the workflow, extended by nesting and by managed work items, with repeated or recursive invocations of the same call distinguished by a deterministic logical ordinal;

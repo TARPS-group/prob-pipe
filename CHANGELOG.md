@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. Such a call used to bake the key drawn
+  while tracing into the compiled function, so every call reused one key, or
+  it raised `ConcretizationTypeError` when the call drew the thread's first
+  workflow key. Call the function outside the transformation,
+  or transform only its deterministic part. A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
+
 - **`simulation_based_calibration` calibrates any posterior, takes its
   randomness from the enclosing workflow scope, and reads a fit's budgets from
   `method_options`.** Its signature is
