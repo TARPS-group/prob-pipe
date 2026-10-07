@@ -37,6 +37,26 @@ def _bind_planned_function_inputs(
 ) -> tuple[InputSpec | None, dict[str, int]]:
     """Bind pre-lifting values using event schemas for lifted inputs.
 
+    Parameters
+    ----------
+    function_name : str
+        The function's label, which the messages name.
+    input_spec : InputSpec or None
+        The declared input slots; ``None`` binds nothing.
+    values : Mapping of str to Any
+        The arguments by parameter name, before the call lifts any of them.
+    lifted_names : set of str
+        The parameters whose arguments the call lifts, each of which binds
+        through its law's event or its batch's element.
+
+    Returns
+    -------
+    input_spec : InputSpec or None
+        The declared slots with the shared dimensions bound, or ``None`` when
+        no slot is declared.
+    bindings : dict of str to int
+        The size bound to each shared dimension.
+
     Raises
     ------
     ApplicabilityError

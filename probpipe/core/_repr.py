@@ -158,6 +158,11 @@ def term_repr(
         The term's label, omitted for an object without one, such as a spec.
     keywords : iterable of (str, str)
         Each keyword argument's name and its formatted value, in order.
+
+    Returns
+    -------
+    str
+        A ``_Layout``, which an enclosing repr lays out again where its line starts.
     """
     return call_repr(class_name, [] if label is None else [repr(label)], keywords)
 
@@ -244,7 +249,7 @@ def public_class_name(cls: type) -> str:
 # Derived labels
 # ---------------------------------------------------------------------------
 
-#: The symbol each binary operator writes in the name its result derives.
+#: The symbol each binary operator writes in the label its result derives.
 BINARY_SYMBOLS = {
     "add": "+", "sub": "-", "mul": "*", "matmul": "@", "truediv": "/", "floordiv": "//",
     "mod": "%", "pow": "**", "lshift": "<<", "rshift": ">>", "and": "&", "xor": "^", "or": "|",
@@ -289,7 +294,7 @@ def grouped_label(label: str) -> str:
 
     An expression is parenthesized, so the derived label states the order of
     evaluation. Any other label with a top-level space, such as a user's label
-    ``other effect``, is bracketed, so it reads as one name, and a label with
+    ``other effect``, is bracketed, so it reads as one label, and a label with
     none is used as it is.
     """
     if is_expression(label):

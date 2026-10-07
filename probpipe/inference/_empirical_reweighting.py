@@ -37,6 +37,16 @@ __all__: list[str] = []
 def _flat_atoms(prior: EmpiricalDistribution) -> jnp.ndarray:
     """The atoms of *prior* as one array ``(atoms, d)`` in the layout :func:`flat_unflatten` reads.
 
+    Parameters
+    ----------
+    prior : EmpiricalDistribution
+        The empirical prior.
+
+    Returns
+    -------
+    jax.Array
+        One row per atom, which concatenates the atom's flattened leaves.
+
     Raises
     ------
     TypeError
@@ -129,6 +139,20 @@ class EmpiricalReweightingMethod(InferenceMethod):
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """The prior's atoms, each weighted by its prior weight times the likelihood there.
+
+        Parameters
+        ----------
+        target : Distribution
+            The unnormalized conditional of a factored joint at observed values,
+            which ``check`` admits.
+        **kwargs : Any
+            The call's ``method_options``, of which the method reads none.
+
+        Returns
+        -------
+        EmpiricalDistribution
+            The posterior labeled ``posterior``, whose provenance records the
+            atom count and the effective sample size.
 
         Raises
         ------

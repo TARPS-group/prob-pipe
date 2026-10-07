@@ -105,6 +105,15 @@ _BACKEND_SOURCES: tuple[type, ...] = (tfd.Distribution, *((_rv_frozen,) if _HAS_
 def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ...]) -> None:
     """Raise ``TypeError`` for an option the converter *converter* does not read.
 
+    Parameters
+    ----------
+    converter : str
+        The converter's name, for the error message.
+    options : dict[str, Any]
+        The converter options the registry passed, by name.
+    reads : tuple of str
+        The names of the options the converter reads.
+
     Raises
     ------
     TypeError
@@ -123,6 +132,16 @@ def _sample_count(options: dict[str, Any]) -> int:
     """The ``num_samples`` option as a positive integer, or the default sample count without it.
 
     The default is the one :func:`~probpipe.set_default_n_broadcast_samples` sets.
+
+    Parameters
+    ----------
+    options : dict[str, Any]
+        The converter options by name, of which only ``num_samples`` is read.
+
+    Returns
+    -------
+    int
+        The number of draws a sampling conversion takes.
 
     Raises
     ------
@@ -145,6 +164,18 @@ def _sample_count(options: dict[str, Any]) -> int:
 
 def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
     """The ``event_spec`` option, the declaration of a backend source.
+
+    Parameters
+    ----------
+    source : Any
+        The conversion's source, which is a ProbPipe law or a backend distribution.
+    options : dict[str, Any]
+        The converter options by name, of which only ``event_spec`` is read.
+
+    Returns
+    -------
+    OutputSpec or None
+        The declaration of the backend source's event, or None when the option is absent.
 
     Raises
     ------
@@ -731,12 +762,20 @@ def _same_support(first: Constraint, second: Constraint) -> bool:
     return _supports_compatible(first, second) and _supports_compatible(second, first)
 
 
-def _check_support(result: Distribution, law: Distribution) -> None:
+def _check_support(result: Distribution, law: Distribution | None) -> None:
     """Refuse a fit whose support is not the law's.
 
     A law whose support is undeclared has nothing to compare, unless it is an
     empirical law, whose atoms are what it is supported on and must each lie in
     the fit's support.
+
+    Parameters
+    ----------
+    result : Distribution
+        The law the fit built, whose support is checked.
+    law : Distribution or None
+        The law the family was fit to, or None for a SciPy frozen distribution without a
+        family, which has no support to compare.
 
     Raises
     ------
@@ -826,6 +865,23 @@ class _MomentMatching(Converter):
     def _fit(self, source: Any, target_type: type, options: dict[str, Any]) -> _MomentFit | str:
         """The plan of the fit of *target_type* to *source*, or the reason it is infeasible.
 
+        Parameters
+        ----------
+        source : Any
+            The law to fit, or a TFP or SciPy backend distribution, which is read as the law
+            it enters ProbPipe as.
+        target_type : type
+            The requested family, feasible when ``_FITS`` lists it.
+        options : dict[str, Any]
+            The converter options by name; the plan reads each option in ``_reads`` except
+            ``check_support``.
+
+        Returns
+        -------
+        _MomentFit or str
+            The plan, which records whether the fit draws, or the reason the fit is
+            infeasible.
+
         Raises
         ------
         ValueError
@@ -871,6 +927,23 @@ class _MomentMatching(Converter):
         declares, unless ``check_support=False``. A support that depends on the
         family's parameters is left to the fit.
 
+        Parameters
+        ----------
+        source : Any
+            The law to fit, or a TFP or SciPy backend distribution, which is read as the law
+            it enters ProbPipe as.
+        target_type : type
+            The requested family, feasible when ``_FITS`` lists it.
+        **options : Any
+            The converter options by name. The check reads those that ``_reads`` names and
+            ignores any other, which :meth:`execute` refuses.
+
+        Returns
+        -------
+        ConversionInfo
+            A feasible promise with the family's capabilities, which says whether the fit
+            draws, or an infeasible report with the reason.
+
         Raises
         ------
         ValueError, TypeError
@@ -910,6 +983,22 @@ class _MomentMatching(Converter):
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         """The fit of the family *target_type* to the source, over its declaration.
+
+        Parameters
+        ----------
+        source : Any
+            The law to fit, or a TFP or SciPy backend distribution, which is read as the law
+            it enters ProbPipe as.
+        target_type : type
+            The requested family, feasible when ``_FITS`` lists it.
+        **options : Any
+            The converter options by name, each one that ``_reads`` names.
+
+        Returns
+        -------
+        Distribution
+            The fitted instance of *target_type*, which keeps the source's label and
+            component.
 
         Raises
         ------
@@ -990,6 +1079,23 @@ class _EmpiricalDraws(Converter):
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the empirical law of the source's draws, over its declaration.
 
+        Parameters
+        ----------
+        source : Any
+            The law to draw from, or a TFP or SciPy backend distribution.
+        target_type : type
+            The requested target; the promise is the same for each target.
+        **options : Any
+            The converter options by name, of which the check reads ``num_samples`` and
+            ``event_spec``.
+
+        Returns
+        -------
+        ConversionInfo
+            A feasible promise of an ``EmpiricalDistribution``, which claims the moment
+            capabilities for a numeric event, or an infeasible report when the source does
+            not sample.
+
         Raises
         ------
         TypeError, ValueError
@@ -1014,6 +1120,21 @@ class _EmpiricalDraws(Converter):
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         """The empirical law of ``num_samples`` draws, keeping the source's declaration.
+
+        Parameters
+        ----------
+        source : Any
+            The law to draw from, or a TFP or SciPy backend distribution.
+        target_type : type
+            The requested target; the result is an ``EmpiricalDistribution`` for each target.
+        **options : Any
+            The converter options by name, each one that ``_reads`` names.
+
+        Returns
+        -------
+        Distribution
+            An ``EmpiricalDistribution`` with the source's label, whose equally weighted atoms
+            are the draws.
 
         Raises
         ------
@@ -1086,6 +1207,24 @@ class _KDESmoothing(Converter):
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the kernel density estimate of the source, over its declaration.
 
+        Parameters
+        ----------
+        source : Any
+            The law to smooth, or a TFP or SciPy backend distribution. An empirical law
+            contributes its atoms, and any other source its draws.
+        target_type : type
+            The requested target; the promise is a ``KDEDistribution`` for each target.
+        **options : Any
+            The converter options by name, of which the check reads ``num_samples`` and
+            ``event_spec``.
+
+        Returns
+        -------
+        ConversionInfo
+            A feasible promise of a ``KDEDistribution``, which says whether the estimate
+            draws, or an infeasible report when the event is not numeric or the source does
+            not sample.
+
         Raises
         ------
         TypeError, ValueError
@@ -1108,6 +1247,22 @@ class _KDESmoothing(Converter):
 
     def execute(self, source: Any, target_type: type, **options: Any) -> Distribution:
         """The kernel density estimate, keeping the source's declaration.
+
+        Parameters
+        ----------
+        source : Any
+            The law to smooth, or a TFP or SciPy backend distribution. An empirical law
+            contributes its atoms, and any other source its draws.
+        target_type : type
+            The requested target; the result is a ``KDEDistribution`` for each target.
+        **options : Any
+            The converter options by name, each one that ``_reads`` names.
+
+        Returns
+        -------
+        Distribution
+            A ``KDEDistribution`` with the source's label, centered at the empirical law's
+            weighted atoms or at the equally weighted draws.
 
         Raises
         ------

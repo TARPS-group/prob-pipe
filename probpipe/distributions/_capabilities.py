@@ -484,8 +484,12 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
         The object claiming the capability.
     method : str
         The capability's method name, such as ``"_marginal"``.
-    *arguments, **keywords
-        The call's arguments other than raw values, such as a marginal's path.
+    *arguments : Any
+        The call's positional arguments other than raw values, such as a marginal's
+        path, which the guard receives in order.
+    **keywords : Any
+        The call's keyword arguments other than raw values, which the guard receives
+        by name.
 
     Returns
     -------
@@ -580,6 +584,12 @@ def _check_guards(cls: type) -> None:
     check on each class they create, so a misspelled guard raises rather than
     going unread. A guard set to ``None`` removes an inherited one.
 
+    Parameters
+    ----------
+    cls : type
+        The class just created, whose own namespace ``vars(cls)`` holds the guards
+        to check.
+
     Raises
     ------
     TypeError
@@ -624,6 +634,15 @@ def _capability_subclass(base: type, protocols: Iterable[type]) -> type:
     methods realizing it, keyed by method name. The subclass is created once per
     base and set of protocols, keeps the base's name, and pickles and copies by
     reference to the base and the set, so it round-trips in a fresh process.
+
+    Parameters
+    ----------
+    base : type
+        The class to subclass, whose instances differ in the capabilities they
+        claim.
+    protocols : iterable of type
+        The capability protocols to claim, which are keys of the base's
+        ``_capability_table``.
 
     Returns
     -------

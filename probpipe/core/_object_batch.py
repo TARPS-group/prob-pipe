@@ -10,9 +10,9 @@ The object array earns its place by answering the storage contract
 :class:`~probpipe.core._batch.Batch` states rather than by holding arrays:
 numpy's basic indexing returns a **view** over the same objects, so a
 sub-batch shares its parent's store, and it honors a descending or stepped
-slice in the order given, which the derived names of a view are stated in.
+slice in the order given, which the derived labels of a view are stated in.
 
-An element is a view as well: the stored object under the name derived from
+An element is a view as well: the stored object under the label derived from
 its position, sharing the stored object's representation, with provenance
 naming the batch and the stored object.
 
@@ -39,8 +39,8 @@ class _ObjectBatch[E](Batch[E]):
     Parameters
     ----------
     label : str
-        The batch's name. Required, as it is for every batch: a batch is a value a
-        caller holds, and a name derived from its class says nothing about what it
+        The batch's label. Required, as it is for every batch: a batch is a value a
+        caller holds, and a label derived from its class says nothing about what it
         holds.
     elements : numpy.ndarray or iterable
         The elements, as an object array of any shape or a flat iterable. A
@@ -161,6 +161,18 @@ class _ObjectBatch[E](Batch[E]):
         batch and, for a stored term, that term as its source, with the position
         in the metadata.
 
+        Parameters
+        ----------
+        index : tuple of int
+            One position per batch axis.
+        name : str
+            The label of the view, derived from its position.
+
+        Returns
+        -------
+        E
+            A tracked term of the element kind.
+
         Raises
         ------
         TypeError
@@ -172,16 +184,28 @@ class _ObjectBatch[E](Batch[E]):
         provenance = Provenance.of_view(self, source, metadata={"position": list(index)})
         if isinstance(stored, TrackedTerm):
             view = stored.with_label(name)
-            # ``with_label`` records a rename; the view's lineage is its selection.
+            # ``with_label`` records a relabeling; the view's lineage is its selection.
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         return self._wrap_element(stored, name).with_provenance(provenance)
 
     def _wrap_element(self, value: Any, name: str) -> Any:
-        """The term of this batch's element kind holding the raw *value*, named *name*.
+        """The term of this batch's element kind holding the raw *value*, labeled *name*.
 
         A batch whose elements are always tracked terms, as a batch of laws is,
         keeps this default, which refuses a raw value.
+
+        Parameters
+        ----------
+        value : Any
+            The raw value stored at the element's position.
+        name : str
+            The label of the element view, derived from its position.
+
+        Returns
+        -------
+        Any
+            The element term that an override builds; this default raises instead.
 
         Raises
         ------
@@ -199,7 +223,7 @@ class _ObjectBatch[E](Batch[E]):
         numpy basic indexing returns a view, so the selection shares its
         parent's objects and is presented in the order *index* states, a
         descending slice included. Built without ``__init__``, since the spec and
-        the name are already decided and re-deriving them from the view's own
+        the label are already decided and re-deriving them from the view's own
         shape would lose the levels a dropped axis came from.
         """
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a

@@ -30,10 +30,10 @@ class Opaque(TrackedTerm, Annotated):
     Parameters
     ----------
     label : str
-        The value's name, required and first as a :class:`~probpipe.Record`
-        takes it: the name is what says which opaque value this is.
+        The value's label, required and first as a :class:`~probpipe.Record`
+        takes it: the label is what says which opaque value this is.
     value : Any
-        The value this names, held as given. Any non-mapping value; the value
+        The value this term holds, stored as given. Any non-mapping value; the value
         layer reads a mapping as a subtree.
     spec : OpaqueSpec, optional
         What this value satisfies, carrying any opaque ``meta``. Defaults to the

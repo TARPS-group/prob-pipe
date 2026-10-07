@@ -204,7 +204,8 @@ unless another `pre-commit` is on your `PATH`. A `pre-commit` already installed 
 Homebrew or pipx works too.
 
 Once the hooks are installed, `ruff` (lint + format), a few file-hygiene hooks,
-and the `no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
+the `pydoclint` docstring check of STYLE_GUIDE.md §3.3, and the
+`no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
 files at commit time. The hooks see only the files you're
 changing, so a commit is checked without re-linting the whole tree.
 `AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
@@ -218,6 +219,11 @@ and `ruff format --check .` over the whole tree, which is clean under both, so a
 lint violation or a misformatted file fails the build. Rule selection and
 per-file ignores are in `[tool.ruff.lint]` in `pyproject.toml`, and the
 pre-commit hooks apply the same checks to your staged files at commit time.
+
+**The docstring check is blocking.** The same CI job runs
+`pre-commit run pydoclint --all-files`, which checks every module of `probpipe/`.
+The hook's entry in `.pre-commit-config.yaml` holds its version and options, so a
+local run and CI check the same rules.
 
 ### Type checking
 
@@ -358,7 +364,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
   the bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
 - Coverage uploaded to Codecov
-- The `lint & format` job runs the ruff gate of *Linting & pre-commit*
+- The `lint & format` job runs the ruff gate and the docstring check of
+  *Linting & pre-commit*
 - Both the `test` and `notebooks` jobs choose what to run via a shared,
   unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
   in `tests/ci/`) — so a change to a source file also exercises the tests and

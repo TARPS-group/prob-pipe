@@ -24,8 +24,8 @@ class FunctionBatch(_ObjectBatch[Callable]):
     Parameters
     ----------
     label : str
-        The batch's name. Required, as it is for every batch: a batch is a value a
-        caller holds, and a name derived from its class says nothing about what it
+        The batch's label. Required, as it is for every batch: a batch is a value a
+        caller holds, and a label derived from its class says nothing about what it
         holds.
     elements : numpy.ndarray or iterable of callable
         The callables, as an object array of any shape or a flat iterable.
@@ -65,13 +65,13 @@ class FunctionBatch(_ObjectBatch[Callable]):
     element and not the required type.
 
     This batch **stores** its elements, and ``batch[i]`` is a view of the
-    stored callable: a :class:`~probpipe.Function` wrapping it under the name
+    stored callable: a :class:`~probpipe.Function` wrapping it under the label
     derived from the position and the batch's declarations, or, for a stored
-    ``Function``, a copy under the derived name sharing its callable. Its
+    ``Function``, a copy under the derived label that shares its callable. Its
     provenance records the batch and the stored term. A callable whose
     signature cannot be inspected, as for some builtins, has no ``Function``
     view and raises ``ValueError`` when indexed. A sub-batch is a view and
-    takes a derived name as any view does.
+    takes a derived label as any view does.
 
     Examples
     --------
@@ -119,7 +119,19 @@ class FunctionBatch(_ObjectBatch[Callable]):
         return cast(FunctionSpec, self._spec.element_spec)
 
     def _wrap_element(self, value: Callable, name: str) -> Function:
-        """The stored callable *value* as a ``Function`` named *name* under the batch's declarations.
+        """The callable *value* as a ``Function`` labeled *name* under the batch's declarations.
+
+        Parameters
+        ----------
+        value : callable
+            The object stored at the element's position.
+        name : str
+            The label of the element view, derived from its position.
+
+        Returns
+        -------
+        Function
+            A new ``Function``, which the caller gives the view's provenance.
 
         Raises
         ------

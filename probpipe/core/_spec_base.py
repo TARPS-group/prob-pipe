@@ -212,6 +212,15 @@ class TermSpec(ABC):
         live value. Binding follows the same rules: sizes go into the caller's
         *bindings*, a name binds once, and a disagreement raises.
 
+        Parameters
+        ----------
+        actual : TermSpec
+            The spec to bind from, such as a produced term's spec.
+        bindings : dict of str to int
+            The caller's dimension scope, which receives each size bound.
+        path : str
+            The location of this spec, which an error message names.
+
         Returns
         -------
         bool
@@ -289,6 +298,16 @@ class NumericArraySpec(NumericSpec):
     construction, so equal dtypes compare and hash equal however they were
     spelled. A spec with ``dtype=None`` is **not** equal to one with a
     concrete dtype. ``support`` must be hashable when set.
+
+    Parameters
+    ----------
+    shape : iterable of int or str
+        The event shape, which holds one dimension per axis and is stored as a
+        tuple.
+    dtype : dtype-like, optional
+        The dtype of the values. Stored as a ``numpy.dtype``.
+    support : Constraint, optional
+        The constraint the entries of a value satisfy.
     """
 
     shape: tuple[int | str, ...]
@@ -301,11 +320,6 @@ class NumericArraySpec(NumericSpec):
         dtype: npt.DTypeLike | None = None,
         support: Constraint | None = None,
     ) -> None:
-        """Store the shape and metadata, normalising *shape* and *dtype*.
-
-        The fields are the *stored* types; the wider parameters here are the
-        accepted spellings, normalised away before assignment.
-        """
         dimensions = tuple(shape)
         if not all(
             (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in dimensions
@@ -464,6 +478,17 @@ def _unify_array_shape(
     The same symbol on both sides is one dimension and may stay free, while two
     different symbols at one axis are different quantities until renamed to agree.
 
+    Parameters
+    ----------
+    declared : tuple of int or str
+        The expected shape, which an error message quotes.
+    actual : tuple of int or str
+        The shape found, of a value or of another declaration.
+    bindings : dict of str to int
+        The caller's dimension scope, which receives each size bound.
+    path : str
+        The location of the shape, which an error message names.
+
     Returns
     -------
     tuple of int or str
@@ -580,6 +605,21 @@ class OpaqueSpec(TermSpec):
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
         """Check another opaque spec: types and ``meta`` each equal or one of them ``None``.
+
+        Parameters
+        ----------
+        actual : TermSpec
+            The spec to check against this one.
+        bindings : dict of str to int
+            The caller's dimension scope, which an opaque spec leaves unchanged.
+        path : str
+            The location of this spec, which the error message names.
+
+        Returns
+        -------
+        bool
+            Whether *actual* is an opaque spec; ``False`` leaves the caller to compare
+            the two specs instead.
 
         Raises
         ------

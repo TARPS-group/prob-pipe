@@ -59,6 +59,24 @@ class NumericRecordBatch(RecordBatch):
     or inferred from the columns, must describe an all-numeric element, and every
     column must carry a numeric dtype.
 
+    Parameters
+    ----------
+    label : str
+        The batch's label.
+    fields : Mapping of str to array
+        The numeric columns, keyed by leaf path or given as a nested mapping, each
+        shaped ``(*batch_shape, *event_shape)``.
+    level_names : str or iterable of str
+        One name per level, outermost first; a single string names a single level.
+    element_spec : RecordSpec, optional
+        The all-numeric schema every element satisfies. Defaults to the spec the
+        columns imply.
+    axes_per_level : iterable of int, optional
+        How many axes each level holds, outermost first. Defaults to one axis per
+        level.
+    provenance : Provenance, optional
+        How this batch was produced.
+
     Raises
     ------
     TypeError
@@ -205,7 +223,7 @@ class NumericRecordBatch(RecordBatch):
         Parameters
         ----------
         label : str
-            The reconstructed batch's name (user-given).
+            The reconstructed batch's label.
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
             Every leaf must be a NumericArraySpec.

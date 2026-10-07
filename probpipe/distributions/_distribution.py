@@ -44,7 +44,7 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
         fields, even when it has one; any other term spec is a whole term whose
         component defaults to *name*; an ``OutputSpec`` is kept as given.
     name : str
-        The law's name, the default component of a whole-term event.
+        The law's label, which is the default component of a whole-term event.
 
     Returns
     -------
@@ -186,7 +186,7 @@ _ELEMENT_SOURCE = "_element_source"
 
 
 def _detached_term(term: Any) -> Any:
-    """*term*, a law or a kernel, detached from the workflow under its own name.
+    """*term*, a law or a kernel, detached from the workflow under its own label.
 
     The copy shares the representation, and it carries no provenance, no
     annotations, and no reference to a batch it was an element of.
@@ -214,7 +214,7 @@ class _DistributionMeta(_TrackedTermMeta):
     """The metaclass of every distribution.
 
     Construction checks that the instance holds its event declaration, as the
-    tracked-term metaclass checks its name: a class that bypasses
+    tracked-term metaclass checks its label: a class that bypasses
     ``Distribution.__init__`` calls ``_init_declaration`` itself.
 
     Membership in a marker registered in ``_DECLARATION_MARKERS`` is read from an
@@ -266,9 +266,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
-    its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
-    does; a joint that ``*`` composes is named by its operands' labels. Every
-    transform preserves the name; only ``with_label`` replaces it.
+    its label as the required first argument, as ``Normal("x", 0.0, 1.0)``
+    does; a joint that ``*`` composes is labeled by its operands' labels. Every
+    transform preserves the label; only ``with_label`` replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -276,7 +276,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     **The event declaration.** A law stores one ``DistributionSpec``, its
     :attr:`spec`, whose :attr:`event_spec` is the output declaration of one
     draw. A bare ``RecordSpec`` exposes its fields; any other term spec is a
-    whole-term event whose component defaults to the law's ``name``, captured
+    whole-term event whose component defaults to the law's label, captured
     once at construction. :attr:`event_shape` reads the declaration, and
     a law whose declaration is numeric also has the views of
     :class:`NumericDistribution`; none of them is stored.
@@ -284,17 +284,23 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Parameters
     ----------
     label : str
-        Non-empty name for this distribution.
+        The law's label, which must be a non-empty string.
     event_spec : OutputSpec or TermSpec
         The declaration of one draw, completed as above.
+    _provenance : Provenance, optional
+        The provenance of the law that a reconstruction rebuilds. By default the
+        provenance stays unset until ``with_provenance`` attaches one.
+    _annotations : Mapping[str, Any], optional
+        The annotations of the law that a reconstruction rebuilds, copied into the
+        law's own store. By default :attr:`annotations` is ``None``.
 
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string, or *event_spec* is not a spec.
+        If *label* is not a non-empty string, or *event_spec* is not a spec.
     ValueError
         If *event_spec* has a type hole, or it is a bare term spec other than a
-        record and *name* is not a valid component name.
+        record and *label* is not a valid component name.
     """
 
     # -- Immutability: deferred for this layer ------------------------------
@@ -346,7 +352,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def _init_declaration(self, event_spec: OutputSpec | TermSpec) -> None:
         """Complete *event_spec* and store it as this law's declaration.
 
-        The constructor calls this after setting the name; a class that bypasses
+        The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
         """
         object.__setattr__(
@@ -356,7 +362,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- the representation ---------------------------------------------------
 
     def raw(self) -> Distribution:
-        """This law detached from the workflow, under its name and declaration.
+        """This law detached from the workflow, under its label and declaration.
 
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
@@ -413,6 +419,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         is numeric has the views of the marker whatever its class, so they resolve
         through the marker, and any other missing attribute raises as usual.
 
+        Parameters
+        ----------
+        name : str
+            The attribute that ordinary lookup did not find, such as ``"dtype"``.
+
+        Returns
+        -------
+        Any
+            The value of the marker's view *name* for this law.
+
         Raises
         ------
         AttributeError
@@ -444,7 +460,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and name whose declaration has the sizes
+            A copy of the same class and label whose declaration has the sizes
             substituted; the original is unchanged.
 
         Raises
@@ -476,7 +492,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and name whose declaration has the
+            A copy of the same class and label whose declaration has the
             dimensions renamed; the original is unchanged.
         """
         return self._with_declaration(
@@ -514,7 +530,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Distribution
-            The renamed law under the same name; the original is unchanged.
+            The renamed law under the same label; the original is unchanged.
 
         Raises
         ------
@@ -559,6 +575,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``FieldView`` of the node there, which holds a reference to this law, and
         a tuple of paths gives the view of their selection.
 
+        Parameters
+        ----------
+        key : str or tuple of str
+            An event path, which starts with a component, or a tuple of event
+            paths to view jointly.
+
+        Returns
+        -------
+        Distribution
+            This law itself, or a ``FieldView`` of it.
+
         Raises
         ------
         KeyError
@@ -587,6 +614,12 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``FactoredDistribution`` when no given is left unmet and a
         ``FactoredConditionalDistribution`` otherwise, flattened over the
         operands' factors and labeled by their labels joined with ``·``.
+
+        Parameters
+        ----------
+        other : Distribution or ConditionalDistribution
+            The right operand, whose components this law's factors may condition
+            on.
 
         Returns
         -------
@@ -627,6 +660,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Builds exactly one draw (``sample_shape == ()``). Batched
         evaluation does not go through kwargs — pass the batch positionally
         and let ``Function`` broadcasting handle it.
+
+        Parameters
+        ----------
+        **field_kwargs : Any
+            One value per named field of a draw, keyed by field name.
+
+        Returns
+        -------
+        Any
+            The draw: the bare value of a single field, or the ``Record`` of
+            several.
 
         Raises
         ------
@@ -769,11 +813,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Parameters
         ----------
         label : str
-            The batch's name.
+            The batch's label.
         batch_shape : tuple of int, optional
             The batch axes, inferred from the parameters when omitted.
         **batched_params
             This class's constructor arguments, with the batch axes leading.
+
+        Returns
+        -------
+        DistributionBatch
+            The batch of these laws under the label *label*, with the batch axes
+            as its batch shape.
 
         Raises
         ------
@@ -880,6 +930,19 @@ def _unify_declarations(
     expected: OutputSpec, actual: OutputSpec, bindings: dict[str, int], path: str
 ) -> None:
     """Match *actual* against *expected*: packaging and components, then their specs.
+
+    Parameters
+    ----------
+    expected : OutputSpec
+        The declaration to match against, such as a term spec's ``event_spec``.
+    actual : OutputSpec
+        The declaration a law or a kernel carries.
+    bindings : dict[str, int]
+        The size of each symbolic dimension bound so far, keyed by its name, which
+        unification extends in place.
+    path : str
+        The location of the declaration that error messages name, such as
+        ``"the declaration"``.
 
     Raises
     ------

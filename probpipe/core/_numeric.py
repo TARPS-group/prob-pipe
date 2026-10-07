@@ -54,7 +54,7 @@ class Numeric(ABC):
     def from_vector(cls, name: str, spec: NumericSpec, vec: Any) -> Self:
         """Rebuild the value that *spec* declares from its flat vector *vec*.
 
-        It inverts :meth:`to_vector`, and the rebuilt value is named *name*.
+        It inverts :meth:`to_vector`, and the rebuilt value is labeled *name*.
         """
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
