@@ -124,8 +124,10 @@ def _stochastic_plan(values, n_broadcast_samples):
 
 
 class _RecordingNormal(Normal):
-    def __init__(self, sample_calls, *, label):
+    def __init__(self, sample_calls, *, label, **attributes):
         self.sample_calls = sample_calls
+        for attribute, value in attributes.items():
+            setattr(self, attribute, value)
         super().__init__(loc=0.0, scale=1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
@@ -199,8 +201,7 @@ class TestExecuteDistributionBroadcast:
         first_calls = []
         second_calls = []
         first = _RecordingNormal(first_calls, label="first")
-        second = _RecordingNormal(second_calls, label="second")
-        setattr(second, lookalike_attribute, first)
+        second = _RecordingNormal(second_calls, label="second", **{lookalike_attribute: first})
         workflow = Function(
             label="function",
             fn=lambda left, right: left - right,

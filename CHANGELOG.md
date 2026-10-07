@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A distribution is immutable, as every tracked term is.** Assigning to or
+  deleting an attribute of a constructed law raises `AttributeError`, naming
+  its class, and an operation that changes a law returns a new one. A
+  subclass's `__init__` assigns its attributes as before. Replace an
+  assignment after construction as follows:
+  - Pass the value to the constructor and build a new law with it.
+  - Write a diagnostic or a validation result into the `annotations` store,
+    which stays writable.
+  - In a test, patch a method on the law's class:
+    replace `patch.object(law, "_sample", ...)` with
+    `patch.object(type(law), "_sample", ...)`.
 - **`simulation_based_calibration` calibrates any posterior, takes its
   randomness from the enclosing workflow scope, and reads a fit's budgets from
   `method_options`.** Its signature is

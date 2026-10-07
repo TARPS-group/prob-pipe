@@ -250,13 +250,13 @@ class TestAnnotationsDiagnosticsAccessor:
         import xarray as xr
 
         dist = Normal(loc=0.0, scale=1.0, label="x")
-        dist._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
+        object.__setattr__(dist, "_annotations", xr.DataTree.from_dict({"arviz": xr.Dataset()}))
         assert dist.annotations is dist._annotations
         assert dist.diagnostics is None
 
     def test_diagnostics_none_when_annotations_has_no_children_attr(self):
         dist = Normal(loc=0.0, scale=1.0, label="x")
-        dist._annotations = object()
+        object.__setattr__(dist, "_annotations", object())
 
         assert dist.diagnostics is None
 
@@ -266,8 +266,10 @@ class TestAnnotationsDiagnosticsAccessor:
         from probpipe.diagnostics.views import DiagnosticsView
 
         dist = Normal(loc=0.0, scale=1.0, label="x")
-        dist._annotations = xr.DataTree.from_dict(
-            {"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}
+        object.__setattr__(
+            dist,
+            "_annotations",
+            xr.DataTree.from_dict({"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}),
         )
         view = dist.diagnostics
         assert view is not None
