@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
-from probpipe import ApplicabilityError, RecordSpec
+from probpipe import (
+    ApplicabilityError,
+    DistributionBatch,
+    Function,
+    Normal,
+    RecordSpec,
+    workflow_run,
+)
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.functions import _descendants
 from probpipe.operations._marginal import factor, marginal
 
 from ._laws import REAL, Gaussian, Kernel, Marginalizing, Pair
@@ -117,6 +126,38 @@ class TestOptionalSlots:
         kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
         with pytest.raises(ResolutionError, match="integrates out the fields \\['scale'\\]"):
             marginal(kernel * HalfNormal("scale", 1.0), "y")
+
+
+def _difference(fn):
+    return Function("difference", fn, dispatch="sequential", n_broadcast_samples=8)
+
+
+class TestDetachment:
+    """A lift draws a marginal independently of its joint, and a view together with it."""
+
+    def test_the_marginal_of_a_renamed_joint_draws_independently_of_its_factor(self):
+        """The marginal is the factor renamed, and the factor is the law the user composed."""
+        prior = Normal("a", 0.0, 1.0)
+        detached = marginal((prior * Normal("b", 2.0, 1.0)).with_path_names(a="c"), "c")
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+        with workflow_run(seed=41):
+            result = _difference(lambda x, y: x - y)(prior, detached)
+        assert np.any(np.asarray(result.atoms) != 0.0)
+
+    def test_the_marginal_at_a_factor_that_is_a_batch_element_is_its_own_root(self):
+        batch = DistributionBatch("laws", [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)], "law")
+        detached = marginal(batch[0] * Normal("b", 2.0, 1.0), "a")
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+
+    def test_a_view_of_a_renamed_joint_draws_with_the_joint(self):
+        renamed = (Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)).with_path_names(a="c")
+
+        with workflow_run(seed=43):
+            result = _difference(lambda x, y: x["c"] - y)(renamed, renamed["c"])
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
 
 
 class TestFactor:

@@ -15,7 +15,7 @@ from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec, _detached_term
 from ..distributions._factored import SupportsFactors, _joined_label
 from ..distributions._views import _node_at
 from ..functions._call import ApplicabilityError
@@ -111,6 +111,9 @@ def _closed_factors(d: Any, components: tuple[Any, ...]) -> list[Any] | None:
 def marginal(d: Distribution, field: str):
     """The detached marginal of *d* at *field*, a standalone law with no reference back to *d*.
 
+    A lift draws the marginal independently of *d* and of the laws *d* is
+    built from (V.5).
+
     Parameters
     ----------
     d : Distribution
@@ -138,6 +141,18 @@ def _can_marginalize_path(call: BoundCall, result: OutputSpec | None) -> Any:
     return _capability_guard(call.operands["d"], "_marginal", call.operands["field"])
 
 
+def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distribution:
+    """The law's exact marginal at the path, detached as a law's raw form is.
+
+    A marginal can be a factor of a factored joint, and a factor can record a
+    batch it was an element of or a law it renames, which a lift reads to draw
+    it with that law. The detached marginal records neither, so a lift draws it
+    independently of the joint (V.5). The result boundary then records the
+    call's provenance on it.
+    """
+    return _detached_term(call.operands["d"]._marginal(call.operands["field"]))
+
+
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
     """The empirical marginal of projected draws is not implemented, so no call selects the route.
 
@@ -159,6 +174,7 @@ marginal.capability_route(
     protocol=SupportsMarginals,
     method="_marginal",
     check=_can_marginalize_path,
+    execute=_detached_marginal,
     exact=True,
 )
 marginal.fallback_route("monte_carlo", check=_can_sample, execute=_empirical_marginal, exact=False)
