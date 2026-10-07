@@ -67,6 +67,7 @@ from ._distribution import (
     Distribution,
     DistributionSpec,
     _declares_numeric_event,
+    _recorded_copy,
     _whole_term_component,
 )
 
@@ -1904,6 +1905,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
 
+        The result is this joint with its dimensions bound, so a lift draws it
+        together with this joint (V.5).
+
         Parameters
         ----------
         **sizes : int
@@ -1919,10 +1923,14 @@ class FactoredDistribution(Distribution, SupportsFactors):
         ValueError
             If a name is not a free dimension of the joint.
         """
-        return _rebuilt(self, "with_dim_sizes", sizes, free=self.event_spec.spec.free_dims)
+        rebuilt = _rebuilt(self, "with_dim_sizes", sizes, free=self.event_spec.spec.free_dims)
+        return _recorded_copy(rebuilt, self)
 
     def with_dim_names(self, **names: str) -> Self:
         """Rename symbolic dimensions in every factor, simultaneously.
+
+        The result is this joint under the new dimension names, so a lift draws
+        it together with this joint (V.5).
 
         Parameters
         ----------
@@ -1934,7 +1942,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
         Self
             The joint of the renamed factors, under the same label.
         """
-        return _rebuilt(self, "with_dim_names", names)
+        return _recorded_copy(_rebuilt(self, "with_dim_names", names), self)
 
 
 class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
