@@ -48,7 +48,7 @@ Follow `AGENTS.md` § Verify:
    add each changed test file;
 2. run them, and compare the pass, skip, and xfail counts with the base branch;
 3. run `tests/docs/`, and for a change to `design/` run the `design-check` skill;
-4. run the ruff gate.
+4. run the ruff gate and the docstring check.
 
 Record each command and its counts for the test plan.
 
