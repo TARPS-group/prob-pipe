@@ -430,7 +430,7 @@ class TestDeclaration:
 
 
 class TestRoundTrips:
-    """A round trip of a renamed law keeps its name and its declaration."""
+    """A round trip of a relabeled law keeps its label and its declaration."""
 
     @pytest.mark.parametrize(("cls", "make"), _rows(_PICKLE_FAILURES))
     def test_pickle(self, cls, make):

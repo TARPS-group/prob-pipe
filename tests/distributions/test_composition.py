@@ -597,7 +597,7 @@ class TestAssociativity:
             a * (b * c)
 
 
-# -- Naming the result -------------------------------------------------------------
+# -- Labeling the result -----------------------------------------------------------
 
 
 class TestLabels:

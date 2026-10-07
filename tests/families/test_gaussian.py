@@ -737,7 +737,7 @@ def _named_weight_grf(name):
 
 
 class TestAlgebraNames:
-    """A result of the algebra is named from its operands."""
+    """A result of the algebra is labeled from its operands."""
 
     @pytest.mark.parametrize(
         ("build", "expected"),

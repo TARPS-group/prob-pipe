@@ -112,7 +112,7 @@ _NO_BATCH_SHAPE_DISTS = [
 
 
 class TestWithNameBasics:
-    """Distribution.with_label() returns a new object with a new name."""
+    """Distribution.with_label() returns a new object with a new label."""
 
     def test_returns_new_object(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
@@ -164,7 +164,7 @@ class TestWithNameProvenance:
         assert any(anc.parent is b for anc in ancestors)
 
     def test_original_provenance_not_mutated(self):
-        """Renaming does not alter the original's source."""
+        """Relabeling does not alter the original's source."""
         n = Normal(loc=0.0, scale=1.0, label="x")
         n.with_provenance(Provenance("construction", parents=()))
         n.with_label("y")
@@ -172,7 +172,7 @@ class TestWithNameProvenance:
 
 
 class TestWithNameSampling:
-    """Renamed copies behave identically under sampling/log_prob."""
+    """Relabeled copies behave identically under sampling/log_prob."""
 
     def test_sample_statistics_match(self):
         n = Normal(loc=2.0, scale=0.5, label="x")
@@ -200,7 +200,7 @@ class TestWithNameSampling:
 
 
 class TestWithNameRecordSpec:
-    """with_label() changes the name and keeps the event component (III.7)."""
+    """with_label() changes the label and keeps the event component (III.7)."""
 
     def test_template_field_stays_the_component(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
@@ -299,7 +299,7 @@ class TestDistributionRepr:
 
 
 class TestConstructorNameCheck:
-    """``Distribution.__init__`` rejects a name that is not a non-empty string."""
+    """``Distribution.__init__`` rejects a label that is not a non-empty string."""
 
     @pytest.mark.parametrize("name", ["", 123, None])
     def test_invalid_name_raises(self, name):
@@ -314,7 +314,7 @@ class TestConstructorNameCheck:
 
 
 class TestMetaclassEnforcement:
-    """The ``_TrackedTermMeta`` metaclass enforces a non-empty ``name``
+    """The ``_TrackedTermMeta`` metaclass enforces a non-empty ``label``
     on every Distribution subclass instance, even when the subclass
     bypasses ``super().__init__``.
     """
@@ -406,7 +406,7 @@ class TestWithNameTemplateRoundtrip:
 
     def test_with_name_preserves_multi_field_template(self):
         """A multi-field joint's components are independent of the
-        distribution's name, so renaming leaves them."""
+        distribution's label, so relabeling leaves them."""
         import jax.numpy as jnp
 
         jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
@@ -418,7 +418,7 @@ class TestWithNameTemplateRoundtrip:
 
     def test_with_name_preserves_a_non_numeric_declaration(self):
         """An empirical law over records with an opaque field declares its atoms'
-        record, not the distribution's name, so renaming leaves the declaration
+        record, not the distribution's label, so relabeling leaves the declaration
         intact."""
         import numpy as np
 
@@ -506,7 +506,7 @@ def _public_distribution_classes() -> list[type]:
 
 _PUBLIC_CLASSES = _public_distribution_classes()
 
-# Laws that indexing constructs from a parent, so no caller names them.
+# Laws that indexing constructs from a parent, so no caller labels them.
 _CONSTRUCTED_BY_INDEXING = {"FieldView"}
 
 
@@ -954,7 +954,7 @@ _FAMILY_SCHEMAS = [
 
 
 class TestFamilyDeclarations:
-    """A TFP family declares one draw as a whole-term array whose component defaults to its name."""
+    """A TFP family declares one draw as a whole-term array whose component defaults to its label."""
 
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_the_schema_views_read_the_declaration(self, make, shape, dtype, support):

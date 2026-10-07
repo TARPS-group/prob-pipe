@@ -1,7 +1,7 @@
 """Contract tests for the ``TrackedTerm`` / ``Annotated`` identity mixins.
 
 Asserts the identity-and-metadata contract shared by every tracked term:
-construction-time names and preservation through transforms,
+construction-time labels and preservation through transforms,
 ``with_label`` copy semantics, ``with_provenance`` write-once behaviour, and
 the ``annotations`` store.
 """
@@ -73,13 +73,13 @@ class TestMixinMembership:
 
 
 # ===========================================================================
-# 2. Construction-time names
+# 2. Construction-time labels
 # ===========================================================================
 
 
 class TestNameEnforcement:
     def test_tracked_host_must_set_nonempty_name(self):
-        """The construction-time name check lives on TrackedTerm, not per host."""
+        """The construction-time label check lives on TrackedTerm, not per host."""
 
         class Nameless(TrackedTerm):
             def __init__(self):
@@ -120,8 +120,8 @@ class TestNameLifecycle:
         assert r.label == "mine"
 
     def test_constructor_requires_name(self):
-        # The name guard fires in ``Record.__new__`` before promotion picks a
-        # class, so a name-less call reports ``Record`` and its custom message
+        # The label guard fires in ``Record.__new__`` before promotion picks a
+        # class, so a call without a label reports ``Record`` and its custom message
         # — not the promoted ``NumericRecord`` nor the bare Python "missing
         # positional argument" a reverted guard would leave.
         with pytest.raises(TypeError, match="Record requires its label"):
@@ -132,7 +132,7 @@ class TestNameLifecycle:
         assert r.label == "sample"
 
     def test_batch_keeps_its_construction_name(self):
-        """A caller that derives a name says so; there is no unnamed batch."""
+        """A caller that derives a label says so; there is no unlabeled batch."""
         ra = RecordBatch(
             "derived",
             {"a": jnp.zeros((3,))},
@@ -185,7 +185,7 @@ class TestNameLifecycle:
         assert {key: float(value) for key, value in record.items()} == {"a": 1.0, "b": 2.0}
 
     def test_nested_auto_name_derives_from_top_level_keys(self):
-        # The derived name uses top-level field keys (not full leaf paths),
+        # The derived label uses top-level field keys (not full leaf paths),
         # so every transform agrees regardless of nesting depth.
         nested = Record(
             "record(a)",
@@ -203,7 +203,7 @@ class TestNameLifecycle:
 
 
 # ===========================================================================
-# 3. with_label — rename-as-copy semantics
+# 3. with_label — relabel-as-copy semantics
 # ===========================================================================
 
 
@@ -216,7 +216,7 @@ class TestWithName:
         assert n.label == "x"
 
     def test_with_name_replaces_a_derived_name(self):
-        r = Record("record(a)", {"a": 1.0})  # operation-derived (auto) name
+        r = Record("record(a)", {"a": 1.0})  # operation-derived (auto) label
         r2 = r.with_label("mine")
         assert r2.label == "mine"
 
@@ -252,7 +252,7 @@ class TestWithName:
         assert m.provenance is None
 
     def test_with_name_decouples_annotations_container(self):
-        # Post-rename annotation writes must not show through on the
+        # Post-relabel annotation writes must not show through on the
         # original (the container is copied; entry values are shared).
         n = Normal(loc=0.0, scale=1.0, label="x")
         n._annotations = {"fit": "exact"}
@@ -274,14 +274,14 @@ class TestWithName:
         n = Normal(loc=0.0, scale=1.0, label="x")
         n.with_provenance(Provenance("first"))
         m = n.with_label("y")
-        # the clone's provenance is the rename, not the original's chain
+        # the clone's provenance is the relabeling, not the original's chain
         assert m.provenance.operation == "with_label"
         # and the original's chain is reachable through the parent descriptor
         assert m.provenance.parents[0].provenance is n.provenance
 
 
 class TestWithNameOnBatchTypes:
-    """with_label on the batch types: a copy under the new user-given name,
+    """with_label on the batch types: a copy under the new user-given label,
     sharing field data, with the original unchanged."""
 
     def test_record_batch(self):
@@ -353,12 +353,12 @@ class TestWithNameOnCustomNewHosts:
 
 
 # ===========================================================================
-# 3c. Name preservation through derived objects
+# 3c. Label preservation through derived objects
 # ===========================================================================
 
 
 class TestNamePreservation:
-    """Transformations preserve the names assigned by their constructors."""
+    """Transformations preserve the labels assigned by their constructors."""
 
     def test_minibatched_distribution_keeps_its_name(self):
         from probpipe import MultivariateNormal

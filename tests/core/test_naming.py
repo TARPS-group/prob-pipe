@@ -1,8 +1,8 @@
-"""Naming across the tracked terms, the batches, and the operations.
+"""Labeling across the tracked terms, the batches, and the operations.
 
-Every tracked term receives its name at construction and preserves it through
+Every tracked term receives its label at construction and preserves it through
 structural transforms. Only ``with_label`` replaces it. New operation results
-and accessed views receive their names when constructed, across every kind.
+and accessed views receive their labels when constructed, across every kind.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ COLUMNS = {"a": jnp.arange(4.0)}
 
 
 def _named(kind):
-    """One instance of *kind* built with an explicit name."""
+    """One instance of *kind* built with an explicit label."""
     return {
         "Record": lambda: Record("given", a=1.0),
         "NumericRecord": lambda: NumericRecord("given", a=1.0),
@@ -104,7 +104,7 @@ EVERY_KIND = [
 
 
 class TestNamesAreKept:
-    """The rule every kind shares, and the one an operation reads before renaming."""
+    """The rule every kind shares, and the one an operation reads before relabeling."""
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
     def test_a_given_name_is_kept_verbatim(self, kind):
@@ -129,7 +129,7 @@ class TestNamesAreKept:
 
 
 class TestWhichKindsRequireAName:
-    """A name is required where nothing else identifies the value.
+    """A label is required where nothing else identifies the value.
 
     A record has fields and a batch has levels, but neither says *which* record
     or batch this is. Where the class can derive something meaningful — a
@@ -156,12 +156,12 @@ class TestWhichKindsRequireAName:
 
     def test_a_numeric_array_requires_a_name(self):
         """It carries no fields to describe it, so a class-name default would
-        name every array in a pipeline alike."""
+        label every array in a pipeline alike."""
         with pytest.raises(TypeError, match="label"):
             NumericArray()
 
     def test_a_lone_value_is_not_enough_for_a_numeric_array(self):
-        """The name comes first, so a single argument is the name and the value
+        """The label comes first, so a single argument is the label and the value
         is what the refusal asks for."""
         with pytest.raises(TypeError, match="value"):
             NumericArray(jnp.arange(3.0))
@@ -174,7 +174,7 @@ class TestWhichKindsRequireAName:
 
 
 class TestADerivedNameSaysSo:
-    """A view names itself after the position it selected, and marks it auto."""
+    """A view labels itself after the position it selected, and marks it auto."""
 
     @staticmethod
     def _batch():
@@ -196,7 +196,7 @@ class TestADerivedNameSaysSo:
         assert sub.label == "posterior[draw=1:3]"
 
     def test_a_derived_name_builds_on_the_given_one(self):
-        """So the lineage reads back to the batch a caller actually named."""
+        """So the lineage reads back to the batch a caller actually labeled."""
         assert self._batch()[1].label.startswith("posterior")
 
 
@@ -272,7 +272,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
 
 
 class TestTheOutputBoundaryNamesEveryKindAlike:
-    """Whatever kind a body returns, the result takes the function's name."""
+    """Whatever kind a body returns, the result takes the function's label."""
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -441,13 +441,13 @@ class TestRawDrawNaming:
 
 
 class TestEveryAggregateIsNamedForItsFunction:
-    """The naming table, widened across the axes that had diverged.
+    """The labeling table, widened across the axes that had diverged.
 
-    A sweep's aggregate is built by the boundary, not by a caller, so its name is
+    A sweep's aggregate is built by the boundary, not by a caller, so its label is
     the producing function's. Three paths disagreed: the
     undeclared record aggregate took `stack`'s class-name default, and the scalar,
-    opaque, and declared paths marked a derived name as user-given — which would
-    stop a later operation renaming it.
+    opaque, and declared paths marked a derived label as user-given — which would
+    stop a later operation relabeling it.
     """
 
     @staticmethod
@@ -488,7 +488,7 @@ class TestEveryAggregateIsNamedForItsFunction:
 
     def test_a_multi_axis_sweep_is_named_the_same_way(self):
         """The re-cut to the sweep's own geometry is a separate construction, and
-        it had its own naming."""
+        it had its own labeling."""
         from probpipe.core._specs import NumericRecordSpec
 
         grid = NumericRecordBatch(
@@ -507,18 +507,18 @@ class TestEveryAggregateIsNamedForItsFunction:
 
 
 class TestNoKindInventsAName:
-    """The rule the whole layer now shares: a name is given, or derived from
+    """The rule the whole layer now shares: a label is given, or derived from
     something that carries meaning. A class name carries none.
 
     Every batch defaulted to its own lowercased class name, so a pipeline full
-    of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — names that
+    of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — labels that
     say what the object *is*, which its type already says, and nothing about
     which one it is.
 
-    That every constructor takes the name first, positional-only and with no
+    That every constructor takes the label first, positional-only and with no
     default behind it, is asserted from the signatures themselves in
     `test_batch.py`'s `TestTheConstructorSignatureContract`. What is left here is
-    the other half of the rule: where a *derived* name comes from.
+    the other half of the rule: where a *derived* label comes from.
     """
 
     def test_stack_derives_its_name_from_what_it_stacks(self):

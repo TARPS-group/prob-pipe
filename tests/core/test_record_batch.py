@@ -856,8 +856,8 @@ class TestStructuralTransforms:
             nested_batch().replace({"m": jnp.ones((3, 2))}, m=jnp.zeros((3, 2)))
 
     def test_a_transform_carries_the_name_and_whether_it_was_given(self):
-        """The transform restates both, rather than deriving a fresh name: an
-        auto name stays auto and a caller's stays the caller's."""
+        """The transform restates both, rather than deriving a fresh label: an
+        auto label stays auto and a caller's stays the caller's."""
         assert nested_batch(name="post").without("m").label == "post"
         assert nested_batch().without("m").label == "batch"
 
@@ -893,7 +893,7 @@ class TestCollectionNotTree:
 
 
 # ---------------------------------------------------------------------------
-# Elements: materialized, named, and sharing the batch's spec
+# Elements: materialized, labeled, and sharing the batch's spec
 # ---------------------------------------------------------------------------
 
 
@@ -982,7 +982,7 @@ class TestLevels:
 
     def test_a_descending_slice_is_presented_in_the_order_given(self):
         """The batch base requires storage to honor a reversed selection rather
-        than re-sort it, since a view's derived name is stated in that order."""
+        than re-sort it, since a view's derived label is stated in that order."""
         batch = nested_batch(4, name="post")
         reversed_view = batch[::-1]
         np.testing.assert_array_equal(

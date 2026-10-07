@@ -66,7 +66,7 @@ class TestDistributionBase:
         )
 
     def test_repr_with_name(self):
-        """Distribution.__repr__ includes the name when set."""
+        """Distribution.__repr__ includes the label when set."""
         n = Normal(loc=0.0, scale=1.0, label="my_normal")
         r = repr(n)
         assert "my_normal" in r

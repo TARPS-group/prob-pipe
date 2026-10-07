@@ -65,7 +65,7 @@ class TestNumericArrayHoldsOneValue:
 class TestNumericArrayStoresNativeForm:
     """Construction validates without converting, as `NumericRecord` does.
 
-    A lazy or disk-backed value is not materialised merely to be named, and a
+    A lazy or disk-backed value is not materialised merely to be labeled, and a
     container's own metadata is not discarded.
     """
 
@@ -238,8 +238,8 @@ class TestNumericArrayCarriesIdentity:
         assert value.label == "draw"
 
     def test_a_name_is_required(self):
-        """A value carries no fields to describe it, so the name is what says
-        which one it is; a class-name default would name every array alike."""
+        """A value carries no fields to describe it, so the label is what says
+        which one it is; a class-name default would label every array alike."""
         with pytest.raises(TypeError, match="label"):
             NumericArray()
 
@@ -305,7 +305,7 @@ class TestNumericArrayComputesAsAnArray:
         ],
     )
     def test_arithmetic_returns_a_term_named_in_evaluation_order(self, compute, name):
-        """III.1: arithmetic returns a tracked term under an evaluation-order name."""
+        """III.1: arithmetic returns a tracked term under an evaluation-order label."""
         result = compute(NumericArray("v", jnp.arange(3.0)))
 
         assert isinstance(result, NumericArray)
@@ -934,9 +934,9 @@ class TestNumericArrayIsAPyTree:
 
 
 class TestABatchIsNamed:
-    """A batch's name is required, as a `Record`'s and an `Opaque`'s are.
+    """A batch's label is required, as a `Record`'s and an `Opaque`'s are.
 
-    The signature itself — the name first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
+    The signature itself — the label first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
     """
 
     def test_a_given_name_is_marked_user_given(self):
@@ -945,7 +945,7 @@ class TestABatchIsNamed:
         assert batch.label == "posterior"
 
     def test_a_derived_name_says_so(self):
-        """A view derives its name, and marks it, rather than defaulting."""
+        """A view derives its label, and marks it, rather than defaulting."""
         sub = _batch(name="posterior")[1:3]
 
         assert sub.label == "posterior[draw=1:3]"

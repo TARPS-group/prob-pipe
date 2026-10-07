@@ -90,7 +90,7 @@ class _ListBatch(Batch[_Leaf]):
 
 
 class _NestedBatch(_ListBatch):
-    """A batch whose elements are batches, which take the name derived for them."""
+    """A batch whose elements are batches, which take the label derived for them."""
 
     __slots__ = ()
 
@@ -197,10 +197,10 @@ class _StoringBatch(Batch[_Leaf]):
     """A batch that hands back the very element the caller put in.
 
     The elements are stored, not built, so ``batch[i]`` is the caller's own
-    object: it keeps the name and the provenance it arrived with, and nothing is
+    object: it keeps the label and the provenance it arrived with, and nothing is
     copied. This is the storing side of the identity rule, which the doubles above
     cannot exercise — each of them builds a fresh element per index, so they would
-    keep passing if the ABC ever renamed or re-attributed a borrowed object.
+    keep passing if the ABC ever relabeled or re-attributed a borrowed object.
     """
 
     __slots__ = ("_store",)
@@ -601,7 +601,7 @@ class TestElementIdentity:
         assert flat[0:3:2].label == "b[draw=0:3:2]"
 
     def test_slices_spanning_the_same_positions_name_alike(self, flat):
-        """A name is a function of what is selected, not of how it was written."""
+        """A label is a function of what is selected, not of how it was written."""
         assert flat[0:4:2].label == flat[0:3:2].label
 
     def test_a_multi_axis_level_names_its_axes_together(self, two_axis):
@@ -633,10 +633,10 @@ class TestABC:
 
 
 class TestDerivedNamesIdentifyTheObject:
-    """A derived name is a function of what a view selects.
+    """A derived label is a function of what a view selects.
 
     Two routes to the same selection read alike, and two different selections of
-    one batch never do — the property that lets a name be used to say which
+    one batch never do — the property that lets a label be used to say which
     object is meant.
     """
 
@@ -727,7 +727,7 @@ class TestViewProvenance:
     """A selection inherits the lineage of the batch it came out of.
 
     Reading one position out of a collection computes nothing, so no node records
-    the reading; which position it was is carried by the name.
+    the reading; which position it was is carried by the label.
     """
 
     @staticmethod
@@ -781,7 +781,7 @@ class TestViewProvenance:
     def test_a_lineage_the_element_already_carries_is_not_overwritten(self, full_provenance_mode):
         """The batch adds nothing where the element brought its own record.
 
-        `_NestedBatch` renames its element, and a rename carries its own
+        `_NestedBatch` relabels its element, and a relabeling carries its own
         provenance naming the original as parent — so the chain back to the
         element's origin stands, and the batch does not replace it.
         """
@@ -885,7 +885,7 @@ class TestDescendingSelections:
         "indexer", [slice(None, None, -1), slice(2, None, -1), slice(3, 1, -1)]
     )
     def test_a_reverse_name_reads_back_as_the_same_selection(self, flat, indexer):
-        """The rendered name is an index that reselects the same positions."""
+        """The rendered label is an index that reselects the same positions."""
         view = flat[indexer]
         spelled = view.label.removeprefix("b[draw=").removesuffix("]")
         start, stop, step = (part or None for part in spelled.split(":"))
@@ -1004,7 +1004,7 @@ class TestRenamingAView:
         assert renamed.provenance is not view.provenance
 
     def test_renaming_onto_a_dropped_root_level_name_says_why(self, nested):
-        """A dropped root level still participates in naming subsequent selections."""
+        """A dropped root level still participates in labeling subsequent selections."""
         view = nested[1]
         assert view.level_names == ("draw",)
         with pytest.raises(ValueError, match="labels of subsequent selections ambiguous"):
@@ -1099,7 +1099,7 @@ class TestNamesStayOneFormPerSelection:
         assert flat[2:2].label == flat[1:1].label == "b[draw=0:0]"
 
     def test_a_step_selection_is_not_read_as_the_whole_level(self, flat):
-        """It spans 2 of 4 positions, so it cannot borrow the batch's own name."""
+        """It spans 2 of 4 positions, so it cannot borrow the batch's own label."""
         assert flat[0:4:3].batch_shape == (2,)
         assert flat[0:4:3].label != flat.label
 
@@ -1154,7 +1154,7 @@ class TestALevelBetweenOthers:
 
 class TestLongerMixedChains:
     """Reverse, step, forward and whole selections composed, checked on both the
-    derived name and the elements at the end of the chain."""
+    derived label and the elements at the end of the chain."""
 
     @pytest.fixture
     def eight(self):
@@ -1569,7 +1569,7 @@ class TestAStoredElementKeepsItsOwnIdentity:
     """A batch that stores its elements hands one back exactly as it arrived.
 
     The other doubles build an element per index, so they say nothing about this:
-    the ABC could start renaming or re-attributing a borrowed object and every one
+    the ABC could start relabeling or re-attributing a borrowed object and every one
     of them would still pass.
     """
 
@@ -1587,7 +1587,7 @@ class TestAStoredElementKeepsItsOwnIdentity:
         assert stored[1] is self.leaves[1]
 
     def test_the_element_keeps_the_name_it_arrived_with(self, stored):
-        """Not ``b[draw=1]``: renaming it would mean handing back a copy."""
+        """Not ``b[draw=1]``: relabeling it would mean returning a copy."""
         assert stored[1].label == "given1"
         assert stored.at_levels(draw=2).label == "given2"
 
@@ -1603,7 +1603,7 @@ class TestAStoredElementKeepsItsOwnIdentity:
         assert once.provenance is twice.provenance
 
     def test_a_sub_batch_still_takes_a_derived_name(self, stored):
-        """The view is the batch's own, so it is named by what it selects."""
+        """The view is the batch's own, so it is labeled by what it selects."""
         assert stored[0:2].label == "b[draw=0:2]"
         assert stored[0:2][0] is self.leaves[0]
 
@@ -1771,9 +1771,9 @@ class TestSymbolicMultiplicity:
 # The constructor signature contract
 # ---------------------------------------------------------------------------
 
-#: The six classes whose constructors take the name first. Five are batches;
+#: The six classes whose constructors take the label first. Five are batches;
 #: ``NumericArray`` is the single value that shares the rule, since it too has no
-#: fields to describe it and so nothing to derive a name from.
+#: fields to describe it and so nothing to derive a label from.
 NAME_FIRST = [
     "NumericArray",
     "NumericArrayBatch",

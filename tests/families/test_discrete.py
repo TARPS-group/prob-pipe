@@ -87,7 +87,7 @@ _NAMED_DISTS = {
 
 @pytest.mark.parametrize("name", list(_NAMED_DISTS))
 def test_name_set(name):
-    """Every discrete distribution must store the ``name`` constructor arg."""
+    """Every discrete distribution must store the ``label`` constructor arg."""
     dist = _NAMED_DISTS[name](name="my_dist")
     assert dist.label == "my_dist"
 

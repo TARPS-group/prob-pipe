@@ -211,8 +211,8 @@ class _NamedDensityLaw(_Law, SupportsLogProb):
 class _RecordingKernel(ConditionalDistribution):
     """A kernel that records each given it binds and curries over the slots left.
 
-    Binding every slot returns a law over the kernel's event whose name is the
-    bound values, in slot order; binding some returns the kernel over the rest,
+    Binding every slot returns a law over the kernel's event under the kernel's
+    label and records the bound values in slot order; binding some returns the kernel over the rest,
     which keeps the values bound so far.
     """
 

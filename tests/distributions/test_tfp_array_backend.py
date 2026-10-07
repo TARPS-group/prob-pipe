@@ -369,7 +369,7 @@ class TestPytreeRegistration:
     can flow through ``jit`` / ``vmap`` / ``tree_map``.
 
     Children are the batched parameter values (the JAX-array leaves
-    the user passed); aux carries the distribution class, name,
+    the user passed); aux carries the distribution class, label,
     declared ``batch_shape``, and parameter keys. Reconstruction
     rebuilds the wrapped ``_batched_dist`` from the parameter dict.
     """
