@@ -14,7 +14,6 @@ import numpy as np
 import pytest
 
 from probpipe import Function, WorkflowKind, function, workflow_run
-from probpipe.functions._function import effective_workflow_kind
 
 from ._design_helpers import atom_leaves, record_law, standard_normal
 
@@ -76,7 +75,7 @@ class TestDispatchModes:
 
 class TestOrchestration:
     def test_orchestration_is_off_by_default(self):
-        assert effective_workflow_kind(Function("affine", _affine)) is WorkflowKind.OFF
+        assert Function("affine", _affine).effective_workflow_kind is WorkflowKind.OFF
 
 
 class TestFailures:

@@ -205,7 +205,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     One draw is the backend event's array, with its shape and dtype and the
     family's support, declared as a whole term, so every instance is a
     :class:`~probpipe.NumericDistribution`. Its component defaults to the law's
-    name, and an ``event_spec`` declaration names another. A backend whose
+    label, and an ``event_spec`` declaration names another. A backend whose
     parameters have axes beyond one law's is reinterpreted as one law whose
     leading event axes are those axes, over independent coordinates or rows.
 
@@ -396,7 +396,7 @@ def _construct_batched_dist(
     batched_params: dict[str, Any],
 ) -> TFPDistribution:
     """Construct the fused batched distribution in the separate-laws form,
-    with the centralised ``__array_backend``-suffixed name.
+    with the centralised ``__array_backend``-suffixed label.
 
     Used by both :meth:`_TFPArrayBackend.__init__` and
     :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and the form
@@ -422,7 +422,7 @@ class _TFPArrayBackend:
     ``Distribution`` instance constructed with the batched params.
     Vectorised ops forward to that wrapped instance's TFP backend;
     ``cell(i)`` slices the params and runs the ordinary scalar
-    constructor with a suffixed name.
+    constructor with a suffixed label.
 
     Not a :class:`Distribution` itself — the backend exists only as
     the contract of :meth:`TFPDistribution._make_array_backend`. See
@@ -434,7 +434,7 @@ class _TFPArrayBackend:
         The concrete ``TFPDistribution`` subclass (e.g., ``Normal``).
         Used to materialise per-cell scalars.
     name : str
-        Base name. Per-cell scalars auto-suffix as ``f"{name}_{flat}"``
+        Base label. Per-cell scalars auto-suffix as ``f"{name}_{flat}"``
         where ``flat`` is the row-major flat index over ``batch_shape``.
     batch_shape : tuple of int
         Leading shape of the batched parameters.
@@ -542,7 +542,7 @@ class _TFPArrayBackend:
         ``batch_shape``) or a ``tuple[int, ...]`` of axis-aligned
         indices. The returned distribution is fully scalar
         (``batch_shape == ()``) — no caching; each call re-runs the
-        ordinary ``dist_cls(**scalar_params, name=...)`` constructor.
+        ordinary ``dist_cls(**scalar_params, label=...)`` constructor.
 
         A zero-axis backend has a single law, which needs no fused
         storage, so ``batch_shape`` is taken to be non-empty here.
@@ -561,7 +561,7 @@ class _TFPArrayBackend:
     def _normalize_index(self, index: int | tuple[int, ...]) -> tuple[tuple[int, ...], int]:
         """Return ``(multi_index, flat_index)`` for the given input.
 
-        Lets :meth:`cell` slice with the multi-d index *and* name the
+        Lets :meth:`cell` slice with the multi-d index *and* label the
         result with the flat index in one pass, without round-tripping
         through ``np.ravel_multi_index`` / ``np.unravel_index`` for
         the common 1-D case. Out-of-range indices raise ``IndexError``
@@ -623,8 +623,8 @@ class _TFPArrayBackend:
 
         Children are the batched parameter values (the JAX-array
         leaves the user passed); aux carries everything needed to
-        reconstruct the backend (the distribution class, the cell
-        name, the declared ``batch_shape``, and the parameter keys
+        reconstruct the backend (the distribution class, the cells'
+        base label, the declared ``batch_shape``, and the parameter keys
         in iteration order). The wrapped ``_batched_dist`` is
         reconstructed inside ``tree_unflatten`` from the params, so
         successive ``jit`` / ``vmap`` traces stay consistent.

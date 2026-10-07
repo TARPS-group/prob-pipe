@@ -45,12 +45,28 @@ def _check_slot(name: str, spec: TermSpec) -> None:
     _check_term(name, spec, allow_hole=False)
 
 
-def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+def _check_component_name(name: str, *, context: str = "component names") -> None:
+    """Check that *name* follows the rule for component names: a non-empty string without ``/``.
+
+    Parameters
+    ----------
+    name : str
+        The component name or level name to check.
+    context : str
+        The subject of the error message, such as ``"level names"``.
+
+    Raises
+    ------
+    ValueError
+        If *name* is not a string, is empty, or contains ``/``.
+    """
     # A component follows the rule for a record's field names.
     if not isinstance(name, str) or not name or _PATH_SEP in name:
-        raise ValueError(
-            f"component names must be non-empty and contain no {_PATH_SEP!r}, got {name!r}"
-        )
+        raise ValueError(f"{context} must be non-empty and contain no {_PATH_SEP!r}, got {name!r}")
+
+
+def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
+    _check_component_name(name)
     _check_term(name, spec, allow_hole=allow_hole)
 
 
@@ -141,6 +157,16 @@ class InputSpec(Mapping[str, TermSpec]):
 
     def with_optional(self, *names: str) -> InputSpec:
         """The slots with *names* optional, in addition to the slots already optional.
+
+        Parameters
+        ----------
+        *names : str
+            The slots to mark optional.
+
+        Returns
+        -------
+        InputSpec
+            A new declaration of the same slots.
 
         Raises
         ------
@@ -347,6 +373,18 @@ class OutputSpec:
         become the components, and ``OutputSpec(**{component: spec})``
         otherwise, so *component* is the producer's default component.
 
+        Parameters
+        ----------
+        spec : TermSpec
+            The spec of the produced term.
+        component : str
+            The producer's default component, which names a whole term.
+
+        Returns
+        -------
+        OutputSpec
+            The declaration, whose packaging follows the kind of *spec*.
+
         Raises
         ------
         ValueError
@@ -367,6 +405,16 @@ class OutputSpec:
         symbolic dimension binds to the size *spec* gives. A record unifies field
         by field, and an opaque spec takes the known type and ``meta``. Any other
         kind takes *spec*.
+
+        Parameters
+        ----------
+        spec : TermSpec
+            The spec of the term a producer returned.
+
+        Returns
+        -------
+        OutputSpec
+            The filled or unified declaration.
 
         Raises
         ------
@@ -403,6 +451,18 @@ class OutputSpec:
         create or remove a component. A whole term's component is renamed in
         place, and the term's fields stay under it, so a field moves only within
         the component.
+
+        Parameters
+        ----------
+        mapping : Mapping of str to str, optional
+            The new path of each node, keyed by the node's path.
+        **kwargs : str
+            The new path of each component, keyed by the component's name.
+
+        Returns
+        -------
+        OutputSpec
+            The renamed declaration.
 
         Raises
         ------
@@ -520,6 +580,16 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     An exposed record is that record, and a whole term is a one-field record
     under its component, which is how a model or a posterior names the
     parameters of one draw.
+
+    Parameters
+    ----------
+    declaration : OutputSpec
+        A declaration that exposes a record or names a whole term.
+
+    Returns
+    -------
+    RecordSpec
+        The exposed record itself, or a new record for a whole term.
 
     Raises
     ------

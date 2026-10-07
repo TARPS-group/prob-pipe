@@ -41,12 +41,12 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     Parameters
     ----------
     label : str
-        The value's name, **required**, as a :class:`~probpipe.Record`'s and an
+        The value's label, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
-        so the name is what says which one it is; a class-name default would name
+        so the label is what says which one it is; a class-name default would label
         every array in a pipeline alike.
     value : array-like
-        The array this names, stored verbatim in its native form: a bare array,
+        The array this term holds, stored verbatim in its native form: a bare array,
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
@@ -82,7 +82,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     arrays.
 
     An operator returns a ``NumericArray`` holding the stored value's result,
-    named by the expression in evaluation order, such as ``draw + 1``, with its
+    labeled by the expression in evaluation order, such as ``draw + 1``, with its
     tracked operands as the provenance's parents. A term presents as its raw
     representation inside a JAX trace, so there an operator returns the bare
     result. Indexing and iteration return the stored value's entries and rows.
@@ -126,19 +126,13 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
             raise TypeError(
                 f"NumericArray holds one numeric array; {type(value).__name__} is not a numeric leaf"
             )
-        # Normalise Python scalars and their subclasses, but preserve NumPy
-        # scalars: np.float64 and np.complex128 also inherit float and complex.
-        if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
-            stored = _to_jax_array(value)
-        else:
-            stored = value
-        shape, dtype = _event_shape_of(stored), _numpy_dtype_of(stored)
+        stored = _stored(value)
         if spec is None:
-            spec = NumericArraySpec(shape=shape, dtype=dtype)
+            spec = _inferred_spec(stored)
         elif not spec.is_valid(stored):
             raise ValueError(
-                f"the array does not satisfy its declaration: shape {shape} and "
-                f"dtype {dtype} against {spec}"
+                f"the array does not satisfy its declaration: shape {_event_shape_of(stored)} "
+                f"and dtype {_numpy_dtype_of(stored)} against {spec}"
             )
         object.__setattr__(self, "_value", stored)
         object.__setattr__(self, "_spec", spec)
@@ -155,10 +149,8 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         would refuse a value the container holds. A Python scalar is normalized as
         the constructor normalizes it.
         """
-        if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
-            value = _to_jax_array(value)
         view = object.__new__(cls)
-        object.__setattr__(view, "_value", value)
+        object.__setattr__(view, "_value", _stored(value))
         object.__setattr__(view, "_spec", spec)
         view._init_tracked(name, provenance=provenance)
         return view
@@ -241,14 +233,14 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
         The value-level inverse of :meth:`to_vector`: reshapes *vec* to the shape
         *spec* declares, casts it to the declared dtype when there is one, and
-        returns a ``NumericArray`` carrying *spec* under *name*. The rebuilt
+        returns a ``NumericArray`` carrying *spec* under *label*. The rebuilt
         value is a bare ``jax.Array``, since a flat vector carries no native
         container to restore.
 
         Parameters
         ----------
         label : str
-            Name for the reconstructed array.
+            The reconstructed array's label.
         spec : NumericArraySpec
             The declaration supplying the shape and dtype, with every dimension
             bound.
@@ -341,30 +333,53 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return iter(self._value)
 
 
+def _stored(value: Any) -> Any:
+    """*value* as a ``NumericArray`` stores it.
+
+    A Python numeric scalar, a subclass included, becomes a 0-d ``jax.Array``,
+    and any other value is kept as it is. A NumPy scalar keeps its form, since
+    ``np.float64`` and ``np.complex128`` also inherit ``float`` and ``complex``.
+    """
+    if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
+        return _to_jax_array(value)
+    return value
+
+
+def _inferred_spec(value: Any) -> NumericArraySpec:
+    """The spec a ``NumericArray`` of the numeric leaf *value* declares when it is given none.
+
+    The spec states the shape and the dtype of the stored value and leaves the
+    support unset.
+    """
+    stored = _stored(value)
+    return NumericArraySpec(shape=_event_shape_of(stored), dtype=_numpy_dtype_of(stored))
+
+
 def _unwrap(other: Any) -> Any:
     """The array inside a ``NumericArray``, or *other* unchanged."""
     return other._value if isinstance(other, NumericArray) else other
 
 
-#: The form each unary operator gives the name its result derives.
+#: The form each unary operator gives the label its result derives.
 _UNARY_FORMS = {"neg": "-{}", "pos": "+{}", "abs": "abs({})", "invert": "~{}"}
 
 
 def _operand_label(operand: Any) -> str:
-    """How *operand* reads in a derived name: its grouped label, or its value when it is untracked."""
+    """How *operand* reads in a derived label: its grouped label, or its value when untracked."""
     if isinstance(operand, NumericArray):
         return grouped_label(operand.label)
     return format_value(operand)
 
 
 def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
-    """The operator's *value* as a ``NumericArray`` named *name*, its tracked *operands* its parents.
+    """The operator's *value* as a ``NumericArray`` labeled *name*.
 
-    The result declares its value's shape, and its value's dtype when every
-    tracked operand declares a dtype, so it declares as much as its operands
-    do. A traced value is returned bare, since a term presents as its raw
-    representation inside a JAX trace (II.4), and a value that is not numeric,
-    ``NotImplemented`` among them, is returned as it is.
+    Its tracked *operands* are its parents. The result declares its value's
+    shape, and its value's dtype when every tracked operand declares a dtype, so
+    it declares as much as its operands do. A traced value is returned bare,
+    since a term presents as its raw representation inside a JAX trace (II.4),
+    and a value that is not numeric, ``NotImplemented`` among them, is returned
+    as it is.
     """
     if isinstance(value, jax.core.Tracer) or not _is_numeric_leaf(value):
         return value

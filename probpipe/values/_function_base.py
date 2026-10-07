@@ -26,7 +26,9 @@ from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
+from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -76,6 +78,24 @@ class FunctionSpec(TermSpec):
     sides. Missing declarations add no bindings. Incompatible slot names,
     output exposure, kinds, or dimensions raise ValueError. Labels are outside
     this spec; component names participate in declaration matching.
+
+    Examples
+    --------
+    A function's declaration binds a dimension that its sides share:
+
+    >>> from probpipe import FunctionSpec, InputSpec, NumericArraySpec, OutputSpec
+    >>> declared = FunctionSpec(
+    ...     InputSpec(x=NumericArraySpec(("n",))),
+    ...     OutputSpec(result=NumericArraySpec(("n",))),
+    ... )
+    >>> actual = FunctionSpec(
+    ...     InputSpec(x=NumericArraySpec((3,))),
+    ...     OutputSpec(result=NumericArraySpec((3,))),
+    ... )
+    >>> declared.bind_dims_from_spec(actual) == actual
+    True
+    >>> sorted(declared.free_dims)
+    ['n']
     """
 
     input_spec: InputSpec | None
@@ -225,6 +245,23 @@ def _validate_function_output(
     Each declared array's dtype admits a returned dtype of the same kind (bool,
     integer, floating, or complex) at any width, and its support must hold.
 
+    Parameters
+    ----------
+    function_name : str
+        The function's label, which error messages name.
+    output_spec : OutputSpec or None
+        The declared output; ``None`` declares nothing to check.
+    result : Any
+        The value the function's body returned.
+    bindings : Mapping of str to int
+        The sizes the inputs bound to symbolic dimensions, which the output shares.
+
+    Returns
+    -------
+    OutputSpec or None
+        The declaration completed from the result, or ``None`` when *output_spec*
+        is ``None``.
+
     Raises
     ------
     ValueError
@@ -235,7 +272,7 @@ def _validate_function_output(
         return None
     spec = output_spec.spec
     if spec is None:
-        spec = RecordSpec.infer_from({"result": result}).children["result"]
+        spec = _produced_spec(result)
     resolved = dict(bindings)
     path = f"Function {function_name!r} output"
     if output_spec._component_name is not None:
@@ -261,8 +298,23 @@ def _validate_function_output(
             construction_bindings=result._bind if isinstance(result, Function) else {},
         )
     if not isinstance(actual_spec, TermSpec):
-        actual_spec = RecordSpec.infer_from({"result": result}).children["result"]
+        actual_spec = _produced_spec(result)
     return output_spec._with_spec(_complete_output_metadata(concrete, actual_spec))
+
+
+def _produced_spec(result: Any) -> TermSpec:
+    """The spec of the term that the kind-directed wrap makes of *result* (V.4).
+
+    A numeric host has the shape and the dtype that a ``NumericArray`` of it
+    declares. Any other value has the spec :meth:`RecordSpec.infer_from` gives a
+    field: a tracked term its own spec, and a mapping, a callable, or an opaque
+    value the spec of the record, function, or opaque term the wrap makes of it.
+    Completing a declaration from this spec keeps a returned array's dtype, as
+    an undeclared return keeps it.
+    """
+    if not isinstance(result, TrackedTerm) and _is_numeric_leaf(result):
+        return _inferred_spec(result)
+    return RecordSpec.infer_from({"result": result}).children["result"]
 
 
 def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:
@@ -307,6 +359,16 @@ def _validate_declared_support(expected: TermSpec, actual: TermSpec, path: str) 
     whose draws leave the declared support is refused, as completion checks the
     produced value (II.2). A law's declaration has no type hole, so both sides
     are concrete there. Supports are compared only where both are declared.
+
+    Parameters
+    ----------
+    expected : TermSpec
+        The declared spec.
+    actual : TermSpec
+        The spec of the returned term.
+    path : str
+        The location of the two specs in the output, which grows by one segment
+        per field or component the check descends into.
 
     Raises
     ------
@@ -368,10 +430,21 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
 def _validate_stacked_output(
     *, function_name: str, output_spec: OutputSpec | None, batch: Any
 ) -> None:
-    """Check the supports *output_spec* declares on *batch*, the stacked results of a mapped call.
+    """Check the stacked results of a mapped call against the supports of their own ``BatchSpec``.
 
     A traced point skips its support check, so a mapped call checks every
     stacked value once the map returns.
+
+    Parameters
+    ----------
+    function_name : str
+        The function's label, which error messages name.
+    output_spec : OutputSpec or None
+        The function's output declaration. The check runs only when it declares
+        a type.
+    batch : Any
+        The stacked results. A batch is checked against the supports of its own
+        ``BatchSpec``, and any other value passes.
 
     Raises
     ------
@@ -516,6 +589,11 @@ _REMOVED_KEYWORDS = frozenset({"seed", "input_template", "output_template", "fun
 def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
     """Refuse every keyword that is neither an engine control nor a removed keyword.
 
+    Parameters
+    ----------
+    controls : Mapping of str to Any
+        The keywords a constructor received beyond its named parameters.
+
     Raises
     ------
     TypeError
@@ -551,9 +629,11 @@ class Function(Node, TrackedTerm, Annotated):
         any other bare term spec declares a whole term under output_label. A
         named type hole is inferred independently for each call.
     output_label : str or None
-        Result label. Defaults to the initial name and survives with_label.
-        Whole-term components default to this name, which must then be a Python
-        identifier; an explicit OutputSpec can supply a different component.
+        Result label. Defaults to the initial label and survives with_label.
+        Whole-term components default to this label, which must then be
+        non-empty and contain no ``/``, so a label such as ``Model.fit`` or
+        ``<lambda>`` serves; an explicit OutputSpec can supply a different
+        component.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -604,12 +684,21 @@ class Function(Node, TrackedTerm, Annotated):
         If a differentiability claim is given, which Function does not carry
         yet.
 
+    Warns
+    -----
+    FutureWarning
+        For the removed keywords ``func``, ``seed``, ``input_template``, and
+        ``output_template``, in one warning that names each one given and
+        points at the caller's line.
+    UserWarning
+        If ``max_workers`` is set with a dispatch other than ``"thread"``.
+
     Notes
     -----
     Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
     ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
-    wrapped callable's seed parameter. ``name`` and ``fn`` remain required.
+    wrapped callable's seed parameter. ``label`` and ``fn`` remain required.
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 
@@ -664,7 +753,7 @@ class Function(Node, TrackedTerm, Annotated):
                 "Use fn, input_spec and output_spec instead; use workflow_run(seed=...) "
                 "or bind={'seed': ...} for a wrapped-function seed.",
                 FutureWarning,
-                stacklevel=2,
+                skip_file_prefixes=_WARNING_SKIP_PREFIXES,
             )
             fn = controls.pop("func", fn) if "func" in removed else fn
             for key in removed - {"func"}:
@@ -793,6 +882,24 @@ class Function(Node, TrackedTerm, Annotated):
         return self._output_label
 
     @property
+    def effective_workflow_kind(self) -> WorkflowKind:
+        """The orchestration mode a call of this function runs under.
+
+        The ``workflow_kind`` control decides it, and ``DEFAULT`` defers to the
+        global ``prefect_config.workflow_kind``, read each time the property is
+        read. When both are ``DEFAULT``, orchestration is ``OFF``. A requested
+        ``TASK`` or ``FLOW`` falls back to ``OFF`` when Prefect is not
+        installed. Until the call engine is installed, a call evaluates plainly,
+        so the mode is ``OFF``.
+
+        Warns
+        -----
+        UserWarning
+            If ``TASK`` or ``FLOW`` is requested and Prefect is not installed.
+        """
+        return _workflow_kind_engine(self)
+
+    @property
     def options(self) -> Mapping[str, Any]:
         """The effective engine controls, separate from domain arguments.
 
@@ -812,6 +919,23 @@ class Function(Node, TrackedTerm, Annotated):
         constructor or an earlier view set. Raises TypeError for unknown
         controls, including construction metadata and seed. Invalid control
         values raise the same errors as construction.
+
+        Parameters
+        ----------
+        **controls : Any
+            The revised controls, keyed by the control names that the class's
+            ``**controls`` entry lists.
+
+        Returns
+        -------
+        Self
+            A shallow copy, which shares the wrapped callable and the declarations.
+
+        Warns
+        -----
+        UserWarning
+            If the copy's ``max_workers`` is set with a dispatch other than
+            ``"thread"``, pointing at the caller's line.
         """
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown:
@@ -836,8 +960,11 @@ class Function(Node, TrackedTerm, Annotated):
 
         Parameters
         ----------
-        *args, **kwargs : Any
-            The call's arguments, bound to the signature as the call binds them.
+        *args : Any
+            The call's positional arguments, bound to the signature as the call
+            binds them.
+        **kwargs : Any
+            The call's keyword arguments, bound the same way.
 
         Returns
         -------
@@ -887,6 +1014,11 @@ class Function(Node, TrackedTerm, Annotated):
         raising ``ApplicabilityError`` for a kind its role refuses; runs the
         route the engine selects, raising ``ResolutionError`` when none
         applies; and returns the raw form of the result.
+
+        Each workflow-owned draw of the evaluation is its own random event, in
+        program order, as in a call of the Function. An evaluation that draws
+        nothing leaves the later draws of its workflow scope unchanged. Inside
+        ``replay_run`` it raises ``ReplayCompatibilityError``.
         """
         with _apply_scope():
             bound = self.signature.bind_partial(*args, **kwargs)
@@ -937,6 +1069,13 @@ class Function(Node, TrackedTerm, Annotated):
         A Function's call object is *values*, and its result declaration its
         ``output_spec``, whose type hole defers the type to the return.
 
+        Parameters
+        ----------
+        values : Mapping of str to Any
+            The point's argument values, keyed by parameter name.
+        controls : Mapping of str to Any
+            The call's effective controls, which a subclass realized by routes reads.
+
         Returns
         -------
         tuple
@@ -950,6 +1089,42 @@ class Function(Node, TrackedTerm, Annotated):
         return values, declared, deferred
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Call the function through the installed engine (V.1).
+
+        The arguments bind to the signature as in :meth:`apply`, and a law or a
+        batch passed where a value is expected lifts the call over it: a law is
+        broadcast and a batch is swept (V.5). The controls come from the
+        construction and :meth:`with_options`, never from the call's keywords,
+        which bind to the wrapped callable.
+
+        Parameters
+        ----------
+        *args : Any
+            The positional arguments of the wrapped callable.
+        **kwargs : Any
+            The keyword arguments of the wrapped callable.
+
+        Returns
+        -------
+        TrackedTerm or Any
+            The result at the kind its declaration names, labeled by
+            ``output_label`` and carrying the call's provenance. A broadcast
+            returns the law of the results, and a sweep the batch of them on
+            the swept levels. Under the ``raw`` control the result is its raw
+            form, as its ``raw()`` gives it.
+
+        Raises
+        ------
+        TypeError
+            If an argument does not bind to the signature.
+        ApplicabilityError
+            If an argument's kind is not one its parameter accepts, or the
+            declarations conflict.
+        ResolutionError
+            If no route realizes the call.
+        ResultKindError, ResultSchemaError
+            If the result violates the completed declaration.
+        """
         return _call_engine(self, *args, **kwargs)
 
     def __repr__(self) -> str:
@@ -975,6 +1150,11 @@ class Function(Node, TrackedTerm, Annotated):
 
 def _check_sample_count(count: Any) -> None:
     """Refuse a sample count that is not a positive integer.
+
+    Parameters
+    ----------
+    count : Any
+        The candidate value of the ``n_broadcast_samples`` control.
 
     Raises
     ------
@@ -1022,6 +1202,23 @@ def _set_controls(
 
     Only set controls are stored, so a default is read when a control is read.
 
+    Parameters
+    ----------
+    defaults : Mapping of str to Any
+        Every control's default, which stands in for each control not set.
+    current : Mapping of str to Any
+        The controls already set.
+    revisions : Mapping of str to Any
+        The controls to set, which replace those of *current*.
+    signature : inspect.Signature
+        The wrapped callable's signature, whose parameters the ``conversions``
+        control must name.
+
+    Returns
+    -------
+    dict of str to Any
+        The validated values of the controls of *current* and *revisions*.
+
     Raises
     ------
     TypeError, ValueError
@@ -1034,6 +1231,20 @@ def _set_controls(
 
 def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) -> dict[str, Any]:
     """The controls with their values validated, and conversions frozen.
+
+    Parameters
+    ----------
+    options : Mapping of str to Any
+        A value for every control.
+    signature : inspect.Signature
+        The wrapped callable's signature, whose parameters the ``conversions``
+        control must name.
+
+    Returns
+    -------
+    dict of str to Any
+        A copy of *options* whose ``conversions`` and ``method_options`` are
+        read-only mappings.
 
     Raises
     ------
@@ -1102,10 +1313,15 @@ def _plain_invoke(
     )
 
 
+def _plain_workflow_kind(function: Function, /) -> WorkflowKind:
+    return WorkflowKind.OFF
+
+
 _call_engine: Callable[..., Any] = _plain_call
 _check_engine: Callable[..., Any] = _plain_check
 _apply_scope: Callable[[], AbstractContextManager[Any]] = nullcontext
 _invoke_engine: Callable[..., Any] = _plain_invoke
+_workflow_kind_engine: Callable[[Function], WorkflowKind] = _plain_workflow_kind
 
 
 def install_call_engine(engine: Callable[..., Any]) -> None:
@@ -1122,8 +1338,10 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
         Function. It may also provide ``check(function, *args, **kwargs)``,
         which serves :meth:`Function.check`; ``apply_scope()``, which returns
         the context manager :meth:`Function.apply` enters around plain
-        evaluation; and ``invoke(function, values, context)``, which realizes
-        the one point :meth:`Function.apply` evaluates.
+        evaluation; ``invoke(function, values, context)``, which realizes the
+        one point :meth:`Function.apply` evaluates; and
+        ``workflow_kind(function)``, which serves
+        :attr:`Function.effective_workflow_kind`.
 
     Raises
     ------
@@ -1133,7 +1351,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
         If a different engine is already installed. Installing the same engine
         again changes nothing.
     """
-    global _call_engine, _check_engine, _apply_scope, _invoke_engine
+    global _call_engine, _check_engine, _apply_scope, _invoke_engine, _workflow_kind_engine
     if not callable(engine):
         raise TypeError("The Function call engine must be callable")
     if _call_engine is not _plain_call and _call_engine is not engine:
@@ -1142,6 +1360,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None:
     _check_engine = getattr(engine, "check", _plain_check)
     _apply_scope = getattr(engine, "apply_scope", nullcontext)
     _invoke_engine = getattr(engine, "invoke", _plain_invoke)
+    _workflow_kind_engine = getattr(engine, "workflow_kind", _plain_workflow_kind)
 
 
 # ---------------------------------------------------------------------------

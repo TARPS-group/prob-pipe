@@ -1,8 +1,11 @@
-"""Contracts of the program-defined families (VII.9): StanModel, PyMCModel, and UnnormalizedDistribution."""
+"""Contracts of the program-defined families (VII.9): StanModel and PyMCModel."""
 
 from __future__ import annotations
 
 import pickle
+import subprocess
+import types
+from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
@@ -32,7 +35,7 @@ from probpipe.distributions._capabilities import (
     _is_normalized,
     _kernel_is_normalized,
 )
-from probpipe.families import PyMCModel, StanModel, UnnormalizedDistribution
+from probpipe.families import PyMCModel, StanModel, _programs
 
 _REGRESSION = """
 // A linear regression, whose coefficient count is a data entry.
@@ -267,6 +270,84 @@ def _flat_regression(x=None, y=None):
     return model
 
 
+def _fake_bridgestan(root, downloads):
+    """Modules standing in for bridgestan, whose source tree is *root*; each lookup's download flag is appended to *downloads*."""
+    compile_module = types.ModuleType("bridgestan.compile")
+    compile_module.MAKE = "make"
+    compile_module.IS_WINDOWS = False
+
+    def get_bridgestan_path(download=True):
+        downloads.append(download)
+        return str(root)
+
+    compile_module.get_bridgestan_path = get_bridgestan_path
+    package = types.ModuleType("bridgestan")
+    package.compile = compile_module
+    return {"bridgestan": package, "bridgestan.compile": compile_module}
+
+
+def _make_fetching_stanc(root, calls):
+    """A stand-in for ``subprocess.run`` that records its call and writes ``bin/stanc`` under *root*."""
+
+    def run(command, *, cwd, **kwargs):
+        calls.append((command, cwd))
+        (root / "bin").mkdir(exist_ok=True)
+        (root / "bin" / "stanc").write_text("")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    return run
+
+
+class TestTheStancCompiler:
+    """BridgeStan's stanc is fetched on first use, as BridgeStan fetches it before its first compile."""
+
+    def test_a_missing_compiler_is_fetched_with_bridgestans_make_target(
+        self, tmp_path, monkeypatch
+    ):
+        downloads, calls = [], []
+        monkeypatch.setattr(_programs.subprocess, "run", _make_fetching_stanc(tmp_path, calls))
+        with patch.dict("sys.modules", _fake_bridgestan(tmp_path, downloads)):
+            stanc = _programs._stanc()
+        assert stanc == tmp_path / "bin" / "stanc"
+        assert downloads == [True]
+        assert calls == [(["make", "bin/stanc"], str(tmp_path))]
+
+    def test_a_present_compiler_is_not_fetched(self, tmp_path, monkeypatch):
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "stanc").write_text("")
+        calls = []
+        monkeypatch.setattr(_programs.subprocess, "run", _make_fetching_stanc(tmp_path, calls))
+        with patch.dict("sys.modules", _fake_bridgestan(tmp_path, [])):
+            assert _programs._stanc() == tmp_path / "bin" / "stanc"
+        assert calls == []
+
+    def test_a_failed_fetch_raises_with_the_command(self, tmp_path, monkeypatch):
+        def failing_make(command, *, cwd, **kwargs):
+            return subprocess.CompletedProcess(command, 2, "", "curl: (6) Could not resolve host")
+
+        monkeypatch.setattr(_programs.subprocess, "run", failing_make)
+        with (
+            patch.dict("sys.modules", _fake_bridgestan(tmp_path, [])),
+            pytest.raises(
+                ImportError, match=r"`make -C .* bin/stanc`: curl: \(6\) Could not resolve"
+            ),
+        ):
+            _programs._stanc()
+
+    def test_without_fetching_a_missing_compiler_raises_with_the_command(
+        self, tmp_path, monkeypatch
+    ):
+        downloads, calls = [], []
+        monkeypatch.setattr(_programs.subprocess, "run", _make_fetching_stanc(tmp_path, calls))
+        with (
+            patch.dict("sys.modules", _fake_bridgestan(tmp_path, downloads)),
+            pytest.raises(ImportError, match=r"fetch it with `make -C .* bin/stanc`"),
+        ):
+            _programs._stanc(fetch=False)
+        assert downloads == [False]
+        assert calls == []
+
+
 def _penalized_regression(x=None, y=None):
     x = np.zeros(3) if x is None else np.asarray(x)
     import pymc as pm
@@ -301,6 +382,30 @@ class TestPyMCModel:
             st.norm.logpdf(0.3, 0, 10) + st.halfnorm.logpdf(1.2) + st.norm.logpdf(0.5, 0.3, 1.2)
         )
         assert float(model._log_prob(value)) == pytest.approx(expected, rel=1e-6)
+
+    def test_draws_of_cauchy_priors_have_their_location_and_scale(self):
+        """Prior draws of a half-Cauchy and a Cauchy variable have their quartiles."""
+        import pymc as pm
+
+        def build():
+            with pm.Model() as model:
+                pm.HalfCauchy("tau", beta=5.0)
+                pm.Cauchy("mu", alpha=2.0, beta=3.0)
+            return model
+
+        with probpipe.workflow_run(seed=0):
+            draws = probpipe.sample(PyMCModel("prior", build), sample_shape=(4000,))
+        quartiles = np.array([0.25, 0.5, 0.75])
+        np.testing.assert_allclose(
+            np.quantile(draws["tau"].raw(), quartiles),
+            5.0 * np.tan(np.pi * quartiles / 2),
+            rtol=0.15,
+        )
+        np.testing.assert_allclose(
+            np.quantile(draws["mu"].raw(), quartiles),
+            2.0 + 3.0 * np.tan(np.pi * (quartiles - 0.5)),
+            atol=0.6,
+        )
 
     def test_the_event_carries_the_variables_dtypes_and_supports(self):
         spec = PyMCModel("m", _constrained_model).event_spec.spec
@@ -374,27 +479,3 @@ class TestPyMCModel:
         model = PyMCModel("normal", _normal_model)
         restored = pickle.loads(pickle.dumps(model))
         assert (restored.label, restored.spec) == (model.label, model.spec)
-
-
-class TestUnnormalizedDistribution:
-    def _law(self):
-        return UnnormalizedDistribution(
-            "u", lambda x: -0.5 * jnp.sum(x**2), OutputSpec(x=NumericArraySpec((2,)))
-        )
-
-    def test_it_claims_the_unnormalized_density_alone(self):
-        law = self._law()
-        assert isinstance(law, SupportsUnnormalizedLogProb)
-        assert not isinstance(law, SupportsLogProb)
-        assert not isinstance(law, SupportsSampling)
-        assert not _is_normalized(law)
-
-    def test_its_density_is_the_users(self):
-        assert float(self._law()._unnormalized_log_prob(jnp.ones(2))) == pytest.approx(-1.0)
-
-    def test_a_log_density_that_is_not_callable_raises(self):
-        with pytest.raises(TypeError, match="callable"):
-            UnnormalizedDistribution("u", 1.0, OutputSpec(x=NumericArraySpec((2,))))
-
-    def test_the_package_exports_it(self):
-        assert probpipe.UnnormalizedDistribution is UnnormalizedDistribution

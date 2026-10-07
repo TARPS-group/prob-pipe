@@ -611,10 +611,17 @@ class DenseLinOp(LinOp):
 
 
 class DiagonalLinOp(LinOp):
-    """Diagonal operator represented by a 1D array of diagonal entries."""
+    """Diagonal operator represented by a 1D array of diagonal entries.
+
+    Parameters
+    ----------
+    diag : array-like
+        The diagonal entries. An array of higher rank is flattened.
+    copy : bool
+        Whether to store a copy of the flattened entries.
+    """
 
     def __init__(self, diag: ArrayLike, copy: bool = True) -> None:
-        """`diag` may be higher-dimensional array, but will be flattened."""
         super().__init__()
         self.diagonal = _ensure_vector(jnp.asarray(diag).ravel(), copy=copy)
         self._n = int(self.diagonal.size)

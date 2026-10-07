@@ -11,7 +11,7 @@ Provides:
 A GLM likelihood conditions on the slots ``X`` of shape ``("obs",
 "features")``, ``beta`` of shape ``("features",)``, and ``dispersion`` when
 its family takes one, and its event is the response vector of shape
-``("obs",)``. Its law at a given value is ``family.build(name, link⁻¹(X @
+``("obs",)``. Its law at a given value is ``family.build(label, link⁻¹(X @
 beta), dispersion)``, so changing the family or the link changes the model
 without a new class.
 """
@@ -159,6 +159,14 @@ def _canonical_link(name: str) -> _Link:
 def _require_invertible(link: Any, owner: str) -> None:
     """Raise unless *link* is an invertible ``Function``.
 
+    Parameters
+    ----------
+    link : Any
+        The link to check, as the caller received it.
+    owner : str
+        The name the error messages give the link's owner, such as ``"glm_likelihood"`` or a
+        family's class name.
+
     Raises
     ------
     TypeError
@@ -198,6 +206,21 @@ class _LogRatePoisson(Poisson):
 
 def _observation_vector(values: ArrayLike, owner: str, quantity: str) -> Array:
     """*values* as a floating vector with one *quantity* per observation.
+
+    Parameters
+    ----------
+    values : ArrayLike
+        One value per observation, in any numeric dtype.
+    owner : str
+        The name of the calling method, which the error message names.
+    quantity : str
+        What one entry is, such as ``"mean"`` or ``"linear predictor"``, for the error message.
+
+    Returns
+    -------
+    Array
+        *values* in its own dtype when that is floating, and in the default floating dtype
+        otherwise.
 
     Raises
     ------
@@ -302,6 +325,19 @@ class GLMFamily(ABC):
 
     def _dispersion(self, dispersion: ArrayLike | None, mean: Array) -> Array | None:
         """The dispersion checked against ``has_dispersion``, in the floating dtype of *mean*.
+
+        Parameters
+        ----------
+        dispersion : ArrayLike or None
+            The dispersion passed to the family, or None when none was passed.
+        mean : Array
+            The checked vector of means or of linear predictors, whose dtype the dispersion
+            takes.
+
+        Returns
+        -------
+        Array or None
+            The dispersion as an array for a family that has one, and None otherwise.
 
         Raises
         ------
@@ -448,6 +484,18 @@ def _declared_sizes(event_spec: OutputSpec, response: NumericArraySpec) -> dict[
     as into the response. A type hole fixes no size, and a declared type of
     another kind is left to ``OutputSpec.with_spec``, which refuses it.
 
+    Parameters
+    ----------
+    event_spec : OutputSpec
+        The declaration of the response passed to :func:`glm_likelihood`.
+    response : NumericArraySpec
+        The spec of the response vector, whose shape is ``("obs",)``.
+
+    Returns
+    -------
+    dict[str, int]
+        The fixed sizes by dimension name, such as ``{"obs": 10}``.
+
     Raises
     ------
     ValueError
@@ -531,6 +579,11 @@ class _GLMLikelihood(
         Called during construction and on a fresh copy, so the kernel is never
         observed mid-change.
 
+        Parameters
+        ----------
+        values : Mapping[str, Array]
+            The value of each slot to fix, by slot name.
+
         Raises
         ------
         ValueError
@@ -592,6 +645,19 @@ class _GLMLikelihood(
     def _given_values(self, given: Any, kwargs: Mapping[str, Any]) -> dict[str, Array]:
         """The given values by slot name, each slot a known one.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some given slots, by slot name; a record contributes its top-level
+            fields.
+        kwargs : Mapping[str, Any]
+            Further values by slot name, which take precedence over those of *given*.
+
+        Returns
+        -------
+        dict[str, Array]
+            Each value converted with ``jnp.asarray``, by slot name.
+
         Raises
         ------
         KeyError
@@ -607,6 +673,16 @@ class _GLMLikelihood(
     def _complete_values(self, given: Record | Mapping[str, Any]) -> dict[str, Array]:
         """The values of every given slot, for a conditional capability.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            A value of every given slot, by slot name.
+
+        Returns
+        -------
+        dict[str, Array]
+            Each value converted with ``jnp.asarray``, by slot name.
+
         Raises
         ------
         KeyError
@@ -620,6 +696,17 @@ class _GLMLikelihood(
 
     def _law(self, values: Mapping[str, Array]) -> Distribution:
         """The response law at the values of every given slot.
+
+        Parameters
+        ----------
+        values : Mapping[str, Array]
+            A value of every given slot, by slot name.
+
+        Returns
+        -------
+        Distribution
+            The family's law of the response vector, with the kernel's label and event
+            declaration.
 
         Raises
         ------
@@ -661,6 +748,11 @@ class _GLMLikelihood(
             The response vector.
         rows : Array
             The indices of the observations, along the response.
+
+        Returns
+        -------
+        Array
+            A scalar that sums the pointwise log-densities over *rows*.
 
         Raises
         ------
@@ -718,7 +810,7 @@ def glm_likelihood(
     The kernel's given slots are ``X`` of shape ``("obs", "features")``,
     ``beta`` of shape ``("features",)``, and ``dispersion`` when the family has
     one, and its event is the response vector of shape ``("obs",)``. Its law at
-    a given value is ``family.build(name, link⁻¹(X @ beta), dispersion,
+    a given value is ``family.build(label, link⁻¹(X @ beta), dispersion,
     event_spec=event_spec)``: ``GaussianFamily`` with the identity link is linear
     regression, ``BernoulliFamily`` with the logit is logistic regression, and
     ``PoissonFamily`` with the logarithm is Poisson regression. A value of ``X``

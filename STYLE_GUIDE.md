@@ -168,8 +168,8 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
 such as `dispatch` and `n_broadcast_samples`, and use
-`workflow.with_options(...)(...)` for one-call overrides such as
-`n_broadcast_samples` and `include_inputs`.
+`workflow.with_options(...)` for a copy with revised controls, such as
+`n_broadcast_samples` and `include_inputs`, which every call of the copy reads.
 
 Ordinary workflow calls should treat keyword arguments as user-function
 inputs. Wrapped functions may use names such as `seed`,
@@ -389,7 +389,8 @@ Usage::
 
 ### 3.2 Class docstrings
 
-Summary line, then `Parameters` section:
+Summary line, then a `Parameters` section for the constructor's parameters.
+`__init__` has no docstring of its own:
 
 ```python
 class Normal(TFPDistribution):
@@ -408,7 +409,10 @@ class Normal(TFPDistribution):
 
 ### 3.3 Function/method docstrings
 
-Summary line, then `Parameters`, `Returns`, `Raises` as needed:
+Summary line, then `Parameters`, `Returns`, and `Raises` as needed. A docstring
+with any section documents every parameter in `Parameters`, in signature order,
+and the returned value in `Returns`. Each entry states its type in words, such as
+`int or tuple of int` or `array-like`:
 
 ```python
 @operation(result=_sample_result)
@@ -437,6 +441,9 @@ def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
         If *d* does not sample.
     """
 ```
+
+The `pydoclint` pre-commit hook checks the parameters and the returned value, and
+the CI lint job runs it over `probpipe/` (CONTRIBUTING.md § Linting & pre-commit).
 
 ### 3.4 Section separators
 

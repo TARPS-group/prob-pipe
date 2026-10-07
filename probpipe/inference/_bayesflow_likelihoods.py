@@ -209,6 +209,19 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     def _values(self, given: Any, kwargs: Mapping[str, Any]) -> dict[str, Any]:
         """The parameter values bound so far and those *given* binds, by slot.
 
+        Parameters
+        ----------
+        given : Record or Mapping of str to Any
+            The values ``condition_on`` passes positionally, by slot.
+        kwargs : Mapping of str to Any
+            The values ``condition_on`` passes by keyword, which take precedence
+            over *given*.
+
+        Returns
+        -------
+        dict of str to Any
+            The earlier bindings, updated with *given* and then with *kwargs*.
+
         Raises
         ------
         KeyError
@@ -521,8 +534,12 @@ def learn_amortized_likelihood(
         The kernel of one observation given the prior's fields, which samples;
         its given values are the prior's structured per-draw record (named-field
         access). Must be JAX-vmappable unless ``sim_backend="sequential"``.
-    num_simulations, epochs, batch_size : int
-        Offline simulation count and keras training schedule.
+    num_simulations : int
+        Number of ``(theta, y)`` pairs simulated offline for training.
+    epochs : int
+        Number of keras training passes over the simulations.
+    batch_size : int
+        Number of simulations in each keras training batch.
     sim_backend : {"jax", "sequential"}
         ``"jax"`` (default) vmaps the simulator; ``"sequential"`` runs an eager
         per-draw loop for non-JAX simulators.
@@ -651,8 +668,10 @@ def learn_amortized_ratio(
         its given values are the prior's structured per-draw record.
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
-    epochs, batch_size : int
-        keras training schedule.
+    epochs : int
+        Number of keras training passes over the simulations.
+    batch_size : int
+        Number of simulations in each keras training batch.
     sim_backend : {"jax", "sequential"}
         ``"jax"`` (default) vmaps the simulator; ``"sequential"`` runs an eager
         per-draw loop for non-JAX simulators.

@@ -1,11 +1,12 @@
-"""Resolve workflow controls, bind arguments, and admit them for the call engine.
+"""Bind the arguments of a call and admit them for the call engine.
 
 Steps 2 and 3 of the call stack: the arguments bind to the wrapped function's
 signature by Python's rules, and each bound argument is admitted against what
 its parameter accepts: the kinds its role names where the Function declares
 roles, as an operation does, and otherwise its input declaration and its
 annotation. A violation of the call contract raises
-:class:`ApplicabilityError`.
+:class:`ApplicabilityError`. The module also decides the form in which the body
+receives each argument (:func:`presented_arguments`).
 """
 
 from __future__ import annotations
@@ -268,68 +269,6 @@ def _html_row(cells: tuple[str, ...], *, selected: bool) -> str:
     return f"<tr{style}>" + "".join(f"<td>{html.escape(cell)}</td>" for cell in cells) + "</tr>"
 
 
-@dataclass(frozen=True)
-class FunctionCallOptions:
-    """Optional call-time workflow controls outside user kwargs."""
-
-    n_broadcast_samples: int | None = None
-    include_inputs: bool | None = None
-
-
-@dataclass(frozen=True)
-class FunctionCallOverrides:
-    """Resolved call-time workflow settings consumed by ``Function``."""
-
-    n_broadcast_samples: int
-    include_inputs: bool
-
-
-@dataclass(frozen=True)
-class ResolvedFunctionCall:
-    """Fully resolved signature-shaped values plus workflow overrides."""
-
-    values: dict[str, Any]
-    overrides: FunctionCallOverrides
-
-
-def bind_call_inputs(
-    info: FunctionSignatureInfo,
-    args: tuple[Any, ...],
-    call_inputs: dict[str, Any],
-    *,
-    default_n_broadcast_samples: int,
-    default_include_inputs: bool,
-    options: FunctionCallOptions | None = None,
-) -> tuple[dict[str, Any], FunctionCallOverrides]:
-    """Bind user inputs and resolve workflow controls.
-
-    Call inputs bind exactly like the wrapped Python function. Workflow
-    controls come only from explicit ``options`` or construction defaults.
-    """
-    explicit_options = options if options is not None else FunctionCallOptions()
-
-    def resolve_option(name: str, default: Any = None) -> Any:
-        explicit_value = getattr(explicit_options, name)
-        if explicit_value is not None:
-            return explicit_value
-
-        return default
-
-    overrides = FunctionCallOverrides(
-        n_broadcast_samples=resolve_option(
-            "n_broadcast_samples",
-            default_n_broadcast_samples,
-        ),
-        include_inputs=resolve_option(
-            "include_inputs",
-            default_include_inputs,
-        ),
-    )
-
-    bound = info.signature.bind_partial(*args, **call_inputs)
-    return dict(bound.arguments), overrides
-
-
 def resolve_function_call(
     info: FunctionSignatureInfo,
     args: tuple[Any, ...],
@@ -339,28 +278,52 @@ def resolve_function_call(
     module: Any | None,
     dependency_type: type,
     function_name: str,
-    default_n_broadcast_samples: int,
-    default_include_inputs: bool,
-    options: FunctionCallOptions | None = None,
-) -> ResolvedFunctionCall:
-    """Resolve one ``Function`` call into values plus overrides."""
-    bound_inputs, overrides = bind_call_inputs(
+) -> dict[str, Any]:
+    """Bind one call's arguments to the signature and fill the inputs it omits.
+
+    The arguments bind by Python's rules, and an omitted input takes its value
+    from the construction bindings, the module, or the parameter's default.
+
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    args : tuple
+        The call's positional arguments.
+    call_inputs : dict of str to Any
+        The call's keyword arguments.
+    bind : Mapping of str to Any
+        The Function's construction bindings.
+    module : object or None
+        The shared-input container consulted for an input that the call and
+        *bind* omit, or ``None``.
+    dependency_type : type
+        The class that marks a parameter as a dependency when the parameter's
+        annotation is a subclass of it.
+    function_name : str
+        The function's label, which the messages name.
+
+    Returns
+    -------
+    dict of str to Any
+        The inputs by parameter name, where a variadic parameter's name holds
+        the arguments it collects.
+
+    Raises
+    ------
+    TypeError
+        If an argument does not bind to the signature, a required input stays
+        unbound, or the call overrides a dependency the module provides.
+    """
+    bound = info.signature.bind_partial(*args, **call_inputs)
+    return resolve_function_values(
         info,
-        args,
-        call_inputs,
-        default_n_broadcast_samples=default_n_broadcast_samples,
-        default_include_inputs=default_include_inputs,
-        options=options,
-    )
-    values = resolve_function_values(
-        info,
-        bound_inputs,
+        dict(bound.arguments),
         bind=bind,
         module=module,
         dependency_type=dependency_type,
         function_name=function_name,
     )
-    return ResolvedFunctionCall(values=values, overrides=overrides)
 
 
 def _consumes_kernel(expected: Any) -> bool:
@@ -386,6 +349,62 @@ def _expects_value(expected: Any) -> bool:
     if expected is Any:
         return False
     return not (_normalization.is_distribution_hint(expected) or _consumes_kernel(expected))
+
+
+def presented_arguments(
+    info: FunctionSignatureInfo, values: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """The arguments a body receives, in raw form where an annotation names the raw form's class.
+
+    A tracked argument is presented as its raw form when its parameter's
+    annotation names a class that the raw form is an instance of and the
+    argument is not. A body annotated ``pd.Series`` therefore receives the
+    ``Series`` that a record field holds, and one annotated ``jax.Array`` the
+    array that a ``NumericArray`` holds. A union annotation names the classes of
+    its arms, and a parametrized annotation, such as ``npt.NDArray[np.float64]``,
+    names the class it parametrizes. Every other argument is presented as it is,
+    as at an unannotated parameter or at one annotated ``Any`` or with the
+    argument's kind.
+
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    values : Mapping of str to Any
+        One point's arguments, shaped by the signature.
+
+    Returns
+    -------
+    Mapping of str to Any
+        The arguments, shaped by the signature, as the body receives them.
+    """
+    presented: dict[_binding.FunctionInputRef, Any] = {}
+    for ref in _binding.iter_input_refs(info, values):
+        value = _binding.input_ref_value(values, ref)
+        form = _raw_form_named(value, _binding.input_ref_hint(info, ref))
+        if form is not value:
+            presented[ref] = form
+    return _binding.replace_input_refs(values, presented) if presented else values
+
+
+def _raw_form_named(value: Any, hint: Any) -> Any:
+    """*value*'s raw form if *hint* names a class of that form and not of *value*, else *value*."""
+    if not isinstance(value, TrackedTerm) or hint is Any:
+        return value
+    classes = tuple(
+        named
+        for named in map(_normalization._hint_class, _normalization._arms(hint))
+        if isinstance(named, type)
+    )
+    try:
+        if not classes or isinstance(value, classes):
+            return value
+    except TypeError:
+        # A class that refuses an instance check, as a protocol that is not
+        # runtime checkable does, names no raw form.
+        return value
+    raw = value.raw()
+    return raw if isinstance(raw, classes) else value
 
 
 def arrived_kind(value: Any) -> type[TermSpec]:
@@ -493,6 +512,21 @@ def _admit_by_role(
     the call lifts and the parameter is not annotated ``Any``, the kind of its
     elements or its draws.
 
+    Parameters
+    ----------
+    info : FunctionSignatureInfo
+        The wrapped function's signature and resolved annotations.
+    ref : FunctionInputRef
+        The reference to the argument, which names its parameter.
+    value : Any
+        The argument bound at *ref*.
+    role : tuple of TermSpec subclasses
+        The kinds the parameter's role names.
+    function_name : str or None
+        The function's label, for the message.
+    lifts : bool
+        Whether the call may lift the argument.
+
     Raises
     ------
     ApplicabilityError
@@ -540,7 +574,7 @@ def admit_arguments(
     input_spec : InputSpec or None
         The declared slots, whose kinds the arguments are admitted against.
     function_name : str or None
-        The function's name, for the message.
+        The function's label, for the message.
     roles : Mapping of str to tuple of TermSpec subclasses, or None
         The kinds each parameter with a role accepts.
     lifts : bool

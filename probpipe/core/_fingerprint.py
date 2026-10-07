@@ -22,9 +22,9 @@ Supported types
   ``Weights`` are hashed by content
 - ``Function`` — frozen signature, input declaration, and output declaration
   without its component names, plus either plain-callable bytecode, referenced
-  names, and captured/default values or a private implementation type, so a
-  rename of the function, its output label, or its output's components keeps
-  the digest
+  names, and captured/default values or a private implementation type, so
+  relabeling the function or its output, or renaming its output's components,
+  keeps the digest
 - Closure-free Python functions — module + qualified name + bytecode +
   defaults. Closure-bearing functions and every other callable kind are
   process-local identities.
@@ -114,10 +114,10 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
 
     Parameters
     ----------
-    obj:
+    obj : Any
         Any ProbPipe object or Python primitive. Unknown types fall back to a
         process-local identity hash.
-    max_array_bytes:
+    max_array_bytes : int or None
         Arrays whose byte size is at or below this threshold are hashed in
         full (zero-copy via ``memoryview``).  Larger arrays are sampled at
         evenly-spaced offsets.  Pass ``None`` to always hash the full buffer.
@@ -161,16 +161,7 @@ def _update(
         state.is_weak = True
         return
 
-    from ._specs import InputSpec, OutputSpec
-
-    if isinstance(obj, InputSpec):
-        h.update(b"input_spec:")
-        _update(h, dict(obj), depth + 1, max_array_bytes, state)
-    elif isinstance(obj, OutputSpec):
-        h.update(b"output_spec:")
-        _update(h, obj._component_name, depth + 1, max_array_bytes, state)
-        _update(h, obj.spec, depth + 1, max_array_bytes, state)
-    elif isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
+    if isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
         _update_array(h, obj, max_array_bytes, state)
     elif _is_record_batch(obj):
         _update_record_batch(h, obj, depth, max_array_bytes, state)
@@ -242,29 +233,39 @@ def _update(
         for k, v in sorted(obj.items(), key=lambda kv: str(kv[0])):
             _update(h, k, depth + 1, max_array_bytes, state)
             _update(h, v, depth + 1, max_array_bytes, state)
-    elif _is_tfp_object(obj):
-        _update_tfp_object(h, obj, depth, max_array_bytes, state)
-    elif (content := _numeric_container_to_numpy(obj)) is not None:
-        # A numeric container (xarray / pandas / a registered array backend):
-        # hash by concrete type, materialised values, AND the container's
-        # identity-bearing metadata (coords / index / dims / attrs), so the
-        # digest is a complete content identifier — two containers with equal
-        # values but different coords fingerprint differently — and is
-        # content-stable across processes rather than falling to ``repr``.
-        h.update(b"container:")
-        h.update(type(obj).__qualname__.encode())
-        h.update(b":")
-        _update_array(h, content, max_array_bytes, state)
-        from ._array_backend import _metadata_of
-
-        metadata = _metadata_of(obj)
-        if metadata is not None:
-            h.update(b":meta:")
-            _update(h, metadata, depth + 1, max_array_bytes, state)
-    elif inspect.isfunction(obj) and obj.__closure__ is None:
-        _update_plain_function(h, obj, depth, max_array_bytes, state)
     else:
-        _update_weak_identity(h, obj, state)
+        from ._specs import InputSpec, OutputSpec
+
+        if isinstance(obj, InputSpec):
+            h.update(b"input_spec:")
+            _update(h, dict(obj), depth + 1, max_array_bytes, state)
+        elif isinstance(obj, OutputSpec):
+            h.update(b"output_spec:")
+            _update(h, obj._component_name, depth + 1, max_array_bytes, state)
+            _update(h, obj.spec, depth + 1, max_array_bytes, state)
+        elif _is_tfp_object(obj):
+            _update_tfp_object(h, obj, depth, max_array_bytes, state)
+        elif (content := _numeric_container_to_numpy(obj)) is not None:
+            # A numeric container (xarray / pandas / a registered array backend):
+            # hash by concrete type, materialised values, AND the container's
+            # identity-bearing metadata (coords / index / dims / attrs), so the
+            # digest is a complete content identifier — two containers with equal
+            # values but different coords fingerprint differently — and is
+            # content-stable across processes rather than falling to ``repr``.
+            h.update(b"container:")
+            h.update(type(obj).__qualname__.encode())
+            h.update(b":")
+            _update_array(h, content, max_array_bytes, state)
+            from ._array_backend import _metadata_of
+
+            metadata = _metadata_of(obj)
+            if metadata is not None:
+                h.update(b":meta:")
+                _update(h, metadata, depth + 1, max_array_bytes, state)
+        elif inspect.isfunction(obj) and obj.__closure__ is None:
+            _update_plain_function(h, obj, depth, max_array_bytes, state)
+        else:
+            _update_weak_identity(h, obj, state)
 
 
 def _subdigest(
@@ -732,7 +733,7 @@ def _update_distribution(
     """Hash a distribution by class name and parameters.
 
     The label names the law for display and records nothing about what it
-    computes, so a relabeled law keeps its fingerprint, as a renamed function does.
+    computes, so a relabeled law keeps its fingerprint, as a relabeled function does.
 
     For TFP-backed distributions (those with a ``_tfp_dist`` attribute) the
     TFP parameter dict is hashed directly — this covers every concrete

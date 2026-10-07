@@ -13,12 +13,17 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
+    ReplayCompatibilityError,
     conditional_distribution,
     predictive_check,
+    replay_run,
+    sample,
     workflow_run,
 )
 from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.functions import _context
+from probpipe.inference._inference_utils import integer_seed, run_seed
 from probpipe.validation import (
     Reference,
     score_posterior,
@@ -127,20 +132,49 @@ class TestPredictiveCheckBroker:
 
 
 class _FakeConditionOn:
-    """A stand-in for ``condition_on`` that records each fit's seed and returns zero draws.
+    """A stand-in for ``condition_on`` that records its observed values and returns zero draws.
 
-    A fit reads its budgets from ``method_options``, as the operation's methods do.
+    A fit also records the seed it reads through ``run_seed``, as an inference
+    method does, so the seed is a key of the workflow scope the fit runs in.
+    The evaluation of a kernel reads no seed.
     """
 
     def __init__(self):
         self.seeds = []
+        self.observations = []
 
-    def with_options(self, *, method=None, method_options):
-        def fit(model, data):
-            self.seeds.append(method_options["random_seed"])
-            return EmpiricalDistribution("beta", jnp.zeros((method_options["num_results"], 1)))
+    def __call__(self, d, given):
+        self.observations.append(np.asarray(given["y"]))
+        return EmpiricalDistribution("beta", jnp.zeros((4, 1)))
+
+    def with_options(self, *, method=None, method_options=None):
+        def fit(d, given):
+            self.seeds.append(integer_seed(run_seed(method_options or {}, "fake")))
+            return self(d, given)
 
         return fit
+
+
+def _conjugate_calibration(**options):
+    """Calibration of the exact posterior kernel of a normal mean given three observations."""
+    prior = Normal("mu", 0.0, 1.0)
+    likelihood = conditional_distribution(
+        "y_given_mu",
+        lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
+        given_spec=prior.event_spec.components,
+    )
+    exact = conditional_distribution(
+        "posterior",
+        lambda y: Normal("mu", jnp.sum(y) / 4.0, 0.5),
+        given_spec={"y": NumericArraySpec((3,))},
+    )
+    return simulation_based_calibration(
+        likelihood * prior,
+        observed="y",
+        posterior=exact,
+        num_posterior_draws=10,
+        **{"num_simulations": 4, **options},
+    )
 
 
 class TestSimulationBasedCalibrationBroker:
@@ -150,65 +184,93 @@ class TestSimulationBasedCalibrationBroker:
         prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), label="beta")
         return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
-    def test_seeded_sbc_claims_one_event_and_derives_inference_seeds(self, monkeypatch):
-        fake_condition_on = _FakeConditionOn()
-        inference_seeds = fake_condition_on.seeds
-        monkeypatch.setattr(
-            "probpipe.validation._calibration.condition_on",
-            fake_condition_on,
-        )
+    def test_a_call_in_a_seeded_scope_reproduces_its_ranks(self):
+        with workflow_run(seed=7):
+            first = _conjugate_calibration().ranks
+        with workflow_run(seed=7):
+            second = _conjugate_calibration().ranks
 
-        def run(num_simulations):
-            inference_seeds.clear()
-            with (
-                patch(
-                    "probpipe.functions._context._commit_stochastic_invocation",
-                    wraps=_context._commit_stochastic_invocation,
-                ) as commit,
-                workflow_run(seed=7),
-            ):
-                result = simulation_based_calibration(
+        np.testing.assert_array_equal(first, second)
+
+    def test_another_seed_changes_the_ranks(self):
+        with workflow_run(seed=7):
+            first = _conjugate_calibration().ranks
+        with workflow_run(seed=8):
+            other = _conjugate_calibration().ranks
+
+        assert not np.array_equal(first, other)
+
+    def test_an_unscoped_call_draws_afresh(self):
+        # Eight ranks in {0, …, 10} agree by chance with probability about 5e-9.
+        first = _conjugate_calibration(num_simulations=8).ranks
+        second = _conjugate_calibration(num_simulations=8).ranks
+
+        assert not np.array_equal(first, second)
+
+    def test_each_replication_fit_reads_its_own_seed(self, monkeypatch):
+        fake_condition_on = _FakeConditionOn()
+        monkeypatch.setattr("probpipe.validation._calibration.condition_on", fake_condition_on)
+
+        def seeds():
+            fake_condition_on.seeds.clear()
+            with workflow_run(seed=7):
+                simulation_based_calibration(
+                    self._model(), observed="y", num_simulations=5, num_posterior_draws=4
+                )
+            return tuple(fake_condition_on.seeds)
+
+        first = seeds()
+
+        assert len(set(first)) == 5
+        assert seeds() == first
+
+    def test_the_replications_observe_the_first_draw_of_the_call_whatever_the_posterior(
+        self, monkeypatch
+    ):
+        """Every replication's ``y`` is a row of the draw of the joint that the call claims first.
+
+        A fit reads a seed and a kernel's evaluation does not, so the two routes
+        claim different numbers of events per replication and still see the same data.
+        """
+        fake_condition_on = _FakeConditionOn()
+        monkeypatch.setattr("probpipe.validation._calibration.condition_on", fake_condition_on)
+        kernel = conditional_distribution(
+            "posterior",
+            lambda y: MultivariateNormal(loc=y[:1], cov=jnp.eye(1), label="beta"),
+            given_spec={"y": NumericArraySpec((3,))},
+        )
+        with workflow_run(seed=7):
+            first_draw = sample.with_options(raw=True)(self._model(), sample_shape=(3,))
+
+        for posterior in (None, kernel):
+            fake_condition_on.observations.clear()
+            with workflow_run(seed=7):
+                simulation_based_calibration(
                     self._model(),
                     observed="y",
-                    num_simulations=num_simulations,
+                    posterior=posterior,
+                    num_simulations=3,
                     num_posterior_draws=4,
                 )
-            return result.ranks.copy(), tuple(inference_seeds), commit
-
-        first_ranks, first_seeds, first_commit = run(2)
-        second_ranks, second_seeds, second_commit = run(2)
-        _, larger_seeds, larger_commit = run(5)
-
-        np.testing.assert_array_equal(first_ranks, second_ranks)
-        assert first_seeds == second_seeds
-        assert len(larger_seeds) == 5
-        first_commit.assert_called_once_with("operation")
-        second_commit.assert_called_once_with("operation")
-        larger_commit.assert_called_once_with("operation")
-
-        with patch("probpipe.functions._context._commit_stochastic_invocation") as explicit_commit:
-            simulation_based_calibration(
-                self._model(),
-                observed="y",
-                num_simulations=2,
-                num_posterior_draws=4,
-                key=jax.random.key(11),
+            np.testing.assert_array_equal(
+                np.stack(fake_condition_on.observations), np.asarray(first_draw["y"])
             )
-        explicit_commit.assert_not_called()
+
+    def test_a_key_keyword_raises_type_error(self):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'key'"):
+            _conjugate_calibration(key=jax.random.key(0))
+
+    def test_a_call_inside_replay_run_raises(self):
+        with workflow_run(seed=7):
+            recorded = sample(Normal("z", 0.0, 1.0))
+
+        with pytest.raises(ReplayCompatibilityError), replay_run(recorded.provenance):
+            _conjugate_calibration()
 
     def test_numpy_integer_counts_are_normalized_before_event_commit(self, monkeypatch):
-        monkeypatch.setattr(
-            "probpipe.validation._calibration.condition_on",
-            _FakeConditionOn(),
-        )
+        monkeypatch.setattr("probpipe.validation._calibration.condition_on", _FakeConditionOn())
 
-        with (
-            patch(
-                "probpipe.functions._context._commit_stochastic_invocation",
-                wraps=_context._commit_stochastic_invocation,
-            ) as commit,
-            workflow_run(seed=11),
-        ):
+        with workflow_run(seed=11):
             result = simulation_based_calibration(
                 self._model(),
                 observed="y",
@@ -217,7 +279,7 @@ class TestSimulationBasedCalibrationBroker:
             )
 
         assert result.ranks.shape == (2, 1)
-        commit.assert_called_once_with("operation")
+        assert type(result.num_posterior_draws) is int
 
     @pytest.mark.parametrize(
         ("argument", "value"),
@@ -226,9 +288,10 @@ class TestSimulationBasedCalibrationBroker:
             ("num_simulations", 0),
             ("num_posterior_draws", True),
             ("num_posterior_draws", 0),
+            ("method_options", [("num_warmup", 10)]),
         ],
     )
-    def test_invalid_counts_fail_before_event_commit(self, argument, value):
+    def test_invalid_arguments_fail_before_event_commit(self, argument, value):
         kwargs = {
             "observed": "y",
             "num_simulations": 2,
@@ -241,6 +304,27 @@ class TestSimulationBasedCalibrationBroker:
             pytest.raises((TypeError, ValueError)),
         ):
             simulation_based_calibration(self._model(), **kwargs)
+
+        commit.assert_not_called()
+
+    def test_a_posterior_whose_slots_miss_the_observed_fields_fails_before_event_commit(self):
+        other_slot = conditional_distribution(
+            "posterior",
+            lambda x, z: Normal("beta", x + z, 1.0),
+            given_spec={"x": NumericArraySpec(()), "z": NumericArraySpec(())},
+        )
+        with (
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
+            workflow_run(seed=7),
+            pytest.raises(ValueError, match="given slots"),
+        ):
+            simulation_based_calibration(
+                self._model(),
+                observed="y",
+                posterior=other_slot,
+                num_simulations=2,
+                num_posterior_draws=4,
+            )
 
         commit.assert_not_called()
 
