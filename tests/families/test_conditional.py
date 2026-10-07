@@ -77,8 +77,8 @@ class _UnitScaleGaussian(GLMFamily):
     canonical_link = GaussianFamily.canonical_link
     has_dispersion = False
 
-    def build(self, name, mean, dispersion=None, *, event_spec=None):
-        return MultivariateNormal(name, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
+    def build(self, label, mean, dispersion=None, *, event_spec=None):
+        return MultivariateNormal(label, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +115,7 @@ class TestTheResponseFamilies:
             canonical_link = Function("square", lambda mean: mean**2)
             has_dispersion = False
 
-            def build(self, name, mean, dispersion=None, *, event_spec=None):
+            def build(self, label, mean, dispersion=None, *, event_spec=None):
                 raise AssertionError("unreachable")
 
         with pytest.raises(ResolutionError, match="not invertible"):
@@ -162,9 +162,9 @@ class TestTheResponseFamilies:
     @pytest.mark.parametrize(
         ("family", "scalar"),
         [
-            (GaussianFamily, lambda name, m: Normal(name, m, 0.5)),
-            (BernoulliFamily, lambda name, m: Bernoulli(name, probs=m)),
-            (PoissonFamily, lambda name, m: Poisson(name, m)),
+            (GaussianFamily, lambda label, m: Normal(label, m, 0.5)),
+            (BernoulliFamily, lambda label, m: Bernoulli(label, probs=m)),
+            (PoissonFamily, lambda label, m: Poisson(label, m)),
         ],
     )
     def test_the_observations_are_conditionally_independent(self, family, scalar):

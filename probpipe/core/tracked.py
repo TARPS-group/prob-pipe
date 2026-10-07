@@ -143,8 +143,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     (:class:`~probpipe.core._immutable.Immutable`): assignment and deletion raise
     once its constructor has returned, and an operation that changes anything
     returns a new term. Construction assigns inside the window the metaclass
-    opens, so a host's ``__init__`` is written normally. The distribution layer
-    is exempt for now, for the reason its ``__setattr__`` gives.
+    opens, so a host's ``__init__`` is written normally.
 
     :meth:`raw` is the one access to the representation, and it is abstract:
     each kind defines it, as its section of the design states.

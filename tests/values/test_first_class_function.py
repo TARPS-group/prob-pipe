@@ -1328,7 +1328,7 @@ class TestDynamicImplementation:
         wrapped = Function._from_implementation(
             _AddImplementation(2),
             signature=signature,
-            name="dynamic_add",
+            label="dynamic_add",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=()).children),
             dispatch="sequential",
@@ -1348,13 +1348,13 @@ class TestDynamicImplementation:
             Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,
-                name="",
+                label="",
             )
         with pytest.raises(TypeError, match="must provide an invoke"):
             Function._from_implementation(
                 object(),  # type: ignore[arg-type]
                 signature=signature,
-                name="invalid",
+                label="invalid",
             )
 
     def test_dynamic_fingerprint_is_declaration_level_not_artifact_identity(self):
@@ -1368,7 +1368,7 @@ class TestDynamicImplementation:
             return Function._from_implementation(
                 implementation,
                 signature=signature,
-                name="dynamic",
+                label="dynamic",
                 input_spec=InputSpec(RecordSpec(x=()).children),
                 output_spec=OutputSpec(**RecordSpec(y=()).children),
             )
@@ -1400,7 +1400,7 @@ class TestDynamicImplementation:
                 )
             ])
             function = Function._from_implementation(
-                Implementation(), signature=signature, name="dynamic"
+                Implementation(), signature=signature, label="dynamic"
             )
             print(fingerprint(function))
             """
@@ -1421,7 +1421,7 @@ class TestDynamicImplementation:
             return Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,
-                name="dynamic",
+                label="dynamic",
                 input_spec=None if input_spec is None else InputSpec(input_spec.children),
                 output_spec=output_spec,
             )
@@ -1565,7 +1565,7 @@ class TestReentrancyAndProvenance:
         wrapped = Function._from_implementation(
             _AddImplementation(1),
             signature=signature,
-            name="fitted",
+            label="fitted",
         ).with_provenance(Provenance.create("fit", parents=[training_data]))
 
         result = wrapped(2)

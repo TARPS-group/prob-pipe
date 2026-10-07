@@ -407,14 +407,14 @@ def _prior(scale: float = 1.0) -> Normal:
     return Normal("prior", 0.0, scale, event_spec=OutputSpec(beta=None))
 
 
-def _law(name: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
-    """A law labeled *name* whose whole-term component is *component*."""
-    return law(name, OutputSpec(**{component: spec}))
+def _law(label: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
+    """A law labeled *label* whose whole-term component is *component*."""
+    return law(label, OutputSpec(**{component: spec}))
 
 
-def _pair(name: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
+def _pair(label: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
     """A law over an exposed record of the fields ``a`` and ``b``."""
-    return law(name, OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)), **options)
+    return law(label, OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)), **options)
 
 
 def _exponential_location_model() -> FactoredDistribution:

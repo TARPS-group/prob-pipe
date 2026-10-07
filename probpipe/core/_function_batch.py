@@ -118,14 +118,14 @@ class FunctionBatch(_ObjectBatch[Callable]):
         """The :class:`FunctionSpec` every element satisfies — a view on ``spec``."""
         return cast(FunctionSpec, self._spec.element_spec)
 
-    def _wrap_element(self, value: Callable, name: str) -> Function:
-        """The callable *value* as a ``Function`` labeled *name* under the batch's declarations.
+    def _wrap_element(self, value: Callable, label: str) -> Function:
+        """The callable *value* as a ``Function`` labeled *label* under the batch's declarations.
 
         Parameters
         ----------
         value : callable
             The object stored at the element's position.
-        name : str
+        label : str
             The label of the element view, derived from its position.
 
         Returns
@@ -140,7 +140,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
             declared input slots.
         """
         spec = self.element_spec
-        return Function(name, value, input_spec=spec.input_spec, output_spec=spec.output_spec)
+        return Function(label, value, input_spec=spec.input_spec, output_spec=spec.output_spec)
 
 
 register_kind(FunctionSpec, batch_class=FunctionBatch)

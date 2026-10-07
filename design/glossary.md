@@ -38,11 +38,11 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **registry**: an extensible set of registered entries, discoverable through the registry catalog; a dispatch registry selects one of its methods for a call (II.7).
 - **route**: one implementation of an operation, with a `check`, an `execute`, and an exact flag, from a structural, capability, registry, or fallback source (VI.0).
 - **schema**: a `RecordSpec` read as the structure of one structured value, such as a draw or a stored datum (III.5).
-- **selection**: the part of an object that one indexing call picks out, either positions of a batch, from which the view takes its name (II.5), or several paths of a law, which one field view addresses jointly (III.7).
+- **selection**: the part of an object that one indexing call picks out, either positions of a batch, from which the view takes its label (II.5), or several paths of a law, which one field view addresses jointly (III.7).
 - **selection order**: the ranking by which a registry tries the matching methods for a call, the same in every registry (II.7).
 - **sweep**: the lift of a function over a batch argument, which maps the function over the batch's elements; the elementwise sweep is its generic evaluation rule (V.5, V.7).
 - **term spec**: the typing information of a term, held in a `TermSpec`; it validates whether an object satisfies it and carries the symbolic-dimension protocol (II.1).
-- **tracked term**: a value, function, distribution, or batch in its tracked form, which carries a name, a spec, a provenance, and annotations through the `TrackedTerm` mixin (II.4).
+- **tracked term**: a value, function, distribution, or batch in its tracked form, which carries a label, a spec, a provenance, and annotations through the `TrackedTerm` mixin (II.4).
 - **type hole**: a component of an `OutputSpec` whose term spec is pending, written `None`, which a producer fills with `with_spec` (II.2). `None` means only a pending type, so an opaque field is declared as `OpaqueSpec()` (III.2, III.5).
 - **unresolved**: the outcome of a feasibility check whose required declarations are not yet available (II.7).
 - **view**: a tracked term that refers into its source, such as a record field, a batch element or sub-batch, or a distribution's field view `d[path]` (B4, II.4, III.7).

@@ -444,8 +444,8 @@ def provenance_dag(node: ProvenanceNode):
 
     visited: set = set()
 
-    def _label(type_name: str, name: str) -> str:
-        return f"{type_name}\n'{name}'" if name else type_name
+    def _label(type_name: str, label: str) -> str:
+        return f"{type_name}\n'{label}'" if label else type_name
 
     def _stable_nid(p: Any) -> str:
         """Graphviz node ID that is the same for all ParentInfo of the same ancestor."""

@@ -491,8 +491,8 @@ class TestGeneralDecomposition:
         assert float(rebuilt["b"]) == 2.0
 
     def test_roundtrip_preserves_user_name(self):
-        # ``==`` ignores the name, so assert name fidelity separately: the
-        # reconstructed record carries exactly the name passed in.
+        # ``==`` ignores the label, so assert label fidelity separately: the
+        # reconstructed record carries exactly the label passed in.
         v = Record("mine", theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="p"), tag="t")
         rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert rebuilt.label == "mine"
