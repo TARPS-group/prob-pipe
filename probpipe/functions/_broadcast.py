@@ -158,10 +158,10 @@ def execute_distribution_broadcast(
         Callback used only for explicit JAX dispatch to raise a clear tracing
         error before executing.
     function_name : str
-        Human-readable workflow name recorded in provenance metadata.
+        The function's label, which provenance metadata records.
     output_label : str or None
         The result's label, and the component of an undeclared whole-term
-        output; the workflow name by default.
+        output; the function's label by default.
     output_spec : OutputSpec or None
         The function's output declaration with the call's shared dimensions
         bound, which the outputs complete.
@@ -296,6 +296,29 @@ def _lift_result(
     the draw of every lifted argument, under its parameter's label, to the
     output's components.
 
+    Parameters
+    ----------
+    draws : _LiftDraws
+        The lifted call's drawn inputs, outputs, and weights.
+    values : mapping of str to Any
+        The call's resolved arguments, from which each lifted law's event
+        declaration is read under *include_inputs*.
+    broadcast_args : sequence of FunctionInputRef
+        The references to the lifted arguments, in the order of their fields
+        in a joint atom.
+    output_label : str
+        The result's label, and the component of an undeclared whole-term output.
+    output_spec : OutputSpec or None
+        The function's output declaration with the call's shared dimensions
+        bound, or ``None`` when the function declares no output.
+    include_inputs : bool
+        Whether the law is the joint law of the lifted inputs and the outputs.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The law labeled *output_label*, with one atom per evaluation.
+
     Raises
     ------
     ApplicabilityError
@@ -322,6 +345,26 @@ def _output_atoms(
     A declared output completes to its declaration with the shared dimensions
     bound by the outputs and any type hole filled; an undeclared one completes to
     ``OutputSpec.default`` of the outputs' spec under *output_label*.
+
+    Parameters
+    ----------
+    outputs : Any
+        The function's results, as a list of *count* results or as the one
+        stacked pytree the mapped dispatch returns.
+    count : int
+        The number of evaluations.
+    output_label : str
+        The batch's label, and the component of an undeclared output.
+    output_spec : OutputSpec or None
+        The function's output declaration with the call's shared dimensions
+        bound, or ``None`` when the function declares no output.
+
+    Returns
+    -------
+    atoms : Batch
+        The outputs, with one atom per evaluation.
+    declaration : OutputSpec
+        The completed output declaration, which records the dtypes the atoms hold.
 
     Raises
     ------
@@ -394,6 +437,29 @@ def _joint_atoms(
     complete draw at the kind its law's event declaration names, so a record
     draw stays nested even when it has one field. The output contributes the
     components *declaration* exposes.
+
+    Parameters
+    ----------
+    atoms : Batch
+        The outputs on the level ``draw``, as :func:`_output_atoms` returns them.
+    declaration : OutputSpec
+        The completed output declaration, as :func:`_output_atoms` returns it.
+    draws : _LiftDraws
+        The lifted call's evaluations, whose ``inputs`` hold each lifted
+        argument's draws.
+    values : mapping of str to Any
+        The call's resolved arguments, from which each lifted law's event
+        declaration is read.
+    broadcast_args : sequence of FunctionInputRef
+        The references to the lifted arguments, in the order of their fields.
+    output_label : str
+        The batch's label, and the component of a whole-term output whose
+        declaration names none.
+
+    Returns
+    -------
+    RecordBatch
+        The joint atoms on the level ``draw``, labeled *output_label*.
 
     Raises
     ------
@@ -601,6 +667,24 @@ def _mapped_evaluator(
     which is built here, so a caller builds the evaluator before it draws the
     lifted arguments and a route that cannot be built fails before any draw.
 
+    Parameters
+    ----------
+    func : callable
+        The function the map evaluates at each row.
+    values : dict of str to Any
+        The call's resolved arguments, whose lifted entries each row replaces.
+    broadcast_args : sequence of FunctionInputRef
+        The references to the lifted arguments.
+    function_name : str
+        The function's label, from which a Prefect task or flow takes its name.
+    workflow_kind : WorkflowKind
+        The call's orchestration mode.
+
+    Returns
+    -------
+    callable
+        The evaluator, which runs one map per call.
+
     Raises
     ------
     RuntimeError
@@ -770,6 +854,18 @@ def _enumerated_root(
     stochastic_plan: _plan.StochasticPlan, group_index: int
 ) -> EmpiricalDistribution:
     """The empirical law at the root of the enumerated group *group_index*.
+
+    Parameters
+    ----------
+    stochastic_plan : StochasticPlan
+        The lift's plan, whose runtime bindings hold each group's root.
+    group_index : int
+        The group's index in the plan's ``source_groups``.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The root the plan captured for the group.
 
     Raises
     ------

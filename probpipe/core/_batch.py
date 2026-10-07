@@ -30,16 +30,16 @@ multiplicity. A batch stores it and nothing else about its type, so
 term, :attr:`Batch.element_spec` and the level accessors are views on it, and a
 batch of values naming no kind is specified all the same.
 
-**A view is named by what it selects.** A view's name is derived from the batch
+**A view is labeled by what it selects.** A view's label is derived from the batch
 it was taken from and the positions it selects, naming the level each selection
-addresses: selecting chain 0 of ``posterior`` yields the name
+addresses: selecting chain 0 of ``posterior`` yields the label
 ``"posterior[chain=0]"``, and its draw 7 yields ``"posterior[chain=0, draw=7]"``.
 Levels selected whole are left out, and the levels that appear are listed in the
-batch's own order, so a derived name is a function of what the view selects: two
-routes to one selection read alike, and two selections never do.
+batch's own order, so a derived label is a function of what the view selects: two
+ways of indexing one selection read alike, and two selections never do.
 
-A view receives its name when selected. Renaming its levels preserves that
-name; the new level names apply when naming subsequent selections.
+A view receives its label when selected. Renaming its levels preserves that
+label, and the new level names appear in the labels of later selections.
 
 **Storage is the concrete class's business, and only storage.** This module
 owns the level algebra: the shape invariants, the naming rules, index
@@ -56,7 +56,7 @@ level needs no hook at all: it touches no axes and no elements, so
 **A selection inherits, it does not record.** Reading one position out of a
 collection computes nothing, so no provenance node claims it happened: a view
 carries the lineage of the batch it came out of, and which position it was is
-carried by its name. Element provenance is :meth:`Batch._element_at`'s own,
+carried by its label. Element provenance is :meth:`Batch._element_at`'s own,
 since only that hook knows whether it built the element or borrowed it.
 
 See design II.5.
@@ -111,7 +111,8 @@ class BatchSpec(TermSpec):
     level_names : iterable of str
         One name per level, aligned with *axis_groups*. The names are unique
         within the batch. A level name follows the rule for component names, so
-        it is any non-empty string without ``/``.
+        it is any non-empty string without ``/``. Stored as a tuple, which keeps
+        the spec hashable.
 
     Attributes
     ----------
@@ -162,11 +163,6 @@ class BatchSpec(TermSpec):
         axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
     ) -> None:
-        """Store the element spec and the multiplicity, validating the levels.
-
-        The fields are the *stored* types; the iterables accepted here are
-        normalized to tuples before assignment, so a stored spec is hashable.
-        """
         if not isinstance(element_spec, TermSpec):
             raise TypeError(
                 f"BatchSpec.element_spec must be a TermSpec, got {type(element_spec).__name__}"
@@ -373,7 +369,7 @@ class Batch[E](TrackedTerm, ABC):
 
     The batch axes are grouped into named **levels**, and indexing them returns a
     *view* — an element once the selection reaches one, a sub-batch otherwise —
-    whose name records what it selected. Index by position with ``[]``, by level
+    whose label records what it selected. Index by position with ``[]``, by level
     name with :meth:`at_levels`, and, where the elements have fields, by field
     name with ``[]`` as well; ``len`` and ``iter`` walk the leading axis.
 
@@ -419,7 +415,7 @@ class Batch[E](TrackedTerm, ABC):
         "_spec",
     )
 
-    # The three ``_root_*`` slots are the machinery of view naming: the name and
+    # The three ``_root_*`` slots derive a view's label: they hold the label and
     # spec of the batch a derivation starts from, and which of *that* batch's
     # positions this object selects — one entry per root axis, an integer where an
     # axis has been dropped and a range of positions where one is kept. ``_label``
@@ -427,12 +423,12 @@ class Batch[E](TrackedTerm, ABC):
     # reading is a function of the selection, not of the calls that reached it.
     #
     # They are never ``None``, not even on a batch nobody has indexed. Such a batch
-    # is its own root and selects all of itself, so its derived name is the name it
+    # is its own root and selects all of itself, so its derived label is the label it
     # was given, and composing a further selection needs no special case at the
     # head of the chain. Leaving them unset for a non-view would put a
     # "means everything" reading on ``None`` — the reading positional ``[]``
     # refuses — and every site that composes or renders a selection would carry a
-    # branch for it. :meth:`with_label` re-roots a view: a user-given name replaces
+    # branch for it. :meth:`with_label` re-roots a view: a user-given label replaces
     # the derivation and discards the selection accumulated before it.
 
     # -- construction -------------------------------------------------------
@@ -453,16 +449,26 @@ class Batch[E](TrackedTerm, ABC):
         storage in ``__slots__``; this class declares the batch's own state and
         the identity slots it hosts.
 
-        The batch becomes the **root** of the names its views derive: it selects
-        all of itself, so its derived name is its own. A view built by
+        The batch becomes the **root** of the labels its views derive: it selects
+        all of itself, so its derived label is its own. A view built by
         :meth:`at_levels` or ``[]`` is re-pointed at its parent's root
-        afterwards, which is what makes a derived name independent of the route
-        taken to it.
+        afterwards, so a derived label depends only on what the view selects.
+
+        Parameters
+        ----------
+        spec : BatchSpec
+            The batch's type, whose axis sizes must all be integers.
+        name : str
+            The batch's label, from which its views derive theirs.
+        provenance : Provenance, optional
+            How this batch was produced.
 
         Raises
         ------
         TypeError
             If *spec* is not a :class:`BatchSpec`.
+        ValueError
+            If an axis size of *spec* is an unbound symbolic dimension.
         """
         if not isinstance(spec, BatchSpec):
             raise TypeError(f"a Batch is specified by a BatchSpec, got {type(spec).__name__}")
@@ -546,7 +552,7 @@ class Batch[E](TrackedTerm, ABC):
         -------
         Self
             A shallow copy over the same axes and elements, specified over the new
-            level names, preserving its own name.
+            level names, preserving its own label.
 
         Raises
         ------
@@ -556,7 +562,7 @@ class Batch[E](TrackedTerm, ABC):
             If a level is renamed twice with different names, or a new name is
             empty, contains ``/``, collides with a level that is being kept, is
             the target of two renames, or belongs to a dropped root level still
-            used to name subsequent selections from a view.
+            used to label subsequent selections from a view.
         TypeError
             If a new name is not a string.
 
@@ -676,6 +682,12 @@ class Batch[E](TrackedTerm, ABC):
         ``batch["outer", "a"]`` a path of fields, which a batch whose elements have
         fields answers and others refuse.
 
+        Parameters
+        ----------
+        key : int, slice, str, or tuple
+            An integer, a slice, or a tuple of them addresses the batch axes, and a
+            string or a tuple of strings addresses a field path.
+
         Returns
         -------
         E or Self or Any
@@ -744,6 +756,11 @@ class Batch[E](TrackedTerm, ABC):
         level name is addressable as a keyword — including one that happens to
         spell a parameter of this method.
 
+        Parameters
+        ----------
+        **levels : int, slice, None, or tuple
+            One indexer per named level, keyed by the level's name.
+
         Returns
         -------
         E or Self
@@ -807,7 +824,7 @@ class Batch[E](TrackedTerm, ABC):
 
     @abstractmethod
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The single element at a fully-integer positional *index*, as a view named *name*.
+        """The single element at a fully-integer positional *index*, as a view labeled *name*.
 
         *name* is the identity this class derived for the element view. A batch
         that *materializes* an element, as columnar storage builds a row, builds
@@ -817,7 +834,7 @@ class Batch[E](TrackedTerm, ABC):
         a stored tracked term that shares its representation, or the stored
         value wrapped as a term of the element kind. That view's provenance
         records this batch and the stored term, and the stored object keeps its
-        own name and provenance, since the caller may still hold it.
+        own label and provenance, since the caller may still hold it.
 
         Provenance is this hook's own, because only it knows whether the element
         was built or borrowed.
@@ -831,22 +848,22 @@ class Batch[E](TrackedTerm, ABC):
         axis being dropped, or a slice selecting the positions a kept axis spans,
         **in the order the view presents them** — a descending slice for a
         reversed selection, which storage must honor rather than re-sort, since
-        the view's derived names are stated in that order.
+        the view's derived labels are stated in that order.
 
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
         *name* is the derived identity. A subclass
-        stores both as given rather than recomputing either; the names a further
-        view derives from are re-pointed at this view's own root afterwards.
+        stores both as given rather than recomputing either; the root slots a
+        further view derives its label from are re-pointed at this view's own
+        root afterwards.
 
         **A view, not a copy.** The result shares this batch's storage wherever
         the storage affords it — a numpy or JAX slice, or a list re-indexed over
         the same objects — so that a batch stays the single source of its elements
         and a selection does not pay for what it selects. Selecting the whole batch
         reaches this hook like any other selection, which costs nothing once the
-        result is a view; it is deliberately not short-circuited to ``self``, since
-        the view carries a name and provenance of its own and ``self`` already has
-        both.
+        result is a view; it is not short-circuited to ``self``, since the view
+        carries a label and provenance of its own and ``self`` already has both.
         """
 
     def _inherit_provenance[T](self, produced: T) -> T:
@@ -855,8 +872,8 @@ class Batch[E](TrackedTerm, ABC):
         Selecting is not a step in a computation. Nothing is computed by reading
         one position out of a collection, so no node records the reading, and
         what a selection carries is the lineage of the batch it came out of.
-        *Which* position was selected is carried by the name, which states it
-        exactly — ``posterior[chain=0, draw=7]`` — so nothing is lost by not
+        *Which* position was selected is carried by the label, which states it
+        in full, as ``posterior[chain=0, draw=7]`` does. Nothing is lost by not
         recording it twice.
 
         This class applies it to every sub-batch view, which it manufactures. An
@@ -873,7 +890,7 @@ class Batch[E](TrackedTerm, ABC):
         its batch's, and ``provenance.parents`` does not point at the batch. That
         is the intended reading of "selection is not an event" — there is no edge
         because there was no computation — but it does mean a lineage walk shows
-        no selection step, and only the name says a view is one.
+        no selection step, and only the label says a view is one.
         """
         if self._provenance is None or not isinstance(produced, TrackedTerm):
             return produced
@@ -950,9 +967,9 @@ class Batch[E](TrackedTerm, ABC):
         Each entry of :attr:`_root_selection` is one root axis: an integer for an
         axis already dropped, or the ``range`` of root positions a kept axis
         still spans, in the order the axis presents them. Composing in root
-        coordinates is what makes a derived name a function of the object rather
-        than of the route to it — two routes to the same selection compose to
-        the same tuple.
+        coordinates makes a derived label a function of the object rather than of
+        the indexing that produced it, so two ways of indexing one selection
+        compose to the same tuple.
 
         A ``range`` is the resolved form throughout: it carries the selected
         positions and their order without a ``slice``'s from-the-end bounds, so
@@ -1012,7 +1029,7 @@ class Batch[E](TrackedTerm, ABC):
         guard, so nothing is assumed about a subclass's constructor.
 
         The root's level names are updated for subsequent indexing, while the
-        copy keeps its current name. The copy carries no provenance beyond the
+        copy keeps its current label. The copy carries no provenance beyond the
         rename: the record of how the batch it was renamed from arose belongs to
         that batch.
 
@@ -1116,6 +1133,19 @@ def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | 
     A constructor that infers its element spec reads the event axes as the axes
     past these, so this count fixes where the batch axes end.
 
+    Parameters
+    ----------
+    names : tuple of str
+        The level names, of which only the count is read.
+    axes_per_level : tuple or None
+        The axis count of each level, outermost first; ``None`` gives each level one
+        axis.
+
+    Returns
+    -------
+    int
+        The number of batch axes, which lead each stored array.
+
     Raises
     ------
     TypeError
@@ -1172,7 +1202,7 @@ def _normalize_indexer(
 
     An omitted axis and ``:`` both mean the whole axis. An integer is resolved
     against *size* (so a negative index names the same position as its
-    non-negative twin, and both derive the same name); a slice is resolved to the
+    non-negative twin, and both derive the same label); a slice is resolved to the
     positions it selects, in order. A ``bool`` is rejected rather than read as
     ``0`` / ``1``, since a batch axis has no mask indexing for it to mean, and a
     bare ``None`` is rejected here because :meth:`Batch.at_levels`, the one place
@@ -1243,12 +1273,12 @@ def _location(axis: int, shape: tuple[int, ...], where: str | None) -> str:
 def _bounds(selected: range) -> tuple[int, int | None, int]:
     """The first position, the bound after the last, and the step of *selected*.
 
-    One form per set of positions, so a name stays a function of the selection:
-    the bounds are pinned to the first and last position actually selected, and a
-    single position takes the ascending unit-step form whatever step reached it,
+    One form per set of positions, so a label stays a function of the selection:
+    the bounds are set at the first and last position actually selected, and a
+    single position takes the ascending unit-step form whatever step selected it,
     since a step spans nothing there. The bound is ``None`` where a descending
-    selection runs down to position 0, since no integer sits before it: that is
-    the one case a stop cannot state, and it is why both the rendered name and
+    selection runs down to position 0, since no integer precedes it: that is
+    the one case a stop cannot state, and it is why both the rendered label and
     the storage slice omit it there.
     """
     start = selected[0]
@@ -1287,7 +1317,7 @@ def _render_axis(entry: int | range) -> str:
     """One axis of a selection: its position, or the positions it spans.
 
     A span is rendered so that reading it back selects the same positions in the
-    same order, which is what lets a derived name be read as an index.
+    same order, so a derived label reads back as an index.
     """
     if isinstance(entry, int):
         return str(entry)

@@ -35,6 +35,13 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     The mixing distribution's produced slots meet the kernel's given slots by
     name.
 
+    Parameters
+    ----------
+    K : ConditionalDistribution
+        The kernel ``K(s, ·)``, which draws ``T`` given ``S = s``.
+    mixing : Distribution
+        The law ``μ`` of ``S``.
+
     Returns
     -------
     Distribution

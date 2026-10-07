@@ -25,8 +25,8 @@ class OpaqueBatch(_ObjectBatch[Any]):
     Parameters
     ----------
     label : str
-        The batch's name. Required, as it is for every batch: a batch is a value a
-        caller holds, and a name derived from its class says nothing about what it
+        The batch's label. Required, as it is for every batch: a batch is a value a
+        caller holds, and a label derived from its class says nothing about what it
         holds.
     elements : numpy.ndarray or iterable
         The objects, as an object array of any shape or a flat iterable.
@@ -70,11 +70,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
     over it.
 
     This batch **stores** its elements, and ``batch[i]`` is a view of the
-    stored object: an :class:`~probpipe.Opaque` holding it under the name
+    stored object: an :class:`~probpipe.Opaque` holding it under the label
     derived from the position, or, for a stored tracked term, a copy of that
-    term under the derived name sharing its representation. Its provenance
+    term under the derived label that shares its representation. Its provenance
     records the batch and the stored term. A sub-batch is a view and takes a
-    derived name as any view does.
+    derived label as any view does.
 
     Examples
     --------
@@ -124,7 +124,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
         return cast(OpaqueSpec, self._spec.element_spec)
 
     def _wrap_element(self, value: Any, name: str) -> Opaque:
-        """The stored *value* as an :class:`~probpipe.Opaque` named *name*."""
+        """The stored *value* as an :class:`~probpipe.Opaque` labeled *name*."""
         return Opaque(name, value, spec=self.element_spec)
 
 

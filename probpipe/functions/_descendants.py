@@ -285,6 +285,21 @@ def _capture_element(
 ) -> CapturedStochasticConsumer:
     """A batch element's capture, which is its stored law's, since the element shares its draws.
 
+    Parameters
+    ----------
+    element : Distribution
+        The element of a batch of laws.
+    source : Distribution
+        The element's stored law, as ``_element_source`` returns it.
+    session : _StochasticCaptureSession
+        The call-local capture session, which captures *source* and whose
+        ``active_descendants`` detect a cycle.
+
+    Returns
+    -------
+    CapturedStochasticConsumer
+        The capture of *source*, which the session caches.
+
     Raises
     ------
     TypeError
@@ -310,6 +325,20 @@ def _capture_field_view(
     A view of one path records the path's segments, and a view of a root needs
     no descriptor beyond them. A selection of several paths records them in its
     descriptor.
+
+    Parameters
+    ----------
+    view : FieldView
+        The view of one path of its parent's event, or of a selection of
+        several paths.
+    session : _StochasticCaptureSession
+        The call-local capture session, which captures the parent and whose
+        ``active_descendants`` detect a cycle.
+
+    Returns
+    -------
+    CapturedStochasticConsumer
+        The capture with the parent's root and sampler.
 
     Raises
     ------
@@ -354,6 +383,24 @@ def _capture_descendant(
     session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
     """A registered descendant's capture: its ancestor's root, then its map.
+
+    Parameters
+    ----------
+    value : Distribution
+        The descendant law.
+    registered : type
+        The registered class nearest *value*'s class, whose qualified name the
+        descriptor records.
+    descend : callable
+        The rule registered for *registered*, which gives *value*'s descent.
+    session : _StochasticCaptureSession
+        The call-local capture session, which captures the ancestor and whose
+        ``active_descendants`` detect a cycle.
+
+    Returns
+    -------
+    CapturedStochasticConsumer
+        The capture with the ancestor's root, sampler, and record path.
 
     Raises
     ------

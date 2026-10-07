@@ -176,6 +176,16 @@ def _planned_statistics(test_fns: Any) -> tuple[tuple[str, Callable], ...]:
     A statistic is named by its ``__name__``, or by its ``repr`` when it has
     none.
 
+    Parameters
+    ----------
+    test_fns : callable or iterable of callable
+        One statistic, or an iterable of statistics.
+
+    Returns
+    -------
+    tuple of tuple of str and callable
+        One ``(name, statistic)`` pair per statistic, in the order given.
+
     Raises
     ------
     TypeError
@@ -214,6 +224,20 @@ def _predictive_joint(
     kernel: ConditionalDistribution, law: Distribution, operation: str
 ) -> Distribution:
     """The composition ``kernel * law``, from which a replication is drawn.
+
+    Parameters
+    ----------
+    kernel : ConditionalDistribution
+        The law of the observations given the parameters.
+    law : Distribution
+        A law over the kernel's given slots, such as a posterior or a prior.
+    operation : str
+        The name of the calling function, which each error names.
+
+    Returns
+    -------
+    Distribution
+        The joint law of the parameters and the observations.
 
     Raises
     ------
@@ -321,7 +345,7 @@ def _record_check_in_annotations(
     Mutates ``distribution._annotations`` in place. This is the
     documented exception to ``Distribution`` immutability (see
     :attr:`Distribution.annotations` and design II.4) — diagnostic ops
-    attach results under named groups rather than returning renamed
+    attach results under named groups rather than returning relabeled
     clones, which would break source/identity tracking.
 
     Encoding:

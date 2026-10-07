@@ -176,6 +176,17 @@ def _flow_log_density(kernel: _AmortizedPosterior, observation: np.ndarray, valu
     ``approximator.log_prob`` does, adding the standardization's
     log-Jacobian, and each bijector's log-Jacobian at the point is subtracted.
 
+    Parameters
+    ----------
+    kernel : _AmortizedPosterior
+        The amortized posterior, whose trained network and bijectors score the
+        point.
+    observation : numpy.ndarray
+        The flattened observation the network conditions on.
+    value : Any
+        The parameters, with any leading axes: a record or nested mapping of
+        the prior's leaves, or one array.
+
     Returns
     -------
     Array
@@ -328,6 +339,17 @@ class _AmortizedPosterior(
     def _observation(self, given: Any) -> np.ndarray:
         """The observation *given* binds, flattened to the size the network was trained on.
 
+        Parameters
+        ----------
+        given : Any
+            The observation, or a mapping or ``Record`` that holds it at the
+            observation slot.
+
+        Returns
+        -------
+        numpy.ndarray
+            A one-dimensional ``float32`` array.
+
         Raises
         ------
         KeyError
@@ -393,6 +415,19 @@ class _AmortizedPosterior(
         method options. Each draw of the law runs the network at the
         observation, seeded by the draw's key, so ``workflow_run(seed=...)``
         fixes the draws.
+
+        Parameters
+        ----------
+        given : Any
+            The value the call conditions on.
+        **kwargs : Any
+            The call's ``method_options``.
+
+        Returns
+        -------
+        Distribution
+            The law, whose provenance names the kernel and the method
+            ``bayesflow_<method>``.
 
         Raises
         ------
@@ -519,8 +554,10 @@ def learn_amortized_posterior(
         network (still reported as ``method="npe"``), which gives no density.
     num_simulations : int
         Number of ``(theta, y)`` pairs simulated offline for training.
-    epochs, batch_size : int
-        keras training schedule.
+    epochs : int
+        Number of keras training passes over the simulations.
+    batch_size : int
+        Number of simulations in each keras training batch.
     sim_backend : {"jax", "sequential"}
         How the offline simulation is executed. ``"jax"`` (default) vmaps the
         simulator and requires it to be JAX-traceable; ``"sequential"`` runs an

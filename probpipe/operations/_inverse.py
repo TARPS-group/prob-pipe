@@ -36,10 +36,16 @@ def _log_det_jacobian_result(f: Any, x: Any) -> OutputSpec:
 def inverse(f: Any):
     """The inverse of the map *f*, itself invertible with *f* as its inverse.
 
+    Parameters
+    ----------
+    f : Function
+        A map that claims ``SupportsInverse`` and whose guard admits the
+        inverse, as ``is_invertible`` reads them.
+
     Returns
     -------
     Function
-        The map ``y ↦ f⁻¹(y)``, whose name derives from *f*'s.
+        The map ``y ↦ f⁻¹(y)``, whose label derives from *f*'s.
 
     Raises
     ------
@@ -53,6 +59,13 @@ def inverse(f: Any):
 @operation(result=_log_det_jacobian_result, roles={"f": (FunctionSpec,)})
 def log_det_jacobian(f: Any, x: Any):
     """The log-determinant of the Jacobian of the map *f* at *x*.
+
+    Parameters
+    ----------
+    f : Function
+        The map, whose ``_log_det_jacobian`` computes the result.
+    x : Any
+        A point of the map's domain.
 
     Returns
     -------

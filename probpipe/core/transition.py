@@ -138,7 +138,7 @@ def iterate[S](
 
 
 def _step_fn_name(step_fn: Callable) -> str:
-    """Extract a human-readable name from a step function."""
+    """A step function's label, or a plain callable's Python name."""
     if isinstance(step_fn, Function):
         return step_fn._label
     return getattr(step_fn, "__name__", type(step_fn).__name__)

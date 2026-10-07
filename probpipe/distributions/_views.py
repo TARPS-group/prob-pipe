@@ -93,6 +93,18 @@ def _node_at(declaration: OutputSpec, path: str) -> TermSpec:
     A path starts with a component: an exposed record's paths are its record's,
     and a whole term's are its component followed by the paths within its term.
 
+    Parameters
+    ----------
+    declaration : OutputSpec
+        The output declaration to read, such as a law's event declaration.
+    path : str
+        A path of *declaration*.
+
+    Returns
+    -------
+    TermSpec
+        The spec of a leaf, or the ``RecordSpec`` of an interior node.
+
     Raises
     ------
     KeyError
@@ -124,6 +136,18 @@ def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> O
 
     One path gives the node whole under a component named by its final segment,
     and a tuple of paths gives an exposed record of the nodes, in order.
+
+    Parameters
+    ----------
+    declaration : OutputSpec
+        The parent law's event declaration.
+    path : str or tuple of str
+        A path of *declaration*, or a tuple of paths to select jointly.
+
+    Returns
+    -------
+    OutputSpec
+        A whole-term declaration for one path, and an exposed record for a tuple.
 
     Raises
     ------
@@ -170,6 +194,18 @@ def _coordinate_range(declaration: OutputSpec, path: str) -> range:
 
     The flat vector lays out the array leaves in canonical order, depth first
     and in insertion order, so a node's coordinates are one contiguous range.
+
+    Parameters
+    ----------
+    declaration : OutputSpec
+        A numeric event declaration.
+    path : str
+        A path of *declaration*.
+
+    Returns
+    -------
+    range
+        The indices from the node's first coordinate to one past its last.
 
     Raises
     ------
@@ -220,6 +256,18 @@ def _extract(value: Any, segments: tuple[str, ...]) -> Any:
     *value* is in raw form, so a value with paths is a nested mapping of raw
     leaves, which each segment indexes. With no segments *value* is returned
     whole.
+
+    Parameters
+    ----------
+    value : Any
+        A raw value shaped like a draw, such as a draw or a mean.
+    segments : tuple of str
+        The segments of the node's path below the top of *value*.
+
+    Returns
+    -------
+    Any
+        The raw node, with any leading batch axes of *value* kept on its leaves.
 
     Raises
     ------
@@ -356,6 +404,16 @@ def _view_cov(self: FieldView) -> LinOp:
     parent's order, and the product stays lazy. A parent without a covariance
     gives the covariance of its exact marginal at the path.
 
+    Parameters
+    ----------
+    self : FieldView
+        The view whose capability subclass installs this function as ``_cov``.
+
+    Returns
+    -------
+    LinOp
+        A ``(k, k)`` operator, where ``k`` is the size of the view's flat vector.
+
     Raises
     ------
     TypeError
@@ -391,6 +449,19 @@ def _view_expectation(self: FieldView, f: Callable[[Any], Array]) -> Array:
 def _view_log_prob(self: FieldView, value: Any) -> Array:
     """The log-density of the parent's detached marginal at the path.
 
+    Parameters
+    ----------
+    self : FieldView
+        The view whose capability subclass installs this function as
+        ``_log_prob``.
+    value : Any
+        A value of the view's event, or a batch of them.
+
+    Returns
+    -------
+    Array
+        The marginal's log-density at *value*.
+
     Raises
     ------
     TypeError
@@ -406,6 +477,19 @@ def _view_log_prob(self: FieldView, value: Any) -> Array:
 
 def _view_unnormalized_log_prob(self: FieldView, value: Any) -> Array:
     """The unnormalized log-density of the parent's detached marginal at the path.
+
+    Parameters
+    ----------
+    self : FieldView
+        The view whose capability subclass installs this function as
+        ``_unnormalized_log_prob``.
+    value : Any
+        A value of the view's event, or a batch of them.
+
+    Returns
+    -------
+    Array
+        The marginal's unnormalized log-density at *value*.
 
     Raises
     ------
@@ -433,6 +517,19 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     *path* is an event path of the view, or a tuple of them, and the result's
     components are named by the paths of the view. The result keeps the view's
     label.
+
+    Parameters
+    ----------
+    self : FieldView
+        The view whose capability subclass installs this function as
+        ``_marginal``.
+    path : str or tuple of str
+        An event path of the view, or a tuple of them.
+
+    Returns
+    -------
+    Distribution
+        The marginal, which holds no reference to the parent.
 
     Raises
     ------
@@ -473,6 +570,19 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
 def _view_marginal_capabilities(self: FieldView, path: str | tuple[str, ...]) -> frozenset[type]:
     """The parent's report of its marginal at the parent's paths for *path*, paths of the view.
 
+    Parameters
+    ----------
+    self : FieldView
+        The view whose capability subclass installs this function as
+        ``_marginal_capabilities``.
+    path : str or tuple of str
+        An event path of the view, or a tuple of them.
+
+    Returns
+    -------
+    frozenset of type
+        The capability protocols the parent reports for that marginal.
+
     Raises
     ------
     KeyError
@@ -491,6 +601,21 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
     *given* is keyed by event paths of the view. The parent is conditioned at
     the parent's paths for them, and the result is the view of the conditioned
     parent at each of the view's nodes that keeps a field unconditioned.
+
+    Parameters
+    ----------
+    self : FieldView
+        The view whose capability subclass installs this function as
+        ``_condition_on``.
+    given : Record or Mapping[str, Any]
+        The observed values, keyed by event paths of the view.
+    **options : Any
+        Options passed to the parent's ``_condition_on``.
+
+    Returns
+    -------
+    Distribution
+        The view of the conditioned parent, under the view's component names.
 
     Raises
     ------
@@ -773,6 +898,16 @@ class FieldView(Distribution):
     def _parent_paths(self, paths: Sequence[str]) -> list[str]:
         """The parent's path for each of *paths*, event paths of this view.
 
+        Parameters
+        ----------
+        paths : sequence of str
+            Paths that each start with a component of this view.
+
+        Returns
+        -------
+        list of str
+            One parent path per entry of *paths*, in the same order.
+
         Raises
         ------
         KeyError
@@ -812,6 +947,11 @@ class FieldView(Distribution):
     def _coordinates(self) -> list[int]:
         """The view's coordinates of the parent's flat vector, in the view's order.
 
+        Returns
+        -------
+        list of int
+            The indices into the parent's flat vector, component by component.
+
         Raises
         ------
         TypeError
@@ -829,6 +969,16 @@ class FieldView(Distribution):
         A path of the view starts with its component, so ``d["a"]["a/b/c"]`` is
         ``d["a/b/c"]``. A tuple of paths of the view selects several nodes, as
         the parent's view at the tuple of their paths, named by the view's paths.
+
+        Parameters
+        ----------
+        key : str or tuple of str
+            An event path of the view, or a tuple of them.
+
+        Returns
+        -------
+        Distribution
+            This view itself, or a law that reads the parent.
 
         Raises
         ------
@@ -853,7 +1003,7 @@ class FieldView(Distribution):
         return _named_as(selection, [_final_segment(each) for each in key])
 
     def raw(self) -> Distribution:
-        """The parent's detached marginal at the path, under the view's name.
+        """The parent's detached marginal at the path, under the view's label.
 
         Returns
         -------
@@ -894,7 +1044,7 @@ class FieldView(Distribution):
         Returns
         -------
         FieldView
-            The view, under the same name, of the parent with the sizes bound.
+            The view, under the same label, of the parent with the sizes bound.
 
         Raises
         ------
@@ -919,13 +1069,13 @@ class FieldView(Distribution):
         Returns
         -------
         FieldView
-            The view, under the same name, of the parent with the dimensions
+            The view, under the same label, of the parent with the dimensions
             renamed.
         """
         return self._viewed(self._parent.with_dim_names(**names))
 
     def _viewed(self, parent: Distribution) -> FieldView:
-        """The view of *parent* at this view's path, under this view's name."""
+        """The view of *parent* at this view's path, under this view's label."""
         view = FieldView(parent, self._path)
         return view if view.label == self.label else view.with_label(self.label)
 
@@ -1265,6 +1415,22 @@ def _original_nodes(
 ) -> list[str]:
     """The node of the parent *parent* that each of *paths*, paths of *declaration*, holds.
 
+    Parameters
+    ----------
+    event : _EventRenames
+        The renames from the parent's declaration to *declaration*.
+    declaration : OutputSpec
+        The renamed event declaration.
+    paths : sequence of str
+        Paths of *declaration*.
+    parent : str
+        The parent's label, which error messages name.
+
+    Returns
+    -------
+    list of str
+        The parent's path of each held node, in the order of *paths*.
+
     Raises
     ------
     KeyError
@@ -1371,6 +1537,19 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
 
     The marginal keeps this law's label.
 
+    Parameters
+    ----------
+    self : _RenamedDistribution
+        The renamed law whose capability subclass installs this function as
+        ``_marginal``.
+    path : str or tuple of str
+        An event path of this law, or a tuple of them.
+
+    Returns
+    -------
+    Distribution
+        The marginal, which holds no reference to the parent.
+
     Raises
     ------
     KeyError
@@ -1417,6 +1596,19 @@ def _renamed_marginal_capabilities(
     has no exact marginal here, which the marginal guard reports, so its report
     claims nothing and a view there claims no density.
 
+    Parameters
+    ----------
+    self : _RenamedDistribution
+        The renamed law whose capability subclass installs this function as
+        ``_marginal_capabilities``.
+    path : str or tuple of str
+        An event path of this law, or a tuple of them.
+
+    Returns
+    -------
+    frozenset of type
+        The capability protocols the parent reports for that marginal.
+
     Raises
     ------
     KeyError
@@ -1438,6 +1630,21 @@ def _renamed_condition_on(
     self: _RenamedDistribution, given: Any, /, **options: Any
 ) -> Distribution:
     """The parent conditioned on *given* under the original names, then renamed.
+
+    Parameters
+    ----------
+    self : _RenamedDistribution
+        The renamed law whose capability subclass installs this function as
+        ``_condition_on``.
+    given : Record or Mapping[str, Any]
+        The observed values, keyed by event paths of this law.
+    **options : Any
+        Options passed to the parent's ``_condition_on``.
+
+    Returns
+    -------
+    Distribution
+        The conditioned parent, with each remaining field at its new path.
 
     Raises
     ------
@@ -1577,6 +1784,16 @@ class _RenamedDistribution(Distribution):
     def _originals(self, paths: Sequence[str]) -> list[str]:
         """The parent's node for each of *paths*, event paths of this law.
 
+        Parameters
+        ----------
+        paths : sequence of str
+            Paths that each start with a component of this law.
+
+        Returns
+        -------
+        list of str
+            One parent path per entry of *paths*, in the same order.
+
         Raises
         ------
         KeyError
@@ -1670,7 +1887,7 @@ def _renamed_through_factors(
     """*joint* renamed by *pairs* through its factors, or None when the factors cannot carry it.
 
     The result is the factored joint of the renamed factors over the same
-    graph, under the joint's name. Its components follow the factors, so a
+    graph, under the joint's label. Its components follow the factors, so a
     moved node joins its factor's components rather than the end of the joint's.
     The factors cannot carry a rename that changes a factor's packaging, as
     moving a whole term's component into a group does, that places components of
@@ -1688,6 +1905,12 @@ def _renamed_through_factors(
     event_spec : OutputSpec
         The joint's event declaration with the renames applied, whose leaves
         the result must declare.
+
+    Returns
+    -------
+    FactoredDistribution or FactoredConditionalDistribution or None
+        The joint of the renamed factors, whose provenance records *pairs*, or
+        ``None``.
     """
     graph: _FactorGraph = joint._graph
     packaging: dict[str, str] = {}
@@ -1972,6 +2195,18 @@ def _leaf_values(given_spec: InputSpec, given: Any) -> dict[str, Any]:
     A key of *given* is a slot or a path into a structured slot, and the value
     of a structured node is a record or a mapping of its fields.
 
+    Parameters
+    ----------
+    given_spec : InputSpec
+        The given side whose paths the keys of *given* are.
+    given : Record or Mapping[str, Any]
+        Values keyed by slot or by a path into a structured slot.
+
+    Returns
+    -------
+    dict[str, Any]
+        One entry per leaf that *given* binds, in the order *given* lists them.
+
     Raises
     ------
     KeyError
@@ -2074,6 +2309,22 @@ def _renamed_conditional_marginal(
     self: _RenamedConditionalDistribution, given: Any, path: str | tuple[str, ...]
 ) -> Distribution:
     """The parent's marginal at the translated given and the original nodes, arranged by *path*.
+
+    Parameters
+    ----------
+    self : _RenamedConditionalDistribution
+        The renamed kernel whose capability subclass installs this function as
+        ``_conditional_marginal``.
+    given : Record or Mapping[str, Any]
+        A value of every slot of this kernel, keyed by slot or by a path into a
+        structured slot.
+    path : str or tuple of str
+        An event path of this kernel, or a tuple of them.
+
+    Returns
+    -------
+    Distribution
+        The marginal, which holds no reference to the parent.
 
     Raises
     ------
@@ -2232,6 +2483,23 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
     def _translated(self, given: Any) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
         """The parent slots *given* completes, the parent leaves left pending, and the slots bound.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some slots of this kernel, keyed by slot or by a path into a
+            structured slot.
+
+        Returns
+        -------
+        complete : dict[str, Any]
+            The value of each parent slot whose leaves are all bound, keyed by
+            slot.
+        pending : dict[str, Any]
+            The values bound so far at leaves of the other parent slots, keyed by
+            the parent's leaf paths.
+        slots : set of str
+            The slots of this kernel that *given* binds.
+
         Raises
         ------
         KeyError
@@ -2275,6 +2543,16 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
 
     def _parent_given(self, given: Any) -> dict[str, Any]:
         """*given*, a value for every slot of this kernel, translated to the parent's slots.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values keyed by slot or by a path into a structured slot.
+
+        Returns
+        -------
+        dict[str, Any]
+            The value of each slot of the parent, keyed by the parent's slot name.
 
         Raises
         ------

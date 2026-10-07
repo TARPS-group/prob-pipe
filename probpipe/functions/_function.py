@@ -151,8 +151,19 @@ def function(
     label : str or None
         The function label, defaulting to the decorated callable's ``__name__``.
         A callable with none, such as a ``functools.partial``, needs it.
-    input_spec, output_spec, output_label, differentiable, bind, module
-        The declarations and construction bindings :class:`Function` takes.
+    input_spec : InputSpec or Mapping[str, TermSpec] or None
+        The authoritative input slots, as :class:`Function` takes them.
+    output_spec : OutputSpec or TermSpec or None
+        The authoritative result declaration, as :class:`Function` takes it.
+    output_label : str or None
+        The result label, defaulting to the function label.
+    differentiable : NumericSpec or None
+        The differentiability claim, as :class:`Function` takes it.
+    bind : Mapping or None
+        Construction-time values of the wrapped callable's arguments, which
+        call arguments override.
+    module : object or None
+        The experimental shared-input container consulted for missing arguments.
     **controls : Any
         The engine's controls, which :class:`Function` lists.
 
@@ -300,7 +311,7 @@ def _call_function_in_context(
 def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     """The label of the result of a call of *function* on the arguments *values* (V.10).
 
-    A function's result takes its output name, and an operation's result the
+    A function's result takes its output label, and an operation's result the
     label its operands give it (II.4).
     """
     derive = getattr(function, "_derived_label", None)
@@ -336,6 +347,23 @@ def _realized_point(
     The point is planned, its route selected and run, and the raw result
     validated against the point's declaration, wrapped at the kind it names,
     and labeled as the call's result is.
+
+    Parameters
+    ----------
+    function : Function
+        The Function realized by routes, which plans the point.
+    values : Mapping of str to Any
+        The point's arguments, by parameter name.
+    controls : Mapping of str to Any
+        The call's resolved controls, which planning and selection read.
+    candidates : tuple
+        The Function's routes, in selection order.
+
+    Returns
+    -------
+    TrackedTerm
+        The result term, which takes the provenance of a route result that
+        records one.
 
     Raises
     ------
@@ -977,6 +1005,25 @@ def _resolve_route(
     as the fixed arguments; *rule_method* names a rule and ``exact_only``
     excludes the approximate ones.
 
+    Parameters
+    ----------
+    function : Function
+        The function whose call the route realizes.
+    values : Mapping of str to Any
+        The call's admitted arguments, by parameter name.
+    broadcast_plan : BroadcastPlan
+        The call's lift, whose regime and first lifted argument the selection
+        reads.
+    rule_method : str or None
+        The evaluation rule the ``method`` control names, or ``None`` to select
+        the first feasible rule by rank.
+
+    Returns
+    -------
+    _Route
+        The selected route, which for a lifted call holds the rule and the
+        arguments it receives.
+
     Raises
     ------
     ResolutionError
@@ -1057,6 +1104,20 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     conversion constructs, selection waits on that law and is unresolved. A
     Function realized by routes is checked at each point of the call, as the
     engine realizes it, once its lifted call has an evaluation rule.
+
+    Parameters
+    ----------
+    function : Function
+        The function whose call is checked.
+    args : tuple
+        The call's positional arguments.
+    kwargs : dict of str to Any
+        The call's keyword arguments.
+
+    Returns
+    -------
+    CallReport
+        The report :meth:`Function.check` returns.
 
     Raises
     ------

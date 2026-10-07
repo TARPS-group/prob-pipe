@@ -318,10 +318,15 @@ def add_loo(
         advanced override; the normal user-facing workflow is
         ``add_loo(posterior)``.
 
-    model, data : optional
-        Inputs used to compute pointwise log likelihoods when
-        ``_annotations/arviz/log_likelihood`` is missing. This keeps LOO owned by
-        ``add_loo`` instead of requiring a separate public precomputation step.
+    model : Distribution, optional
+        The factored joint the posterior was conditioned from, such as
+        ``likelihood * prior``. When ``_annotations/arviz/log_likelihood`` is
+        missing, ``add_loo`` computes the pointwise log likelihoods from *model*
+        and *data*, and needs no separate precomputation step.
+
+    data : Record or Mapping, optional
+        The observed values the posterior was conditioned on, keyed by field,
+        at which *model* scores each observation.
 
     var_name : str
         Variable name to use when converting raw log-likelihood arrays into an

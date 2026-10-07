@@ -109,6 +109,15 @@ def _probe(
 ) -> tuple[Any, Feasibility | None, list[tuple[Any, Feasibility]]]:
     """Probe *candidates* in selection order until one is feasible or unresolved.
 
+    Parameters
+    ----------
+    candidates : sequence
+        The routes, in selection order.
+    call : Any
+        The point's call object, which each probe reads.
+    result : OutputSpec or None
+        The point's result declaration.
+
     Returns
     -------
     tuple
@@ -145,6 +154,26 @@ def selected(
 ) -> tuple[Any, Feasibility]:
     """The candidate that realizes one point of a call, and its report.
 
+    Parameters
+    ----------
+    name : str
+        The Function's label, which the messages name.
+    controls : Mapping of str to Any
+        The call's resolved controls, whose ``exact_only`` the message reports.
+    candidates : sequence
+        The Function's routes, in selection order.
+    call : Any
+        The point's call object, which each probe reads.
+    result : OutputSpec or None
+        The point's result declaration.
+
+    Returns
+    -------
+    candidate : Any
+        The selected candidate.
+    report : Feasibility
+        The candidate's feasible report, which its ``run`` receives.
+
     Raises
     ------
     ResolutionError
@@ -174,6 +203,25 @@ def check_point(
 
     Without *select* the point is planned and no route is selected, as for an
     empty sweep, which runs none.
+
+    Parameters
+    ----------
+    function : Function
+        The Function realized by routes, which plans the point.
+    values : Mapping of str to Any
+        The point's arguments, by parameter name.
+    controls : Mapping of str to Any
+        The call's resolved controls.
+    candidates : sequence
+        The Function's routes, in selection order.
+    select : bool
+        Whether to probe the candidates; ``True`` unless the point runs no route.
+
+    Returns
+    -------
+    PointReport
+        The point's feasibility, with its planned result declaration and its
+        deferred checks.
 
     Raises
     ------

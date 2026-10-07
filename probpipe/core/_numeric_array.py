@@ -41,12 +41,12 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     Parameters
     ----------
     label : str
-        The value's name, **required**, as a :class:`~probpipe.Record`'s and an
+        The value's label, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
-        so the name is what says which one it is; a class-name default would name
+        so the label is what says which one it is; a class-name default would label
         every array in a pipeline alike.
     value : array-like
-        The array this names, stored verbatim in its native form: a bare array,
+        The array this term holds, stored verbatim in its native form: a bare array,
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
@@ -82,7 +82,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     arrays.
 
     An operator returns a ``NumericArray`` holding the stored value's result,
-    named by the expression in evaluation order, such as ``draw + 1``, with its
+    labeled by the expression in evaluation order, such as ``draw + 1``, with its
     tracked operands as the provenance's parents. A term presents as its raw
     representation inside a JAX trace, so there an operator returns the bare
     result. Indexing and iteration return the stored value's entries and rows.
@@ -233,14 +233,14 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
         The value-level inverse of :meth:`to_vector`: reshapes *vec* to the shape
         *spec* declares, casts it to the declared dtype when there is one, and
-        returns a ``NumericArray`` carrying *spec* under *name*. The rebuilt
+        returns a ``NumericArray`` carrying *spec* under *label*. The rebuilt
         value is a bare ``jax.Array``, since a flat vector carries no native
         container to restore.
 
         Parameters
         ----------
         label : str
-            Name for the reconstructed array.
+            The reconstructed array's label.
         spec : NumericArraySpec
             The declaration supplying the shape and dtype, with every dimension
             bound.
@@ -360,25 +360,26 @@ def _unwrap(other: Any) -> Any:
     return other._value if isinstance(other, NumericArray) else other
 
 
-#: The form each unary operator gives the name its result derives.
+#: The form each unary operator gives the label its result derives.
 _UNARY_FORMS = {"neg": "-{}", "pos": "+{}", "abs": "abs({})", "invert": "~{}"}
 
 
 def _operand_label(operand: Any) -> str:
-    """How *operand* reads in a derived name: its grouped label, or its value when it is untracked."""
+    """How *operand* reads in a derived label: its grouped label, or its value when untracked."""
     if isinstance(operand, NumericArray):
         return grouped_label(operand.label)
     return format_value(operand)
 
 
 def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
-    """The operator's *value* as a ``NumericArray`` named *name*, its tracked *operands* its parents.
+    """The operator's *value* as a ``NumericArray`` labeled *name*.
 
-    The result declares its value's shape, and its value's dtype when every
-    tracked operand declares a dtype, so it declares as much as its operands
-    do. A traced value is returned bare, since a term presents as its raw
-    representation inside a JAX trace (II.4), and a value that is not numeric,
-    ``NotImplemented`` among them, is returned as it is.
+    Its tracked *operands* are its parents. The result declares its value's
+    shape, and its value's dtype when every tracked operand declares a dtype, so
+    it declares as much as its operands do. A traced value is returned bare,
+    since a term presents as its raw representation inside a JAX trace (II.4),
+    and a value that is not numeric, ``NotImplemented`` among them, is returned
+    as it is.
     """
     if isinstance(value, jax.core.Tracer) or not _is_numeric_leaf(value):
         return value

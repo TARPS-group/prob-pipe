@@ -824,9 +824,9 @@ def replay_run(provenance: Provenance) -> _ReplayRunScope:
     definition with compatible arguments inside the scope.
 
     The definition matches when the code, the signature, and the types of the
-    declarations do. A rename of the function, of its output label, or of its
-    output's components changes no value, so a renamed function replays the
-    call to the same draws under its new names (V.8). Replay validates the
+    declarations do. A new label for the function or its output, or new names
+    for its output's components, change no value, so the function replays the
+    call to the same draws under them (V.8). Replay validates the
     definition, the stochastic plan, and the events the call consumes, and not
     the values of its arguments, so an accepted replay of a call with other
     arguments of the same structure runs on the recorded draws.

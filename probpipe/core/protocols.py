@@ -31,7 +31,7 @@ class _DistributionArrayBackend(Protocol):
 
     A backend owns the batched parameters of the laws and computes their
     capabilities vectorized, through the backend's native batch axis, without
-    one ``Distribution`` per position. It carries no ``name`` or
+    one ``Distribution`` per position. It carries no ``label`` or
     ``provenance``, and it is the contract between a class's
     :meth:`SupportsArrayBackend._make_array_backend` and the code that stores
     the laws. Backends are private to the library.
@@ -108,7 +108,7 @@ class SupportsArrayBackend(Protocol):
         Parameters
         ----------
         name : str
-            Base name; per-cell distributions auto-suffix as
+            Base label; per-cell distributions auto-suffix as
             ``f"{name}_{i}"``.
         batch_shape : tuple of int
             The leading shape of the batched parameters. The backend

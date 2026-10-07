@@ -64,6 +64,11 @@ jobs:
       - name: Ruff format check (blocking — the tree is autoformatted)
         run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" format --check .
 
+      # The docstring check runs the pydoclint hook of .pre-commit-config.yaml,
+      # which holds its version and options, over the whole tree.
+      - name: Docstring check (blocking)
+        run: uvx pre-commit run pydoclint --all-files
+
   # Advisory pyright type check. Reports but does NOT gate merges
   # (continue-on-error). The source carries a type-debt baseline (much of
   # it JAX/TFP untyped-attribute noise), so enforcing now would block

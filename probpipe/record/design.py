@@ -206,5 +206,5 @@ class FullFactorialDesign(Design):
             element_spec=RecordSpec(template_spec),
             axes_per_level=(1,),
         )
-        # The name is derived from the marginals, not user-typed.
+        # The label is derived from the marginals, not user-typed.
         object.__setattr__(self, "_marginals", dict(marginals))
