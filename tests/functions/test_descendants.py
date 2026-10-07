@@ -4,7 +4,8 @@ A lifted law's root is the root of the law whose draws it reads:
 
 - a field view: its parent;
 - a batch element: its stored law;
-- every law that ``with_path_names`` returns: the law it renames;
+- every law that ``with_path_names``, ``with_label``, ``with_dim_names``, or
+  ``with_dim_sizes`` returns: the law it is made from;
 - a bijector-transformed law: its base.
 
 A lift groups each law with its root, so the root draws once per repetition and
@@ -30,15 +31,20 @@ from probpipe import (
     KDEDistribution,
     MultivariateNormal,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     NumericRecordSpec,
+    Record,
+    RecordSpec,
+    SupportsSampling,
     iterate,
     workflow_run,
 )
-from probpipe.distributions import FactoredDistribution, FieldView
+from probpipe.distributions import Distribution, FactoredDistribution, FieldView
 from probpipe.functions import _descendants
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
+from probpipe.operations._marginal import factor, marginal
 from probpipe.values import _binding
 from tests._ops import mean, variance
 
@@ -440,6 +446,115 @@ class TestRenamedLaws:
     def test_the_raw_form_of_a_view_of_a_rebuilt_joint_is_its_own_root(self):
         """The view's marginal is a renamed factor, and detaching it drops the factor it renames."""
         detached = _joint().with_path_names(x="u")["u"].raw()
+
+        assert _descendants.capture_stochastic_consumer(detached).root is detached
+
+
+# -- Relabeled and dimension-bound copies --------------------------------------
+
+
+#: Arrays of the free length ``n``.
+_FREE = NumericArraySpec(("n",))
+
+
+class _FreeNormal(Distribution, SupportsSampling):
+    """A standard normal law over arrays of the free length ``n``, which draws three coordinates."""
+
+    def __init__(self, label="x", spec=_FREE):
+        super().__init__(label, spec)
+
+    def _sample(self, key, sample_shape=()):
+        return jax.random.normal(key, (*sample_shape, 3))
+
+
+#: Each method that returns a copy of a law, applied to a law over arrays of the
+#: free length ``n``.
+_COPIES = [
+    pytest.param(lambda law: law.with_label("e"), id="with_label"),
+    pytest.param(lambda law: law.with_dim_names(n="m"), id="with_dim_names"),
+    pytest.param(lambda law: law.with_dim_sizes(n=3), id="with_dim_sizes"),
+]
+
+#: A law over arrays of the free length ``n``, and a rename of one of its paths.
+_FREE_LAWS_AND_RENAMES = [
+    pytest.param(_FreeNormal, {"x": "y"}, id="whole-term"),
+    pytest.param(
+        lambda: _FreeNormal("r", RecordSpec(x=_FREE, y=())),
+        {"x": "z"},
+        id="record",
+    ),
+]
+
+
+class TestCopies:
+    @pytest.mark.parametrize("copy", _COPIES)
+    def test_a_copy_forms_one_plan_group_with_its_law(self, copy):
+        law = _FreeNormal()
+        plan = _stochastic_plan({"law": law, "copy": copy(law)})
+
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is law
+
+    @pytest.mark.parametrize("copy", _COPIES)
+    def test_a_copy_co_samples_with_its_law(self, copy):
+        law = _FreeNormal()
+        workflow = Function("difference", lambda a, b: a - b, n_broadcast_samples=8)
+        copied = copy(law)
+
+        assert workflow.check(law, copied).selected.method_name == "sampling_lift"
+        with workflow_run(seed=40):
+            result = workflow(law, copied)
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros((8, 3)))
+
+    def test_a_relabeled_library_law_co_samples_with_it(self):
+        law = _normal()
+
+        with workflow_run(seed=41):
+            result = _difference()(law, law.with_label("e"))
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(16))
+
+    @pytest.mark.parametrize("copy", _COPIES)
+    def test_a_copy_of_a_factored_joint_forms_one_plan_group_with_it(self, copy):
+        joint = _FreeNormal("a") * _FreeNormal("b")
+        plan = _stochastic_plan({"joint": joint, "copy": copy(joint)})
+
+        assert len(plan.source_groups) == 1
+        assert plan.runtime_bindings[0].root is joint
+
+    @pytest.mark.parametrize(("make", "renames"), _FREE_LAWS_AND_RENAMES)
+    def test_a_rename_and_a_dimension_binding_commute_in_their_root(self, make, renames):
+        law = make()
+        renamed_first = law.with_path_names(renames).with_dim_sizes(n=3)
+        bound_first = law.with_dim_sizes(n=3).with_path_names(renames)
+
+        assert renamed_first.event_spec == bound_first.event_spec
+        assert _descendants.capture_stochastic_consumer(renamed_first).root is law
+        assert _descendants.capture_stochastic_consumer(bound_first).root is law
+
+    @pytest.mark.parametrize("stored_label", ["x", "mu"])
+    def test_a_law_read_from_a_record_field_co_samples_with_the_stored_law(self, stored_label):
+        stored = Normal(stored_label, 0.0, 1.0)
+        record = Record("laws", x=stored)
+
+        assert _descendants.capture_stochastic_consumer(record["x"]).root is stored
+        with workflow_run(seed=42):
+            result = _difference()(record["x"], record["x"])
+
+        np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(16))
+
+    @pytest.mark.parametrize(
+        "detach",
+        [
+            pytest.param(lambda law: law.raw(), id="raw"),
+            pytest.param(lambda law: marginal(law, "a"), id="marginal"),
+            pytest.param(lambda law: factor(law, "a"), id="factor"),
+        ],
+    )
+    @pytest.mark.parametrize("copy", _COPIES)
+    def test_the_raw_form_marginal_or_factor_of_a_copy_is_its_own_root(self, copy, detach):
+        detached = detach(copy(_FreeNormal("a") * _FreeNormal("b")))
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 

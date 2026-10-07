@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mean` of a closed-form law, runs under the caller's transformation as
   before. The engine's own traces, such as `dispatch="jax"` and an inference
   method's compiled chains, draw as before.
+- **A relabeled or dimension-bound copy of a law draws together with the law
+  it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
+  `with_dim_sizes` returns together with the law it is made from, as it draws a
+  law that `with_path_names` returns. Each method returns the same law under a
+  new label, new dimension names, or bound dimensions. So
+  `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
+  where it drew two independent values before, and
+  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  from a `Record` field draws with the law the record stores, so
+  `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
+  values, construct the law twice.
 - **A distribution is immutable, as every tracked term is.** Assigning to or
   deleting an attribute of a constructed law raises `AttributeError`, naming
   its class, and an operation that changes a law returns a new one. A
