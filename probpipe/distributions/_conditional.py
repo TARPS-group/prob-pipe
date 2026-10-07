@@ -74,6 +74,17 @@ __all__ = [
 def _complete_given_spec(given_spec: Any) -> InputSpec:
     """*given_spec* as a non-empty ``InputSpec``.
 
+    Parameters
+    ----------
+    given_spec : InputSpec or Mapping[str, TermSpec]
+        The term spec of each given slot's value, keyed by slot name.
+
+    Returns
+    -------
+    InputSpec
+        *given_spec* itself when it is an ``InputSpec``, and an ``InputSpec`` built
+        from the mapping otherwise.
+
     Raises
     ------
     TypeError
@@ -145,6 +156,13 @@ def _moved_slots(
     below a moved node moves with it unless it is moved itself, a node renamed
     within its parent keeps its position, a moved node is appended to its new
     parent, and a structured slot that the moves empty dissolves.
+
+    Parameters
+    ----------
+    given_spec : InputSpec
+        The kernel's given slots, whose nodes the moves address.
+    moves : Mapping[str, str]
+        The new exact path of each node to move, keyed by the node's current path.
 
     Returns
     -------
@@ -317,6 +335,19 @@ class ConditionalDistributionSpec(TermSpec):
     ) -> None:
         """Unify both sides against another kernel's, in the scope *bindings*.
 
+        Parameters
+        ----------
+        given_spec : InputSpec
+            The other kernel's given slots.
+        event_spec : OutputSpec
+            The other kernel's event declaration.
+        bindings : dict[str, int]
+            The size of each symbolic dimension bound so far, keyed by its name,
+            which unification extends in place.
+        path : str
+            The location of the declaration that error messages name, such as
+            ``"the declaration"``.
+
         Raises
         ------
         ValueError
@@ -435,6 +466,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Python identifiers.
     event_spec : OutputSpec or TermSpec
         The declaration of one produced draw, completed as above.
+    _provenance : Provenance, optional
+        The provenance of the kernel that a reconstruction rebuilds. By default the
+        provenance stays unset until ``with_provenance`` attaches one.
+    _annotations : Mapping[str, Any], optional
+        The annotations of the kernel that a reconstruction rebuilds, copied into
+        the kernel's own store. By default :attr:`annotations` is ``None``.
 
     Raises
     ------
@@ -855,6 +892,21 @@ def _argument(spec: TermSpec, slot: str, value: Any) -> Any:
 def _declared_law(law: Any, event_spec: OutputSpec, name: str) -> Distribution:
     """*law*, the function's result, checked against the kernel's event declaration.
 
+    Parameters
+    ----------
+    law : Any
+        The value the kernel's function returned, which must be a ``Distribution``.
+    event_spec : OutputSpec
+        The kernel's event declaration, which the declaration of *law* must unify
+        with.
+    name : str
+        The kernel's label, which error messages name.
+
+    Returns
+    -------
+    Distribution
+        *law* itself, once both checks pass.
+
     Raises
     ------
     TypeError
@@ -931,6 +983,20 @@ class _FunctionKernel(ConditionalDistribution):
     ) -> Distribution | ConditionalDistribution:
         """The law the function returns at a value of every given slot, or the curried kernel.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some or all given slots, keyed by slot name.
+        **options : Any
+            The options of the call, which must be empty.
+
+        Returns
+        -------
+        Distribution or ConditionalDistribution
+            The returned law once every required slot is bound. Otherwise a copy of
+            this kernel that holds the bound values and conditions on the other
+            slots.
+
         Raises
         ------
         TypeError
@@ -960,6 +1026,17 @@ class _FunctionKernel(ConditionalDistribution):
     def _given_values(self, given: Any) -> dict[str, Any]:
         """The values *given* holds, by given slot.
 
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of some or all given slots, keyed by slot name.
+
+        Returns
+        -------
+        dict[str, Any]
+            A new dict of the values, read from the children of a ``Record`` or the
+            items of a mapping.
+
         Raises
         ------
         KeyError
@@ -988,6 +1065,17 @@ class _FunctionKernel(ConditionalDistribution):
         """The law the function returns at *given*, a value of every required slot.
 
         An optional slot that *given* leaves out takes the function's default.
+
+        Parameters
+        ----------
+        given : Record or Mapping[str, Any]
+            Values of the slots this kernel conditions on, keyed by slot name.
+
+        Returns
+        -------
+        Distribution
+            The law the function returns at the values a curried kernel holds and
+            at *given*, checked against the kernel's event declaration.
 
         Raises
         ------
@@ -1028,6 +1116,23 @@ class _Probe:
 
 def _stand_in(spec: TermSpec, path: str, name: str) -> Any:
     """The abstract stand-in of a value of *spec*: an array's shape and dtype, or a mapping of them.
+
+    Parameters
+    ----------
+    spec : TermSpec
+        The term spec of a given slot, or of a field within a record slot.
+    path : str
+        The path of that slot or field within the given side, which error messages
+        name.
+    name : str
+        The kernel's label, which error messages name.
+
+    Returns
+    -------
+    jax.ShapeDtypeStruct or dict
+        A ``jax.ShapeDtypeStruct`` for an array spec, of the default float dtype
+        when *spec* sets none, and a dict of each field's stand-in, keyed by field
+        name, for a record spec.
 
     Raises
     ------
@@ -1077,6 +1182,21 @@ def _probe(name: str, fn: Callable[..., Distribution], slots: InputSpec) -> _Pro
     and with its default for each optional slot; a support that a given value
     sets holds a traced bound, and is left undeclared.
 
+    Parameters
+    ----------
+    name : str
+        The kernel's label, which error messages name.
+    fn : callable
+        The function of the given values that returns a law.
+    slots : InputSpec
+        The kernel's given slots, which name the parameters of *fn*.
+
+    Returns
+    -------
+    _Probe
+        The event declaration of the returned law, and the report of the guard of
+        each derived capability it claims.
+
     Raises
     ------
     TypeError
@@ -1114,6 +1234,22 @@ def _slots_of(
     A parameter with a default is an optional slot, which a binding may omit,
     and its default's value declares it when neither *given_spec* nor its
     annotation does.
+
+    Parameters
+    ----------
+    name : str
+        The kernel's label, which error messages name.
+    fn : callable
+        The function whose parameters are the slots.
+    given_spec : InputSpec or Mapping[str, TermSpec] or None
+        The specs of some or all parameters, keyed by parameter name. ``None``
+        declares every slot by its annotation or its default.
+
+    Returns
+    -------
+    InputSpec
+        One slot per parameter of *fn*, in signature order, with each parameter
+        that has a default marked optional.
 
     Raises
     ------
@@ -1162,6 +1298,23 @@ def _slots_of(
 def _agreed_event_spec(name: str, declared: OutputSpec | TermSpec, law: OutputSpec) -> OutputSpec:
     """*declared*, completed from *law*, the declaration of the law the function returns.
 
+    Parameters
+    ----------
+    name : str
+        The kernel's label, which is the component of a bare term spec and which
+        error messages name.
+    declared : OutputSpec or TermSpec
+        The event declaration the caller passed. A bare term spec declares a whole
+        term under the component *name*.
+    law : OutputSpec
+        The event declaration of the law the function returns at the stand-ins.
+
+    Returns
+    -------
+    OutputSpec
+        *declared* under its own components and packaging, holding the
+        unification of its type with the type of *law*.
+
     Raises
     ------
     ValueError
@@ -1190,6 +1343,25 @@ def _function_kernel(
     event_spec: OutputSpec | TermSpec | None,
 ) -> ConditionalDistribution:
     """The kernel of *fn*, labeled *name* or after the function.
+
+    Parameters
+    ----------
+    name : str or None
+        The kernel's label. ``None`` takes the label from ``fn.__name__``.
+    fn : callable
+        The function of the given values that returns a law.
+    given_spec : InputSpec or Mapping[str, TermSpec] or None
+        The specs of some or all given slots, keyed by parameter name, which
+        :func:`_slots_of` completes.
+    event_spec : OutputSpec or TermSpec or None
+        The declared event, which must agree with the declaration of the law *fn*
+        returns. ``None`` takes the returned law's declaration.
+
+    Returns
+    -------
+    ConditionalDistribution
+        The kernel, which claims the conditional twin of each derived capability
+        that the returned law claims.
 
     Raises
     ------

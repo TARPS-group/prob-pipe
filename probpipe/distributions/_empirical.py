@@ -80,6 +80,18 @@ def _numeric_atoms(atoms: Any) -> bool:
 def _atom_spec(atoms: Any) -> TermSpec:
     """The term spec of one atom of *atoms*.
 
+    Parameters
+    ----------
+    atoms : Batch or Array
+        The atoms in the event's batch form, or an array of array atoms along its
+        leading axis.
+
+    Returns
+    -------
+    TermSpec
+        The batch's ``element_spec``, or for an array the ``NumericArraySpec`` of
+        its trailing axes and its dtype.
+
     Raises
     ------
     TypeError
@@ -118,6 +130,18 @@ def _atom_weights(weights: Any, atoms: Batch) -> Weights:
     An array is flat, one entry per atom in the row-major order of the batch
     axes, or shaped like the batch axes.
 
+    Parameters
+    ----------
+    weights : Array or Weights or None
+        The weights the constructor received.
+    atoms : Batch
+        The stored atoms, whose batch axes the weights follow.
+
+    Returns
+    -------
+    Weights
+        One weight per atom, in the row-major order of the batch axes.
+
     Raises
     ------
     ValueError
@@ -145,6 +169,11 @@ def _flattened(column: Any, count: int, rank: int) -> Any:
 
 def _flat_rows(atoms: Batch) -> Any:
     """The raw atoms of *atoms* along one leading axis, in row-major order of the batch axes.
+
+    Parameters
+    ----------
+    atoms : Batch
+        The stored atoms, with any number of batch axes.
 
     Returns
     -------
@@ -187,6 +216,23 @@ def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
     The raw form is an array of array values, the nested mapping of columns, or
     a ``Record`` of them, for record values, and an object array of any other
     values.
+
+    Parameters
+    ----------
+    name : str
+        The batch's label.
+    raw : Any
+        The values in raw form, along one leading axis.
+    level : str
+        The name of the batch's one level.
+    spec : TermSpec
+        The term spec every value satisfies, which selects the batch class.
+
+    Returns
+    -------
+    Batch
+        The batch of the kind *spec* declares, such as a ``RecordBatch`` for a
+        record spec, with *spec* as its ``element_spec``.
 
     Raises
     ------
@@ -294,6 +340,14 @@ def _empirical_quantile(self: EmpiricalDistribution, q: ArrayLike) -> Array | di
     cumulative weight reaches ``q`` (see :func:`_inverse_cdf`). So the atoms 1,
     2, 3, 4 with uniform weights have median 2, and a zero-weight atom has no
     effect.
+
+    Parameters
+    ----------
+    self : EmpiricalDistribution
+        A law with a numeric event, which claims this function as its
+        ``_quantile``.
+    q : ArrayLike
+        The levels, of any shape.
 
     Returns
     -------
@@ -505,6 +559,13 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
         """Draw atoms independently, each with probability its weight.
 
+        Parameters
+        ----------
+        key : PRNGKey
+            The key of the draws.
+        sample_shape : tuple of int, optional
+            The axes of independent draws; ``()`` draws one atom.
+
         Returns
         -------
         Any
@@ -526,6 +587,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         array or a pytree of arrays. Over a numeric event ``f`` is evaluated at
         every atom at once with ``jax.vmap``, so it must be traceable; over any
         other event it is called on each atom in turn.
+
+        Parameters
+        ----------
+        f : callable
+            The integrand, which receives one atom in its raw form.
 
         Returns
         -------
@@ -553,6 +619,17 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         segments. Either way the result keeps this law's label, the projected
         atoms keep the stored atoms' levels, and the result holds no reference
         to this law.
+
+        Parameters
+        ----------
+        path : str or tuple of str
+            An event path of this law, or a tuple of event paths to select
+            jointly.
+
+        Returns
+        -------
+        EmpiricalDistribution
+            The marginal law, whose atoms carry this law's weights.
 
         Raises
         ------
@@ -587,6 +664,19 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     def _selection(self, path: str | tuple[str, ...]) -> tuple[_Selected, ...]:
         """Each requested event path with its segments within one atom and its node's spec.
+
+        Parameters
+        ----------
+        path : str or tuple of str
+            An event path of this law, or a tuple of event paths to select
+            jointly.
+
+        Returns
+        -------
+        tuple of _Selected
+            One ``(path, segments, spec)`` triple per requested path, in the order
+            requested. The segments leave out a whole term's component, so they
+            address the node within one atom.
 
         Raises
         ------

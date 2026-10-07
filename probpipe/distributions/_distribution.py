@@ -287,6 +287,12 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Non-empty name for this distribution.
     event_spec : OutputSpec or TermSpec
         The declaration of one draw, completed as above.
+    _provenance : Provenance, optional
+        The provenance of the law that a reconstruction rebuilds. By default the
+        provenance stays unset until ``with_provenance`` attaches one.
+    _annotations : Mapping[str, Any], optional
+        The annotations of the law that a reconstruction rebuilds, copied into the
+        law's own store. By default :attr:`annotations` is ``None``.
 
     Raises
     ------
@@ -412,6 +418,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Python calls this only when ordinary lookup fails. A law whose declaration
         is numeric has the views of the marker whatever its class, so they resolve
         through the marker, and any other missing attribute raises as usual.
+
+        Parameters
+        ----------
+        name : str
+            The attribute that ordinary lookup did not find, such as ``"dtype"``.
+
+        Returns
+        -------
+        Any
+            The value of the marker's view *name* for this law.
 
         Raises
         ------
@@ -559,6 +575,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``FieldView`` of the node there, which holds a reference to this law, and
         a tuple of paths gives the view of their selection.
 
+        Parameters
+        ----------
+        key : str or tuple of str
+            An event path, which starts with a component, or a tuple of event
+            paths to view jointly.
+
+        Returns
+        -------
+        Distribution
+            This law itself, or a ``FieldView`` of it.
+
         Raises
         ------
         KeyError
@@ -587,6 +614,12 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``FactoredDistribution`` when no given is left unmet and a
         ``FactoredConditionalDistribution`` otherwise, flattened over the
         operands' factors and labeled by their labels joined with ``·``.
+
+        Parameters
+        ----------
+        other : Distribution or ConditionalDistribution
+            The right operand, whose components this law's factors may condition
+            on.
 
         Returns
         -------
@@ -627,6 +660,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Builds exactly one draw (``sample_shape == ()``). Batched
         evaluation does not go through kwargs — pass the batch positionally
         and let ``Function`` broadcasting handle it.
+
+        Parameters
+        ----------
+        **field_kwargs : Any
+            One value per named field of a draw, keyed by field name.
+
+        Returns
+        -------
+        Any
+            The draw: the bare value of a single field, or the ``Record`` of
+            several.
 
         Raises
         ------
@@ -775,6 +819,11 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         **batched_params
             This class's constructor arguments, with the batch axes leading.
 
+        Returns
+        -------
+        DistributionBatch
+            The type the signature declares. The method raises before it returns.
+
         Raises
         ------
         NotImplementedError
@@ -880,6 +929,19 @@ def _unify_declarations(
     expected: OutputSpec, actual: OutputSpec, bindings: dict[str, int], path: str
 ) -> None:
     """Match *actual* against *expected*: packaging and components, then their specs.
+
+    Parameters
+    ----------
+    expected : OutputSpec
+        The declaration to match against, such as a term spec's ``event_spec``.
+    actual : OutputSpec
+        The declaration a law or a kernel carries.
+    bindings : dict[str, int]
+        The size of each symbolic dimension bound so far, keyed by its name, which
+        unification extends in place.
+    path : str
+        The location of the declaration that error messages name, such as
+        ``"the declaration"``.
 
     Raises
     ------

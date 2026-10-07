@@ -27,6 +27,20 @@ __all__ = ["ConditionalDistributionBatch", "DistributionBatch"]
 def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
     """The spec of the first element of *store*, which the others must satisfy.
 
+    Parameters
+    ----------
+    store : numpy.ndarray
+        The batch's elements, as an object array of any shape.
+    kind : type
+        The class each element must be an instance of, such as ``Distribution``.
+    owner : str
+        The batch as an error message names it, such as ``"a DistributionBatch"``.
+
+    Returns
+    -------
+    object
+        The ``spec`` of the element at position ``(0, ..., 0)``.
+
     Raises
     ------
     ValueError
@@ -153,6 +167,16 @@ def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule:
     The message names the position and how the law's declaration departs, such
     as the components each declares. An element that is not a law, or a
     departure this reading does not name, is left to the batch's own check.
+
+    Parameters
+    ----------
+    store : numpy.ndarray
+        The batch's elements, as an object array of any shape.
+    element_spec : DistributionSpec
+        The spec every element must satisfy.
+    rule : str
+        The requirement on every element, worded to follow "must" in the message,
+        as the batch class's ``_element_rule`` is.
 
     Raises
     ------

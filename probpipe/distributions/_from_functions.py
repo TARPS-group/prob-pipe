@@ -158,8 +158,13 @@ class _FunctionLaw(Distribution):
         The law's label.
     event_spec : OutputSpec
         The complete declaration of one draw.
-    sample, log_prob, unnormalized_log_prob : callable or None
-        The functions, as :func:`distribution` takes them.
+    sample : callable or None
+        The sampler, as :func:`distribution` takes it.
+    log_prob : callable or None
+        The normalized log-density, as :func:`distribution` takes it.
+    unnormalized_log_prob : callable or None
+        The log-density up to an additive constant, as :func:`distribution`
+        takes it.
     sampler_traces : bool
         Whether *sample* traces in JAX, so a sample shape maps it with
         ``jax.vmap`` rather than with a Python loop.
@@ -242,6 +247,23 @@ def _sampler_declaration(
     whose ``jax.eval_shape`` fails does not trace, and *declaration* is
     returned as it is, as it is for an event that is not numeric.
 
+    Parameters
+    ----------
+    label : str
+        The law's label, which error messages name.
+    sample : callable
+        The sampler, which returns one draw at a PRNG key.
+    declaration : OutputSpec
+        The event declaration, whose type may be pending.
+
+    Returns
+    -------
+    declaration : OutputSpec
+        The declaration that ``OutputSpec.with_spec`` completes with the abstract
+        draw's spec, or *declaration* as it is when no abstract draw is read.
+    traces : bool
+        Whether *sample* traces in JAX.
+
     Raises
     ------
     ValueError
@@ -268,6 +290,19 @@ def _sampler_declaration(
 
 def _event_declaration(label: str, event_spec: Any) -> OutputSpec:
     """*event_spec* as an output declaration, a bare spec completed as ``Distribution`` completes it.
+
+    Parameters
+    ----------
+    label : str
+        The law's label, which is the component of a bare spec.
+    event_spec : OutputSpec or TermSpec
+        The declaration :func:`distribution` received.
+
+    Returns
+    -------
+    OutputSpec
+        *event_spec* itself when it is an ``OutputSpec``, and otherwise the
+        default declaration of the bare spec under the component *label*.
 
     Raises
     ------
@@ -306,6 +341,25 @@ def _density_traces(
 
     A declaration without a stand-in, such as one with a value that is no
     array, reads no density, which then scores a batch one value at a time.
+
+    Parameters
+    ----------
+    label : str
+        The law's label, which error messages name.
+    name : str
+        The density's keyword, ``"log_prob"`` or ``"unnormalized_log_prob"``,
+        which error messages name.
+    density : callable
+        The log-density, which receives one value at the kind the event
+        declares.
+    declaration : OutputSpec
+        The complete event declaration.
+
+    Returns
+    -------
+    bool
+        ``True`` when *density* traces at the stand-in and returns a real
+        scalar there, and ``False`` otherwise.
 
     Raises
     ------

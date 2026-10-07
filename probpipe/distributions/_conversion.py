@@ -402,6 +402,14 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
     def _validate_supported_types(self, name: str, supported_types: Any) -> None:
         """The pair of class tuples II.7 requires, each class one ``issubclass`` can check.
 
+        Parameters
+        ----------
+        name : str
+            The converter's registered name, which error messages name.
+        supported_types : Any
+            The converter's declared ``supported_types``, checked to be a
+            ``(source_types, target_types)`` pair of tuples of classes.
+
         Raises
         ------
         TypeError
@@ -443,6 +451,25 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         options: dict[str, Any],
     ) -> _Plan:
         """The converter's report under its registration, held to the conversion contract.
+
+        Parameters
+        ----------
+        registration : _Registration[Converter]
+            The converter to ask, with the name and exactness the registry read from
+            it at registration.
+        args : tuple of Any
+            The call's positional arguments, which start with the source and the
+            target.
+        options : dict[str, Any]
+            The converter options, passed to the converter's ``check`` as keywords.
+
+        Returns
+        -------
+        _Plan
+            The report under the registration's name and exactness. For a
+            capability target, the report is infeasible when no promised capability
+            is the target or refines it. It is unresolved when only the converted law
+            can decide the target's guard, which the plan then awaits.
 
         Raises
         ------
@@ -611,6 +638,26 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
 
         A source that already satisfies the target is returned as it is.
 
+        Parameters
+        ----------
+        *args : Any
+            The source and the target, passed with *options* to the selected
+            converter's ``check`` and ``execute``.
+        method : str or None
+            A registered converter to run instead of auto-selecting.
+        exact_only : bool
+            If ``True``, approximate converters are excluded.
+        **options : Any
+            Converter options, which the selected converter reads; a backend
+            object's event declaration is the option ``event_spec``.
+
+        Returns
+        -------
+        Distribution
+            The source itself, or the converted law. A converted law that the
+            converter left without provenance records the source and the
+            converter's name and exactness in its provenance.
+
         Raises
         ------
         ResolutionError
@@ -666,6 +713,22 @@ class ConverterRegistry(BinaryDispatchRegistry[Converter]):
         awaiting: str | None,
     ) -> None:
         """Hold the converted law to the promise: the source's declaration, and the target.
+
+        Parameters
+        ----------
+        registration : _Registration[Converter]
+            The converter that ran, whose name error messages name.
+        args : tuple of Any
+            The call's positional arguments, which start with the source and the
+            target.
+        options : dict[str, Any]
+            The converter options, whose ``event_spec`` declares a backend source's
+            event.
+        result : Any
+            The value the converter's ``execute`` returned.
+        awaiting : str or None
+            The method of the target capability whose guard only the converted law
+            decides, such as ``"_sample"``. ``None`` leaves no guard to check.
 
         Raises
         ------
