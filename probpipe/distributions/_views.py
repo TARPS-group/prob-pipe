@@ -316,18 +316,18 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     return project
 
 
-def _detached(law: Distribution, name: str) -> Distribution:
-    """*law* detached from the workflow under *name*: no provenance and no annotations."""
+def _detached(law: Distribution, label: str) -> Distribution:
+    """*law* detached from the workflow under *label*: no provenance and no annotations."""
     clone = law._shallow_copy()
-    object.__setattr__(clone, "_label", name)
+    object.__setattr__(clone, "_label", label)
     object.__setattr__(clone, "_provenance", None)
     object.__setattr__(clone, "_annotations", None)
     return clone
 
 
-def _labeled(law: Distribution, name: str) -> Distribution:
-    """*law* under the label *name*, which a marginal takes from the law it is a marginal of."""
-    return law if law.label == name else law.with_label(name)
+def _labeled(law: Distribution, label: str) -> Distribution:
+    """*law* under *label*, which a marginal takes from the law it is a marginal of."""
+    return law if law.label == label else law.with_label(label)
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:

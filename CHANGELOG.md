@@ -2893,6 +2893,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
+  constructors document `label` as the first parameter, but a keyword call
+  `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
+  call took `name`.
 - **A PyMC model draws its Cauchy and half-Cauchy variables with their location
   and scale.** The lock pinned PyTensor 3.0.4, whose sampler of a Cauchy
   variable returned location `loc / scale` and scale `1 / scale`, so a prior

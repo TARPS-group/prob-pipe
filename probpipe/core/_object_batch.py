@@ -117,12 +117,12 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=label,
+            label=label,
             provenance=provenance,
         )
 
     @classmethod
-    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, name: str) -> Self:
+    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, label: str) -> Self:
         """This batch over *store* as given, without copying or re-checking it.
 
         The public constructor copies the elements, freezes the copy, and checks
@@ -141,7 +141,7 @@ class _ObjectBatch[E](Batch[E]):
         # own ``__new__`` may select a class from constructor arguments.
         batch = object.__new__(cls)
         object.__setattr__(batch, "_store", store)
-        batch._init_batch(spec, name=name)
+        batch._init_batch(spec, label=label)
         return batch
 
     def raw(self) -> np.ndarray:
@@ -150,10 +150,10 @@ class _ObjectBatch[E](Batch[E]):
 
     # -- the storage seam ---------------------------------------------------
 
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The stored object at *index*, as a view under the derived *name*.
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> E:
+        """The stored object at *index*, as a view under the derived *label*.
 
-        A stored tracked term is returned as a copy under *name* that shares its
+        A stored tracked term is returned as a copy under *label* that shares its
         representation, so a law keeps its parameters and a function its callable,
         and the stored object itself is left untouched. A stored value that is
         not a tracked term is wrapped as the term of the batch's element kind by
@@ -165,7 +165,7 @@ class _ObjectBatch[E](Batch[E]):
         ----------
         index : tuple of int
             One position per batch axis.
-        name : str
+        label : str
             The label of the view, derived from its position.
 
         Returns
@@ -183,14 +183,14 @@ class _ObjectBatch[E](Batch[E]):
         source = stored if isinstance(stored, TrackedTerm) else None
         provenance = Provenance.of_view(self, source, metadata={"position": list(index)})
         if isinstance(stored, TrackedTerm):
-            view = stored.with_label(name)
+            view = stored.with_label(label)
             # ``with_label`` records a relabeling; the view's lineage is its selection.
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
-        return self._wrap_element(stored, name).with_provenance(provenance)
+        return self._wrap_element(stored, label).with_provenance(provenance)
 
-    def _wrap_element(self, value: Any, name: str) -> Any:
-        """The term of this batch's element kind holding the raw *value*, labeled *name*.
+    def _wrap_element(self, value: Any, label: str) -> Any:
+        """The term of this batch's element kind holding the raw *value*, labeled *label*.
 
         A batch whose elements are always tracked terms, as a batch of laws is,
         keeps this default, which refuses a raw value.
@@ -199,7 +199,7 @@ class _ObjectBatch[E](Batch[E]):
         ----------
         value : Any
             The raw value stored at the element's position.
-        name : str
+        label : str
             The label of the element view, derived from its position.
 
         Returns
@@ -214,10 +214,10 @@ class _ObjectBatch[E](Batch[E]):
         """
         raise TypeError(
             f"a {type(self).__name__} element is a tracked term, and the value stored at "
-            f"{name!r} is a {type(value).__name__}"
+            f"{label!r} is a {type(value).__name__}"
         )
 
-    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
+    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same store, indexed as given.
 
         numpy basic indexing returns a view, so the selection shares its
@@ -231,7 +231,7 @@ class _ObjectBatch[E](Batch[E]):
         # must not run again where there are none.
         view = object.__new__(type(self))
         object.__setattr__(view, "_store", self._store[index])
-        view._init_batch(spec, name=name)
+        view._init_batch(spec, label=label)
         return view
 
 

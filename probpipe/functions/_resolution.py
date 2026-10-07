@@ -134,19 +134,21 @@ def _probe(
     return None, None, probed
 
 
-def _no_route(name: str, controls: Mapping[str, Any], probed: list[tuple[Any, Feasibility]]) -> str:
+def _no_route(
+    label: str, controls: Mapping[str, Any], probed: list[tuple[Any, Feasibility]]
+) -> str:
     """The message naming each probed candidate and why it declined."""
     restriction = " with exact_only" if controls.get("exact_only") else ""
     if not probed:
-        return f"{name}: no route applies{restriction}; none is registered"
+        return f"{label}: no route applies{restriction}; none is registered"
     tried = "; ".join(
         f"{candidate.label}: {report.description or 'infeasible'}" for candidate, report in probed
     )
-    return f"{name}: no route applies{restriction}. Tried: {tried}"
+    return f"{label}: no route applies{restriction}. Tried: {tried}"
 
 
 def selected(
-    name: str,
+    label: str,
     controls: Mapping[str, Any],
     candidates: Sequence[Any],
     call: Any,
@@ -156,7 +158,7 @@ def selected(
 
     Parameters
     ----------
-    name : str
+    label : str
         The Function's label, which the messages name.
     controls : Mapping of str to Any
         The call's resolved controls, whose ``exact_only`` the message reports.
@@ -183,10 +185,10 @@ def selected(
     """
     candidate, report, probed = _probe(candidates, call, result)
     if candidate is None or report is None:
-        raise ResolutionError(_no_route(name, controls, probed))
+        raise ResolutionError(_no_route(label, controls, probed))
     if report.feasible is None:
         raise ResolutionError(
-            f"{name}: route {candidate.label!r} is unresolved; pending: {', '.join(report.pending)}"
+            f"{label}: route {candidate.label!r} is unresolved; pending: {', '.join(report.pending)}"
         )
     return candidate, report
 

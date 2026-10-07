@@ -32,9 +32,9 @@ from probpipe.core.tracked import Annotated, TrackedTerm, auto_label
 from probpipe.distributions import FactoredDistribution
 
 
-def _normals(name: str, count: int) -> DistributionBatch:
+def _normals(label: str, count: int) -> DistributionBatch:
     """A batch of *count* standard normal laws on a level named ``law``."""
-    return DistributionBatch(name, [Normal("x", 0.0, 1.0) for _ in range(count)], "law")
+    return DistributionBatch(label, [Normal("x", 0.0, 1.0) for _ in range(count)], "law")
 
 
 # ===========================================================================
@@ -77,11 +77,11 @@ class TestMixinMembership:
 # ===========================================================================
 
 
-class TestNameEnforcement:
-    def test_tracked_host_must_set_nonempty_name(self):
+class TestLabelEnforcement:
+    def test_tracked_host_must_set_nonempty_label(self):
         """The construction-time label check lives on TrackedTerm, not per host."""
 
-        class Nameless(TrackedTerm):
+        class Unlabeled(TrackedTerm):
             def __init__(self):
                 pass
 
@@ -89,9 +89,9 @@ class TestNameEnforcement:
                 return None
 
         with pytest.raises(TypeError, match="non-empty label"):
-            Nameless()
+            Unlabeled()
 
-        class EmptyNamed(TrackedTerm):
+        class EmptyLabeled(TrackedTerm):
             def __init__(self):
                 self._init_tracked("")
 
@@ -99,27 +99,27 @@ class TestNameEnforcement:
                 return None
 
         with pytest.raises(TypeError, match="non-empty label"):
-            EmptyNamed()
+            EmptyLabeled()
 
 
-class TestAutoNameHelper:
-    def test_supplied_name_is_user_given(self):
+class TestAutoLabelHelper:
+    def test_supplied_label_is_user_given(self):
         assert auto_label("mine", "default") == "mine"
 
-    def test_missing_name_takes_default(self):
+    def test_missing_label_takes_default(self):
         assert auto_label(None, "default") == "default"
 
 
-class TestNameLifecycle:
-    def test_distribution_keeps_explicit_name(self):
+class TestLabelLifecycle:
+    def test_distribution_keeps_explicit_label(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
         assert n.label == "x"
 
-    def test_record_keeps_explicit_name(self):
+    def test_record_keeps_explicit_label(self):
         r = Record("mine", a=1.0)
         assert r.label == "mine"
 
-    def test_constructor_requires_name(self):
+    def test_constructor_requires_label(self):
         # The label guard fires in ``Record.__new__`` before promotion picks a
         # class, so a call without a label reports ``Record`` and its custom message
         # — not the promoted ``NumericRecord`` nor the bare Python "missing
@@ -127,11 +127,11 @@ class TestNameLifecycle:
         with pytest.raises(TypeError, match="Record requires its label"):
             Record(a=1.0)
 
-    def test_record_keeps_operation_name(self):
+    def test_record_keeps_operation_label(self):
         r = Record("sample", {"a": 1.0, "b": 2.0})
         assert r.label == "sample"
 
-    def test_batch_keeps_its_construction_name(self):
+    def test_batch_keeps_its_construction_label(self):
         """A caller that derives a label says so; there is no unlabeled batch."""
         ra = RecordBatch(
             "derived",
@@ -150,11 +150,11 @@ class TestNameLifecycle:
         )
         assert named.label == "mine"
 
-    def test_composite_distribution_derives_default_name(self):
+    def test_composite_distribution_derives_default_label(self):
         joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(loc=0.0, scale=1.0, label="sigma")
         assert joint.label == "mu·sigma"
 
-    def test_composite_distribution_keeps_explicit_name(self):
+    def test_composite_distribution_keeps_explicit_label(self):
         joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, label="mu")])
         assert joint.label == "my_joint"
 
@@ -173,7 +173,7 @@ class TestNameLifecycle:
             pytest.param(lambda r: r.with_path_names(a="z"), {"z": 1.0, "b": 2.0}, id="rename"),
         ],
     )
-    def test_structural_transforms_preserve_names_and_apply_the_edit(
+    def test_structural_transforms_preserve_labels_and_apply_the_edit(
         self, name, transform, expected
     ):
         record = Record.ensure({"a": jnp.array(1.0), "b": jnp.array(2.0)}, label=name)
@@ -184,7 +184,7 @@ class TestNameLifecycle:
         assert {key: float(value) for key, value in result.items()} == expected
         assert {key: float(value) for key, value in record.items()} == {"a": 1.0, "b": 2.0}
 
-    def test_nested_auto_name_derives_from_top_level_keys(self):
+    def test_nested_auto_label_derives_from_top_level_keys(self):
         # The derived label uses top-level field keys (not full leaf paths),
         # so every transform agrees regardless of nesting depth.
         nested = Record(
@@ -195,7 +195,7 @@ class TestNameLifecycle:
         assert nested.with_path_names({"a/b": "z"}).label == "record(a)"
         assert nested.map(lambda x: x).label == "record(a)"
 
-    def test_record_names_survive_pickle(self):
+    def test_record_labels_survive_pickle(self):
         auto = Record("record(a)", {"a": 1.0})
         named = Record("mine", a=1.0)
         assert pickle.loads(pickle.dumps(auto)).label == auto.label
@@ -207,20 +207,20 @@ class TestNameLifecycle:
 # ===========================================================================
 
 
-class TestWithName:
-    def test_with_name_returns_copy_original_unchanged(self):
+class TestWithLabel:
+    def test_with_label_returns_copy_original_unchanged(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
         m = n.with_label("y")
         assert m is not n
         assert m.label == "y"
         assert n.label == "x"
 
-    def test_with_name_replaces_a_derived_name(self):
+    def test_with_label_replaces_a_derived_label(self):
         r = Record("record(a)", {"a": 1.0})  # operation-derived (auto) label
         r2 = r.with_label("mine")
         assert r2.label == "mine"
 
-    def test_with_name_records_provenance(self):
+    def test_with_label_records_provenance(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
         m = n.with_label("y")
         assert m.provenance is not None
@@ -228,7 +228,7 @@ class TestWithName:
         assert m.provenance.metadata == {"old_label": "x", "new_label": "y"}
         assert m.provenance.parents[0].label == "x"
 
-    def test_with_name_on_immutable_record(self):
+    def test_with_label_on_immutable_record(self):
         r = Record("orig", a=jnp.array(1.0), b=jnp.array(2.0))
         r2 = r.with_label("new")
         assert r2.label == "new"
@@ -237,21 +237,21 @@ class TestWithName:
         assert r2.event_template is r.event_template
         assert r == r2 or r2["b"] is r["b"]
 
-    def test_with_name_rejects_empty_or_non_string(self):
+    def test_with_label_rejects_empty_or_non_string(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
         with pytest.raises(TypeError, match="non-empty string"):
             n.with_label("")
         with pytest.raises(TypeError, match="non-empty string"):
             n.with_label(3)  # type: ignore[arg-type]
 
-    def test_with_name_off_mode_attaches_no_provenance(self):
+    def test_with_label_off_mode_attaches_no_provenance(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         n = Normal(loc=0.0, scale=1.0, label="x")
         m = n.with_label("y")
         assert m.label == "y"
         assert m.provenance is None
 
-    def test_with_name_decouples_annotations_container(self):
+    def test_with_label_decouples_annotations_container(self):
         # Post-relabel annotation writes must not show through on the
         # original (the container is copied; entry values are shared).
         n = Normal(loc=0.0, scale=1.0, label="x")
@@ -261,7 +261,7 @@ class TestWithName:
         assert "check" not in n.annotations
         assert m.annotations["fit"] == "exact"
 
-    def test_with_name_decouples_datatree_annotations(self):
+    def test_with_label_decouples_datatree_annotations(self):
         xr = pytest.importorskip("xarray")
         n = Normal(loc=0.0, scale=1.0, label="x")
         n._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
@@ -270,7 +270,7 @@ class TestWithName:
         assert "diagnostics" not in n.annotations.children
         assert "arviz" in m.annotations.children
 
-    def test_with_name_after_provenance_starts_fresh_chain(self):
+    def test_with_label_after_provenance_starts_fresh_chain(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
         n.with_provenance(Provenance("first"))
         m = n.with_label("y")
@@ -280,7 +280,7 @@ class TestWithName:
         assert m.provenance.parents[0].provenance is n.provenance
 
 
-class TestWithNameOnBatchTypes:
+class TestWithLabelOnBatchTypes:
     """with_label on the batch types: a copy under the new user-given label,
     sharing field data, with the original unchanged."""
 
@@ -325,7 +325,7 @@ class TestWithNameOnBatchTypes:
 # ===========================================================================
 
 
-class TestWithNameOnCustomNewHosts:
+class TestWithLabelOnCustomNewHosts:
     """with_label must work on every TrackedTerm host, including classes whose
     __new__ takes required arguments (dynamic class selection / views)."""
 
@@ -357,10 +357,10 @@ class TestWithNameOnCustomNewHosts:
 # ===========================================================================
 
 
-class TestNamePreservation:
+class TestLabelPreservation:
     """Transformations preserve the labels assigned by their constructors."""
 
-    def test_minibatched_distribution_keeps_its_name(self):
+    def test_minibatched_distribution_keeps_its_label(self):
         from probpipe import MultivariateNormal
         from probpipe.families import BernoulliFamily, glm_likelihood
         from probpipe.inference._minibatch import MinibatchedDistribution
@@ -372,7 +372,7 @@ class TestNamePreservation:
         named = MinibatchedDistribution("mine", prior, lik, y, batch_size=2)
         assert named.label == "mine"
 
-    def test_joint_conditioning_preserves_names(self):
+    def test_joint_conditioning_preserves_labels(self):
         auto_joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(
             loc=1.0, scale=0.5, label="sigma"
         )
@@ -382,16 +382,16 @@ class TestNamePreservation:
         cond_named = named_joint._condition_on({"mu": 0.5})
         assert cond_named.label == named_joint.label
 
-    def test_distribution_batch_slice_derives_its_name_from_the_batch(self):
+    def test_distribution_batch_slice_derives_its_label_from_the_batch(self):
         batch = _normals("batch", 4)
         assert batch[0:2].label == "batch[law=0:2]"
         renamed = batch.with_label("renamed")
         assert renamed[0:2].label == "renamed[law=0:2]"
 
-    def test_distribution_batch_elements_derive_names(self):
+    def test_distribution_batch_elements_derive_labels(self):
         assert _normals("x", 3)[0].label == "x[law=0]"
 
-    def test_full_factorial_design_derives_name(self):
+    def test_full_factorial_design_derives_label(self):
         from probpipe.record import FullFactorialDesign
 
         design = FullFactorialDesign(a=jnp.arange(2.0), b=jnp.arange(3.0))
@@ -456,12 +456,12 @@ class TestAnnotated:
 
 
 class TestJointPickleRoundTrip:
-    def test_joint_keeps_derived_name_through_pickle(self):
+    def test_joint_keeps_derived_label_through_pickle(self):
         joint = Normal(loc=0.0, scale=1.0, label="mu") * Normal(loc=1.0, scale=0.5, label="sigma")
         back = pickle.loads(pickle.dumps(joint))
         assert back.label == joint.label
 
-    def test_user_named_joint_keeps_identity_and_provenance(self):
+    def test_user_labeled_joint_keeps_identity_and_provenance(self):
         joint = FactoredDistribution("my_joint", [Normal(loc=0.0, scale=1.0, label="mu")])
         joint.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(joint))

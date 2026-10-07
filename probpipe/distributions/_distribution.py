@@ -34,7 +34,7 @@ from ._capabilities import _check_guards
 # ---------------------------------------------------------------------------
 
 
-def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
+def _complete_event_spec(event_spec: Any, label: str) -> OutputSpec:
     """Complete *event_spec* into the output declaration of one draw.
 
     Parameters
@@ -42,8 +42,8 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
     event_spec : OutputSpec or TermSpec
         The declaration a constructor supplies. A ``RecordSpec`` exposes its
         fields, even when it has one; any other term spec is a whole term whose
-        component defaults to *name*; an ``OutputSpec`` is kept as given.
-    name : str
+        component defaults to *label*; an ``OutputSpec`` is kept as given.
+    label : str
         The law's label, which is the default component of a whole-term event.
 
     Returns
@@ -57,19 +57,19 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
         If *event_spec* is neither an ``OutputSpec`` nor a ``TermSpec``.
     ValueError
         If the declaration has a type hole, since filling one is the
-        constructor's job, or *name* is not a valid component name.
+        constructor's job, or *label* is not a valid component name.
     """
     if isinstance(event_spec, OutputSpec):
         declaration = event_spec
     elif isinstance(event_spec, TermSpec):
-        declaration = OutputSpec.default(event_spec, component=name)
+        declaration = OutputSpec.default(event_spec, component=label)
     else:
         raise TypeError(
             f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
         )
     if declaration.spec is None:
         raise ValueError(
-            f"the event declaration of {name!r} has a type hole; a distribution stores "
+            f"the event declaration of {label!r} has a type hole; a distribution stores "
             f"only a complete declaration"
         )
     return declaration
@@ -83,10 +83,10 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
     return component
 
 
-def _is_default_declaration(declaration: OutputSpec, name: str) -> bool:
-    """Whether *declaration* is the one a bare spec completes to under the label *name* (III.7)."""
+def _is_default_declaration(declaration: OutputSpec, label: str) -> bool:
+    """Whether *declaration* is the one a bare spec completes to under *label* (III.7)."""
     try:
-        return declaration == OutputSpec.default(declaration.spec, component=name)
+        return declaration == OutputSpec.default(declaration.spec, component=label)
     except ValueError:
         # Only a label that is a valid component has a default whole-term declaration.
         return False

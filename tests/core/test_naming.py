@@ -45,7 +45,7 @@ ELEMENT = NumericRecordSpec(a=())
 COLUMNS = {"a": jnp.arange(4.0)}
 
 
-def _named(kind):
+def _labeled(kind):
     """One instance of *kind* built with an explicit label."""
     return {
         "Record": lambda: Record("given", a=1.0),
@@ -103,16 +103,16 @@ EVERY_KIND = [
 ]
 
 
-class TestNamesAreKept:
+class TestLabelsAreKept:
     """The rule every kind shares, and the one an operation reads before relabeling."""
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
-    def test_a_given_name_is_kept_verbatim(self, kind):
-        assert _named(kind).label == "given"
+    def test_a_given_label_is_kept_verbatim(self, kind):
+        assert _labeled(kind).label == "given"
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
-    def test_name_origin_is_not_part_of_the_public_term(self, kind):
-        term = _named(kind)
+    def test_label_origin_is_not_part_of_the_public_term(self, kind):
+        term = _labeled(kind)
         assert not hasattr(term, "name_is_auto")
         assert not hasattr(term, "_name_is_auto")
         renamed = term.with_label("replacement")
@@ -128,7 +128,7 @@ class TestNamesAreKept:
         assert record.label == "flags"
 
 
-class TestWhichKindsRequireAName:
+class TestWhichKindsRequireALabel:
     """A label is required where nothing else identifies the value.
 
     A record has fields and a batch has levels, but neither says *which* record
@@ -150,11 +150,11 @@ class TestWhichKindsRequireAName:
             ),
         ],
     )
-    def test_a_name_is_required(self, build):
+    def test_a_label_is_required(self, build):
         with pytest.raises(TypeError):
             build()
 
-    def test_a_numeric_array_requires_a_name(self):
+    def test_a_numeric_array_requires_a_label(self):
         """It carries no fields to describe it, so a class-name default would
         label every array in a pipeline alike."""
         with pytest.raises(TypeError, match="label"):
@@ -173,7 +173,7 @@ class TestWhichKindsRequireAName:
         assert Function(label="predict", fn=predict).label == "predict"
 
 
-class TestADerivedNameSaysSo:
+class TestADerivedLabelSaysSo:
     """A view labels itself after the position it selected, and marks it auto."""
 
     @staticmethod
@@ -185,17 +185,17 @@ class TestADerivedNameSaysSo:
             element_spec=NumericArraySpec(shape=(3,)),
         )
 
-    def test_an_element_is_named_for_its_position(self):
+    def test_an_element_is_labeled_for_its_position(self):
         element = self._batch()[1]
 
         assert element.label == "posterior[draw=1]"
 
-    def test_a_sub_batch_is_named_for_its_slice(self):
+    def test_a_sub_batch_is_labeled_for_its_slice(self):
         sub = self._batch()[1:3]
 
         assert sub.label == "posterior[draw=1:3]"
 
-    def test_a_derived_name_builds_on_the_given_one(self):
+    def test_a_derived_label_builds_on_the_given_one(self):
         """So the lineage reads back to the batch a caller actually labeled."""
         assert self._batch()[1].label.startswith("posterior")
 
@@ -271,7 +271,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
         assert result.provenance.parents[1].parent is law
 
 
-class TestTheOutputBoundaryNamesEveryKindAlike:
+class TestTheOutputBoundaryLabelsEveryKindAlike:
     """Whatever kind a body returns, the result takes the function's label."""
 
     @pytest.mark.parametrize(
@@ -286,7 +286,7 @@ class TestTheOutputBoundaryNamesEveryKindAlike:
             ("empty sequence", lambda: []),
         ],
     )
-    def test_the_result_takes_the_functions_name(self, label, body):
+    def test_the_result_takes_the_functions_label(self, label, body):
         result = Function(fn=body, label="myfunc")()
 
         assert result.label == "myfunc"
@@ -419,7 +419,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
             density_op(self.LAW, jnp.zeros(3))
 
 
-class TestRawDrawNaming:
+class TestRawDrawLabeling:
     @pytest.mark.parametrize(
         ("value", "declaration", "completed"),
         [
@@ -428,7 +428,7 @@ class TestRawDrawNaming:
         ],
         ids=["scalar", "mapping"],
     )
-    def test_a_declared_function_result_takes_the_requested_name(
+    def test_a_declared_function_result_takes_the_requested_label(
         self, value, declaration, completed
     ):
         wrapped = Function("producer", lambda: value, output_spec=declaration, output_label="law")
@@ -440,7 +440,7 @@ class TestRawDrawNaming:
         assert float(result["x"] if isinstance(result, Record) else result) == 2.0
 
 
-class TestEveryAggregateIsNamedForItsFunction:
+class TestEveryAggregateIsLabeledForItsFunction:
     """The labeling table, widened across the axes that had diverged.
 
     A sweep's aggregate is built by the boundary, not by a caller, so its label is
@@ -474,19 +474,19 @@ class TestEveryAggregateIsNamedForItsFunction:
             ("sequence", lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])]),
         ],
     )
-    def test_an_undeclared_aggregate_is_named_for_the_function(self, label, body):
+    def test_an_undeclared_aggregate_is_labeled_for_the_function(self, label, body):
         result = self._swept(body)
 
         assert result.label == "double"
 
-    def test_a_declared_aggregate_is_named_the_same_way(self):
+    def test_a_declared_aggregate_is_labeled_the_same_way(self):
         from probpipe import RecordSpec
 
         result = self._swept(lambda v: {"y": jnp.asarray(v["x"])}, output_spec=RecordSpec(y=()))
 
         assert result.label == "double"
 
-    def test_a_multi_axis_sweep_is_named_the_same_way(self):
+    def test_a_multi_axis_sweep_is_labeled_the_same_way(self):
         """The re-cut to the sweep's own geometry is a separate construction, and
         it had its own labeling."""
         from probpipe.core._specs import NumericRecordSpec
@@ -506,7 +506,7 @@ class TestEveryAggregateIsNamedForItsFunction:
         assert result.level_names == ("a", "b")
 
 
-class TestNoKindInventsAName:
+class TestNoKindInventsALabel:
     """The rule the whole layer now shares: a label is given, or derived from
     something that carries meaning. A class name carries none.
 
@@ -521,7 +521,7 @@ class TestNoKindInventsAName:
     the other half of the rule: where a *derived* label comes from.
     """
 
-    def test_stack_derives_its_name_from_what_it_stacks(self):
+    def test_stack_derives_its_label_from_what_it_stacks(self):
         """Derived from real content, so no call site has to invent one: a batch
         of `draw` records is about `draw`."""
         rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
@@ -530,14 +530,14 @@ class TestNoKindInventsAName:
 
         assert batch.label == "draw"
 
-    def test_stack_takes_a_better_name_when_offered(self):
+    def test_stack_takes_a_better_label_when_offered(self):
         rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
 
         batch = NumericRecordBatch.stack(rows, level_name="row", label="posterior")
 
         assert batch.label == "posterior"
 
-    def test_a_structural_transform_preserves_the_name(self):
+    def test_a_structural_transform_preserves_the_label(self):
         """There is no class-name default to re-derive from, and an auto name is
         something derived rather than a placeholder."""
         batch = NumericRecordBatch(

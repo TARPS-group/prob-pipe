@@ -731,9 +731,9 @@ class TestAlgebraComposition:
         )
 
 
-def _named_weight_grf(name):
+def _named_weight_grf(label):
     weights = MultivariateNormal("weights", jnp.array([1.0, 0.5]), cov=0.01 * jnp.eye(2))
-    return LinearBasisFunction(name, _weight_basis, weights)
+    return LinearBasisFunction(label, _weight_basis, weights)
 
 
 class TestAlgebraNames:

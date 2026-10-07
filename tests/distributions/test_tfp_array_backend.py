@@ -33,7 +33,7 @@ from probpipe.families._backend import _TFPArrayBackend
 class TestMakeArrayBackendConstruction:
     def test_normal_returns_tfp_array_backend(self):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(5,),
             loc=jnp.arange(5.0),
             scale=1.0,
@@ -44,7 +44,7 @@ class TestMakeArrayBackendConstruction:
 
     def test_beta_inherits_make_array_backend(self):
         backend = Beta._make_array_backend(
-            name="b",
+            label="b",
             batch_shape=(3,),
             alpha=jnp.array([1.0, 2.0, 3.0]),
             beta=jnp.array([1.0, 1.0, 1.0]),
@@ -54,7 +54,7 @@ class TestMakeArrayBackendConstruction:
 
     def test_gamma_inherits_make_array_backend(self):
         backend = Gamma._make_array_backend(
-            name="g",
+            label="g",
             batch_shape=(4,),
             concentration=jnp.array([1.0, 2.0, 3.0, 4.0]),
             rate=1.0,
@@ -65,7 +65,7 @@ class TestMakeArrayBackendConstruction:
     def test_mvn_inherits_make_array_backend(self):
         d = 3
         backend = MultivariateNormal._make_array_backend(
-            name="z",
+            label="z",
             batch_shape=(2,),
             loc=jnp.zeros((2, d)),
             scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
@@ -76,7 +76,7 @@ class TestMakeArrayBackendConstruction:
 
     def test_required_minimum_surface(self):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(2,),
             loc=jnp.zeros(2),
             scale=1.0,
@@ -98,7 +98,7 @@ class TestMakeArrayBackendConstruction:
         ``(3,)`` raises ``ValueError`` at backend construction."""
         with pytest.raises(ValueError, match="batch_shape"):
             Normal._make_array_backend(
-                name="x",
+                label="x",
                 batch_shape=(5,),
                 loc=jnp.zeros(3),  # actually batch_shape=(3,)
                 scale=1.0,
@@ -114,7 +114,7 @@ class TestCellMaterialisation:
     def test_cell_returns_fresh_scalar_normal(self):
         loc = jnp.array([0.0, 1.0, 2.0, 3.0, 4.0])
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(5,),
             loc=loc,
             scale=1.0,
@@ -141,7 +141,7 @@ class TestCellMaterialisation:
         """
         loc = jnp.array([10.0, 20.0, 30.0])
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(3,),
             loc=loc,
             scale=1.0,
@@ -155,7 +155,7 @@ class TestCellMaterialisation:
 
     def test_cell_name_auto_suffixes(self):
         backend = Normal._make_array_backend(
-            name="weights",
+            label="weights",
             batch_shape=(3,),
             loc=jnp.zeros(3),
             scale=jnp.ones(3),
@@ -167,7 +167,7 @@ class TestCellMaterialisation:
         """Cells materialise as scalar distributions
         (``tfd batch_shape == ()``)."""
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(4,),
             loc=jnp.arange(4.0),
             scale=jnp.ones(4),
@@ -178,7 +178,7 @@ class TestCellMaterialisation:
 
     def test_cell_negative_index_rejected(self):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(3,),
             loc=jnp.zeros(3),
             scale=1.0,
@@ -193,7 +193,7 @@ class TestCellMaterialisation:
         loc = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         scale_tril = jnp.broadcast_to(jnp.eye(d), (2, d, d))
         backend = MultivariateNormal._make_array_backend(
-            name="z",
+            label="z",
             batch_shape=(2,),
             loc=loc,
             scale_tril=scale_tril,
@@ -216,7 +216,7 @@ class TestMultiDimensionalBatch:
         """Flat ``int`` indices unravel row-major over ``batch_shape``."""
         loc = jnp.array([[10.0, 11.0, 12.0], [20.0, 21.0, 22.0]])
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(2, 3),
             loc=loc,
             scale=1.0,
@@ -229,7 +229,7 @@ class TestMultiDimensionalBatch:
     def test_tuple_index_axis_aligned(self):
         loc = jnp.array([[10.0, 11.0, 12.0], [20.0, 21.0, 22.0]])
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(2, 3),
             loc=loc,
             scale=1.0,
@@ -240,7 +240,7 @@ class TestMultiDimensionalBatch:
     def test_int_and_tuple_indices_match(self):
         loc = jnp.arange(12.0).reshape(3, 4)
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(3, 4),
             loc=loc,
             scale=1.0,
@@ -253,7 +253,7 @@ class TestMultiDimensionalBatch:
 
     def test_tuple_wrong_rank_rejected(self):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(2, 3),
             loc=jnp.zeros((2, 3)),
             scale=1.0,
@@ -270,7 +270,7 @@ class TestMultiDimensionalBatch:
 class TestBatchedOpsMatchTFPNative:
     def _make_pair(self, loc, scale):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=tuple(
                 jnp.broadcast_shapes(
                     jnp.asarray(loc).shape,
@@ -320,7 +320,7 @@ class TestBatchedOpsMatchTFPNative:
     def test_multi_d_batch_sample_shape(self):
         loc = jnp.zeros((2, 3))
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(2, 3),
             loc=loc,
             scale=1.0,
@@ -339,7 +339,7 @@ class TestScalarBroadcast:
         """A param given as a Python float / 0-D array (broadcast across
         every cell) is preserved unchanged in ``cell(i)``."""
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(4,),
             loc=jnp.arange(4.0),
             scale=2.5,  # scalar
@@ -350,7 +350,7 @@ class TestScalarBroadcast:
 
     def test_zero_d_jax_array_param_passes_through(self):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(3,),
             loc=jnp.arange(3.0),
             scale=jnp.array(0.5),
@@ -376,7 +376,7 @@ class TestPytreeRegistration:
 
     def _backend(self):
         return Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(5,),
             loc=jnp.arange(5.0),
             scale=1.0,
@@ -430,7 +430,7 @@ class TestPytreeRegistration:
         """vmap-able through ``tree_map`` lifting a fresh axis on each
         leaf, then calling the backend's vectorised op under the lift."""
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(3,),
             loc=jnp.zeros(3),
             scale=jnp.ones(3),
@@ -464,7 +464,7 @@ class TestScalarParamBroadcasting:
         """All-scalar params + ``batch_shape=(5,)`` produces five
         identical Normals."""
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(5,),
             loc=0.0,
             scale=1.0,
@@ -479,7 +479,7 @@ class TestScalarParamBroadcasting:
         """``loc`` scalar + ``scale`` array broadcasts ``loc`` to
         match the batch axis."""
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(3,),
             loc=0.0,
             scale=jnp.array([0.1, 0.2, 0.3]),
@@ -490,7 +490,7 @@ class TestScalarParamBroadcasting:
 
     def test_multi_d_batch_with_scalar_params(self):
         backend = Normal._make_array_backend(
-            name="x",
+            label="x",
             batch_shape=(2, 3),
             loc=0.0,
             scale=1.0,

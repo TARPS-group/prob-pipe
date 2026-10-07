@@ -196,9 +196,9 @@ _register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
 
 
 def _declarations(
-    name: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
+    label: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
 ) -> tuple[OutputSpec, OutputSpec]:
-    """The drawn function's output declaration and the event's, each defaulting to *name*.
+    """The drawn function's output declaration and the event's, each defaulting to *label*.
 
     The event is a function, so a declared event type is a ``FunctionSpec`` whose
     output side names the drawn function's output component. A type hole in the
@@ -206,15 +206,15 @@ def _declarations(
 
     Parameters
     ----------
-    name : str
+    label : str
         The random function's label, which both declarations take as their default
         component.
     output_spec : OutputSpec or None
         The declaration of the drawn function's output, or None for a type hole under
-        *name*.
+        *label*.
     event_spec : OutputSpec or None
         The declaration of the function-valued event, or None for a ``FunctionSpec`` under
-        *name*.
+        *label*.
 
     Returns
     -------
@@ -233,22 +233,22 @@ def _declarations(
     ValueError
         If the event's ``FunctionSpec`` names another output component.
     """
-    output = OutputSpec(**{name: None}) if output_spec is None else output_spec
+    output = OutputSpec(**{label: None}) if output_spec is None else output_spec
     if not isinstance(output, OutputSpec) or output._component_name is None:
         raise TypeError(
-            f"output_spec of {name!r} must be an OutputSpec naming one component, got "
+            f"output_spec of {label!r} must be an OutputSpec naming one component, got "
             f"{output_spec!r}"
         )
     if event_spec is None:
-        return output, OutputSpec(**{name: FunctionSpec(output_spec=output)})
+        return output, OutputSpec(**{label: FunctionSpec(output_spec=output)})
     if not isinstance(event_spec, OutputSpec):
-        raise TypeError(f"event_spec of {name!r} must be an OutputSpec, got {event_spec!r}")
+        raise TypeError(f"event_spec of {label!r} must be an OutputSpec, got {event_spec!r}")
     declared = event_spec.spec
     if declared is None:
         return output, event_spec._with_spec(FunctionSpec(output_spec=output))
     if not isinstance(declared, FunctionSpec):
         raise TypeError(
-            f"the event of the random function {name!r} is a function, so event_spec declares "
+            f"the event of the random function {label!r} is a function, so event_spec declares "
             f"a FunctionSpec; got {type(declared).__name__}"
         )
     if declared.output_spec is None:
@@ -257,7 +257,7 @@ def _declarations(
     named = declared.output_spec._component_name
     if named != output._component_name:
         raise ValueError(
-            f"the event of {name!r} declares a function whose output is {named!r}, but the "
+            f"the event of {label!r} declares a function whose output is {named!r}, but the "
             f"drawn function names the output component {output._component_name!r}"
         )
     return output, event_spec

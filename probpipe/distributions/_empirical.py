@@ -210,7 +210,7 @@ def _ranks(atoms: Batch) -> tuple[int, ...]:
     return tuple(len(group) for group in atoms.axis_groups)
 
 
-def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
+def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
     """*raw*, values of *spec* in raw form along one leading axis, as their batch on *level*.
 
     The raw form is an array of array values, the nested mapping of columns, or
@@ -219,7 +219,7 @@ def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's label.
     raw : Any
         The values in raw form, along one leading axis.
@@ -240,11 +240,11 @@ def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
         If *spec* has no batch form.
     """
     if isinstance(spec, RecordSpec):
-        return _batch_class_for(spec)(name, _raw_record(raw), level, element_spec=spec)
+        return _batch_class_for(spec)(label, _raw_record(raw), level, element_spec=spec)
     batch_class = batch_class_for_spec(spec)
     if batch_class is None:
         raise TypeError(f"a value declared as {type(spec).__name__} has no batch form")
-    return batch_class(name, raw, level, element_spec=spec)
+    return batch_class(label, raw, level, element_spec=spec)
 
 
 # ---------------------------------------------------------------------------

@@ -98,14 +98,14 @@ def _prior() -> Normal:
     return Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))
 
 
-def _law(name: str, component: str, spec: Any = SCALAR) -> Law:
-    """A law labeled *name* whose whole-term component is *component*."""
-    return Law(name, OutputSpec(**{component: spec}))
+def _law(label: str, component: str, spec: Any = SCALAR) -> Law:
+    """A law labeled *label* whose whole-term component is *component*."""
+    return Law(label, OutputSpec(**{component: spec}))
 
 
-def _kernel(name: str, given: Mapping[str, Any], component: str, spec: Any = SCALAR):
-    """A kernel labeled *name* on the slots *given* that produces *component*."""
-    return NormalKernel(name, dict(given), OutputSpec(**{component: spec}))
+def _kernel(label: str, given: Mapping[str, Any], component: str, spec: Any = SCALAR):
+    """A kernel labeled *label* on the slots *given* that produces *component*."""
+    return NormalKernel(label, dict(given), OutputSpec(**{component: spec}))
 
 
 def _features(X):

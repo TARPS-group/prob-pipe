@@ -154,7 +154,7 @@ def _column_permutation(
 # ---------------------------------------------------------------------------
 
 
-def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericArrayBatch:
+def _array_atoms(label: str, stacked: Array, term: NumericArraySpec) -> NumericArrayBatch:
     """The draws *stacked* ``(chains, draws, *flat)`` as atoms of the array term *term*.
 
     Each draw takes the shape the term declares, so a scalar term's draws are
@@ -162,7 +162,7 @@ def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericAr
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's label.
     stacked : Array
         The draws of every chain, stacked along the leading axis.
@@ -194,10 +194,10 @@ def _array_atoms(name: str, stacked: Array, term: NumericArraySpec) -> NumericAr
         term = NumericArraySpec(tuple(stacked.shape[2:]), term.dtype, term.support)
     if term.dtype is not None:
         values = values.astype(term.dtype)
-    return NumericArrayBatch(name, values, _CHAIN_LEVELS, element_spec=term, axes_per_level=(1, 1))
+    return NumericArrayBatch(label, values, _CHAIN_LEVELS, element_spec=term, axes_per_level=(1, 1))
 
 
-def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecordBatch:
+def _record_atoms(label: str, stacked: Array, record: RecordSpec) -> NumericRecordBatch:
     """The draws *stacked* ``(chains, draws, d)`` as atoms of *record*, in its flat layout.
 
     The columns follow the record's canonical leaf order, nested groups
@@ -205,7 +205,7 @@ def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecor
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's label.
     stacked : Array
         The draws of every chain, stacked along the leading axis.
@@ -251,11 +251,11 @@ def _record_atoms(name: str, stacked: Array, record: RecordSpec) -> NumericRecor
         columns[path] = column if spec.dtype is None else column.astype(spec.dtype)
         offset += width
     return NumericRecordBatch(
-        name, columns, _CHAIN_LEVELS, element_spec=record, axes_per_level=(1, 1)
+        label, columns, _CHAIN_LEVELS, element_spec=record, axes_per_level=(1, 1)
     )
 
 
-def _chain_atoms(name: str, stacked: Array, declaration: OutputSpec | None) -> Any:
+def _chain_atoms(label: str, stacked: Array, declaration: OutputSpec | None) -> Any:
     """The draws *stacked* ``(chains, draws, *flat)`` as atoms of the target's event term.
 
     Without a target, each draw is one array.
@@ -263,16 +263,16 @@ def _chain_atoms(name: str, stacked: Array, declaration: OutputSpec | None) -> A
     if declaration is None:
         element = NumericArraySpec(tuple(stacked.shape[2:]), stacked.dtype)
         return NumericArrayBatch(
-            name, stacked, _CHAIN_LEVELS, element_spec=element, axes_per_level=(1, 1)
+            label, stacked, _CHAIN_LEVELS, element_spec=element, axes_per_level=(1, 1)
         )
     term = declaration.spec
     if isinstance(term, RecordSpec):
-        return _record_atoms(name, stacked, term)
+        return _record_atoms(label, stacked, term)
     if not isinstance(term, NumericArraySpec):
         raise TypeError(
-            f"An inference result requires a numeric target; {name!r} declares {term!r}"
+            f"An inference result requires a numeric target; {label!r} declares {term!r}"
         )
-    return _array_atoms(name, stacked, term)
+    return _array_atoms(label, stacked, term)
 
 
 # ---------------------------------------------------------------------------

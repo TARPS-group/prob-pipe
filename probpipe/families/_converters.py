@@ -1153,7 +1153,7 @@ class _EmpiricalDraws(Converter):
         return EmpiricalDistribution(name, atoms, event_spec=declaration)
 
 
-def _smoothed_atoms(name: str, values: Any, spec: Any) -> Any:
+def _smoothed_atoms(label: str, values: Any, spec: Any) -> Any:
     """*values*, raw values of *spec* along one axis, as a KDE takes its atoms.
 
     An array event's values are an array, and a record event's are a batch of
@@ -1161,7 +1161,7 @@ def _smoothed_atoms(name: str, values: Any, spec: Any) -> Any:
     """
     if isinstance(spec, NumericArraySpec):
         return jnp.asarray(values)
-    return _batch_form(name, values, SAMPLE_LEVEL, spec)
+    return _batch_form(label, values, SAMPLE_LEVEL, spec)
 
 
 class _KDESmoothing(Converter):

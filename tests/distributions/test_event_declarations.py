@@ -122,11 +122,11 @@ def _features(X, output_shape=()):
     return jnp.stack([phi] * output_shape[0], -2) if output_shape else phi
 
 
-def _basis_function(name: str = "f", output_shape: tuple[int, ...] = ()) -> LinearBasisFunction:
+def _basis_function(label: str = "f", output_shape: tuple[int, ...] = ()) -> LinearBasisFunction:
     width = 2 * max(1, int(np.prod(output_shape)))
     weights = MultivariateNormal("w", loc=jnp.zeros(width), cov=jnp.eye(width))
     return LinearBasisFunction(
-        name, functools.partial(_features, output_shape=output_shape), weights
+        label, functools.partial(_features, output_shape=output_shape), weights
     )
 
 
