@@ -1124,7 +1124,7 @@ def _stack_rows(
 
 
 def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
-    """*value* validated against *declared* and wrapped at the kind it names, labeled *label*.
+    """*value* validated against *declared* and wrapped at the kind it names.
 
     This is the return step of one point of a call that a route realized
     (V.10): a type hole is completed from *value*, a batch declaration reads
@@ -1138,7 +1138,9 @@ def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
     declared : OutputSpec or None
         The point's result declaration, or ``None`` when the point declares none.
     label : str
-        The call's result label, which names a term wrapped from a raw *value*.
+        The call's result label, which names each term built from *value*. A
+        tracked *value* keeps its own label unless a batch declaration builds a
+        batch from it.
 
     Returns
     -------

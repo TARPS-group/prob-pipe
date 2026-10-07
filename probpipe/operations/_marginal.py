@@ -75,8 +75,8 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
     Raises
     ------
     ApplicabilityError
-        If a path is not an event path, or two selected paths end in the same
-        segment.
+        If *field* is neither a str nor a tuple, a path is not an event path, or
+        two selected paths end in the same segment.
     """
     if isinstance(field, tuple):
         nodes = {path.rsplit(_PATH_SEP, 1)[-1]: _node(d, path) for path in field}

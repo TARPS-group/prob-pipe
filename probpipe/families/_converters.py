@@ -762,7 +762,7 @@ def _same_support(first: Constraint, second: Constraint) -> bool:
     return _supports_compatible(first, second) and _supports_compatible(second, first)
 
 
-def _check_support(result: Distribution, law: Distribution) -> None:
+def _check_support(result: Distribution, law: Distribution | None) -> None:
     """Refuse a fit whose support is not the law's.
 
     A law whose support is undeclared has nothing to compare, unless it is an

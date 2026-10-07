@@ -321,7 +321,7 @@ def _replicate_spec(source: Distribution, size: int, level: str) -> TermSpec:
 
 
 def _completed(term: TermSpec, event_spec: OutputSpec | None) -> OutputSpec | TermSpec:
-    """*term* under *event_spec*'s component, or a whole term under the law's name.
+    """*term* under *event_spec*'s component, or a whole term whose component defaults to the label.
 
     Parameters
     ----------
@@ -335,7 +335,7 @@ def _completed(term: TermSpec, event_spec: OutputSpec | None) -> OutputSpec | Te
     OutputSpec or TermSpec
         *event_spec* completed with *term* by :meth:`OutputSpec.with_spec`, or *term*
         itself when *event_spec* is None, which ``Distribution`` declares as a whole term
-        under the law's label.
+        whose component defaults to the law's label.
 
     Raises
     ------

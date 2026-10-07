@@ -266,9 +266,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
-    its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
-    does; a joint that ``*`` composes is named by its operands' labels. Every
-    transform preserves the name; only ``with_label`` replaces it.
+    its label as the required first argument, as ``Normal("x", 0.0, 1.0)``
+    does; a joint that ``*`` composes is labeled by its operands' labels. Every
+    transform preserves the label; only ``with_label`` replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -276,7 +276,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     **The event declaration.** A law stores one ``DistributionSpec``, its
     :attr:`spec`, whose :attr:`event_spec` is the output declaration of one
     draw. A bare ``RecordSpec`` exposes its fields; any other term spec is a
-    whole-term event whose component defaults to the law's ``name``, captured
+    whole-term event whose component defaults to the law's label, captured
     once at construction. :attr:`event_shape` reads the declaration, and
     a law whose declaration is numeric also has the views of
     :class:`NumericDistribution`; none of them is stored.
@@ -284,7 +284,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Parameters
     ----------
     label : str
-        Non-empty name for this distribution.
+        The law's label, which must be a non-empty string.
     event_spec : OutputSpec or TermSpec
         The declaration of one draw, completed as above.
     _provenance : Provenance, optional
@@ -297,10 +297,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string, or *event_spec* is not a spec.
+        If *label* is not a non-empty string, or *event_spec* is not a spec.
     ValueError
         If *event_spec* has a type hole, or it is a bare term spec other than a
-        record and *name* is not a valid component name.
+        record and *label* is not a valid component name.
     """
 
     # -- Immutability: deferred for this layer ------------------------------
@@ -813,7 +813,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Parameters
         ----------
         label : str
-            The batch's name.
+            The batch's label.
         batch_shape : tuple of int, optional
             The batch axes, inferred from the parameters when omitted.
         **batched_params
@@ -822,7 +822,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         DistributionBatch
-            The type the signature declares. The method raises before it returns.
+            The batch of these laws under the label *label*, with the batch axes
+            as its batch shape.
 
         Raises
         ------

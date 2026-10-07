@@ -256,9 +256,8 @@ class Provenance:
     ) -> Provenance | None:
         """Build provenance respecting the active workflow's provenance mode.
 
-        Returns ``None`` when the mode is :attr:`ProvenanceMode.OFF` so that
-        call sites can pass the result directly to ``with_provenance()``
-        without an extra guard — ``with_provenance(None)`` is a no-op.
+        Call sites can pass the result directly to ``with_provenance()`` without
+        an extra guard, since ``with_provenance(None)`` is a no-op.
 
         Parameters
         ----------

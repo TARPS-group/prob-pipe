@@ -430,7 +430,7 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
 def _validate_stacked_output(
     *, function_name: str, output_spec: OutputSpec | None, batch: Any
 ) -> None:
-    """Check the supports *output_spec* declares on *batch*, the stacked results of a mapped call.
+    """Check the stacked results of a mapped call against the supports of their own ``BatchSpec``.
 
     A traced point skips its support check, so a mapped call checks every
     stacked value once the map returns.

@@ -386,7 +386,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     **The event declaration.** Without *event_spec*, record atoms expose their
     fields, and any other atoms form a whole-term event whose component defaults
-    to the law's *name*. An *event_spec* names the components and the packaging.
+    to the law's label. An *event_spec* names the components and the packaging.
     ``OutputSpec.with_spec`` completes it with the atoms' spec: a type hole
     takes that spec, and a declared type must unify with it.
 
@@ -433,7 +433,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string, *atoms* is neither a batch of a
+        If *label* is not a non-empty string, *atoms* is neither a batch of a
         stored kind nor a numeric array, *level* is not a string or is given
         with a batch of atoms, *event_spec* is not an ``OutputSpec``, or
         *event_spec* exposes a record for atoms that are not records.
@@ -441,7 +441,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         If *atoms* holds no atom or is a 0-d array, the weights do not number
         one per atom or are negative or sum to zero, *level* is not a valid level
         name, *event_spec* declares a type that does not unify with the atoms'
-        spec, or the default component *name* is not a valid component name.
+        spec, or *label* is not a valid component name when it is the default
+        component.
 
     Examples
     --------

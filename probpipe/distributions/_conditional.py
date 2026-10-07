@@ -446,21 +446,21 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     :attr:`given_spec` and :attr:`event_spec` are views on it. The event
     declaration is read as a ``Distribution``'s is: a bare ``RecordSpec``
     exposes its fields, and any other term spec is a whole term whose component
-    defaults to the kernel's ``name``. The given slots and the produced
+    defaults to the kernel's label. The given slots and the produced
     components are distinct roles, so their names are disjoint even when the
     two spaces coincide, as in a Markov kernel ``state → next_state``. Symbolic
     dimensions are scoped over both sides jointly.
 
     Users call operations rather than methods: ``condition_on(K, s)`` binds the
     given slots, and ``sample(K, given=s)``, ``log_prob(K, y, given=s)``, and
-    ``mean(K, given=s)`` are the fused conditional paths, equal to the same
+    ``mean(K, given=s)`` are the fused conditional calls, equal to the same
     operation on ``condition_on(K, s)``. A subclass implements
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
     Parameters
     ----------
     label : str
-        Non-empty name for this kernel.
+        The kernel's label, which must be a non-empty string.
     given_spec : InputSpec or Mapping[str, TermSpec]
         The named slots the kernel conditions on, at least one; the keys are
         Python identifiers.
@@ -476,12 +476,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string, *given_spec* is not a mapping of
+        If *label* is not a non-empty string, *given_spec* is not a mapping of
         term specs, or *event_spec* is not a spec.
     ValueError
         If *given_spec* has no slots, *event_spec* has a type hole, a given slot
         shares a name with a produced component, or *event_spec* is a bare term
-        spec other than a record and *name* is not a valid component name.
+        spec other than a record and *label* is not a valid component name.
     """
 
     def __init__(

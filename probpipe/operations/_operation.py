@@ -239,7 +239,7 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
     Raises
     ------
     TypeError
-        If *report* is not a bool, ``None``, or a Feasibility.
+        If *report* is not a bool, ``None``, a Feasibility, or a CallReport.
     """
     if isinstance(report, Feasibility):
         return report

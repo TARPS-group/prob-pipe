@@ -124,8 +124,8 @@ class NumericRecord(Record, Numeric):
     Parameters
     ----------
     label : str
-        The record's name — the required first positional argument, exactly
-        as on :class:`Record`.
+        The record's label, which is the required first positional argument as
+        on :class:`Record`.
     _fields : Mapping, optional
         Fields as a positional mapping — an alternative to keyword ``**fields``
         (passing both raises). As on :class:`Record`, use it when a field name
@@ -155,8 +155,8 @@ class NumericRecord(Record, Numeric):
 
     Notes
     -----
-    Constructing ``NumericRecord(name, **fields)``, constructing
-    ``Record(name, **fields)`` from all-numeric fields (which auto-promotes),
+    Constructing ``NumericRecord(label, **fields)``, constructing
+    ``Record(label, **fields)`` from all-numeric fields (which auto-promotes),
     and calling ``to_numeric()`` follow the same validation path and produce
     identical results; ``to_numeric()`` on an existing ``NumericRecord`` is
     the identity.
@@ -164,8 +164,8 @@ class NumericRecord(Record, Numeric):
     The compute boundary presents a plain PyTree of arrays: the JAX pytree
     children are the converted leaves, so ``jit`` / ``vmap`` / ``grad`` see
     exactly the ProbPipe structure. As on :class:`Record`, the PyTree aux
-    carries the ``(spec, name)`` pair, so the declared type
-    and the name survive a flatten/unflatten round-trip;
+    carries the ``(spec, label)`` pair, so the declared type
+    and the label survive a flatten/unflatten round-trip;
     :attr:`provenance`, :attr:`annotations`, and the native container types
     do not cross a JAX transform boundary.
     """
@@ -472,7 +472,7 @@ class NumericRecord(Record, Numeric):
 
 
 # ---------------------------------------------------------------------------
-# 1-D vector reconstruction (value-level; the template supplies only layout)
+# 1-D vector reconstruction: the template supplies the layout and the dtypes
 # ---------------------------------------------------------------------------
 
 
@@ -514,13 +514,11 @@ def _reconstruct_from_vector(
     """Reconstruct a numeric value from its flat vector, under *name*.
 
     Splits *vec* along its trailing axis into *template*'s leaves (canonical
-    leaf order), reshapes each to its event shape, and rebuilds the structured
-    value: a single :class:`NumericRecord` when *vec* is 1-D, a
-    :class:`~probpipe.NumericRecordBatch` over one level of
-    ``vec.shape[:-1]`` otherwise. This is the value-level machinery behind
-    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordBatch.from_vector`;
-    the template supplies only the leaf layout (shapes, order), never
-    constructing the value itself.
+    leaf order) and reshapes each to its event shape. A leaf whose spec declares
+    a dtype is cast to that dtype. The rebuilt value is a single
+    :class:`NumericRecord` when *vec* is 1-D, and otherwise a
+    :class:`~probpipe.NumericRecordBatch` on the levels that *level_names* gives.
+    :meth:`NumericRecord.from_vector` calls it to rebuild one value.
 
     Parameters
     ----------

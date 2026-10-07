@@ -223,7 +223,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # RecordSpec(vec=(3,), label=OpaqueSpec(type=str))   — array -> NumericArraySpec
 
     **Metadata: identity and annotations.** A record is a tracked term: it is
-    :class:`~probpipe.core.tracked.TrackedTerm`, carrying a human-readable :attr:`name`
+    :class:`~probpipe.core.tracked.TrackedTerm`, carrying a human-readable :attr:`label`
     and, optionally, a :attr:`provenance`, the :class:`~probpipe.core.provenance.Provenance`
     describing how it was created, attached write-once via :meth:`with_provenance`. It is
     also :class:`~probpipe.core.tracked.Annotated`, so free-form :attr:`annotations` may
@@ -285,10 +285,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     Parameters
     ----------
     label : str
-        The record's name — the required first positional argument on
-        explicit construction (a user-given name). An operation that
-        produces a record supplies a deterministic name derived from its
-        inputs. Every structural transform preserves that name.
+        The record's label, which explicit construction requires as the first
+        positional argument. An operation that produces a record supplies a
+        deterministic label derived from its inputs. Every structural transform
+        preserves the label.
     _fields : Mapping, optional
         Fields as a positional mapping (any ``collections.abc.Mapping``, copied
         into a ``dict`` at construction) — an alternative to keyword ``**fields``
@@ -311,7 +311,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Named values, stored unchanged: ``jax`` / ``numpy`` arrays, Python
         scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
         or any opaque object. At least one field is required. A nested record
-        takes its name from the field key it sits under. A ``Mapping`` value
+        takes its label from the field key it is stored under. A ``Mapping`` value
         (e.g. a ``dict``) is never a leaf — it is materialised into a nested
         subtree.
 
@@ -342,8 +342,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     coincide when every field is an array (e.g. :class:`NumericRecord`).
 
     The PyTree registration's children are the field values and its static aux
-    data is the ``(spec, name)`` pair, so the declared type and
-    the name survive a ``tree_flatten`` / ``tree_unflatten``
+    data is the ``(spec, label)`` pair, so the declared type and
+    the label survive a ``tree_flatten`` / ``tree_unflatten``
     round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
     JAX transform boundary; re-attach provenance on the reconstructed Record
     if you need to preserve the chain. On a :class:`NumericRecord`, the

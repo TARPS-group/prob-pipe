@@ -93,7 +93,6 @@ def _replicated_data_to_dataset(y_rep: Any, var_name: str = "y") -> xr.Dataset:
 
     - ``(draw,)``
     - ``(draw, obs)``
-    - ``(chain, draw)``
     - ``(chain, draw, obs)``
 
     If no chain dimension is present, a singleton chain dimension is added.

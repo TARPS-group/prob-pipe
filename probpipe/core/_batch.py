@@ -468,6 +468,8 @@ class Batch[E](TrackedTerm, ABC):
         ------
         TypeError
             If *spec* is not a :class:`BatchSpec`.
+        ValueError
+            If an axis size of *spec* is an unbound symbolic dimension.
         """
         if not isinstance(spec, BatchSpec):
             raise TypeError(f"a Batch is specified by a BatchSpec, got {type(spec).__name__}")

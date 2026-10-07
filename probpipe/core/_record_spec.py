@@ -188,6 +188,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
           ``("obs", 3)``); normalised to :class:`NumericArraySpec`.
         - a :class:`TermSpec` — an already-built spec (passed through).
         - ``RecordSpec`` — a nested sub-structure (an internal node).
+        - a ``Mapping`` — a nested sub-structure whose values take these forms,
+          built into a ``RecordSpec``.
 
     Examples
     --------

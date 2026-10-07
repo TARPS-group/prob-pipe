@@ -326,12 +326,13 @@ class RecordBatch(Batch[Record]):
     def _at_fields(self, path: tuple[str, ...]) -> Any:
         """The batched field at *path*, for a named ``[]`` key.
 
-        A **key** — a path reaching a field — yields that field's column in its
-        native batch form: an array for an array field, and the batch form of the
-        element kind otherwise, a :class:`FunctionBatch` or an
-        :class:`OpaqueBatch`. A path reaching an **interior node** yields the
-        sub-batch over the columns beneath it, a view over the same storage with
-        the same axis levels.
+        A **key**, which is a path that addresses a field, yields that field's
+        column as the batch form of its kind on this batch's levels, such as a
+        ``NumericArrayBatch`` for an array field and a :class:`FunctionBatch` or
+        an :class:`OpaqueBatch` otherwise. Inside a JAX trace, an array field's
+        column is the stored array. A path that addresses an **interior node**
+        yields the sub-batch over the columns beneath it, which is a view over
+        the same storage with the same axis levels.
 
         Parameters
         ----------
@@ -341,9 +342,7 @@ class RecordBatch(Batch[Record]):
         Returns
         -------
         Any
-            The field's column as the batch form of its kind, such as a
-            ``NumericArrayBatch`` for an array field, or the sub-batch view under an
-            interior node.
+            The field's column, or the sub-batch view under an interior node.
 
         Raises
         ------

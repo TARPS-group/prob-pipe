@@ -879,7 +879,7 @@ class StanModel(
     label : str
         The kernel's label.
     stan_file : str
-        Path to a ``.stan`` file.
+        The location of the ``.stan`` file that holds the program.
     data : Mapping[str, Any], optional
         Values of some data-block variables, bound at construction. A
         construction that binds every data variable returns the posterior, a
