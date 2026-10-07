@@ -2886,6 +2886,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A real-valued support rejects a complex value with a nonzero imaginary
+  part.** JAX orders complex values lexicographically, so `positive.check(1j)`
+  and `real.check(1j)` were true, and a function that declared a positive
+  output accepted `1j`. Every built-in `Constraint` now contains a complex
+  value only where its imaginary part is zero and its real part is in the
+  support. A structured support, such as `simplex`, `sphere`, or
+  `positive_definite`, requires every entry of the event to be real. The
+  result keeps its shape, and the check still traces under `jax.jit`.
 - **Renaming an empirical law's paths returns an empirical law.**
   `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
   posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
