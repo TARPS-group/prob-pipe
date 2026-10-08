@@ -391,6 +391,18 @@ _COPIES = {
 }
 
 
+class TestRecordedArguments:
+    """A family rebuilds itself from its constructor arguments, so it keeps them as given."""
+
+    def test_a_numpy_argument_is_read_only(self):
+        loc = np.array([0.0, 1.0, 2.0])
+        law = F.Normal("x", loc, np.ones(3))
+
+        with pytest.raises(ValueError, match="read-only"):
+            loc[0] = 5.0
+        np.testing.assert_array_equal(pickle.loads(pickle.dumps(law)).raw().mean(), [0.0, 1.0, 2.0])
+
+
 class TestPickling:
     """A family pickles and deep-copies, rebuilt from its constructor arguments."""
 

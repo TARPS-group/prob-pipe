@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A term marks each NumPy array it stores read-only.** Constructing a term
+  from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
+  family, sets the array's `writeable` flag to `False` in place. A write into that array afterwards, through the caller's handle or
+  through `.raw()`, raises `ValueError: assignment destination is read-only`,
+  where it used to change the term. To keep a writable array, pass a copy,
+  as in `NumericArray("x", values.copy())`. A pandas or xarray container is
+  stored by reference as before.
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
   `with_dim_sizes` returns together with the law it is made from, as it draws a

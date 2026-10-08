@@ -39,7 +39,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..values._function_base import FunctionSpec
-from ._array_backend import _is_numeric_dtype, _to_jax_array
+from ._array_backend import _is_numeric_dtype, _read_only, _to_jax_array
 from ._batch import Batch, BatchSpec, _axis_groups_for, _batch_axis_count, _ranks_of
 from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
@@ -126,8 +126,8 @@ class RecordBatch(Batch[Record]):
     An **object** column is copied and frozen, so a caller keeping a handle on
     what they passed cannot afterwards write a value the batch's spec refuses.
     Only the pointer array is copied, so the elements stay shared. An array
-    column is stored as given: a JAX array is already immutable, and a numpy one
-    follows the aliasing convention the single-record types set.
+    column is stored as given: a JAX array is already immutable, and a NumPy
+    array is marked read-only in place, as a record marks its leaves.
 
     Reading one element materializes it from the columns, which costs one gather
     per field, so iterating a batch is proportional to elements × fields. Reading
@@ -178,7 +178,7 @@ class RecordBatch(Batch[Record]):
         groups = _axis_groups_for(batch_shape, names, axes, kind=kind)
         type(self)._check_columns(store, spec, kind=kind)
         store = {
-            path: _frozen_object_column(column) if _is_object_array(column) else column
+            path: _frozen_object_column(column) if _is_object_array(column) else _read_only(column)
             for path, column in store.items()
         }
 

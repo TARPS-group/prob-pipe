@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ._array_backend import _read_only
 from ._repr import term_repr
 from ._spec_base import OpaqueSpec
 from .provenance import Provenance
@@ -34,7 +35,8 @@ class Opaque(TrackedTerm, Annotated):
         takes it: the label is what says which opaque value this is.
     value : Any
         The value this term holds, stored as given. Any non-mapping value; the value
-        layer reads a mapping as a subtree.
+        layer reads a mapping as a subtree. A NumPy array is marked read-only in
+        place.
     spec : OpaqueSpec, optional
         What this value satisfies, carrying any opaque ``meta``. Defaults to the
         :class:`~probpipe.OpaqueSpec` of the value's type.
@@ -82,7 +84,7 @@ class Opaque(TrackedTerm, Annotated):
             spec = OpaqueSpec(type=type(value))
         elif not spec.is_valid(value):
             raise TypeError(f"{spec!r} does not admit a {type(value).__name__}")
-        object.__setattr__(self, "_value", value)
+        object.__setattr__(self, "_value", _read_only(value))
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(label, provenance=provenance)
 
