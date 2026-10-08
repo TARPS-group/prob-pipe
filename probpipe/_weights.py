@@ -230,20 +230,20 @@ def weighted_choice(
     ValueError
         If a size is negative.
     """
-    shape = _as_shape(shape, what="weighted_choice shape", symbolic=False)
-    if not shape:
-        shape = (1,)
+    sizes = _as_shape(shape, what="weighted_choice shape", symbolic=False)
+    if not sizes:
+        sizes = (1,)
         squeeze = True
     else:
         squeeze = False
 
     if weights is None:
-        indices = jax.random.randint(key, shape=shape, minval=0, maxval=n)
+        indices = jax.random.randint(key, shape=sizes, minval=0, maxval=n)
     else:
         indices = jax.random.choice(
             key,
             n,
-            shape=shape,
+            shape=sizes,
             p=weights,
             replace=True,
         )

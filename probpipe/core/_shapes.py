@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import operator
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Literal, overload
 
 from ._repr import type_name
 
@@ -114,6 +114,10 @@ def _as_dim(entry: Any, *, what: str, symbolic: bool = True) -> int | str:
     return size
 
 
+@overload
+def _as_shape(arg: Any, *, what: str, symbolic: Literal[False]) -> tuple[int, ...]: ...
+@overload
+def _as_shape(arg: Any, *, what: str, symbolic: bool = True) -> tuple[int | str, ...]: ...
 def _as_shape(arg: Any, *, what: str, symbolic: bool = True) -> tuple[int | str, ...]:
     """A shape argument as a tuple of dimensions; a bare ``int`` or ``str`` is one dimension.
 

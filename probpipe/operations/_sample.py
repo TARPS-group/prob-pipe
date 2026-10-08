@@ -9,7 +9,7 @@ workflow-owned random event, so the operation takes no key.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, cast
+from typing import Any
 
 import jax
 import numpy as np
@@ -77,7 +77,7 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
         ``bool`` or negative.
     """
     try:
-        return cast(tuple[int, ...], _as_shape(sample_shape, what="sample_shape", symbolic=False))
+        return _as_shape(sample_shape, what="sample_shape", symbolic=False)
     except (TypeError, ValueError) as error:
         raise ApplicabilityError(str(error)) from None
 
