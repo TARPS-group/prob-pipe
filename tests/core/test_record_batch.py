@@ -673,9 +673,7 @@ class TestTheClassFollowsTheColumns:
         records = [NumericRecord("r", x=float(i), tag=i) for i in range(3)]
         stacked = RecordBatch.stack(records, level_name="draw", element_spec=spec)
         assert type(stacked) is RecordBatch
-        with pytest.raises(
-            TypeError, match=r"^RecordBatch: the field 'tag' is declared OpaqueSpec"
-        ):
+        with pytest.raises(TypeError, match=r"^RecordBatch: field 'tag' is declared OpaqueSpec"):
             RecordBatch("b", {"x": jnp.zeros(3), "tag": jnp.arange(3)}, "draw", element_spec=spec)
 
     def test_an_explicit_numeric_batch_call_is_unchanged(self):
