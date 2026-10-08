@@ -193,7 +193,10 @@ class NumericRecord(Record, Numeric):
         # ``__setattr__`` guard holds.
         if _fields is not None:
             if fields:
-                raise ValueError("Cannot pass both positional dict and keyword arguments")
+                raise ValueError(
+                    f"{type(self).__name__} takes either a mapping of fields or keyword fields, "
+                    f"not both"
+                )
             raw_inputs = _unflatten_paths(_fields)
         else:
             for field_name in fields:
@@ -565,8 +568,8 @@ def _reconstruct_from_vector(
     for path, spec in template._walk_leaves():
         if not isinstance(spec, NumericArraySpec):
             raise TypeError(
-                f"from_vector: field {path!r} has a {type(spec).__name__}; "
-                "reconstruction requires NumericArraySpec leaves"
+                f"from_vector: field {path!r} must have a NumericArraySpec, "
+                f"got {type(spec).__name__}"
             )
         size = prod(spec.shape)
         chunk = vec[..., offset : offset + size]

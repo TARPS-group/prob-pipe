@@ -53,7 +53,7 @@ class TestDistributionBase:
             pass
 
         d = StubDist("stub", NumericArraySpec(()))
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):

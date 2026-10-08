@@ -101,6 +101,14 @@ class TestLabelEnforcement:
         with pytest.raises(TypeError, match="non-empty label"):
             EmptyLabeled()
 
+    def test_a_misplaced_label_names_the_value_the_constructor_got(self):
+        with pytest.raises(
+            TypeError, match=r"Record requires a non-empty label, got \{'x': 1.0\}, which is not"
+        ):
+            Record({"x": 1.0})
+        with pytest.raises(TypeError, match=r"Record requires a non-empty label, got ''$"):
+            Record("", x=1.0)
+
 
 class TestAutoLabelHelper:
     def test_supplied_label_is_user_given(self):
@@ -417,7 +425,7 @@ class TestWithProvenance:
     def test_write_once_raises(self):
         for obj in (Record("r", a=1.0), Normal(loc=0.0, scale=1.0, label="x")):
             obj.with_provenance(Provenance("first"))
-            with pytest.raises(RuntimeError, match="write-once"):
+            with pytest.raises(RuntimeError, match="set only once"):
                 obj.with_provenance(Provenance("second"))
 
 

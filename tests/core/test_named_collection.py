@@ -313,7 +313,7 @@ class TestEditTemplateThreading:
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
         ):
-            with pytest.raises(ValueError, match="overlap"):
+            with pytest.raises(ValueError, match="got both 'physics' and the path 'physics/mass'"):
                 r.replace(updates)
         with pytest.raises(ValueError, match="overlap"):
             r.event_template.replace(

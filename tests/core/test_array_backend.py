@@ -131,7 +131,7 @@ class TestRegistryLookup:
         first = ArrayBackend(event_shape=lambda b: (1,))
         second = ArrayBackend(event_shape=lambda b: (2,))
         register_array_backend(Box, first)
-        with pytest.warns(UserWarning, match="overwriting the existing ArrayBackend"):
+        with pytest.warns(UserWarning, match="replaced the ArrayBackend already registered"):
             register_array_backend(Box, second)
         assert array_backend_for(Box()) is second
 
