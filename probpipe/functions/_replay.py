@@ -16,6 +16,7 @@ from threading import Lock
 from types import TracebackType
 from typing import Any
 
+from .._messages import count
 from ..core.provenance import Provenance
 from . import _context, _execution_contract
 from ._callable import CallableAnchor
@@ -240,28 +241,37 @@ class _ReplayState:
         """Require the current Function to match the strong recorded anchor."""
         controls = current.controls()
         if not current.supported:
-            raise ReplayUnsupportedCallableError(
-                "replay requires an importable module-level closure-free Python def; "
-                f"the supplied Function is recorded as {current.form!r}"
+            raise _unsupported_callable(
+                current.form, current.module, current.qualname, recorded=False
             )
         recorded = self.callable_anchor
+        recorded_name = _callable_name(recorded.get("module"), recorded.get("qualname"))
         if controls.get("module") != recorded.get("module") or controls.get(
             "qualname"
         ) != recorded.get("qualname"):
+            current_name = _callable_name(controls.get("module"), controls.get("qualname"))
             raise ReplayCompatibilityError(
-                "the supplied Function callable import anchor changed since recording"
+                f"replay_run expected a call to {recorded_name}, but {current_name} was "
+                "called. Call the Function that produced the recorded result."
             )
-        if (
-            controls.get("definition_abi") != recorded.get("definition_abi")
-            or controls.get("python_replay_abi") != recorded.get("python_replay_abi")
-            or controls.get("probpipe_replay_abi") != recorded.get("probpipe_replay_abi")
-        ):
+        if controls.get("python_replay_abi") != recorded.get("python_replay_abi"):
             raise ReplayCompatibilityError(
-                "the supplied Function callable replay ABI is incompatible"
+                f"cannot replay: the call was recorded under {recorded.get('python_replay_abi')}, "
+                f"but this interpreter is {controls.get('python_replay_abi')}. Replay with the "
+                "recording's Python version, or record the call again."
             )
+        for field_name in ("definition_abi", "probpipe_replay_abi"):
+            if controls.get(field_name) != recorded.get(field_name):
+                raise _version_mismatch(
+                    f"replay.callable.{field_name}",
+                    recorded.get(field_name),
+                    controls.get(field_name),
+                )
         if controls != recorded:
             raise ReplayCompatibilityError(
-                "the supplied Function callable definition changed since recording"
+                f"cannot replay: {recorded_name} has changed since the call was recorded (its "
+                "code, defaults, annotations, signature, or declared specs differ). Replay the "
+                "call with the recorded definition."
             )
         current_source = current.diagnostics()
         self.source_artifact_drift = current_source.get(
@@ -274,9 +284,7 @@ class _ReplayState:
     def validate_plan(self, current: dict[str, Any]) -> None:
         """Require exact canonical lifting/direct-operation plan equality."""
         if _canonical_json(current) != self.canonical_plan_json:
-            raise ReplayCompatibilityError(
-                "the current stochastic plan differs from the recorded replay plan"
-            )
+            raise _plan_mismatch(current, self.canonical_plan)
 
     def validate_execution_contract(self, contract: Any) -> None:
         """Require the current route to satisfy the one route-neutral contract."""
@@ -290,8 +298,9 @@ class _ReplayState:
             )
         ):
             raise ReplayCompatibilityError(
-                "the current evaluator or transport cannot satisfy the recorded "
-                "workflow RNG execution contract"
+                f"cannot replay with evaluator {contract.evaluator!r} and transport "
+                f"{contract.transport!r}: this route cannot derive random keys the way the "
+                "recorded call did. Record the call again."
             )
         if self.requested_dispatch is None or self.requested_workflow_kind is None:
             raise ReplayCompatibilityError(
@@ -309,19 +318,7 @@ class _ReplayState:
 
     def validate_effect_plan(self, plan: Any) -> None:
         """Match one planned effect before its stochastic occurrence is committed."""
-        current_effect = _canonical_json(_effect_plan_anchor(plan))
-        source_unit = (
-            plan.event.stochastic_source_id,
-            plan.event.logical_unit_id,
-        )
-        if current_effect not in self.effect_anchors_by_source_unit.get(
-            source_unit,
-            (),
-        ):
-            raise ReplayCompatibilityError(
-                "unexpected replay event: the current stochastic effect plan differs "
-                "from the recorded replay plan"
-            )
+        _require_planned_draw(self.effect_anchors_by_source_unit, plan, worker=False)
 
     def record_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
         """Capture current request diagnostics before route resolution."""
@@ -403,9 +400,7 @@ class _ReplayState:
             seen.add(encoded)
             claim = self.claims.get(encoded)
             if claim is None:
-                raise ReplayCompatibilityError(
-                    "workflow execution requested an unexpected replay event"
-                )
+                raise _extra_draw(_describe_draw(effect))
             _require_matching_effect(claim.expected, effect)
             if attempt is None:
                 if claim.direct_claimed or claim.work_item_token is not None:
@@ -465,9 +460,7 @@ class _ReplayState:
             seen.add(encoded)
             claim = self.claims.get(encoded)
             if claim is None:
-                raise ReplayCompatibilityError(
-                    "workflow execution completed with an unexpected replay event"
-                )
+                raise _extra_draw(_describe_draw(effect))
             _require_matching_effect(claim.expected, effect)
             if claim.direct_successful or claim.successful_attempt_token is not None:
                 raise ReplayCompatibilityError(
@@ -552,9 +545,7 @@ class _ReplayState:
                 for claim in self.claims.values()
             )
         if missing_count:
-            raise ReplayCompatibilityError(
-                f"workflow replay completed with {missing_count} missing expected event(s)"
-            )
+            raise _missing_draws(missing_count)
 
     def mark_successful_effects(
         self,
@@ -586,9 +577,7 @@ class _ReplayState:
                 seen.add(encoded)
                 claim = self.claims.get(encoded)
                 if claim is None:
-                    raise ReplayCompatibilityError(
-                        "workflow execution completed with an unexpected replay event"
-                    )
+                    raise _extra_draw(_describe_draw(effect))
                 _require_matching_effect(claim.expected, effect)
                 if claim.successful_attempt_token is not None:
                     continue
@@ -652,18 +641,7 @@ class _RemoteReplayClaims:
 
     def validate_plan(self, plan: Any) -> None:
         """Validate a transported plan before its child occurrence is committed."""
-        current_effect = _canonical_json(_effect_plan_anchor(plan))
-        source_unit = (
-            plan.event.stochastic_source_id,
-            plan.event.logical_unit_id,
-        )
-        if current_effect not in self.effect_anchors_by_source_unit.get(
-            source_unit,
-            (),
-        ):
-            raise ReplayCompatibilityError(
-                "the remote stochastic effect plan differs from its assigned event namespace"
-            )
+        _require_planned_draw(self.effect_anchors_by_source_unit, plan, worker=True)
 
     def claim(
         self,
@@ -677,9 +655,7 @@ class _RemoteReplayClaims:
         encoded = _encoded_effect_identity(effect)
         expected = self.expected_by_identity.get(encoded)
         if expected is None:
-            raise ReplayCompatibilityError(
-                "remote workflow execution requested an unexpected replay event"
-            )
+            raise _extra_draw(_describe_draw(effect), worker=True)
         _require_matching_managed_effect(expected, effect)
         if encoded in self.claimed:
             raise ReplayCompatibilityError(
@@ -691,9 +667,7 @@ class _RemoteReplayClaims:
         """Reject a successful worker that omitted its assigned event namespace."""
         missing_count = len(self.expected_by_identity.keys() - self.claimed)
         if missing_count:
-            raise ReplayCompatibilityError(
-                f"remote workflow replay completed with {missing_count} missing expected event(s)"
-            )
+            raise _missing_draws(missing_count, worker=True)
 
 
 @dataclass(frozen=True)
@@ -770,11 +744,13 @@ class _ReplayRunScope:
         if exc_type is None:
             if not state.root_started:
                 pending = ReplayCompatibilityError(
-                    "replay_run must contain exactly one top-level Function.__call__"
+                    "replay_run exited without a Function call. Call the recorded Function "
+                    "exactly once inside the with block."
                 )
             elif not state.root_completed:
                 pending = ReplayCompatibilityError(
-                    "the top-level Function call in replay_run did not complete successfully"
+                    "the Function call inside replay_run did not complete: it raised an error "
+                    "that was caught inside the with block"
                 )
         try:
             _ACTIVE_REPLAY_STATE.reset(token)
@@ -858,7 +834,10 @@ def _function_replay_scope() -> Generator[_ReplayFunctionCall | None, None, None
             _REPLAY_FUNCTION_DEPTH.reset(token)
         return
     if state.root_started:
-        raise ReplayCompatibilityError("replay_run accepts only one top-level Function.__call__")
+        raise ReplayCompatibilityError(
+            "replay_run replays exactly one Function call, and this is a second one. Use a "
+            "separate replay_run block for each recorded result."
+        )
     state.root_started = True
     token = _REPLAY_FUNCTION_DEPTH.set(1)
     try:
@@ -872,7 +851,7 @@ def _function_replay_scope() -> Generator[_ReplayFunctionCall | None, None, None
 def _reject_function_apply() -> None:
     if _ACTIVE_REPLAY_STATE.get() is not None:
         raise ReplayCompatibilityError(
-            "Function.apply is not permitted inside replay_run; call the Function normally"
+            "Function.apply cannot run inside replay_run. Call the Function directly."
         )
 
 
@@ -960,25 +939,31 @@ def _remote_replay_claim_scope(
 
 def _validate_provenance(provenance: Provenance) -> _ReplayState:
     if not isinstance(provenance, Provenance):
-        raise ReplayCompatibilityError("replay_run requires a Provenance RNG recipe")
+        raise ReplayCompatibilityError(
+            f"replay_run() expects a Provenance, got {type(provenance).__name__}. Pass "
+            "result.provenance."
+        )
     controls = provenance.controls
-    randomness = _mapping(controls.get("randomness"), "randomness RNG recipe")
-    replay = _mapping(controls.get("replay"), "replay anchor")
-    if randomness.get("schema") != _RNG_RECIPE_ABI:
-        raise ReplayCompatibilityError("unknown or missing workflow RNG recipe schema")
-    if replay.get("schema") != _REPLAY_ANCHOR_ABI:
-        raise ReplayCompatibilityError("recorded replay anchor schema is incompatible")
+    if controls.get("randomness") is None:
+        raise ReplayCompatibilityError(
+            "this provenance has no recorded random draws to replay. Pass the provenance of "
+            "a result that drew random values, such as result.provenance for "
+            "result = sample(...)."
+        )
+    randomness = _mapping(controls.get("randomness"), "randomness")
+    replay = _mapping(controls.get("replay"), "replay")
+    _require_version(randomness.get("schema"), "randomness.schema", _RNG_RECIPE_ABI)
+    _require_version(replay.get("schema"), "replay.schema", _REPLAY_ANCHOR_ABI)
     # The callable anchor's fields belong to its definition ABI, so an anchor of
     # another ABI is refused before its fields are read.
     callable_anchor = copy.deepcopy(dict(_mapping(replay.get("callable"), "replay.callable")))
-    if callable_anchor.get("definition_abi") != _CALLABLE_DEFINITION_ABI:
-        raise ReplayCompatibilityError(
-            f"recorded callable definition ABI {callable_anchor.get('definition_abi')!r} "
-            f"is incompatible; expected {_CALLABLE_DEFINITION_ABI!r}. Record the call again."
-        )
+    _require_version(
+        callable_anchor.get("definition_abi"),
+        "replay.callable.definition_abi",
+        _CALLABLE_DEFINITION_ABI,
+    )
     _validate_version_one_structure(controls)
-    if randomness.get("rng_abi") != _RNG_ABI:
-        raise ReplayCompatibilityError("recorded workflow RNG ABI is incompatible")
+    _require_version(randomness.get("rng_abi"), "randomness.rng_abi", _RNG_ABI)
 
     root_words = _root_words(randomness.get("root_words"))
     occurrence_path = _structural_tuple(
@@ -989,50 +974,67 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     standalone = _mapping(replay.get("standalone"), "replay.standalone")
     eligibility = standalone.get("eligibility")
     restriction = standalone.get("restriction")
-    if eligibility == "supported" and restriction is not None:
-        raise ReplayCompatibilityError(
-            "recorded standalone replay restriction does not match its eligibility"
-        )
-    if eligibility == "nested_workflow_rng_execution" and (
-        restriction != "nested_automatic_function"
-    ):
-        raise ReplayCompatibilityError(
-            "recorded standalone replay restriction does not match its eligibility"
+    restriction_matches = (
+        restriction is None
+        if eligibility == "supported"
+        else eligibility != "nested_workflow_rng_execution"
+        or restriction == "nested_automatic_function"
+    )
+    if not restriction_matches:
+        raise _malformed(
+            f"replay.standalone.restriction {restriction!r} does not match eligibility "
+            f"{eligibility!r}"
         )
     if eligibility != "supported":
         if eligibility == "nested_workflow_rng_execution":
+            name = _callable_name(callable_anchor.get("module"), callable_anchor.get("qualname"))
             raise ReplayCompatibilityError(
-                "standalone replay does not support a parent with nested automatic "
-                "workflow randomness"
+                f"cannot replay this call: {name} draws random values through a nested "
+                "Function call, which replay_run does not support. Replay the provenance of "
+                "the inner call's result instead."
             )
-        raise ReplayCompatibilityError("recorded standalone replay eligibility is invalid")
+        raise _malformed(f"unknown replay.standalone.eligibility {eligibility!r}")
 
     if callable_anchor.get("supported") is not True:
-        form = callable_anchor.get("form", "unsupported")
-        raise ReplayUnsupportedCallableError(
-            "replay requires an importable module-level closure-free Python def; "
-            f"the recorded Function uses {form!r}"
+        raise _unsupported_callable(
+            callable_anchor.get("form", "unsupported"),
+            callable_anchor.get("module"),
+            callable_anchor.get("qualname"),
+            recorded=True,
         )
-    if callable_anchor.get("probpipe_replay_abi") != _PROBPIPE_REPLAY_ABI:
-        raise ReplayCompatibilityError("recorded ProbPipe replay ABI is incompatible")
+    _require_version(
+        callable_anchor.get("probpipe_replay_abi"),
+        "replay.callable.probpipe_replay_abi",
+        _PROBPIPE_REPLAY_ABI,
+    )
     for field_name in ("module", "qualname", "python_replay_abi", "sha256"):
-        if not isinstance(callable_anchor.get(field_name), str):
-            raise ReplayCompatibilityError(f"recorded callable anchor has invalid {field_name}")
-    if not isinstance(callable_anchor.get("signature_and_declarations"), dict):
-        raise ReplayCompatibilityError(
-            "recorded callable anchor has invalid signature_and_declarations"
+        value = callable_anchor.get(field_name)
+        if not isinstance(value, str):
+            raise _malformed(
+                f"replay.callable.{field_name} must be a string, got {type(value).__name__}"
+            )
+    signature = callable_anchor.get("signature_and_declarations")
+    if not isinstance(signature, dict):
+        raise _malformed(
+            "replay.callable.signature_and_declarations must be a dict, got "
+            f"{type(signature).__name__}"
         )
 
     plan_anchor = _mapping(replay.get("plan"), "replay.plan")
-    if plan_anchor.get("schema") != _STOCHASTIC_PLAN_ABI:
-        raise ReplayCompatibilityError("recorded stochastic plan ABI is incompatible")
+    _require_version(plan_anchor.get("schema"), "replay.plan.schema", _STOCHASTIC_PLAN_ABI)
     canonical_plan = copy.deepcopy(
         dict(_mapping(plan_anchor.get("canonical_fields"), "replay.plan.canonical_fields"))
     )
-    if canonical_plan.get("managed_child_policy") != _MANAGED_CHILD_POLICY_ABI:
-        raise ReplayCompatibilityError("recorded managed-child replay policy is incompatible")
+    _require_version(
+        canonical_plan.get("managed_child_policy"),
+        "replay.plan.canonical_fields.managed_child_policy",
+        _MANAGED_CHILD_POLICY_ABI,
+    )
     if canonical_plan.get("key_ownership") != "automatic":
-        raise ReplayCompatibilityError("recorded replay plan is not workflow-key-owned")
+        raise _malformed(
+            "replay.plan.canonical_fields.key_ownership must be 'automatic', got "
+            f"{canonical_plan.get('key_ownership')!r}"
+        )
 
     events_raw = _list(randomness.get("events"), "randomness.events")
     effects_raw = _list(plan_anchor.get("expected_effects"), "replay.plan.expected_effects")
@@ -1044,7 +1046,11 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         or len(events_raw) != len(effects_raw)
         or expected_count < 1
     ):
-        raise ReplayCompatibilityError("recorded replay event count is inconsistent")
+        raise _malformed(
+            "randomness.expected_event_count must be a positive integer equal to the number "
+            f"of randomness.events and of replay.plan.expected_effects, got {expected_count!r} "
+            f"with {count(len(events_raw), 'event')} and {count(len(effects_raw), 'effect')}"
+        )
     expected_events = _expected_events(
         events_raw,
         effects_raw,
@@ -1053,17 +1059,27 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
 
     compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
     execution_contract_abi = compatibility.get("execution_contract")
-    if execution_contract_abi != _execution_contract.execution_contract_abi():
-        raise ReplayCompatibilityError("recorded workflow RNG execution contract is incompatible")
-    sampling_abis = _abi_sequence(compatibility.get("sampling_abi"), "sampling ABI")
-    provider_abis = _abi_sequence(compatibility.get("provider_abi"), "provider ABI")
+    _require_version(
+        execution_contract_abi,
+        "replay.compatibility.execution_contract",
+        _execution_contract.execution_contract_abi(),
+    )
+    sampling_abis = _abi_sequence(
+        compatibility.get("sampling_abi"), "replay.compatibility.sampling_abi"
+    )
+    provider_abis = _abi_sequence(
+        compatibility.get("provider_abi"), "replay.compatibility.provider_abi"
+    )
     descendant_adapter_abis = _abi_sequence(
         compatibility.get("descendant_adapter_abi"),
-        "descendant-adapter ABI",
+        "replay.compatibility.descendant_adapter_abi",
     )
     key_adapter_abi = compatibility.get("key_adapter_abi")
-    if key_adapter_abi != _execution_contract.key_adapter_abi():
-        raise ReplayCompatibilityError("recorded workflow key-adapter ABI is incompatible")
+    _require_version(
+        key_adapter_abi,
+        "replay.compatibility.key_adapter_abi",
+        _execution_contract.key_adapter_abi(),
+    )
 
     compatibility_material = (canonical_plan, [event.effect for event in expected_events])
     expected_sampling_abis = _ordered_unique(
@@ -1077,26 +1093,26 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     expected_descendant_adapter_abis = _ordered_unique(
         list(_iter_named_abi(compatibility_material, "descendant_adapter_abi"))
     )
-    if sampling_abis != expected_sampling_abis:
-        raise ReplayCompatibilityError(
-            "recorded sampling ABI fields disagree with the expected effects and plan"
-        )
-    if provider_abis != expected_provider_abis:
-        raise ReplayCompatibilityError(
-            "recorded provider ABI fields disagree with the expected effects and plan"
-        )
-    if descendant_adapter_abis != expected_descendant_adapter_abis:
-        raise ReplayCompatibilityError(
-            "recorded descendant-adapter ABI fields disagree with the canonical plan"
-        )
+    for field_name, recorded_abis, expected_abis in (
+        ("sampling_abi", sampling_abis, expected_sampling_abis),
+        ("provider_abi", provider_abis, expected_provider_abis),
+        ("descendant_adapter_abi", descendant_adapter_abis, expected_descendant_adapter_abis),
+    ):
+        if recorded_abis != expected_abis:
+            raise _malformed(
+                f"replay.compatibility.{field_name} is {list(recorded_abis)}, but the recorded "
+                f"plan and draws use {list(expected_abis)}"
+            )
 
     diagnostics = provenance.diagnostics
     recorded_source = copy.deepcopy(
-        dict(_mapping_or_empty(diagnostics.get("callable_source"), "callable_source"))
+        dict(_mapping_or_empty(diagnostics.get("callable_source"), "diagnostics.callable_source"))
     )
     recorded_execution = tuple(
-        copy.deepcopy(dict(_mapping(item, "execution diagnostic")))
-        for item in _list_or_empty(diagnostics.get("execution"), "execution")
+        copy.deepcopy(dict(_mapping(item, f"diagnostics.execution[{index}]")))
+        for index, item in enumerate(
+            _list_or_empty(diagnostics.get("execution"), "diagnostics.execution")
+        )
     )
     return _ReplayState(
         root_words=root_words,
@@ -1114,21 +1130,9 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
 
 def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
     """Require exact fields for every record owned by the replay-v1 schema."""
-    _require_version_one_fields(
-        controls,
-        _CONTROLS_FIELDS,
-        "workflow RNG recipe controls",
-    )
-    randomness = _version_one_record(
-        controls.get("randomness"),
-        _RANDOMNESS_FIELDS,
-        "randomness recipe",
-    )
-    replay = _version_one_record(
-        controls.get("replay"),
-        _REPLAY_FIELDS,
-        "replay anchor",
-    )
+    _require_version_one_fields(controls, _CONTROLS_FIELDS, "controls")
+    randomness = _version_one_record(controls.get("randomness"), _RANDOMNESS_FIELDS, "randomness")
+    replay = _version_one_record(controls.get("replay"), _REPLAY_FIELDS, "replay")
     _version_one_record(
         replay.get("standalone"),
         _STANDALONE_FIELDS,
@@ -1212,16 +1216,8 @@ def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
     for index, effect in enumerate(
         _list(plan.get("expected_effects"), "replay.plan.expected_effects")
     ):
-        effect_record = _mapping(effect, f"replay.plan.expected_effects[{index}]")
-        if set(effect_record) != _EFFECT_FIELDS:
-            raise ReplayCompatibilityError(
-                f"recorded replay effect {index} has incompatible fields for the version-1 schema"
-            )
-    compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
-    if set(compatibility) != _COMPATIBILITY_FIELDS:
-        raise ReplayCompatibilityError(
-            "recorded replay compatibility fields do not match the version-1 schema"
-        )
+        _version_one_record(effect, _EFFECT_FIELDS, f"replay.plan.expected_effects[{index}]")
+    _version_one_record(replay.get("compatibility"), _COMPATIBILITY_FIELDS, "replay.compatibility")
 
 
 def _validate_arg_ref_structure(value: Any, field_name: str) -> None:
@@ -1243,9 +1239,16 @@ def _require_version_one_fields(
     expected_fields: frozenset[str],
     field_name: str,
 ) -> None:
-    if set(record) != expected_fields:
-        raise ReplayCompatibilityError(
-            f"recorded {field_name} fields do not match the version-1 schema"
+    missing = sorted(expected_fields - set(record))
+    unexpected = sorted(set(record) - expected_fields, key=str)
+    if missing or unexpected:
+        problems = []
+        if missing:
+            problems.append(f"lacks fields {missing}")
+        if unexpected:
+            problems.append(f"has unexpected fields {unexpected}")
+        raise _malformed(
+            f"{field_name} {' and '.join(problems)}. It may come from another ProbPipe version."
         )
 
 
@@ -1266,14 +1269,21 @@ def _expected_events(
         )
         _validate_occurrence_path(occurrence_path)
         if occurrence_path[: len(outer_occurrence_path)] != outer_occurrence_path:
-            raise ReplayCompatibilityError(
-                "recorded replay event is outside its anchored occurrence_path"
+            raise _malformed(
+                f"randomness.events[{index}].occurrence_path does not start with "
+                "randomness.occurrence_path"
             )
         occurrence_kind = event.get("occurrence_kind")
         if occurrence_kind not in ("invocation", "operation"):
-            raise ReplayCompatibilityError("recorded replay event occurrence kind is invalid")
+            raise _malformed(
+                f"randomness.events[{index}].occurrence_kind must be 'invocation' or "
+                f"'operation', got {occurrence_kind!r}"
+            )
         if event.get("key_ownership") != "automatic":
-            raise ReplayCompatibilityError("recorded replay event is not workflow-key-owned")
+            raise _malformed(
+                f"randomness.events[{index}].key_ownership must be 'automatic', got "
+                f"{event.get('key_ownership')!r}"
+            )
         source = _structural_tuple(
             event.get("source"),
             field_name=f"randomness.events[{index}].source",
@@ -1291,7 +1301,7 @@ def _expected_events(
             )
         )
         if encoded in seen:
-            raise ReplayCompatibilityError("recorded replay contains a duplicate event identity")
+            raise _malformed(f"randomness.events[{index}] is a duplicate event of an earlier entry")
         seen.add(encoded)
         result.append(
             _ExpectedReplayEvent(
@@ -1308,6 +1318,7 @@ def _expected_events(
 
 
 def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
+    prefix = f"replay.plan.expected_effects[{index}]"
     for field_name in (
         "operation_kind",
         "execution_mode",
@@ -1315,22 +1326,23 @@ def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
         "provider_abi",
     ):
         if not isinstance(effect.get(field_name), str) or not effect[field_name]:
-            raise ReplayCompatibilityError(
-                f"recorded replay effect {index} has invalid {field_name}"
+            raise _malformed(
+                f"{prefix}.{field_name} must be a non-empty string, got {effect.get(field_name)!r}"
             )
     sample_shape = effect.get("sample_shape")
     if sample_shape is not None:
         if not isinstance(sample_shape, list) or any(
             isinstance(size, bool) or not isinstance(size, int) or size < 0 for size in sample_shape
         ):
-            raise ReplayCompatibilityError(
-                f"recorded replay effect {index} has invalid sample_shape"
+            raise _malformed(
+                f"{prefix}.sample_shape must be null or a list of nonnegative integers, got "
+                f"{sample_shape!r}"
             )
     record_path = effect.get("record_path")
     if not isinstance(record_path, list) or any(
         not isinstance(field, str) for field in record_path
     ):
-        raise ReplayCompatibilityError(f"recorded replay effect {index} has invalid record_path")
+        raise _malformed(f"{prefix}.record_path must be a list of strings, got {record_path!r}")
     _validate_descriptor_value(effect.get("descendant_descriptor"), index=index)
 
 
@@ -1348,15 +1360,11 @@ def _require_matching_effect(
     expected: _ExpectedReplayEvent,
     actual: ManagedEffectClaim,
 ) -> None:
-    if expected.occurrence_kind != actual.occurrence_kind:
-        raise ReplayCompatibilityError(
-            "workflow replay event occurrence kind differs from the recorded recipe"
-        )
-    current_effect = _managed_effect_anchor(actual)
-    if _canonical_json(current_effect) != expected.effect_json:
-        raise ReplayCompatibilityError(
-            "workflow replay effect or provider ABI differs from the recorded plan"
-        )
+    if (
+        expected.occurrence_kind != actual.occurrence_kind
+        or _canonical_json(_managed_effect_anchor(actual)) != expected.effect_json
+    ):
+        raise _draw_mismatch(_describe_draw(actual))
 
 
 def _require_matching_managed_effect(
@@ -1370,9 +1378,22 @@ def _require_matching_managed_effect(
         or _canonical_json(_managed_effect_anchor(expected))
         != _canonical_json(_managed_effect_anchor(actual))
     ):
-        raise ReplayCompatibilityError(
-            "remote workflow replay effect differs from its assigned event namespace"
-        )
+        raise _draw_mismatch(_describe_draw(actual), worker=True)
+
+
+def _require_planned_draw(
+    anchors_by_source_unit: Mapping[tuple[Any, ...], frozenset[bytes]],
+    plan: Any,
+    *,
+    worker: bool,
+) -> None:
+    """Require a planned draw to match a recorded draw of its source and unit."""
+    source_unit = (plan.event.stochastic_source_id, plan.event.logical_unit_id)
+    anchors = anchors_by_source_unit.get(source_unit)
+    if anchors is None:
+        raise _extra_draw(_describe_draw(plan), worker=worker)
+    if _canonical_json(_effect_plan_anchor(plan)) not in anchors:
+        raise _draw_mismatch(_describe_draw(plan), worker=worker)
 
 
 def _effect_plan_anchor(plan: Any) -> dict[str, Any]:
@@ -1424,10 +1445,15 @@ def _descriptor_item(value: Any) -> Any:
 def _validate_descriptor_value(value: Any, *, index: int) -> None:
     if value is None:
         return
-    if not isinstance(value, list):
-        raise ReplayCompatibilityError(
-            f"recorded replay effect {index} has invalid descendant_descriptor"
+
+    def invalid() -> ReplayCompatibilityError:
+        return _malformed(
+            f"replay.plan.expected_effects[{index}].descendant_descriptor must be null or a "
+            f"nested list of finite numbers, strings, booleans, and nulls, got {value!r}"
         )
+
+    if not isinstance(value, list):
+        raise invalid()
 
     def validate(item: Any) -> bool:
         if isinstance(item, list):
@@ -1437,9 +1463,7 @@ def _validate_descriptor_value(value: Any, *, index: int) -> None:
         return item is None or isinstance(item, (str, bool, int, float))
 
     if not validate(value):
-        raise ReplayCompatibilityError(
-            f"recorded replay effect {index} has invalid descendant_descriptor"
-        )
+        raise invalid()
 
 
 def _root_words(value: Any) -> tuple[int, int]:
@@ -1451,46 +1475,39 @@ def _root_words(value: Any) -> tuple[int, int]:
             for word in value
         )
     ):
-        raise ReplayCompatibilityError(
-            "recorded randomness.root_words must contain two uint32 values"
+        raise _malformed(
+            f"randomness.root_words must be two integers from 0 to 2**32 - 1, got {value!r}"
         )
     return value[0], value[1]
 
 
 def _structural_tuple(value: Any, *, field_name: str) -> tuple[Any, ...]:
     if not isinstance(value, list):
-        raise ReplayCompatibilityError(f"recorded {field_name} must be a JSON sequence")
+        raise _malformed(f"{field_name} must be a list, got {type(value).__name__}")
+
+    def invalid(item: Any) -> ReplayCompatibilityError:
+        return _malformed(f"{field_name} contains invalid entry {item!r}")
 
     def convert(item: Any) -> Any:
         if isinstance(item, list):
             return tuple(convert(child) for child in item)
         if isinstance(item, Mapping):
             if set(item) != {"type", "base64"} or item.get("type") != "bytes":
-                raise ReplayCompatibilityError(
-                    f"recorded {field_name} contains an invalid structural value"
-                )
+                raise invalid(item)
             encoded = item.get("base64")
             if not isinstance(encoded, str):
-                raise ReplayCompatibilityError(
-                    f"recorded {field_name} contains an invalid structural value"
-                )
+                raise invalid(item)
             try:
                 decoded = base64.b64decode(encoded, validate=True)
             except (binascii.Error, ValueError) as error:
-                raise ReplayCompatibilityError(
-                    f"recorded {field_name} contains an invalid structural value"
-                ) from error
+                raise invalid(item) from error
             if base64.b64encode(decoded).decode("ascii") != encoded:
-                raise ReplayCompatibilityError(
-                    f"recorded {field_name} contains an invalid structural value"
-                )
+                raise invalid(item)
             return decoded
         if isinstance(item, str):
             return item
         if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 2**64 - 1:
-            raise ReplayCompatibilityError(
-                f"recorded {field_name} contains an invalid structural value"
-            )
+            raise invalid(item)
         return item
 
     return tuple(convert(item) for item in value)
@@ -1601,7 +1618,7 @@ def _is_nonnegative_int(value: Any) -> bool:
 
 def _mapping(value: Any, field_name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise ReplayCompatibilityError(f"recorded {field_name} must be a mapping")
+        raise _malformed(f"{field_name} must be a dict, got {type(value).__name__}")
     return value
 
 
@@ -1613,7 +1630,7 @@ def _mapping_or_empty(value: Any, field_name: str) -> Mapping[str, Any]:
 
 def _list(value: Any, field_name: str) -> list[Any]:
     if not isinstance(value, list):
-        raise ReplayCompatibilityError(f"recorded {field_name} must be a sequence")
+        raise _malformed(f"{field_name} must be a list, got {type(value).__name__}")
     return value
 
 
@@ -1626,10 +1643,10 @@ def _list_or_empty(value: Any, field_name: str) -> list[Any]:
 def _abi_sequence(value: Any, field_name: str) -> tuple[str, ...]:
     items = _list(value, field_name)
     if any(not isinstance(item, str) or not item for item in items):
-        raise ReplayCompatibilityError(f"recorded {field_name} must contain ABI strings")
+        raise _malformed(f"{field_name} must contain only non-empty strings, got {items!r}")
     result = tuple(items)
     if len(set(result)) != len(result):
-        raise ReplayCompatibilityError(f"recorded {field_name} contains duplicate entries")
+        raise _malformed(f"{field_name} contains duplicate entries, got {items!r}")
     return result
 
 
@@ -1649,7 +1666,7 @@ def _canonical_json(value: Any) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise ReplayCompatibilityError(
-            "replay authority must contain finite JSON-native values"
+            f"cannot replay: the replay record must contain only finite JSON values ({exc})"
         ) from exc
 
 
@@ -1665,3 +1682,134 @@ def _iter_named_abi(value: Any, field_name: str):
             yield value[1]
         for item in value:
             yield from _iter_named_abi(item, field_name)
+
+
+def _malformed(detail: str) -> ReplayCompatibilityError:
+    """The error for a provenance record whose replay fields are damaged."""
+    return ReplayCompatibilityError(f"malformed provenance record: {detail}")
+
+
+def _require_version(recorded: Any, field_name: str, expected: str) -> None:
+    """Refuse a record whose version tag in *field_name* is not *expected*."""
+    if recorded != expected:
+        raise _version_mismatch(field_name, recorded, expected)
+
+
+def _version_mismatch(field_name: str, recorded: Any, expected: Any) -> ReplayCompatibilityError:
+    """The error for a record written under another version of a replay format."""
+    found = f"has no {field_name}" if recorded is None else f"has {field_name} {recorded!r}"
+    return ReplayCompatibilityError(
+        f"cannot replay: this provenance {found}, but this ProbPipe version needs "
+        f"{expected!r}. Record the call again with this ProbPipe version."
+    )
+
+
+def _callable_name(module: Any, qualname: Any) -> str:
+    """The name to show for a recorded or current Function's fn."""
+    if not isinstance(qualname, str):
+        return "the Function"
+    if not isinstance(module, str) or module == "probpipe" or module.startswith("probpipe."):
+        return qualname
+    return f"{module}.{qualname}"
+
+
+_MODULE_LEVEL_FIX = (
+    "fn must be a plain function defined at module level, not a lambda, closure, nested "
+    "function, method, or partial."
+)
+
+# What an unsupported callable form is, and the fix when one fix holds.
+_UNSUPPORTED_FORMS: dict[str, tuple[str, str | None]] = {
+    "lambda": ("is a lambda", _MODULE_LEVEL_FIX),
+    "closure": ("is a closure", _MODULE_LEVEL_FIX),
+    "local_function": ("is a nested function", _MODULE_LEVEL_FIX),
+    "bound_method": ("is a method", _MODULE_LEVEL_FIX),
+    "partial": ("is a functools.partial", _MODULE_LEVEL_FIX),
+    "class": ("is a class", _MODULE_LEVEL_FIX),
+    "builtin": ("is a builtin function", _MODULE_LEVEL_FIX),
+    "callable_object": ("is a callable object", _MODULE_LEVEL_FIX),
+    "non_callable": ("is not callable", _MODULE_LEVEL_FIX),
+    "private_function_implementation": ("is not a Python function", None),
+    "missing_import_identity": ("has no module or qualified name", _MODULE_LEVEL_FIX),
+    "module_resolution_mismatch": (
+        "is not the object its module and qualified name import",
+        "fn must be importable under its own module and qualified name.",
+    ),
+    "unsupported_definition_state": (
+        "has a signature, defaults, annotations, or declared specs that replay cannot record",
+        None,
+    ),
+}
+
+
+def _unsupported_callable(
+    form: Any, module: Any, qualname: Any, *, recorded: bool
+) -> ReplayUnsupportedCallableError:
+    """The error for a Function whose fn replay cannot identify by its definition."""
+    reason, fix = _UNSUPPORTED_FORMS.get(form, (f"has unsupported form {form!r}", None))
+    shown = f" ({_callable_name(module, qualname)})" if isinstance(qualname, str) else ""
+    if recorded:
+        message = (
+            f"cannot replay this result: it was recorded from a Function whose fn{shown} {reason}."
+        )
+    else:
+        message = f"cannot replay a Function whose fn{shown} {reason}."
+    return ReplayUnsupportedCallableError(message if fix is None else f"{message} {fix}")
+
+
+def _plan_mismatch(current: dict[str, Any], recorded: dict[str, Any]) -> ReplayCompatibilityError:
+    """The error for a call set up differently from the recorded call."""
+    key = "n_broadcast_samples"
+    if _canonical_json(current.get(key)) != _canonical_json(recorded.get(key)):
+        detail = f"{key} is {current.get(key)!r}, recorded {recorded.get(key)!r}"
+    else:
+        detail = "which arguments are distributions, or how they are broadcast, differs"
+    return ReplayCompatibilityError(
+        f"cannot replay: this call is set up differently from the recorded call ({detail}). "
+        "Use the same distribution arguments and broadcasting settings as the recording."
+    )
+
+
+def _describe_draw(effect: Any) -> str:
+    """A short description of one random draw, such as ``sample with sample_shape=(3,)``."""
+    text = str(effect.operation_kind).replace("_", " ")
+    if effect.record_path:
+        text += f" of {'/'.join(effect.record_path)!r}"
+    if effect.sample_shape is not None:
+        text += f" with sample_shape={tuple(effect.sample_shape)}"
+    return text
+
+
+def _on_worker(worker: bool) -> str:
+    return " on a worker" if worker else ""
+
+
+def _draw_mismatch(draw: str, *, worker: bool = False) -> ReplayCompatibilityError:
+    """The error for a draw that matches no recorded draw."""
+    return ReplayCompatibilityError(
+        f"cannot replay: this call made a random draw{_on_worker(worker)} ({draw}) that "
+        "matches no draw of the recorded call. The call must make the same draws as the "
+        "recording, with the same distributions, components, and sample shapes."
+    )
+
+
+_CONTROL_FLOW_HINT = (
+    "Control flow that depends on argument values or global state can change which draws a "
+    "call makes."
+)
+
+
+def _extra_draw(draw: str, *, worker: bool = False) -> ReplayCompatibilityError:
+    """The error for a draw the recorded call did not make."""
+    return ReplayCompatibilityError(
+        f"cannot replay: this call made a random draw{_on_worker(worker)} ({draw}) that the "
+        f"recorded call did not make. {_CONTROL_FLOW_HINT}"
+    )
+
+
+def _missing_draws(missing: int, *, worker: bool = False) -> ReplayCompatibilityError:
+    """The error for recorded draws the call did not make."""
+    return ReplayCompatibilityError(
+        f"cannot replay: the recorded call made {count(missing, 'random draw')} that this "
+        f"call did not make{_on_worker(worker)}. {_CONTROL_FLOW_HINT}"
+    )

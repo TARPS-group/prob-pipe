@@ -52,6 +52,7 @@ from ._inference_utils import (
     flat_density,
     get_init_state,
     is_jax_traceable,
+    no_density_reason,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
@@ -685,10 +686,7 @@ def rwmh(
     giving later windows more steps.
     """
     if not isinstance(dist, SupportsUnnormalizedLogProb):
-        raise TypeError(
-            f"{type(dist).__name__} does not support log_prob "
-            "(does not implement SupportsUnnormalizedLogProb)"
-        )
+        raise TypeError(f"cannot run rwmh: {no_density_reason(dist)}")
     return _rwmh(
         dist,
         data,
@@ -768,10 +766,9 @@ def _rwmh(
     # than degrade quietly, since the caller asked for adaptation.
     if adapt and num_warmup == 0 and proposal_cov is None:
         warnings.warn(
-            "rwmh(adapt=True) with num_warmup=0 cannot fit a proposal "
-            "covariance; falling back to sigma = step_size * I. Pass "
-            "num_warmup > 0 to adapt, or adapt=False to silence this "
-            "warning.",
+            "rwmh cannot adapt the proposal covariance with num_warmup=0, so it uses "
+            "step_size * I. Pass num_warmup > 0 to adapt, or adapt=False to silence "
+            "this warning.",
             stacklevel=3,
         )
 
@@ -800,7 +797,7 @@ def _rwmh(
             raise ValueError(
                 f"proposal_cov must be a square ({d}, {d}) matrix matching the "
                 f"{d}-dimensional target; got shape "
-                f"{tuple(proposal_sigma_override.shape)}."
+                f"{tuple(proposal_sigma_override.shape)}"
             )
 
     chains, warmups, sample_stats, accept_rate = _run_blackjax_rwmh(
@@ -882,14 +879,11 @@ class BlackJAXRWMHMethod(InferenceMethod):
         """Whether the target's parameters have an unnormalized density, from data not in a dict."""
         dist, observed = observed_parts(target)
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return Feasibility(
-                feasible=False,
-                description="Requires SupportsUnnormalizedLogProb",
-            )
+            return Feasibility(feasible=False, description=no_density_reason(dist))
         if observed is not None and isinstance(observed, dict):
             return Feasibility(
                 feasible=False,
-                description="Does not support dict-based conditioning",
+                description="observed data given as a dict is not supported",
             )
         return Feasibility(feasible=True)
 

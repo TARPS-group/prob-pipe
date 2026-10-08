@@ -458,6 +458,7 @@ class Feasibility:                # what a method's check reports
     feasible:    bool | None   # None when required declarations are not yet available
     description: str           # why not, when infeasible
     pending:     tuple[str, ...]   # the missing declarations; non-empty exactly when feasible is None
+    actionable:  bool          # infeasible on a detail of the call the caller can fix; a listing leads with it
 
 class MethodInfo(Feasibility):    # what a registry's check reports
     method_name: str | None    # from the registration; both None exactly when no method was selected

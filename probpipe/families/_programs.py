@@ -33,6 +33,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import count, unknown_names
 from ..core._immutable import transient_memo
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_names, format_value
@@ -97,7 +98,7 @@ def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any)
     values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
     unknown = sorted(set(values) - set(slots))
     if unknown:
-        raise KeyError(f"{unknown} are not given slots of {owner!r}")
+        raise KeyError(f"cannot condition {owner!r}: {unknown_names('given slot', unknown, slots)}")
     return values
 
 
@@ -155,7 +156,7 @@ def _pack_block_params(
     Parameters
     ----------
     owner : str
-        The name of the calling class, which the error messages name.
+        The label of the calling law, which the error messages name.
     blocks : tuple of _StanBlock
         The parameter blocks, in BridgeStan's order.
     values : Mapping[str, Any]
@@ -179,15 +180,16 @@ def _pack_block_params(
     if missing or extra:
         detail = [f"missing {missing}"] * bool(missing) + [f"unexpected {extra}"] * bool(extra)
         raise TypeError(
-            f"{owner}: the keyword form expects the Stan parameter blocks "
-            f"{tuple(expected)}: {'; '.join(detail)}."
+            f"{owner!r} expects values for the Stan parameters {tuple(expected)} "
+            f"({', '.join(detail)})"
         )
     out: list[Array] = []
     for b in blocks:
         arr = jnp.asarray(values[b.name])
         if tuple(arr.shape) != b.shape:
             raise TypeError(
-                f"{owner}: parameter {b.name!r} expects shape {b.shape}, got {tuple(arr.shape)}."
+                f"parameter {b.name!r} of {owner!r} must have shape {b.shape}, got "
+                f"{tuple(arr.shape)}"
             )
         out.append(jnp.reshape(arr, (1,)) if b.shape == () else arr[b.gather])
     return jnp.concatenate(out) if out else jnp.zeros((0,))
@@ -426,7 +428,9 @@ def _declared_variables(block: str) -> list[_StanVariable]:
         elif kind in _MATRIX_TYPES:
             shape = sizes * 2 if len(sizes) == 1 else sizes
         else:
-            raise ValueError(f"the Stan type {kind!r} of {match['name']!r} is not read")
+            raise ValueError(
+                f"StanModel does not support the Stan type {kind!r} (variable {match['name']!r})"
+            )
         axes = (*_sizes(match["array"]), *_sizes(match["old"]), *shape)
         variables.append(_StanVariable(match["name"], axes, kind, bounds))
     return variables
@@ -582,15 +586,17 @@ def _checked_against_stanc(
     names = [variable.name for variable in variables]
     if names != list(reported):
         raise ValueError(
-            f"the {block} block of {stan_file} reads as {names}, and stanc reports {list(reported)}"
+            f"StanModel read the {block} block of {stan_file} as declaring {names}, but stanc "
+            f"reports {list(reported)}; StanModel does not support this declaration syntax"
         )
     checked = []
     for variable in variables:
         entry = reported[variable.name]
         if len(variable.sizes) != entry["dimensions"]:
             raise ValueError(
-                f"{variable.name!r} in {stan_file} reads as {len(variable.sizes)} axes, and "
-                f"stanc reports {entry['dimensions']}"
+                f"StanModel read {variable.name!r} in {stan_file} as having "
+                f"{count(len(variable.sizes), 'axis', 'axes')}, but stanc reports "
+                f"{entry['dimensions']}; StanModel does not support this declaration syntax"
             )
         checked.append((variable, _STAN_DTYPES[entry["type"]]()))
     return tuple(checked)
@@ -781,13 +787,13 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """The keyword form: one array per parameter block, as BridgeStan's flat vector."""
-        return _pack_block_params(type(self).__name__, self._blocks(), field_kwargs)
+        return _pack_block_params(self.label, self._blocks(), field_kwargs)
 
     def _flat(self, value: Any) -> np.ndarray:
         """*value*, a record of the parameter blocks or BridgeStan's flat vector, as the vector."""
         if isinstance(value, (Record, Mapping)):
             fields = value.children if isinstance(value, Record) else value
-            value = _pack_block_params(type(self).__name__, self._blocks(), dict(fields))
+            value = _pack_block_params(self.label, self._blocks(), dict(fields))
         return _to_f64(value)
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
@@ -827,13 +833,13 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """The keyword form: one array per unconstrained block, as BridgeStan's flat vector."""
-        return _pack_block_params(type(self).__name__, self._blocks, field_kwargs)
+        return _pack_block_params(self.label, self._blocks, field_kwargs)
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
         """BridgeStan's log density at the unconstrained *value*, with the Jacobian."""
         if isinstance(value, (Record, Mapping)):
             fields = value.children if isinstance(value, Record) else value
-            value = _pack_block_params(type(self).__name__, self._blocks, dict(fields))
+            value = _pack_block_params(self.label, self._blocks, dict(fields))
         return jnp.asarray(self._posterior._bridgestan_model().log_density(_to_f64(value)))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -849,7 +855,10 @@ class _StanModelMeta(type(ConditionalDistribution)):
         bound = dict(data or {})
         unknown = sorted(set(bound) - set(program.data_entries))
         if unknown:
-            raise KeyError(f"{unknown} are not data-block variables of {stan_file}")
+            raise KeyError(
+                f"cannot bind data for {stan_file}: "
+                f"{unknown_names('data variable', unknown, program.data_entries)}"
+            )
         if set(program.data_entries) <= set(bound):
             return _StanPosterior(label, program, bound)
         return super().__call__(label, stan_file, data=data)
@@ -973,7 +982,9 @@ class StanModel(
         """
         law = self._condition_on(given)
         if isinstance(law, ConditionalDistribution):
-            raise KeyError(f"{self.label!r} needs a value for every data-block variable")
+            raise KeyError(
+                f"{self.label!r} is missing values for the data variables {list(law.given_spec)}"
+            )
         return law._unnormalized_log_prob(value)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -1077,9 +1088,9 @@ class _PyMCProgram:
             model = self.build()
         except TypeError as error:
             raise TypeError(
-                f"PyMCModel builds {getattr(model_fn, '__name__', model_fn)!r} with its "
-                f"arguments' defaults to read its variables; give each argument a default: "
-                f"{error}"
+                f"PyMCModel could not build {getattr(model_fn, '__name__', model_fn)!r} from its "
+                f"default arguments ({error}); give every argument a default, such as None for "
+                f"observed data"
             ) from error
         free = {rv.name: rv for rv in model.free_RVs}
         self.observed = tuple(p.name for p in arguments if p.default is None and p.name in free)
@@ -1332,11 +1343,11 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         missing = [n for n in self._param_names if n not in free and n not in fixed]
         extra = free - set(self._param_names) - set(self._observed_names)
         if missing or extra:
+            names, change = (sorted(missing), "disappear") if missing else (sorted(extra), "appear")
             raise ValueError(
-                f"PyMC random variable(s) {sorted(missing) or sorted(extra)} differ between "
-                f"the build without data and this build. ProbPipe does not support models "
-                f"whose set of free random variables changes with the data (dynamic random "
-                f"variables); only per-variable shapes may depend on data size."
+                f"PyMC random variables {names} {change} when the model is built with this "
+                f"data, but the free random variables must not change with the data (only "
+                f"their shapes may)"
             )
         return tuple(n for n in self._param_names if n in free) + tuple(
             n for n in self._observed_names if n in free

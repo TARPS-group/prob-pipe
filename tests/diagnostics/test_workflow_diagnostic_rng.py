@@ -150,7 +150,7 @@ class TestPpcDiagnosticBroker:
             patch("probpipe.diagnostics._ppc_spc._replicated_statistics") as sample,
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=17),
-            pytest.raises(ValueError, match=r"given slots \['gamma'\]"),
+            pytest.raises(ValueError, match=r"does not produce \['gamma'\]"),
         ):
             _ppc_op(
                 posterior,

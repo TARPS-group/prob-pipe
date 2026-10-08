@@ -120,7 +120,7 @@ class TestConstruction:
             NumericArraySpec((200,)),
             lambda beta: tfd.Independent(tfd.Normal(jnp.zeros(200) + beta[0], 1.0), 1),
         )
-        with pytest.raises(TypeError, match="scores a subset"):
+        with pytest.raises(TypeError, match="score a subset of its observations"):
             MinibatchedDistribution("measure", prior, whole, response, batch_size=32)
 
     def test_construction_validates_batch_size_too_small(self, prior, likelihood, response):

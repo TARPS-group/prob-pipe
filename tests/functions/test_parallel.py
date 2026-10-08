@@ -1790,7 +1790,9 @@ class TestRemoteReportTransactions:
                 successful_effects=(expected, unexpected),
             )
 
-            with pytest.raises(ReplayCompatibilityError, match="unexpected replay event"):
+            with pytest.raises(
+                ReplayCompatibilityError, match="that the recorded call did not make"
+            ):
                 parent.accept_remote_claim_report(report)
 
             state = parent._managed_claims.by_token[item.frame.token]
@@ -1910,7 +1912,7 @@ class TestManagedSubmissionGuards:
             pytest.param(
                 context_mod._workflow_jax_runtime_guard,
                 TypeError,
-                "managed submission",
+                "cannot run a function that starts thread or Prefect work",
                 id="jax-runtime",
             ),
         ],
@@ -2637,7 +2639,7 @@ class TestPrefectMapping:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key before replay validation"),
             ),
-            pytest.raises(ReplayCompatibilityError, match="assigned event namespace"),
+            pytest.raises(ReplayCompatibilityError, match=r"on a worker .* matches no draw"),
             replay_run(changed),
         ):
             remote()

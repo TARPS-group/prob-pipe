@@ -185,7 +185,7 @@ class TestTheUniformConstructor:
 
     @pytest.mark.parametrize("kernel", _KERNELS)
     def test_centers_without_an_atom_axis_raise(self, kernel):
-        with pytest.raises(ValueError, match="atoms"):
+        with pytest.raises(ValueError, match="centers must have a leading axis"):
             kernel.build_kernels(jnp.asarray(1.0), 1.0)
 
 
@@ -391,11 +391,21 @@ class TestTheBandwidthRules:
         np.testing.assert_allclose(kde._variance(), jnp.var(atoms) + h**2, rtol=1e-5)
 
     def test_an_unknown_rule_raises(self, centers):
-        with pytest.raises(ValueError, match="rule"):
+        with pytest.raises(ValueError, match="unknown bandwidth rule 'rule-of-thumb'"):
             KDEDistribution("k", centers, "rule-of-thumb")
 
+    def test_a_bad_bandwidth_is_reported_in_the_kdes_terms(self, centers):
+        with pytest.raises(ValueError, match=r"bandwidth has shape \(3,\).*atoms of shape"):
+            KDEDistribution("k", centers, jnp.ones(3))
+        with pytest.raises(ValueError, match="bandwidth must be positive"):
+            KDEDistribution("k", centers, jnp.array([1.0, -1.0]))
+
+    def test_atoms_that_are_not_an_array_raise(self):
+        with pytest.raises(TypeError, match=r"atoms must be an array .* got list"):
+            KDEDistribution("k", [1.0, 2.0, 3.0])
+
     def test_a_rule_refuses_atoms_without_spread(self):
-        with pytest.raises(ValueError, match="no spread"):
+        with pytest.raises(ValueError, match="atoms do not vary"):
             KDEDistribution("k", jnp.ones((4, 2)))
 
 
@@ -568,7 +578,7 @@ class TestTheBootstrapReplicate:
 
     @pytest.mark.parametrize("source", [jnp.arange(3.0), Record("r", a=jnp.zeros(3))])
     def test_the_source_is_a_law_that_samples(self, source):
-        with pytest.raises(TypeError, match="samples"):
+        with pytest.raises(TypeError, match="must be a Distribution that supports sampling"):
             BootstrapReplicateDistribution("b", source, 3)
 
     def test_the_outer_component_defaults_to_the_label_for_an_array_source(self):
@@ -666,7 +676,7 @@ class TestTheReplicateLevel:
             axes_per_level=(1, 1),
         )
         source = EmpiricalDistribution("post", atoms)
-        with pytest.raises(ValueError, match="level"):
+        with pytest.raises(ValueError, match=r"level is required .* \['x', 'y'\]; pass level="):
             BootstrapReplicateDistribution("b", source)
         named = BootstrapReplicateDistribution("b", source, level="row")
         assert named.event_spec.spec.level_names == ("row",)

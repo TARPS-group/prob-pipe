@@ -190,7 +190,7 @@ class TestLogLikelihoodToDataset:
         assert da.shape == (1, 1, 1)
 
     def test_1d_raises_clear_error(self):
-        with pytest.raises(ValueError, match="1-D log_likelihood"):
+        with pytest.raises(ValueError, match="got a 1-D array"):
             _log_likelihood_to_dataset(np.ones(10))
 
     def test_1d_dataarray_raises_clear_error(self):
@@ -444,7 +444,9 @@ class TestAddLoo:
         post = _FakePosterior(with_arviz_log_likelihood=False)
         _add_group(post, "arviz/posterior", xr.Dataset(attrs={"present": True}))
 
-        with pytest.raises(ValueError, match="No pointwise log_likelihood group"):
+        with pytest.raises(
+            ValueError, match=r"add_loo needs pointwise log likelihoods.*Pass model= and data="
+        ):
             add_loo(post)
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -716,7 +718,9 @@ class TestAddLogLikelihood:
     def test_a_joint_whose_likelihood_scores_no_observation_raises(self):
         post, _, data = self._setup()
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
-        with pytest.raises(TypeError, match="scores each observation"):
+        with pytest.raises(
+            TypeError, match="cannot compute pointwise log likelihoods: the model must be"
+        ):
             _add_log_likelihood(post, prior, data)
 
     def test_fallback_loop_produces_same_shape(self):

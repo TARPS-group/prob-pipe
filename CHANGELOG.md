@@ -2065,6 +2065,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Error and warning messages say what went wrong in the caller's terms.**
+  Each message names the call that failed, the argument and value at fault,
+  and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
+  §9.3. Messages no longer use design vocabulary such as "packaging", "whole
+  term", or "claim", and no longer name private helpers. A lookup of a name
+  that does not exist lists the names that do, as in
+  `unknown level 'test'; available levels: ['quantile']`. Code that matches
+  on the old wording needs updating, since the exception types are unchanged.
+- **A "no route applies" error leads with the reason the caller can fix.** A
+  `Feasibility` report takes `actionable=True` when it fails on a detail of the
+  call, such as a field name the argument does not have, and the error opens
+  with the first such reason before it lists every route tried. So
+  `condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})` raises
+  `condition_on: unknown field 'x'; available fields: ['mu']. Routes tried: ...`.
+  A route's reason no longer repeats the route's name, and a missing capability
+  reads "does not implement SupportsSampling".
 - **Error messages and a repr call a term's label its label.** A `Record` built
   without a label says it requires its label as the first positional argument,
   and that every keyword argument, `name=` and `label=` included, is a field.

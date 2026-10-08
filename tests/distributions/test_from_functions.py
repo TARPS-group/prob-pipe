@@ -227,7 +227,7 @@ class TestTheArguments:
             distribution("x", log_prob=1.0, event_spec=VECTOR)
 
     def test_both_densities_raise(self):
-        with pytest.raises(TypeError, match="got both"):
+        with pytest.raises(TypeError, match="not both"):
             distribution(
                 "x",
                 log_prob=_normal_density,
@@ -258,15 +258,19 @@ class TestTheDeclarationCheck:
         assert law.event_spec == OutputSpec(y=VECTOR)
 
     def test_a_draw_of_another_shape_raises(self):
-        with pytest.raises(ValueError, match=r"declaration check of 'x'.*\(3,\)"):
+        with pytest.raises(
+            ValueError, match=r"sample of 'x' returns draws that do not match event_spec.*\(3,\)"
+        ):
             distribution("x", sample=_normal_draw, event_spec=NumericArraySpec((4,)))
 
     def test_a_draw_of_another_dtype_raises(self):
-        with pytest.raises(ValueError, match=r"declaration check of 'y'.*float32"):
+        with pytest.raises(
+            ValueError, match=r"sample of 'y' returns draws that do not match event_spec.*float32"
+        ):
             distribution("y", sample=lambda key: jax.random.normal(key, (4,)), event_spec=COUNTS)
 
     def test_an_array_for_a_record_event_raises(self):
-        with pytest.raises(ValueError, match="declaration check"):
+        with pytest.raises(ValueError, match="sample of 'x' returns draws that do not match"):
             distribution("x", sample=_normal_draw, event_spec=RecordSpec(a=REAL))
 
     def test_the_check_runs_under_jit(self):
@@ -278,7 +282,7 @@ class TestTheDeclarationCheck:
             )
             return law._sample(jax.random.key(1))
 
-        with pytest.raises(ValueError, match="declaration check"):
+        with pytest.raises(ValueError, match="sample of 'x' returns draws that do not match"):
             jax.jit(build)(1.0)
 
     def test_a_sampler_that_does_not_trace_keeps_the_declaration_as_given(self):
@@ -290,11 +294,11 @@ class TestTheDeclarationCheck:
             distribution("x", log_prob=lambda value: -0.5 * value**2, event_spec=VECTOR)
 
     def test_a_pending_type_with_no_sampler_raises(self):
-        with pytest.raises(TypeError, match="pending type"):
+        with pytest.raises(TypeError, match="does not declare a type"):
             distribution("x", log_prob=_normal_density, event_spec=OutputSpec(x=None))
 
     def test_a_pending_type_with_a_sampler_that_does_not_trace_raises(self):
-        with pytest.raises(TypeError, match="pending type"):
+        with pytest.raises(TypeError, match="does not declare a type"):
             distribution("x", sample=_numpy_draw, event_spec=OutputSpec(x=None))
 
 

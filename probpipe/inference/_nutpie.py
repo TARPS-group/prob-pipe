@@ -16,6 +16,7 @@ from ..functions import function
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
+    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
@@ -231,8 +232,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
         return nutpie.compile_pymc_model(pymc_build), pymc_build
 
     raise TypeError(
-        f"condition_on_nutpie does not support {type(model).__name__}. "
-        f"Expected a StanModel or PyMCModel."
+        f"condition_on_nutpie: model must be a StanModel or PyMCModel; got {type(model).__name__}"
     )
 
 
@@ -264,7 +264,10 @@ def _extract_chains(
         order.
     """
     if not hasattr(trace, "posterior"):
-        raise TypeError(f"Cannot extract chains from nutpie trace of type {type(trace).__name__}")
+        raise TypeError(
+            f"cannot extract chains from the nutpie trace: it has no posterior group; "
+            f"got {type(trace).__name__}"
+        )
     if keep_names is not None:
         param_names = list(keep_names)
     else:
@@ -317,16 +320,25 @@ class NutpieNutsMethod(InferenceMethod):
         """Whether the target is a Stan or PyMC program, or a PyMC one at its observed values."""
         dist, given = joint_and_given(target)
         if not isinstance(dist, self._supported):
-            return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
+            return Feasibility(
+                feasible=False,
+                description=f"the model must be a StanModel or PyMCModel; got {described(dist)}",
+            )
         if given is not None and not isinstance(dist, self._pymc_model_type):
             return Feasibility(
                 feasible=False,
-                description="nutpie samples a Stan program at its data, which fixes no parameter",
+                description=(
+                    "nutpie cannot condition a StanModel on more values: it samples every "
+                    "parameter at the data the StanModel was built with. Pass data to "
+                    "StanModel(...) instead"
+                ),
             )
         try:
             import nutpie  # noqa: F401
         except ImportError:
-            return Feasibility(feasible=False, description="nutpie not installed")
+            return Feasibility(
+                feasible=False, description="nutpie is not installed; pip install nutpie"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:

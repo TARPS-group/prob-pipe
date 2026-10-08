@@ -120,7 +120,7 @@ class TestMakeStack:
         from probpipe.functions._result import _make_stack
 
         comps = [Normal(loc=0.0, scale=1.0, label="a"), Normal(loc=0.0, scale=1.0, label="b")]
-        with pytest.raises(TypeError, match="at 1"):
+        with pytest.raises(TypeError, match="element 1 of the DistributionBatch"):
             _make_stack(comps, n=2, field_name="demo", level_names=("sweep",))
 
     def test_list_of_record_batches_nests_batch_shape(self):

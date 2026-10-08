@@ -81,12 +81,12 @@ def log_det_jacobian(f: Any, x: Any):
 
 def _invertible(call: BoundCall, result: OutputSpec | None) -> Any:
     """The map claims SupportsInverse and its guard admits it, as is_invertible reads them."""
-    raise NotImplementedError("inverse.exact")
+    raise NotImplementedError("inverse is not implemented yet")
 
 
 def _jacobian(call: BoundCall, result: OutputSpec | None) -> Any:
     """The map claims SupportsLogDetJacobian and its guard admits the call."""
-    raise NotImplementedError("log_det_jacobian.exact")
+    raise NotImplementedError("log_det_jacobian is not implemented yet")
 
 
 inverse.register_route(

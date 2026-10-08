@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import count
 from ..custom_types import Array
 from ._batch import _batch_axis_count
 from ._record_batch import (
@@ -104,10 +105,16 @@ class NumericRecordBatch(RecordBatch):
             element_spec = _inferred_element_spec(fields, n_batch, kind=type(self).__name__)
         template = _record_element_spec(element_spec, kind=type(self).__name__)
         if not isinstance(template, NumericRecordSpec):
+            kind = type(self).__name__
+            others = [k for k in template if not isinstance(template[k], NumericArraySpec)]
+            if not others:
+                raise TypeError(
+                    f"{kind}: element_spec must be a NumericRecordSpec, "
+                    f"got {type(template).__name__}"
+                )
             raise TypeError(
-                f"{type(self).__name__} describes an all-numeric element, so its element_spec "
-                f"carries a NumericRecordSpec; got one over {type(template).__name__} with "
-                f"fields {list(template.keys())}"
+                f"{kind} requires every field to be a numeric array, but {others} are not; "
+                f"use RecordBatch for fields that are not numeric arrays"
             )
         super().__init__(
             label,
@@ -142,8 +149,8 @@ class NumericRecordBatch(RecordBatch):
         """The one field's values, or a refusal naming what to do instead."""
         if len(self._columns) != 1:
             raise TypeError(
-                f"a {type(self).__name__} of {len(self._columns)} fields is not array-like; "
-                f"read one field first, as batch['field']"
+                f"{type(self).__name__} with {count(len(self._columns), 'field')} is not "
+                f"array-like; read one field first, such as batch['field']"
             )
         return next(iter(self._columns.values()))
 
@@ -288,8 +295,8 @@ class NumericRecordBatch(RecordBatch):
         for key, declared in spec._walk_leaves():
             if not isinstance(declared, NumericArraySpec):
                 raise TypeError(
-                    f"{cls.__name__}.from_vector: field {key!r} has a {type(declared).__name__}; "
-                    "reconstruction requires NumericArraySpec leaves"
+                    f"{cls.__name__}.from_vector: field {key!r} must have a NumericArraySpec, "
+                    f"got {type(declared).__name__}"
                 )
             event_shape = declared.shape
             size = int(np.prod(event_shape, dtype=int))

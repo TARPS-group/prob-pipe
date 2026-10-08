@@ -125,7 +125,7 @@ class TestPredictiveCheckBroker:
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(ValueError, match=r"given slots \['mu'\]"),
+            pytest.raises(ValueError, match=r"does not produce \['mu'\]"),
         ):
             predictive_check(likelihood, other, jnp.mean, num_replications=3)
 
@@ -333,7 +333,7 @@ class TestSimulationBasedCalibrationBroker:
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="does not support SBC joint sampling"),
+            pytest.raises(TypeError, match="model must be a distribution that can be sampled"),
         ):
             simulation_based_calibration(
                 _OpaqueLikelihood(),

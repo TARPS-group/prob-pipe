@@ -52,5 +52,5 @@ def test_the_draws_follow_the_workflow_seed():
 
 
 def test_conditioning_takes_no_method_options():
-    with pytest.raises(TypeError, match="takes none"):
+    with pytest.raises(TypeError, match="takes no method_options"):
         _posterior()._condition_on({"observation": 0.5}, num_results=7)

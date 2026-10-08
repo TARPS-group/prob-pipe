@@ -423,7 +423,7 @@ class TestFunctionDeclarations:
         )
         with pytest.raises(ValueError, match="input"):
             wrapped.apply(jnp.ones(3))
-        with pytest.raises(ValueError, match="RecordSpec"):
+        with pytest.raises(ValueError, match="must be a record or a mapping of fields"):
             wrapped.apply(jnp.ones(2))
 
     def test_options_preserve_declarations(self):

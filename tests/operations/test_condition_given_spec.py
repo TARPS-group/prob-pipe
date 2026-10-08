@@ -19,7 +19,7 @@ class TestAGivenOfTheWrongShape:
     def test_check_reports_it_infeasible(self):
         report = condition_on.check(_model(), {"y": jnp.zeros((3, 8))})
         assert not report.feasible
-        assert "the given at 'y' does not conform" in report.description
+        assert "the value given for 'y' does not match its declaration" in report.description
 
     def test_the_call_raises_before_inference_runs(self):
         with pytest.raises(ResolutionError, match="'y' has rank 2"):

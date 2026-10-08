@@ -479,7 +479,7 @@ class TestValidation:
             learner(_prior(), _SIM, num_simulations=8, epochs=1, random_seed=0)
 
     def test_rejects_unknown_sim_backend(self):
-        with pytest.raises(ValueError, match="Unknown sim_backend"):
+        with pytest.raises(ValueError, match="unknown sim_backend"):
             learn_amortized_likelihood(
                 _prior(), _SIM, sim_backend="bogus", num_simulations=8, epochs=1
             )
@@ -498,7 +498,7 @@ class TestValidation:
         class _NoGenerate:
             pass
 
-        with pytest.raises(TypeError, match="ConditionalDistribution that samples"):
+        with pytest.raises(TypeError, match="ConditionalDistribution that can be sampled"):
             learn_amortized_likelihood(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_that_is_not_numeric(self):

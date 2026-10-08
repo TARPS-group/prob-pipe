@@ -462,7 +462,7 @@ class TestGetInitState:
 
     def test_raises_without_sampling_or_event_shape(self):
         # Branch 4: neither heuristic applies -> ValueError.
-        with pytest.raises(ValueError, match="Cannot determine initial state"):
+        with pytest.raises(ValueError, match="cannot choose an initial state"):
             get_init_state(_NoInitHeuristicDist(), init=None)
 
     def test_data_not_consulted_so_seed_determines_init(self):
@@ -510,7 +510,7 @@ class TestRunSeed:
 
     @pytest.mark.parametrize("method", _SEEDED_METHODS)
     def test_a_random_seed_option_is_refused(self, method):
-        with pytest.raises(TypeError, match=r"\['random_seed'\] are not options"):
+        with pytest.raises(TypeError, match="unknown method option 'random_seed'"):
             _first_draws(method, 0, random_seed=3)
 
     def test_no_registered_method_reads_a_seed_option(self):
@@ -667,7 +667,7 @@ class TestPosteriorVarOrder:
         """A kept name absent from the trace raises a clear ValueError here,
         not a cryptic 'not a permutation' error later in make_posterior."""
         trace = _StubTrace(["mu"])
-        with pytest.raises(ValueError, match="missing expected variable"):
+        with pytest.raises(ValueError, match="trace is missing the parameters"):
             posterior_var_order(trace, ["mu", "sigma"])
 
     def test_error_message_names_the_missing_vars(self):

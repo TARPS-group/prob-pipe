@@ -289,7 +289,7 @@ class TestATransformCannotAddAnUnnamedLevel:
                 axes_per_level=(1,),
             )
 
-        with pytest.raises(ValueError, match="An added axis belongs to no level"):
+        with pytest.raises(ValueError, match="To add a level, build a new"):
             jax.vmap(body)(jnp.arange(3.0))
 
     def test_dropping_one_of_two_batch_axes_is_refused_too(self):
@@ -304,7 +304,7 @@ class TestATransformCannotAddAnUnnamedLevel:
             axes_per_level=(1, 1),
         )
 
-        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+        with pytest.raises(ValueError, match="must keep every batch axis or remove all of them"):
             jax.vmap(lambda b: jnp.zeros(()))(batch)
 
         single = NumericRecordBatch(
@@ -526,7 +526,7 @@ class TestSameRankTransformsCannotLieEither:
             element_spec=RecordSpec(x=(), y=()),
         )
 
-        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+        with pytest.raises(ValueError, match="must keep every batch axis or remove all of them"):
             jax.tree.map(lambda leaf: leaf[:1], batch)
 
         sliced = batch[0:1]
@@ -545,7 +545,7 @@ class TestSameRankTransformsCannotLieEither:
         )
         _, treedef = jtu.tree_flatten(batch)
 
-        with pytest.raises(ValueError, match="disagreeing batch axes"):
+        with pytest.raises(ValueError, match="the fields now have different batch shapes"):
             jtu.tree_unflatten(treedef, [jnp.zeros(2), jnp.zeros(3)])
 
 
@@ -611,11 +611,11 @@ class TestATransformCannotResizeTheElement:
         )
 
     def test_slicing_an_event_axis_is_refused(self):
-        with pytest.raises(ValueError, match="never the element's own"):
+        with pytest.raises(ValueError, match="only batch axes may change"):
             jax.tree.map(lambda leaf: leaf[:, :1], self._vector_batch())
 
     def test_transposing_batch_and_event_axes_is_refused(self):
-        with pytest.raises(ValueError, match="never the element's own"):
+        with pytest.raises(ValueError, match="only batch axes may change"):
             jax.tree.map(lambda leaf: leaf.T, self._vector_batch())
 
     def test_reducing_below_the_event_rank_is_refused(self):
@@ -696,14 +696,14 @@ class TestShapeCannotRecoverAxisProvenance:
 
     @pytest.mark.parametrize(("chain", "draw"), [(2, 2), (2, 3)], ids=["equal", "distinct"])
     def test_removing_one_of_two_axes_is_refused(self, chain, draw):
-        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+        with pytest.raises(ValueError, match="must keep every batch axis or remove all of them"):
             jax.vmap(lambda v: 0.0, in_axes=1)(self._grid(chain, draw))
 
     def test_an_unequal_permutation_is_refused(self):
         """A transpose changes the batch shape here, so it is caught by the same
         gate a resize is. An *equal*-sized transpose changes nothing about the
         shape and is undetectable — see the batch's own contract tests."""
-        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+        with pytest.raises(ValueError, match="must keep every batch axis or remove all of them"):
             jax.tree.map(lambda leaf: leaf.T, self._grid(2, 3))
 
 
@@ -716,7 +716,7 @@ class TestATransformCannotRetypeTheElement:
             element_spec=RecordSpec(x=NumericArraySpec((), dtype=jnp.float32)),
         )
 
-        with pytest.raises(TypeError, match="does not admit"):
+        with pytest.raises(TypeError, match="cannot be cast to the declared float32"):
             jax.tree.map(lambda leaf: leaf.astype(jnp.complex64), batch)
 
     def test_a_same_kind_widening_is_admitted(self):
@@ -1037,7 +1037,7 @@ class TestBatchValuedRowAggregation:
         def body(x):
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner(2)
 
-        with pytest.raises(TypeError, match="one kind for every row"):
+        with pytest.raises(TypeError, match="returned batches of different kinds"):
             Function(label="body", fn=body, dispatch="sequential")(x=self._rows())
 
     def test_a_returned_design_aggregates_as_a_plain_batch(self):

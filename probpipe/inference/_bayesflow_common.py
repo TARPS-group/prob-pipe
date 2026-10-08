@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from ..core._specs import _components_record
 from ..core.record import Record
 from ..custom_types import Array, PRNGKey
@@ -152,25 +153,24 @@ def _validate_learn_inputs(
     """
     refuse_seed_keywords(caller, fit_kwargs)
     if sim_backend not in ("jax", "sequential"):
-        raise ValueError(f"Unknown sim_backend: {sim_backend!r}. Supported: 'jax', 'sequential'.")
+        raise ValueError(unknown_names("sim_backend", [sim_backend], ["jax", "sequential"]))
     for _name, _val in counts:
         if not isinstance(_val, (int, np.integer)):
-            raise TypeError(f"{_name} must be an integer, got {type(_val).__name__}.")
+            raise TypeError(f"{_name} must be an integer; got {type(_val).__name__}")
         if _val < 1:
-            raise ValueError(f"{_name} must be a positive integer, got {_val}.")
+            raise ValueError(f"{_name} must be a positive integer; got {_val}")
     if not (
         isinstance(simulator, ConditionalDistribution)
         and isinstance(simulator, SupportsConditionalSampling)
     ):
         raise TypeError(
-            "simulator must be a ConditionalDistribution that samples, the kernel of one "
-            f"observation given the prior's fields, got {type(simulator).__name__}"
+            "simulator must be a ConditionalDistribution that can be sampled, giving one "
+            f"observation at the prior's parameters; got {type(simulator).__name__}"
         )
     if not isinstance(prior, NumericDistribution):
         raise TypeError(
-            f"{caller} requires a numeric prior with named parameter fields -- "
-            "typically a factored joint of named distributions -- "
-            f"but got {type(prior).__name__}, which declares no numeric event."
+            f"{caller} requires a numeric prior over named parameters, such as a product of "
+            f"named distributions; got {type(prior).__name__}, whose draws are not numeric"
         )
     return _components_record(prior.event_spec)
 

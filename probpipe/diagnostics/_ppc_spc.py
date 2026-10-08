@@ -256,7 +256,7 @@ def _ppc_op(
     _context._assert_workflow_admission()
     planned_tests = _planned_statistics(test_fns)
     n_replications = _validate_positive_int("n_replications", n_replications)
-    joint = _predictive_joint(kernel, posterior, "add_ppc")
+    joint = _predictive_joint(kernel, posterior, "add_ppc", "posterior")
     observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
     results: dict[str, dict[str, Any]] = {}

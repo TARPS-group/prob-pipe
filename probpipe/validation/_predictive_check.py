@@ -218,7 +218,7 @@ def _planned_statistics(test_fns: Any) -> tuple[tuple[str, Callable], ...]:
 
 
 def _predictive_joint(
-    kernel: ConditionalDistribution, law: Distribution, operation: str
+    kernel: ConditionalDistribution, law: Distribution, operation: str, law_name: str = "law"
 ) -> Distribution:
     """The composition ``kernel * law``, from which a replication is drawn.
 
@@ -230,6 +230,8 @@ def _predictive_joint(
         A law over the kernel's given slots, such as a posterior or a prior.
     operation : str
         The name of the calling function, which each error names.
+    law_name : str
+        The name of the calling function's argument that holds *law*.
 
     Returns
     -------
@@ -247,19 +249,19 @@ def _predictive_joint(
     """
     if not isinstance(kernel, ConditionalDistribution):
         raise TypeError(
-            f"{operation} takes the kernel of the observations, a ConditionalDistribution; "
-            f"got {type(kernel).__name__}"
+            f"{operation}: kernel must be a ConditionalDistribution of the observations given "
+            f"the parameters; got {type(kernel).__name__}"
         )
     if not isinstance(law, Distribution) or not callable(getattr(law, "_sample", None)):
         raise TypeError(
-            f"{operation} draws the kernel's given slots from a Distribution that samples; "
+            f"{operation}: {law_name} must be a Distribution that can be sampled; "
             f"got {type(law).__name__}"
         )
     joint = kernel * law
     if isinstance(joint, FactoredConditionalDistribution):
         raise ValueError(
-            f"{operation}: the law {law.label!r} does not produce the given slots "
-            f"{sorted(joint.given_spec.required)} of the kernel {kernel.label!r}"
+            f"{operation}: {law_name} {law.label!r} does not produce "
+            f"{sorted(joint.given_spec.required)}, which kernel {kernel.label!r} needs as input"
         )
     return joint
 

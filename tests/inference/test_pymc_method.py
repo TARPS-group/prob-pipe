@@ -60,7 +60,7 @@ class TestMethodOptions:
     def test_an_option_the_method_does_not_read_raises(self, method, normal_mean):
         """PyMC's own name ``progressbar`` is not an option of the method."""
         options = {**_BUDGETS[method], "progressbar": False}
-        with pytest.raises(TypeError, match=r"\['progressbar'\] are not options"):
+        with pytest.raises(TypeError, match="unknown method option 'progressbar'"):
             condition_on.with_options(method=method, method_options=options)(
                 normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
             )

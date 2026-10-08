@@ -66,14 +66,49 @@ def _complete_event_spec(event_spec: Any, label: str) -> OutputSpec:
         declaration = OutputSpec.default(event_spec, component=label)
     else:
         raise TypeError(
-            f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
+            f"event_spec must be an OutputSpec or a TermSpec; got {type(event_spec).__name__}"
         )
     if declaration.spec is None:
         raise ValueError(
-            f"the event declaration of {label!r} has a type hole; a distribution stores "
-            f"only a complete declaration"
+            f"event_spec of {label!r} does not declare a type; pass a full spec, such as "
+            f"NumericArraySpec(())"
         )
     return declaration
+
+
+#: The message for a selection of field paths that names none.
+_EMPTY_SELECTION = "select at least one field path; got an empty tuple"
+
+
+def _shared_final_names(paths: tuple[str, ...] | list[str]) -> str:
+    """The message that two of the selected *paths* end in the same name.
+
+    The selected fields are named by the last part of each path, so two such
+    paths would give the result two fields of one name.
+    """
+    finals = [path.rsplit("/", 1)[-1] for path in paths]
+    shared = sorted({final for final in finals if finals.count(final) > 1})
+    names = repr(shared[0]) if len(shared) == 1 else str(shared)
+    return (
+        f"cannot select {list(paths)} together: more than one path ends in {names}, which "
+        f"would give the result two fields of the same name"
+    )
+
+
+def _no_free_dims(term: Any, unbound: set[str], free: set[str] | frozenset[str]) -> str:
+    """The message that *term* has no free dimensions *unbound* to bind, with those it has."""
+    return (
+        f"{public_class_name(type(term))} {term.label!r} has no free dimensions "
+        f"{sorted(unbound)} to bind; its free dimensions: {sorted(free) or 'none'}"
+    )
+
+
+def _fixes_every_field(label: str) -> str:
+    """The message that a given fixes every field of the law *label*, leaving none to infer."""
+    return (
+        f"given fixes every field of {label!r}, which leaves no field to infer; leave at least "
+        f"one field out of given"
+    )
 
 
 def _whole_term_component(declaration: OutputSpec) -> str | None:
@@ -450,8 +485,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             return object.__getattribute__(self, name)
         if not _declares_numeric_event(self):
             raise AttributeError(
-                f"{type(self).__name__} declares a non-numeric event, and {name} belongs to "
-                f"NumericDistribution"
+                f"{name} is only available for a distribution with a numeric event, but "
+                f"{public_class_name(type(self))} {self.label!r} has a non-numeric event"
             )
         return view.__get__(self, type(self))
 
@@ -510,10 +545,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """
         unbound = set(sizes) - self.event_spec.spec.free_dims
         if unbound:
-            raise ValueError(
-                f"{type(self).__name__} {self.label!r} has no free dimensions "
-                f"{sorted(unbound)} to bind"
-            )
+            raise ValueError(_no_free_dims(self, unbound, self.event_spec.spec.free_dims))
         copy = self._with_declaration(
             self.event_spec.with_dim_sizes(**sizes), "with_dim_sizes", sizes
         )
@@ -658,7 +690,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             return self
         if _field_view_factory is None:
             raise RuntimeError("the field view is not installed; import probpipe")
-        return _field_view_factory(self, key)
+        try:
+            return _field_view_factory(self, key)
+        except KeyError as error:
+            requested = key if isinstance(key, tuple) else (key,)
+            if len(error.args) == 1 and error.args[0] in requested:
+                raise KeyError(
+                    f"{error.args[0]!r} is not an event path of {self.label!r}; its fields: "
+                    f"{list(self.event_spec.components)}"
+                ) from None
+            raise
 
     # -- composition ------------------------------------------------------------
 
@@ -744,9 +785,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             fields = tuple(self.event_spec.components)
         if not fields:
             raise TypeError(
-                f"{type(self).__name__} does not support the keyword form of "
-                f"the log_prob-family ops (it has no named fields); pass a "
-                f"positional value."
+                f"{public_class_name(type(self))} {self.label!r} has no named fields, so it "
+                f"cannot take the value by keyword; pass the value positionally"
             )
         rec = _pack_fields(fields, field_kwargs, owner=type(self).__name__)
         return field_kwargs[fields[0]] if len(fields) == 1 else rec
@@ -888,7 +928,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         NotImplementedError
             Always.
         """
-        raise NotImplementedError("Distribution.from_batched_params")
+        raise NotImplementedError("from_batched_params is not implemented yet")
 
     # -- repr ---------------------------------------------------------------
 
@@ -984,6 +1024,11 @@ _NUMERIC_VIEWS: dict[str, property] = {
 # ---------------------------------------------------------------------------
 
 
+def _event_form(component: str | None) -> str:
+    """The form of an event, as a message names it: a record of fields, or one named field."""
+    return "a record of fields" if component is None else f"the single field {component!r}"
+
+
 def _unify_declarations(
     expected: OutputSpec, actual: OutputSpec, bindings: dict[str, int], path: str
 ) -> None:
@@ -1011,8 +1056,7 @@ def _unify_declarations(
     wanted, found = _whole_term_component(expected), _whole_term_component(actual)
     if (wanted is None) != (found is None):
         raise ValueError(
-            f"{path} declares {'an exposed record' if wanted is None else f'the whole term {wanted!r}'}, "
-            f"but the law declares {'an exposed record' if found is None else f'the whole term {found!r}'}"
+            f"{path} declares {_event_form(wanted)}, but the law declares {_event_form(found)}"
         )
     if wanted != found:
         raise ValueError(
@@ -1070,11 +1114,11 @@ class DistributionSpec(TermSpec):
             event_spec = OutputSpec(event_spec)
         elif not isinstance(event_spec, OutputSpec):
             raise TypeError(
-                f"DistributionSpec.event_spec must be an OutputSpec or a RecordSpec, got "
-                f"{type(event_spec).__name__}, which has no component name to complete it with"
+                f"DistributionSpec.event_spec must be an OutputSpec or a RecordSpec; got "
+                f"{type(event_spec).__name__}. Name the field, such as OutputSpec(x=...)"
             )
         if event_spec.spec is None:
-            raise ValueError("DistributionSpec.event_spec has a type hole")
+            raise ValueError("DistributionSpec.event_spec does not declare a type")
         object.__setattr__(self, "event_spec", event_spec)
 
     @property

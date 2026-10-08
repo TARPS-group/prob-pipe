@@ -202,7 +202,7 @@ class TestCheck:
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="x")
         info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
-        assert "factored joint" in info.description
+        assert "likelihood * prior" in info.description
 
     def test_rejects_a_likelihood_that_scores_no_subset(self):
         """A likelihood kernel that cannot score a subset of its observations is rejected."""
@@ -216,7 +216,7 @@ class TestCheck:
         target = observed_target(likelihood * prior, {"y": jnp.zeros((5, 2))})
         info = BlackJAXSGLDMethod().check(target, batch_size=2)
         assert not info.feasible
-        assert "conditionally independent" in info.description
+        assert "score a subset of its observations" in info.description
 
     def test_requires_batch_size_kwarg(self, logistic_problem):
         """Missing ``batch_size=`` returns ``feasible=False`` with hint."""
@@ -224,7 +224,8 @@ class TestCheck:
             observed_target(logistic_problem["model"], logistic_problem["data"]),
         )
         assert not info.feasible
-        assert "batch_size" in info.description
+        assert 'method_options={"batch_size": ...}' in info.description
+        assert info.actionable
 
     def test_feasible_for_well_formed_input(self, logistic_problem):
         info = BlackJAXSGLDMethod().check(

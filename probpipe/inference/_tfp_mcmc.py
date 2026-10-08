@@ -26,6 +26,7 @@ from ._inference_utils import (
     flat_record,
     get_init_state,
     is_jax_traceable,
+    no_density_reason,
     observed_parts,
     run_seed,
     unconstrained_chain,
@@ -50,7 +51,7 @@ def _run_tfp_chains(
     arrays shaped (num_chains, num_results) for building DataTree.
     """
     if algorithm != "nuts":
-        raise ValueError(f"algorithm must be 'nuts', got {algorithm!r}")
+        raise ValueError(f"algorithm must be 'nuts'; got {algorithm!r}")
     inner_kernel = tfp_mcmc.NoUTurnSampler(
         target_log_prob_fn=target_log_prob_fn,
         step_size=step_size,
@@ -174,10 +175,7 @@ class _TFPGradientMethod(InferenceMethod):
         # The cost is ~one JAX trace, cached by JAX on subsequent calls.
         model, observed = observed_parts(target)
         if not isinstance(model, SupportsUnnormalizedLogProb):
-            return Feasibility(
-                feasible=False,
-                description="Requires SupportsUnnormalizedLogProb",
-            )
+            return Feasibility(feasible=False, description=no_density_reason(model))
         try:
             density, init, _ = _chain_target(
                 model, observed, init=kwargs.get("init"), random_seed=0
@@ -186,7 +184,7 @@ class _TFPGradientMethod(InferenceMethod):
             if not is_jax_traceable(density, init):
                 return Feasibility(
                     feasible=False,
-                    description="Log-prob is not JAX-traceable",
+                    description="the log-density is not JAX-traceable",
                 )
         except Exception as e:
             return Feasibility(feasible=False, description=str(e))
@@ -217,7 +215,7 @@ class _TFPGradientMethod(InferenceMethod):
         target_accept_prob = kwargs.get("target_accept_prob", 0.75)
         if not 0.0 < target_accept_prob < 1.0:
             raise ValueError(
-                f"target_accept_prob must be strictly between 0 and 1, got {target_accept_prob!r}"
+                f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
             )
         random_seed = run_seed(self.name)
         model, observed = observed_parts(target)

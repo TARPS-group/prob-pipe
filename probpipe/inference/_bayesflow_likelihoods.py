@@ -29,6 +29,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
@@ -179,8 +180,8 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         t = jnp.ravel(jnp.asarray(t))
         if t.shape[0] != self._theta_dim:
             raise ValueError(
-                f"params has {t.shape[0]} values but the estimator was trained on "
-                f"{self._theta_dim}-dimensional parameters."
+                f"params has {t.shape[0]} values, but {self.label!r} was trained on "
+                f"parameters of {self._theta_dim} values"
             )
         return t
 
@@ -200,10 +201,9 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
             rows = jnp.atleast_2d(rows)
         if rows.shape[-1] != self._data_dim:
             raise ValueError(
-                f"data rows have {rows.shape[-1]} values but the estimator was "
-                f"trained on observations of size {self._data_dim}; pass a dataset "
-                "of shape (n, d_y) (or a single (d_y,) observation) matching the "
-                "simulator's flattened output."
+                f"each observation in data has {rows.shape[-1]} values, but {self.label!r} was "
+                f"trained on observations of size {self._data_dim}. Pass data of shape "
+                f"(n, {self._data_dim}) or a single observation of shape ({self._data_dim},)."
             )
         return rows.reshape(-1, self._data_dim)
 
@@ -231,7 +231,7 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
         unknown = sorted(set(values) - set(self.given_spec))
         if unknown:
-            raise KeyError(f"{unknown} are not given slots of {self.label!r}")
+            raise KeyError(unknown_names("parameter", unknown, list(self.given_spec)))
         return {**self._bound, **values}
 
     def _score(self, values: Mapping[str, Any], data: Any) -> Array:
@@ -509,10 +509,10 @@ def _train_offline(
         if dequantize:
             if float(np.abs(y).max()) >= 2.0**23:
                 raise ValueError(
-                    "dequantize=True requires counts below 2**23: float32 "
-                    "spacing reaches 1.0 there, silently rounding away the "
-                    "jitter and the midpoint shift. Rescale the observations "
-                    "or use learn_amortized_ratio."
+                    f"dequantize=True requires simulated counts below 2**23, where float32 "
+                    f"can still hold the added jitter; the largest simulated count is "
+                    f"{float(np.abs(y).max()):g}. Rescale the observations or use "
+                    f"learn_amortized_ratio."
                 )
             y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape), dtype="float32")
         internal_keys = _adapter_field_keys(leaf_keys)
@@ -647,10 +647,9 @@ def learn_amortized_likelihood(
     def _build(bf: Any, adapter: Any, data_dim: int) -> Any:
         if inference_network is None and data_dim < 2:
             raise ValueError(
-                "NLE's default coupling flow requires observations with at least 2 "
-                f"dimensions, but the simulator emits {data_dim}-dimensional data. "
-                "Use learn_amortized_ratio (the NRE classifier has no minimum "
-                "dimension) or pass a custom inference_network."
+                "the default network of learn_amortized_likelihood requires observations of "
+                f"at least 2 values, but the simulator gives {data_dim}. Pass an "
+                "inference_network, or use learn_amortized_ratio, which has no minimum."
             )
         net = inference_network or bf.networks.CouplingFlow()
         return bf.ContinuousApproximator(inference_network=net, adapter=adapter)

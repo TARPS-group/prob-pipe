@@ -223,15 +223,13 @@ class Module(Node):
 
                 # If still abstract, ABCMeta will also catch it; but this provides better errors
                 if getattr(impl_attr, "__isabstractmethod__", False):
-                    raise TypeError(
-                        f"{cls.__name__} does not implement abstract workflow '{name}'."
-                    )
+                    raise TypeError(f"{cls.__name__} does not implement abstract workflow '{name}'")
 
                 # Must be marked as workflow (@workflow_method)
                 if not getattr(impl_attr, "_is_function_method", False):
                     raise TypeError(
                         f"{cls.__name__}.{name} implements an abstract workflow interface "
-                        f"but is not marked with @workflow_method."
+                        f"but is not marked with @workflow_method"
                     )
 
                 # Compare signatures (use unbound function signatures to include 'self')

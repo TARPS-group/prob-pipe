@@ -95,7 +95,7 @@ class TestFunctionValueContract:
         wrapped = Function(label="function", fn=lambda x: x)
         wrapped.with_provenance(Provenance("trained"))
 
-        with pytest.raises(RuntimeError, match="write-once"):
+        with pytest.raises(RuntimeError, match="set only once"):
             wrapped.with_provenance(Provenance("retrained"))
 
     def test_signature_is_captured_independently_once(self):
@@ -477,7 +477,9 @@ class TestApplyContract:
             assert wrapped.apply() is returned
             assert wrapped().spec is returned.spec
 
-        with pytest.raises(ValueError, match=r"dtype .* does not conform to int32"):
+        with pytest.raises(
+            ValueError, match=r"has dtype .*, which cannot be cast to the declared int32"
+        ):
             Function(
                 "law",
                 lambda: Normal("y", 0, 1),
@@ -754,7 +756,9 @@ class TestApplyContract:
         result = wrapped(np.ones((3,)))
 
         assert result.event_template == RecordSpec(stats=RecordSpec(copy=(3,), total=()))
-        with pytest.raises(ValueError, match="do not match template fields"):
+        with pytest.raises(
+            ValueError, match=r"fields do not match the declared fields: missing \['total'\]"
+        ):
             Function(
                 label="function",
                 fn=lambda x: {"stats": {"copy": x}},
@@ -769,7 +773,7 @@ class TestApplyContract:
             output_spec=RecordSpec(left=(), right=()),
         )
 
-        with pytest.raises(ValueError, match="expected named fields"):
+        with pytest.raises(ValueError, match="must be a record or a mapping of fields, got int"):
             wrapped.apply(1)
 
     def test_existing_record_requires_matching_authoritative_template(self):
@@ -779,7 +783,7 @@ class TestApplyContract:
             output_spec=RecordSpec(expected=()),
         )
 
-        with pytest.raises(ValueError, match=r"fields .* do not match template fields"):
+        with pytest.raises(ValueError, match=r"missing \['expected'\], unexpected \['wrong'\]"):
             wrapped.apply(1)
 
     def test_existing_distribution_requires_matching_authoritative_template(self):
@@ -925,7 +929,10 @@ class TestTemplateDeclarationContract:
             )
 
     def test_unknown_construction_binding_is_rejected(self):
-        with pytest.raises(ValueError, match="invalid construction bindings"):
+        with pytest.raises(
+            ValueError,
+            match=r"bind= names \['missing'\], which are not parameters of Function 'function'",
+        ):
             Function(label="function", fn=lambda x: x, bind={"missing": 1})
 
     def test_output_symbols_can_bind_independently_of_inputs(self):
@@ -1253,7 +1260,7 @@ class TestSymbolicCalls:
 
         with pytest.raises(
             ValueError,
-            match="does not conform",
+            match="which cannot be cast to the declared",
         ):
             wrapped(Normal("x", 0, 1))
 
