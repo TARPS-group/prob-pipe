@@ -60,13 +60,19 @@ from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
-from .record import Record
+from .record import Record, _is_numeric_field_value
 
 __all__ = ["RecordBatch"]
 
 
 class RecordBatch(Batch[Record]):
     """A batch of records sharing one ``RecordSpec``, stored as columns.
+
+    ``RecordBatch(...)`` returns a :class:`~probpipe.NumericRecordBatch` when every
+    column is a numeric array and *element_spec* is omitted or a
+    ``NumericRecordSpec``, as ``Record(...)`` returns a
+    :class:`~probpipe.NumericRecord` when every field is numeric. A subclass
+    constructs its own class.
 
     Parameters
     ----------
@@ -160,6 +166,16 @@ class RecordBatch(Batch[Record]):
     _columns: dict[str, Any]
 
     __slots__ = ("_columns",)
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # Only a call on the base class selects the class, as ``Record.__new__``
+        # does. A view allocates with ``object.__new__`` and so does not call this.
+        if cls is RecordBatch and _columns_promote(args, kwargs):
+            # Lazy: the numeric module builds on this one.
+            from ._numeric_record_batch import NumericRecordBatch
+
+            return cast(Self, object.__new__(NumericRecordBatch))
+        return object.__new__(cls)
 
     def __init__(
         self,
@@ -297,6 +313,22 @@ class RecordBatch(Batch[Record]):
             )
         )
 
+    def _view_class(self, element_spec: RecordSpec) -> type[RecordBatch]:
+        """The class of a view over this batch's columns whose elements satisfy *element_spec*.
+
+        A view whose :attr:`_view_type` is a plain batch takes the class that
+        *element_spec* calls for, so a view of numeric fields is a
+        ``NumericRecordBatch``, as construction gives. A subclass's own view type
+        is kept.
+        """
+        # Lazy: the numeric module builds on this one.
+        from ._numeric_record_batch import NumericRecordBatch
+
+        view_type = self._view_type
+        if view_type in (RecordBatch, NumericRecordBatch):
+            return _batch_class_for(element_spec)
+        return view_type
+
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same columns, indexed on the batch axes as given.
 
@@ -309,7 +341,7 @@ class RecordBatch(Batch[Record]):
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a
         # host's own ``__new__`` may select a class from constructor arguments and
         # must not run again where there are none.
-        view = object.__new__(self._view_type)
+        view = object.__new__(self._view_class(spec.element_spec))
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
@@ -454,7 +486,7 @@ class RecordBatch(Batch[Record]):
             for key, column in self._columns.items()
             if key.startswith(prefix)
         }
-        view = object.__new__(self._view_type)
+        view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
             BatchSpec(template, self.axis_groups, self.level_names),
@@ -470,14 +502,11 @@ class RecordBatch(Batch[Record]):
         an operation aligning operands by level name lines it up with its
         siblings and with the batch it came from.
         """
-        view = object.__new__(self._view_type)
+        element_spec = RecordSpec({key: self.event_template[key]})
+        view = object.__new__(self._view_class(element_spec))
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
-            BatchSpec(
-                RecordSpec({key: self.event_template[key]}),
-                self.axis_groups,
-                self.level_names,
-            ),
+            BatchSpec(element_spec, self.axis_groups, self.level_names),
             label=key,
         )
         return self._inherit_provenance(view)
@@ -794,7 +823,9 @@ class RecordBatch(Batch[Record]):
         Returns
         -------
         RecordBatch
-            The batch, with ``batch_shape == (len(records),)``.
+            The batch, with ``batch_shape == (len(records),)``. Called on
+            ``RecordBatch``, it is a ``NumericRecordBatch`` when the stacked
+            columns are all numeric, by the rule :class:`RecordBatch` states.
 
         Raises
         ------
@@ -891,6 +922,46 @@ def _batch_class_for(element_spec: RecordSpec) -> type[RecordBatch]:
     from ._numeric_record_batch import NumericRecordBatch
 
     return NumericRecordBatch if isinstance(element_spec, NumericRecordSpec) else RecordBatch
+
+
+def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
+    """Whether a ``RecordBatch(...)`` call builds a ``NumericRecordBatch``.
+
+    It does when the call gives no ``element_spec`` or a ``NumericRecordSpec`` and
+    every column is numeric by the probe ``Record(...)`` promotes with. A tracked
+    column, such as the ``NumericArrayBatch`` that reading a field gives, is probed
+    by its raw values, because the probe counts a batch-valued field as
+    non-numeric. For an array column the probe agrees with
+    :func:`_inferred_field_spec`, so the class agrees with the element spec the
+    batch infers. A call that omits the fields or the level names, or gives no
+    field, keeps ``RecordBatch``, so the error it raises names the class the
+    caller wrote.
+
+    Parameters
+    ----------
+    args : tuple of Any
+        The call's positional arguments.
+    kwargs : Mapping of str to Any
+        The call's keyword arguments.
+
+    Returns
+    -------
+    bool
+        Whether the call's columns are all numeric and its element spec, if
+        given, is a ``NumericRecordSpec``.
+    """
+    if len(args) < 2 or (len(args) < 3 and "level_names" not in kwargs):
+        return False
+    fields = args[1]
+    if not isinstance(fields, Mapping) or not fields:
+        return False
+    element_spec = kwargs.get("element_spec")
+    if element_spec is not None and not isinstance(element_spec, NumericRecordSpec):
+        return False
+    return all(
+        _is_numeric_field_value(column.raw() if isinstance(column, Batch) else column)
+        for column in fields.values()
+    )
 
 
 def _unbatchable_field(path: str, spec: TermSpec) -> str:

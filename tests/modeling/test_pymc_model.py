@@ -507,7 +507,7 @@ class TestRecordSpec:
         model = PyMCModel("model", model_fn)
         assert "ghost" in model.event_spec.components
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
-        with pytest.raises(ValueError, match="dynamic random variables"):
+        with pytest.raises(ValueError, match="free random variables must not change with the data"):
             model._conditioned_param_names(conditioned)
 
     def test_additive_dynamic_rv_set_rejected(self):
@@ -531,7 +531,7 @@ class TestRecordSpec:
         model = PyMCModel("model", model_fn)
         assert tuple(model.event_spec.components) == ("mu", "y")  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
-        with pytest.raises(ValueError, match="dynamic random variables"):
+        with pytest.raises(ValueError, match="free random variables must not change with the data"):
             model._conditioned_param_names(conditioned)
 
     def test_partial_conditioning_includes_unsupplied_observed(self):
@@ -673,7 +673,7 @@ class TestRecordSpec:
             return m
 
         model = PyMCModel("model", model_fn)
-        with pytest.raises(ValueError, match="dynamic random variables"):
+        with pytest.raises(ValueError, match="free random variables must not change with the data"):
             condition_on.with_options(
                 method="pymc_nuts",
                 method_options={

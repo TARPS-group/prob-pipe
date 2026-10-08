@@ -627,6 +627,82 @@ class TestTheElementSpecIsInferredWhenOmitted:
             RecordBatch("draws", {"x": jnp.arange(3.0)}, ("chain", "draw"))
 
 
+class TestTheClassFollowsTheColumns:
+    """``RecordBatch(...)`` selects its class as ``Record(...)`` does: when every
+    column is numeric and no explicit non-numeric element spec vetoes it, the batch
+    is a ``NumericRecordBatch``."""
+
+    def test_numeric_columns_build_a_numeric_batch(self):
+        batch = RecordBatch(
+            "sites",
+            {"count": jnp.array([[3, 5, 2], [4, 1, 2]]), "area": jnp.array([1.5, 2.0])},
+            "site",
+        )
+        assert type(batch) is NumericRecordBatch
+        assert batch.to_vector().shape == (2, 4)
+
+    def test_stacking_numeric_records_builds_a_numeric_batch(self):
+        north = Record("north", count=jnp.array([3, 5, 2]), area=1.5)
+        south = Record("south", count=jnp.array([4, 1, 2]), area=2.0)
+        batch = RecordBatch.stack([north, south], level_name="site", label="sites")
+        assert type(batch) is NumericRecordBatch
+        assert type(batch[1]) is NumericRecord
+        np.testing.assert_array_equal(np.asarray(batch.to_vector()[1]), [4.0, 1.0, 2.0, 2.0])
+
+    def test_a_column_read_from_a_numeric_batch_counts_as_numeric(self):
+        batch = RecordBatch("copy", {"m": nested_batch()["m"]}, "draw")
+        assert type(batch) is NumericRecordBatch
+        assert batch.element_spec == RecordSpec(m=(2,))
+
+    def test_one_opaque_column_keeps_a_plain_batch(self):
+        batch = RecordBatch(
+            "design", {"x": jnp.zeros(2), "site": _object_column(["north", "south"])}, "row"
+        )
+        assert type(batch) is RecordBatch
+        records = [Record("r", x=1.0, site="north"), Record("r", x=2.0, site="south")]
+        assert type(RecordBatch.stack(records, level_name="row")) is RecordBatch
+
+    def test_an_explicit_non_numeric_element_spec_keeps_a_plain_batch(self):
+        """The declaration vetoes the promotion, so ``RecordBatch`` itself checks
+        the columns against it."""
+        spec = RecordSpec(x=(), tag=OpaqueSpec())
+        batch = RecordBatch(
+            "b", {"x": jnp.zeros(3), "tag": _object_column([1, 2, 3])}, "draw", element_spec=spec
+        )
+        assert type(batch) is RecordBatch
+        records = [NumericRecord("r", x=float(i), tag=i) for i in range(3)]
+        stacked = RecordBatch.stack(records, level_name="draw", element_spec=spec)
+        assert type(stacked) is RecordBatch
+        with pytest.raises(TypeError, match=r"^RecordBatch: field 'tag' is declared OpaqueSpec"):
+            RecordBatch("b", {"x": jnp.zeros(3), "tag": jnp.arange(3)}, "draw", element_spec=spec)
+
+    def test_an_explicit_numeric_batch_call_is_unchanged(self):
+        assert type(NumericRecordBatch("b", {"x": jnp.zeros(3)}, "draw")) is NumericRecordBatch
+        records = [NumericRecord("r", x=1.0)]
+        assert type(NumericRecordBatch.stack(records, level_name="draw")) is NumericRecordBatch
+
+    def test_a_subclass_constructs_its_own_class(self):
+        class Rows(RecordBatch):
+            __slots__ = ()
+
+        assert type(Rows("rows", {"x": jnp.zeros(3)}, "row")) is Rows
+
+    def test_a_call_missing_an_argument_names_record_batch(self):
+        with pytest.raises(TypeError, match=r"^RecordBatch\.__init__\(\) missing"):
+            RecordBatch("b", {"x": jnp.zeros(3)})
+        with pytest.raises(ValueError, match=r"^RecordBatch requires at least one field"):
+            RecordBatch("b", {}, "draw")
+
+    def test_a_view_of_the_numeric_fields_of_a_mixed_batch_is_numeric(self):
+        batch = RecordBatch(
+            "b", {"x": jnp.arange(3.0), "tag": np.array(["a", "b", "c"], dtype=object)}, "row"
+        )
+
+        assert type(batch.select("x")["x"]) is NumericRecordBatch
+        assert type(batch.select("tag")["tag"]) is RecordBatch
+        assert type(batch[0:2]) is RecordBatch
+
+
 class TestProvenance:
     def test_every_derived_view_inherits_the_batchs_provenance(self):
         from probpipe import Provenance

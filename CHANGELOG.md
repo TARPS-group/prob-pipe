@@ -9,11 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
+  `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
+  every column is numeric and no explicit non-numeric `element_spec` vetoes it,
+  as `Record(...)` returns a `NumericRecord`. A view over numeric fields, such
+  as a field that `select` takes from a mixed batch or a `Design`, is a
+  `NumericRecordBatch` too. Such a batch has `to_vector`,
+  where it was a plain `RecordBatch` before. Replace a check of
+  `type(batch) is RecordBatch` with `isinstance(batch, RecordBatch)`.
 - **A term marks each NumPy array it stores read-only.** Constructing a term
   from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
-  family, sets the array's `writeable` flag to `False` in place. A write into that array afterwards, through the caller's handle or
-  through `.raw()`, raises `ValueError: assignment destination is read-only`,
-  where it used to change the term. To keep a writable array, pass a copy,
+  family, sets the array's `writeable` flag to `False` in place. A write into
+  that array afterwards, through the caller's handle or through `.raw()`,
+  raises `ValueError: assignment destination is read-only`, where it used to
+  change the term. To keep a writable array, pass a copy,
   as in `NumericArray("x", values.copy())`. A pandas or xarray container is
   stored by reference as before.
 - **A relabeled or dimension-bound copy of a law draws together with the law
