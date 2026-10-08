@@ -45,7 +45,13 @@ import numpy as np
 
 from .._messages import count
 from ..custom_types import ArrayLike
-from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
+from ._array_backend import (
+    _metadata_of,
+    _numpy_dtype_of,
+    _read_only,
+    _to_numpy_array,
+    array_backend_for,
+)
 from ._record_spec import _unify_record_spec_with_value
 from ._repr import format_names, public_class_name, term_repr, type_name
 from ._spec_base import OpaqueSpec, _full_array_shape_or_none
@@ -477,7 +483,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             except ValueError as error:
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
-        object.__setattr__(self, "_tree", field_map)
+        object.__setattr__(
+            self, "_tree", {key: _read_only(value) for key, value in field_map.items()}
+        )
         self._init_tracked(label)
         if event_template is None:
             event_template = RecordSpec.infer_from(field_map)

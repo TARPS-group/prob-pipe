@@ -358,6 +358,18 @@ def _take_at(value: Any, index: tuple) -> Any:
     return value[index]
 
 
+def _read_only(value: Any) -> Any:
+    """*value*, marked read-only in place when it is a NumPy array.
+
+    A term stores the array it is given, so the flag keeps a write through the
+    caller's handle or through ``raw()`` from changing a term after
+    construction. Any other value is returned as it is.
+    """
+    if isinstance(value, np.ndarray) and value.flags.writeable:
+        value.flags.writeable = False
+    return value
+
+
 def _to_numpy_array(value: Any) -> np.ndarray:
     """Materialise a numeric leaf to numpy on its native basis.
 

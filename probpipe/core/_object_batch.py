@@ -251,13 +251,11 @@ class _ObjectBatch[E](Batch[E]):
 def _frozen_object_column(column: np.ndarray) -> np.ndarray:
     """*column* as an object array nobody can write through.
 
-    A batch holds the columns it validated. An object column is the one kind a
-    caller can still mutate after construction — a JAX array is already immutable
-    and a numpy numeric column follows the aliasing convention the single-record
-    types already set — so it is copied and frozen, for the reason
-    ``_ObjectBatch`` states: a caller keeping a handle on what they passed cannot
-    write a value into the batch that its spec does not admit. Only the pointer
-    array is copied, so the elements stay shared.
+    A batch holds the columns it validated, so an object column is copied and
+    frozen, for the reason ``_ObjectBatch`` states: a caller keeping a handle on
+    what they passed cannot write a value into the batch that its spec does not
+    admit. Only the pointer array is copied, so the elements stay shared. A
+    numeric NumPy column is marked read-only in place by ``_read_only``.
     """
     frozen = np.array(column, dtype=object, subok=False)
     frozen.setflags(write=False)

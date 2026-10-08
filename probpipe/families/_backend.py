@@ -34,6 +34,7 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
+from ..core._array_backend import _read_only
 from ..core._repr import format_value
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
@@ -162,12 +163,15 @@ def _recording_arguments(init: Callable[..., None]) -> Callable[..., None]:
 
     A family's constructor calls the adapter's, so the arguments recorded are
     those the family was called with, together with whether it was built in the
-    separate-laws form.
+    separate-laws form. A pickle rebuilds the law from them, so a NumPy array
+    among them is marked read-only.
     """
 
     @functools.wraps(init)
     def __init__(self: TFPDistribution, *args: Any, **kwargs: Any) -> None:
         if getattr(self, "_constructor_arguments", None) is None:
+            args = tuple(_read_only(value) for value in args)
+            kwargs = {name: _read_only(value) for name, value in kwargs.items()}
             recorded = (args, kwargs, _BATCHED_INIT_BYPASS.get())
             object.__setattr__(self, "_constructor_arguments", recorded)
         init(self, *args, **kwargs)

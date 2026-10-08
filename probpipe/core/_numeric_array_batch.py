@@ -17,6 +17,7 @@ from ._array_backend import (
     _is_numeric_leaf,
     _not_numeric,
     _numpy_dtype_of,
+    _read_only,
     _take_at,
     _to_jax_array,
     _to_numpy_array,
@@ -55,7 +56,8 @@ class NumericArrayBatch(Batch[NumericArray]):
     values : array-like
         One array holding every element, shaped ``(*batch_shape, *event_shape)``.
         Stored verbatim in its native form, as a :class:`NumericArray`'s value
-        is, so a lazy or disk-backed column is not materialised to be batched.
+        is, so a lazy or disk-backed column is not materialised to be batched,
+        and a NumPy array is marked read-only in place.
     level_names : str or iterable of str
         One name per level, outermost first; a single string names one level.
     element_spec : NumericArraySpec, optional
@@ -168,7 +170,7 @@ class NumericArrayBatch(Batch[NumericArray]):
             )
 
         groups = _axis_groups_for(batch_shape, names, axes, kind="NumericArrayBatch")
-        object.__setattr__(self, "_values", values)
+        object.__setattr__(self, "_values", _read_only(values))
         self._init_batch(
             BatchSpec(element_spec, groups, names),
             label=label,

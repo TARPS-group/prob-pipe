@@ -18,6 +18,7 @@ from ._array_backend import (
     _is_numeric_leaf,
     _not_numeric,
     _numpy_dtype_of,
+    _read_only,
     _to_jax_array,
     _to_numpy_array,
 )
@@ -51,7 +52,9 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
-        their native form and dtype.
+        their native form and dtype. A NumPy array is marked read-only in place,
+        so a write through the caller's handle or through :meth:`raw` raises
+        ``ValueError``.
     spec : NumericArraySpec, optional
         What this value satisfies. Derived from the array's shape and dtype when
         omitted, with an unconstrained support.
@@ -135,7 +138,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
                 f"NumericArray {label!r}: value of shape {_event_shape_of(stored)} and dtype "
                 f"{_numpy_dtype_of(stored)} does not match spec {spec}"
             )
-        object.__setattr__(self, "_value", stored)
+        object.__setattr__(self, "_value", _read_only(stored))
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(label, provenance=provenance)
 

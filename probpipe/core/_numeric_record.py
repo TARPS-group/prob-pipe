@@ -85,12 +85,15 @@ class NumericRecord(Record, Numeric):
     verbatim, so native types survive them.
 
     **Aliasing and mutation.** Native leaves are stored **by reference**, exactly as a
-    plain :class:`Record` stores opaque leaves. Mutating a passed-in container in
-    place after construction therefore reaches the record. Once the leaf has
-    crossed a compute boundary, navigation and compute can disagree:
-    navigation reflects the mutation, but compute reuses the ``jax.Array``
-    snapshot cached at the first concrete conversion. Records assume their data
-    is not externally mutated mid-pipeline; no defensive copies are made.
+    plain :class:`Record` stores opaque leaves, and construction marks a NumPy
+    array leaf read-only in place, so a write through the caller's handle or
+    through :meth:`~Record.raw` raises ``ValueError``. A ``pandas`` or ``xarray``
+    container carries no such flag, so mutating it in place after construction
+    changes the record. Once that leaf has crossed a compute boundary,
+    navigation and compute can disagree: navigation reflects the mutation, but
+    compute reuses the ``jax.Array`` snapshot cached at the first concrete
+    conversion. Records assume their containers are not externally mutated
+    mid-pipeline; no defensive copies are made.
 
     **Equality, hashing, and lazy leaves.** :meth:`~Record.__eq__` and content
     fingerprints compare converted values (and native-container metadata such as coords
