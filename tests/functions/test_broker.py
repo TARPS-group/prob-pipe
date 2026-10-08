@@ -576,6 +576,34 @@ def _sample_sum(loc):
     return jnp.sum(jnp.asarray(sample(Normal("x", loc, 1.0), sample_shape=(3,))))
 
 
+class TestCallerJaxTraceDetection:
+    @pytest.mark.parametrize("use_core_fallback", [False, True])
+    @pytest.mark.parametrize(
+        ("transform", "argument"),
+        [
+            pytest.param(None, 0.0, id="eager"),
+            pytest.param(jax.jit, 0.0, id="jit"),
+            pytest.param(jax.vmap, jnp.zeros(2), id="vmap"),
+            pytest.param(jax.grad, 0.0, id="grad"),
+        ],
+    )
+    def test_trace_detection(self, monkeypatch, use_core_fallback, transform, argument):
+        if use_core_fallback:
+            monkeypatch.delattr(jax.extend.core, "find_top_trace", raising=False)
+        observed = []
+
+        def body(value):
+            observed.append(context_mod._caller_jax_trace_active())
+            return value * value
+
+        if transform is None:
+            body(argument)
+        else:
+            transform(body)(argument)
+
+        assert observed == [transform is not None]
+
+
 class TestCallerJaxTrace:
     @pytest.fixture(autouse=True)
     def _fresh_jax_key_adapter_state(self, monkeypatch):

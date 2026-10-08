@@ -338,9 +338,13 @@ def _caller_jax_trace_active() -> bool:
     current trace at the top level. Under a transformation, such as ``jit``,
     ``vmap``, or ``grad``, the current trace is the transformation's own.
     """
-    current = jax.extend.core.find_top_trace(())
+    find_top_trace = getattr(jax.extend.core, "find_top_trace", None)
+    if find_top_trace is None:
+        # JAX 0.9 exposes this extension entry point through jax.core.
+        find_top_trace = jax.core.find_top_trace
+    current = find_top_trace(())
     with jax.core.eval_context():
-        top_level = jax.extend.core.find_top_trace(())
+        top_level = find_top_trace(())
     return current is not top_level
 
 

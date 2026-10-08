@@ -2929,6 +2929,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
 - **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
   constructors document `label` as the first parameter, but a keyword call
   `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
