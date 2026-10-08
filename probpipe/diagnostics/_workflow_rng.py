@@ -8,16 +8,13 @@ from ..functions import _broker
 _PPC_SAMPLING_ABI = "probpipe.diagnostics.ppc/v1"
 
 
-def _resolve_ppc_key(
-    key: PRNGKey | None,
+def _claim_ppc_key(
     *,
     source_index: int,
     n_replications: int,
     provider_abi: str,
 ) -> PRNGKey:
-    """Preserve a caller key or claim one ordered PPC source event."""
-    if key is not None:
-        return key
+    """Claim one ordered PPC source event of the workflow scope and return its key."""
     return _broker._resolve_automatic_key(
         None,
         _broker._singleton_effect_plan(
