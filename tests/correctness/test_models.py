@@ -162,7 +162,8 @@ class TestGLM:
         case = canonical.case("gaussian_linear")
         report = condition_on.check(case.model, case.data)
         assert (report.route, report.method) == ("inference_methods", "blackjax_nuts")
-        posterior = condition_on.with_options(method_options=FIT)(case.model, case.data)
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=FIT)(case.model, case.data)
         assert_matches(posterior, case.reference, label="the default route on gaussian_linear")
 
     def test_a_design_left_unbound_is_a_given_slot_of_the_joint(self):
@@ -184,9 +185,10 @@ class TestGLM:
         X = jnp.asarray(case.stan_data["X"], jnp.float32)
         prior = MultivariateNormal("beta", jnp.zeros(X.shape[1]), cov=4.0 * jnp.eye(X.shape[1]))
         joint = glm_likelihood("y", GaussianFamily(), dispersion=1.0) * prior
-        posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
-            joint, {"X": X, **case.data}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
+                joint, {"X": X, **case.data}
+            )
         assert_matches(posterior, case.reference, label="binding X and y together")
 
 
@@ -281,9 +283,10 @@ class TestPyMCModel:
             if "nutpie_nuts" in inference_method_registry.list_methods()
             else "pymc_nuts"
         )
-        posterior = condition_on.with_options(
-            method=method, method_options=PROFILES[method].method_options
-        )(PyMCModel("regression", _regression), {"x": x, "y": y})
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method=method, method_options=PROFILES[method].method_options
+            )(PyMCModel("regression", _regression), {"x": x, "y": y})
         precision = 1.0 + x @ x
         reference = exact_reference(np.array([x @ y / precision]), np.array([1.0 / precision]))
         assert_matches(posterior, reference, label=f"{method} on the PyMC regression")
@@ -314,9 +317,10 @@ class TestPyMCModel:
             if "nutpie_nuts" in inference_method_registry.list_methods()
             else "pymc_nuts"
         )
-        posterior = condition_on.with_options(
-            method=method, method_options=PROFILES[method].method_options
-        )(PyMCModel("penalized", _with_potential), {"y": _POTENTIAL_DATA})
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method=method, method_options=PROFILES[method].method_options
+            )(PyMCModel("penalized", _with_potential), {"y": _POTENTIAL_DATA})
         precision = 3.0 + _POTENTIAL_DATA.shape[0]
         reference = exact_reference(
             np.array([_POTENTIAL_DATA.sum() / precision]), np.array([1.0 / precision]), path="mu"
@@ -405,8 +409,8 @@ class TestUnnormalizedDensity:
     def test_sampling_through_a_method_draws_atoms_of_the_normalized_law(self):
         """``sample`` normalizes with the method and resamples its result, so every draw is an atom.
 
-        The same controls run the same chain, so the draws of ``sample`` are
-        draws of the atoms ``convert`` returns.
+        The same controls in a scope of the same seed run the same chain, so the
+        draws of ``sample`` are draws of the atoms ``convert`` returns.
         """
         law = _unnormalized()
         with workflow_run(seed=14):
@@ -415,9 +419,10 @@ class TestUnnormalizedDensity:
             )
         assert draws.batch_shape == (50,)
         assert draws.element_spec == law.event_spec.spec
-        normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
-            law, EmpiricalDistribution
-        )
+        with workflow_run(seed=14):
+            normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
+                law, EmpiricalDistribution
+            )
         # One row per atom, across the levels chain and draw.
         atoms = np.reshape(np.asarray(normalized.atoms.values), (normalized.num_atoms, -1))
         for draw in np.asarray(draws.values):
@@ -425,17 +430,19 @@ class TestUnnormalizedDensity:
 
     def test_conversion_through_a_method_keeps_the_declaration(self):
         law = _unnormalized()
-        normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
-            law, EmpiricalDistribution
-        )
+        with workflow_run(seed=0):
+            normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
+                law, EmpiricalDistribution
+            )
         assert isinstance(normalized, EmpiricalDistribution)
         assert normalized.event_spec == law.event_spec
 
     def test_the_converted_law_has_the_moments_of_the_normalized_density(self):
-        """The empirical law of the chains has the Gaussian's moments to four MCSE."""
-        normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
-            _unnormalized(), EmpiricalDistribution
-        )
+        """The empirical law of the chains has the Gaussian's moments within the harness's band."""
+        with workflow_run(seed=0):
+            normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
+                _unnormalized(), EmpiricalDistribution
+            )
         assert_matches(normalized, _gaussian_reference(), label="the converted law")
 
     def test_conditioning_an_unnormalized_joint_gives_the_closed_form(self):
@@ -450,9 +457,10 @@ class TestUnnormalizedDensity:
             unnormalized_log_prob=density,
             event_spec=OutputSpec(RecordSpec(mu=REAL, y=REAL)),
         )
-        posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
-            joint, {"y": 1.4}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
+                joint, {"y": 1.4}
+            )
         reference = exact_reference(np.array(0.7), np.array(0.5), path="mu")
         assert_matches(posterior, reference, label="the unnormalized joint conditioned on y")
 
@@ -531,9 +539,10 @@ class TestStanModel:
         """The Beta-Bernoulli program's posterior is ``Beta(3, 12)``, through the method condition_on selects."""
         case = canonical.case("beta_bernoulli")
         kernel = case.stan_model(tmp_path)
-        posterior = condition_on.with_options(
-            method_options=PROFILES["cmdstan_nuts"].method_options
-        )(kernel, dict(case.stan_data))
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method_options=PROFILES["cmdstan_nuts"].method_options
+            )(kernel, dict(case.stan_data))
         assert_matches(posterior, case.reference, label="the Stan program of beta_bernoulli")
 
 
@@ -569,15 +578,17 @@ class TestLearnedKernels:
         The prior is the factored joint of two standard normals, so the law
         exposes the record ``{a, b}``. The law is a biased stand-in, held to the
         harness's biased contract: means within a quarter of a posterior
-        deviation beyond four MCSE. Training the network takes tens of seconds.
+        deviation beyond the harness's MCSE band. Training the network takes tens
+        of seconds.
         """
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
 
         prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
-        kernel = learn_amortized_posterior(
-            prior, _shift_simulator(prior), num_simulations=3000, epochs=8, random_seed=0
-        )
+        with workflow_run(seed=0):
+            kernel = learn_amortized_posterior(
+                prior, _shift_simulator(prior), num_simulations=3000, epochs=8
+            )
         observation = jnp.array([0.6, -0.4])
         law = condition_on(kernel, {"observation": observation})
         reference = _shift_reference(observation)
@@ -598,13 +609,13 @@ class TestLearnedKernels:
         _bayesflow()
         from probpipe.inference import learn_amortized_posterior
 
-        kernel = learn_amortized_posterior(
-            _shift_prior(),
-            _shift_simulator(_shift_prior()),
-            num_simulations=500,
-            epochs=1,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            kernel = learn_amortized_posterior(
+                _shift_prior(),
+                _shift_simulator(_shift_prior()),
+                num_simulations=500,
+                epochs=1,
+            )
         law = condition_on(kernel, {"observation": jnp.array([0.6, -0.4])})
         assert law.event_spec == _shift_prior().event_spec
 
@@ -617,16 +628,17 @@ class TestLearnedKernels:
         _bayesflow()
         from probpipe.inference import learn_amortized_likelihood
 
-        likelihood = learn_amortized_likelihood(
-            _shift_prior(),
-            _shift_simulator(_shift_prior()),
-            num_simulations=3000,
-            epochs=15,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            likelihood = learn_amortized_likelihood(
+                _shift_prior(),
+                _shift_simulator(_shift_prior()),
+                num_simulations=3000,
+                epochs=15,
+            )
         observation = jnp.array([[0.6, -0.4]])
         joint = likelihood * _shift_prior()
-        posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
-            joint, {"observation": observation}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(
+                joint, {"observation": observation}
+            )
         assert_matches(posterior, _shift_reference(observation[0]), consistent=False)

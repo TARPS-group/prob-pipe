@@ -62,6 +62,7 @@ from ._bayesflow_common import (
     _validate_learn_inputs,
     _without_progress_bar,
 )
+from ._inference_utils import integer_seed, run_seed
 
 if TYPE_CHECKING:
     # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
@@ -510,7 +511,6 @@ def learn_amortized_posterior(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
-    random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
 ) -> ConditionalDistribution:
@@ -524,6 +524,16 @@ def learn_amortized_posterior(
     of the network; the evaluation is approximate, so ``exact_only=True`` refuses
     it. Provenance names the prior
     and the simulator it was trained on.
+
+    The training's seed is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the trained network, and an unscoped
+    call trains afresh. The seed fixes the offline simulation (``jax.random``)
+    and keras's network initialization and training, which
+    ``keras.utils.set_random_seed`` seeds. The caller's global NumPy and Python
+    random states are restored after training, and keras's global seed
+    generator keeps the state training leaves. Each draw of the learned
+    posterior's law at an observation is a workflow-owned random event of its
+    own.
 
     Parameters
     ----------
@@ -566,12 +576,6 @@ def learn_amortized_posterior(
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
         ``ConsistencyModel``). A ``CouplingFlow`` gives the posterior a density.
-    random_seed : int
-        Seed for offline simulation (``jax.random``) and keras network init +
-        training (via ``keras.utils.set_random_seed``). The caller's global
-        NumPy / Python RNG state is snapshotted and restored after training, so the
-        call does not perturb unrelated random streams. The draws of the learned
-        posterior's law at an observation are seeded by the workflow scope.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -594,7 +598,8 @@ def learn_amortized_posterior(
         smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
-        that samples, or ``prior`` is not a numeric distribution.
+        that samples, ``prior`` is not a numeric distribution, or
+        ``fit_kwargs`` holds ``random_seed`` or ``seed``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
@@ -612,6 +617,7 @@ def learn_amortized_posterior(
             ("batch_size", batch_size),
             ("epochs", epochs),
         ),
+        fit_kwargs=fit_kwargs,
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
     # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
@@ -628,6 +634,7 @@ def learn_amortized_posterior(
     )
 
     bf = _import_bayesflow()
+    random_seed = integer_seed(run_seed("learn_amortized_posterior"))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(
