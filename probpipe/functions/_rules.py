@@ -269,7 +269,7 @@ class _ElementwiseSweep(_Floor):
             )
         if controls is not None and controls.get("include_inputs"):
             return Feasibility(
-                False, "include_inputs asks for the inputs, and the sweep returns the outputs"
+                False, "include_inputs=True is not supported over a Batch", actionable=True
             )
         return Feasibility(True)
 
@@ -370,8 +370,8 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
         if stochastic is None or stochastic.evaluation_mode != "exact":
             return Feasibility(
                 False,
-                f"not every lifted group is an empirical law whose atoms, with the other "
-                f"groups', number at most n_broadcast_samples={count}",
+                f"every lifted distribution must be an empirical law, with at most "
+                f"n_broadcast_samples={count} combinations of their atoms",
             )
         return Feasibility(True)
 

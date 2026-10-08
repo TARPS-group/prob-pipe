@@ -213,8 +213,8 @@ def resolve_function_values(
             if bound_container is not None:
                 if not isinstance(bound_container, Mapping):
                     raise TypeError(
-                        f"Construction binding for variadic keyword parameter "
-                        f"'{name}' of workflow '{function_name}' must be a mapping"
+                        f"bind[{name!r}] must be a mapping because {name!r} is the **kwargs "
+                        f"parameter of {function_name!r}; got {type(bound_container).__name__}"
                     )
                 extras.update(bound_container)
             known_params = set(info.signature.parameters)
@@ -229,8 +229,8 @@ def resolve_function_values(
         if name in call_inputs:
             if module is not None and is_dep and name in mod_child_nodes:
                 raise TypeError(
-                    f"Dependency '{name}' for workflow '{function_name}' is provided "
-                    f"by the module and cannot be overridden at call time."
+                    f"{function_name}: dependency {name!r} is provided by the module and "
+                    f"cannot be overridden at call time"
                 )
             values[name] = call_inputs[name]
         elif name in bind:
@@ -250,8 +250,8 @@ def resolve_function_values(
         unexpected = set(bind).difference(info.signature.parameters)
         if unexpected:
             raise TypeError(
-                f"Unexpected construction bindings for workflow '{function_name}': "
-                f"{sorted(unexpected)}"
+                f"bind= names {sorted(unexpected)}, which are not parameters of "
+                f"Function {function_name!r}"
             )
 
     _validate_required_values(info, values, function_name=function_name)
@@ -290,7 +290,7 @@ def _validate_required_values(
         if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
             continue
         if param.default is param.empty and name not in values:
-            raise TypeError(f"Missing required input '{name}' for workflow '{function_name}'")
+            raise TypeError(f"{function_name}() missing required argument {name!r}")
 
 
 def _validate_dependency_values(
@@ -307,7 +307,8 @@ def _validate_dependency_values(
         value = input_ref_value(values, ref)
         if not isinstance(value, dependency_type):
             ann = info.hints.get(name)
+            annotation = getattr(ann, "__name__", None) or repr(ann)
             raise TypeError(
-                f"Function '{function_name}' expects dependency "
-                f"'{ref.label}: {ann}' to be a Node, but got {type(value)}."
+                f"Function {function_name!r} expects a Node for dependency {ref.label!r} "
+                f"(annotated {annotation}); got {type(value).__name__}"
             )

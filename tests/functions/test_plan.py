@@ -203,7 +203,7 @@ class TestArrayGrouping:
         ra_a = _numeric_record_batch("a", range(3))
         ra_b = _numeric_record_batch("b", range(2))
 
-        with pytest.raises(ApplicabilityError, match="batched differently"):
+        with pytest.raises(ApplicabilityError, match="different shapes per level"):
             _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
     def test_a_distribution_batch_sweeps_on_its_own_levels(self):
@@ -649,7 +649,7 @@ class TestBatchGrouping:
         so disagreeing about its size is a mistake rather than a product."""
         import pytest
 
-        with pytest.raises(ApplicabilityError, match="batched differently"):
+        with pytest.raises(ApplicabilityError, match="different shapes per level"):
             _plan({"a": _batch("draw", 3), "b": _batch("draw", 2)})
 
 
@@ -690,7 +690,9 @@ class TestPartialLevelOverlap:
         )
         one = _batch("draw", 3)
 
-        with pytest.raises(ApplicabilityError, match="share the level 'draw'"):
+        with pytest.raises(
+            ApplicabilityError, match="Rename 'draw' on one of them with with_level_names"
+        ):
             _plan({"a": two, "b": one})
 
     def test_the_same_levels_at_different_geometries_are_refused(self):
@@ -714,7 +716,7 @@ class TestPartialLevelOverlap:
         )
 
         with pytest.raises(
-            ApplicabilityError, match=r"same levels \('a', 'b'\) but are batched differently"
+            ApplicabilityError, match=r"same levels \('a', 'b'\) but different shapes per level"
         ):
             _plan({"a": ga, "b": gb})
 

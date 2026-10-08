@@ -31,6 +31,7 @@ from ..core._opaque import Opaque
 from ..core._opaque_batch import OpaqueBatch
 from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ..core._record_spec import _reshaped_template
+from ..core._repr import type_name
 from ..core._spec_base import _full_array_shape_or_none, _known_type, _unify_specs
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec, RecordSpec
 from ..core.provenance import Provenance
@@ -452,11 +453,15 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
             family = candidate
             break
     if family is None or not all(isinstance(o, family) for o in outs):
-        kinds = sorted({type(o).__name__ for o in outs})
+        kinds = ", ".join(sorted({type_name(o) for o in outs}))
+        if all(isinstance(o, (NumericArrayBatch, _ObjectBatch, RecordBatch)) for o in outs):
+            raise TypeError(
+                f"{field_name}: the rows returned batches of different kinds ({kinds}). "
+                f"Return the same kind of batch from every row."
+            )
         raise TypeError(
-            f"{field_name}: some rows returned a batch and some did not "
-            f"({', '.join(kinds)}). A swept body returns one kind for every row, since "
-            f"the aggregate has one schema; return a batch from every row or from none"
+            f"{field_name}: some rows returned a batch and some did not ({kinds}). "
+            f"Return a batch from every row or from none."
         )
     for other in outs[1:]:
         if (
@@ -466,12 +471,16 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
             and other.axis_groups == first.axis_groups
         ):
             continue
+        if other.level_names == first.level_names and other.batch_shape == first.batch_shape:
+            difference = f"element spec {first.element_spec!r} vs {other.element_spec!r}"
+        else:
+            difference = (
+                f"levels {first.level_names} with shape {first.batch_shape} vs levels "
+                f"{other.level_names} with shape {other.batch_shape}"
+            )
         raise ValueError(
-            f"{field_name}: the rows returned batches that disagree — "
-            f"{first.level_names} over {first.batch_shape} against "
-            f"{other.level_names} over {other.batch_shape}. Rows stack into one batch, "
-            f"which states one element spec and one multiplicity for all of them, so "
-            f"every row must return the same schema on the same levels"
+            f"{field_name}: the rows returned batches that disagree: {difference}. Every row "
+            f"must return a batch with the same levels, shape, and element spec."
         )
     return first
 
@@ -977,9 +986,9 @@ def _stack_rows(
                 for spec in specs[1:]:
                     if replace(spec, dtype=element_spec.dtype) != element_spec:
                         raise ValueError(
-                            f"{field_name}: numeric rows returned declarations that disagree "
-                            f"({element_spec!r} and {spec!r}); return numeric rows with "
-                            "one shared event shape and support"
+                            f"{field_name}: the rows returned arrays with different specs "
+                            f"({element_spec!r} and {spec!r}); every row must return the same "
+                            "shape and support"
                         )
                 # Promote the complete set: pairwise NumPy promotion can depend
                 # on row order. JAX handles extended dtypes such as bfloat16.
@@ -1006,10 +1015,8 @@ def _stack_rows(
         if outs and all(_is_numeric_leaf(o) for o in outs):
             shapes = sorted({tuple(_event_shape_of(o)) for o in outs})
             raise ValueError(
-                f"{field_name}: the rows returned numeric values of differing shapes "
-                f"{shapes}, so they do not stack into one batch. Every row of a sweep "
-                f"contributes one element of one shape; pad the rows, or return a batch "
-                f"from each and let the levels record the difference"
+                f"{field_name}: the rows returned arrays of differing shapes {shapes}, which "
+                f"cannot be stacked. Pad them to one shape, or return a Batch from each row."
             )
 
         # Rows that do not stack take the batch form of their own kind, which is
@@ -1029,11 +1036,9 @@ def _stack_rows(
                 return FunctionBatch(result_name, object_array, level_names, **shared)
             return OpaqueBatch(result_name, object_array, level_names, **shared)
         except (TypeError, ValueError) as exc:
-            types_seen = sorted({type(o).__name__ for o in outs})
+            types_seen = sorted({type_name(o) for o in outs})
             raise TypeError(
-                f"_make_stack cannot aggregate outputs of types "
-                f"{types_seen}; supported: numeric arrays, Record, "
-                f"a batch of records, Distribution."
+                f"{field_name}: cannot stack the rows' results of types {types_seen} into one batch"
             ) from exc
 
     # --- Single-pytree path (jax.vmap execution) ------------------------
@@ -1249,7 +1254,10 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         element = NumericArraySpec(shape[n_axes:], _numpy_dtype_of(value), support)
         _unify_specs(declared, element, {}, f"{label} element")
         return NumericArrayBatch(label, value, levels, element_spec=element, axes_per_level=ranks)
-    raise ValueError(f"{label}: a {type(value).__name__} has no form as the declared batch")
+    raise ValueError(
+        f"{label}: expected a Batch, a Record of stacked columns, or an array for the declared "
+        f"batch output; got {type_name(value)}"
+    )
 
 
 def raw_form(term: Any) -> Any:

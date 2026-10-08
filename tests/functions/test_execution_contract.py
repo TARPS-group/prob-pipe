@@ -194,7 +194,7 @@ class TestJaxWorkflowGuards:
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,
             workflow_run(),
-            pytest.raises(TypeError, match="workflow-owned randomness"),
+            pytest.raises(TypeError, match="draws random numbers without an explicit key"),
         ):
             workflow(row=_record_batch())
 
@@ -211,7 +211,7 @@ class TestJaxWorkflowGuards:
             workflow_run(),
             _broker._function_stochastic_scope() as broker,
             _context._workflow_jax_runtime_guard(),
-            pytest.raises(TypeError, match="JAX workflow execution"),
+            pytest.raises(TypeError, match="draws random numbers without an explicit key"),
         ):
             _broker._resolve_automatic_key(None, plan)
 

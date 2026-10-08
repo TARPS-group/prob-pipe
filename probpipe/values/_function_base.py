@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
 from ..core._numeric_array import _inferred_spec
@@ -105,9 +106,14 @@ class FunctionSpec(TermSpec):
         self, input_spec: InputSpec | None = None, output_spec: OutputSpec | None = None
     ) -> None:
         if input_spec is not None and not isinstance(input_spec, InputSpec):
-            raise TypeError("FunctionSpec.input_spec must be an InputSpec or None")
+            raise TypeError(
+                f"FunctionSpec input_spec must be an InputSpec or None; got {type(input_spec).__name__}"
+            )
         if output_spec is not None and not isinstance(output_spec, OutputSpec):
-            raise TypeError("FunctionSpec.output_spec must be an OutputSpec or None")
+            raise TypeError(
+                "FunctionSpec output_spec must be an OutputSpec or None; "
+                f"got {type(output_spec).__name__}"
+            )
         object.__setattr__(self, "input_spec", input_spec)
         object.__setattr__(self, "output_spec", output_spec)
 
@@ -143,16 +149,24 @@ class FunctionSpec(TermSpec):
             return False
         if self.input_spec is not None and actual.input_spec is not None:
             if self.input_spec.keys() != actual.input_spec.keys():
-                raise ValueError(f"{path} has incompatible input slots")
+                raise ValueError(
+                    f"{path} has incompatible input slots {list(actual.input_spec)}; "
+                    f"the declaration expects {list(self.input_spec)}"
+                )
             for name, spec in self.input_spec.items():
                 _unify_specs(spec, actual.input_spec[name], bindings, f"{path}/input/{name}")
         if self.output_spec is not None and actual.output_spec is not None:
             expected, observed = self.output_spec, actual.output_spec
-            if (
-                expected._component_name != observed._component_name
-                or expected.components.keys() != observed.components.keys()
-            ):
-                raise ValueError(f"{path} has incompatible output components")
+            if expected.components.keys() != observed.components.keys():
+                raise ValueError(
+                    f"{path} has incompatible output components {list(observed.components)}; "
+                    f"the declaration expects {list(expected.components)}"
+                )
+            if expected._component_name != observed._component_name:
+                raise ValueError(
+                    f"{path} has incompatible output components: {observed!r} does not "
+                    f"match the declared {expected!r}"
+                )
             if expected.spec is not None and observed.spec is not None:
                 _unify_specs(expected.spec, observed.spec, bindings, f"{path}/output")
         return True
@@ -215,7 +229,9 @@ def _complete_output_spec(
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
         return OutputSpec(**{output_label: output_spec})
-    raise TypeError("output_spec must be an OutputSpec, TermSpec, or None")
+    raise TypeError(
+        f"output_spec must be an OutputSpec, TermSpec, or None; got {type(output_spec).__name__}"
+    )
 
 
 def _bind_function_inputs(
@@ -229,7 +245,10 @@ def _bind_function_inputs(
     if input_spec is None:
         return None, resolved
     if input_spec.keys() != values.keys():
-        raise ValueError(f"Function {function_name!r} input slots do not match its declaration")
+        raise ValueError(
+            f"Function {function_name!r} got inputs {list(values)}, but its input_spec "
+            f"declares {list(input_spec)}"
+        )
     for name, spec in input_spec.items():
         spec._bind_dims_from_value(
             values[name], resolved, f"Function {function_name!r} input/{name}"
@@ -522,8 +541,8 @@ def _validate_function_declarations(
     if input_spec is not None:
         if variadic:
             raise ValueError(
-                f"Function {function_name!r} cannot use an authoritative input_spec "
-                f"with variadic parameters {variadic}"
+                f"Function {function_name!r} cannot declare input_spec because it has "
+                f"variadic parameters {variadic}"
             )
         if set(input_spec) != set(parameters):
             raise ValueError(
@@ -533,8 +552,8 @@ def _validate_function_declarations(
     unexpected = set(construction_bindings).difference(parameters)
     if unexpected and not any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
         raise ValueError(
-            f"Function {function_name!r} has invalid construction bindings: "
-            f"unexpected names {sorted(unexpected)}"
+            f"bind= names {sorted(unexpected)}, which are not parameters of "
+            f"Function {function_name!r}"
         )
     if input_spec is None:
         return
@@ -582,8 +601,47 @@ _DEFAULTED_BY_NONE = frozenset(
     {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
-#: Removed construction keywords, which warn: ``func`` aliases ``fn``, and the rest are ignored.
-_REMOVED_KEYWORDS = frozenset({"seed", "input_template", "output_template", "func"})
+#: Removed construction keywords, each with the warning it raises: ``func``
+#: aliases ``fn``, and the rest are ignored.
+_REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
+    {
+        "func": "Function(func=...) is deprecated; use fn=...",
+        "input_template": (
+            "Function(input_template=...) is no longer supported and is ignored; use input_spec=..."
+        ),
+        "output_template": (
+            "Function(output_template=...) is no longer supported and is ignored; "
+            "use output_spec=..."
+        ),
+        "seed": (
+            "Function(seed=...) is no longer supported and is ignored; use "
+            "workflow_run(seed=...), or bind={'seed': ...} to pass a seed to the wrapped function"
+        ),
+    }
+)
+
+
+def _unknown_controls(unknown: set[str], *, construction: bool = False) -> TypeError:
+    """The error for keywords that are not engine controls.
+
+    Parameters
+    ----------
+    unknown : set of str
+        The keywords that are not controls.
+    construction : bool
+        Whether the keywords were given at construction, where an argument of
+        the wrapped function binds through ``bind=``.
+
+    Returns
+    -------
+    TypeError
+        The error to raise, naming each unknown keyword and the controls.
+    """
+    names = sorted(unknown)
+    message = unknown_names("Function option", names, sorted(_CONTROL_DEFAULTS))
+    if construction:
+        message += f". To set an argument of the wrapped function, pass bind={{{names[0]!r}: ...}}"
+    return TypeError(message)
 
 
 def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
@@ -599,12 +657,9 @@ def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
     TypeError
         Naming each unknown keyword.
     """
-    unknown = controls.keys() - _CONTROL_DEFAULTS.keys() - _REMOVED_KEYWORDS
+    unknown = controls.keys() - _CONTROL_DEFAULTS.keys() - _REMOVED_KEYWORDS.keys()
     if unknown:
-        raise TypeError(
-            f"Unknown Function controls: {sorted(unknown)}; an argument of the wrapped "
-            f"function binds at construction through bind="
-        )
+        raise _unknown_controls(unknown, construction=True)
 
 
 class Function(Node, TrackedTerm, Annotated):
@@ -688,8 +743,8 @@ class Function(Node, TrackedTerm, Annotated):
     -----
     FutureWarning
         For the removed keywords ``func``, ``seed``, ``input_template``, and
-        ``output_template``, in one warning that names each one given and
-        points at the caller's line.
+        ``output_template``, one warning for each one given, pointing at the
+        caller's line.
     UserWarning
         If ``max_workers`` is set with a dispatch other than ``"thread"``.
 
@@ -745,19 +800,13 @@ class Function(Node, TrackedTerm, Annotated):
         **controls: Any,
     ) -> None:
         _refuse_unknown_controls(controls)
-        removed = _REMOVED_KEYWORDS.intersection(controls)
-        if removed:
+        for key in sorted(_REMOVED_KEYWORDS.keys() & controls.keys()):
             warnings.warn(
-                f"Removed Function options {sorted(removed)} detected: func aliases fn; "
-                "input_template, output_template and seed are ignored. "
-                "Use fn, input_spec and output_spec instead; use workflow_run(seed=...) "
-                "or bind={'seed': ...} for a wrapped-function seed.",
-                FutureWarning,
-                skip_file_prefixes=_WARNING_SKIP_PREFIXES,
+                _REMOVED_KEYWORDS[key], FutureWarning, skip_file_prefixes=_WARNING_SKIP_PREFIXES
             )
-            fn = controls.pop("func", fn) if "func" in removed else fn
-            for key in removed - {"func"}:
-                controls.pop(key, None)
+            value = controls.pop(key)
+            if key == "func":
+                fn = value
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
         self._initialize(
@@ -791,18 +840,25 @@ class Function(Node, TrackedTerm, Annotated):
     ) -> None:
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown:
-            raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
+            raise _unknown_controls(unknown, construction=True)
         if differentiable is not None:
-            raise NotImplementedError("Function.__init__: the differentiability claim")
+            raise NotImplementedError(
+                "Function(differentiable=...) is not supported yet; omit differentiable"
+            )
         if not isinstance(label, str) or not label:
-            raise TypeError("Function requires a non-empty label")
+            raise TypeError(f"Function requires a non-empty label, got {label!r}")
         if output_label is None:
             output_label = label
         if not isinstance(output_label, str) or not output_label:
-            raise TypeError("Function output_label must be a non-empty string")
+            raise TypeError(
+                f"Function output_label must be a non-empty string; got {output_label!r}"
+            )
         if input_spec is not None and not isinstance(input_spec, InputSpec):
             if not isinstance(input_spec, Mapping):
-                raise TypeError("input_spec must be an InputSpec, a mapping, or None")
+                raise TypeError(
+                    "input_spec must be an InputSpec, a mapping, or None; "
+                    f"got {type(input_spec).__name__}"
+                )
             input_spec = InputSpec(input_spec)
         output_spec = _complete_output_spec(output_spec, output_label)
         construction_bindings = dict(bind or {})
@@ -939,7 +995,7 @@ class Function(Node, TrackedTerm, Annotated):
         """
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
         if unknown:
-            raise TypeError(f"Unknown Function controls: {sorted(unknown)}")
+            raise _unknown_controls(unknown)
         # Only set controls are stored, so dropping one makes it read its default.
         reset = {name for name, value in controls.items() if value is None}
         kept = {name: value for name, value in self._options.items() if name not in reset}
@@ -1259,16 +1315,20 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
     workers = options["max_workers"]
     if workers is not None:
         if not isinstance(workers, int):
-            raise TypeError("max_workers must be a positive integer or None")
+            raise TypeError(
+                f"max_workers must be a positive integer or None; got {type(workers).__name__}"
+            )
         if workers <= 0:
-            raise ValueError("max_workers must be a positive integer or None")
+            raise ValueError(f"max_workers must be a positive integer or None; got {workers!r}")
         if dispatch != "thread":
             warnings.warn(
                 f"max_workers configures only dispatch='thread'; ignoring it for dispatch={dispatch!r}.",
                 skip_file_prefixes=_WARNING_SKIP_PREFIXES,
             )
     if not isinstance(options["workflow_kind"], WorkflowKind):
-        raise TypeError("workflow_kind must be a WorkflowKind enum member")
+        raise TypeError(
+            f"workflow_kind must be a WorkflowKind enum member; got {options['workflow_kind']!r}"
+        )
     _check_sample_count(options["n_broadcast_samples"])
     for flag in ("include_inputs", "exact_only", "raw"):
         if not isinstance(options[flag], bool):
@@ -1277,18 +1337,30 @@ def _validate_options(options: Mapping[str, Any], signature: inspect.Signature) 
     if method is not None and (not isinstance(method, str) or not method):
         raise TypeError(f"method must be a non-empty string or None; got {method!r}")
     conversions = options["conversions"]
-    if not isinstance(conversions, Mapping) or not all(
-        isinstance(settings, Mapping) for settings in conversions.values()
-    ):
-        raise TypeError("conversions must map parameter names to mappings of converter settings")
+    if not isinstance(conversions, Mapping):
+        raise TypeError(
+            "conversions must map parameter names to mappings of converter settings; "
+            f"got {type(conversions).__name__}"
+        )
+    for name, settings in conversions.items():
+        if not isinstance(settings, Mapping):
+            raise TypeError(
+                f"conversions[{name!r}] must be a mapping of converter settings; got {settings!r}"
+            )
     unknown = set(conversions).difference(signature.parameters)
     if unknown:
-        raise ValueError(f"conversions name parameters the signature lacks: {sorted(unknown)}")
+        raise ValueError(
+            f"conversions: {unknown_names('parameter', sorted(unknown), signature.parameters)}"
+        )
     method_options = options["method_options"]
-    if not isinstance(method_options, Mapping) or not all(
-        isinstance(name, str) and name for name in method_options
-    ):
-        raise TypeError("method_options must map option names to their values")
+    if not isinstance(method_options, Mapping):
+        raise TypeError(
+            "method_options must map option names to their values; "
+            f"got {type(method_options).__name__}"
+        )
+    for name in method_options:
+        if not isinstance(name, str) or not name:
+            raise TypeError(f"method_options keys must be non-empty strings; got {name!r}")
     return dict(options) | {
         "conversions": MappingProxyType(
             {name: MappingProxyType(dict(settings)) for name, settings in conversions.items()}
@@ -1467,4 +1539,7 @@ def is_differentiable(x: Any, values: NamedTree | None = None) -> bool:
     """
     if not isinstance(x, SupportsDifferentiation):
         return False
-    raise NotImplementedError("values.is_differentiable")
+    raise NotImplementedError(
+        "is_differentiable() is not implemented yet for an object that declares "
+        "SupportsDifferentiation"
+    )
