@@ -17,6 +17,7 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import _record_run, make_posterior
 from ._inference_utils import (
+    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
@@ -82,7 +83,9 @@ class PyMCNutsMethod(InferenceMethod):
         """Whether the target is a PyMC model, or one at its observed values."""
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires PyMCModel")
+            return Feasibility(
+                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
@@ -197,7 +200,9 @@ class PyMCADVIMethod(InferenceMethod):
         """Whether the target is a PyMC model, or one at its observed values."""
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires PyMCModel")
+            return Feasibility(
+                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> Distribution:

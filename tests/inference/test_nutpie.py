@@ -261,7 +261,7 @@ class TestExtractChains:
 
     def test_no_posterior_raises(self):
         mock_trace = MagicMock(spec=[])
-        with pytest.raises(TypeError, match="Cannot extract chains"):
+        with pytest.raises(TypeError, match="cannot extract chains"):
             _extract_chains(mock_trace, num_chains=1)
 
     def test_keep_names_overrides_data_vars_order(self):

@@ -20,6 +20,7 @@ from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     _declared_vector,
+    described,
     flat_unflatten,
     flat_vector,
     integer_seed,
@@ -27,6 +28,7 @@ from ._inference_utils import (
     parameter_given,
     run_seed,
     unconstrained_coordinates,
+    unfactored_model_reason,
 )
 
 if TYPE_CHECKING:
@@ -231,13 +233,7 @@ class PyABCSMCMethod(InferenceMethod):
         """Whether the target conditions a joint whose likelihood simulates and whose prior scores."""
         factors = model_factors(target)
         if factors is None:
-            return Feasibility(
-                feasible=False,
-                description=(
-                    "Requires a factored joint at observed values of its fields, whose other "
-                    "factors form the prior"
-                ),
-            )
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
         if not (
             isinstance(factors.likelihood, ConditionalDistribution)
             and isinstance(factors.likelihood, SupportsConditionalSampling)
@@ -245,8 +241,8 @@ class PyABCSMCMethod(InferenceMethod):
             return Feasibility(
                 feasible=False,
                 description=(
-                    "Requires a likelihood kernel that samples, the simulator; got "
-                    f"{type(factors.likelihood).__name__}"
+                    "the likelihood must be a ConditionalDistribution that can be sampled, "
+                    f"since ABC simulates from it; got {described(factors.likelihood)}"
                 ),
             )
         # Feasible means the prior can flatten, sample, *and* score jointly.
@@ -261,7 +257,10 @@ class PyABCSMCMethod(InferenceMethod):
         if not np.isfinite(density):
             return Feasibility(
                 feasible=False,
-                description="prior has no usable joint density",
+                description=(
+                    f"the joint density of the prior {described(factors.prior)} is not finite "
+                    f"at a draw from it"
+                ),
             )
         return Feasibility(feasible=True)
 

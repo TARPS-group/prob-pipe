@@ -246,7 +246,7 @@ class TestFeasibilityCheck:
         m = BlackJAXESSMethod()
         info = m.check(observed_target(Normal(loc=0.0, scale=1.0, label="x"), jnp.zeros(5)))
         assert not info.feasible
-        assert "factored joint" in info.description
+        assert "Normal 'x' conditioned on data not keyed by its fields" in info.description
 
     def test_rejects_non_gaussian_prior(self):
         model = _observations(Gamma(concentration=2.0, rate=1.0, label="g"), (5,))
@@ -258,7 +258,7 @@ class TestFeasibilityCheck:
         model = _observations(Normal(loc=0.0, scale=1.0, label="mu"), (5,))
         info = BlackJAXESSMethod().check(model)
         assert not info.feasible
-        assert "observed values" in info.description
+        assert "with no observed fields" in info.description
 
     def test_accepts_a_joint_with_a_gaussian_prior(self):
         model = _observations(
@@ -588,7 +588,7 @@ class TestProvenanceAndAnnotations:
 
 class TestErrors:
     def test_raises_on_bare_distribution(self):
-        with pytest.raises(TypeError, match="factored joint"):
+        with pytest.raises(TypeError, match="Normal 'x' conditioned on data not keyed"):
             elliptical_slice(
                 Normal(loc=0.0, scale=1.0, label="x"),
                 jnp.zeros(5),
@@ -607,7 +607,7 @@ class TestErrors:
             )
 
     def test_raises_on_none_data(self, gaussian_model):
-        with pytest.raises(TypeError, match="observed values"):
+        with pytest.raises(TypeError, match="with no observed fields"):
             elliptical_slice(
                 gaussian_model,
                 data=None,

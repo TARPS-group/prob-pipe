@@ -44,6 +44,7 @@ import jax
 import jax.numpy as jnp
 from jax.extend import core as jax_core
 
+from .._messages import unknown_names
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..functions import _context
@@ -84,14 +85,14 @@ def _as_draws(x: DrawsLike) -> Array:
     if arr.ndim == 1:
         arr = arr[:, None]
     if arr.ndim != 2:
-        raise ValueError(f"expected (n, d) draws, got shape {arr.shape}")
+        raise ValueError(f"draws must have shape (n, d) or (n,); got shape {arr.shape}")
     return arr
 
 
 def _sample_cov(d: Array) -> Array:
     """Unbiased sample covariance of ``(n, d)`` draws → ``(d, d)`` (``atleast_2d`` for ``d=1``)."""
     if d.shape[0] < 2:
-        raise ValueError(f"sample covariance needs >= 2 draws, got {d.shape[0]}")
+        raise ValueError(f"sample covariance needs >= 2 draws; got {d.shape[0]}")
     return jnp.atleast_2d(jnp.cov(d, rowvar=False))
 
 
@@ -170,8 +171,7 @@ class Reference:
         mean, cov = jnp.asarray(mean), jnp.asarray(cov)
         if mean.ndim != 1 or cov.shape != (mean.shape[0], mean.shape[0]):
             raise ValueError(
-                f"expected mean of shape (d,) and cov of shape (d, d); "
-                f"got {mean.shape} and {cov.shape}"
+                f"mean must have shape (d,) and cov shape (d, d); got {mean.shape} and {cov.shape}"
             )
         return cls(
             mean=mean,
@@ -198,14 +198,15 @@ def _reference_unflatten(aux: tuple, children: tuple) -> Reference:
 jax.tree_util.register_pytree_node(Reference, _reference_flatten, _reference_unflatten)
 
 
-def _require(ref: Reference, *names: str) -> None:
-    """Raise :class:`_MissingReference` if *ref* is missing any named piece."""
+def _require(ref: Reference, metric: str, *names: str) -> None:
+    """Raise :class:`_MissingReference` if *ref* is missing any piece *metric* names."""
     missing = [n for n in names if getattr(ref, n) is None]
     if missing:
         present = [k for k in ("mean", "cov", "draws", "score_fn") if getattr(ref, k) is not None]
+        needed = " and ".join(f"Reference.{n}" for n in missing)
         raise _MissingReference(
-            f"this metric needs reference {', '.join(missing)}; "
-            f"the Reference carries only {present}"
+            f"{metric} needs {needed}, but this Reference has only {present}. Build it with "
+            f"Reference.from_moments or Reference.from_draws."
         )
 
 
@@ -220,10 +221,13 @@ def standardized_mean_error(approx: DrawsLike, ref: Reference) -> Array:
     reported in units of reference posterior standard deviations. Computed as
     ``‖L⁻¹(μ̂ − μ_ref)‖₂`` with ``L = chol(Σ_ref)``.
     """
-    _require(ref, "mean", "cov")
+    _require(ref, "standardized_mean_error", "mean", "cov")
     mu_hat = _as_draws(approx).mean(axis=0)
     if mu_hat.shape != ref.mean.shape:
-        raise ValueError(f"approximation mean {mu_hat.shape} != reference mean {ref.mean.shape}")
+        raise ValueError(
+            f"the approximation's mean has shape {mu_hat.shape}, but the reference mean has "
+            f"shape {ref.mean.shape}; they must match"
+        )
     diff = mu_hat - ref.mean
     chol = jnp.linalg.cholesky(ref.cov)
     z = jax.scipy.linalg.solve_triangular(chol, diff, lower=True)
@@ -240,10 +244,13 @@ def relative_cov_error(approx: DrawsLike, ref: Reference) -> Array:
     ``0`` iff ``Σ̂ = Σ_ref``. The whitening ``Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}`` is
     computed as ``L⁻¹ Σ̂ L⁻ᵀ`` via two triangular solves, ``L = chol(Σ_ref)``.
     """
-    _require(ref, "cov")
+    _require(ref, "relative_cov_error", "cov")
     cov_hat = _sample_cov(_as_draws(approx))
     if cov_hat.shape != ref.cov.shape:
-        raise ValueError(f"approximation cov {cov_hat.shape} != reference cov {ref.cov.shape}")
+        raise ValueError(
+            f"the approximation's covariance has shape {cov_hat.shape}, but the reference "
+            f"covariance has shape {ref.cov.shape}; they must match"
+        )
     chol = jnp.linalg.cholesky(ref.cov)  # L, lower-triangular
     whitened = jax.scipy.linalg.solve_triangular(chol, cov_hat, lower=True)  # L⁻¹ Σ̂
     whitened = jax.scipy.linalg.solve_triangular(chol, whitened.T, lower=True)  # L⁻¹ Σ̂ L⁻ᵀ
@@ -258,11 +265,14 @@ def std_ratios(approx: DrawsLike, ref: Reference) -> Array:
     :func:`relative_cov_error` subsumes it. A reference coordinate with zero
     variance yields ``inf`` for that ratio.
     """
-    _require(ref, "cov")
+    _require(ref, "std_ratios", "cov")
     var_hat = jnp.diag(_sample_cov(_as_draws(approx)))
     var_ref = jnp.diag(ref.cov)
     if var_hat.shape != var_ref.shape:
-        raise ValueError(f"approximation dim {var_hat.shape} != reference dim {var_ref.shape}")
+        raise ValueError(
+            f"the approximation has dimension {var_hat.shape[0]}, but the reference has "
+            f"dimension {var_ref.shape[0]}; they must match"
+        )
     return jnp.sqrt(var_hat / var_ref)
 
 
@@ -282,7 +292,7 @@ def sliced_wasserstein(
     """
     x, y = _as_draws(x), _as_draws(y)
     if x.shape[1] != y.shape[1]:
-        raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
+        raise ValueError(f"x and y must share a dimension; got {x.shape[1]} and {y.shape[1]}")
     n, m = x.shape[0], y.shape[0]
     proj = jax.random.normal(key, (n_projections, x.shape[1]))
     proj = proj / jnp.linalg.norm(proj, axis=-1, keepdims=True)
@@ -315,10 +325,10 @@ def mmd(x: DrawsLike, y: DrawsLike, *, bandwidth: float | Literal["median"] = "m
     """
     x, y = _as_draws(x), _as_draws(y)
     if x.shape[1] != y.shape[1]:
-        raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
+        raise ValueError(f"x and y must share a dimension; got {x.shape[1]} and {y.shape[1]}")
     m, n = x.shape[0], y.shape[0]
     if m < 2 or n < 2:
-        raise ValueError(f"unbiased MMD needs >= 2 draws per sample, got {m} and {n}")
+        raise ValueError(f"unbiased MMD needs >= 2 draws per sample; got {m} and {n}")
     dxx, dyy, dxy = _sq_dists(x, x), _sq_dists(y, y), _sq_dists(x, y)
     if bandwidth == "median":
         ell2 = jnp.median(dxy)
@@ -349,7 +359,7 @@ def ksd(
     x = _as_draws(x)
     n, d = x.shape
     if n < 2:
-        raise ValueError(f"KSD U-statistic needs >= 2 draws, got {n}")
+        raise ValueError(f"KSD U-statistic needs >= 2 draws; got {n}")
     scores = jax.vmap(score_fn)(x)  # (n, d)
     diff = x[:, None, :] - x[None, :, :]  # (n, n, d)
     sq = jnp.sum(diff**2, axis=-1)  # (n, n)
@@ -473,14 +483,17 @@ def score_posterior(
     }
     for name in metric_names:
         if name not in supported_metrics:
-            raise ValueError(f"unknown metric {name!r}")
+            raise ValueError(unknown_names("metric", [name], sorted(supported_metrics)))
 
     # Sliced Wasserstein scoring checks its draws before it claims the key of its projections.
     sliced: tuple[Array, Array, PRNGKey] | None = None
     if "sliced_wasserstein" in metric_names and reference.draws is not None:
         x, y = _as_draws(approx), _as_draws(reference.draws)
         if x.shape[1] != y.shape[1]:
-            raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
+            raise ValueError(
+                f"approx draws have dimension {x.shape[1]}, but reference.draws have "
+                f"dimension {y.shape[1]}; they must match"
+            )
         _guard_staged_scoring()
         key = _claim_validation_key(
             operation_kind="score-posterior",

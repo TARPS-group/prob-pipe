@@ -62,9 +62,14 @@ class CmdStanNutsMethod(InferenceMethod):
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
         """Whether the target is a Stan program's posterior at its data, and cmdstanpy is installed."""
         if not isinstance(target, _StanPosterior):
-            return Feasibility(feasible=False, description="Requires a StanModel's posterior")
+            return Feasibility(
+                feasible=False, description="the target must be a StanModel's posterior"
+            )
         if "cmdstanpy" not in sys.modules and importlib.util.find_spec("cmdstanpy") is None:
-            return Feasibility(feasible=False, description="cmdstanpy is not installed")
+            return Feasibility(
+                feasible=False,
+                description="cmdstanpy is not installed; pip install probpipe-core[stan]",
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:

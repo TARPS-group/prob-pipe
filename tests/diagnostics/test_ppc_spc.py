@@ -285,7 +285,9 @@ class TestAddPpc:
                 "gamma": posterior.event_spec.components["alpha"],
             },
         )
-        with pytest.raises(ValueError, match=r"does not produce the given slots \['gamma'\]"):
+        with pytest.raises(
+            ValueError, match=r"add_ppc: posterior '.*' does not produce \['gamma'\]"
+        ):
             add_ppc(posterior, _mean, np.zeros(5), kernel=kernel)
 
     def test_n_replications_must_be_positive(self, posterior):

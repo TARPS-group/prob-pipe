@@ -57,6 +57,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._factored import _components_of
 from ..families._random_functions import RandomFunction, RandomMeasure
 from ..values._function_base import FunctionSpec
+from ._inference_utils import described
 
 __all__ = ["MinibatchedDistribution"]
 
@@ -87,9 +88,7 @@ def _data_size(data: Any) -> int:
     """
     shape = jnp.shape(data)
     if not shape:
-        raise ValueError(
-            "MinibatchedDistribution takes observations along a leading axis; got a scalar"
-        )
+        raise ValueError("the observed data must have a leading axis of observations; got a scalar")
     return int(shape[0])
 
 
@@ -123,6 +122,14 @@ def _reads_observations(likelihood: Any) -> bool:
     """Whether *likelihood* is a kernel that scores a subset of its observations."""
     return isinstance(likelihood, ConditionalDistribution) and callable(
         getattr(likelihood, "_observation_log_prob", None)
+    )
+
+
+def _subset_scoring_reason(likelihood: Any) -> str:
+    """Why *likelihood*, which :func:`_reads_observations` rejects, cannot be minibatched."""
+    return (
+        "the likelihood must be a ConditionalDistribution that can score a subset of its "
+        f"observations, such as one from glm_likelihood; got {described(likelihood)}"
     )
 
 
@@ -205,19 +212,15 @@ class MinibatchedDistribution(
     ):
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
-                f"MinibatchedDistribution requires prior to satisfy "
-                f"SupportsLogProb; got {type(prior).__name__}."
+                f"MinibatchedDistribution: prior must have a log-density (SupportsLogProb); "
+                f"got {described(prior)}"
             )
         if not _reads_observations(likelihood):
-            raise TypeError(
-                f"MinibatchedDistribution requires a likelihood kernel whose observations "
-                f"are conditionally independent and which scores a subset of them, such as "
-                f"glm_likelihood's kernel; got {type(likelihood).__name__}."
-            )
+            raise TypeError(f"MinibatchedDistribution: {_subset_scoring_reason(likelihood)}")
 
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
-            raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}.")
+            raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}")
 
         self._prior = prior
         self._likelihood = likelihood
@@ -446,8 +449,9 @@ class _RandomMinibatchLogProb(
         """
         if sample_shape != ():
             raise NotImplementedError(
-                "Batched _sample of _RandomMinibatchLogProb (sample_shape != ()) "
-                "is not supported. Call with split keys instead."
+                f"sample_shape={sample_shape} is not supported: the random log-density of a "
+                f"MinibatchedDistribution draws one function at a time. Split the key and "
+                f"sample once per key."
             )
         inner = self._measure._draw_one(key)
         # Return the bound method as a deterministic callable.

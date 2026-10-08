@@ -233,8 +233,18 @@ class TestScorePosterior:
         approx = _mvn(jax.random.PRNGKey(18), 200, jnp.zeros(2), jnp.eye(2))
         ref = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
         assert set(score_posterior(approx, ref, metrics=("std_ratios",))) == {"std_ratios"}
-        with pytest.raises(ValueError, match="unknown metric"):
+        with pytest.raises(ValueError, match=r"unknown metric 'bogus'; available metrics: \['ksd'"):
             score_posterior(approx, ref, metrics=("bogus",))
+
+    def test_a_moment_metric_names_the_reference_pieces_it_lacks(self):
+        approx = _mvn(jax.random.PRNGKey(19), 50, jnp.zeros(2), jnp.eye(2))
+        ref = Reference(draws=approx)
+        with pytest.raises(
+            ValueError,
+            match=r"standardized_mean_error needs Reference.mean and Reference.cov, but this "
+            r"Reference has only \['draws'\]",
+        ):
+            standardized_mean_error(approx, ref)
 
 
 def _draw_after(run_first) -> float:

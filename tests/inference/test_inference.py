@@ -352,7 +352,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=(), b=())  # total flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z")
-        with pytest.raises(ValueError, match="doesn't match"):
+        with pytest.raises(ValueError, match="each draw has"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -368,7 +368,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=(), b=(), c=())  # total flat size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))  # 2 columns
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        with pytest.raises(ValueError, match="doesn't match"):
+        with pytest.raises(ValueError, match="each draw has"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -411,7 +411,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=(2,))  # flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z")
-        with pytest.raises(ValueError, match="doesn't match"):
+        with pytest.raises(ValueError, match="each draw has"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -425,7 +425,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=OpaqueSpec(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+        with pytest.raises(ValueError, match=r"draws of 'a'.*its spec is OpaqueSpec"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -439,7 +439,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=OpaqueSpec(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+        with pytest.raises(ValueError, match=r"draws of 'a'.*its spec is OpaqueSpec"):
             make_posterior(
                 [chain],
                 parents=(prior,),

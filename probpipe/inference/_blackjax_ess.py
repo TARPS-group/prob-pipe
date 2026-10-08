@@ -44,6 +44,7 @@ from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
+    described,
     get_init_state,
     is_jax_traceable,
     likelihood_flat,
@@ -51,6 +52,7 @@ from ._inference_utils import (
     observed_target,
     parallel_chain_map,
     run_seed,
+    unfactored_model_reason,
 )
 
 logger = logging.getLogger(__name__)
@@ -247,14 +249,11 @@ def _elliptical_slice(
     """Elliptical slice chains on the unnormalized conditional *target* of a factored joint."""
     factors = model_factors(target)
     if factors is None:
-        raise TypeError(
-            "elliptical_slice requires a factored joint at observed values of its fields, "
-            "whose other factors form the prior"
-        )
+        raise TypeError(f"cannot run elliptical_slice: {unfactored_model_reason(target)}")
     gp = _gaussian_prior_params(factors.prior)
     if gp is None:
         raise TypeError(
-            f"elliptical_slice requires a Gaussian prior; got {type(factors.prior).__name__}"
+            f"cannot run elliptical_slice: the prior must be Gaussian; got {described(factors.prior)}"
         )
     prior_mean, prior_cov = gp
     init_state = get_init_state(factors.prior, init, random_seed=random_seed)
@@ -324,18 +323,12 @@ class BlackJAXESSMethod(InferenceMethod):
         """Whether the target is a joint with a Gaussian prior at data, with a traceable likelihood."""
         factors = model_factors(target)
         if factors is None:
-            return Feasibility(
-                feasible=False,
-                description=(
-                    "ESS requires a factored joint at observed values of its fields, whose "
-                    "other factors form the prior"
-                ),
-            )
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
         gp = _gaussian_prior_params(factors.prior)
         if gp is None:
             return Feasibility(
                 feasible=False,
-                description=f"ESS requires a Gaussian prior; got {type(factors.prior).__name__}",
+                description=f"the prior must be Gaussian; got {described(factors.prior)}",
             )
         # The runner traces the BlackJAX ESS step under ``lax.scan``;
         # there's no eager fallback. Catching non-traceable likelihoods
@@ -344,7 +337,7 @@ class BlackJAXESSMethod(InferenceMethod):
             if not is_jax_traceable(likelihood_flat(factors), jnp.asarray(gp[0])):
                 return Feasibility(
                     feasible=False,
-                    description="Log-likelihood is not JAX-traceable",
+                    description="the log-likelihood is not JAX-traceable",
                 )
         except Exception as e:
             return Feasibility(

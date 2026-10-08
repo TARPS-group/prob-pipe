@@ -63,6 +63,7 @@ __all__ = [
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
+    "described",
     "extract_chain_columns",
     "extract_event_spec",
     "flat_density",
@@ -75,6 +76,7 @@ __all__ = [
     "joint_and_given",
     "likelihood_flat",
     "model_factors",
+    "no_density_reason",
     "observed_parts",
     "observed_target",
     "parallel_chain_map",
@@ -84,6 +86,7 @@ __all__ = [
     "run_seed",
     "unconstrained_chain",
     "unconstrained_coordinates",
+    "unfactored_model_reason",
 ]
 
 
@@ -170,9 +173,8 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
     missing = [name for name in keep if name not in available]
     if missing:
         raise ValueError(
-            f"trace posterior is missing expected variable name(s) "
-            f"{missing}; available posterior variables are {available}. "
-            f"Every parameter being assembled must be present in the trace."
+            f"the sampler's trace is missing the parameters {missing}; its posterior "
+            f"variables are {available}"
         )
     keep_set = set(keep)
     return [name for name in available if name in keep_set]
@@ -361,6 +363,14 @@ def flat_record(prior: Any) -> NumericRecordSpec | None:
     return spec if isinstance(spec, NumericRecordSpec) else None
 
 
+def _not_vectorizable(law: Any) -> str:
+    """The message for a law whose draws a flat parameter vector cannot hold."""
+    return (
+        f"cannot pack the draws of {described(law)} into a parameter vector: they must be "
+        f"a numeric array or a record of numeric arrays"
+    )
+
+
 def flat_unflatten(law: Any) -> Callable[[Array], Any]:
     """The map from a flat vector to a draw of the numeric *law*, the inverse of :func:`flat_vector`.
 
@@ -391,7 +401,7 @@ def flat_unflatten(law: Any) -> Callable[[Array], Any]:
         return _reshape_to(array.shape)
     record = flat_record(law)
     if record is None:
-        raise TypeError(f"{type(law).__name__} {law.label!r} draws no value a flat vector lays out")
+        raise TypeError(_not_vectorizable(law))
 
     def unflatten(theta_flat: Array) -> Any:
         return _reconstruct_from_vector(law.label, record, theta_flat)
@@ -445,6 +455,45 @@ class ModelFactors(NamedTuple):
     prior: Distribution
     likelihood: Distribution | ConditionalDistribution
     observed: Any
+
+
+def described(value: Any) -> str:
+    """*value*'s type name and label for a message, such as ``"Normal 'theta'"``.
+
+    An unnormalized conditional, which the caller never builds, is described
+    by the joint it conditions.
+    """
+    if isinstance(value, _UnnormalizedConditional):
+        value = value.joint
+    label = getattr(value, "label", None)
+    name = type(value).__name__
+    return f"{name} {label!r}" if isinstance(label, str) else name
+
+
+def no_density_reason(model: Any) -> str:
+    """Why *model*, which claims no unnormalized log-density, has no chain to run on."""
+    return (
+        "the model must have an unnormalized log-density (SupportsUnnormalizedLogProb); "
+        f"got {described(model)}"
+    )
+
+
+def unfactored_model_reason(target: Any) -> str:
+    """Why *target*, for which :func:`model_factors` gives None, has no prior and likelihood.
+
+    The one wording of that check, which every method that reads a model's
+    factors raises or reports.
+    """
+    if not isinstance(target, _UnnormalizedConditional):
+        got = f"{described(target)} with no observed fields"
+    elif target.keyed:
+        got = f"{described(target.joint)} conditioned on {list(target.given.fields)}"
+    else:
+        got = f"{described(target.joint)} conditioned on data not keyed by its fields"
+    return (
+        "the model must be a product such as likelihood * prior, conditioned on every field "
+        f"the likelihood produces and on no field of the prior; got {got}"
+    )
 
 
 def _joint_of(label: str, factors: list[Any]) -> Any:
@@ -677,10 +726,12 @@ def get_init_state(
             dtype=target_dtype,
         )
 
+    failure = (
+        "drawing from it failed" if isinstance(prior, SupportsSampling) else "it cannot be sampled"
+    )
     raise ValueError(
-        "Cannot determine initial state: pass init= explicitly, or "
-        "provide a distribution whose prior implements "
-        "SupportsSampling or exposes event_shape."
+        f"cannot choose an initial state for {described(prior)}: {failure} and it has no "
+        f"event_shape. Pass init= explicitly."
     )
 
 
@@ -949,7 +1000,7 @@ def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
     """
     maps = _leaf_maps(law)
     if maps is None:
-        raise TypeError(f"{type(law).__name__} {law.label!r} draws no value a flat vector lays out")
+        raise TypeError(_not_vectorizable(law))
     return _coordinates(maps)
 
 

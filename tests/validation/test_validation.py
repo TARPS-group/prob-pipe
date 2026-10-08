@@ -555,7 +555,7 @@ class TestOptionalSlots:
             lambda mu, sigma, scale=1.0: Normal("y", mu * jnp.ones(N), sigma * scale),
             given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
         )
-        with pytest.raises(ValueError, match=r"does not produce the given slots \['sigma'\] "):
+        with pytest.raises(ValueError, match=r"does not produce \['sigma'\], which kernel"):
             predictive_check(kernel, prior, sample_mean, observed_data)
 
 
@@ -566,7 +566,7 @@ class TestErrors:
             lambda mu, sigma: Normal("y", mu * jnp.ones(N), sigma),
             given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
         )
-        with pytest.raises(ValueError, match=r"does not produce the given slots \['sigma'\]"):
+        with pytest.raises(ValueError, match=r"does not produce \['sigma'\]"):
             predictive_check(kernel, prior, sample_mean, observed_data)
 
     def test_a_simulator_in_place_of_the_kernel_raises(self, prior, observed_data):

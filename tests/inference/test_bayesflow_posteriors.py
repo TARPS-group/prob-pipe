@@ -305,7 +305,9 @@ class TestBayesFlowNPE:
 
     def test_an_mcmc_option_is_refused(self, npe_model):
         """Conditioning the posterior takes no method options and refuses them."""
-        with pytest.raises(TypeError, match=r"\['num_chains', 'num_warmup'\].*takes none"):
+        with pytest.raises(
+            TypeError, match=r"takes no method_options; got \['num_chains', 'num_warmup'\]"
+        ):
             condition_on.with_options(method_options={"num_warmup": 99, "num_chains": 4})(
                 npe_model, {"observation": _observe(0.0, 0.0, 1)}
             )
@@ -313,7 +315,7 @@ class TestBayesFlowNPE:
     def test_observation_dim_mismatch(self, npe_model):
         """Conditioning on wrong-size observed data raises a clear error rather
         than an opaque keras shape failure."""
-        with pytest.raises(ValueError, match="conditioning shape is fixed"):
+        with pytest.raises(ValueError, match="observed data has 5 values, but"):
             condition_on(npe_model, {"observation": np.zeros(5, dtype="float32")})
 
     def test_the_model_claims_no_direct_sampling(self, npe_model):
@@ -1025,7 +1027,7 @@ class TestBayesFlowValidation:
         class _NoGenerate:
             pass
 
-        with pytest.raises(TypeError, match="ConditionalDistribution that samples"):
+        with pytest.raises(TypeError, match="ConditionalDistribution that can be sampled"):
             learn_amortized_posterior(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_that_is_not_numeric(self):
@@ -1041,7 +1043,7 @@ class TestBayesFlowValidation:
 
     def test_rejects_unknown_method(self):
         """An unsupported amortized method is rejected up front."""
-        with pytest.raises(ValueError, match="Unknown amortized SBI method"):
+        with pytest.raises(ValueError, match="unknown method"):
             learn_amortized_posterior(
                 _prior(),
                 _toy_simulator(),
@@ -1052,7 +1054,7 @@ class TestBayesFlowValidation:
 
     def test_rejects_unknown_sim_backend(self):
         """An unsupported simulation backend is rejected up front."""
-        with pytest.raises(ValueError, match="Unknown sim_backend"):
+        with pytest.raises(ValueError, match="unknown sim_backend"):
             learn_amortized_posterior(
                 _prior(),
                 _toy_simulator(),
