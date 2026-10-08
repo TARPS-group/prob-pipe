@@ -111,7 +111,7 @@ class TestTheGivenSlots:
             conditional_distribution("y", lambda **values: Normal("y", 0.0, 1.0))
 
     def test_a_slot_with_free_dimensions_raises(self):
-        with pytest.raises(TypeError, match="free dimensions"):
+        with pytest.raises(TypeError, match="unbound dimensions"):
             conditional_distribution(
                 "y", lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec(("n",))}
             )
@@ -135,7 +135,7 @@ class TestTheEventDeclaration:
         assert kernel.event_spec == Normal("y", 0.0, 1.0).event_spec
 
     def test_an_explicit_event_spec_naming_other_components_raises(self):
-        with pytest.raises(ValueError, match="components"):
+        with pytest.raises(ValueError, match="declares the fields"):
             conditional_distribution(
                 "y", _location, given_spec=SLOTS, event_spec=OutputSpec(obs=None)
             )

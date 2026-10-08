@@ -34,6 +34,7 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._array_utils import _slice_leading_axes
+from ..core._array_backend import _read_only
 from ..core._repr import format_value
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
@@ -162,12 +163,15 @@ def _recording_arguments(init: Callable[..., None]) -> Callable[..., None]:
 
     A family's constructor calls the adapter's, so the arguments recorded are
     those the family was called with, together with whether it was built in the
-    separate-laws form.
+    separate-laws form. A pickle rebuilds the law from them, so a NumPy array
+    among them is marked read-only.
     """
 
     @functools.wraps(init)
     def __init__(self: TFPDistribution, *args: Any, **kwargs: Any) -> None:
         if getattr(self, "_constructor_arguments", None) is None:
+            args = tuple(_read_only(value) for value in args)
+            kwargs = {name: _read_only(value) for name, value in kwargs.items()}
             recorded = (args, kwargs, _BATCHED_INIT_BYPASS.get())
             object.__setattr__(self, "_constructor_arguments", recorded)
         init(self, *args, **kwargs)
@@ -473,12 +477,9 @@ class _TFPArrayBackend:
                     leading = arr.shape[: len(self._batch_shape)]
                     if leading != self._batch_shape:
                         raise ValueError(
-                            f"_TFPArrayBackend: declared "
-                            f"batch_shape={self._batch_shape} but "
-                            f"parameter {key!r} has leading shape "
-                            f"{leading}; the two must match. Check "
-                            f"that every batched parameter broadcasts "
-                            f"to batch_shape."
+                            f"batch_shape={self._batch_shape} does not match parameter "
+                            f"{key!r} with leading shape {leading}; every batched parameter "
+                            f"must broadcast to batch_shape"
                         )
                 normalised[key] = arr
             batched_params = normalised
@@ -498,10 +499,9 @@ class _TFPArrayBackend:
         actual = tuple(self._batched_dist._tfp_dist.batch_shape)
         if actual != self._batch_shape:
             raise ValueError(
-                f"_TFPArrayBackend: declared batch_shape={self._batch_shape} "
-                f"but {dist_cls.__name__} with the given batched_params "
-                f"produced TFP batch_shape={actual}. Check that every "
-                f"batched parameter broadcasts to batch_shape."
+                f"batch_shape={self._batch_shape} does not match the batch shape {actual} that "
+                f"{dist_cls.__name__} gets from its parameters; every batched parameter must "
+                f"broadcast to batch_shape"
             )
 
     # -- shape ---------------------------------------------------------------
@@ -573,18 +573,14 @@ class _TFPArrayBackend:
             i = int(index)
             if len(bshape) == 1:
                 if not 0 <= i < bshape[0]:
-                    raise IndexError(
-                        f"_TFPArrayBackend.cell: index {i} out of range for batch_shape={bshape}."
-                    )
+                    raise IndexError(f"index {i} is out of range for batch_shape={bshape}")
                 return (i,), i
             multi = tuple(int(x) for x in np.unravel_index(i, bshape))
             return multi, i
         idx = tuple(int(x) for x in index)
         if len(idx) != len(bshape):
             raise IndexError(
-                f"_TFPArrayBackend.cell: index {idx} has rank "
-                f"{len(idx)} but batch_shape={bshape} has rank "
-                f"{len(bshape)}."
+                f"index {idx} has rank {len(idx)} but batch_shape={bshape} has rank {len(bshape)}"
             )
         flat = int(np.ravel_multi_index(idx, bshape))
         return idx, flat

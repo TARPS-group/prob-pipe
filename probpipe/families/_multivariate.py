@@ -172,7 +172,7 @@ class MultivariateNormal(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and cov is not None:
-            raise ValueError("Provide exactly one of scale_tril or cov, not both.")
+            raise ValueError("scale_tril and cov cannot both be given; pass one of them")
 
         operator = cov if isinstance(cov, LinOp) else None
         if operator is not None:
@@ -182,7 +182,7 @@ class MultivariateNormal(TFPDistribution):
         elif cov is not None:
             _, (loc, cov) = _promote_floats(loc, cov)
         else:
-            raise ValueError("One of scale_tril or cov must be provided.")
+            raise ValueError("one of scale_tril or cov must be provided")
 
         if loc.ndim == 0:
             loc = loc.reshape(1)
@@ -335,7 +335,7 @@ class Dirichlet(TFPDistribution):
     ):
         concentration = _as_float_array(concentration)
         if concentration.ndim == 0:
-            raise ValueError("concentration must be at least 1-D.")
+            raise ValueError(f"concentration must be at least 1-D, got shape {concentration.shape}")
 
         self._concentration = concentration
         backend = tfd.Dirichlet(concentration=concentration)
@@ -405,7 +405,7 @@ class Multinomial(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
 
         if probs is not None:
             _, (total_count, probs) = _promote_floats(total_count, probs)
@@ -489,9 +489,9 @@ class Wishart(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and scale is not None:
-            raise ValueError("Provide exactly one of scale_tril or scale, not both.")
+            raise ValueError("scale_tril and scale cannot both be given; pass one of them")
         if scale_tril is None and scale is None:
-            raise ValueError("One of scale_tril or scale must be provided.")
+            raise ValueError("one of scale_tril or scale must be provided")
 
         if scale is not None:
             _, (df, scale) = _promote_floats(df, scale)

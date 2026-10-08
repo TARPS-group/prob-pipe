@@ -85,12 +85,15 @@ class NumericRecord(Record, Numeric):
     verbatim, so native types survive them.
 
     **Aliasing and mutation.** Native leaves are stored **by reference**, exactly as a
-    plain :class:`Record` stores opaque leaves. Mutating a passed-in container in
-    place after construction therefore reaches the record. Once the leaf has
-    crossed a compute boundary, navigation and compute can disagree:
-    navigation reflects the mutation, but compute reuses the ``jax.Array``
-    snapshot cached at the first concrete conversion. Records assume their data
-    is not externally mutated mid-pipeline; no defensive copies are made.
+    plain :class:`Record` stores opaque leaves, and construction marks a NumPy
+    array leaf read-only in place, so a write through the caller's handle or
+    through :meth:`~Record.raw` raises ``ValueError``. A ``pandas`` or ``xarray``
+    container carries no such flag, so mutating it in place after construction
+    changes the record. Once that leaf has crossed a compute boundary,
+    navigation and compute can disagree: navigation reflects the mutation, but
+    compute reuses the ``jax.Array`` snapshot cached at the first concrete
+    conversion. Records assume their containers are not externally mutated
+    mid-pipeline; no defensive copies are made.
 
     **Equality, hashing, and lazy leaves.** :meth:`~Record.__eq__` and content
     fingerprints compare converted values (and native-container metadata such as coords
@@ -193,7 +196,10 @@ class NumericRecord(Record, Numeric):
         # ``__setattr__`` guard holds.
         if _fields is not None:
             if fields:
-                raise ValueError("Cannot pass both positional dict and keyword arguments")
+                raise ValueError(
+                    f"{type(self).__name__} takes either a mapping of fields or keyword fields, "
+                    f"not both"
+                )
             raw_inputs = _unflatten_paths(_fields)
         else:
             for field_name in fields:
@@ -565,8 +571,8 @@ def _reconstruct_from_vector(
     for path, spec in template._walk_leaves():
         if not isinstance(spec, NumericArraySpec):
             raise TypeError(
-                f"from_vector: field {path!r} has a {type(spec).__name__}; "
-                "reconstruction requires NumericArraySpec leaves"
+                f"from_vector: field {path!r} must have a NumericArraySpec, "
+                f"got {type(spec).__name__}"
             )
         size = prod(spec.shape)
         chunk = vec[..., offset : offset + size]

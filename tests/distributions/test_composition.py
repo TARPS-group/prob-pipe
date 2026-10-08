@@ -160,7 +160,7 @@ class TestRequireRules:
 
     def test_a_producer_on_the_left_of_its_consumer_raises(self):
         with pytest.raises(
-            ValueError, match=_mentions("'lik'", "'beta'", "'prior'", "producer on the right")
+            ValueError, match=_mentions("'lik'", "'beta'", "'prior'", "to its left in the product")
         ):
             _prior() * _likelihood()
 
@@ -168,7 +168,7 @@ class TestRequireRules:
         right = _likelihood() * _law("other", "c")
         assert "beta" in right.given_spec
         with pytest.raises(
-            ValueError, match=_mentions("'lik'", "'beta'", "'prior'", "producer on the right")
+            ValueError, match=_mentions("'lik'", "'beta'", "'prior'", "to its left in the product")
         ):
             _prior() * right
 
@@ -329,7 +329,7 @@ class TestOptionalSlots:
 
     def test_a_conditional_joint_requires_its_required_slots(self):
         joint = self._scaled() * Normal("c", 0.0, 1.0)
-        with pytest.raises(KeyError, match="omits the required slots"):
+        with pytest.raises(KeyError, match="missing a value for the required given slot"):
             joint._conditional_log_prob({"scale": 3.0}, {"y": 0.5, "c": 0.0})
 
     def test_a_slot_two_factors_hold_optional_is_optional_and_feeds_both(self):

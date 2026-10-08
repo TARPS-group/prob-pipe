@@ -75,7 +75,8 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
         return {component: np.asarray(rows)}
 
     raise TypeError(
-        f"Cannot extract draws from {type(posterior).__name__}. Expected an EmpiricalDistribution."
+        f"cannot extract draws: the posterior must be an EmpiricalDistribution; "
+        f"got {type(posterior).__name__}"
     )
 
 

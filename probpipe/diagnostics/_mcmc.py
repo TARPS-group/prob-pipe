@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._messages import unknown_names
 from ._utils import _dataset_values
 
 if TYPE_CHECKING:
@@ -223,7 +224,7 @@ def _payload_kind(payload: Mapping[str, Any]) -> str:
     try:
         return str(payload["kind"])
     except Exception as exc:
-        raise ValueError("Diagnostic payload is missing required key 'kind'.") from exc
+        raise ValueError("the diagnostic payload is missing required key 'kind'") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +473,9 @@ def _write_mcmc_payload(
             _write_mcmc_payload(posterior, child)
         return None
 
-    raise ValueError(f"Unknown MCMC diagnostic payload kind: {kind!r}")
+    raise ValueError(
+        unknown_names("MCMC diagnostic payload kind", [kind], ["ess", "mcmc", "mcse", "rhat"])
+    )
 
 
 # ---------------------------------------------------------------------------

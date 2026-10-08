@@ -146,7 +146,9 @@ class TestConstruction:
 
 class TestConstructionRefusals:
     def test_a_non_callable_element_names_its_position(self):
-        with pytest.raises(TypeError, match=r"element at 1 is a int"):
+        with pytest.raises(
+            TypeError, match=r"FunctionBatch: element 1 is int, but elements must be callable"
+        ):
             FunctionBatch(
                 "batch",
                 [lambda x: x, 3],
@@ -154,12 +156,19 @@ class TestConstructionRefusals:
             )
 
     def test_a_mapping_is_not_an_opaque_element(self):
-        with pytest.raises(TypeError, match="denotes a subtree"):
+        with pytest.raises(TypeError, match="element 0 is dict, but elements cannot be mappings"):
             OpaqueBatch(
                 "batch",
                 [{"a": 1}],
                 "site",
             )
+
+    def test_an_element_of_the_wrong_type_names_the_spec(self):
+        """A typed spec refuses on type, which the message says rather than blaming a mapping."""
+        with pytest.raises(
+            TypeError, match=r"element 1 is str, but elements must match element_spec OpaqueSpec"
+        ):
+            OpaqueBatch("batch", [1, "a"], "site", element_spec=OpaqueSpec(type=int))
 
     @pytest.mark.parametrize(
         ("cls", "good", "bad"),
@@ -172,7 +181,7 @@ class TestConstructionRefusals:
         store[...] = good
         store[1, 0] = bad
 
-        with pytest.raises(TypeError, match=r"element at \(1, 0\)"):
+        with pytest.raises(TypeError, match=r"element \(1, 0\) is"):
             cls("batch", store, ["chain", "draw"])
 
     def test_no_elements_is_a_batch_of_none(self):
@@ -208,7 +217,7 @@ class TestConstructionRefusals:
             )
 
     def test_naming_fewer_levels_than_axes_is_refused(self):
-        with pytest.raises(ValueError, match="2 axes need 2 level names"):
+        with pytest.raises(ValueError, match=r"got batch shape \(2, 2\) but 1 level name"):
             OpaqueBatch(
                 "batch",
                 np.empty((2, 2), dtype=object),
@@ -234,8 +243,8 @@ class TestConstructionRefusals:
     @pytest.mark.parametrize(
         ("axes_per_level", "names", "match"),
         [
-            ((1,), ["a"], "must account for every batch axis"),
-            ((1, 1, 1), ["a", "b", "c"], "must account for every batch axis"),
+            ((1,), ["a"], r"axes_per_level \(1,\) covers 1 axis"),
+            ((1, 1, 1), ["a", "b", "c"], r"axes_per_level \(1, 1, 1\) covers 3 axes"),
             ((1, 1), ["a"], "one count per level"),
             ((2,), ["a", "b"], "one count per level"),
         ],
@@ -257,9 +266,9 @@ class TestConstructionRefusals:
     @pytest.mark.parametrize(
         ("elements", "match"),
         [
-            ("north", "iterates into its parts"),
-            (b"ab", "iterates into its parts"),
-            ({"a": 1, "b": 2}, "iterates into its parts"),
+            ("north", "which would be split into its"),
+            (b"ab", "which would be split into its"),
+            ({"a": 1, "b": 2}, "which would be split into its"),
             (np.zeros(3), "must have dtype=object"),
             (jnp.zeros(3), "must have dtype=object"),
         ],
@@ -275,7 +284,7 @@ class TestConstructionRefusals:
             )
 
     def test_something_not_iterable_at_all_is_refused(self):
-        with pytest.raises(TypeError, match="iterable of elements"):
+        with pytest.raises(TypeError, match="elements must be an object array or an iterable"):
             OpaqueBatch(
                 "batch",
                 3,
@@ -551,11 +560,11 @@ class TestNaming:
 
 class TestFieldKeys:
     def test_these_elements_have_no_fields(self, functions):
-        with pytest.raises(TypeError, match="have no fields to address by name"):
+        with pytest.raises(TypeError, match="its elements have no named fields"):
             functions["anything"]
 
     def test_the_message_names_the_concrete_class(self, labels):
-        with pytest.raises(TypeError, match="this OpaqueBatch"):
+        with pytest.raises(TypeError, match="cannot index OpaqueBatch by"):
             labels["anything"]
 
 

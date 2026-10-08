@@ -46,7 +46,7 @@ class CmdStanNutsMethod(InferenceMethod):
     applies to a disjoint model class.
     """
 
-    _method_options = ("num_chains", "num_results", "num_warmup", "random_seed")
+    _method_options = ("num_chains", "num_results", "num_warmup")
 
     @property
     def name(self) -> str:
@@ -62,9 +62,14 @@ class CmdStanNutsMethod(InferenceMethod):
     def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
         """Whether the target is a Stan program's posterior at its data, and cmdstanpy is installed."""
         if not isinstance(target, _StanPosterior):
-            return Feasibility(feasible=False, description="Requires a StanModel's posterior")
+            return Feasibility(
+                feasible=False, description="the target must be a StanModel's posterior"
+            )
         if "cmdstanpy" not in sys.modules and importlib.util.find_spec("cmdstanpy") is None:
-            return Feasibility(feasible=False, description="cmdstanpy is not installed")
+            return Feasibility(
+                feasible=False,
+                description="cmdstanpy is not installed; pip install probpipe-core[stan]",
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
@@ -80,7 +85,7 @@ class CmdStanNutsMethod(InferenceMethod):
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 1000)
         num_chains = kwargs.get("num_chains", 4)
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        random_seed = integer_seed(run_seed(self.name))
 
         model = cmdstanpy.CmdStanModel(stan_file=target.stan_file)
         fit = model.sample(

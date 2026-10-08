@@ -295,11 +295,11 @@ class TestShapeAndLevels:
     @pytest.mark.parametrize(
         ("groups", "names", "match"),
         [
-            ([], [], "at least one batch axis"),
-            ([()], ["draw"], "every level holds at least one axis"),
-            ([(2,)], [], "name every level"),
-            ([(2,), (3,)], ["draw"], "name every level"),
-            ([(2,), (3,)], ["draw", "draw"], "unique within a batch"),
+            ([], [], "axis_groups is empty"),
+            ([()], ["draw"], "each level must have at least one axis"),
+            ([(2,)], [], "one name per level"),
+            ([(2,), (3,)], ["draw"], "one name per level"),
+            ([(2,), (3,)], ["draw", "draw"], "level names must be unique"),
             ([(2,)], [""], "non-empty"),
             ([(-1,)], ["draw"], "non-negative"),
         ],
@@ -310,12 +310,12 @@ class TestShapeAndLevels:
 
     def test_a_flat_shape_is_not_a_grouping(self):
         """``batch_shape`` is the natural thing to reach for, and is one nesting short."""
-        with pytest.raises(TypeError, match=r"is not a group"):
+        with pytest.raises(TypeError, match=r"one tuple of axis sizes per level, got 4"):
             _spec((4,), ("draw",))
 
     def test_a_bare_string_is_not_one_name_per_character(self):
         """``tuple("ab")`` is two names, which is never what a caller means."""
-        with pytest.raises(TypeError, match="one name per character"):
+        with pytest.raises(TypeError, match="got the string 'ab'"):
             _spec([(2,)], "ab")
 
 
@@ -368,7 +368,7 @@ class TestSpec:
             BatchSpec("not a spec", [(2,)], ["draw"])
 
     def test_a_batch_must_be_given_a_batch_spec(self):
-        with pytest.raises(TypeError, match="specified by a BatchSpec"):
+        with pytest.raises(TypeError, match="spec must be a BatchSpec"):
             _ListBatch([], _ELEMENT_SPEC)
 
     def test_a_sub_batch_view_keeps_the_element_spec_over_surviving_levels(self, nested):
@@ -426,7 +426,7 @@ class TestLevelNames:
         assert nested.with_level_names(chain="draw", draw="chain").level_names == ("draw", "chain")
 
     def test_renaming_an_unknown_level_raises(self, nested):
-        with pytest.raises(KeyError, match="not levels of this batch"):
+        with pytest.raises(KeyError, match=r"unknown level 'nope'; available levels"):
             nested.with_level_names(nope="x")
 
     def test_a_duplicate_level_name_is_rejected_not_altered(self):
@@ -437,11 +437,11 @@ class TestLevelNames:
         which is what keeps a level name a statement about meaning rather than
         about the order levels were added in.
         """
-        with pytest.raises(ValueError, match="must be unique within a batch"):
+        with pytest.raises(ValueError, match="level names must be unique"):
             _spec([(2,), (3,)], ["draw", "draw"])
 
-    def test_the_duplicate_message_names_the_remedy(self):
-        with pytest.raises(ValueError, match="name of its own"):
+    def test_the_duplicate_message_shows_the_names(self):
+        with pytest.raises(ValueError, match=r"got \('draw', 'draw'\)"):
             _spec([(2,), (3,)], ["draw", "draw"])
 
     def test_renaming_onto_a_kept_level_raises_like_minting_does(self, nested):
@@ -460,7 +460,7 @@ class TestLevelNames:
         ``None``, ``0`` and ``[]`` are all falsy, so an emptiness check reached
         first would describe the wrong problem.
         """
-        with pytest.raises(TypeError, match="level names are strings"):
+        with pytest.raises(TypeError, match="level names must be strings"):
             nested.with_level_names(chain=new)
 
     def test_two_renames_onto_one_name_raise(self, nested):
@@ -493,7 +493,7 @@ class TestLevelNames:
             nested.with_level_names(chain="a/b")
 
     def test_a_level_name_must_be_a_string(self):
-        with pytest.raises(TypeError, match="level names are strings"):
+        with pytest.raises(TypeError, match="level names must be strings"):
             _spec([(2,)], [7])
 
     def test_renaming_a_level_repins_the_names_a_view_derives_from(self, nested):
@@ -563,7 +563,7 @@ class TestAtLevels:
             two_axis.at_levels(draw=(0, 0, 0))
 
     def test_an_unknown_level_raises(self, nested):
-        with pytest.raises(KeyError, match="not levels of this batch"):
+        with pytest.raises(KeyError, match=r"unknown level 'nope'; available levels"):
             nested.at_levels(nope=0)
 
     def test_a_level_name_that_is_no_identifier_is_passed_in_a_mapping(self):
@@ -688,24 +688,28 @@ class TestDerivedLabelsIdentifyTheObject:
 class TestIndexerValidation:
     @pytest.mark.parametrize("indexer", [1.5, object()])
     def test_an_indexer_must_be_an_integer_or_a_slice(self, flat, indexer):
-        with pytest.raises(TypeError, match="indexed by an integer or a slice"):
+        with pytest.raises(TypeError, match="must be indexed by integers or slices"):
             flat[indexer]
 
     def test_at_levels_rejects_the_same_indexers(self, flat):
-        with pytest.raises(TypeError, match="indexed by an integer or a slice"):
+        with pytest.raises(TypeError, match="must be indexed by integers or slices"):
             flat.at_levels(draw="first")
 
     @pytest.mark.parametrize("bound", [2.5, "2"], ids=["float", "str"])
     def test_a_slice_bound_that_is_not_an_integer_is_placed(self, nested, bound):
         """A bound computed with ``/`` is a float, the ordinary way to arrive here."""
-        with pytest.raises(TypeError, match=r"sliced by integers.*batch_shape \(2, 3\)"):
+        with pytest.raises(TypeError, match=r"slice bounds must be integers.*batch_shape \(2, 3\)"):
             nested[0:bound]
-        with pytest.raises(TypeError, match=r"sliced by integers.*level 'draw'"):
+        with pytest.raises(TypeError, match=r"slice bounds must be integers.*level 'draw'"):
             nested.at_levels(draw=slice(0, bound))
 
     def test_a_bool_is_not_an_index(self, flat):
-        with pytest.raises(TypeError, match="not indexed by a bool"):
+        with pytest.raises(TypeError, match="cannot index a batch axis with a bool"):
             flat[True]
+
+    def test_a_zero_step_is_refused(self, flat):
+        with pytest.raises(ValueError, match=r"slice step cannot be zero \(axis 0 of batch_shape"):
+            flat[::0]
 
     def test_a_tuple_addresses_the_leading_axes_in_order(self, nested):
         assert nested[1, 2].value == 5
@@ -829,7 +833,7 @@ class TestDegenerateAxes:
 
 class TestSpecValidation:
     def test_an_axis_size_must_be_integral(self):
-        with pytest.raises(TypeError, match="axis sizes are integers"):
+        with pytest.raises(TypeError, match="axis sizes must be integers"):
             _spec([(2.7,)], ["draw"])
 
     def test_an_identifier_is_a_symbolic_axis_size(self):
@@ -852,7 +856,7 @@ class TestSpecValidation:
     def test_replacing_a_field_revalidates_the_levels(self):
         from dataclasses import replace
 
-        with pytest.raises(ValueError, match="must name every level"):
+        with pytest.raises(ValueError, match="one name per level"):
             replace(_spec([(2,)], ["draw"]), level_names=("a", "b"))
 
 
@@ -1007,7 +1011,10 @@ class TestRenamingAView:
         """A dropped root level still participates in labeling subsequent selections."""
         view = nested[1]
         assert view.level_names == ("draw",)
-        with pytest.raises(ValueError, match="labels of subsequent selections ambiguous"):
+        with pytest.raises(
+            ValueError,
+            match=r"cannot rename level 'draw' to 'chain': this view b\[chain=1\] was indexed from a level named 'chain'.*with_label\(\)",
+        ):
             view.with_level_names(draw="chain")
 
     def test_the_same_rename_is_fine_once_the_view_is_its_own_root(self, nested):
@@ -1291,15 +1298,17 @@ class TestIndexingDispatchesOnTheKeyType:
     """
 
     def test_a_name_reaches_the_elements_rather_than_an_axis(self, flat):
-        with pytest.raises(TypeError, match="have no fields to address by name"):
+        with pytest.raises(TypeError, match="its elements have no named fields"):
             flat["x"]
 
     def test_a_path_of_names_reaches_the_elements_too(self, flat):
-        with pytest.raises(TypeError, match=r"\('outer', 'a'\) indexes nothing"):
+        with pytest.raises(
+            TypeError, match=r"by \('outer', 'a'\): its elements have no named fields"
+        ):
             flat["outer", "a"]
 
     def test_the_refusal_says_where_the_axes_are_addressed(self, flat):
-        with pytest.raises(TypeError, match="at_levels addresses them by level name"):
+        with pytest.raises(TypeError, match=r"or at_levels\(\) to index by level name"):
             flat["x"]
 
     def test_a_batch_whose_elements_have_fields_answers_a_name(self):
@@ -1315,13 +1324,13 @@ class TestIndexingDispatchesOnTheKeyType:
         assert fields[:, 1].label == "b[draw=1]"
 
     def test_a_tuple_mixing_names_and_positions_addresses_neither(self, nested):
-        with pytest.raises(TypeError, match="mixes field names with axis indexers"):
+        with pytest.raises(TypeError, match="cannot mix field names and axis indices"):
             nested[0, "x"]
 
     def test_a_mixed_tuple_is_blamed_on_the_mix_and_not_on_the_count(self, flat):
         # One axis and two entries, so a complaint about arity would fire first
         # and blame the count rather than the name that indexes no axis.
-        with pytest.raises(TypeError, match="mixes field names"):
+        with pytest.raises(TypeError, match="cannot mix field names"):
             flat[0, "x"]
 
     def test_an_empty_tuple_selects_the_whole_batch(self, nested):
@@ -1333,17 +1342,17 @@ class TestNoneSpellsAWholeAxisByKeywordAlone:
     """``:`` is how a whole axis is written; ``None`` says it only in ``at_levels``."""
 
     def test_a_positional_none_is_refused(self, flat):
-        with pytest.raises(TypeError, match="not indexed by None"):
+        with pytest.raises(TypeError, match="cannot index a batch axis with None"):
             flat[None]
 
     def test_the_refusal_gives_the_spelling_to_use(self, flat):
-        with pytest.raises(TypeError, match="write ':' for the whole axis"):
+        with pytest.raises(TypeError, match="use ':' for the whole axis"):
             flat[None]
 
     def test_a_none_inside_a_positional_tuple_is_refused(self, nested):
         # The case that motivates refusing it: an unset argument read as *all of
         # it* answers a question the caller never asked.
-        with pytest.raises(TypeError, match="not indexed by None"):
+        with pytest.raises(TypeError, match="cannot index a batch axis with None"):
             nested[0, None]
 
     def test_a_colon_keeps_the_axis_whole(self, nested):
@@ -1518,7 +1527,7 @@ class TestTheTwoWaysOfIndexingCompose:
 
     def test_a_mixed_tuple_is_refused_whichever_comes_first(self, fields):
         for key in [(0, "value"), ("value", 0)]:
-            with pytest.raises(TypeError, match="mixes field names with axis indexers"):
+            with pytest.raises(TypeError, match="cannot mix field names and axis indices"):
                 fields[key]
 
 
@@ -1649,12 +1658,12 @@ class TestSymbolicMultiplicity:
     def test_batch_size_is_undefined_while_an_axis_is_symbolic(self):
         spec = _spec([("S",)], ["draw"])
 
-        with pytest.raises(ValueError, match="undefined while an axis size is symbolic"):
+        with pytest.raises(ValueError, match="batch_size is undefined: axis size S is symbolic"):
             _ = spec.batch_size
 
     def test_a_live_batch_refuses_a_symbolic_axis(self):
         """A batch holds elements at positions, so its multiplicity is concrete."""
-        with pytest.raises(ValueError, match="leaves the axis size S unbound"):
+        with pytest.raises(ValueError, match="cannot build a batch: axis size S is symbolic"):
             _ListBatch([], _spec([("S",)], ["draw"]))
 
     def test_a_symbolic_axis_is_substitutable(self):
@@ -1862,11 +1871,11 @@ class TestTheConstructorSignatureContract:
     @pytest.mark.parametrize(
         ("count", "exc", "match"),
         [
-            (0, ValueError, "at least one axis"),
-            (-1, ValueError, "at least one axis"),
-            (True, TypeError, "a bool is not one"),
-            (2.0, TypeError, "integer axis counts"),
-            ("2", TypeError, "integer axis counts"),
+            (0, ValueError, "must be at least 1"),
+            (-1, ValueError, "must be at least 1"),
+            (True, TypeError, "must be integers, got bool"),
+            (2.0, TypeError, "must be integers, got float"),
+            ("2", TypeError, "must be integers, got str"),
         ],
         ids=["zero", "negative", "bool", "float", "str"],
     )

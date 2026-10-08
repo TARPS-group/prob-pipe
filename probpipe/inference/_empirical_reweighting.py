@@ -24,11 +24,13 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod
 from ._approximate_distribution import _record_run
 from ._inference_utils import (
+    described,
     flat_record,
     flat_unflatten,
     is_jax_traceable,
     model_factors,
     parameter_given,
+    unfactored_model_reason,
 )
 
 __all__: list[str] = []
@@ -116,25 +118,25 @@ class EmpiricalReweightingMethod(InferenceMethod):
         """Whether the target's prior is an empirical law over numeric atoms and its likelihood has a density."""
         factors = model_factors(target)
         if factors is None:
-            return Feasibility(
-                False,
-                "Requires a factored joint at observed values of the fields a likelihood produces",
-            )
+            return Feasibility(False, unfactored_model_reason(target))
         if not isinstance(factors.prior, EmpiricalDistribution):
             return Feasibility(
-                False, f"Requires an empirical prior; got {type(factors.prior).__name__}"
+                False,
+                f"the prior must be an EmpiricalDistribution; got {described(factors.prior)}",
             )
         likelihood = factors.likelihood
         if not isinstance(likelihood, ConditionalDistribution) or not isinstance(
             likelihood, SupportsConditionalLogProb
         ):
             return Feasibility(
-                False, "Requires a likelihood that claims SupportsConditionalLogProb"
+                False,
+                "the likelihood must be a ConditionalDistribution with a conditional "
+                f"log-density (SupportsConditionalLogProb); got {described(likelihood)}",
             )
         try:
             _flat_atoms(factors.prior)
         except (TypeError, ValueError) as error:
-            return Feasibility(False, f"Requires numeric atoms: {error}")
+            return Feasibility(False, f"the prior's atoms must be numeric: {error}")
         return Feasibility(True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:

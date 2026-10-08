@@ -37,6 +37,7 @@ __all__ = [
     "public_class_name",
     "sequence_repr",
     "term_repr",
+    "type_name",
 ]
 
 #: The length past which a repr shows one argument per line.
@@ -243,6 +244,20 @@ def public_class_name(cls: type) -> str:
         if not klass.__name__.startswith("_"):
             return klass.__name__
     return cls.__name__
+
+
+def type_name(value: Any) -> str:
+    """The name of *value*'s type as an error message shows it.
+
+    A JAX array shows as ``jax.Array`` rather than as its private concrete
+    class, and a value of a ProbPipe class shows as its first public class. Any
+    other value shows as its own class, which is the caller's.
+    """
+    cls = type(value)
+    package = cls.__module__.split(".")[0]
+    if package in {"jax", "jaxlib"} and hasattr(value, "shape"):
+        return "jax.Array"
+    return public_class_name(cls) if package == "probpipe" else cls.__name__
 
 
 # ---------------------------------------------------------------------------

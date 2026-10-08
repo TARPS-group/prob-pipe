@@ -244,7 +244,10 @@ class TestWorkflowCallHelpers:
         def use_dep(dep: DataNode):
             return dep
 
-        with pytest.raises(TypeError, match="expects dependency 'dep:"):
+        with pytest.raises(
+            TypeError,
+            match=r"expects a Node for dependency 'dep' \(annotated DataNode\); got object",
+        ):
             _resolve_call(use_dep, dep=object())
 
 
@@ -291,7 +294,7 @@ class TestArgumentBinding:
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
         wf = Function(label="add_func", fn=add_func, dispatch="sequential")
 
-        with pytest.raises(TypeError, match="Missing required input 'y'"):
+        with pytest.raises(TypeError, match=r"add_func\(\) missing required argument 'y'"):
             wf(x=1.0)
 
 
@@ -329,7 +332,10 @@ class TestModuleResolution:
 
         wf = Function(label="use_dep", fn=use_dep, dispatch="sequential")
 
-        with pytest.raises(TypeError, match="expects dependency 'dep:"):
+        with pytest.raises(
+            TypeError,
+            match=r"expects a Node for dependency 'dep' \(annotated DataNode\); got object",
+        ):
             wf(dep=object())
 
 

@@ -29,7 +29,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._dispatch import BinaryDispatchMethod, BinaryDispatchRegistry, Feasibility
-from probpipe.functions import _rules
+from probpipe.functions import _resolution, _rules
 from probpipe.functions._rules import FLOOR_PRIORITY, evaluation_rule_registry
 
 from ._design_helpers import error_of, standard_normal
@@ -331,3 +331,32 @@ class TestTheDirectCall:
 
         recorded = str(dict(result.provenance.controls)) + str(dict(result.provenance.metadata))
         assert "sampling_lift" in recorded
+
+
+class _Route:
+    def __init__(self, label: str):
+        self.label = label
+
+
+class TestNoRouteMessage:
+    def test_lists_each_route_tried(self):
+        message = _resolution._no_route(
+            "op",
+            {},
+            [
+                (_Route("a"), Feasibility(False, "x is not a kernel")),
+                (_Route("b"), Feasibility(False, "y")),
+            ],
+        )
+        assert message == "op: no route applies. Tried: a: x is not a kernel; b: y"
+
+    def test_leads_with_the_first_actionable_reason(self):
+        probed = [
+            (_Route("a"), Feasibility(False, "Normal is not a ConditionalDistribution")),
+            (_Route("b"), Feasibility(False, "unknown field 'x'", actionable=True)),
+        ]
+        message = _resolution._no_route("condition_on", {}, probed)
+        assert message == (
+            "condition_on: unknown field 'x'. Routes tried: "
+            "a: Normal is not a ConditionalDistribution; b: unknown field 'x'"
+        )

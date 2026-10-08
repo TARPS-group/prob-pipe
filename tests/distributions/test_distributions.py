@@ -91,11 +91,11 @@ class TestMultivariateNormal:
 
     def test_rejects_both_cov_and_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
-        with pytest.raises(ValueError, match="exactly one"):
+        with pytest.raises(ValueError, match="cannot both be given"):
             MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix, label="z")
 
     def test_rejects_neither_cov_nor_scale_tril(self, loc):
-        with pytest.raises(ValueError, match="One of"):
+        with pytest.raises(ValueError, match="one of scale_tril or cov must be provided"):
             MultivariateNormal(loc=loc, label="z")
 
     def test_rejects_dim_mismatch(self):
@@ -227,7 +227,7 @@ class TestEmpiricalDistribution:
             EmpiricalDistribution("x", simple_samples, jnp.array([0.0, 0.0, 0.0]))
 
     def test_invalid_weights_wrong_length(self, simple_samples):
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match="one weight per item"):
             EmpiricalDistribution("x", simple_samples, jnp.array([0.5, 0.5]))
 
     def test_1d_input_scalar_event(self):
@@ -344,7 +344,7 @@ class TestEmpiricalLogWeights:
 
     def test_log_weights_wrong_length_raises(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match="one per item, got 2"):
             EmpiricalDistribution("x", samples, Weights(log_weights=jnp.array([0.0, 0.0])))
 
     def test_uniform_weights_by_default(self, simple_samples):
@@ -480,7 +480,7 @@ class TestDistributionABC:
         p1 = Provenance("first")
         gaussian.with_provenance(p1)
         p2 = Provenance("second")
-        with pytest.raises(RuntimeError, match="Provenance already set"):
+        with pytest.raises(RuntimeError, match=r"provenance of .* is already set"):
             gaussian.with_provenance(p2)
 
     def test_name(self, loc, cov_matrix):

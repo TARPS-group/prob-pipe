@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+from .._messages import unknown_names
 from ..core._dispatch import ResolutionError
 from ..core._repr import format_value
 from ..core._spec_base import _unify_specs
@@ -43,10 +44,11 @@ from ..distributions._capabilities import (
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..linalg import LinOp
-from ..values import Function, SupportsInverse, is_invertible
+from ..values import Function, SupportsInverse
 from ._backend import TFPDistribution
 from ._continuous import Normal
 from ._discrete import Bernoulli, Poisson
+from ._transformed import _not_invertible
 
 if TYPE_CHECKING:
     from ..core.record import Record
@@ -93,13 +95,13 @@ class LinearGaussianConditional(ConditionalDistribution):
     """
 
     def __init__(self, label: str, A: LinOp, b: Array, cov: LinOp) -> None:
-        raise NotImplementedError("LinearGaussianConditional.__init__")
+        raise NotImplementedError("LinearGaussianConditional is not implemented yet")
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
         """The Gaussian law ``N(A @ s + b, cov)`` at the given value ``s``."""
-        raise NotImplementedError("LinearGaussianConditional._condition_on")
+        raise NotImplementedError("conditioning a LinearGaussianConditional is not implemented yet")
 
 
 # ---------------------------------------------------------------------------
@@ -176,12 +178,10 @@ def _require_invertible(link: Any, owner: str) -> None:
         its guard rejects.
     """
     if not isinstance(link, Function):
-        raise TypeError(f"{owner} takes a link Function, got {type(link).__name__}")
-    if not is_invertible(link):
-        raise ResolutionError(
-            f"the link {link.label!r} of {owner} is not invertible: it does not claim "
-            f"SupportsInverse"
-        )
+        raise TypeError(f"link of {owner} must be a Function, got {type(link).__name__}")
+    reason = _not_invertible(link)
+    if reason is not None:
+        raise ResolutionError(f"{owner} needs an invertible link, but {link.label!r} {reason}")
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +212,9 @@ def _observation_vector(values: ArrayLike, owner: str, quantity: str) -> Array:
     values : ArrayLike
         One value per observation, in any numeric dtype.
     owner : str
-        The name of the calling method, which the error message names.
+        The name of the caller, such as a family or its ``build`` method, for the error message.
     quantity : str
-        What one entry is, such as ``"mean"`` or ``"linear predictor"``, for the error message.
+        What one entry is, such as ``"mean"`` or ``"the linear predictor"``, for the error message.
 
     Returns
     -------
@@ -232,7 +232,8 @@ def _observation_vector(values: ArrayLike, owner: str, quantity: str) -> Array:
         array = array.astype(jnp.result_type(float))
     if array.ndim != 1:
         raise ValueError(
-            f"{owner} takes one {quantity} per observation, a vector, got shape {array.shape}"
+            f"{owner} expects {quantity} as a 1-D vector (one entry per observation), got shape "
+            f"{array.shape}"
         )
     return array
 
@@ -420,9 +421,7 @@ class BernoulliFamily(GLMFamily):
         event_spec: OutputSpec | None = None,
     ) -> Distribution:
         """Independent Bernoulli observations with the log-odds *predictor*."""
-        logits = _observation_vector(
-            predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
-        )
+        logits = _observation_vector(predictor, type(self).__name__, "the linear predictor")
         self._dispersion(dispersion, logits)
         return Bernoulli(label, logits=logits, event_spec=event_spec)
 
@@ -464,9 +463,7 @@ class PoissonFamily(GLMFamily):
         event_spec: OutputSpec | None = None,
     ) -> Distribution:
         """Independent Poisson observations with the log-rates *predictor*."""
-        log_rate = _observation_vector(
-            predictor, f"{type(self).__name__}._build_canonical", "linear predictor"
-        )
+        log_rate = _observation_vector(predictor, type(self).__name__, "the linear predictor")
         self._dispersion(dispersion, log_rate)
         return _LogRatePoisson(label, log_rate, event_spec=event_spec)
 
@@ -667,7 +664,10 @@ class _GLMLikelihood(
         values = {**dict(top.items()), **kwargs}
         unknown = set(values) - set(self.given_spec)
         if unknown:
-            raise KeyError(f"{sorted(unknown)} are not given slots of {self.label!r}")
+            raise KeyError(
+                f"cannot condition {self.label!r}: "
+                f"{unknown_names('given slot', sorted(unknown), self.given_spec)}"
+            )
         return {slot: jnp.asarray(value) for slot, value in values.items()}
 
     def _complete_values(self, given: Record | Mapping[str, Any]) -> dict[str, Array]:
@@ -691,7 +691,9 @@ class _GLMLikelihood(
         values = self._given_values(given, {})
         missing = set(self.given_spec) - set(values)
         if missing:
-            raise KeyError(f"{self.label!r} needs a value for every given slot; {sorted(missing)}")
+            raise KeyError(
+                f"{self.label!r} is missing values for the given slots {sorted(missing)}"
+            )
         return values
 
     def _law(self, values: Mapping[str, Array]) -> Distribution:

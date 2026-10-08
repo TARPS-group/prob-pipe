@@ -17,6 +17,7 @@ from ..distributions._empirical import EmpiricalDistribution
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import _record_run, make_posterior
 from ._inference_utils import (
+    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
@@ -35,8 +36,6 @@ class PyMCNutsMethod(InferenceMethod):
     - ``num_warmup``: the number of warmup steps of each chain, which is 500
       unless set;
     - ``num_chains``: the number of chains, which is 4 unless set;
-    - ``random_seed``: the sampler's seed, which a workflow-owned random event
-      draws unless set;
     - ``cores``: the number of chains sampled in parallel, which is the smaller
       of the chain count and the CPU count unless set;
     - ``progress_bar``: whether PyMC's sampler draws its progress bar. The
@@ -59,7 +58,6 @@ class PyMCNutsMethod(InferenceMethod):
         "num_results",
         "num_warmup",
         "progress_bar",
-        "random_seed",
     )
 
     def __init__(self) -> None:
@@ -82,7 +80,9 @@ class PyMCNutsMethod(InferenceMethod):
         """Whether the target is a PyMC model, or one at its observed values."""
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires PyMCModel")
+            return Feasibility(
+                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
@@ -102,7 +102,7 @@ class PyMCNutsMethod(InferenceMethod):
         # warning and falls back to single-process sampling — so multi-core
         # is the default without making serializability a hard requirement.
         cores = kwargs.get("cores", min(num_chains, os.cpu_count() or 1))
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        random_seed = integer_seed(run_seed(self.name))
 
         model = dist._pymc_model(data=observed)
         # Build the parameter record in canonical field order before sampling
@@ -153,10 +153,11 @@ class PyMCADVIMethod(InferenceMethod):
       1000 unless set;
     - ``vi_method``: the variational method of PyMC's ``fit``, which is
       ``"advi"`` unless set;
-    - ``random_seed``: the seed of ``fit``, which a workflow-owned random event
-      draws unless set;
     - ``progress_bar``: whether ``fit`` draws its progress bar. ``fit``
       receives the option as ``progressbar``, which is ``True`` unless set.
+
+    The run draws its key from a workflow-owned random event, and the key seeds
+    both ``fit`` and the draws of an empirical result.
 
     Notes
     -----
@@ -175,7 +176,7 @@ class PyMCADVIMethod(InferenceMethod):
     ``pymc_nuts`` fails would silently substitute VI for MCMC.
     """
 
-    _method_options = ("num_iterations", "num_results", "progress_bar", "random_seed", "vi_method")
+    _method_options = ("num_iterations", "num_results", "progress_bar", "vi_method")
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel
@@ -197,7 +198,9 @@ class PyMCADVIMethod(InferenceMethod):
         """Whether the target is a PyMC model, or one at its observed values."""
         dist, _ = joint_and_given(target)
         if not isinstance(dist, self._model_type):
-            return Feasibility(feasible=False, description="Requires PyMCModel")
+            return Feasibility(
+                feasible=False, description=f"the model must be a PyMCModel; got {described(dist)}"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> Distribution:
@@ -209,7 +212,7 @@ class PyMCADVIMethod(InferenceMethod):
 
         num_iterations = kwargs.get("num_iterations", 30000)
         num_results = kwargs.get("num_results", 1000)
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        fit_key, draws_key = jax.random.split(run_seed(self.name))
         vi_method = kwargs.get("vi_method", "advi")
 
         model = dist._pymc_model(data=observed)
@@ -221,7 +224,7 @@ class PyMCADVIMethod(InferenceMethod):
             approx = pm.fit(
                 n=num_iterations,
                 method=vi_method,
-                random_seed=random_seed,
+                random_seed=integer_seed(fit_key),
                 progressbar=kwargs.get("progress_bar", True),
             )
         name = f"pymc_{vi_method}"
@@ -230,7 +233,7 @@ class PyMCADVIMethod(InferenceMethod):
             if family is not None:
                 return _record_run(family, (target,), name, num_iterations=num_iterations)
         with model:
-            trace = approx.sample(num_results)
+            trace = approx.sample(num_results, random_seed=integer_seed(draws_key))
 
         # ADVI's approx.sample yields a single chain of `num_results`
         # draws; extract in natural order and realign by name.

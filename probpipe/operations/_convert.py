@@ -11,6 +11,7 @@ support.
 
 from __future__ import annotations
 
+import reprlib
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, cast
@@ -26,9 +27,14 @@ from ._operation import BoundCall, Operation, operation_registry
 __all__ = ["convert"]
 
 
-def _is_target(target: Any) -> bool:
+def _is_target(target: Any) -> Feasibility:
     """The target is a distribution class or a capability protocol."""
-    return isinstance(target, type)
+    if isinstance(target, type):
+        return Feasibility(True)
+    return Feasibility(
+        False,
+        f"convert: target must be a distribution class or a capability protocol; got {reprlib.repr(target)}",
+    )
 
 
 def _convert_result(d: DistributionSpec, target: Any) -> OutputSpec:

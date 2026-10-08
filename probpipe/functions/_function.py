@@ -225,8 +225,9 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
     prefect_missing = task is None or flow is None
     if kind in _PREFECT_KINDS and prefect_missing:
         warnings.warn(
-            f"workflow_kind={kind!r} requested but Prefect is not installed. "
-            "Falling back to OFF. Install with: pip install probpipe[prefect]",
+            f"workflow_kind=WorkflowKind.{kind.name} requested but Prefect is not installed; "
+            "running without Prefect (WorkflowKind.OFF). Install it with: "
+            "pip install probpipe[prefect]",
             skip_file_prefixes=_WARNING_SKIP_PREFIXES,
         )
         return WorkflowKind.OFF
@@ -259,7 +260,7 @@ def _make_execution_config(
         warnings.warn(
             "dispatch='thread' and max_workers configure only local "
             "ThreadPoolExecutor dispatch; they do not control Prefect "
-            "scheduling.",
+            "scheduling",
             stacklevel=2,
         )
 
@@ -790,15 +791,15 @@ def _jax_traceability_error(
                     components = _components_record(root.event_spec)
                     if not isinstance(components, NumericRecordSpec) or not components.is_concrete:
                         raise TypeError(
-                            f"{type(root).__name__} does not declare a concrete numeric "
-                            "event for side-effect-free JAX probing"
+                            f"{type(root).__name__} must declare a concrete numeric event "
+                            "to run under dispatch='jax'"
                         )
                     try:
                         dtypes = root.dtypes
                     except (AttributeError, NotImplementedError) as error:
                         raise TypeError(
-                            f"{type(root).__name__} does not declare field dtypes for "
-                            "side-effect-free JAX probing"
+                            f"{type(root).__name__} must declare its field dtypes to run "
+                            "under dispatch='jax'"
                         ) from error
                     columns = {}
                     for path in components:
@@ -891,11 +892,12 @@ def _require_jax_traceable(
     ):
         raise trace_error
     if isinstance(trace_error, _context._StochasticProbeSignal):
-        raise TypeError(
-            "dispatch='jax' cannot execute a wrapped function that requests "
-            "workflow-owned randomness with key=None. Pass an explicit key, "
-            "or use dispatch='auto', 'sequential', or 'thread'."
-        ) from trace_error
+        message = (
+            _context.JAX_SUBMISSION_MESSAGE
+            if trace_error.submission
+            else _context.JAX_KEYLESS_DRAW_MESSAGE
+        )
+        raise TypeError(message) from trace_error
     raise ValueError(
         "dispatch='jax' failed while tracing the wrapped function with JAX; "
         "ensure the function is JAX-traceable, or use dispatch='auto', "
@@ -1038,9 +1040,9 @@ def _resolve_route(
         detail = (
             f"pending: {', '.join(info.pending)}" if info.feasible is None else info.description
         )
-        restriction = " with exact_only" if function.options["exact_only"] else ""
+        restriction = " (exact_only=True)" if function.options["exact_only"] else ""
         raise ResolutionError(
-            f"{function.label}: no evaluation rule realizes the call lifting {ref.label!r}"
+            f"{function.label}: no evaluation rule applies to a call over {ref.label!r}"
             f"{restriction}. {detail}"
         )
     return route

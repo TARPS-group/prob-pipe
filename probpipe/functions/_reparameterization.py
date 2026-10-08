@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from ..core._dispatch import MathematicalDomainError, ResolutionError
+from ..core._repr import type_name
 from ..core.constraints import (
     Constraint,
     _Boolean,
@@ -190,7 +191,7 @@ def _as_bijector(value: Any, image: Constraint | None = None) -> Function:
         return value
     if isinstance(value, tfb.Bijector):
         return _BackendBijector(value, _backend_image(value) if image is None else image)
-    raise TypeError(f"a bijector is a Function or a backend bijector, got {type(value).__name__}")
+    raise TypeError(f"bijector must be a Function or a TFP bijector; got {type_name(value)}")
 
 
 def register_bijector(key: type[Constraint] | Constraint, factory: BijectorFactory) -> None:
@@ -239,12 +240,20 @@ def bijector_for(constraint: Constraint) -> Function:
     ResolutionError
         If no factory is registered for *constraint* or its types, or the
         factory's map does not claim both capabilities.
+    TypeError
+        If the factory returns neither a ``Function`` nor a backend bijector.
     MathematicalDomainError
         If *constraint* is a support onto which no smooth bijector exists, such
         as a discrete support or the unit sphere.
     """
     factory = _factory(constraint)
-    bijector = _as_bijector(factory(constraint), image=constraint)
+    returned = factory(constraint)
+    if not isinstance(returned, (Function, tfb.Bijector)):
+        raise TypeError(
+            f"the bijector factory registered for {constraint!r} returned "
+            f"{type_name(returned)}; it must return a Function or a TFP bijector"
+        )
+    bijector = _as_bijector(returned, image=constraint)
     missing = [
         claim
         for claim, holds in (
@@ -255,8 +264,8 @@ def bijector_for(constraint: Constraint) -> Function:
     ]
     if missing:
         raise ResolutionError(
-            f"the bijector {bijector.label!r} registered for {constraint!r} does not claim "
-            f"{' and '.join(missing)}"
+            f"the bijector {bijector.label!r} registered for {constraint!r} must support "
+            f"SupportsInverse and SupportsLogDetJacobian, but lacks {' and '.join(missing)}"
         )
     return bijector
 
@@ -290,7 +299,7 @@ def _factory(constraint: Constraint) -> BijectorFactory:
         if cls in _CONSTRAINT_BIJECTOR_REGISTRY:
             return _CONSTRAINT_BIJECTOR_REGISTRY[cls]
     raise ResolutionError(
-        f"No bijector registered for {constraint!r}; register one with probpipe.register_bijector."
+        f"no bijector registered for {constraint!r}; register one with probpipe.register_bijector"
     )
 
 

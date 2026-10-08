@@ -162,7 +162,7 @@ class TestStanModel:
         )
 
     def test_an_entry_the_data_block_does_not_declare_raises(self, regression_file):
-        with pytest.raises(KeyError, match="data-block"):
+        with pytest.raises(KeyError, match="unknown data variable 'M'; available data variables"):
             StanModel("regression", regression_file, data={"M": 3})
 
     def test_a_program_without_a_data_block_is_its_posterior(self, tmp_path):

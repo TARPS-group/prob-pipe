@@ -531,11 +531,10 @@ def build_array_zip_groups(
             # arrived first.
             if tuple(other.axis_groups) != tuple(first.axis_groups):
                 raise ApplicabilityError(
-                    f"{arg_refs[0].label!r} and {ref.label!r} carry the same levels "
-                    f"{tuple(first.level_names)} but are batched differently: "
-                    f"{tuple(first.axis_groups)} against {tuple(other.axis_groups)}. Levels "
-                    f"align by name, so operands naming the same levels must hold them on the "
-                    f"same axes"
+                    f"{arg_refs[0].label!r} and {ref.label!r} have the same levels "
+                    f"{tuple(first.level_names)} but different shapes per level: "
+                    f"{tuple(first.axis_groups)} vs {tuple(other.axis_groups)}. Arguments that "
+                    f"share level names must have the same shape for each level."
                 )
         batch_shape = tuple(first.batch_shape)
         groups.append(
@@ -560,11 +559,10 @@ def build_array_zip_groups(
             prior = owners.setdefault(level_name, (group.arg_refs[0].label, names))
             if prior[1] != names or prior[0] != group.arg_refs[0].label:
                 raise ApplicabilityError(
-                    f"{prior[0]!r} and {group.arg_refs[0].label!r} share the level "
-                    f"{level_name!r} without sharing all their levels ({prior[1]} against "
-                    f"{names}). Aligning one shared level across differently-leveled operands "
-                    f"is not supported yet; rename it with with_level_names to sweep them "
-                    f"independently, or give both operands the same levels to zip them"
+                    f"{prior[0]!r} has levels {prior[1]} and {group.arg_refs[0].label!r} has "
+                    f"levels {names}, but arguments that share a level must have the same "
+                    f"levels. Rename {level_name!r} on one of them with with_level_names to "
+                    f"sweep them independently, or give both the same levels to pair them."
                 )
     return tuple(groups)
 

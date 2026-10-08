@@ -195,7 +195,7 @@ class TestConstructionErrors:
         ],
     )
     def test_a_given_slot_named_like_a_produced_component_raises(self, given, event, name):
-        with pytest.raises(ValueError, match="both as a given slot and as a produced"):
+        with pytest.raises(ValueError, match="both as a given slot and as an output field"):
             _kernel(given=given, event=event, label=name)
 
     def test_a_missing_label_raises(self):
@@ -213,7 +213,7 @@ class TestConstructionErrors:
             Kernel("k", {"mu": SCALAR}, event)
 
     def test_an_event_with_a_type_hole_raises(self):
-        with pytest.raises(ValueError, match="type hole"):
+        with pytest.raises(ValueError, match="does not declare a type"):
             _kernel(event=OutputSpec(y=None))
 
     @pytest.mark.parametrize("given", [["mu"], SCALAR, 3])
@@ -280,7 +280,11 @@ class TestConditionalDistributionSpec:
         [
             pytest.param({}, OutputSpec(y=SCALAR), ValueError, "at least one", id="empty-given"),
             pytest.param(
-                {"mu": SCALAR}, OutputSpec(y=None), ValueError, "type hole", id="type-hole"
+                {"mu": SCALAR},
+                OutputSpec(y=None),
+                ValueError,
+                "does not declare a type",
+                id="type-hole",
             ),
             pytest.param(
                 {"y": SCALAR}, OutputSpec(y=SCALAR), ValueError, "both as a given", id="shared"

@@ -21,10 +21,10 @@ from probpipe import (
     function,
 )
 
-# Some assertions use NumericRecord / NumericRecordBatch — these only
-# appear as Function outputs, not as Design types. A Design is
-# always a plain RecordBatch subclass; a numeric marginal's column is a
-# NumericArrayBatch over the stored jnp.ndarray.
+# Some assertions use NumericRecord / NumericRecordBatch — these
+# appear as Function outputs and as views of numeric fields, not as Design
+# types. A Design is always a plain RecordBatch subclass; a numeric
+# marginal's column is a NumericArrayBatch over the stored jnp.ndarray.
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +258,12 @@ class TestDesignAsSweep:
 
 
 class TestSelectAll:
+    def test_a_view_of_a_categorical_field_is_a_record_batch(self):
+        cols = FullFactorialDesign(r=[1.5, 1.8], habitat=["forest", "wetland"]).select_all()
+
+        assert type(cols["r"]) is NumericRecordBatch
+        assert type(cols["habitat"]) is RecordBatch
+
     def test_select_all_returns_views(self):
         """``select_all()`` returns single-field views that share the
         Design as their parent. Sibling views passed to a
@@ -268,8 +274,9 @@ class TestSelectAll:
         cols = ff.select_all()
         assert set(cols) == {"r", "K"}
         # A view is a plain batch, not a Design: it holds none of the marginals.
-        assert type(cols["r"]) is RecordBatch
-        assert type(cols["K"]) is RecordBatch
+        # Its fields are numeric, so it is the numeric batch.
+        assert type(cols["r"]) is NumericRecordBatch
+        assert type(cols["K"]) is NumericRecordBatch
         # It carries the design's own level, which is what the sweep zips on.
         assert cols["r"].level_names == cols["K"].level_names == ("design",)
         assert cols["r"].batch_shape == cols["K"].batch_shape == (4,)

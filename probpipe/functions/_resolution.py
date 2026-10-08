@@ -137,13 +137,20 @@ def _probe(
 def _no_route(
     label: str, controls: Mapping[str, Any], probed: list[tuple[Any, Feasibility]]
 ) -> str:
-    """The message naming each probed candidate and why it declined."""
+    """The message naming each probed candidate and why it does not apply.
+
+    The message leads with the first actionable reason, which concerns a detail
+    of the call that the caller can fix rather than the kind of its arguments.
+    """
     restriction = " with exact_only" if controls.get("exact_only") else ""
     if not probed:
         return f"{label}: no route applies{restriction}; none is registered"
     tried = "; ".join(
         f"{candidate.label}: {report.description or 'infeasible'}" for candidate, report in probed
     )
+    lead = next((report.description for _, report in probed if report.actionable), "")
+    if lead:
+        return f"{label}: {lead}. Routes tried{restriction}: {tried}"
     return f"{label}: no route applies{restriction}. Tried: {tried}"
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,7 @@ from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     _declared_vector,
+    described,
     flat_unflatten,
     flat_vector,
     integer_seed,
@@ -27,6 +29,7 @@ from ._inference_utils import (
     parameter_given,
     run_seed,
     unconstrained_coordinates,
+    unfactored_model_reason,
 )
 
 if TYPE_CHECKING:
@@ -42,6 +45,42 @@ _DATA_KEY = "y"
 _SumStat = Mapping[str, Any]
 _SummaryFn = Callable[[np.ndarray], np.ndarray]
 _DistanceFn = Callable[[_SumStat, _SumStat], float]
+
+
+class _ProcessKeys:
+    """A stream of JAX keys that differs in each process that draws from it.
+
+    A sampler whose workers run in other processes gives each worker a copy of
+    the stream, so without a change every worker would draw the same keys. The
+    first draw in a process other than the one that made the stream folds a
+    value of that process's numpy generator into the key, and pyabc seeds each
+    worker's generator afresh, so the workers draw different keys. The process
+    that made the stream draws the keys it always did.
+
+    Parameters
+    ----------
+    key : PRNGKey
+        The first key of the stream.
+    """
+
+    def __init__(self, key: PRNGKey) -> None:
+        self._key = key
+        self._owner = os.getpid()
+
+    def next(self) -> PRNGKey:
+        """The next key of the stream in this process.
+
+        Returns
+        -------
+        PRNGKey
+            A key that no earlier draw in this process returned.
+        """
+        if os.getpid() != self._owner:
+            salt = int(np.random.randint(0, 2**31 - 1))
+            self._key = jax.random.fold_in(self._key, salt)
+            self._owner = os.getpid()
+        self._key, sub = jax.random.split(self._key)
+        return sub
 
 
 def _flat_key(i: int) -> str:
@@ -67,12 +106,13 @@ class PyABCDistribution(pyabc.Distribution):
     prior : Distribution
         The ProbPipe prior, which samples and has a joint density.
     key : PRNGKey
-        The JAX key threaded through :meth:`rvs`, split per draw.
+        The first key of the stream that :meth:`rvs` draws from, split per draw
+        and distinct in each worker process.
     """
 
     def __init__(self, prior: Distribution, key: PRNGKey):
         self._prior = prior
-        self._key = key
+        self._keys = _ProcessKeys(key)
         self._d = unconstrained_coordinates(prior).size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
@@ -103,8 +143,7 @@ class PyABCDistribution(pyabc.Distribution):
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
         """One joint draw from the prior, at its coordinates, as a ``pN``-keyed pyabc ``Parameter``."""
         draw, _ = self._compiled_prior()
-        self._key, sub = jax.random.split(self._key)
-        vec = np.asarray(draw(sub))
+        vec = np.asarray(draw(self._keys.next()))
         return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
     def pdf(self, x: Mapping[str, float]) -> float:
@@ -210,7 +249,6 @@ class PyABCSMCMethod(InferenceMethod):
         "min_acceptance_rate",
         "minimum_epsilon",
         "n_particles",
-        "random_seed",
         "sampler",
         "summary_fn",
         "transitions",
@@ -231,13 +269,7 @@ class PyABCSMCMethod(InferenceMethod):
         """Whether the target conditions a joint whose likelihood simulates and whose prior scores."""
         factors = model_factors(target)
         if factors is None:
-            return Feasibility(
-                feasible=False,
-                description=(
-                    "Requires a factored joint at observed values of its fields, whose other "
-                    "factors form the prior"
-                ),
-            )
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
         if not (
             isinstance(factors.likelihood, ConditionalDistribution)
             and isinstance(factors.likelihood, SupportsConditionalSampling)
@@ -245,8 +277,8 @@ class PyABCSMCMethod(InferenceMethod):
             return Feasibility(
                 feasible=False,
                 description=(
-                    "Requires a likelihood kernel that samples, the simulator; got "
-                    f"{type(factors.likelihood).__name__}"
+                    "the likelihood must be a ConditionalDistribution that can be sampled, "
+                    f"since ABC simulates from it; got {described(factors.likelihood)}"
                 ),
             )
         # Feasible means the prior can flatten, sample, *and* score jointly.
@@ -261,12 +293,22 @@ class PyABCSMCMethod(InferenceMethod):
         if not np.isfinite(density):
             return Feasibility(
                 feasible=False,
-                description="prior has no usable joint density",
+                description=(
+                    f"the joint density of the prior {described(factors.prior)} is not finite "
+                    f"at a draw from it"
+                ),
             )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
+
+        The run's seed is drawn from a workflow-owned random event, so
+        ``workflow_run(seed=...)`` reproduces the run, and an unscoped call
+        runs afresh. The seed fixes the JAX keys of the prior's draws and of
+        the simulator. It also seeds numpy's global generator for the duration
+        of the run, and pyabc draws its perturbations from that generator. The
+        caller's numpy state is restored afterwards.
 
         Parameters
         ----------
@@ -295,10 +337,6 @@ class PyABCSMCMethod(InferenceMethod):
               stopping criteria forwarded to ``ABCSMC.run`` alongside
               ``max_populations`` (whichever is hit first stops the run);
               pyabc's defaults apply when omitted.
-            - ``random_seed`` (int): seeds the JAX keys threaded into the prior
-              and simulator and pyabc's own (numpy-global) proposal RNG, so
-              repeated calls are reproducible. Omitted, the run's seed is a
-              workflow-owned random event, which ``workflow_run`` fixes.
             - ``summary_fn`` (callable): ``(batch, dim) -> (batch, summary_dim)``
               applied to simulated and observed data before the distance.
             - ``distance_fn`` (callable): ``(x, x0) -> float`` over the
@@ -307,11 +345,17 @@ class PyABCSMCMethod(InferenceMethod):
               ``"y"`` key, so pyabc's multi-statistic adaptive/weighted
               distances are not used; supply a custom
               ``summary_fn``/``distance_fn`` pair for bespoke weighting.
-            - ``sampler`` (pyabc sampler): defaults to ``SingleCoreSampler``.
-              pyabc's multicore samplers ``fork()``, which can deadlock
-              alongside JAX's threads (the same reason the PyMC backend avoids
-              forking); pass an explicit sampler to opt into local-multicore
-              parallelism.
+            - ``sampler`` (pyabc sampler): defaults to ``SingleCoreSampler``,
+              which simulates in this process, so the run's seed fixes every
+              draw. A sampler whose workers run in other processes, such as
+              pyabc's multicore samplers, draws outside ProbPipe's control.
+              Each worker reseeds numpy's generator from fresh entropy, so the
+              run does not reproduce. Each worker folds a value of its own
+              numpy generator into the run's JAX keys at its first draw, so the
+              workers draw different prior samples and simulation keys. pyabc's
+              multicore samplers also
+              ``fork()``, which can deadlock alongside JAX's threads (the same
+              reason the PyMC backend avoids forking).
 
         Returns
         -------
@@ -336,7 +380,7 @@ class PyABCSMCMethod(InferenceMethod):
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
         eps_alpha = float(kwargs.get("eps_alpha", 0.5))
-        random_seed = integer_seed(run_seed(kwargs, self.name))
+        random_seed = integer_seed(run_seed(self.name))
         summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
         distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()
@@ -353,7 +397,7 @@ class PyABCSMCMethod(InferenceMethod):
         unflatten = flat_unflatten(prior)
         coordinates = unconstrained_coordinates(prior)
 
-        sim_key = [sim_key0]  # threaded per simulator call (no numpy reseed)
+        sim_keys = _ProcessKeys(sim_key0)
         simulate = _compiled(
             lambda z, key: flat_vector(
                 simulator._conditional_sample(
@@ -364,8 +408,7 @@ class PyABCSMCMethod(InferenceMethod):
 
         def model_fn(parameters: Mapping[str, float]) -> _SumStat:
             z = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
-            sim_key[0], sub = jax.random.split(sim_key[0])
-            raw = simulate(z, sub)[None, :]
+            raw = simulate(z, sim_keys.next())[None, :]
             return {_DATA_KEY: _summarize(raw, summary_fn)}
 
         abc = pyabc.ABCSMC(

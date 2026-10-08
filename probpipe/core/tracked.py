@@ -69,6 +69,10 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     return decoupled_container(annotations)
 
 
+#: The label of an instance whose ``__init__`` stored none.
+_UNSET = object()
+
+
 class _TrackedTermMeta(_ProtocolMeta):
     """Metaclass running construction in a window, and enforcing a non-empty label.
 
@@ -109,14 +113,16 @@ class _TrackedTermMeta(_ProtocolMeta):
                 returned = instance.__init__(*args, **kwargs)
             if returned is not None:
                 raise TypeError(f"__init__() should return None, not {type(returned).__name__!r}")
-        label = getattr(instance, "_label", None)
+        label = getattr(instance, "_label", _UNSET)
         if not isinstance(label, str) or not label:
-            raise TypeError(
-                f"{cls.__name__}.__init__ must set a non-empty label "
-                f"(via _init_tracked(label, ...) / super().__init__(label=...) "
-                f"or by assigning self._label to a non-empty string) "
-                f"before returning."
-            )
+            if label is _UNSET:
+                # Only a subclass that never stores a label reaches this branch.
+                raise TypeError(
+                    f"{cls.__name__} requires a non-empty label, but its __init__ sets none; "
+                    f"it must set one with super().__init__(label=...)"
+                )
+            not_string = "" if isinstance(label, str) else ", which is not a string"
+            raise TypeError(f"{cls.__name__} requires a non-empty label, got {label!r}{not_string}")
         return instance
 
 
@@ -261,7 +267,10 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
             If *label* is not a non-empty string.
         """
         if not isinstance(label, str) or not label:
-            raise TypeError(f"{type(self).__name__}.with_label() requires a non-empty string label")
+            raise TypeError(
+                f"{type(self).__name__}.with_label() requires a non-empty string label, "
+                f"got {label!r}"
+            )
         clone = self._shallow_copy()
         object.__setattr__(clone, "_label", label)
         object.__setattr__(clone, "_provenance", None)
@@ -312,7 +321,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         if provenance is None:
             return self
         if getattr(self, "_provenance", None) is not None:
-            raise RuntimeError(f"Provenance already set on {self!r}. Provenance is write-once.")
+            raise RuntimeError(f"provenance of {self!r} is already set; it can be set only once")
         object.__setattr__(self, "_provenance", provenance)
         return self
 

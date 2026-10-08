@@ -21,13 +21,14 @@ See design II.4, II.5, and III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Self
 
 import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._repr import type_name
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -93,8 +94,9 @@ class _ObjectBatch[E](Batch[E]):
 
     __slots__ = ("_store",)
 
-    #: What the shared spec admits, phrased for the refusal a bad element earns.
-    _element_rule = "satisfy this batch's element specification"
+    #: What the shared spec admits, worded to follow "elements must" in the
+    #: refusal a bad element earns.
+    _element_rule = "match element_spec"
 
     def __init__(
         self,
@@ -113,7 +115,10 @@ class _ObjectBatch[E](Batch[E]):
 
         object.__setattr__(self, "_store", store)
         _check_elements(
-            store, element_spec, describing=self._element_rule, kind=type(self).__name__
+            store,
+            element_spec,
+            refusal=lambda element: self._element_refusal(element, element_spec),
+            kind=type(self).__name__,
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
@@ -217,6 +222,14 @@ class _ObjectBatch[E](Batch[E]):
             f"{label!r} is a {type(value).__name__}"
         )
 
+    def _element_refusal(self, element: Any, element_spec: TermSpec) -> str:
+        """Why *element_spec* refuses *element*, worded to follow "but" in the message.
+
+        The default states :attr:`_element_rule`; a class whose spec refuses
+        elements for more than one reason words each one.
+        """
+        return f"elements must {self._element_rule}"
+
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same store, indexed as given.
 
@@ -238,13 +251,11 @@ class _ObjectBatch[E](Batch[E]):
 def _frozen_object_column(column: np.ndarray) -> np.ndarray:
     """*column* as an object array nobody can write through.
 
-    A batch holds the columns it validated. An object column is the one kind a
-    caller can still mutate after construction — a JAX array is already immutable
-    and a numpy numeric column follows the aliasing convention the single-record
-    types already set — so it is copied and frozen, for the reason
-    ``_ObjectBatch`` states: a caller keeping a handle on what they passed cannot
-    write a value into the batch that its spec does not admit. Only the pointer
-    array is copied, so the elements stay shared.
+    A batch holds the columns it validated, so an object column is copied and
+    frozen, for the reason ``_ObjectBatch`` states: a caller keeping a handle on
+    what they passed cannot write a value into the batch that its spec does not
+    admit. Only the pointer array is copied, so the elements stay shared. A
+    numeric NumPy column is marked read-only in place by ``_read_only``.
     """
     frozen = np.array(column, dtype=object, subok=False)
     frozen.setflags(write=False)
@@ -271,10 +282,7 @@ def _as_object_array(elements: np.ndarray | Iterable[Any], *, kind: str) -> np.n
     """
     if isinstance(elements, np.ndarray):
         if elements.dtype != object:
-            raise TypeError(
-                f"{kind} stores objects, so an ndarray of elements must have dtype=object; "
-                f"got dtype={elements.dtype}"
-            )
+            raise TypeError(_not_object_dtype(kind, elements))
         # A subclass — np.matrix, a masked array — indexes by its own rules and
         # would not hand back the objects that were stored.
         store = np.array(elements, dtype=object, subok=False)
@@ -298,15 +306,21 @@ def _refuse_container(elements: Any, *, kind: str) -> None:
     batch of one.
     """
     if isinstance(elements, str | bytes | Mapping):
+        parts = "keys" if isinstance(elements, Mapping) else "characters"
         raise TypeError(
-            f"{kind} takes a sequence of elements, and a {type(elements).__name__} iterates "
-            f"into its parts rather than into elements; wrap it in a list to batch it as one"
+            f"{kind}: elements must be a sequence of elements, got {type(elements).__name__}, "
+            f"which would be split into its {parts}; wrap it in a list to batch it as one element"
         )
     if isinstance(elements, np.ndarray | jax.Array):
-        raise TypeError(
-            f"{kind} stores objects, so an array of elements must have dtype=object; "
-            f"got a {type(elements).__name__} of {elements.dtype}"
-        )
+        raise TypeError(_not_object_dtype(kind, elements))
+
+
+def _not_object_dtype(kind: str, elements: Any) -> str:
+    """The message for an array of elements whose dtype is not ``object``."""
+    return (
+        f"{kind}: an array of elements must have dtype=object, got {type_name(elements)} "
+        f"with dtype {elements.dtype}; use NumericArrayBatch for numeric values"
+    )
 
 
 def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
@@ -315,7 +329,7 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
         iterator = iter(elements)
     except TypeError:
         raise TypeError(
-            f"{kind} takes an object ndarray or an iterable of elements; "
+            f"{kind}: elements must be an object array or an iterable, "
             f"got {type(elements).__name__}"
         ) from None
     flat = list(iterator)
@@ -326,20 +340,19 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
 
 
 def _check_elements(
-    store: np.ndarray, element_spec: TermSpec, *, describing: str, kind: str
+    store: np.ndarray, element_spec: TermSpec, *, refusal: Callable[[Any], str], kind: str
 ) -> None:
     """Fail on the first element the shared spec does not admit, naming its position.
 
     Checked at construction rather than left to ``is_valid`` because a batch
     asserts its ``element_spec`` of *every* element: one that does not satisfy it
     makes the batch's own spec a false statement, and where it sits is what a
-    caller needs to hear. *describing* states positively what an element must be,
-    so each class supplies only its own phrase.
+    caller needs to hear. *refusal* says why the spec refuses an element, so each
+    class supplies only its own wording.
     """
     for index, element in np.ndenumerate(store):
         if not element_spec.is_valid(element):
             position = index[0] if len(index) == 1 else index
             raise TypeError(
-                f"every element of a {kind} must {describing}; the element at {position} "
-                f"is a {type(element).__name__}"
+                f"{kind}: element {position} is {type_name(element)}, but {refusal(element)}"
             )

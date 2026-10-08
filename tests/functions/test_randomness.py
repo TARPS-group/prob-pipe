@@ -146,7 +146,7 @@ class TestStructuralKeys:
         assert result.provenance.controls["randomness"]["rng_abi"] == "ProbPipe-RNG-v1"
 
     def test_there_is_no_framework_key_on_a_call(self):
-        with pytest.raises(TypeError, match="Unknown Function controls"):
+        with pytest.raises(TypeError, match="unknown Function option"):
             _lift().with_options(key=jnp.zeros(2, dtype=jnp.uint32))
 
 

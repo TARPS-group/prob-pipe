@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from probpipe import Normal, NumericArraySpec, OutputSpec
+from probpipe import Normal, NumericArraySpec, OutputSpec, workflow_run
 from probpipe.diagnostics import add_loo, add_mcmc_diagnostics, add_ppc
 from probpipe.diagnostics._view_base import NotComputed
 from probpipe.diagnostics._views import (
@@ -462,14 +462,8 @@ class TestDiagnosticsView:
     def test_to_dict_after_mcmc_ppc_and_loo_holds_every_diagnostic(self, poisson_regression):
         likelihood, model, data, posterior = poisson_regression
         add_mcmc_diagnostics(posterior)
-        add_ppc(
-            posterior,
-            total_count,
-            data,
-            kernel=likelihood,
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(posterior, total_count, data, kernel=likelihood, n_replications=20)
         add_loo(posterior, model=model, data=data)
 
         summary = posterior.diagnostics.to_dict()

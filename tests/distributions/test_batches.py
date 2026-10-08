@@ -130,7 +130,7 @@ class TestDistributionBatchConstruction:
             MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)),
             MultivariateNormal("x", jnp.zeros(3), cov=jnp.eye(3)),
         ]
-        with pytest.raises(TypeError, match="at 1"):
+        with pytest.raises(TypeError, match=r"element 1\b"):
             DistributionBatch("laws", laws, "law")
 
     def test_a_polymorphic_element_spec_admits_elements_of_different_sizes(self):
@@ -156,17 +156,17 @@ class TestDistributionBatchConstruction:
     def test_an_element_that_does_not_match_raises_naming_its_position(self, stranger):
         laws = _laws(3)
         laws[1] = stranger
-        with pytest.raises(TypeError, match="at 1"):
+        with pytest.raises(TypeError, match=r"element 1\b"):
             DistributionBatch("laws", laws, "law")
 
     def test_a_law_of_other_components_raises_naming_the_components(self):
-        with pytest.raises(TypeError, match=r"at 1 .*components \['x'\] and the law \['other'\]"):
+        with pytest.raises(TypeError, match=r"element 1 .*fields \['x'\] but the law \['other'\]"):
             DistributionBatch("laws", [Normal("x", 0.0, 1.0), Normal("other", 0.0, 1.0)], "law")
 
     def test_a_mismatch_in_a_batch_of_several_axes_names_its_index(self):
         laws = _laws(6)
         laws[5] = Normal("other", 0.0, 1.0)
-        with pytest.raises(TypeError, match=r"at \(1, 2\)"):
+        with pytest.raises(TypeError, match=r"element \(1, 2\)"):
             DistributionBatch("grid", _objects(laws, shape=(2, 3)), ("row", "col"))
 
     def test_a_first_element_that_is_not_a_law_raises_naming_its_position(self):
@@ -351,7 +351,7 @@ class TestConditionalDistributionBatch:
     def test_an_element_that_does_not_match_raises_naming_its_position(self, stranger):
         kernels = _kernels(3)
         kernels[1] = stranger
-        with pytest.raises(TypeError, match="at 1"):
+        with pytest.raises(TypeError, match=r"element 1\b"):
             ConditionalDistributionBatch("kernels", kernels, "kernel")
 
     def test_a_polymorphic_element_spec_admits_kernels_of_different_sizes(self):
@@ -481,7 +481,7 @@ class TestKindRegistration:
         laws = _laws(3)
         declared = laws[0].spec
         laws[1] = Normal("other", 0.0, 1.0)
-        with pytest.raises(TypeError, match="at 1"):
+        with pytest.raises(TypeError, match=r"entry 1\b"):
             RecordBatch(
                 "design",
                 {"prior": _objects(laws), "x": jnp.zeros(3)},

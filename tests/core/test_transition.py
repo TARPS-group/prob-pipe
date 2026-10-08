@@ -147,7 +147,7 @@ class TestIterate:
         def bad_step(dist, inp):
             return "not a distribution"
 
-        with pytest.raises(TypeError, match="returned str"):
+        with pytest.raises(TypeError, match="must return a Distribution, got str"):
             iterate(step_fn=bad_step, initial=initial, inputs=[1])
 
     def test_final_is_last(self, initial):
