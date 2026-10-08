@@ -294,8 +294,9 @@ class NutpieNutsMethod(InferenceMethod):
             return Feasibility(
                 feasible=False,
                 description=(
-                    "a StanModel cannot be conditioned on further values; its data is fixed "
-                    "when the StanModel is built"
+                    "nutpie cannot condition a StanModel on more values: it samples every "
+                    "parameter at the data the StanModel was built with. Pass data to "
+                    "StanModel(...) instead"
                 ),
             )
         try:

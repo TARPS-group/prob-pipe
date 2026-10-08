@@ -146,7 +146,9 @@ class TestCompileForNutpie:
 
     def test_unsupported_model_raises(self):
         model = MagicMock(spec=[])
-        with pytest.raises(TypeError, match="does not support"):
+        with pytest.raises(
+            TypeError, match="model must be a StanModel or PyMCModel; got MagicMock"
+        ):
             _compile_for_nutpie(model, data=None)
 
     @pytest.mark.usefixtures("_stanc")
