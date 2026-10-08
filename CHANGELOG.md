@@ -19,14 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
   `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
   mapping, and the repr is the keyword call. `dataclasses.replace` no longer
-  rebuilds a `BatchSpec`, so construct a new one instead.
+  rebuilds a `BatchSpec`; use `copy.replace` on Python 3.13 or later, or
+  construct a new one.
 - **A string shape is one dimension.** `NumericArraySpec("loc")` is
   `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
   and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
   rank-0 shape. A dimension name must be a Python identifier, so
   `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
-  `ValueError`. A negative size raises
-  `ValueError` rather than `TypeError`, and a `bool` size raises `TypeError`.
+  `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
+  and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
+  a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
+  level names, or axis counts are taken, so pass a tuple or a list.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,
@@ -1186,9 +1189,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A single int is a shape of one axis wherever a shape is taken.**
   `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
   `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
-  each read the int as a tuple of one, and these arguments take any iterable,
-  such as a list or a 1-D array. A `numpy` integer size is stored as a Python
-  `int`.
+  each read the int as a tuple of one, and these arguments take any sequence,
+  such as a list, a `range`, or a 1-D array. A `numpy` integer size is stored as
+  a Python `int`.
 - **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
   warmup's step-size adaptation targets is a method option, 0.75 unless set,
   so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and

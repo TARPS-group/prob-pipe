@@ -882,9 +882,12 @@ takes a single item as a sequence of one:
 - level names take a single str as one name, so `"draw"` is `("draw",)`;
 - axis counts take a single int as the count of one level.
 
-Any other iterable is read as one item per entry and stored as a tuple, and
-`bytes` and a mapping are refused. `probpipe/core/_shapes.py` is the one place
-these arguments are read. A function that takes one calls the reader there
+Any other sequence, such as a tuple, a list, a `range`, or a 1-D array, is read
+as one item per entry and stored as a tuple. An iterator such as a generator, a
+set, `bytes`, a `memoryview`, and a mapping are refused, so an argument is never
+used up or read in an arbitrary order. A `RecordSpec` field given as a shape
+takes a tuple only, since a field's value may also be a spec. `probpipe/core/_shapes.py`
+is the one place these arguments are read. A function that takes one calls the reader there
 rather than calling `tuple()` on the argument, passes its own name and the
 argument's for the error messages (§9.3 rule 7), and annotates the parameter
 with the alias there, such as `ShapeLike` or `LevelNamesLike`.
