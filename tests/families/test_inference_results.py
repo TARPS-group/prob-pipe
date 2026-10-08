@@ -10,7 +10,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from probpipe import EmpiricalDistribution, MultivariateNormal
+from probpipe import EmpiricalDistribution, MultivariateNormal, workflow_run
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling, SupportsVariance
 from probpipe.inference import rwmh
 
@@ -22,7 +22,8 @@ def target():
 
 @pytest.fixture(scope="module")
 def posterior(target):
-    return rwmh(dist=target, num_results=40, num_warmup=20, step_size=0.5, random_seed=0)
+    with workflow_run(seed=0):
+        return rwmh(dist=target, num_results=40, num_warmup=20, step_size=0.5)
 
 
 def test_an_mcmc_result_is_empirical(posterior):

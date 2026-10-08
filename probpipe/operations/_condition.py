@@ -143,7 +143,10 @@ class InferenceMethod(UnaryDispatchMethod):
 
     A method validates the ``method_options`` entries it receives when it runs:
     a subclass names the entries its ``execute`` reads in ``_method_options``
-    and calls :meth:`_check_options` before it computes anything.
+    and calls :meth:`_check_options` before it computes anything. A built-in
+    method reads no seed among them: each of its runs draws its key from a
+    workflow-owned random event, so ``workflow_run(seed=...)`` reproduces the
+    run.
 
     Notes
     -----

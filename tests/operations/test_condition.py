@@ -18,6 +18,7 @@ from probpipe import (
     Record,
     RecordSpec,
     conditional_distribution,
+    workflow_run,
 )
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
@@ -498,9 +499,9 @@ class TestConditioningCapabilities:
 
     def test_the_approximate_capability_receives_the_method_options(self):
         model = _RecordingAmortized("model")
-        view = condition_on.with_options(method_options={"num_results": 500, "random_seed": 3})
+        view = condition_on.with_options(method_options={"num_results": 500, "num_chains": 3})
         assert view(model, {"y": 0.3}).loc == 2.0
-        assert model.options == [{"num_results": 500, "random_seed": 3}]
+        assert model.options == [{"num_results": 500, "num_chains": 3}]
 
     def test_the_exact_capability_reads_no_budget(self):
         model = _RecordingPosterior("model")
@@ -885,9 +886,9 @@ class TestApproximateKernels:
 
     def test_an_approximate_kernel_receives_the_method_options(self):
         kernel = _AmortizedKernel()
-        view = condition_on.with_options(method_options={"num_results": 7, "random_seed": 3})
+        view = condition_on.with_options(method_options={"num_results": 7, "num_chains": 3})
         view(kernel, {"y": 0.3})
-        assert kernel.options == {"num_results": 7, "random_seed": 3}
+        assert kernel.options == {"num_results": 7, "num_chains": 3}
 
 
 class TestTheOperation:
@@ -999,7 +1000,7 @@ class TestABatchOfGivens:
 # End to end: condition_on returns a normalized law for each kind of model
 # ---------------------------------------------------------------------------
 
-_MCMC = {"num_results": 60, "num_warmup": 60, "random_seed": 0}
+_MCMC = {"num_results": 60, "num_warmup": 60}
 
 
 def _logistic_joint():
@@ -1075,9 +1076,10 @@ class TestEndToEnd:
 
     def test_the_posterior_is_labeled_by_the_model_and_the_data_and_names_its_method(self):
         model = _logistic_joint().with_label("logistic")
-        posterior = condition_on.with_options(method_options=_MCMC)(
-            model, {"y": jnp.array([1, 0, 1, 0])}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=_MCMC)(
+                model, {"y": jnp.array([1, 0, 1, 0])}
+            )
         assert posterior.label == "logistic | y"
         assert method_of(posterior) == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
@@ -1091,7 +1093,8 @@ class TestEndToEnd:
             "dataset",
             element_spec=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
         )
-        posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
+        with workflow_run(seed=0):
+            posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
         element = posteriors[1]
         assert method_of(element) == "blackjax_nuts"
         operations = {
@@ -1111,13 +1114,15 @@ class TestEndToEnd:
             "blackjax_nuts",
             False,
         )
-        posterior = view(joint, y)
+        with workflow_run(seed=0):
+            posterior = view(joint, y)
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("beta",)
 
     def test_an_unnormalized_distribution_conditioned_on_a_field_is_normalized(self):
         view = condition_on.with_options(method_options=_MCMC)
-        posterior = view(_unnormalized_pair(), {"b": 1.0})
+        with workflow_run(seed=0):
+            posterior = view(_unnormalized_pair(), {"b": 1.0})
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("a",)
         assert view.check(_unnormalized_pair(), {"b": 1.0}).method == "blackjax_nuts"
@@ -1127,7 +1132,8 @@ class TestEndToEnd:
         view = condition_on.with_options(method_options=_MCMC)
         given = dict.fromkeys(kernel.given_spec, 1.0)
         assert view.check(kernel, given).method == "blackjax_nuts"
-        posterior = view(kernel, given)
+        with workflow_run(seed=0):
+            posterior = view(kernel, given)
         assert _is_normalized(posterior)
         assert not posterior.event_spec.exposes_record
         assert tuple(posterior.event_spec.components) == ("theta",)
@@ -1137,8 +1143,11 @@ class TestEndToEnd:
         view = sample.with_options(method_options=_MCMC)
         report = view.check(_unnormalized_vector())
         assert (report.route, report.method, report.exact) == ("normalize", "blackjax_nuts", False)
-        assert jnp.shape(jnp.asarray(view(_unnormalized_vector()).value)) == (2,)
-        assert view(_unnormalized_vector(), sample_shape=(5,)).batch_shape == (5,)
+        with workflow_run(seed=0):
+            draw = view(_unnormalized_vector())
+            draws = view(_unnormalized_vector(), sample_shape=(5,))
+        assert jnp.shape(jnp.asarray(draw.value)) == (2,)
+        assert draws.batch_shape == (5,)
 
     def test_a_law_that_samples_does_not_normalize(self):
         assert sample.check(Gaussian("g")).route == "exact"
@@ -1149,10 +1158,12 @@ class TestEndToEnd:
         view = convert.with_options(method_options=_MCMC)
         law = _unnormalized_vector()
         assert view.check(law, EmpiricalDistribution).route == "normalize"
-        empirical = view(law, EmpiricalDistribution)
+        with workflow_run(seed=0):
+            empirical = view(law, EmpiricalDistribution)
+            sampling = view(law, SupportsSampling)
         assert isinstance(empirical, EmpiricalDistribution)
         assert tuple(empirical.event_spec.components) == ("x",)
-        assert isinstance(view(law, SupportsSampling), SupportsSampling)
+        assert isinstance(sampling, SupportsSampling)
 
     def test_a_pymc_model_with_a_covariate_bound_and_its_observation_conditioned(self):
         pm = pytest.importorskip("pymc")
@@ -1261,9 +1272,10 @@ class TestEndToEnd:
     def test_provenance_names_both_stages(self, full_provenance_mode):
         from probpipe import provenance_ancestors
 
-        posterior = condition_on.with_options(method_options=_MCMC)(
-            _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=_MCMC)(
+                _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
+            )
         operations = {
             ancestor.parent.provenance.operation
             for ancestor in provenance_ancestors(posterior)

@@ -150,7 +150,7 @@ class _FakeConditionOn:
 
     def with_options(self, *, method=None, method_options=None):
         def fit(d, given):
-            self.seeds.append(integer_seed(run_seed(method_options or {}, "fake")))
+            self.seeds.append(integer_seed(run_seed("fake")))
             return self(d, given)
 
         return fit

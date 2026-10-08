@@ -13,7 +13,7 @@ import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe import EmpiricalDistribution, NumericArraySpec
+from probpipe import EmpiricalDistribution, NumericArraySpec, workflow_run
 from probpipe.core.constraints import real
 from probpipe.inference._nutpie import (
     _compile_for_nutpie,
@@ -203,6 +203,23 @@ class TestMethodOptions:
     def test_without_progress_bar_the_sampler_keeps_its_default(self, tmp_path):
         assert "progress_bar" not in self._sampled_with(tmp_path)
 
+    def test_the_sampler_seed_follows_the_workflow_seed(self, tmp_path):
+        def seed(workflow_seed):
+            with workflow_run(seed=workflow_seed):
+                return self._sampled_with(tmp_path)["seed"]
+
+        assert seed(0) == seed(0)
+        assert seed(0) != seed(1)
+
+
+class TestSeedKeywords:
+    """The run's seed is a workflow event, so the function refuses a seed keyword."""
+
+    @pytest.mark.parametrize("keyword", ["random_seed", "seed"])
+    def test_a_seed_keyword_is_unexpected(self, keyword):
+        with pytest.raises(TypeError, match=f"unexpected keyword argument '{keyword}'"):
+            condition_on_nutpie.apply(MagicMock(), num_results=10, **{keyword: 0})
+
 
 class TestImportError:
     """When nutpie is missing, condition_on_nutpie raises a helpful
@@ -348,14 +365,14 @@ class TestNutpieStanIntegration:
             data={"N": N, "x": x.tolist(), "y": y.tolist()},
         )
 
-        result = condition_on_nutpie.apply(
-            model,
-            data={"y": y.tolist()},
-            num_results=200,
-            num_warmup=200,
-            num_chains=2,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            result = condition_on_nutpie.apply(
+                model,
+                data={"y": y.tolist()},
+                num_results=200,
+                num_warmup=200,
+                num_chains=2,
+            )
         assert isinstance(result, EmpiricalDistribution)
         assert num_chains(result) == 2
         assert method_of(result) == "nutpie_nuts"
@@ -364,8 +381,8 @@ class TestNutpieStanIntegration:
         beta_mean = float(np.asarray(post["beta"]).mean())
         assert np.isfinite(beta_mean)
         # Data uses beta = 1.5; the posterior should be pulled toward it and
-        # away from the N(0, 1) prior mean of 0 (a tolerance-free directional
-        # check, since this run can't be re-seeded here to measure a bound).
+        # away from the N(0, 1) prior mean of 0, a tolerance-free directional
+        # check. Observed across four workflow seeds: beta mean 1.39-1.40.
         assert abs(beta_mean - 1.5) < abs(beta_mean - 0.0)
 
     def test_a_renamed_program_keeps_its_routing(self, _stan_toolchain, tmp_path_factory):
@@ -422,14 +439,14 @@ class TestNutpieIntegration:
         np.random.seed(0)
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
         model = PyMCModel("gaussian", _gaussian_pymc_fn)
-        result = condition_on_nutpie.apply(
-            model,
-            data={"y": y_obs},
-            num_results=500,
-            num_warmup=200,
-            num_chains=2,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = condition_on_nutpie.apply(
+                model,
+                data={"y": y_obs},
+                num_results=500,
+                num_warmup=200,
+                num_chains=2,
+            )
         assert isinstance(result, EmpiricalDistribution)
         assert num_chains(result) == 2
         assert method_of(result) == "nutpie_nuts"
@@ -448,7 +465,9 @@ class TestNutpieIntegration:
         assert draws.event_template.fields == ("mu",)
         mu_draws = jnp.asarray(draws["mu"])
         assert mu_draws.shape == (1000,)  # 2 chains × 500 draws, flattened
-        # With 1000 draws total, MC SE for mean ~ post_sd / sqrt(1000) ~ 0.014
+        # With 1000 draws total, MC SE for mean ~ post_sd / sqrt(1000) ~ 0.014.
+        # Observed across four workflow seeds: |mean error| 0.004-0.032, |std
+        # error| 0.001-0.011.
         np.testing.assert_allclose(float(jnp.mean(mu_draws)), post_mean, atol=0.05)
         np.testing.assert_allclose(float(jnp.std(mu_draws)), post_sd, atol=0.05)
 
@@ -461,9 +480,8 @@ class TestNutpieIntegration:
         target = condition_on.with_options(method="unnormalized")(
             model, {"y": np.array([0.0, 1.0])}
         )
-        result = NutpieNutsMethod().execute(
-            target, num_results=30, num_warmup=30, num_chains=1, random_seed=0
-        )
+        with workflow_run(seed=0):
+            result = NutpieNutsMethod().execute(target, num_results=30, num_warmup=30, num_chains=1)
         (parent,) = result.provenance.parents
         assert (parent.type_name, parent.provenance) == (
             "_UnnormalizedConditional",
@@ -487,14 +505,14 @@ class TestNutpieIntegration:
     def test_annotations_trace_attached(self):
         model = PyMCModel("gaussian", _gaussian_pymc_fn)
         y_obs = np.array([0.0, 1.0], dtype=float)
-        result = condition_on_nutpie.apply(
-            model,
-            data={"y": y_obs},
-            num_results=50,
-            num_warmup=50,
-            num_chains=1,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            result = condition_on_nutpie.apply(
+                model,
+                data={"y": y_obs},
+                num_results=50,
+                num_warmup=50,
+                num_chains=1,
+            )
         assert arviz_data(result) is not None
         # arviz-like trace exposes posterior as an xarray Dataset/DataTree
         assert hasattr(arviz_data(result), "posterior")
@@ -519,14 +537,14 @@ class TestNutpieIntegration:
             return m
 
         model = PyMCModel("ordering", model_fn)
-        result = condition_on_nutpie.apply(
-            model,
-            data={"y": np.zeros(4, dtype=float)},
-            num_results=300,
-            num_warmup=300,
-            num_chains=1,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            result = condition_on_nutpie.apply(
+                model,
+                data={"y": np.zeros(4, dtype=float)},
+                num_results=300,
+                num_warmup=300,
+                num_chains=1,
+            )
         draws = flat_draws(result)
         assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
@@ -552,14 +570,14 @@ class TestNutpieIntegration:
             return m
 
         model = PyMCModel("partial", model_fn)
-        result = condition_on_nutpie.apply(
-            model,
-            data={"y": np.zeros(5, dtype=float)},
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            result = condition_on_nutpie.apply(
+                model,
+                data={"y": np.zeros(5, dtype=float)},
+                num_results=200,
+                num_warmup=200,
+                num_chains=1,
+            )
         draws = flat_draws(result)
         assert set(draws.event_template.fields) == {"mu", "X"}
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0)

@@ -148,7 +148,6 @@ class _TFPGradientMethod(InferenceMethod):
         "num_chains",
         "num_results",
         "num_warmup",
-        "random_seed",
         "step_size",
         "target_accept_prob",
     )
@@ -179,10 +178,7 @@ class _TFPGradientMethod(InferenceMethod):
             return Feasibility(feasible=False, description=no_density_reason(model))
         try:
             density, init, _ = _chain_target(
-                model,
-                observed,
-                init=kwargs.get("init"),
-                random_seed=kwargs.get("random_seed", 0),
+                model, observed, init=kwargs.get("init"), random_seed=0
             )
             density, init, _ = unconstrained_chain(density, init, model)
             if not is_jax_traceable(density, init):
@@ -221,7 +217,7 @@ class _TFPGradientMethod(InferenceMethod):
             raise ValueError(
                 f"target_accept_prob must be strictly between 0 and 1; got {target_accept_prob!r}"
             )
-        random_seed = run_seed(kwargs, self.name)
+        random_seed = run_seed(self.name)
         model, observed = observed_parts(target)
         density, init, event_spec = _chain_target(
             model, observed, init=kwargs.get("init"), random_seed=random_seed
@@ -263,8 +259,8 @@ def TFPNutsMethod() -> _TFPGradientMethod:
     Runs only when the caller pins ``method="tfp_nuts"``; ``blackjax_nuts``
     is what automatic selection picks for the same targets.
 
-    Its ``method_options`` are the draw, warmup, and chain counts, the seed,
-    ``init``, the initial ``step_size``, and ``target_accept_prob``, the
+    Its ``method_options`` are the draw, warmup, and chain counts, ``init``,
+    the initial ``step_size``, and ``target_accept_prob``, the
     acceptance probability that warmup's step-size adaptation targets, 0.75
     unless set. A higher target adapts a smaller step, which removes the
     divergent transitions of a posterior with regions of high curvature at the
