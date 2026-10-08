@@ -92,6 +92,11 @@ class Feasibility:
         One entry per missing declaration, each describing what is required
         for the method to be feasible. Non-empty exactly when ``feasible`` is
         ``None``.
+    actionable : bool
+        ``True`` when the method accepts this kind of argument and fails on a
+        detail of the call that the caller can fix, such as a field name the
+        argument does not have. A message that lists several reports leads
+        with an actionable one. Only an infeasible report is actionable.
 
     Raises
     ------
@@ -101,12 +106,14 @@ class Feasibility:
         or ``""`` would make ``check`` and ``execute`` disagree.
     ValueError
         If ``pending`` is empty while ``feasible`` is ``None``, or non-empty
-        while it is not.
+        while it is not, or if ``actionable`` is set on a report that is not
+        infeasible.
     """
 
     feasible: bool | None
     description: str = ""
     pending: tuple[str, ...] = field(default_factory=tuple)
+    actionable: bool = False
 
     def __post_init__(self) -> None:
         if self.feasible is not None and type(self.feasible) is not bool:
@@ -115,6 +122,8 @@ class Feasibility:
             raise ValueError("an unresolved Feasibility must name its pending declarations")
         if self.feasible is not None and self.pending:
             raise ValueError("only an unresolved Feasibility carries pending declarations")
+        if self.actionable and self.feasible is not False:
+            raise ValueError("only an infeasible Feasibility can be actionable")
 
     @property
     def unresolved(self) -> bool:
@@ -126,12 +135,14 @@ class Feasibility:
         return call_repr(type(self).__name__, [repr(self.feasible)], self._repr_arguments())
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The description and the pending declarations, where there are any."""
+        """The description, the pending declarations, and actionability, where there are any."""
         fields = []
         if self.description:
             fields.append(("description", repr(self.description)))
         if self.pending:
             fields.append(("pending", repr(self.pending)))
+        if self.actionable:
+            fields.append(("actionable", "True"))
         return fields
 
 
@@ -640,6 +651,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             feasible=feasibility.feasible,
             description=feasibility.description,
             pending=feasibility.pending,
+            actionable=feasibility.actionable,
             method_name=registration.name,
             exact=registration.exact,
         )

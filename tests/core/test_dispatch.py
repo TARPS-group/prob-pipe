@@ -266,7 +266,17 @@ class TestExactnessDeclaration:
 
     def test_a_feasibility_carries_no_exactness(self):
         """A method reports only what it alone knows; exactness is the registration's."""
-        assert {f.name for f in fields(Feasibility)} == {"feasible", "description", "pending"}
+        assert {f.name for f in fields(Feasibility)} == {
+            "feasible",
+            "description",
+            "pending",
+            "actionable",
+        }
+
+    def test_only_an_infeasible_report_is_actionable(self):
+        assert Feasibility(False, "unknown field 'x'", actionable=True).actionable
+        with pytest.raises(ValueError, match="only an infeasible Feasibility can be actionable"):
+            Feasibility(True, actionable=True)
 
     @pytest.mark.parametrize("declared_exact", [True, False], ids=["exact", "approximate"])
     def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared_exact: bool):
