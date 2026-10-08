@@ -330,7 +330,7 @@ class TestConstruction:
             RecordSpec(x=3.0)
 
     def test_invalid_shape_raises(self):
-        with pytest.raises(TypeError, match="non-negative ints"):
+        with pytest.raises(ValueError, match="entries must be non-negative, got -1"):
             RecordSpec(x=(-1,))
 
     def test_invalid_shape_float_raises(self):
@@ -885,7 +885,7 @@ class TestTermSpecs:
         assert isinstance(spec.shape, tuple)
 
     def test_numeric_array_spec_rejects_negative_dims(self):
-        with pytest.raises(TypeError, match="non-negative ints"):
+        with pytest.raises(ValueError, match="entries must be non-negative, got -1"):
             NumericArraySpec((-1,))
 
     @pytest.mark.parametrize(
@@ -1113,10 +1113,36 @@ class TestTermSpecs:
         assert spec.is_valid(np.zeros((4, 3, 4)))
         assert not spec.is_valid(np.zeros((4, 3, 5)))
 
-    @pytest.mark.parametrize("dimension", ["", -1, 1.5, None])
-    def test_numeric_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
-        with pytest.raises(TypeError, match="symbolic dimension"):
+    @pytest.mark.parametrize(
+        ("dimension", "error", "match"),
+        [
+            ("", ValueError, "must be Python identifiers such as 'n_obs', got ''"),
+            ("n obs", ValueError, "must be Python identifiers such as 'n_obs', got 'n obs'"),
+            (-1, ValueError, "must be non-negative, got -1"),
+            (1.5, TypeError, "must be non-negative ints or dimension names, got float 1.5"),
+            (None, TypeError, "must be non-negative ints or dimension names, got NoneType"),
+            (True, TypeError, "must be non-negative ints or dimension names, got bool True"),
+        ],
+    )
+    def test_numeric_array_spec_rejects_invalid_dimensions(self, dimension, error, match):
+        with pytest.raises(error, match=match):
             NumericArraySpec((dimension,))
+
+    @pytest.mark.parametrize(
+        ("shape", "expected"),
+        [("loc", ("loc",)), (3, (3,)), (np.int64(3), (3,)), (["n", 2], ("n", 2))],
+    )
+    def test_a_single_int_or_str_is_one_dimension(self, shape, expected):
+        spec = NumericArraySpec(shape)
+
+        assert spec.shape == expected
+        assert spec == NumericArraySpec(expected)
+        assert hash(spec) == hash(NumericArraySpec(expected))
+        assert repr(spec) == repr(NumericArraySpec(expected))
+
+    def test_an_empty_name_is_not_rank_zero(self):
+        with pytest.raises(ValueError, match="got ''"):
+            NumericArraySpec("")
 
     def test_distribution_spec_requires_an_output_declaration(self):
         with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):

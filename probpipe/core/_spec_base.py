@@ -14,6 +14,7 @@ import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ._repr import format_dtype, public_class_name, term_repr
+from ._shapes import ShapeLike, _as_shape
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -301,8 +302,9 @@ class NumericArraySpec(NumericSpec):
 
     ``dtype`` and ``support`` are optional (default ``None``); when unset the
     spec describes its shape only. Each dimension is either a fixed
-    non-negative integer or a non-empty symbolic name. Repeated names must have
-    the same size when a value is validated. ``dtype`` accepts any ``numpy.dtype``
+    non-negative integer or a symbolic dimension name, which is a Python
+    identifier such as ``n_obs``. Repeated names must have the same size when a
+    value is validated. ``dtype`` accepts any ``numpy.dtype``
     spelling (a dtype instance, a scalar type such as ``jnp.float32``, or a
     string such as ``"float32"``) and is normalised to ``numpy.dtype`` at
     construction, so equal dtypes compare and hash equal however they were
@@ -311,13 +313,24 @@ class NumericArraySpec(NumericSpec):
 
     Parameters
     ----------
-    shape : iterable of int or str
+    shape : int, str, or iterable of int or str
         The event shape, which holds one dimension per axis and is stored as a
-        tuple.
+        tuple. A single int or str is one dimension: ``3`` means ``(3,)`` and
+        ``"n"`` means ``("n",)``. A dimension that is an integer of another type,
+        such as ``numpy.int64``, is stored as a Python ``int``.
     dtype : dtype-like, optional
         The dtype of the values. Stored as a ``numpy.dtype``.
     support : Constraint, optional
         The constraint the entries of a value satisfy.
+
+    Raises
+    ------
+    TypeError
+        If *shape* is not an int, a str, or an iterable of them, or a dimension
+        is a ``bool`` or is neither an integer nor a string.
+    ValueError
+        If a dimension is a negative integer or a name that is not a Python
+        identifier.
     """
 
     shape: tuple[int | str, ...]
@@ -326,18 +339,11 @@ class NumericArraySpec(NumericSpec):
 
     def __init__(
         self,
-        shape: Iterable[int | str],
+        shape: ShapeLike,
         dtype: npt.DTypeLike | None = None,
         support: Constraint | None = None,
     ) -> None:
-        dimensions = tuple(shape)
-        if not all(
-            (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in dimensions
-        ):
-            raise TypeError(
-                "NumericArraySpec.shape must contain only non-negative ints or non-empty "
-                f"symbolic dimension names, got {shape!r}"
-            )
+        dimensions = _as_shape(shape, what="NumericArraySpec shape")
         if support is not None:
             _require_hashable(support, context="NumericArraySpec.support")
         object.__setattr__(self, "shape", dimensions)
