@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   event, such as `sample`, a lifted `Function` call, or `score_posterior` with
   the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
   `jax.grad` that the caller opened is tracing it. The error names the
-  operation that claimed the event. Such a call used to bake the key drawn
-  while tracing into the compiled function, so every call reused one key, or
-  it raised `ConcretizationTypeError` when the call drew the thread's first
-  workflow key. Call the function outside the transformation,
-  or transform only its deterministic part. A deterministic operation, such as
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
   `mean` of a closed-form law, runs under the caller's transformation as
   before. The engine's own traces, such as `dispatch="jax"` and an inference
   method's compiled chains, draw as before.
@@ -182,12 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The scope derives the call's key from the seed and the call's position in the
   scope, so the result differs from the one the old key gave.
-  `score_posterior` raises `TypeError` before claiming an event when sliced
-  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
-  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
-  supported, including their composition, and mapped calls share random
-  projections across the batch. For staged computation, use
-  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
   skipping sliced Wasserstein when the reference has no draws, remains
   compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form

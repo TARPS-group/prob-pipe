@@ -387,10 +387,8 @@ def _guard_caller_jax_trace(operation_kind: str) -> None:
     if _workflow_side_effects_forbidden() or not _caller_jax_trace_active():
         return
     raise RuntimeError(
-        f"The {operation_kind!r} operation claimed a workflow-owned random event "
-        "inside a JAX transformation, such as jax.jit or jax.vmap, that the caller "
-        "opened. A key drawn while tracing becomes a constant of the compiled "
-        "function, so every call would reuse it. Call the function outside the "
+        f"the {operation_kind!r} operation cannot draw random values "
+        "inside a JAX transformation opened by the caller. Call the operation outside the "
         "transformation, or transform only its deterministic part."
     )
 

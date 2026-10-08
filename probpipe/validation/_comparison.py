@@ -42,7 +42,6 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
-from jax.extend import core as jax_core
 
 from .._messages import unknown_names
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -396,25 +395,6 @@ _DEFAULT_METRICS = (
 )
 
 
-def _guard_staged_scoring() -> None:
-    """Reject workflow-owned projections inside a staged JAX computation."""
-    find_top_trace = getattr(jax_core, "find_top_trace", None)
-    if find_top_trace is None:
-        # JAX 0.9 exposes this extension entry point through jax.core.
-        find_top_trace = jax.core.find_top_trace
-    trace = find_top_trace(())
-    # A differentiation or batching trace can enclose a staging trace.
-    while trace is not None:
-        # The extension API does not export the staging trace class.
-        if type(trace).__name__ == "DynamicJaxprTrace":
-            raise TypeError(
-                "score_posterior with sliced_wasserstein cannot run in a staged JAX "
-                "computation. Call it outside jit, scan, and other staging transformations, "
-                "or use sliced_wasserstein with an explicit key."
-            )
-        trace = getattr(trace, "parent_trace", None)
-
-
 def score_posterior(
     approx: DrawsLike,
     reference: Reference,
@@ -459,17 +439,17 @@ def score_posterior(
         If *metrics* names an unknown metric, or if the draws a scored metric
         reads are not an ``(n, d)`` or 1-D array, differ in dimension from the
         reference, or are too few for the metric.
-    TypeError
-        If sliced Wasserstein scoring runs inside a staged JAX computation,
-        such as ``jax.jit`` or the body of ``jax.lax.scan``.
+    RuntimeError
+        If sliced Wasserstein scoring claims workflow-owned randomness inside
+        a JAX transformation opened by the caller, such as ``jax.jit``,
+        ``jax.grad``, or ``jax.vmap``.
 
     Notes
     -----
-    Interim implementation detail: sliced Wasserstein scoring supports
-    unstaged ``jax.grad`` and ``jax.vmap``, including their composition. A
-    mapped call shares its random projections across the batch. Staging would
-    capture those projections instead of claiming an event on each execution.
-    For staged computation, call ``sliced_wasserstein`` with an explicit key.
+    For JAX transformations, call ``sliced_wasserstein`` with an explicit key.
+    Sharing a key across mapped inputs shares their random projections;
+    passing a separate key to each input gives independent projections.
+    The random-event guard checks only metrics that claim workflow-owned randomness.
     """
     _context._assert_workflow_admission()
     metric_names = tuple(metrics)
@@ -494,7 +474,6 @@ def score_posterior(
                 f"approx draws have dimension {x.shape[1]}, but reference.draws have "
                 f"dimension {y.shape[1]}; they must match"
             )
-        _guard_staged_scoring()
         key = _claim_validation_key(
             operation_kind="score-posterior",
             execution_mode="sliced-wasserstein",
