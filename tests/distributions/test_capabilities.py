@@ -487,8 +487,8 @@ class TestGuardReports:
         report = _capability_guard(_TruncatedLaw("t", False), "_marginal", "block/x")
         assert report == Feasibility(
             False,
-            "_TruncatedLaw._marginal_guard('block/x') rejected: "
-            "Exact for a path outside the truncated block.",
+            "marginal('block/x') is not available for Distribution; it requires: "
+            "exact for a path outside the truncated block",
         )
 
     def test_a_guard_returning_none_is_unresolved_and_quotes_its_condition(self):
@@ -496,18 +496,18 @@ class TestGuardReports:
         assert report == Feasibility(
             None,
             pending=(
-                "_TruncatedLaw._marginal_guard('block/x') needs values not yet known: "
-                "Exact for a path outside the truncated block.",
+                "whether marginal('block/x') is available for Distribution depends on values "
+                "not yet known; it requires: exact for a path outside the truncated block",
             ),
         )
 
     def test_the_report_names_the_keyword_arguments(self):
         report = _capability_guard(_TruncatedLaw("t", False), "_marginal", path="a")
-        assert report.description.startswith("_TruncatedLaw._marginal_guard(path='a') rejected")
+        assert report.description.startswith("marginal(path='a') is not available")
 
     def test_a_guard_without_a_docstring_is_named_without_a_condition(self):
         report = _capability_guard(_BareGuardLaw("b"), "_marginal", "a")
-        assert report == Feasibility(False, "_BareGuardLaw._marginal_guard('a') rejected")
+        assert report == Feasibility(False, "marginal('a') is not available for Distribution")
 
     def test_a_feasibility_is_returned_as_the_guard_gave_it(self):
         custom = Feasibility(False, "the block is truncated")

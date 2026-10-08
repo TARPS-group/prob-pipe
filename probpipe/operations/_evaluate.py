@@ -13,6 +13,7 @@ import inspect
 from collections.abc import Mapping
 from typing import Any
 
+from .._messages import unknown_names
 from ..core._dispatch import Feasibility
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
@@ -98,7 +99,8 @@ def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     unknown = sorted(set(fixed) - set(parameters))
     if unknown:
         raise ApplicabilityError(
-            f"evaluate: fixed_args names {unknown}, which are not parameters of {f.label!r}"
+            f"evaluate: fixed_args of {f.label!r}: "
+            f"{unknown_names('parameter', unknown, list(parameters))}"
         )
     open_parameters = [
         name
@@ -107,10 +109,16 @@ def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
         and parameter.default is inspect.Parameter.empty
         and parameter.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
     ]
-    if len(open_parameters) != 1:
+    if not open_parameters:
         raise ApplicabilityError(
-            f"evaluate applies {f.label!r} over exactly one parameter, and fixed_args leaves "
-            f"{open_parameters or 'none'} open; supply the others by name in fixed_args"
+            f"evaluate: no parameter of {f.label!r} is left open for the value to bind; "
+            f"exactly one parameter must have no default and be absent from fixed_args"
+        )
+    if len(open_parameters) > 1:
+        raise ApplicabilityError(
+            f"evaluate: {f.label!r} has {len(open_parameters)} open parameters "
+            f"{open_parameters}, but exactly one parameter may stay open; pass the others in "
+            f"fixed_args, such as fixed_args={{{open_parameters[1]!r}: ...}}"
         )
     return open_parameters[0]
 

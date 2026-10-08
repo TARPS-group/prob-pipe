@@ -73,7 +73,7 @@ from ._evaluate import (
     _lifts,
     evaluate,
 )
-from ._operation import BoundCall, _call_label, _workflow_draws, operation
+from ._operation import BoundCall, _call_label, _subject_name, _workflow_draws, operation
 from ._sample import _record_batch
 
 __all__ = [
@@ -278,7 +278,12 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
         If the levels are not numeric.
     """
     if not isinstance(q, NumericArraySpec):
-        raise ApplicabilityError(f"quantile levels are a number or an array of numbers; got {q!r}")
+        given = getattr(q, "type", None)
+        name = given.__name__ if isinstance(given, type) else type(q).__name__
+        hint = "; pass jnp.asarray(q)" if given in (list, tuple) else ""
+        raise ApplicabilityError(
+            f"quantile: q must be a number or an array of numbers; got {name}{hint}"
+        )
     element = _summary_declaration(d.event_spec, "quantile", _quantile_term(d.event_spec.spec))
     if not q.shape:
         return element
@@ -320,7 +325,7 @@ def _can_sample(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     """
     d = call.operands["d"]
     if not isinstance(d, SupportsSampling):
-        return Feasibility(False, f"{type(d).__name__} does not sample")
+        return Feasibility(False, f"{_subject_name(d)} does not sample")
     return _capability_guard(d, "_sample")
 
 
@@ -332,9 +337,11 @@ def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     """
     event = call.operands["d"].event_spec.spec
     if isinstance(event, FunctionSpec):
-        return Feasibility(False, "the average of function-valued draws is not implemented")
+        return Feasibility(False, "the average of function-valued draws is not implemented yet")
     if not isinstance(event, (NumericSpec, DistributionSpec)):
-        return Feasibility(False, f"the draws of a {type(event).__name__} event have no average")
+        return Feasibility(
+            False, f"cannot average draws of a non-numeric event; got {type(event).__name__}"
+        )
     return _can_sample(call, result)
 
 
@@ -347,10 +354,13 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
     event = call.operands["d"].event_spec.spec
     if isinstance(event, FunctionSpec):
         return Feasibility(
-            False, "the pointwise variance of function-valued draws is not implemented"
+            False, "the pointwise variance of function-valued draws is not implemented yet"
         )
     if not isinstance(event, NumericSpec):
-        return Feasibility(False, f"the draws of a {type(event).__name__} event have no variance")
+        return Feasibility(
+            False,
+            f"cannot take the variance of draws of a non-numeric event; got {type(event).__name__}",
+        )
     return _can_sample(call, result)
 
 

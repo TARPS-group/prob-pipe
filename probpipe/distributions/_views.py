@@ -62,11 +62,15 @@ from ._conditional import (
 )
 from ._distribution import (
     _COPY_SOURCE,
+    _EMPTY_SELECTION,
     Distribution,
     _detached_term,
+    _fixes_every_field,
     _install_copy_source,
     _install_field_view,
     _install_renamed_law,
+    _no_free_dims,
+    _shared_final_names,
     _whole_term_component,
 )
 from ._factored import (
@@ -168,18 +172,15 @@ def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> O
     if isinstance(path, str):
         return OutputSpec(**{_final_segment(path): _node_at(declaration, path)})
     if not isinstance(path, tuple) or not all(isinstance(each, str) for each in path):
-        raise TypeError(f"a view's path is a string or a tuple of strings, got {path!r}")
+        raise TypeError(f"a field path must be a string or a tuple of strings; got {path!r}")
     if not path:
-        raise ValueError("a selection of event paths names at least one path")
+        raise ValueError(_EMPTY_SELECTION)
     nodes: dict[str, TermSpec] = {}
     for each in path:
         node = _node_at(declaration, each)
         component = _final_segment(each)
         if component in nodes:
-            raise ValueError(
-                f"the selected paths {list(path)} share the final segment {component!r}, "
-                f"so their components would collide"
-            )
+            raise ValueError(_shared_final_names(path))
         nodes[component] = node
     return OutputSpec(RecordSpec(nodes))
 
@@ -555,7 +556,7 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if not paths:
-        return Feasibility(False, "no path was requested")
+        return Feasibility(False, _EMPTY_SELECTION)
     parent_paths = []
     for each in paths:
         parent_path = self._parent_path(each)
@@ -564,7 +565,7 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
         parent_paths.append(parent_path)
     components = [_final_segment(each) for each in paths]
     if len(set(components)) < len(components):
-        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+        return Feasibility(False, _shared_final_names(paths))
     return _capability_guard(
         self._parent, "_marginal", parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
@@ -631,7 +632,7 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
     parent_paths = self._parent_paths([path for path, _ in items])
     kept = self._kept_components([path for path, _ in items])
     if not kept:
-        raise ValueError(f"the given covers every field of {self.label!r}, so no law remains")
+        raise ValueError(_fixes_every_field(self.label))
     conditioned = self._parent._condition_on(
         {parent_path: value for parent_path, (_, value) in zip(parent_paths, items)}, **options
     )
@@ -653,7 +654,7 @@ def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibi
             return Feasibility(False, f"{path!r} is not an event path of the view")
         parent_paths.append(parent_path)
     if not self._kept_components(paths):
-        return Feasibility(False, f"the paths {list(paths)} cover every field of the view")
+        return Feasibility(False, _fixes_every_field(self.label))
     return _capability_guard(self._parent, "_condition_on", tuple(parent_paths))
 
 
@@ -688,7 +689,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
         if not isinstance(marginal, protocol):
             return Feasibility(
                 False,
-                f"the marginal of {self._parent.label!r} at {self._path!r} claims no "
+                f"the marginal of {self._parent.label!r} at {self._path!r} does not support "
                 f"{protocol.__name__}",
             )
         return _capability_guard(marginal, method, *arguments)
@@ -849,7 +850,9 @@ class FieldView(Distribution):
 
     def __new__(cls, parent: Distribution, path: str | tuple[str, ...]) -> FieldView:
         if not isinstance(parent, Distribution):
-            raise TypeError(f"a field view reads a Distribution, got {type(parent).__name__}")
+            raise TypeError(
+                f"FieldView: parent must be a Distribution; got {type(parent).__name__}"
+            )
         declaration = _view_declaration(parent.event_spec, path)
         return object.__new__(
             _capability_subclass(FieldView, _derived_protocols(parent, declaration.spec, path))
@@ -994,14 +997,17 @@ class FieldView(Distribution):
         if isinstance(key, str):
             parent_path = self._parent_path(key)
             if parent_path is None:
-                raise KeyError(key)
+                raise KeyError(_not_an_event_path(self, key))
             if parent_path == self._path:
                 return self
             return FieldView(self._parent, parent_path)
         if not isinstance(key, tuple) or not all(isinstance(each, str) for each in key):
-            raise KeyError(key)
+            raise KeyError(f"a field path must be a string or a tuple of strings; got {key!r}")
         if not key:
-            raise ValueError("a selection of event paths names at least one path")
+            raise ValueError(_EMPTY_SELECTION)
+        for each in key:
+            if self._parent_path(each) is None:
+                raise KeyError(_not_an_event_path(self, each))
         selection = FieldView(self._parent, tuple(self._parent_paths(key)))
         return _named_as(selection, [_final_segment(each) for each in key])
 
@@ -1056,9 +1062,7 @@ class FieldView(Distribution):
         """
         unbound = set(sizes) - self.event_spec.spec.free_dims
         if unbound:
-            raise ValueError(
-                f"the view {self.label!r} has no free dimensions {sorted(unbound)} to bind"
-            )
+            raise ValueError(_no_free_dims(self, unbound, self.event_spec.spec.free_dims))
         return self._viewed(self._parent.with_dim_sizes(**sizes))
 
     def with_dim_names(self, **names: str) -> FieldView:
@@ -1461,12 +1465,25 @@ def _original_nodes(
             raise KeyError(path)
         original = event.original(path)
         if original is None:
-            raise ValueError(
-                f"{path!r} holds no single node of {parent!r}, since a move gathered or "
-                f"regrouped its fields"
-            )
+            raise ValueError(_regrouped_path(path, parent))
         originals.append(original)
     return originals
+
+
+def _regrouped_path(path: str, owner: str) -> str:
+    """The message that *path* gathers fields that ``with_path_names`` moved from several places."""
+    return (
+        f"{path!r} does not correspond to a single field of {owner!r} because "
+        f"with_path_names() regrouped fields into it; select its fields individually"
+    )
+
+
+def _not_an_event_path(law: Any, path: str) -> str:
+    """The message that *path* is not an event path of *law*, with the fields it has."""
+    return (
+        f"{path!r} is not an event path of {law.label!r}; its fields: "
+        f"{list(law.event_spec.components)}"
+    )
 
 
 def _unreached(
@@ -1477,9 +1494,7 @@ def _unreached(
         if not _has_path(declaration, path):
             return Feasibility(False, f"{path!r} is not an event path of {owner!r}")
         if event.original(path) is None:
-            return Feasibility(
-                False, f"{path!r} holds no single node of the parent, since a move regrouped it"
-            )
+            return Feasibility(False, _regrouped_path(path, owner))
     return None
 
 
@@ -1577,10 +1592,7 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
     paths = (path,) if isinstance(path, str) else tuple(path)
     originals = self._originals(paths)
     if _shared_final_segment(paths):
-        raise ValueError(
-            f"the selected paths {list(paths)} share a final segment, so their components "
-            f"would collide"
-        )
+        raise ValueError(_shared_final_names(paths))
     marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
     return _labeled(self._event.marginal(marginal, paths, originals), self.label)
 
@@ -1596,7 +1608,7 @@ def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, .
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):
-        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+        return Feasibility(False, _shared_final_names(paths))
     originals = self._originals(paths)
     return _capability_guard(
         self._parent, "_marginal", originals[0] if isinstance(path, str) else tuple(originals)
@@ -2332,8 +2344,8 @@ def _leaf_values(given_spec: InputSpec, given: Any) -> dict[str, Any]:
             return
         if not isinstance(value, (Record, Mapping)):
             raise TypeError(
-                f"the value of the structured node {path!r} is a record or a mapping of its "
-                f"fields, got {type(value).__name__}"
+                f"the value for {path!r} must be a Record or a mapping of its fields; got "
+                f"{type(value).__name__}"
             )
         for key, entry in value.items():
             visit(f"{path}{_PATH_SEP}{key}", entry)
@@ -2441,10 +2453,7 @@ def _renamed_conditional_marginal(
     paths = (path,) if isinstance(path, str) else tuple(path)
     originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
     if _shared_final_segment(paths):
-        raise ValueError(
-            f"the selected paths {list(paths)} share a final segment, so their components "
-            f"would collide"
-        )
+        raise ValueError(_shared_final_names(paths))
     marginal = self._parent._conditional_marginal(
         self._parent_given(given), originals[0] if isinstance(path, str) else tuple(originals)
     )
@@ -2464,7 +2473,7 @@ def _renamed_conditional_marginal_guard(
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):
-        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+        return Feasibility(False, _shared_final_names(paths))
     originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
     return _capability_guard(
         self._parent,
@@ -2619,7 +2628,10 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             if path.partition(_PATH_SEP)[0] in slots and path not in values
         ]
         if missing:
-            raise ValueError(f"the given binds part of a slot of {self.label!r}, without {missing}")
+            raise ValueError(
+                f"cannot bind part of a given slot of {self.label!r}: missing {missing}; bind "
+                f"every field of a structured given slot together"
+            )
         bound = {
             **self._pending,
             **{
@@ -2665,7 +2677,10 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         """
         complete, pending, _ = self._translated(given)
         if pending or len(complete) != len(self._parent.given_spec):
-            raise ValueError(f"{self.label!r} needs a value for every slot {list(self.given_spec)}")
+            raise ValueError(
+                f"cannot bind {self.label!r}: it needs a value for every given slot "
+                f"{list(self.given_spec)}"
+            )
         return complete
 
     def _condition_on(

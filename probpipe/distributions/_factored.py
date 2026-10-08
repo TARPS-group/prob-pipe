@@ -61,13 +61,18 @@ from ._conditional import (
     ConditionalDistributionSpec,
     _event_is_numeric,
     _given_side_is_numeric,
+    _missing_slots,
+    _unknown_slots,
 )
 from ._distribution import (
     _DECLARATION_MARKERS,
+    _EMPTY_SELECTION,
     Distribution,
     DistributionSpec,
     _declares_numeric_event,
+    _no_free_dims,
     _recorded_copy,
+    _shared_final_names,
     _whole_term_component,
 )
 
@@ -299,21 +304,21 @@ def _factor_graph(
     """
     factors, bindings = _flattened(tuple(factors), scope)
     if not factors:
-        raise ValueError("a factored distribution has at least one factor")
+        raise ValueError("a FactoredDistribution needs at least one factor; got none")
     producers: dict[str, int] = {}
     component_specs: dict[str, TermSpec] = {}
     for index, factor in enumerate(factors):
         if not isinstance(factor, (Distribution, ConditionalDistribution)):
             raise TypeError(
-                f"a factor is a Distribution or a ConditionalDistribution, got "
+                f"each factor must be a Distribution or a ConditionalDistribution; got "
                 f"{type(factor).__name__}"
             )
         for component, spec in factor.event_spec.components.items():
             if component in producers:
                 raise ValueError(
-                    f"the component {component!r} is produced by both "
-                    f"{factors[producers[component]].label!r} and {factor.label!r}; each "
-                    f"component is produced once, so rename one with with_path_names"
+                    f"the field {component!r} is produced by both "
+                    f"{factors[producers[component]].label!r} and {factor.label!r}; rename one "
+                    f"with with_path_names()"
                 )
             producers[component] = index
             component_specs[component] = spec
@@ -338,9 +343,9 @@ def _factor_graph(
                 continue
             if producer < index:
                 raise ValueError(
-                    f"{factor.label!r} conditions on {slot!r}, which {factors[producer].label!r} "
-                    f"produces to its left; composition is conditional-first, so put the "
-                    f"producer on the right"
+                    f"{factor.label!r} conditions on {slot!r}, but {factors[producer].label!r} "
+                    f"defines {slot!r} to its left in the product; put "
+                    f"{factors[producer].label!r} to the right of {factor.label!r}"
                 )
             _unify_specs(slot_spec, component_specs[slot], bindings, f"the given {slot!r}")
             edges.append((index, producer, slot))
@@ -444,7 +449,9 @@ def _children(value: Any) -> Mapping[str, Any]:
     children = getattr(value, "children", None)
     if isinstance(children, Mapping):
         return children
-    raise TypeError(f"a record value is a mapping of its fields, got {type(value).__name__}")
+    raise TypeError(
+        f"a record value must be a Record or a mapping of its fields; got {type(value).__name__}"
+    )
 
 
 def _components_of(declaration: OutputSpec, value: Any) -> dict[str, Any]:
@@ -498,10 +505,10 @@ def _given_values(joint: Any, given: Record | Mapping[str, Any]) -> dict[str, An
     values = dict(top.items())
     unknown = set(values) - set(joint.given_spec)
     if unknown:
-        raise KeyError(f"{sorted(unknown)} are not given slots of {joint.label!r}")
+        raise KeyError(_unknown_slots(joint.label, sorted(unknown), joint.given_spec))
     missing = [slot for slot in joint.given_spec.required if slot not in values]
     if missing:
-        raise KeyError(f"the given of {joint.label!r} omits the required slots {missing}")
+        raise KeyError(_missing_slots(joint.label, missing))
     return values
 
 
@@ -967,37 +974,33 @@ def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if not paths:
-        raise ValueError("a selection of event paths names at least one path")
+        raise ValueError(_EMPTY_SELECTION)
     component = _whole_term_component(joint.event_spec)
     record = joint._graph.event_spec.spec
     inner: list[str] = []
     for requested in paths:
         if not isinstance(requested, str):
-            raise TypeError(f"an event path is a string, got {type(requested).__name__}")
+            raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
         within = requested
         if component is not None:
             head, _, within = requested.partition(_PATH_SEP)
             if head != component or not within:
                 raise KeyError(
-                    f"{requested!r} is not a path below the component {component!r} of "
-                    f"{joint.label!r}"
+                    f"{requested!r} is not an event path of {joint.label!r}; its paths start "
+                    f"with {component + _PATH_SEP!r}"
                 )
         try:
             record.at_path(*within.split(_PATH_SEP))
         except KeyError:
             raise KeyError(
-                f"{requested!r} is not an event path of {joint.label!r}, whose components are "
+                f"{requested!r} is not an event path of {joint.label!r}; its fields: "
                 f"{list(joint.event_spec.components)}"
             ) from None
         inner.append(within)
     paths = tuple(inner)
     finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-    shared = sorted({final for final in finals if finals.count(final) > 1})
-    if shared:
-        raise ValueError(
-            f"the selected paths {list(paths)} share the final segments {shared}, which would "
-            f"name two fields of the selected record alike"
-        )
+    if len(set(finals)) < len(finals):
+        raise ValueError(_shared_final_names(paths))
     return paths
 
 
@@ -1727,10 +1730,7 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
     if free is not None:
         unbound = set(mapping) - set(free)
         if unbound:
-            raise ValueError(
-                f"{type(joint).__name__} {joint.label!r} has no free dimensions "
-                f"{sorted(unbound)} to bind"
-            )
+            raise ValueError(_no_free_dims(joint, unbound, free))
     base = vars(type(joint)).get("_capability_base", type(joint))
     scope = dict(joint._graph.scope)
     if method == "with_dim_sizes":
@@ -1784,7 +1784,7 @@ def _register_refinement(cls: type, predicate: Callable[[tuple[Factor, ...]], bo
         If *cls* is not a subclass of :class:`FactoredDistribution`.
     """
     if not (isinstance(cls, type) and issubclass(cls, FactoredDistribution)):
-        raise TypeError(f"a refinement is a subclass of FactoredDistribution, got {cls!r}")
+        raise TypeError(f"a refinement must be a subclass of FactoredDistribution; got {cls!r}")
     _REFINEMENTS.append((cls, predicate))
 
 
@@ -1887,8 +1887,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
         graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
             raise ValueError(
-                f"the factors of {label!r} leave the givens {sorted(graph.unmet)} unmet, so "
-                f"the joint is a FactoredConditionalDistribution"
+                f"no factor of {label!r} defines {sorted(graph.unmet)}, which its factors "
+                f"condition on; add a factor for them, or build a "
+                f"FactoredConditionalDistribution"
             )
         super().__init__(label, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
@@ -2007,7 +2008,8 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
-                f"the factors of {label!r} meet every given, so the joint is a FactoredDistribution"
+                f"the factors of {label!r} define every field they condition on; build a "
+                f"FactoredDistribution instead"
             )
         super().__init__(label, graph.unmet, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
@@ -2087,7 +2089,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         values = dict(top.items())
         unknown = set(values) - set(self.given_spec)
         if unknown:
-            raise KeyError(f"{sorted(unknown)} are not given slots of {self.label!r}")
+            raise KeyError(_unknown_slots(self.label, sorted(unknown), self.given_spec))
         factors: list[Factor] = []
         for factor in self.factors:
             if isinstance(factor, ConditionalDistribution):

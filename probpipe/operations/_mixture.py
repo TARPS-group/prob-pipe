@@ -25,7 +25,7 @@ def _mixture_result(K: ConditionalDistributionSpec, mixing: DistributionSpec) ->
 
 def _kernel_output_projection(K: ConditionalDistribution) -> Any:
     """The map from a joint draw to *K*'s produced components, reconstructed by ``K.event_spec``."""
-    raise NotImplementedError("mixture.kernel_output_projection")
+    raise NotImplementedError("mixture is not implemented yet")
 
 
 @operation(result=_mixture_result)

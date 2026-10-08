@@ -359,12 +359,12 @@ class TestSlice:
         joint = Kernel("w", ("a",)) * Pair("p")
         declined = _by_name(condition_on.check(joint, {"a": 0.3}).routes)["slice (exact methods)"]
         assert declined.feasible is False
-        assert "not assumed independent" in declined.description
+        assert "cannot condition on part of its fields exactly" in declined.description
 
     def test_fixing_every_field_leaves_no_law(self):
         joint = Gaussian("a") * Gaussian("b")
         declined = _by_name(condition_on.check(joint, {"a": 0.0, "b": 0.0}).routes)
-        assert "leaving no law" in declined["slice (exact methods)"].description
+        assert "leaves no field to infer" in declined["slice (exact methods)"].description
 
     def test_currying_an_approximate_kernel_makes_the_slice_approximate(self):
         joint = _AmortizedKernel() * Gaussian("y")
@@ -524,12 +524,14 @@ class TestMethodOptions:
 
     def test_a_misspelled_option_is_refused_before_the_method_runs(self):
         target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
-        with pytest.raises(TypeError, match=r"\['num_resluts'\].*'tfp_nuts'.*num_results"):
+        with pytest.raises(TypeError, match=r"'tfp_nuts'.*'num_resluts'.*num_results"):
             inference_method_registry.execute(target, method="tfp_nuts", num_resluts=500)
 
     def test_the_selected_method_refuses_an_option_it_does_not_read(self):
         target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
-        with pytest.raises(TypeError, match="'blackjax_rwmh', which reads"):
+        with pytest.raises(
+            TypeError, match="inference method 'blackjax_rwmh': unknown method option"
+        ):
             inference_method_registry.execute(
                 target, method="blackjax_rwmh", num_integration_steps=5
             )
@@ -835,7 +837,9 @@ class TestAKernelThatDeclaresNothingAboutItsLaws:
         report = condition_on.check(Kernel(), {"mu": 1.0})
         assert report.feasible is None
         assert (report.route, report.method) == (None, None)
-        assert any("declares no conditional capability" in entry for entry in report.pending)
+        assert any(
+            "does not declare whether its laws are normalized" in entry for entry in report.pending
+        )
         assert suite_methods[0].targets == suite_methods[1].targets == []
 
     def test_the_call_returns_a_normalized_law_without_inference(self, suite_methods):
@@ -908,6 +912,47 @@ class TestTheOperation:
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})
         assert conditional.event_spec.components.keys() == {"y"}
+
+
+class TestNoRouteMessages:
+    """A call no route applies to leads with the reason that concerns a detail of the call."""
+
+    def test_an_unknown_field_of_a_law_leads(self):
+        with pytest.raises(
+            ResolutionError,
+            match=r"^condition_on: unknown field 'x'; available fields: \['mu'\]\. Routes tried",
+        ):
+            condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})
+
+    def test_an_unknown_key_of_a_kernel_names_its_slots_and_fields(self):
+        with pytest.raises(
+            ResolutionError,
+            match=r"^condition_on: unknown given slot or field 'zz'; given slots: \['mu'\]",
+        ):
+            condition_on(_NormalKernel(), {"zz": 1.0})
+
+    def test_a_nested_path_that_does_not_exist_is_unknown(self):
+        joint = Normal("b", 0.0, 1.0) * Normal("a", 0.0, 1.0)
+        with pytest.raises(ResolutionError, match=r"^condition_on: unknown field 'a/q'"):
+            condition_on(joint, {"a/q": 1.0})
+
+    def test_fixing_every_field_leads(self):
+        with pytest.raises(
+            ResolutionError, match=r"^condition_on: given fixes every field of 'mu'"
+        ):
+            condition_on(Normal("mu", 0.0, 1.0), {"mu": 1.0})
+
+    def test_the_unnormalized_method_leads_with_the_same_reason(self):
+        view = condition_on.with_options(method="unnormalized")
+        with pytest.raises(ResolutionError, match=r"^condition_on: unknown field 'x'") as info:
+            view(Normal("mu", 0.0, 1.0), {"x": 1.0})
+        assert "declined" not in str(info.value)
+
+    def test_a_reason_does_not_repeat_its_route(self):
+        with pytest.raises(ResolutionError) as info:
+            condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})
+        assert "route '" not in str(info.value)
+        assert "declined" not in str(info.value)
 
 
 def _givens(field: str, values: list[float]) -> NumericRecordBatch:

@@ -80,6 +80,15 @@ def test_a_map_left_with_two_open_parameters_is_refused():
         evaluate(Function("add", add), 1.0)
 
 
+def test_a_map_left_with_no_open_parameter_is_refused_without_naming_others():
+    def add(x, y):
+        return x + y
+
+    with pytest.raises(ApplicabilityError, match="no parameter of 'add' is left open") as info:
+        evaluate(Function("add", add), 1.0, fixed_args={"x": 1.0, "y": 2.0})
+    assert "pass the others" not in str(info.value)
+
+
 def test_a_batch_is_swept_elementwise():
     rows = NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=NumericArraySpec(()))
     swept = evaluate(Function("f", lambda x: x + 1.0), rows)
