@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
+  `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
+  every column is numeric and no explicit non-numeric `element_spec` vetoes it,
+  as `Record(...)` returns a `NumericRecord`. Such a batch has `to_vector`,
+  where it was a plain `RecordBatch` before. Replace a check of
+  `type(batch) is RecordBatch` with `isinstance(batch, RecordBatch)`.
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
   `with_dim_sizes` returns together with the law it is made from, as it draws a

@@ -478,7 +478,7 @@ class TestRecordAutoPromotion:
         assert type(back) is NumericRecord
         assert jax.tree_util.tree_structure(back) == treedef
 
-    def test_batch_subclasses_unaffected(self):
+    def test_batch_construction_promotes_as_record_construction_does(self):
         from probpipe import NumericRecordBatch, RecordBatch
 
         ra = RecordBatch(
@@ -488,7 +488,7 @@ class TestRecordAutoPromotion:
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
         )
-        assert type(ra) is RecordBatch
+        assert type(ra) is NumericRecordBatch
         nrb = NumericRecordBatch(
             "batch",
             {"a": jnp.zeros((3,))},
