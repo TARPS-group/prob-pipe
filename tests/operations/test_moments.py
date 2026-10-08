@@ -341,7 +341,9 @@ class TestQuantile:
             quantile(Measure("m"), 0.5)
 
     def test_the_levels_are_numeric(self):
-        with pytest.raises(ApplicabilityError, match="levels"):
+        with pytest.raises(
+            ApplicabilityError, match="q must be a number or an array of numbers; got str"
+        ):
             quantile(Gaussian("g"), "median")
 
 

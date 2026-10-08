@@ -90,9 +90,9 @@ class TestOutputSpec:
         )
         batch = OutputSpec(BatchSpec(record, ((3,),), ("sample",)))
         assert (list(batch.components), batch.exposes_record) == (["mu", "tau"], False)
-        with pytest.raises(TypeError, match="exposed law declaration needs"):
+        with pytest.raises(TypeError, match=r"with_spec\(\) needs a DistributionSpec"):
             law.with_spec(record)
-        with pytest.raises(TypeError, match="no record's fields"):
+        with pytest.raises(TypeError, match="a record or a single named value"):
             _components_record(law)
 
     def test_a_batch_of_arrays_exposes_no_components(self):
@@ -142,7 +142,7 @@ class TestOutputSpec:
     def test_an_exposed_term_that_is_no_record_is_refused(self):
         # The constructor refuses one, so only a malformed declaration holds it.
         malformed = SimpleNamespace(exposes_record=True, spec=NumericArraySpec(()))
-        with pytest.raises(TypeError, match="an exposed declaration holds a RecordSpec"):
+        with pytest.raises(TypeError, match="expected an output that is a record"):
             _components_record(malformed)
 
 
@@ -196,7 +196,10 @@ class TestOutputSpecCompletion:
         exposed = OutputSpec(RecordSpec(a=NumericArraySpec((2,))))
         with pytest.raises(ValueError, match=r"^a has dimension 3"):
             exposed.with_spec(RecordSpec(a=NumericArraySpec((3,))))
-        with pytest.raises(ValueError, match=r"^fields \['b'\] do not match template fields"):
+        with pytest.raises(
+            ValueError,
+            match=r"^fields do not match the declared fields: missing \['a'\], unexpected \['b'\]",
+        ):
             exposed.with_spec(RecordSpec(b=NumericArraySpec((2,))))
 
     def test_with_spec_keeps_an_exposed_record_exposed(self):
@@ -216,7 +219,7 @@ class TestOutputSpecCompletion:
             OutputSpec(prior=array).with_path_names({"prior/x": "y"})
         # The component is renamed in place: moving it into a group would
         # change the packaging, so a path target raises.
-        with pytest.raises(ValueError, match="keeps the packaging"):
+        with pytest.raises(ValueError, match="cannot move it into a group"):
             OutputSpec(prior=array).with_path_names(prior="group/beta")
 
     def test_a_whole_record_renames_its_fields_through_its_component(self):
@@ -274,7 +277,7 @@ class TestOutputSpecCompletion:
     )
     def test_a_whole_record_keeps_its_fields_under_its_component(self, renames):
         record = RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))
-        with pytest.raises(ValueError, match="keeps the packaging"):
+        with pytest.raises(ValueError, match="must stay under"):
             OutputSpec(p=record).with_path_names(renames)
 
     def test_a_whole_term_refuses_a_repeated_or_an_empty_rename(self):
@@ -405,7 +408,7 @@ class TestDeclarationRoundTrips:
 class TestDimensionBinding:
     @pytest.mark.parametrize("actual", [None, {"x": NumericArraySpec((3,))}])
     def test_binding_requires_an_actual_term_spec(self, actual):
-        with pytest.raises(TypeError, match="bind_dims_from_spec expects a TermSpec"):
+        with pytest.raises(TypeError, match=r"bind_dims_from_spec\(\) expects a TermSpec, got"):
             RecordSpec(x=(3,)).bind_dims_from_spec(actual)
 
     @pytest.mark.parametrize("kind", ["array", "batch"])
@@ -424,7 +427,7 @@ class TestDimensionBinding:
         else:
             declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
             actual = BatchSpec(OpaqueSpec(), [("m",)], ["draw"])
-        with pytest.raises(ValueError, match="meets the symbolic dimensions 'n' and 'm'"):
+        with pytest.raises(ValueError, match="symbolic dimension 'm' where 'n' is expected"):
             declared.bind_dims_from_spec(actual)
 
     def test_a_symbol_on_the_other_side_binds_to_this_side_size(self):
@@ -450,7 +453,7 @@ class TestDimensionBinding:
                 RecordSpec(x=(3,)),
                 NumericArraySpec((3,)),
                 np.zeros(3),
-                "expected named fields",
+                r"must be a record or a mapping of fields, got an array of shape \(3,\)",
                 id="record-receives-array",
             ),
         ],
@@ -522,7 +525,9 @@ class TestDimensionBinding:
 
     def test_binding_array_values_checks_dtype_and_record_kind(self):
         spec = NumericArraySpec(("n",), dtype="int32")
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(
+            ValueError, match="has dtype float32, which cannot be cast to the declared"
+        ):
             spec.bind_dims_from_value(np.zeros(3, dtype="float32"))
         record = Record("record", x=np.zeros(3))
         assert not spec.is_valid(record)
@@ -620,9 +625,9 @@ class TestSpecKinds:
         assert isinstance(numeric, NumericRecordSpec)
         assert numeric.vector_size == 10
         assert numeric.leaf_shapes == {"x": (4,), "nested/y": (2, 3)}
-        with pytest.raises(TypeError, match=r"field 'x'.*requires NumericArraySpec"):
+        with pytest.raises(TypeError, match=r"field 'x' must have a NumericArraySpec"):
             NumericRecord.from_vector("value", numeric, np.zeros(10))
-        with pytest.raises(TypeError, match=r"field 'x'.*requires NumericArraySpec"):
+        with pytest.raises(TypeError, match=r"field 'x' must have a NumericArraySpec"):
             NumericRecordBatch.from_vector("values", numeric, np.zeros((2, 10)), level_names="row")
 
 
@@ -674,11 +679,15 @@ class TestInputSpec:
             InputSpec(a=NumericArraySpec(())).with_optional("c")
 
     def test_binding_values_requires_a_mapping(self):
-        with pytest.raises(TypeError, match=r"InputSpec\.bind_dims_from_value expects a mapping"):
+        with pytest.raises(
+            TypeError, match=r"InputSpec\.bind_dims_from_value\(\) expects a mapping, got NoneType"
+        ):
             InputSpec(x=OpaqueSpec()).bind_dims_from_value(None)
 
     def test_binding_specs_requires_an_input_spec(self):
-        with pytest.raises(TypeError, match=r"InputSpec\.bind_dims_from_spec expects an InputSpec"):
+        with pytest.raises(
+            TypeError, match=r"InputSpec\.bind_dims_from_spec\(\) expects an InputSpec, got"
+        ):
             InputSpec(x=OpaqueSpec()).bind_dims_from_spec({"x": OpaqueSpec()})
 
     def test_inputs_follow_mapping_equality_while_preserving_slot_order(self):
@@ -745,7 +754,7 @@ class TestRecordValueValidation:
         if valid:
             assert spec.bind_dims_from_value(value) == spec.with_dim_sizes(n=3)
         else:
-            with pytest.raises(ValueError, match="does not conform"):
+            with pytest.raises(ValueError, match="has dtype float32, which cannot be cast"):
                 spec.bind_dims_from_value(value)
         assert spec.free_dims == {"n"}
 
@@ -1044,3 +1053,22 @@ class TestNestedSpecBinding:
         inputs = InputSpec(dict(fields))
         with pytest.raises(ValueError, match="already bound"):
             inputs.bind_dims_from_value({"x": np.zeros(3), "group": {"y": np.zeros(4)}})
+
+
+class TestDeclarationMessages:
+    def test_a_positional_array_spec_is_told_to_take_a_keyword(self):
+        with pytest.raises(TypeError, match=r"cannot take a NumericArraySpec positionally; name"):
+            OutputSpec(NumericArraySpec(()))
+
+    def test_a_shape_tuple_slot_is_told_to_use_an_array_spec(self):
+        with pytest.raises(TypeError, match=r"input slot 'x' needs a TermSpec, got tuple; use Num"):
+            InputSpec(x=(3,))
+
+    def test_an_unknown_optional_slot_lists_the_slots(self):
+        with pytest.raises(KeyError, match=r"unknown slot 'y'; available slots: \['x'\]"):
+            InputSpec(x=NumericArraySpec(())).with_optional("y")
+
+    def test_binding_values_names_the_missing_and_unexpected_slots(self):
+        spec = InputSpec(x=OpaqueSpec(), y=OpaqueSpec())
+        with pytest.raises(ValueError, match=r"missing \['y'\], unexpected \['z'\]$"):
+            spec.bind_dims_from_value({"x": 1.0, "z": 2.0})

@@ -21,7 +21,7 @@ from typing import Any, Literal, Union, get_args, get_origin
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import MethodInfo
-from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr
+from ..core._repr import call_repr, format_names, mapping_repr, sequence_repr, type_name
 from ..core._specs import (
     InputSpec,
     NumericArraySpec,
@@ -483,15 +483,22 @@ def _role_refusal(
     function_name: str | None, label: str, role: tuple[type[TermSpec], ...], value: Any
 ) -> ApplicabilityError:
     """The refusal of *value* at the parameter *label* names, whose role names *role*."""
-    owner = f"{function_name}: " if function_name else ""
     kinds = ", ".join(kind.__name__ for kind in role)
-    detail = f", whose kind is {arrived_kind(value).__name__}"
+    detail = arrived_kind(value).__name__
     if isinstance(value, Batch) and len(value.batch_shape) > 0:
         detail += f" with {type(value.element_spec).__name__} elements"
     elif isinstance(value, Distribution) and value.event_spec.spec is not None:
         detail += f" with {type(value.event_spec.spec).__name__} draws"
+    return _kind_refusal(function_name, label, kinds, value, detail)
+
+
+def _kind_refusal(
+    function_name: str | None, label: str, accepts: str, value: Any, kind: str
+) -> ApplicabilityError:
+    """The refusal of *value*, of kind *kind*, at a parameter that accepts *accepts*."""
+    owner = f"{function_name}: " if function_name else ""
     return ApplicabilityError(
-        f"{owner}{label!r} accepts {kinds}, but received a {type(value).__name__}{detail}"
+        f"{owner}parameter {label!r} accepts {accepts}, but got {type_name(value)} (kind {kind})"
     )
 
 
@@ -594,13 +601,7 @@ def admit_arguments(
             value = values[name]
             kind = _admitted_kind(value, type(spec))
             if not _accepts(type(spec), kind):
-                owner = f"{function_name}: " if function_name else ""
-                arrived = type(value).__name__
-                article = "an" if arrived[0] in "AEIOU" else "a"
-                raise ApplicabilityError(
-                    f"{owner}parameter {name!r} accepts {type(spec).__name__}, and got "
-                    f"{article} {arrived}, whose kind is {kind.__name__}"
-                )
+                raise _kind_refusal(function_name, name, type(spec).__name__, value, kind.__name__)
     for ref in _binding.iter_input_refs(info, values):
         value = _binding.input_ref_value(values, ref)
         role = (roles or {}).get(ref.parameter_name)
@@ -610,10 +611,10 @@ def admit_arguments(
         if isinstance(value, ConditionalDistribution) and _expects_value(
             info.hints.get(ref.parameter_name)
         ):
+            owner = f"{function_name}: " if function_name else ""
             raise ApplicabilityError(
-                f"parameter {ref.label!r} expects a value, and a value parameter accepts no "
-                f"ConditionalDistribution: got {type(value).__name__} {value.label!r}, which is "
-                f"a kernel with no marginal law to lift over. Condition it on a given value "
-                f"first, or annotate the parameter ConditionalDistribution to consume the "
-                f"kernel itself"
+                f"{owner}parameter {ref.label!r} expects a value, but got {type_name(value)} "
+                f"{value.label!r}, which has no marginal to broadcast over. Condition "
+                f"{value.label!r} on a value first, or annotate {ref.parameter_name!r} as "
+                f"ConditionalDistribution to receive it as is"
             )

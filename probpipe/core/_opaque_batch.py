@@ -5,7 +5,7 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 import numpy as np
@@ -14,6 +14,7 @@ from ._kinds import register_kind
 from ._object_batch import _as_object_array, _ObjectBatch
 from ._opaque import Opaque, OpaqueSpec
 from ._spec_base import _opaque_spec_of
+from ._specs import TermSpec
 from .provenance import Provenance
 
 __all__ = ["OpaqueBatch"]
@@ -89,7 +90,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     __slots__ = ()
 
-    _element_rule = "be any value but a mapping, which denotes a subtree"
+    def _element_refusal(self, element: Any, element_spec: TermSpec) -> str:
+        """Why *element_spec* refuses *element*: it is a mapping, or not of the spec's type."""
+        if isinstance(element, Mapping):
+            return "elements cannot be mappings; use RecordBatch for structured values"
+        return f"elements must match element_spec {element_spec!r}"
 
     def __init__(
         self,

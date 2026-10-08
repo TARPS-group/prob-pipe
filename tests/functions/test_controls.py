@@ -20,6 +20,7 @@ from probpipe import (
     NumericArraySpec,
     OutputSpec,
     ResolutionError,
+    SupportsMean,
     WorkflowKind,
     function,
     workflow_run,
@@ -73,14 +74,14 @@ class TestTwoNamespaces:
     def test_construction_metadata_is_not_a_control(self, name):
         wrapped = Function("identity", _identity)
 
-        with pytest.raises(TypeError, match="Unknown Function controls"):
+        with pytest.raises(TypeError, match="unknown Function option"):
             wrapped.with_options(**{name: "x"})
 
     @pytest.mark.parametrize("name", ["seed", "key"])
     def test_there_is_no_framework_key_or_seed_control(self, name):
         wrapped = Function("identity", _identity)
 
-        with pytest.raises(TypeError, match="Unknown Function controls"):
+        with pytest.raises(TypeError, match="unknown Function option"):
             wrapped.with_options(**{name: 0})
 
     def test_a_wrapped_functions_own_seed_parameter_is_an_ordinary_argument(self):
@@ -190,7 +191,7 @@ class TestResolution:
 
 class TestAdmissibility:
     def test_an_unknown_control_raises_at_with_options(self):
-        with pytest.raises(TypeError, match="Unknown Function controls"):
+        with pytest.raises(TypeError, match="unknown Function option"):
             Function("identity", _identity).with_options(budget=3)
 
     @pytest.mark.parametrize(
@@ -243,8 +244,40 @@ class TestAdmissibility:
 
     @pytest.mark.parametrize("body", [lambda x, y=0: x + y, lambda x, **kwargs: x])
     def test_an_unknown_control_raises_at_construction_naming_it(self, body):
-        with pytest.raises(TypeError, match=r"Unknown Function controls: \['y'\]"):
+        with pytest.raises(TypeError, match=r"unknown Function option 'y'.*bind=\{'y': \.\.\.\}"):
             Function("add", body, y=2)
+
+    def test_an_unknown_control_lists_the_controls(self):
+        with pytest.raises(TypeError, match=r"available Function options: \[.*'dispatch'"):
+            Function("identity", _identity).with_options(budget=3)
+
+    def test_a_differentiability_claim_is_refused_naming_the_keyword(self):
+        with pytest.raises(
+            NotImplementedError, match=r"Function\(differentiable=\.\.\.\) is not supported yet"
+        ):
+            Function("identity", _identity, differentiable=NumericArraySpec(()))
+
+    @pytest.mark.parametrize(
+        ("entry", "message"),
+        [
+            ({"method": 3}, r"conversions\['x'\]\['method'\] must be a string; got 3"),
+            ({"exact_only": "yes"}, r"conversions\['x'\]\['exact_only'\] must be a bool"),
+        ],
+    )
+    def test_an_inadmissible_conversions_entry_names_the_setting(self, entry, message):
+        def body(x: SupportsMean):
+            return 0.0
+
+        wrapped = Function("body", body, conversions={"x": entry})
+
+        with pytest.raises(TypeError, match=message):
+            wrapped(standard_normal())
+
+    def test_an_inadmissible_worker_count_shows_the_value(self):
+        with pytest.raises(
+            ValueError, match="max_workers must be a positive integer or None; got 0"
+        ):
+            Function("identity", _identity).with_options(max_workers=0)
 
     def test_an_argument_binds_at_construction_through_bind(self):
         wrapped = Function("add", lambda x, y: x + y, bind={"y": 2.0})

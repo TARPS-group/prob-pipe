@@ -31,6 +31,7 @@ derived, and its routes in selection order.
 from __future__ import annotations
 
 import ast
+import difflib
 import dis
 import inspect
 import textwrap
@@ -40,16 +41,17 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 
+from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
 from ..core._kinds import _KINDS
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names
+from ..core._repr import format_names, public_class_name
 from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
-from ..distributions._capabilities import _capability_guard, _guard_condition
+from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
 from ..functions import _broker, _descendants
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
@@ -213,7 +215,9 @@ class OperationRoute(Protocol):
         ...
 
 
-def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feasibility:
+def _as_feasibility(
+    report: Any, source: Callable[..., Any], owner: str, subject: str = ""
+) -> Feasibility:
     """*report* as a Feasibility, quoting the condition *source*'s docstring states.
 
     Parameters
@@ -225,13 +229,15 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
         The check or condition that returned *report*, whose docstring's first
         paragraph states the condition.
     owner : str
-        The checker that a declined or an unresolved report names, such as
-        ``route 'identity'``.
+        The checker that an unresolved report names, such as ``route 'identity'``.
+    subject : str
+        The prefix of an infeasible report's description, such as ``"convert: "``;
+        a route's report has none, since the listing of routes names the route.
 
     Returns
     -------
     Feasibility
-        A feasible report for ``True``, a declined report for ``False``, and an
+        A feasible report for ``True``, an infeasible report for ``False``, and an
         unresolved report for ``None``, the last two quoting the condition. A
         Feasibility is returned as it is, and a CallReport gives its selected
         route's report, or else an unresolved report of its pending checks.
@@ -248,15 +254,23 @@ def _as_feasibility(report: Any, source: Callable[..., Any], owner: str) -> Feas
         if report.selected is not None:
             return report.selected
         return Feasibility(None, pending=report.pending)
-    condition = _guard_condition(source)
-    suffix = f": {condition}" if condition else ""
+    condition = _requirement(source)
     if report is True:
         return Feasibility(True)
     if report is False:
-        return Feasibility(False, f"{owner} declined{suffix}")
+        reason = f"requirement not met: {condition}" if condition else "a requirement is not met"
+        return Feasibility(False, f"{subject}{reason}")
     if report is None:
-        return Feasibility(None, pending=(f"{owner} needs values not yet known{suffix}",))
+        suffix = f"; it requires: {condition}" if condition else ""
+        return Feasibility(None, pending=(f"{owner} depends on values not yet known{suffix}",))
     raise TypeError(f"{owner} returned {report!r}; a check returns a bool, None, or a Feasibility")
+
+
+def _subject_name(subject: Any) -> str:
+    """*subject* as a message names it: its public class, and its label where it has one."""
+    label = getattr(subject, "label", None)
+    name = public_class_name(type(subject))
+    return f"{name} {label!r}" if isinstance(label, str) else name
 
 
 class _Route:
@@ -458,7 +472,7 @@ class _CapabilityRoute(_Route):
         subject = call.operands[self.operand]
         if not isinstance(subject, self.protocol):
             return Feasibility(
-                False, f"{type(subject).__name__} does not claim {self.protocol.__name__}"
+                False, f"{_subject_name(subject)} does not implement {self.protocol.__name__}"
             )
         if self._check is not None:
             return _as_feasibility(self._check(call, result), self._check, f"route {self.name!r}")
@@ -829,7 +843,9 @@ def _validated_roles(
             raise TypeError(f"{owner} declares a role for {name!r}, which is not a parameter")
         accepted = tuple(kinds)
         if not all(isinstance(kind, type) and issubclass(kind, TermSpec) for kind in accepted):
-            raise TypeError(f"the role of {owner}'s {name!r} must list TermSpec subclasses")
+            raise TypeError(
+                f"{owner}: the role of parameter {name!r} must list TermSpec subclasses"
+            )
         derived[name] = accepted
     return derived
 
@@ -920,13 +936,15 @@ class Operation(Function):
         unknown = (read | set(_parameter_names(label) if label else ())) - set(parameters)
         if unknown:
             raise TypeError(
-                f"{owner} has a result rule, condition, or label rule reading {sorted(unknown)}"
+                f"{owner}: the result rule, a condition, or the label rule reads "
+                f"{sorted(unknown)}, which the declaration does not declare as parameters"
             )
         derived = not _has_empty_body(declaration)
         if identity_check is not None:
             if not derived:
                 raise TypeError(
-                    f"{owner} is primitive; only a derived operation takes an identity check"
+                    f"{owner} has an empty body, so it cannot take identity_check; only an "
+                    f"operation whose body returns its identity can"
                 )
             if not callable(identity_check):
                 raise TypeError(f"{owner} needs a callable identity check; got {identity_check!r}")
@@ -1259,7 +1277,10 @@ class Operation(Function):
         """
         unknown = set(controls) - set(self.options)
         if unknown:
-            raise TypeError(f"Unknown controls for operation {self.label!r}: {sorted(unknown)}")
+            raise TypeError(
+                f"{self.label}.with_options(): "
+                f"{unknown_names('control', sorted(unknown), sorted(self.options))}"
+            )
         return super().with_options(**controls)
 
     def raw(self) -> Callable[..., Any]:
@@ -1363,7 +1384,10 @@ class Operation(Function):
         for condition in self._conditions:
             arguments = {name: declarations[name] for name in _parameter_names(condition)}
             report = _as_feasibility(
-                condition(**arguments), condition, f"{self.label} condition {condition.__name__}"
+                condition(**arguments),
+                condition,
+                f"{self.label} condition {condition.__name__}",
+                f"{self.label}: ",
             )
             if report.feasible is False:
                 raise ApplicabilityError(report.description)
@@ -1457,10 +1481,18 @@ class Operation(Function):
                     and method_name in route.registry.list_methods()
                 ):
                     return [_Candidate(route, None, index, method_name)]
-            raise ResolutionError(
-                f"{self.label}: no registry route {route_name!r} holds a method named "
-                f"{method_name!r}; {self._names_available()}"
-            )
+            registry_routes = {
+                route.name: route for route in routes if isinstance(route, _RegistryRoute)
+            }
+            holder = registry_routes.get(route_name)
+            if holder is None:
+                detail = unknown_names("registry route", [route_name], registry_routes)
+            else:
+                detail = (
+                    f"route {route_name!r} has no method {method_name!r}; its methods: "
+                    f"{list(holder.registry.list_methods())}"
+                )
+            raise ResolutionError(f"{self.label}: {detail}")
         named = [(index, route) for index, route in enumerate(routes) if route.name == method]
         holders = [
             (index, route)
@@ -1472,8 +1504,8 @@ class Operation(Function):
             forms = [route.name for _, route in named]
             forms += [f"{route.name}/{method}" for _, route in holders]
             raise ResolutionError(
-                f"{self.label}: method={method!r} matches {', '.join(forms)}; name one of "
-                f"them, a registry method as route/method"
+                f"{self.label}: method={method!r} is ambiguous; it matches "
+                f"{', '.join(forms)}. Pass one of these names"
             )
         if named:
             index, route = named[0]
@@ -1481,19 +1513,30 @@ class Operation(Function):
                 return [_Candidate(route, True, index), _Candidate(route, False, index)]
             if exact_only and route.exact is not True:
                 raise ResolutionError(
-                    f"{self.label}: route {method!r} is not exact and exact_only was requested"
+                    f"{self.label}: route {method!r} is not exact, but exact_only=True"
                 )
             return [_Candidate(route, route.exact, index)]
         if holders:
             return [_Candidate(route, None, index, method) for index, route in holders]
-        raise ResolutionError(
-            f"{self.label}: no route or registered method named {method!r}; "
-            f"{self._names_available()}"
-        )
+        raise ResolutionError(f"{self.label}: {self._unknown_method(method)}")
 
-    def _names_available(self) -> str:
-        """The routes a ``method`` control may name, in words."""
-        return f"routes: {', '.join(route.name for route in self._route_table.routes) or 'none'}"
+    def _unknown_method(self, method: str) -> str:
+        """The message that no route or registry method is named *method*, with those that are."""
+        routes = [route.name for route in self._route_table.routes]
+        methods = list(
+            dict.fromkeys(
+                name
+                for route in self._route_table.routes
+                if isinstance(route, _RegistryRoute)
+                for name in route.registry.list_methods()
+            )
+        )
+        close = difflib.get_close_matches(method, routes + methods, n=1)
+        hint = f". Did you mean {close[0]!r}?" if close else ""
+        return (
+            f"unknown method {method!r}; available routes: {routes}, registry methods: "
+            f"{methods}{hint}"
+        )
 
     # -- the summary ---------------------------------------------------------
 
@@ -1802,8 +1845,7 @@ class OperationRegistry:
         try:
             return self._operations[name]
         except KeyError:
-            available = ", ".join(self._operations) or "none"
-            raise KeyError(f"no operation named {name!r}; registered: {available}") from None
+            raise KeyError(unknown_names("operation", [name], self._operations)) from None
 
 
 operation_registry: OperationRegistry = OperationRegistry()

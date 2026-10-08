@@ -226,7 +226,7 @@ class TestSequentialLiftingWorkflowRun:
                 first = identity(normal)
                 deterministic(1.0)
                 identity(empirical)
-                with pytest.raises(TypeError, match="Missing required input"):
+                with pytest.raises(TypeError, match=r"identity\(\) missing required argument 'x'"):
                     identity()
                 second = identity(normal)
                 return first, second

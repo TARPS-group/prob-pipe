@@ -26,7 +26,7 @@ def test_extract_draws_reads_an_empirical_law_and_refuses_others():
     empirical = EmpiricalDistribution("x", jnp.array([4.0, 5.0]))
     np.testing.assert_array_equal(extract_draws(empirical)["x"], [4.0, 5.0])
 
-    with pytest.raises(TypeError, match="Cannot extract draws"):
+    with pytest.raises(TypeError, match="cannot extract draws"):
         extract_draws(object())
 
 

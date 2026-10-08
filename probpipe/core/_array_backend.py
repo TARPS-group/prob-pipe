@@ -210,8 +210,8 @@ def register_array_backend(leaf_type: type, backend: ArrayBackend) -> None:
     """
     if leaf_type in _backend_registry:
         warnings.warn(
-            f"register_array_backend: overwriting the existing ArrayBackend "
-            f"registration for {leaf_type.__name__}.",
+            f"register_array_backend() replaced the ArrayBackend already registered "
+            f"for {leaf_type.__name__}",
             stacklevel=2,
         )
     _backend_registry[leaf_type] = backend
@@ -298,6 +298,24 @@ def _is_numeric_leaf(value: Any) -> bool:
     return hasattr(value, "dtype") and hasattr(value, "shape") and _is_numeric_dtype(value.dtype)
 
 
+def _not_numeric(owner: str, name: str, value: Any, *, what: str = "a numeric array") -> str:
+    """The message for a value :func:`_is_numeric_leaf` refuses.
+
+    *owner* is the class the value was given to, *name* the argument that held
+    it, and *what* the values it accepts. A list or tuple gets the conversion
+    that fixes it.
+    """
+    from ._repr import type_name
+
+    dtype = getattr(value, "dtype", None)
+    message = f"{owner}: {name} must be {what}, got {type_name(value)}"
+    if dtype is not None:
+        message += f" with dtype {dtype}"
+    if isinstance(value, list | tuple):
+        message += f"; pass np.asarray({name}) instead"
+    return message
+
+
 def _event_shape_of(value: Any) -> tuple[int, ...]:
     """The numeric leaf's event shape — registry ``event_shape``, else ``.shape``.
 
@@ -338,6 +356,18 @@ def _take_at(value: Any, index: tuple) -> Any:
     if backend is not None:
         return backend.take(value, index)
     return value[index]
+
+
+def _read_only(value: Any) -> Any:
+    """*value*, marked read-only in place when it is a NumPy array.
+
+    A term stores the array it is given, so the flag keeps a write through the
+    caller's handle or through ``raw()`` from changing a term after
+    construction. Any other value is returned as it is.
+    """
+    if isinstance(value, np.ndarray) and value.flags.writeable:
+        value.flags.writeable = False
+    return value
 
 
 def _to_numpy_array(value: Any) -> np.ndarray:

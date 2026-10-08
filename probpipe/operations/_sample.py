@@ -77,11 +77,16 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
     """
     axes = sample_shape if isinstance(sample_shape, tuple) else (sample_shape,)
     if any(isinstance(axis, bool) for axis in axes):
-        raise ApplicabilityError("sample_shape must be an integer or a tuple of integers, not bool")
+        raise ApplicabilityError(
+            f"sample_shape must be an integer or a tuple of integers, not bool; got "
+            f"{sample_shape!r}"
+        )
     try:
         shape = tuple(operator.index(axis) for axis in axes)
     except TypeError:
-        raise ApplicabilityError("sample_shape must be an integer or a tuple of integers") from None
+        raise ApplicabilityError(
+            f"sample_shape must be an integer or a tuple of integers; got {sample_shape!r}"
+        ) from None
     if any(axis < 0 for axis in shape):
         raise ApplicabilityError(f"sample_shape sizes must be non-negative; got {shape!r}")
     return shape
@@ -115,8 +120,10 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     shape = _sample_shape(sample_shape)
     free = d.free_dims
     if free:
+        example = ", ".join(f"{name}=..." for name in sorted(free))
         raise ApplicabilityError(
-            f"sample requires a concrete declaration; the free dimensions are {sorted(free)}"
+            f"sample: the event has unbound dimensions {sorted(free)}; bind them first with "
+            f"with_dim_sizes({example})"
         )
     if not shape:
         return d.event_spec

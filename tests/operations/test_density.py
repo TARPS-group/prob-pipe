@@ -54,7 +54,7 @@ class TestLogProb:
         )
 
     def test_log_prob_requires_the_normalized_capability(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(Unnormalized("u"), 0.0)
 
     def test_unnormalized_log_prob_needs_only_the_unnormalized_capability(self):
@@ -244,14 +244,14 @@ class TestDerivedDensities:
     def test_the_identity_is_infeasible_where_log_prob_has_no_route(self):
         report = prob.check(Bare("b"), 0.0)
         assert report.feasible is False
-        assert "does not claim SupportsLogProb" in report.description
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        assert "does not implement SupportsLogProb" in report.description
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             prob(Bare("b"), 0.0)
 
     def test_the_unnormalized_identity_is_infeasible_where_its_constituent_has_no_route(self):
         report = unnormalized_prob.check(Bare("b"), 0.0)
         assert report.feasible is False
-        assert "does not claim SupportsUnnormalizedLogProb" in report.description
+        assert "does not implement SupportsUnnormalizedLogProb" in report.description
 
     def test_the_identity_takes_the_exactness_of_the_route_log_prob_selects(self):
         report = prob.check(Gaussian("g"), 0.5)

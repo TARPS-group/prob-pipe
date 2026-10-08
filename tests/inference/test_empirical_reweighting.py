@@ -181,7 +181,7 @@ class TestWhenItApplies:
             condition_on.with_options(method="unnormalized")(model, {"y": Y})
         )
         assert report.feasible is False
-        assert "empirical prior" in report.description
+        assert "must be an EmpiricalDistribution" in report.description
 
     def test_a_likelihood_without_a_density_does_not_apply(self):
         class _SamplingOnly(ConditionalDistribution):

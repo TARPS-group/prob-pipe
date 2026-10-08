@@ -11,12 +11,25 @@ a type the duck path cannot see.
 
 from __future__ import annotations
 
+import copy
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import ArrayBackend, NumericRecord, Record, array_backend_for, register_array_backend
+from probpipe import (
+    ArrayBackend,
+    NumericArray,
+    NumericArrayBatch,
+    NumericRecord,
+    NumericRecordBatch,
+    Opaque,
+    Record,
+    RecordBatch,
+    array_backend_for,
+    register_array_backend,
+)
 from probpipe.core import _array_backend
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 
@@ -131,7 +144,7 @@ class TestRegistryLookup:
         first = ArrayBackend(event_shape=lambda b: (1,))
         second = ArrayBackend(event_shape=lambda b: (2,))
         register_array_backend(Box, first)
-        with pytest.warns(UserWarning, match="overwriting the existing ArrayBackend"):
+        with pytest.warns(UserWarning, match="replaced the ArrayBackend already registered"):
             register_array_backend(Box, second)
         assert array_backend_for(Box()) is second
 
@@ -768,3 +781,65 @@ class TestNativeMetadataInIdentity:
 
         meta = array_backend_for(da).metadata(da)
         assert _leaf_metadata_key(da) == fingerprint(meta, max_array_bytes=None)
+
+
+# ---------------------------------------------------------------------------
+# A stored NumPy array is read-only
+# ---------------------------------------------------------------------------
+
+#: Each constructor that stores a NumPy array, given that array.
+_STORES = {
+    "NumericArray": lambda a: NumericArray("x", a),
+    "Record": lambda a: Record("r", x=a),
+    "nested Record": lambda a: Record("r", {"inner": {"x": a}}),
+    "NumericArrayBatch": lambda a: NumericArrayBatch("b", a, "draw"),
+    "NumericRecordBatch": lambda a: NumericRecordBatch("b", {"x": a}, "draw"),
+    "RecordBatch": lambda a: RecordBatch("b", {"x": a}, "draw"),
+    "Opaque": lambda a: Opaque("o", a),
+}
+
+
+class TestStoredNumPyArraysAreReadOnly:
+    """A term stores the array it is given and marks it read-only in place."""
+
+    @pytest.mark.parametrize("store", list(_STORES))
+    def test_a_write_through_the_callers_array_raises(self, store):
+        values = np.array([1.0, 2.0, 3.0])
+        _STORES[store](values)
+
+        with pytest.raises(ValueError, match="read-only"):
+            values[0] = 9.0
+
+    @pytest.mark.parametrize(
+        "store", ["NumericArray", "Record", "NumericArrayBatch", "RecordBatch"]
+    )
+    def test_a_write_through_raw_raises(self, store):
+        term = _STORES[store](np.array([1.0, 2.0, 3.0]))
+        stored = term.raw() if store in ("NumericArray", "NumericArrayBatch") else term.raw("x")
+
+        with pytest.raises(ValueError, match="read-only"):
+            stored[0] = 9.0
+
+    @pytest.mark.parametrize("store", ["NumericArray", "NumericArrayBatch"])
+    def test_a_deep_copy_stores_a_read_only_array(self, store):
+        term = copy.deepcopy(_STORES[store](np.array([1.0, 2.0, 3.0])))
+
+        assert not term.raw().flags.writeable
+
+    def test_an_element_of_a_batch_is_read_only(self):
+        batch = NumericArrayBatch("b", np.arange(6.0).reshape(2, 3), "row")
+
+        assert not batch[0].raw().flags.writeable
+
+    def test_a_failed_construction_leaves_the_array_writable(self):
+        values = np.array([1.0, 2.0])
+
+        with pytest.raises(ValueError):
+            NumericArray("x", values, spec=NumericArraySpec(shape=(3,)))
+        assert values.flags.writeable
+
+    def test_a_pandas_container_is_stored_as_given(self):
+        series = pd.Series([1.0, 2.0, 3.0])
+        record = Record("r", x=series)
+
+        assert record.raw("x") is series

@@ -20,6 +20,7 @@ The design reference in `design/` describes the target state, and the documents 
 | A new family, inference method, or converter | `docs/api/extending.md` |
 | Test tolerances and baselines | `STYLE_GUIDE.md` §8.6 |
 | Prose, such as a docstring, a docs page, or PR text | `STYLE_GUIDE.md` §10 |
+| An error or warning message | `STYLE_GUIDE.md` §9.3 |
 | A docs page or a notebook | `CONTRIBUTING.md` § Documentation |
 | Installation | `CONTRIBUTING.md` § Installation |
 | The branch, the PR title and body, the CHANGELOG entry, and labels | `CONTRIBUTING.md` § PR Workflow and `.github/PULL_REQUEST_TEMPLATE.md` |

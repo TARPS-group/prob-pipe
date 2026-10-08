@@ -99,7 +99,7 @@ def test_removed_templates_warn_without_installing_declarations(option):
 
 
 def test_legacy_func_alias_warns_and_uses_the_replacement_signature():
-    with pytest.warns(FutureWarning, match="func aliases fn"):
+    with pytest.warns(FutureWarning, match=r"Function\(func=\.\.\.\) is deprecated; use fn="):
         wrapped = Function("replace", lambda x: x, func=lambda y: y + 1)
     assert tuple(wrapped.signature.parameters) == ("y",)
     assert float(wrapped(y=2)) == 3
@@ -107,7 +107,7 @@ def test_legacy_func_alias_warns_and_uses_the_replacement_signature():
 
 def test_legacy_func_alias_validates_the_effective_callable():
     with (
-        pytest.warns(FutureWarning, match="func aliases fn"),
+        pytest.warns(FutureWarning, match=r"Function\(func=\.\.\.\) is deprecated; use fn="),
         pytest.raises(TypeError, match="fn must be callable"),
     ):
         Function("invalid", lambda: 1, func=3)
@@ -131,13 +131,13 @@ def test_legacy_option_warning_points_to_the_user_call(option, entrypoint):
             line = frame.f_lineno + 1
             wrapped = Function("identity", identity, **{option: value})
     assert len(caught) == 1
-    assert repr([option]) in str(caught[0].message)
+    assert str(caught[0].message).startswith(f"Function({option}=...)")
     assert caught[0].filename == __file__
     assert caught[0].lineno == line
     assert float(wrapped(3)) == (4 if option == "func" else 3)
 
 
-def test_one_warning_names_every_legacy_option():
+def test_each_legacy_option_warns_on_its_own():
     with pytest.warns(FutureWarning) as caught:
         Function(
             "identity",
@@ -147,8 +147,12 @@ def test_one_warning_names_every_legacy_option():
             input_template=object(),
             output_template=object(),
         )
-    assert len(caught) == 1
-    assert "['func', 'input_template', 'output_template', 'seed']" in str(caught[0].message)
+    assert sorted(str(warning.message).split("=")[0] for warning in caught) == [
+        "Function(func",
+        "Function(input_template",
+        "Function(output_template",
+        "Function(seed",
+    ]
 
 
 def test_func_does_not_replace_the_required_fn_argument():
@@ -394,3 +398,15 @@ def test_max_workers_warning_points_to_the_user_call(entrypoint):
     assert len(caught) == 1
     assert caught[0].filename == __file__
     assert caught[0].lineno == line
+
+
+def test_each_removed_keyword_warns_on_its_own():
+    with pytest.warns(FutureWarning) as caught:
+        wrapped = Function("identity", lambda y: y, func=lambda x: x, seed=3)
+    messages = sorted(str(warning.message) for warning in caught)
+    assert messages == [
+        "Function(func=...) is deprecated; use fn=...",
+        "Function(seed=...) is no longer supported and is ignored; use workflow_run(seed=...), "
+        "or bind={'seed': ...} to pass a seed to the wrapped function",
+    ]
+    assert float(wrapped(x=3)) == 3

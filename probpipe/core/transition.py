@@ -105,8 +105,8 @@ def iterate[S](
         result = step_fn(current, inp)
         if not isinstance(result, Distribution):
             raise TypeError(
-                f"Step function at index {i} returned "
-                f"{type(result).__name__}, expected Distribution."
+                f"step function must return a Distribution, got {type(result).__name__} "
+                f"for the input at index {i}"
             )
 
         # Auto-attach provenance if not already set

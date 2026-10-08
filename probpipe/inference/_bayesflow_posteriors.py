@@ -30,6 +30,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from ..core._dispatch import Feasibility, MathematicalDomainError, ResolutionError
 from ..core._numeric_record import _reconstruct_from_vector
 from ..core._spec_base import NumericArraySpec
@@ -62,6 +63,7 @@ from ._bayesflow_common import (
     _validate_learn_inputs,
     _without_progress_bar,
 )
+from ._inference_utils import integer_seed, run_seed
 
 if TYPE_CHECKING:
     # Type-only: bayesflow/keras load at runtime in _import_bayesflow.
@@ -75,6 +77,8 @@ else:
     InferenceNetwork = KerasOptimizer = Any
 
 AmortizedMethod = Literal["npe", "fmpe", "cmpe"]
+_METHODS = ("npe", "fmpe", "cmpe")
+
 # ---------------------------------------------------------------------------
 # Bridge helpers: ProbPipe prior / simulator <-> BayesFlow named-array dicts
 # ---------------------------------------------------------------------------
@@ -100,7 +104,7 @@ def _make_inference_network(
         return bf.networks.FlowMatching()
     if method == "cmpe":
         return bf.networks.ConsistencyModel(total_steps=total_steps)
-    raise ValueError(f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'.")
+    raise ValueError(unknown_names("method", [method], _METHODS))
 
 
 def _build_adapter(bf: ModuleType, internal_keys: tuple[str, ...]) -> Adapter:
@@ -138,17 +142,16 @@ def _field_bijectors(prior: Distribution, keys: tuple[str, ...]) -> dict[str, Fu
         if constraint is None:
             raise ValueError(
                 f"learn_amortized_posterior cannot handle prior parameter {k!r}: its "
-                "support is not declared, so no bijector to R^d can be chosen. Give the "
-                "prior a declared support, for example by building it from a family."
+                f"support is not declared. Give {k!r} a declared support, for example by "
+                f"drawing it from a built-in distribution such as Normal or Gamma."
             )
         try:
             bijectors[k] = bijector_for(constraint)
         except (MathematicalDomainError, ResolutionError) as e:
             raise ValueError(
-                f"learn_amortized_posterior cannot handle prior parameter {k!r} with "
-                f"support {constraint!r}: {e}. Amortized SBI requires a continuous prior "
-                "whose support admits a smooth bijector to R^d (e.g. real, positive, an "
-                "interval); discrete priors are not supported."
+                f"learn_amortized_posterior cannot handle prior parameter {k!r}: its "
+                f"support {constraint!r} must be continuous, such as real, positive, or an "
+                f"interval; discrete priors are not supported"
             ) from e
     return bijectors
 
@@ -363,16 +366,15 @@ class _AmortizedPosterior(
         if isinstance(given, Mapping):
             others = sorted(set(given) - {self._slot})
             if others:
-                raise KeyError(f"{others} are not the given slot {self._slot!r} of {self.label!r}")
+                raise KeyError(self._unexpected_keys(others))
             given = given[self._slot]
         obs_flat = np.ravel(np.asarray(given, dtype="float32"))
         if obs_flat.size != self._data_dim:
             raise ValueError(
-                f"observed data has {obs_flat.size} values but the estimator was "
-                f"trained to condition on size {self._data_dim} (the simulator's "
-                "per-draw output) -- the conditioning shape is fixed at training "
-                "time. Pass observed data of that shape; for datasets of other "
-                "sizes use learn_amortized_likelihood or learn_amortized_ratio."
+                f"observed data has {obs_flat.size} values, but {self.label!r} was trained on "
+                f"observations of {self._data_dim} values (one simulator draw). Pass data of "
+                f"that size, or use learn_amortized_likelihood or learn_amortized_ratio for "
+                f"datasets of other sizes."
             )
         return obs_flat
 
@@ -397,14 +399,15 @@ class _AmortizedPosterior(
             cols.append(jnp.reshape(draws, (count, -1)))
         return jnp.concatenate(cols, axis=-1)
 
+    def _unexpected_keys(self, others: list[str]) -> str:
+        """The message for conditioning on *others*, keys other than the observation slot."""
+        return f"unexpected keys {others} for {self.label!r}; it conditions only on {self._slot!r}"
+
     def _condition_on_guard(self, paths: tuple[str, ...]) -> Feasibility:
         """Every path names the observation slot, since a parameter is conditioned by Bayes' rule."""
         others = [path for path in paths if path != self._slot]
         if others:
-            return Feasibility(
-                False,
-                f"{others} are not the given slot {self._slot!r} of the amortized posterior",
-            )
+            return Feasibility(False, self._unexpected_keys(others), actionable=True)
         return Feasibility(True)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution:
@@ -440,8 +443,8 @@ class _AmortizedPosterior(
         """
         if kwargs:
             raise TypeError(
-                f"method_options {sorted(kwargs)} are not options of the amortized posterior "
-                f"{self.label!r}, which takes none"
+                f"the amortized posterior {self.label!r} takes no method_options; "
+                f"got {sorted(kwargs)}"
             )
         law = _AmortizedPosteriorLaw(self, self._observation(given))
         return _record_run(law, (self,), f"bayesflow_{self._method}")
@@ -510,7 +513,6 @@ def learn_amortized_posterior(
     batch_size: int = 128,
     sim_backend: SimBackend = "jax",
     inference_network: InferenceNetwork | None = None,
-    random_seed: int = 0,
     optimizer: str | KerasOptimizer = "adam",
     **fit_kwargs: Any,
 ) -> ConditionalDistribution:
@@ -524,6 +526,16 @@ def learn_amortized_posterior(
     of the network; the evaluation is approximate, so ``exact_only=True`` refuses
     it. Provenance names the prior
     and the simulator it was trained on.
+
+    The training's seed is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the trained network, and an unscoped
+    call trains afresh. The seed fixes the offline simulation (``jax.random``)
+    and keras's network initialization and training, which
+    ``keras.utils.set_random_seed`` seeds. The caller's global NumPy and Python
+    random states are restored after training, and keras's global seed
+    generator keeps the state training leaves. Each draw of the learned
+    posterior's law at an observation is a workflow-owned random event of its
+    own.
 
     Parameters
     ----------
@@ -566,12 +578,6 @@ def learn_amortized_posterior(
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
         ``ConsistencyModel``). A ``CouplingFlow`` gives the posterior a density.
-    random_seed : int
-        Seed for offline simulation (``jax.random``) and keras network init +
-        training (via ``keras.utils.set_random_seed``). The caller's global
-        NumPy / Python RNG state is snapshotted and restored after training, so the
-        call does not perturb unrelated random streams. The draws of the learned
-        posterior's law at an observation are seeded by the workflow scope.
     optimizer : str or keras.Optimizer
         Passed to ``approximator.compile``.
     **fit_kwargs
@@ -594,14 +600,13 @@ def learn_amortized_posterior(
         smooth bijector to ``R^d`` (e.g. a discrete prior).
     TypeError
         If a count parameter is not an integer, ``simulator`` is not a kernel
-        that samples, or ``prior`` is not a numeric distribution.
+        that samples, ``prior`` is not a numeric distribution, or
+        ``fit_kwargs`` holds ``random_seed`` or ``seed``.
     ImportError
         If the ``[bayesflow]`` extra is not installed.
     """
-    if method not in ("npe", "fmpe", "cmpe"):
-        raise ValueError(
-            f"Unknown amortized SBI method: {method!r}. Supported: 'npe', 'fmpe', 'cmpe'."
-        )
+    if method not in _METHODS:
+        raise ValueError(unknown_names("method", [method], _METHODS))
     record = _validate_learn_inputs(
         prior,
         simulator,
@@ -612,6 +617,7 @@ def learn_amortized_posterior(
             ("batch_size", batch_size),
             ("epochs", epochs),
         ),
+        fit_kwargs=fit_kwargs,
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
     # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
@@ -628,6 +634,7 @@ def learn_amortized_posterior(
     )
 
     bf = _import_bayesflow()
+    random_seed = integer_seed(run_seed("learn_amortized_posterior"))
     with _isolated_keras_seeding(random_seed):
         key = jax.random.PRNGKey(random_seed)
         named, y = _simulate_offline(

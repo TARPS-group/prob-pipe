@@ -443,7 +443,7 @@ class TestASweptBodyThatReturnsABatch:
         it stands for, may rebuild across one. The executor knows both; a raw
         ``vmap`` knows neither, and is refused.
         """
-        with pytest.raises(ValueError, match="belongs to no level"):
+        with pytest.raises(ValueError, match="To add a level, build a new"):
             jax.vmap(
                 lambda v: RecordBatch.stack(
                     [Record("r", {"y": v * k}) for k in (1.0, 2.0)],
@@ -630,7 +630,9 @@ class TestNumericArraySweep:
         )
         source = _numeric_record_batch("x", range(2))
 
-        with pytest.raises(ValueError, match=r"different: numeric.*declarations"):
+        with pytest.raises(
+            ValueError, match=r"different: the rows returned arrays with different specs"
+        ):
             Function(
                 fn=lambda row: first if float(row["x"]) == 0 else second,
                 label="different",

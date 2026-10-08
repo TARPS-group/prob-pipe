@@ -149,7 +149,7 @@ class TestBuiltInConversionRandomness:
         calls = []
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-            pytest.raises(TypeError, match="reads the options"),
+            pytest.raises(TypeError, match="unknown option 'key'"),
         ):
             converter_registry.convert(
                 _RecordingNormal(calls),

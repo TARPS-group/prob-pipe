@@ -38,7 +38,7 @@ from ..distributions._distribution import Distribution
 from ..functions._descendants import _Descent, _register_descendant_type
 from ..functions._reparameterization import _as_bijector, _BackendBijector, _image, _is_affine
 from ..linalg import DenseLinOp, LinOp
-from ..values import Function, SupportsLogDetJacobian, is_invertible
+from ..values import Function, SupportsInverse, SupportsLogDetJacobian, is_invertible
 
 __all__ = ["BijectorTransformedDistribution", "LinearPushforwardDistribution"]
 
@@ -68,7 +68,30 @@ class LinearPushforwardDistribution(Distribution):
     """
 
     def __init__(self, label: str, base: Distribution, op: LinOp) -> None:
-        raise NotImplementedError("LinearPushforwardDistribution.__init__")
+        raise NotImplementedError("LinearPushforwardDistribution is not implemented yet")
+
+
+def _not_invertible(f: Any) -> str | None:
+    """Why the ``Function`` *f* is not invertible, as a predicate on its label, or ``None``.
+
+    Parameters
+    ----------
+    f : Any
+        The map to check, usually a :class:`~probpipe.values.Function`.
+
+    Returns
+    -------
+    str or None
+        Such as ``"does not implement SupportsInverse"``, or ``None`` when
+        :func:`~probpipe.values.is_invertible` holds for *f*.
+    """
+    if is_invertible(f):
+        return None
+    if not isinstance(f, SupportsInverse):
+        return "does not implement SupportsInverse"
+    report = f._inverse_guard()
+    detail = getattr(report, "description", "")
+    return "has no inverse here" + (f" ({detail})" if detail else "")
 
 
 # ---------------------------------------------------------------------------
@@ -235,26 +258,32 @@ class BijectorTransformedDistribution(Distribution):
         return object.__new__(_capability_subclass(cls, claimed))
 
     def __init__(self, label: str, base: Distribution, bijector: Function | Any) -> None:
-        if not isinstance(base, Distribution) or not isinstance(
-            base.event_spec.spec, NumericArraySpec
-        ):
+        if not isinstance(base, Distribution):
             raise TypeError(
-                f"BijectorTransformedDistribution takes a base whose draws are arrays, got "
+                f"base of BijectorTransformedDistribution must be a Distribution, got "
                 f"{type(base).__name__}"
             )
-        bijector = _as_bijector(bijector)
-        missing = [
-            claim
-            for claim, holds in (
-                ("SupportsInverse", is_invertible(bijector)),
-                ("SupportsLogDetJacobian", isinstance(bijector, SupportsLogDetJacobian)),
+        base_kind = base.event_spec.spec
+        if not isinstance(base_kind, NumericArraySpec):
+            drawn = "records" if base.event_spec.exposes_record else type(base_kind).__name__
+            raise TypeError(
+                f"BijectorTransformedDistribution needs a base that draws numeric arrays, but "
+                f"{base.label!r} draws {drawn}"
             )
-            if not holds
-        ]
-        if missing:
+        bijector = _as_bijector(bijector)
+        inverse = _not_invertible(bijector)
+        if inverse is not None or not isinstance(bijector, SupportsLogDetJacobian):
+            if isinstance(bijector, SupportsLogDetJacobian):
+                reason = inverse
+            elif isinstance(bijector, SupportsInverse):
+                reason = "does not implement SupportsLogDetJacobian" + (
+                    f" and {inverse}" if inverse is not None else ""
+                )
+            else:
+                reason = "does not implement SupportsInverse and SupportsLogDetJacobian"
             raise ResolutionError(
-                f"the bijector {bijector.label!r} of {label!r} does not claim "
-                f"{' and '.join(missing)}, which a change of variables needs"
+                f"BijectorTransformedDistribution {label!r} needs an invertible bijector with a "
+                f"log-det Jacobian, but {bijector.label!r} {reason}"
             )
         base_spec = base.event_spec.spec
         point = jax.ShapeDtypeStruct(tuple(base_spec.shape), base_spec.dtype or jnp.float32)

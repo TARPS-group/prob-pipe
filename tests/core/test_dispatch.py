@@ -239,7 +239,7 @@ class TestExactnessDeclaration:
     def test_set_priorities_has_no_exactness_input(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("m", exact=False))
-        with pytest.raises(KeyError, match="No method named 'exact'"):
+        with pytest.raises(KeyError, match="unknown method 'exact'"):
             reg.set_priorities(exact=True)
         assert reg.get_method("m").exact is False
 
@@ -266,7 +266,17 @@ class TestExactnessDeclaration:
 
     def test_a_feasibility_carries_no_exactness(self):
         """A method reports only what it alone knows; exactness is the registration's."""
-        assert {f.name for f in fields(Feasibility)} == {"feasible", "description", "pending"}
+        assert {f.name for f in fields(Feasibility)} == {
+            "feasible",
+            "description",
+            "pending",
+            "actionable",
+        }
+
+    def test_only_an_infeasible_report_is_actionable(self):
+        assert Feasibility(False, "unknown field 'x'", actionable=True).actionable
+        with pytest.raises(ValueError, match="only an infeasible Feasibility can be actionable"):
+            Feasibility(True, actionable=True)
 
     @pytest.mark.parametrize("declared_exact", [True, False], ids=["exact", "approximate"])
     def test_a_check_cannot_contradict_the_registration(self, arity: Arity, declared_exact: bool):
@@ -346,7 +356,7 @@ class TestSelectionOrder:
     def test_only_opt_in_methods_means_no_auto_method(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("opt_in", priority=None))
-        with pytest.raises(ResolutionError, match="No method registered"):
+        with pytest.raises(ResolutionError, match="no method is registered"):
             reg.execute(*arity.args)
         assert reg.execute(*arity.args, method="opt_in") == "opt_in"
 
@@ -552,14 +562,14 @@ class TestSetPriorities:
     def test_unknown_name_raises_and_applies_nothing(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", priority=1))
-        with pytest.raises(KeyError, match="No method named 'nope'"):
+        with pytest.raises(KeyError, match="unknown method 'nope'"):
             reg.set_priorities(a=50, nope=1)
         assert reg._effective_priority(reg._by_name["a"]) == 1
 
     @pytest.mark.parametrize(
         "kwargs, exc, match",
         [
-            ({"a": 5, "nope": 1}, KeyError, "No method named 'nope'"),
+            ({"a": 5, "nope": 1}, KeyError, "unknown method 'nope'"),
             ({"a": 6}, ValueError, "both"),
             ({"a": "high"}, TypeError, "int or None"),
         ],
@@ -596,10 +606,15 @@ class TestSetPriorities:
     def test_warns_once_on_each_crossing_of_opt_in(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("a", priority=50))
-        with pytest.warns(UserWarning, match="into opt-in-only") as rec:
+        with pytest.warns(
+            UserWarning,
+            match="from priority 50 to None, so it now runs only when requested with method='a'",
+        ) as rec:
             reg.set_priorities(a=None)
         assert len(rec) == 1
-        with pytest.warns(UserWarning, match="out of opt-in-only") as rec:
+        with pytest.warns(
+            UserWarning, match="from priority None to 42, so automatic dispatch can now select it"
+        ) as rec:
             reg.set_priorities(a=42)
         assert len(rec) == 1
 
@@ -617,7 +632,7 @@ class TestSetPriorities:
     def test_promoted_opt_in_method_joins_automatic_selection(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("opt_in", priority=None, result="ran"))
-        with pytest.warns(UserWarning, match="out of opt-in-only"):
+        with pytest.warns(UserWarning, match="automatic dispatch can now select it"):
             reg.set_priorities(opt_in=10)
         assert reg.execute(*arity.args) == "ran"
 
@@ -709,7 +724,9 @@ class TestCheck:
     def test_unknown_name_is_a_resolution_error(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("m"))
-        with pytest.raises(ResolutionError, match="Available: m"):
+        with pytest.raises(
+            ResolutionError, match=r"unknown method 'nope'; available methods: \['m'\]"
+        ):
             reg.check(*arity.args, method="nope")
 
     def test_no_arguments_is_a_type_error(self, arity: Arity):
@@ -734,9 +751,9 @@ class TestCheck:
 
     def test_binary_registry_needs_two_arguments(self):
         reg = BinaryDispatchRegistry()
-        with pytest.raises(TypeError, match="at least two positional arguments"):
+        with pytest.raises(TypeError, match="requires two positional arguments"):
             reg.check(Left())
-        with pytest.raises(TypeError, match="at least two positional arguments"):
+        with pytest.raises(TypeError, match="requires two positional arguments"):
             reg.execute(Left())
 
 
@@ -755,7 +772,9 @@ class TestExecute:
         reg = arity.registry()
         reg.register(arity.method("pending", priority=20, feasible=None, pending=("event spec",)))
         reg.register(arity.method("ready", priority=10))
-        with pytest.raises(ResolutionError, match="event spec"):
+        with pytest.raises(
+            ResolutionError, match="method 'pending' cannot tell yet whether it applies: event spec"
+        ):
             reg.execute(*arity.args)
 
     def test_no_feasible_candidate_names_the_methods_tried(self, arity: Arity):
@@ -773,7 +792,7 @@ class TestExecute:
     def test_named_infeasible_method_raises(self, arity: Arity):
         reg = arity.registry()
         reg.register(arity.method("m", feasible=False, description="no"))
-        with pytest.raises(ResolutionError, match="not applicable"):
+        with pytest.raises(ResolutionError, match="method 'm' does not apply: no"):
             reg.execute(*arity.args, method="m")
 
     def test_named_unresolved_method_raises(self, arity: Arity):
@@ -786,7 +805,9 @@ class TestExecute:
         """Naming a method that is not registered is a dispatch that cannot resolve."""
         reg = arity.registry()
         reg.register(arity.method("m"))
-        with pytest.raises(ResolutionError, match="Available: m"):
+        with pytest.raises(
+            ResolutionError, match=r"unknown method 'nope'; available methods: \['m'\]"
+        ):
             reg.execute(*arity.args, method="nope")
 
     @pytest.mark.parametrize("exc", [ValueError("bad"), RuntimeError("worse")])
@@ -819,7 +840,7 @@ class TestDeclarationMarkers:
         from probpipe import NumericDistribution
 
         registry = UnaryDispatchRegistry()
-        with pytest.raises(TypeError, match="not a dispatch type"):
+        with pytest.raises(TypeError, match="cannot dispatch on"):
             registry.register(FakeUnary("numeric", types=(NumericDistribution,)))
         assert registry.list_methods() == []
 
@@ -983,7 +1004,7 @@ class TestRegistration:
         m = arity.method("m")
         reg.register(m)
         assert reg.get_method("m") is m
-        with pytest.raises(KeyError, match="No method named"):
+        with pytest.raises(KeyError, match="unknown method"):
             reg.get_method("nope")
 
 

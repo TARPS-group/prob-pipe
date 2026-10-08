@@ -400,7 +400,10 @@ def _output_atoms(
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(str(error)) from error
     if len(atoms.level_names) > 1:
-        raise NotImplementedError("_SamplingLift.execute: a lifted function that returns a batch")
+        raise NotImplementedError(
+            f"{output_label!r} returned a Batch while broadcasting over a distribution "
+            f"argument, which is not supported yet"
+        )
     if output_spec is None:
         return atoms, OutputSpec.default(atoms.element_spec, component=output_label)
     try:
@@ -474,10 +477,13 @@ def _joint_atoms(
         columns.update(_draw_columns(ref.label, draws.inputs[ref]))
     clash = sorted(set(fields) & set(declaration.components))
     if clash:
+        if len(clash) == 1:
+            named, held = f"parameter {clash[0]!r}", "a component with that name"
+        else:
+            named, held = f"parameters {clash}", "components with those names"
         raise ApplicabilityError(
-            f"include_inputs gives each lifted parameter a field of the joint law, and the "
-            f"parameters {clash} share their names with components of the output of "
-            f"{output_label!r}; rename the parameters, or declare output components of other names"
+            f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
+            f"already has {held}. Rename the parameters or the output components."
         )
     stored = _batch_columns(atoms)
     if declaration.exposes_record:

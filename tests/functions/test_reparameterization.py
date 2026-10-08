@@ -179,7 +179,7 @@ class TestUnsupported:
             def check(self, value):
                 return jnp.asarray(value) >= 0
 
-        with pytest.raises(ResolutionError, match="No bijector registered"):
+        with pytest.raises(ResolutionError, match="no bijector registered for MyConstraint"):
             bijector_for(MyConstraint())
 
     def test_a_factory_whose_map_claims_no_inverse_is_unresolved(self, registry_snapshot):

@@ -57,10 +57,17 @@ def test_the_components_share_one_event_declaration_and_labels_may_differ():
 
 
 def test_components_with_different_declarations_raise():
-    with pytest.raises(ValueError, match="share one event declaration"):
+    with pytest.raises(ValueError, match=r"must draw the same event.*Rename them with"):
         MixtureDistribution(
             "m", [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)], jnp.array([0.5, 0.5])
         )
+
+
+def test_components_with_different_shapes_raise_without_a_rename_hint():
+    vector = MultivariateNormal("a", jnp.zeros(2), cov=jnp.eye(2))
+    with pytest.raises(ValueError, match=r"'a' is an array of shape \(\) in component 0") as info:
+        MixtureDistribution("m", [Normal("a", 0.0, 1.0), vector], jnp.array([0.5, 0.5]))
+    assert "with_path_names" not in str(info.value)
 
 
 def test_a_mixture_has_at_least_one_component():
@@ -74,7 +81,7 @@ def test_a_component_is_a_law():
 
 
 def test_weights_that_do_not_sum_to_one_raise():
-    with pytest.raises(ValueError, match="sum to one"):
+    with pytest.raises(ValueError, match=r"must sum to 1, got .* \(sum 1\.2\)"):
         MixtureDistribution("m", _components(), jnp.array([0.5, 0.7]))
 
 
@@ -84,7 +91,7 @@ def test_negative_weights_raise():
 
 
 def test_one_weight_per_component():
-    with pytest.raises(ValueError, match="2 weights"):
+    with pytest.raises(ValueError, match=r"has 2 components but got weights of shape \(1,\)"):
         MixtureDistribution("m", _components(), jnp.array([1.0]))
 
 

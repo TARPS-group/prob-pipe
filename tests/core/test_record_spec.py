@@ -70,7 +70,7 @@ class TestOpaqueSpecTypeAndMeta:
         assert OpaqueSpec().is_valid(3)
 
     def test_the_type_must_be_a_class_or_none(self):
-        with pytest.raises(TypeError, match="class of the admitted values"):
+        with pytest.raises(TypeError, match="must be a class or None"):
             OpaqueSpec(type="str")  # type: ignore[arg-type]
 
     def test_meta_is_part_of_equality_and_hash_and_never_checked(self):
@@ -286,7 +286,7 @@ class TestConstruction:
                 spec_type(fields)
 
     def test_dict_and_kwargs_raises(self):
-        with pytest.raises(ValueError, match="Cannot pass both"):
+        with pytest.raises(ValueError, match="as a mapping or as keywords, not both"):
             RecordSpec({"a": ()}, b=(2,))
 
     def test_the_empty_template_is_legal(self):
@@ -521,7 +521,7 @@ class TestFlatSize:
 
         assert tpl.free_dims == frozenset({"obs"})
         assert not tpl.is_concrete
-        with pytest.raises(ValueError, match="unbound dimensions: obs"):
+        with pytest.raises(ValueError, match="has symbolic dimension obs; set the sizes"):
             _ = tpl.vector_size
 
     @pytest.mark.parametrize(
@@ -556,7 +556,7 @@ class TestFlatSize:
         renamed = partial.with_dim_names(a="b")
 
         for template, missing in ((spec, "a, z"), (partial, "a"), (renamed, "b")):
-            with pytest.raises(ValueError, match=rf"unbound dimensions: {missing}$"):
+            with pytest.raises(ValueError, match=rf"symbolic dimensions? {missing}; set the sizes"):
                 _ = template.vector_size
         assert spec.free_dims == {"a", "z"}
         assert partial.free_dims == {"a"}
@@ -578,7 +578,7 @@ class TestFlatSize:
             assert type(bound.vector_size) is int
             assert bound.vector_size == size * 2
         assert spec.free_dims == {"n"}
-        with pytest.raises(ValueError, match=r"unbound dimensions: n$"):
+        with pytest.raises(ValueError, match=r"has symbolic dimension n; set the sizes"):
             _ = spec.vector_size
 
     @pytest.mark.parametrize(
@@ -595,7 +595,7 @@ class TestFlatSize:
             assert restored == spec
             assert hash(restored) == hash(spec)
             if size is None:
-                with pytest.raises(ValueError, match=r"unbound dimensions: n$"):
+                with pytest.raises(ValueError, match=r"has symbolic dimension n; set the sizes"):
                     _ = restored.vector_size
                 assert restored.with_dim_sizes(n=3).vector_size == 6
             else:
@@ -603,7 +603,7 @@ class TestFlatSize:
                 assert restored.vector_size == size
 
     def test_rejects_opaque_leaf(self):
-        with pytest.raises(TypeError, match="only NumericArraySpec"):
+        with pytest.raises(TypeError, match="must be numeric"):
             NumericRecordSpec(label=OpaqueSpec(), x=(3,))
 
     def test_rejects_non_numeric_nested(self):
@@ -863,7 +863,9 @@ class TestTermSpecs:
 
         spec = Coordinates((size,))
         if isinstance(size, str):
-            with pytest.raises(ValueError, match=r"Coordinates; unbound dimensions: n$"):
+            with pytest.raises(
+                ValueError, match=r"but Coordinates has symbolic dimension n; set the sizes"
+            ):
                 _ = spec.vector_size
             assert calls == []
         else:
@@ -977,7 +979,7 @@ class TestTermSpecs:
     def test_template_rejects_unhashable_custom_value_spec_at_construction(self):
         spec = _UnhashableTermSpec(metadata=["mutable"])
 
-        with pytest.raises(TypeError, match=r"Field 'custom' spec must be hashable"):
+        with pytest.raises(TypeError, match=r"the spec of field 'custom' must be hashable"):
             RecordSpec(custom=spec)
 
     def test_template_accepts_hashable_custom_value_spec(self):
@@ -1120,7 +1122,7 @@ class TestTermSpecs:
         with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):
             DistributionSpec(event_spec=(3,))  # type: ignore[arg-type]
         # A bare array spec has no component name to complete it with.
-        with pytest.raises(TypeError, match="no component name"):
+        with pytest.raises(TypeError, match="Name the field"):
             DistributionSpec(event_spec=NumericArraySpec(()))  # type: ignore[arg-type]
         whole = OutputSpec(x=NumericArraySpec(()))
         assert DistributionSpec(whole).event_spec is whole
@@ -1503,19 +1505,19 @@ class TestAutoPromotionSpecs:
         assert type(tpl) is RecordSpec
 
     def test_numeric_rejects_opaque_spec(self):
-        with pytest.raises(TypeError, match="only NumericArraySpec"):
+        with pytest.raises(TypeError, match="must be numeric"):
             NumericRecordSpec(x=(), label=OpaqueSpec())
 
     def test_numeric_rejects_distribution_spec(self):
-        with pytest.raises(TypeError, match="only NumericArraySpec"):
+        with pytest.raises(TypeError, match="must be numeric"):
             NumericRecordSpec(x=(), d=DistributionSpec(event_spec=RecordSpec(a=())))
 
     def test_numeric_rejects_mixed_record_spec(self):
-        with pytest.raises(TypeError, match="nested sub-templates"):
+        with pytest.raises(TypeError, match=r"nested field .* must be numeric"):
             NumericRecordSpec(x=(), r=RecordSpec(a=OpaqueSpec()))
 
     def test_numeric_rejects_function_spec(self):
-        with pytest.raises(TypeError, match="only NumericArraySpec"):
+        with pytest.raises(TypeError, match="must be numeric"):
             NumericRecordSpec(
                 x=(),
                 f=FunctionSpec(
@@ -1650,7 +1652,7 @@ class TestNumericSubset:
 
     def test_raises_when_no_numeric_leaves(self):
         tpl = RecordSpec(label=OpaqueSpec(), tag=OpaqueSpec())
-        with pytest.raises(ValueError, match="NumericSpec leaves survive"):
+        with pytest.raises(ValueError, match="found no numeric field"):
             tpl.numeric_subset()
 
     def test_raises_names_dropped_fields(self):
@@ -1665,10 +1667,10 @@ class TestNumericSubset:
 
     @pytest.mark.parametrize("empty", [RecordSpec(), NumericRecordSpec()])
     def test_empty_subtrees_do_not_count_as_numeric_leaves(self, empty):
-        with pytest.raises(ValueError, match="no NumericSpec leaves survive"):
+        with pytest.raises(ValueError, match="found no numeric field"):
             empty.numeric_subset()
         tpl = RecordSpec(nested=empty, label=OpaqueSpec())
-        with pytest.raises(ValueError, match=r"Dropped fields:.*nested.*label"):
+        with pytest.raises(ValueError, match=r"none of \['nested', 'label'\] is numeric"):
             tpl.numeric_subset()
         assert RecordSpec(nested=empty, x=(0,)).numeric_subset() == NumericRecordSpec(x=(0,))
 
@@ -1957,7 +1959,7 @@ class TestTermSpecTaxonomy:
         """
         tau = RecordSpec(x=())
         for decl in (DistributionSpec(tau), FunctionSpec()):
-            with pytest.raises(TypeError, match="no component name"):
+            with pytest.raises(TypeError, match="Name the field"):
                 DistributionSpec(decl)  # type: ignore[arg-type]
             assert DistributionSpec(OutputSpec(m=decl)).event_spec.spec is decl
 
@@ -2348,7 +2350,11 @@ class TestInferenceThroughTermSpecs:
     @pytest.mark.parametrize(
         ("spec_type", "message"),
         [
-            pytest.param(RecordSpec, "expected named fields", id="record-receives-distribution"),
+            pytest.param(
+                RecordSpec,
+                "must be a record or a mapping of fields",
+                id="record-receives-distribution",
+            ),
             pytest.param(
                 DistributionSpec,
                 "does not conform to its field spec",
@@ -2382,7 +2388,7 @@ class TestInferenceThroughTermSpecs:
         """Inference is for the symbolic case; a fixed size is still a fixed size."""
         declared = RecordSpec(law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=(4,)))))
 
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="does not match event_template"):
             Record("r", law=self._law(3), event_template=declared)
 
 
@@ -2603,13 +2609,15 @@ class TestMultiplicityBindsFromAValue:
 
         with pytest.raises(
             ValueError,
-            match=r"value at 'b' does not conform to its field spec .*levels=\{'item': 4\}",
+            match=r"value at 'b' does not match event_template: expected .*levels=\{'item': 4\}",
         ):
             Record("r", b=self._batch(3), event_template=declared)
 
     def test_a_value_carrying_no_multiplicity_says_so(self):
         """A raw value is not a batch, so there is nothing to bind an axis from."""
-        with pytest.raises(ValueError, match="exposes no schema to bind it against"):
+        with pytest.raises(
+            ValueError, match=r"'r'/b must be a batch matching BatchSpec.*, got jax.Array"
+        ):
             Record("r", b=jnp.zeros(3), event_template=self._declared())
 
     def test_a_level_name_mismatch_is_refused_rather_than_bound(self):
@@ -2653,7 +2661,7 @@ class TestMultiplicityBindsFromAValue:
         """Two declared axes in a level do not bind against an actual one."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("a", "b")], ["grid"]))
 
-        with pytest.raises(ValueError, match=r"tiles its axes as \[1\], expected \[2\]"):
+        with pytest.raises(ValueError, match=r"has \[1\] axes per level, expected \[2\]"):
             Record("r", b=self._batch(3, level="grid"), event_template=declared)
 
     def test_a_partially_bindable_template_binds_what_it_can(self):
@@ -2742,7 +2750,9 @@ class TestDefaultSpecBinding:
             def is_valid(self, value: Any) -> bool:
                 return True
 
-        with pytest.raises(ValueError, match="cannot bind from a value"):
+        with pytest.raises(
+            ValueError, match=r"cannot check value against .* with symbolic dimensions"
+        ):
             _DimlessButClaiming().bind_dims_from_value(object())
 
     def test_an_array_binds_its_own_shape(self):

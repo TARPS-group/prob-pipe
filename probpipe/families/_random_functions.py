@@ -58,7 +58,7 @@ def _event_of_kind(
         return event_spec._with_spec(default)
     if not isinstance(declared, kind):
         raise TypeError(
-            f"the event of {label!r} declares a {kind.__name__}, got {type(declared).__name__}"
+            f"event_spec of {label!r} must declare a {kind.__name__}, got {type(declared).__name__}"
         )
     return event_spec
 

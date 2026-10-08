@@ -32,6 +32,17 @@ class TestWorkflowSeedEncoding:
         with pytest.raises((TypeError, ValueError)):
             seed_to_root_words(seed)
 
+    @pytest.mark.parametrize(
+        ("seed", "error", "message"),
+        [
+            ("7", TypeError, r"seed must be an integer in \[0, 2\*\*64 - 1\]; got '7'"),
+            (-1, ValueError, r"seed must be in \[0, 2\*\*64 - 1\]; got -1"),
+        ],
+    )
+    def test_an_invalid_seed_is_shown(self, seed, error, message):
+        with pytest.raises(error, match=message):
+            seed_to_root_words(seed)
+
 
 class TestCanonicalEventEncoding:
     def test_encoding_is_typed_length_prefixed_and_domain_separated(self):

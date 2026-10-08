@@ -83,7 +83,7 @@ class TestNormalizeDistributionValues:
 
         with pytest.raises(
             ResolutionError,
-            match=r"'dist' converts to UnsupportedDistribution: No method registered for "
+            match=r"cannot convert parameter 'dist' to UnsupportedDistribution: no method is registered for "
             r"\(Normal, UnsupportedDistribution\)",
         ):
             normalize_distribution_values(
@@ -109,7 +109,9 @@ class TestNormalizeDistributionValues:
         failure = ResolutionError("no converter applies")
         with (
             patch.object(converter_registry, "convert", side_effect=failure),
-            pytest.raises(ResolutionError, match="'dist' converts to SupportsLogProb"),
+            pytest.raises(
+                ResolutionError, match="cannot convert parameter 'dist' to SupportsLogProb"
+            ),
         ):
             normalize_distribution_values(
                 values={"dist": empirical_dist},

@@ -642,7 +642,7 @@ class TestEventDeclaration:
         assert _DeclaredLaw("law", declaration).event_spec is declaration
 
     def test_a_type_hole_raises(self):
-        with pytest.raises(ValueError, match="type hole"):
+        with pytest.raises(ValueError, match="does not declare a type"):
             _DeclaredLaw("x", OutputSpec(x=None))
 
     def test_a_value_that_is_not_a_spec_raises(self):
@@ -815,7 +815,10 @@ class TestSchemaViews:
         assert not hasattr(Distribution, view)
         assert hasattr(NumericDistribution, view)
         assert hasattr(numeric, view)
-        with pytest.raises(AttributeError, match=f"non-numeric event, and {view} belongs"):
+        with pytest.raises(
+            AttributeError,
+            match=f"{view} is only available for a distribution with a numeric event",
+        ):
             getattr(opaque, view)
 
     def test_an_attribute_error_of_a_property_is_kept(self):
@@ -995,7 +998,7 @@ class TestFamilyDeclarations:
                 cov=jnp.eye(3),
                 event_spec=OutputSpec(theta=NumericArraySpec((2,))),
             )
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="cannot be cast to the declared int32"):
             Normal("x", 0.0, 1.0, event_spec=OutputSpec(theta=NumericArraySpec((), "int32")))
 
     def test_event_spec_declares_a_whole_array(self):
@@ -1124,7 +1127,7 @@ class TestEmpiricalDeclarations:
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, (*sample_shape, 2))
 
-        with pytest.raises(TypeError, match="samples"):
+        with pytest.raises(TypeError, match="supports sampling"):
             BootstrapReplicateDistribution("reps", _Sampler(), replicate_size=5)
 
     def test_a_bootstrap_measure_draws_laws_of_its_sources_event(self):
@@ -1306,7 +1309,7 @@ class TestDimensionTransforms:
 class TestDistributionSpecMatching:
     def test_a_packaging_mismatch_is_named(self):
         spec = DistributionSpec(RecordSpec(x=()))
-        with pytest.raises(ValueError, match="declares an exposed record, but the law declares"):
+        with pytest.raises(ValueError, match="declares a record of fields, but the law declares"):
             spec.bind_dims_from_value(_DeclaredLaw("x", NumericArraySpec(())))
 
     def test_a_whole_term_under_another_component_is_named(self):

@@ -15,7 +15,12 @@ from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, DistributionSpec, _detached_term
+from ..distributions._distribution import (
+    Distribution,
+    DistributionSpec,
+    _detached_term,
+    _shared_final_names,
+)
 from ..distributions._factored import SupportsFactors, _joined_label
 from ..distributions._views import _node_at
 from ..functions._call import ApplicabilityError
@@ -49,7 +54,10 @@ def _node(d: DistributionSpec, path: str) -> Any:
     try:
         return _node_at(d.event_spec, path)
     except (KeyError, TypeError):
-        raise ApplicabilityError(f"marginal: {path!r} is not an event path of the law") from None
+        raise ApplicabilityError(
+            f"marginal: {path!r} is not an event path of the law; its fields: "
+            f"{list(d.event_spec.components)}"
+        ) from None
 
 
 def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
@@ -81,10 +89,12 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
     if isinstance(field, tuple):
         nodes = {path.rsplit(_PATH_SEP, 1)[-1]: _node(d, path) for path in field}
         if len(nodes) != len(field):
-            raise ApplicabilityError(f"marginal: the paths {field!r} end in the same segment")
+            raise ApplicabilityError(f"marginal: {_shared_final_names(field)}")
         return OutputSpec(DistributionSpec(OutputSpec(RecordSpec(nodes))))
     if not isinstance(field, str):
-        raise ApplicabilityError(f"marginal: a field is a path or a tuple of paths; got {field!r}")
+        raise ApplicabilityError(
+            f"marginal: field must be a path string or a tuple of path strings; got {field!r}"
+        )
     component = field.rsplit(_PATH_SEP, 1)[-1]
     return OutputSpec(DistributionSpec(OutputSpec(**{component: _node(d, field)})))
 
@@ -186,12 +196,12 @@ def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
     an empirical marginal; until its execution exists, ``check`` and the call
     both report it infeasible.
     """
-    return Feasibility(False, "the empirical marginal of projected draws is not implemented")
+    return Feasibility(False, "the empirical marginal of projected draws is not implemented yet")
 
 
 def _empirical_marginal(call: BoundCall, result: OutputSpec | None) -> Any:
     """The empirical law of draws projected onto the field, declaring the node's event."""
-    raise NotImplementedError("marginal.monte_carlo")
+    raise NotImplementedError("the empirical marginal of projected draws is not implemented yet")
 
 
 marginal.capability_route(
