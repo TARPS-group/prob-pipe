@@ -29,7 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
   and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
   a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
-  level names, or axis counts are taken, so pass a tuple or a list.
+  level names, or axis counts are taken, so pass a tuple or a list. A
+  `PyMCModel` names the symbolic dimensions of a variable whose name is not
+  an identifier by replacing each other character with `_`, so a nested
+  model's `sub::beta` has the dimension `sub__beta_0`, where it was
+  `sub::beta_0`.
 - **A workflow-owned draw inside a JAX transformation that the caller opens
   raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
   event, such as `sample`, a lifted `Function` call, or `score_posterior` with
