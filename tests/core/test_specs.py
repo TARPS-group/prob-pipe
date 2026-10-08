@@ -90,6 +90,9 @@ class TestOutputSpec:
         )
         batch = OutputSpec(BatchSpec(record, sample=3))
         assert (list(batch.components), batch.exposes_record) == (["mu", "tau"], False)
+        assert batch.with_path_names({"mu": "center"}).spec == BatchSpec(
+            record.with_path_names({"mu": "center"}), sample=3
+        )
         with pytest.raises(TypeError, match=r"with_spec\(\) needs a DistributionSpec"):
             law.with_spec(record)
         with pytest.raises(TypeError, match="a record or a single named value"):

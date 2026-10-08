@@ -312,6 +312,8 @@ class TestShapeAndLevels:
             ([(2,)], [], "has 0 level names but 1 axis group"),
             ([(2,), (3,)], ["draw"], "has 1 level name but 2 axis groups"),
             ([(2,), (3,)], ["draw", "draw"], "level names must be unique"),
+            ([], [], "BatchSpec must have at least one level"),
+            ([()], ["draw"], r"BatchSpec level 'draw' must have at least one axis, got \(\)"),
         ],
     )
     def test_an_aligned_tiling_is_checked_where_the_library_builds_one(self, groups, names, match):
