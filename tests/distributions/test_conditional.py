@@ -429,7 +429,7 @@ class TestDimensionTransforms:
             self._polymorphic().with_dim_sizes(n=-1)
 
     def test_with_dim_sizes_refuses_a_size_that_is_not_an_integer(self):
-        with pytest.raises(TypeError, match="must be a non-negative int, got float 2.5"):
+        with pytest.raises(TypeError, match=r"must be a non-negative int, got float 2\.5"):
             self._polymorphic().with_dim_sizes(n=2.5)
 
     def test_with_dim_names_renames_on_both_sides_simultaneously(self):
