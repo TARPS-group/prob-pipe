@@ -27,8 +27,9 @@ records.
 
 All metrics return 0-d (or, for ``std_ratios``, 1-d) JAX arrays and are
 jit-compatible; :class:`Reference` is a registered JAX pytree, so the moment
-metrics and :func:`score_posterior` jit with the reference passed as either a
-traced argument or a closed-over constant. The moment metrics Cholesky-factor
+metrics, and :func:`score_posterior` on the metrics other than
+``sliced_wasserstein``, jit with the reference passed as either a traced
+argument or a closed-over constant. The moment metrics Cholesky-factor
 ``Σ_ref`` and so require it to be positive definite; a non-PD reference
 covariance yields NaN rather than raising.
 """
@@ -41,13 +42,14 @@ from typing import Literal
 
 import jax
 import jax.numpy as jnp
+from jax.extend import core as jax_core
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..functions import _context
 from ._workflow_rng import (
     _SLICED_WASSERSTEIN_PROVIDER_ABI,
-    _resolve_validation_key,
+    _claim_validation_key,
 )
 
 __all__ = [
@@ -384,12 +386,30 @@ _DEFAULT_METRICS = (
 )
 
 
+def _guard_staged_scoring() -> None:
+    """Reject workflow-owned projections inside a staged JAX computation."""
+    find_top_trace = getattr(jax_core, "find_top_trace", None)
+    if find_top_trace is None:
+        # JAX 0.9 exposes this extension entry point through jax.core.
+        find_top_trace = jax.core.find_top_trace
+    trace = find_top_trace(())
+    # A differentiation or batching trace can enclose a staging trace.
+    while trace is not None:
+        # The extension API does not export the staging trace class.
+        if type(trace).__name__ == "DynamicJaxprTrace":
+            raise TypeError(
+                "score_posterior with sliced_wasserstein cannot run in a staged JAX "
+                "computation. Call it outside jit, scan, and other staging transformations, "
+                "or use sliced_wasserstein with an explicit key."
+            )
+        trace = getattr(trace, "parent_trace", None)
+
+
 def score_posterior(
     approx: DrawsLike,
     reference: Reference,
     *,
     metrics: Sequence[str] = _DEFAULT_METRICS,
-    key: PRNGKey | None = None,
 ) -> dict[str, Array]:
     """Score *approx* against *reference* on the named metrics → a scorecard dict.
 
@@ -398,10 +418,48 @@ def score_posterior(
     than erroring, so one call serves analytic, long-NUTS, and sandwich
     references. Reused by the test suite and the ``probpipe-benchmark`` harness.
 
-    When sliced Wasserstein scoring is active and ``key`` is omitted, randomness
-    belongs to the workflow broker. A bare call therefore receives a fresh
-    ephemeral root. Enclose benchmark scoring in ``workflow_run(seed=...)`` or
-    pass an explicit ``key=`` to keep it reproducible.
+    The random projections of ``sliced_wasserstein`` are one workflow-owned
+    random event of the enclosing workflow scope, which a call claims only when
+    it scores that metric. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces the scorecard, and a call outside every scope draws fresh
+    projections.
+
+    Parameters
+    ----------
+    approx : array-like or EmpiricalDistribution
+        The approximation's draws: an ``(n, d)`` array, a 1-D array of ``n``
+        scalars, or an empirical law, read as the flat coordinates of its atoms.
+    reference : Reference
+        The reference posterior to score against.
+    metrics : sequence of str
+        The metrics to score, among ``standardized_mean_error``,
+        ``relative_cov_error``, ``std_ratios``, ``sliced_wasserstein``,
+        ``mmd``, and ``ksd``. The default scores each metric but
+        ``std_ratios``.
+
+    Returns
+    -------
+    dict of str to Array
+        The value of each scored metric under its name, in the order of
+        *metrics*: a 0-d array, or a ``(d,)`` array for ``std_ratios``.
+
+    Raises
+    ------
+    ValueError
+        If *metrics* names an unknown metric, or if the draws a scored metric
+        reads are not an ``(n, d)`` or 1-D array, differ in dimension from the
+        reference, or are too few for the metric.
+    TypeError
+        If sliced Wasserstein scoring runs inside a staged JAX computation,
+        such as ``jax.jit`` or the body of ``jax.lax.scan``.
+
+    Notes
+    -----
+    Interim implementation detail: sliced Wasserstein scoring supports
+    unstaged ``jax.grad`` and ``jax.vmap``, including their composition. A
+    mapped call shares its random projections across the batch. Staging would
+    capture those projections instead of claiming an event on each execution.
+    For staged computation, call ``sliced_wasserstein`` with an explicit key.
     """
     _context._assert_workflow_admission()
     metric_names = tuple(metrics)
@@ -417,22 +475,20 @@ def score_posterior(
         if name not in supported_metrics:
             raise ValueError(f"unknown metric {name!r}")
 
-    sliced_inputs: tuple[Array, Array] | None = None
+    # Sliced Wasserstein scoring checks its draws before it claims the key of its projections.
+    sliced: tuple[Array, Array, PRNGKey] | None = None
     if "sliced_wasserstein" in metric_names and reference.draws is not None:
-        sliced_inputs = (_as_draws(approx), _as_draws(reference.draws))
-        if sliced_inputs[0].shape[1] != sliced_inputs[1].shape[1]:
-            raise ValueError(
-                "x and y must share a dimension, got "
-                f"{sliced_inputs[0].shape[1]} and {sliced_inputs[1].shape[1]}"
-            )
-        if key is None:
-            key = _resolve_validation_key(
-                None,
-                operation_kind="score-posterior",
-                execution_mode="sliced-wasserstein",
-                sample_shape=(128,),
-                provider_abi=_SLICED_WASSERSTEIN_PROVIDER_ABI,
-            )
+        x, y = _as_draws(approx), _as_draws(reference.draws)
+        if x.shape[1] != y.shape[1]:
+            raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
+        _guard_staged_scoring()
+        key = _claim_validation_key(
+            operation_kind="score-posterior",
+            execution_mode="sliced-wasserstein",
+            sample_shape=(128,),
+            provider_abi=_SLICED_WASSERSTEIN_PROVIDER_ABI,
+        )
+        sliced = (x, y, key)
 
     out: dict[str, Array] = {}
     for name in metric_names:
@@ -447,12 +503,9 @@ def score_posterior(
             elif name == "std_ratios":
                 out[name] = std_ratios(approx, reference)
             elif name == "sliced_wasserstein":
-                if sliced_inputs is not None:
-                    if key is None:
-                        raise RuntimeError(
-                            "sliced Wasserstein scoring did not receive a resolved PRNG key"
-                        )
-                    out[name] = sliced_wasserstein(*sliced_inputs, key=key)
+                if sliced is not None:
+                    x, y, key = sliced
+                    out[name] = sliced_wasserstein(x, y, key=key)
             elif name == "mmd":
                 if reference.draws is not None:
                     out[name] = mmd(approx, reference.draws)

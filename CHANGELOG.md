@@ -136,6 +136,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A repr writes names that are no Python identifiers, such as `mean(mu)`,
     in order inside one `**{...}` mapping, as in
     `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+- **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
+  from the workflow scope.** The three drop their `key` parameter, and a `key=`
+  keyword raises `TypeError`. A call claims one workflow-owned random event of
+  the enclosing workflow scope, as a call without a key did. A call inside
+  `workflow_run(seed=...)` therefore reproduces its result, and a call outside
+  every scope draws afresh. `score_posterior` claims the event only when it
+  scores `sliced_wasserstein`. Move a call that passed a key into a seeded scope,
+  so `predictive_check(likelihood, posterior, test_fn, y, key=jax.random.key(0))`
+  becomes
+
+  ```python
+  with workflow_run(seed=0):
+      check = predictive_check(likelihood, posterior, test_fn, y)
+  ```
+
+  The scope derives the call's key from the seed and the call's position in the
+  scope, so the result differs from the one the old key gave.
+  `score_posterior` raises `TypeError` before claiming an event when sliced
+  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
+  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
+  supported, including their composition, and mapped calls share random
+  projections across the batch. For staged computation, use
+  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  skipping sliced Wasserstein when the reference has no draws, remains
+  compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -531,11 +556,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow scope" states. A wrapped user callable's own `seed` parameter is
   still an ordinary input.
 
-  `score_posterior(..., key=None)` no longer uses a fixed
-  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
-  the same ownership rule: a bare score receives a fresh ephemeral root, while
-  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
-  explicit `key=`) to remain reproducible.
+  `score_posterior` no longer uses a fixed `jax.random.PRNGKey(0)` for sliced
+  Wasserstein projections. It now follows the same ownership rule: a bare score
+  receives a fresh ephemeral root, while benchmark scoring must run inside
+  `workflow_run(seed=...)` to remain reproducible.
 
   PPC test functions must have unique `__name__` values because those names
   label the returned statistics; use distinct named functions instead of

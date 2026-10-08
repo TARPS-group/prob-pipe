@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EmpiricalDistribution
+from probpipe import EmpiricalDistribution, Normal, sample, workflow_run
 from probpipe.validation import (
     Reference,
     ksd,
@@ -200,7 +200,8 @@ class TestScorePosterior:
         approx = _mvn(jax.random.PRNGKey(12), 400, jnp.zeros(2), jnp.eye(2))
         # Full reference → every metric present.
         full = Reference.from_draws(draws, score_fn=lambda t: -t)
-        card = score_posterior(approx, full, key=jax.random.PRNGKey(13))
+        with workflow_run(seed=13):
+            card = score_posterior(approx, full)
         assert set(card) >= {
             "standardized_mean_error",
             "relative_cov_error",
@@ -210,7 +211,7 @@ class TestScorePosterior:
         }
         # Moments-only reference → sample/score metrics skipped, not errored.
         moments = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
-        card2 = score_posterior(approx, moments, key=jax.random.PRNGKey(14))
+        card2 = score_posterior(approx, moments)
         assert "standardized_mean_error" in card2
         assert {"ksd", "mmd", "sliced_wasserstein"}.isdisjoint(card2)
 
@@ -224,7 +225,6 @@ class TestScorePosterior:
             approx,
             ref,
             metrics=("standardized_mean_error", "relative_cov_error", "std_ratios", "mmd"),
-            key=jax.random.PRNGKey(17),
         )
         assert "mmd" in card  # draws present
         assert {"standardized_mean_error", "relative_cov_error", "std_ratios"}.isdisjoint(card)
@@ -235,6 +235,52 @@ class TestScorePosterior:
         assert set(score_posterior(approx, ref, metrics=("std_ratios",))) == {"std_ratios"}
         with pytest.raises(ValueError, match="unknown metric"):
             score_posterior(approx, ref, metrics=("bogus",))
+
+
+def _draw_after(run_first) -> float:
+    """The draw that follows *run_first* in a workflow scope seeded 7."""
+    with workflow_run(seed=7):
+        run_first()
+        return float(sample.with_options(raw=True)(Normal("z", 0.0, 1.0)))
+
+
+class TestScorePosteriorRandomness:
+    """The sliced Wasserstein projections are one workflow-owned random event of the scope."""
+
+    @staticmethod
+    def _score(metrics=("sliced_wasserstein",)):
+        approx = _mvn(jax.random.PRNGKey(19), 200, jnp.zeros(2), jnp.eye(2))
+        reference = Reference.from_draws(
+            _mvn(jax.random.PRNGKey(20), 200, jnp.zeros(2), jnp.eye(2))
+        )
+        return score_posterior(approx, reference, metrics=metrics)
+
+    def test_a_seed_reproduces_the_score_and_another_seed_changes_it(self):
+        def score(seed):
+            with workflow_run(seed=seed):
+                return float(self._score()["sliced_wasserstein"])
+
+        first = score(3)
+        assert score(3) == first
+        assert score(4) != first
+
+    def test_calls_outside_every_scope_draw_fresh_projections(self):
+        first = float(self._score()["sliced_wasserstein"])
+        assert float(self._score()["sliced_wasserstein"]) != first
+
+    def test_a_call_claims_one_event_of_the_enclosing_scope(self):
+        after_score = _draw_after(self._score)
+        assert after_score == _draw_after(lambda: sample(Normal("w", 0.0, 1.0)))
+        assert after_score != _draw_after(lambda: None)
+
+    def test_a_call_without_sliced_wasserstein_claims_no_event(self):
+        metrics = ("standardized_mean_error", "relative_cov_error", "mmd")
+        assert _draw_after(lambda: self._score(metrics)) == _draw_after(lambda: None)
+
+    def test_a_key_keyword_raises_type_error(self):
+        draws = _mvn(jax.random.PRNGKey(21), 200, jnp.zeros(2), jnp.eye(2))
+        with pytest.raises(TypeError, match="unexpected keyword argument 'key'"):
+            score_posterior(draws, Reference.from_draws(draws), key=jax.random.PRNGKey(0))
 
 
 class TestInputHandling:
@@ -288,15 +334,10 @@ class TestInputHandling:
             assert float(jax.jit(metric)(approx, ref)) == pytest.approx(
                 float(metric(approx, ref)), abs=1e-5
             )
-        card = jax.jit(
-            lambda draws, reference: score_posterior(
-                draws,
-                reference,
-                key=jax.random.PRNGKey(0),
-            )
-        )(approx, ref)
-        assert set(card) == {"standardized_mean_error", "relative_cov_error"} | {
-            "sliced_wasserstein",
-            "mmd",
-            "ksd",
-        }
+        # The jitted scorecard leaves out sliced_wasserstein, whose projections are a
+        # workflow-owned random event.
+        metrics = ("standardized_mean_error", "relative_cov_error", "mmd", "ksd")
+        card = jax.jit(lambda draws, reference: score_posterior(draws, reference, metrics=metrics))(
+            approx, ref
+        )
+        assert set(card) == set(metrics)
