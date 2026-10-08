@@ -225,7 +225,7 @@ class TestWeightsConstruction:
         assert w.n == 4
 
     def test_at_least_one_required(self):
-        with pytest.raises(ValueError, match="At least one"):
+        with pytest.raises(ValueError, match="Weights needs n, weights or log_weights"):
             Weights()  # none provided
 
     def test_n_with_weights_validates_length(self):
@@ -233,7 +233,7 @@ class TestWeightsConstruction:
         w = Weights(n=3, weights=jnp.ones(3))
         assert w.n == 3
         # Mismatched n raises
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match=r"must have shape \(5,\), one weight per item"):
             Weights(n=5, weights=jnp.ones(3))
 
     def test_weights_and_log_weights_exclusive(self):
@@ -392,7 +392,7 @@ class TestWeightsObjectPassthrough:
         result = Weights(n=2, weights=w)
         assert result.n == 2
         # Mismatched n raises
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match="weights must hold 5 weights, one per item, got 2"):
             Weights(n=5, weights=w)
 
     def test_n_only_gives_uniform(self):
@@ -403,7 +403,7 @@ class TestWeightsObjectPassthrough:
     def test_n_with_array_validates_length(self):
         result = Weights(n=3, weights=jnp.array([1.0, 2.0, 3.0]))
         assert result.n == 3
-        with pytest.raises(ValueError, match="does not match"):
+        with pytest.raises(ValueError, match=r"must have shape \(5,\)"):
             Weights(n=5, weights=jnp.array([1.0, 2.0, 3.0]))
 
     def test_both_arrays_raises(self):

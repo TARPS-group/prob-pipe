@@ -142,7 +142,7 @@ class Bernoulli(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             self._probs = _as_float_array(probs)
             self._logits = None
@@ -223,7 +223,7 @@ class Binomial(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
@@ -348,7 +348,7 @@ class Categorical(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             self._probs = _as_float_array(probs)
             self._logits = None
@@ -422,7 +422,7 @@ class NegativeBinomial(TFPDistribution):
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
-            raise ValueError("Exactly one of probs or logits must be provided.")
+            raise ValueError("exactly one of probs or logits must be provided")
         if probs is not None:
             _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None

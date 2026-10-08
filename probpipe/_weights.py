@@ -55,32 +55,35 @@ def _validate_to_log_weights(
         ``True`` when neither *weights* nor *log_weights* was provided.
     """
     if weights is not None and log_weights is not None:
-        raise ValueError("Provide either weights or log_weights, not both.")
+        raise ValueError("pass either weights or log_weights, not both")
 
     if weights is not None:
         weights = _as_float_array(weights)
         if weights.shape != (n,):
-            raise ValueError(f"weights shape {weights.shape} does not match number of items {n}.")
+            raise ValueError(
+                f"weights must have shape ({n},), one weight per item, got shape {weights.shape}"
+            )
         if not jnp.all(jnp.isfinite(weights)):
-            raise ValueError("weights must be finite.")
+            raise ValueError("weights must be finite")
         if jnp.any(weights < 0):
-            raise ValueError("weights must be non-negative.")
+            raise ValueError("weights must be non-negative")
         total = jnp.sum(weights)
         if total <= 0:
-            raise ValueError("weights must sum to a positive value.")
+            raise ValueError("weights must sum to a positive value")
         return jnp.log(weights), False
 
     if log_weights is not None:
         log_weights = _as_float_array(log_weights)
         if log_weights.shape != (n,):
             raise ValueError(
-                f"log_weights shape {log_weights.shape} does not match number of items {n}."
+                f"log_weights must have shape ({n},), one weight per item, "
+                f"got shape {log_weights.shape}"
             )
         if jnp.any(jnp.isnan(log_weights)):
-            raise ValueError("log_weights must not contain NaN.")
+            raise ValueError("log_weights must not contain NaN")
         total_log_weight = jax.scipy.special.logsumexp(log_weights)
         if not jnp.isfinite(total_log_weight):
-            raise ValueError("log_weights must define a positive finite total weight.")
+            raise ValueError("log_weights must define a positive finite total weight")
         return log_weights, False
 
     return None, True
@@ -353,16 +356,16 @@ class Weights:
         source = None
         if isinstance(weights, Weights):
             if log_weights is not None:
-                raise ValueError("Provide either weights or log_weights, not both.")
+                raise ValueError("pass either weights or log_weights, not both")
             source = weights
         elif isinstance(log_weights, Weights):
             if weights is not None:
-                raise ValueError("Provide either weights or log_weights, not both.")
+                raise ValueError("pass either weights or log_weights, not both")
             source = log_weights
 
         if source is not None:
             if n is not None and source._n != n:
-                raise ValueError(f"Weights length {source._n} does not match n={n}.")
+                raise ValueError(f"weights must hold {n} weights, one per item, got {source._n}")
             self._n = source._n
             self._log_weights = source._log_weights
             self._is_uniform = source._is_uniform
@@ -375,15 +378,15 @@ class Weights:
             if weights is not None:
                 weights = _as_float_array(weights)
                 if weights.ndim != 1 or weights.shape[0] == 0:
-                    raise ValueError("weights must be a non-empty 1-D array.")
+                    raise ValueError("weights must be a non-empty 1-D array")
                 n = weights.shape[0]
             elif log_weights is not None:
                 log_weights = _as_float_array(log_weights)
                 if log_weights.ndim != 1 or log_weights.shape[0] == 0:
-                    raise ValueError("log_weights must be a non-empty 1-D array.")
+                    raise ValueError("log_weights must be a non-empty 1-D array")
                 n = log_weights.shape[0]
             else:
-                raise ValueError("At least one of n, weights, or log_weights must be provided.")
+                raise ValueError("Weights needs n, weights or log_weights")
 
         self._log_weights, self._is_uniform = _validate_to_log_weights(
             n,

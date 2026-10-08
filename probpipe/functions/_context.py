@@ -150,6 +150,7 @@ class _StochasticProbeState:
     """Observable stochastic effects reached during one route probe."""
 
     effect_observed: bool = False
+    submission_observed: bool = False
 
 
 _STOCHASTIC_PROBE_STATE: ContextVar[_StochasticProbeState | None] = ContextVar(
@@ -164,7 +165,28 @@ _JAX_RUNTIME_GUARD: ContextVar[bool] = ContextVar(
 
 
 class _StochasticProbeSignal(RuntimeError):
-    """Signal that JAX probing reached workflow-owned randomness."""
+    """Signal that JAX probing reached workflow-owned randomness or managed submission.
+
+    ``submission`` is True when the probe reached managed submission, so the
+    refusal can name thread or Prefect work rather than a draw.
+    """
+
+    def __init__(self, message: str, *, submission: bool = False) -> None:
+        super().__init__(message)
+        self.submission = submission
+
+
+#: The refusal of thread or Prefect work started inside a body run under dispatch='jax'.
+JAX_SUBMISSION_MESSAGE = (
+    "dispatch='jax' cannot run a function that starts thread or Prefect work in its body. "
+    "Use dispatch='auto' or 'sequential' instead."
+)
+
+#: The refusal of a keyless draw inside a body run under dispatch='jax'.
+JAX_KEYLESS_DRAW_MESSAGE = (
+    "dispatch='jax' cannot run a function that draws random numbers without an explicit "
+    "key. Pass key=... to each draw, or use dispatch='auto', 'sequential', or 'thread'."
+)
 
 
 class _WorkflowRunScope:
@@ -287,7 +309,8 @@ def _workflow_probe() -> Generator[None, None, None]:
     else:
         if state.effect_observed:
             raise _StochasticProbeSignal(
-                "JAX route probing reached a workflow-owned stochastic operation"
+                "JAX route probing reached a workflow-owned stochastic operation",
+                submission=state.submission_observed,
             )
     finally:
         _STOCHASTIC_PROBE_STATE.reset(token)
@@ -313,22 +336,18 @@ def _guard_managed_submission() -> None:
     probe_state = _STOCHASTIC_PROBE_STATE.get()
     if probe_state is not None:
         probe_state.effect_observed = True
-        raise _StochasticProbeSignal("JAX route probing reached managed submission")
-    if _JAX_RUNTIME_GUARD.get():
-        raise TypeError(
-            "JAX workflow execution cannot perform managed submission. Use "
-            "dispatch='auto', 'sequential', or a caller-owned key outside the JAX body."
+        probe_state.submission_observed = True
+        raise _StochasticProbeSignal(
+            "JAX route probing reached managed submission", submission=True
         )
+    if _JAX_RUNTIME_GUARD.get():
+        raise TypeError(JAX_SUBMISSION_MESSAGE)
 
 
 def _guard_automatic_key_request() -> None:
     """Reject omitted-key randomness during actual JAX execution."""
     if _JAX_RUNTIME_GUARD.get():
-        raise TypeError(
-            "JAX workflow execution cannot request workflow-owned randomness with "
-            "key=None. Pass an explicit key, or use dispatch='auto', 'sequential', "
-            "or 'thread'."
-        )
+        raise TypeError(JAX_KEYLESS_DRAW_MESSAGE)
 
 
 def _caller_jax_trace_active() -> bool:
@@ -493,9 +512,9 @@ def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
     )
     if not same_owner:
         raise UnmanagedConcurrentWorkflowEntryError(
-            "The active workflow context belongs to another process, thread, or asyncio task. "
-            "Use a ProbPipe-managed execution route, or start a new workflow_run in "
-            "the concurrent worker instead of copying the parent context."
+            "this workflow_run belongs to another thread, process, or asyncio task. Run "
+            "concurrent work through a Function (e.g. dispatch='thread'), or start a separate "
+            "workflow_run inside the worker."
         )
     _assert_workflow_frame_open(active)
 

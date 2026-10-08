@@ -28,6 +28,7 @@ from probpipe.validation import (
     Reference,
     score_posterior,
     simulation_based_calibration,
+    sliced_wasserstein,
 )
 
 
@@ -89,16 +90,6 @@ class TestPredictiveCheckBroker:
 
         assert derive.call_count == 1
 
-    def test_an_explicit_key_claims_no_event(self):
-        likelihood, prior = _check_setup()
-
-        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
-            predictive_check(
-                likelihood, prior, jnp.mean, num_replications=3, key=jax.random.key(11)
-            )
-
-        commit.assert_not_called()
-
     def test_a_check_outside_a_workflow_run_draws_a_fresh_key(self):
         likelihood, prior = _check_setup()
 
@@ -134,7 +125,7 @@ class TestPredictiveCheckBroker:
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(ValueError, match=r"given slots \['mu'\]"),
+            pytest.raises(ValueError, match=r"does not produce \['mu'\]"),
         ):
             predictive_check(likelihood, other, jnp.mean, num_replications=3)
 
@@ -159,7 +150,7 @@ class _FakeConditionOn:
 
     def with_options(self, *, method=None, method_options=None):
         def fit(d, given):
-            self.seeds.append(integer_seed(run_seed(method_options or {}, "fake")))
+            self.seeds.append(integer_seed(run_seed("fake")))
             return self(d, given)
 
         return fit
@@ -342,7 +333,7 @@ class TestSimulationBasedCalibrationBroker:
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
             workflow_run(seed=7),
-            pytest.raises(TypeError, match="does not support SBC joint sampling"),
+            pytest.raises(TypeError, match="model must be a distribution that can be sampled"),
         ):
             simulation_based_calibration(
                 _OpaqueLikelihood(),
@@ -360,6 +351,171 @@ class TestPosteriorScoreBroker:
         approx = jax.random.normal(jax.random.PRNGKey(0), (32, 2))
         reference_draws = jax.random.normal(jax.random.PRNGKey(1), (32, 2))
         return approx, Reference.from_draws(reference_draws)
+
+    @pytest.mark.parametrize("certified", [False, True])
+    @pytest.mark.parametrize("closed_over", [False, True])
+    def test_jit_rejects_random_scoring_before_any_event_or_key(
+        self, monkeypatch, certified, closed_over
+    ):
+        approx, reference = self._inputs()
+        monkeypatch.setattr(_rng._JAX_KEY_ADAPTER_STATE, "certified", False)
+        if certified:
+            _rng.jax_key_from_words((0, 0))
+
+        def score(draws):
+            return score_posterior(draws, reference, metrics=("sliced_wasserstein",))
+
+        compiled = jax.jit(lambda: score(approx)) if closed_over else jax.jit(score)
+        args = () if closed_over else (approx,)
+        with (
+            workflow_run(seed=7),
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context.jax_key_from_words") as adapt,
+        ):
+            for _ in range(2):
+                with pytest.raises(TypeError, match="staged JAX computation"):
+                    compiled(*args)
+
+        commit.assert_not_called()
+        adapt.assert_not_called()
+
+    @pytest.mark.parametrize("certified", [False, True])
+    @pytest.mark.parametrize("transform", ["grad", "vmap", "vmap-grad", "grad-vmap"])
+    def test_unstaged_scoring_matches_explicit_projections_and_claims_one_event(
+        self, monkeypatch, certified, transform
+    ):
+        approx, reference = self._inputs()
+        monkeypatch.setattr(_rng._JAX_KEY_ADAPTER_STATE, "certified", False)
+        if certified:
+            _rng.jax_key_from_words((0, 0))
+
+        def score(scale):
+            return score_posterior(approx * scale, reference, metrics=("sliced_wasserstein",))[
+                "sliced_wasserstein"
+            ]
+
+        def apply(metric):
+            if transform == "grad":
+                return jax.grad(metric)(jnp.asarray(0.7))
+            scales = jnp.array([0.7, 1.3])
+            if transform == "vmap":
+                return jax.vmap(metric)(scales)
+            if transform == "vmap-grad":
+                return jax.vmap(jax.grad(metric))(scales)
+            return jax.grad(lambda s: jnp.sum(jax.vmap(metric)(s)))(scales)
+
+        adapt_key = _context.jax_key_from_words
+
+        def run(seed):
+            keys = []
+
+            def capture_key(words):
+                key = adapt_key(words)
+                keys.append(key)
+                return key
+
+            with (
+                workflow_run(seed=seed),
+                patch(
+                    "probpipe.functions._context._commit_stochastic_invocation",
+                    wraps=_context._commit_stochastic_invocation,
+                ) as commit,
+                patch(
+                    "probpipe.functions._context.jax_key_from_words", side_effect=capture_key
+                ) as adapt,
+            ):
+                actual = apply(score)
+
+            commit.assert_called_once_with("operation")
+            adapt.assert_called_once()
+            # Using the same key for each mapped element verifies shared projections.
+            expected = apply(
+                lambda scale: sliced_wasserstein(approx * scale, reference.draws, key=keys[0])
+            )
+            np.testing.assert_array_equal(actual, expected)
+            return np.asarray(actual)
+
+        results = [run(seed) for seed in (3, 4, 3)]
+        np.testing.assert_array_equal(results[0], results[2])
+        assert not np.array_equal(results[0], results[1])
+
+    @pytest.mark.parametrize(
+        "transform",
+        [
+            "jit-grad",
+            "grad-jit",
+            "jit-vmap",
+            "vmap-jit",
+            "jit-vmap-grad",
+            "jit-grad-vmap",
+            "scan",
+            "cond",
+            "make-jaxpr",
+        ],
+    )
+    def test_staged_scoring_rejects_nested_transformations_before_any_event_or_key(self, transform):
+        approx, reference = self._inputs()
+
+        def score(scale):
+            return score_posterior(approx * scale, reference, metrics=("sliced_wasserstein",))[
+                "sliced_wasserstein"
+            ]
+
+        with (
+            workflow_run(seed=7),
+            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
+            patch("probpipe.functions._context.jax_key_from_words") as adapt,
+            pytest.raises(TypeError, match="staged JAX computation"),
+        ):
+            if transform == "jit-grad":
+                jax.jit(jax.grad(score))(1.0)
+            elif transform == "grad-jit":
+                jax.grad(jax.jit(score))(1.0)
+            elif transform == "jit-vmap":
+                jax.jit(jax.vmap(score))(jnp.array([0.7, 1.3]))
+            elif transform == "vmap-jit":
+                jax.vmap(jax.jit(score))(jnp.array([0.7, 1.3]))
+            elif transform == "jit-vmap-grad":
+                jax.jit(jax.vmap(jax.grad(score)))(jnp.array([0.7, 1.3]))
+            elif transform == "jit-grad-vmap":
+                jax.jit(jax.grad(lambda scales: jax.vmap(score)(scales).sum()))(
+                    jnp.array([0.7, 1.3])
+                )
+            elif transform == "scan":
+                jax.lax.scan(lambda carry, scale: (carry, score(scale)), 0, jnp.ones(2))
+            elif transform == "cond":
+                jax.lax.cond(True, score, lambda scale: scale, 1.0)
+            else:
+                jax.make_jaxpr(score)(1.0)
+
+        commit.assert_not_called()
+        adapt.assert_not_called()
+
+    def test_rejected_jit_score_preserves_the_next_workflow_draw(self):
+        approx, reference = self._inputs()
+        compiled = jax.jit(
+            lambda: score_posterior(approx, reference, metrics=("sliced_wasserstein",))
+        )
+        law = Normal("z", 0.0, 1.0)
+        with workflow_run(seed=7):
+            expected = sample.with_options(raw=True)(law)
+        with workflow_run(seed=7):
+            for _ in range(2):
+                with pytest.raises(TypeError, match="staged JAX computation"):
+                    compiled()
+            actual = sample.with_options(raw=True)(law)
+
+        np.testing.assert_array_equal(actual, expected)
+
+    def test_jit_skips_unavailable_random_metric_without_claiming_an_event(self):
+        approx, _ = self._inputs()
+        reference = Reference.from_moments(jnp.zeros(2), jnp.eye(2))
+        compiled = jax.jit(
+            lambda draws: score_posterior(draws, reference, metrics=("sliced_wasserstein",))
+        )
+        with patch("probpipe.functions._context._commit_stochastic_invocation") as commit:
+            assert compiled(approx) == {}
+        commit.assert_not_called()
 
     def test_sliced_wasserstein_claims_only_one_seeded_event(self):
         approx, reference = self._inputs()
@@ -453,72 +609,3 @@ class TestPosteriorScoreBroker:
             )
 
         commit.assert_not_called()
-
-    def test_explicit_key_does_not_shift_later_automatic_score(self):
-        approx, reference = self._inputs()
-        explicit = jax.random.key(11)
-
-        with workflow_run(seed=7):
-            expected = score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-            )
-
-        with workflow_run(seed=7):
-            score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-                key=explicit,
-            )
-            actual = score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-            )
-
-        np.testing.assert_array_equal(
-            actual["sliced_wasserstein"],
-            expected["sliced_wasserstein"],
-        )
-
-    def test_explicit_key_reaches_sliced_wasserstein_unchanged(self):
-        approx, reference = self._inputs()
-        explicit = jax.random.key(11)
-
-        with (
-            patch(
-                "probpipe.validation._comparison.sliced_wasserstein",
-                return_value=jnp.asarray(0.0),
-            ) as metric,
-            patch("probpipe.functions._context._commit_stochastic_invocation") as commit,
-        ):
-            score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-                key=explicit,
-            )
-
-        assert metric.call_args.kwargs["key"] is explicit
-        commit.assert_not_called()
-
-    def test_missing_resolved_sliced_wasserstein_key_is_an_internal_error(self):
-        approx, reference = self._inputs()
-
-        with (
-            patch(
-                "probpipe.validation._comparison._resolve_validation_key",
-                return_value=None,
-            ),
-            patch("probpipe.validation._comparison.sliced_wasserstein") as metric,
-            pytest.raises(RuntimeError, match="resolved PRNG key"),
-        ):
-            score_posterior(
-                approx,
-                reference,
-                metrics=("sliced_wasserstein",),
-            )
-
-        metric.assert_not_called()

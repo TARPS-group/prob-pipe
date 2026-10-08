@@ -352,7 +352,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=(), b=())  # total flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z")
-        with pytest.raises(ValueError, match="doesn't match"):
+        with pytest.raises(ValueError, match="each draw has"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -368,7 +368,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=(), b=(), c=())  # total flat size 3
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))  # 2 columns
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        with pytest.raises(ValueError, match="doesn't match"):
+        with pytest.raises(ValueError, match="each draw has"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -411,7 +411,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=(2,))  # flat size 2
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 3))  # 3 columns
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z")
-        with pytest.raises(ValueError, match="doesn't match"):
+        with pytest.raises(ValueError, match="each draw has"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -425,7 +425,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=OpaqueSpec(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+        with pytest.raises(ValueError, match=r"draws of 'a'.*its spec is OpaqueSpec"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -439,7 +439,7 @@ class TestMakePosteriorRecordTarget:
         template = RecordSpec(a=OpaqueSpec(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+        with pytest.raises(ValueError, match=r"draws of 'a'.*its spec is OpaqueSpec"):
             make_posterior(
                 [chain],
                 parents=(prior,),
@@ -640,13 +640,13 @@ class TestRWMH:
     def test_basic_sampling(self):
         """RWMH samples from a simple Normal distribution."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        result = rwmh(
-            dist=dist,
-            num_results=100,
-            num_warmup=50,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=100,
+                num_warmup=50,
+                step_size=0.5,
+            )
         assert isinstance(result, EmpiricalDistribution)
         assert num_draws(result) == 100
         assert num_chains(result) == 4
@@ -656,13 +656,13 @@ class TestRWMH:
     def test_inference_data_produced(self):
         """RWMH produces an annotations DataTree with posterior group."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        result = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=20,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=20,
+                step_size=0.5,
+            )
         assert arviz_data(result) is not None
         assert "posterior" in arviz_data(result)
         # RWMH scalar stats (accept_rate, step_size) live in provenance,
@@ -673,14 +673,14 @@ class TestRWMH:
     def test_multi_chain(self):
         """RWMH with multiple chains."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        result = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=20,
-            num_chains=3,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=20,
+                num_chains=3,
+                step_size=0.5,
+            )
         assert num_chains(result) == 3
         assert num_draws(result) == 50
         assert result.num_atoms == 150  # 50 * 3
@@ -688,26 +688,26 @@ class TestRWMH:
     def test_warmup_stored(self):
         """RWMH stores warmup samples."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        result = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=20,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=20,
+                step_size=0.5,
+            )
         assert warmup_samples(result) is not None
         assert warmup_samples(result)[0].shape == (20, 2)
 
     def test_provenance(self):
         """RWMH attaches provenance."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        result = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=20,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=20,
+                step_size=0.5,
+            )
         assert result.provenance is not None
         assert result.provenance.operation == "blackjax_rwmh"
 
@@ -729,15 +729,15 @@ class TestRWMH:
         def log_lik(params, data):
             return -0.5 / sigma_y**2 * jnp.sum((data - params) ** 2)
 
-        result = rwmh(
-            dist=prior,
-            data=data,
-            log_prob_fn=log_lik,
-            num_results=8000,
-            num_warmup=2000,
-            step_size=0.3,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=prior,
+                data=data,
+                log_prob_fn=log_lik,
+                num_results=8000,
+                num_warmup=2000,
+                step_size=0.3,
+            )
         assert isinstance(result, EmpiricalDistribution)
 
         # Analytical posterior.
@@ -755,7 +755,9 @@ class TestRWMH:
         # warmup, so ``step_size=0.3`` is ignored for sampling and mixing
         # is better than a fixed-step chain would give. Assume n_eff ~ 300
         # conservatively — the tolerance is looser than the true effective
-        # sample size warrants, which keeps the test robust.
+        # sample size warrants, which keeps the test robust. Observed across
+        # four workflow seeds: max |mean error| 0.007-0.017, max |variance
+        # error| 0.004-0.011.
         n_eff = 300
         mc_se_mean = 4.0 * np.sqrt(analytical_var / n_eff)
         np.testing.assert_allclose(draws.mean(0), analytical_mean, atol=mc_se_mean)
@@ -792,21 +794,22 @@ class TestRWMH:
         """
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
         far_init = jnp.array([20.0, 20.0])
-        result = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=0,
-            step_size=0.5,
-            adapt=False,
-            init=far_init,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=0,
+                step_size=0.5,
+                adapt=False,
+                init=far_init,
+            )
         assert isinstance(result, EmpiricalDistribution)
 
         first = np.asarray(flat_chains(result)[0][0])
         # A chain seeded at the origin (init ignored) would land within a
         # few units of it; a step_size=0.5 RWMH move from [20, 20] stays
         # far out. Use a conservative band well clear of both regimes.
+        # Observed across four workflow seeds: |first - init| 0-0.50.
         assert np.linalg.norm(first - np.asarray(far_init)) < 5.0, (
             f"First draw {first} is not near init {far_init} — init may be ignored."
         )
@@ -816,15 +819,15 @@ class TestRWMH:
 
         # Two distinct inits must yield distinct early draws.
         other_init = jnp.array([-20.0, -20.0])
-        result_other = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=0,
-            step_size=0.5,
-            adapt=False,
-            init=other_init,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result_other = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=0,
+                step_size=0.5,
+                adapt=False,
+                init=other_init,
+            )
         first_other = np.asarray(flat_chains(result_other)[0][0])
         assert np.linalg.norm(first - first_other) > 1.0, (
             "Different inits produced near-identical first draws — init may be ignored."
@@ -833,13 +836,13 @@ class TestRWMH:
     def test_zero_warmup(self):
         """RWMH with num_warmup=0 stores no warmup samples."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
-        result = rwmh(
-            dist=dist,
-            num_results=50,
-            num_warmup=0,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=50,
+                num_warmup=0,
+                step_size=0.5,
+            )
         assert warmup_samples(result) is None
         assert num_draws(result) == 50
 
@@ -865,13 +868,13 @@ class TestRWMH:
                 return self._prob(value)
 
         dist = LogProbOnlyDist(label="test")
-        result = rwmh(
-            dist=dist,
-            num_results=30,
-            num_warmup=10,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=30,
+                num_warmup=10,
+                step_size=0.5,
+            )
         assert isinstance(result, EmpiricalDistribution)
 
     def test_mean_exception_fallback(self):
@@ -899,13 +902,13 @@ class TestRWMH:
                 raise RuntimeError("broken")
 
         dist = BrokenMeanLogProbDist(label="test")
-        result = rwmh(
-            dist=dist,
-            num_results=30,
-            num_warmup=10,
-            step_size=0.5,
-            random_seed=42,
-        )
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=30,
+                num_warmup=10,
+                step_size=0.5,
+            )
         assert isinstance(result, EmpiricalDistribution)
 
 
@@ -1174,14 +1177,14 @@ class TestEndToEndValuesPipeline:
             NumericArraySpec((2,)),
             lambda params: tfd.Independent(tfd.Normal(params, 1.0), 1),
         )
-        return condition_on.with_options(
-            method_options={
-                "num_results": 500,
-                "num_warmup": 200,
-                "step_size": 0.3,
-                "random_seed": 42,
-            }
-        )(likelihood * prior, {"y": jnp.array([1.0, 2.0])})
+        with workflow_run(seed=42):
+            return condition_on.with_options(
+                method_options={
+                    "num_results": 500,
+                    "num_warmup": 200,
+                    "step_size": 0.3,
+                }
+            )(likelihood * prior, {"y": jnp.array([1.0, 2.0])})
 
     def test_template_propagation(self, posterior):
         """The posterior is a law over the joint's unconditioned field, a record of params."""
@@ -1209,6 +1212,8 @@ class TestEndToEndValuesPipeline:
         post_std = np.asarray(draws["params"].raw().std(axis=0))
         analytical_mean = np.array([10 / 11, 20 / 11])
         analytical_std = np.sqrt(10 / 11)
+        # Observed across four workflow seeds: max |mean error| 0.003-0.038,
+        # |std error| 0.004-0.022.
         np.testing.assert_allclose(post_mean, analytical_mean, atol=0.15)
         np.testing.assert_allclose(post_std, analytical_std, atol=0.15)
 
@@ -1225,7 +1230,8 @@ class TestEndToEndValuesPipeline:
             np.asarray(draws["params"].raw().mean(axis=0)),
             atol=1e-5,
         )
-        # Analytical check: view._mean() near analytical posterior mean
+        # Analytical check: view._mean() near analytical posterior mean.
+        # Observed across four workflow seeds: max |mean error| 0.003-0.038.
         np.testing.assert_allclose(
             np.asarray(view._mean()),
             np.array([10 / 11, 20 / 11]),
@@ -1243,9 +1249,11 @@ class TestEndToEndValuesPipeline:
         with workflow_run(seed=0):
             result = predict(params=posterior["params"], x=0.5)
         assert result.num_atoms == 100
-        # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82
+        # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82. The mean of
+        # 100 predictions, whose sd is about 1.07, has an MC error of about
+        # 0.11. Observed across four workflow seeds: |error| 0.002-0.131.
         analytical = 10 / 11 + 0.5 * 20 / 11
-        np.testing.assert_allclose(float(mean(result)), analytical, atol=0.2)
+        np.testing.assert_allclose(float(mean(result)), analytical, atol=0.4)
 
     def test_workflow_broadcasting_preserves_correlation(self, posterior):
         """Two views from same posterior sample jointly (not independently).

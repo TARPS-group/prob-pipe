@@ -36,6 +36,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..core._dispatch import Feasibility
+from ..core._repr import public_class_name
 
 if TYPE_CHECKING:
     from ..core.record import Record
@@ -496,8 +497,8 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
     Feasibility
         The report of ``term._<method>_guard(*arguments, **keywords)``. A
         ``Feasibility`` is returned as the guard gave it, and a ``bool`` or
-        ``None`` becomes a report whose reason names the guard, its arguments,
-        and its condition. Without a guard the report is feasible, since the
+        ``None`` becomes a report whose reason names the capability, its
+        arguments, *term*'s class, and the guard's condition. Without a guard the report is feasible, since the
         capability is total on its declared domain, unless *method* is a
         protocol default that calls another capability, whose guard then applies.
 
@@ -525,13 +526,21 @@ def _capability_guard(term: Any, method: str, *arguments: Any, **keywords: Any) 
         [reprlib.repr(argument) for argument in arguments]
         + [f"{name}={reprlib.repr(value)}" for name, value in keywords.items()]
     )
-    call = f"{type(term).__name__}.{method}{_GUARD_SUFFIX}({rendered})"
-    condition = _guard_condition(guard)
-    suffix = f": {condition}" if condition else ""
+    requested = f"{method.lstrip('_')}({rendered})"
+    subject = public_class_name(type(term))
+    condition = _requirement(guard)
+    suffix = f"; it requires: {condition}" if condition else ""
     if report is False:
-        return Feasibility(False, f"{call} rejected{suffix}")
+        return Feasibility(False, f"{requested} is not available for {subject}{suffix}")
     if report is None:
-        return Feasibility(None, pending=(f"{call} needs values not yet known{suffix}",))
+        return Feasibility(
+            None,
+            pending=(
+                f"whether {requested} is available for {subject} depends on values not yet "
+                f"known{suffix}",
+            ),
+        )
+    call = f"{type(term).__name__}.{method}{_GUARD_SUFFIX}({rendered})"
     raise TypeError(f"{call} returned {report!r}; a guard returns a bool, None, or a Feasibility")
 
 
@@ -541,6 +550,19 @@ def _guard_condition(guard: Callable[..., Any]) -> str:
     if not doc:
         return ""
     return " ".join(doc.split("\n\n", 1)[0].split())
+
+
+def _requirement(check: Callable[..., Any]) -> str:
+    """The condition *check* states, as a message quotes it, or ``""``.
+
+    It is :func:`_guard_condition` with its first letter in lowercase, unless
+    the condition starts with an identifier, and without a final period.
+    """
+    condition = _guard_condition(check).rstrip(".")
+    word = condition.split(" ", 1)[0]
+    if word[:1].isupper() and word[1:] == word[1:].lower():
+        condition = condition[0].lower() + condition[1:]
+    return condition
 
 
 def _conjunction(reports: Iterable[Feasibility]) -> Feasibility:

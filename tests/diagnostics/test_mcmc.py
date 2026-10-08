@@ -215,7 +215,7 @@ class TestMcmcHelpers:
 
         assert _mcmc_has_field(posterior, "rhat")
 
-        with pytest.raises(ValueError, match="Unknown MCMC"):
+        with pytest.raises(ValueError, match="unknown MCMC diagnostic payload kind"):
             _write_mcmc_payload(posterior, {"kind": "bogus"})
 
         class _MissingKind:
@@ -248,6 +248,13 @@ class TestAddEss:
         for v in view.ess_tail.values():
             if isinstance(v, float):
                 assert v > 0
+
+    def test_a_posterior_without_chains_raises_naming_its_levels(self):
+        from probpipe import EmpiricalDistribution
+
+        law = EmpiricalDistribution("theta", np.random.default_rng(0).standard_normal((50, 2)))
+        with pytest.raises(ValueError, match=r"'theta' has no chains: .* \['theta'\]"):
+            add_ess(law)
 
     def test_ess_covers_all_params(self, posterior_3params):
         add_ess(posterior_3params)

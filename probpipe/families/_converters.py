@@ -33,6 +33,7 @@ import numpy as np
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _default_float_dtype
+from .._messages import unknown_names
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import Constraint, _supports_compatible
@@ -122,10 +123,7 @@ def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ..
     """
     unread = sorted(set(options).difference(reads))
     if unread:
-        raise TypeError(
-            f"the converter {converter!r} reads the options {list(reads)}, and {unread} are not "
-            f"among them"
-        )
+        raise TypeError(f"{unknown_names('option', unread, reads)} (converter {converter!r})")
 
 
 def _sample_count(options: dict[str, Any]) -> int:
@@ -152,13 +150,13 @@ def _sample_count(options: dict[str, Any]) -> int:
     """
     value = options.get("num_samples", Function.DEFAULT_N_BROADCAST_SAMPLES)
     if isinstance(value, bool):
-        raise TypeError(f"num_samples must be an integer; got {value!r}")
+        raise TypeError(f"num_samples must be an integer, got {value!r}")
     try:
         count = operator.index(value)
     except TypeError:
-        raise TypeError(f"num_samples must be an integer; got {value!r}") from None
+        raise TypeError(f"num_samples must be an integer, got {value!r}") from None
     if count <= 0:
-        raise ValueError(f"num_samples must be positive; got {value!r}")
+        raise ValueError(f"num_samples must be positive, got {value!r}")
     return count
 
 
@@ -188,8 +186,9 @@ def _declared(source: Any, options: dict[str, Any]) -> OutputSpec | None:
         return None
     if isinstance(source, Distribution):
         raise TypeError(
-            f"event_spec declares a backend distribution's event, and {source.label!r} is a "
-            f"ProbPipe law that carries its own declaration"
+            f"the event_spec option applies only to TFP and SciPy distributions, but "
+            f"{source.label!r} is a ProbPipe distribution with its own event_spec; remove the "
+            f"event_spec option"
         )
     if not isinstance(declared, OutputSpec):
         raise TypeError(f"event_spec must be an OutputSpec, got {type(declared).__name__}")
@@ -388,19 +387,23 @@ class _BackendConverter(Converter):
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution | None:
         raise NotImplementedError
 
+    def _source_name(self, source: Any) -> str:
+        """*source* as the error messages name it, such as ``"TFP's Normal"``."""
+        raise NotImplementedError
+
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """The law *source* enters ProbPipe as, when it is a *target_type*, read from its parameters."""
         law = self._law(source, _declared(source, options))
         if law is None:
             return ConversionInfo(
-                False, description=f"the catalog has no family for {type(source).__name__}"
+                False, description=f"no ProbPipe family corresponds to {self._source_name(source)}"
             )
         if not isinstance(law, target_type):
             return ConversionInfo(
                 False,
                 description=(
-                    f"a {type(source).__name__} enters ProbPipe as a {type(law).__name__}, which "
-                    f"is not a {getattr(target_type, '__name__', target_type)}"
+                    f"the ProbPipe family for {self._source_name(source)} is {type(law).__name__}, "
+                    f"not {getattr(target_type, '__name__', target_type)}"
                 ),
             )
         return ConversionInfo(
@@ -417,7 +420,7 @@ class _BackendConverter(Converter):
         _refuse_unread(self.name, options, self._reads)
         law = self._law(source, _declared(source, options))
         if law is None:
-            raise TypeError(f"the catalog has no family for {type(source).__name__}")
+            raise TypeError(f"no ProbPipe family corresponds to {self._source_name(source)}")
         return law
 
 
@@ -435,6 +438,9 @@ class _TFPConverter(_BackendConverter):
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution:
         return _tfp_law(source, declared)
 
+    def _source_name(self, source: Any) -> str:
+        return f"TFP's {type(source).__name__}"
+
 
 class _ScipyConverter(_BackendConverter):
     """A SciPy frozen distribution enters ProbPipe as the family whose parameters it holds."""
@@ -449,6 +455,9 @@ class _ScipyConverter(_BackendConverter):
 
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution | None:
         return _scipy_law(source, declared)
+
+    def _source_name(self, source: Any) -> str:
+        return f"SciPy's {source.dist.name}"
 
 
 # ---------------------------------------------------------------------------
@@ -724,19 +733,24 @@ def _array_event(declaration: OutputSpec, label: str, family: type, rank: int | 
     A family draws one array, as a whole term, of the rank its event has.
     """
     spec = declaration.spec
-    if declaration.exposes_record or not isinstance(spec, NumericArraySpec):
+    if declaration.exposes_record:
+        fields = list(declaration.components)
         return (
-            f"{family.__name__} draws one array, and {label!r} declares "
-            f"{'an exposed record' if declaration.exposes_record else type(spec).__name__}; "
-            f"convert a field's law d[path] instead"
+            f"{family.__name__} draws a single array, but {label!r} draws a record with fields "
+            f"{fields}; convert one field instead, such as d[{fields[0]!r}]"
+        )
+    if not isinstance(spec, NumericArraySpec):
+        return (
+            f"{family.__name__} draws a single array, but {label!r} draws "
+            f"{type(spec).__name__} values"
         )
     if spec.free_dims:
         return f"{label!r} has unbound dimensions {sorted(spec.free_dims)}"
     shape = spec.shape
     if rank == 2 and (len(shape) != 2 or shape[0] != shape[1]):
-        return f"{family.__name__} draws a square matrix, and {label!r} draws shape {shape}"
+        return f"{family.__name__} draws a square matrix, but {label!r} draws shape {shape}"
     if rank is not None and rank != 2 and len(shape) != rank:
-        return f"{family.__name__} draws an array of rank {rank}, and {label!r} draws shape {shape}"
+        return f"{family.__name__} draws an array of rank {rank}, but {label!r} draws shape {shape}"
     return None
 
 
@@ -790,7 +804,7 @@ def _check_support(result: Distribution, law: Distribution | None) -> None:
     if source is not None:
         if not _same_support(source, target):
             raise ValueError(
-                f"Cannot convert {type(law).__name__} {law.label!r} (support={source}) to "
+                f"cannot convert {type(law).__name__} {law.label!r} (support={source}) to "
                 f"{type(result).__name__} (support={target}). Pass check_support=False to "
                 f"override."
             )
@@ -799,7 +813,7 @@ def _check_support(result: Distribution, law: Distribution | None) -> None:
         jnp.all(target.check(jnp.asarray(law._rows)))
     ):
         raise ValueError(
-            f"Cannot convert {type(law).__name__} {law.label!r} to {type(result).__name__} "
+            f"cannot convert {type(law).__name__} {law.label!r} to {type(result).__name__} "
             f"(support={target}): its atoms lie outside that support. Pass check_support=False "
             f"to override."
         )
@@ -893,8 +907,8 @@ class _MomentMatching(Converter):
         fit = _FITS.get(target_type)
         if fit is None:
             return (
-                f"moment matching fits the parametric family the target names, and "
-                f"{getattr(target_type, '__name__', target_type)} names none"
+                f"{getattr(target_type, '__name__', target_type)} is not a parametric family "
+                f"that moment matching can fit"
             )
         declared = _declared(source, options)
         law = _entering_law(source, declared)
@@ -913,7 +927,10 @@ class _MomentMatching(Converter):
         samples = _samples(law, needs)
         if samples:
             if law is not None and not isinstance(law, SupportsSampling):
-                return f"{label!r} has no closed-form moments for the fit and does not sample"
+                return (
+                    f"{label!r} has no closed-form moments for the fit and does not support "
+                    f"sampling"
+                )
             _sample_count(options)
         return _MomentFit(law, declaration, label, parameters, samples)
 
@@ -963,9 +980,9 @@ class _MomentMatching(Converter):
             return ConversionInfo(
                 False,
                 description=(
-                    f"{target_type.__name__} is supported on {fixed}, and {planned.label!r} "
-                    f"declares the support {declared}; pass check_support=False to the "
-                    f"converter registry to fit it anyway"
+                    f"{target_type.__name__} is supported on {fixed}, but {planned.label!r} "
+                    f"declares the support {declared}; set the converter option "
+                    f"check_support=False to fit it anyway"
                 ),
             )
         promised = declaration._with_spec(
@@ -1042,7 +1059,7 @@ def _sampled_source(
     if law is None:
         return None, _scipy_declaration(source, declared)
     if not isinstance(law, SupportsSampling):
-        return f"{law.label!r} does not sample"
+        return f"{law.label!r} does not support sampling"
     return law, law.event_spec
 
 
@@ -1196,8 +1213,8 @@ class _KDESmoothing(Converter):
         law, declaration = (source, source.event_spec) if isinstance(sampled, str) else sampled
         if not isinstance(declaration.spec, NumericSpec):
             return (
-                f"a KDE smooths numeric atoms, and {_label(source, law, declaration)!r} declares "
-                f"{type(declaration.spec).__name__}"
+                f"a KDE needs numeric draws, but {_label(source, law, declaration)!r} draws "
+                f"{type(declaration.spec).__name__} values"
             )
         samples = not isinstance(law, EmpiricalDistribution)
         if samples:

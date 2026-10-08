@@ -695,11 +695,11 @@ class TestIndexing:
     def test_an_empty_selection_raises_value_error(self):
         """An empty tuple is malformed rather than an unknown path."""
         parent = _Law("parent", _EVENT)
-        with pytest.raises(ValueError, match="at least one path"):
+        with pytest.raises(ValueError, match="select at least one field path"):
             FieldView(parent, ())
-        with pytest.raises(ValueError, match="at least one path"):
+        with pytest.raises(ValueError, match="select at least one field path"):
             parent[()]
-        with pytest.raises(ValueError, match="at least one path"):
+        with pytest.raises(ValueError, match="select at least one field path"):
             FieldView(parent, "model/theta")[()]
 
     @pytest.mark.parametrize("path", [["y"], ("y", 0), 0])
@@ -964,7 +964,7 @@ class TestGuards:
         view = FieldView(_ConditioningLaw("parent", _EVENT), "model/theta")
         report = _capability_guard(view, "_condition_on", paths)
         assert report.feasible is False
-        assert "cover every field" in report.description
+        assert "fixes every field" in report.description
 
     def test_the_conditioning_guard_rejects_a_path_that_is_not_a_view_path(self):
         view = FieldView(_ConditioningLaw("parent", _EVENT), "model/theta")
@@ -1203,7 +1203,7 @@ class TestDerivedBehavior:
 
     def test_conditioning_on_every_field_of_the_view_raises_value_error(self):
         parent = _ConditioningLaw("parent", _EVENT)
-        with pytest.raises(ValueError, match="covers every field"):
+        with pytest.raises(ValueError, match="fixes every field"):
             FieldView(parent, "model/theta/tau")._condition_on({"tau": jnp.zeros(2)})
         assert parent.given_calls == []
 

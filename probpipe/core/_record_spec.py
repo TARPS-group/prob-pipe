@@ -12,7 +12,10 @@ from ._spec_base import (
     NumericSpec,
     OpaqueSpec,
     TermSpec,
+    _described,
     _full_array_shape_or_none,
+    _kind_mismatch,
+    _name_mismatch,
     _require_hashable,
     _unify_specs,
 )
@@ -79,8 +82,8 @@ def _to_spec(spec: _FieldSpecInput) -> TermSpec:
         return spec
     if spec is None:
         raise TypeError(
-            "a RecordSpec field takes a shape tuple or a TermSpec, and None is a pending "
-            "type; declare an opaque field as OpaqueSpec()"
+            "None is not a field spec; use OpaqueSpec() for an untyped field or a shape tuple "
+            "such as (3,) for an array"
         )
     if isinstance(spec, tuple):
         return NumericArraySpec(shape=spec)
@@ -238,7 +241,10 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         # explicit ``NumericRecordSpec(...)`` calls bypass this path
         # and run their own strict validation.
         if _field_specs is not None and not isinstance(_field_specs, (Mapping, RecordSpec)):
-            raise TypeError("RecordSpec fields must be a mapping or a RecordSpec")
+            raise TypeError(
+                f"{cls.__name__} fields must be a mapping or a RecordSpec, "
+                f"got {type(_field_specs).__name__}"
+            )
         if cls is RecordSpec:
             specs = _field_specs if _field_specs is not None else field_specs
             if isinstance(specs, RecordSpec):
@@ -260,7 +266,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     ):
         if _field_specs is not None:
             if field_specs:
-                raise ValueError("Cannot pass both positional dict and keyword arguments")
+                raise ValueError(
+                    f"pass {type(self).__name__} fields as a mapping or as keywords, not both"
+                )
             nested = (
                 dict(_field_specs.children)
                 if isinstance(_field_specs, RecordSpec)
@@ -286,7 +294,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 try:
                     converted = _to_spec(spec)
                 except TypeError as exc:
-                    raise TypeError(f"Field {name!r}: {exc}") from None
+                    raise TypeError(f"field {name!r}: {exc}") from None
                 if not isinstance(converted, RecordSpec):
                     self._check_leaf(name, converted)
             if (
@@ -296,7 +304,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 and converted.is_numeric
             ):
                 converted = NumericRecordSpec(converted)
-            _require_hashable(converted, context=f"Field {name!r} spec")
+            _require_hashable(converted, context=f"the spec of field {name!r}")
             specs[name] = converted
         self._post_validate(specs)
         object.__setattr__(self, "_tree", specs)
@@ -382,14 +390,10 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             children = value
         else:
             raise ValueError(
-                f"{path} does not match its RecordSpec: expected named fields, "
-                f"got {type(value).__name__}"
+                f"{path} must be a record or a mapping of fields, got {_described(value)}"
             )
         if self._tree.keys() != children.keys():
-            fields = f"{path} fields" if path else "fields"
-            raise ValueError(
-                f"{fields} {sorted(children)} do not match template fields {sorted(self._tree)}"
-            )
+            raise _field_mismatch(path, children, self._tree)
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
             spec._bind_dims_from_value(children[name], bindings, child_path)
@@ -398,10 +402,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         if not isinstance(actual, RecordSpec):
             return False
         if self._tree.keys() != actual._tree.keys():
-            fields = f"{path} fields" if path else "fields"
-            raise ValueError(
-                f"{fields} {sorted(actual._tree)} do not match template fields {sorted(self._tree)}"
-            )
+            raise _field_mismatch(path, actual._tree, self._tree)
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
             _unify_specs(spec, actual._tree[name], bindings, child_path)
@@ -419,7 +420,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         if not isinstance(value, (Record, Mapping)):
             return False
         try:
-            self._bind_dims_from_value(value, {}, type(self).__name__)
+            self._bind_dims_from_value(value, {}, "value")
         except (AttributeError, TypeError, ValueError):
             return False
         return True
@@ -447,9 +448,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         """
         specs = {path: spec for path, spec in self._walk_leaves() if isinstance(spec, NumericSpec)}
         if not specs:
+            found = f"none of {list(self._tree)} is numeric" if self._tree else "it has no fields"
             raise ValueError(
-                f"numeric_subset() of {type(self).__name__} is empty: no "
-                f"NumericSpec leaves survive. Dropped fields: {tuple(self._tree)}."
+                f"numeric_subset() found no numeric field in this {type(self).__name__}: {found}"
             )
         return NumericRecordSpec(specs)
 
@@ -523,7 +524,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             return value.event_template
         if not isinstance(value, Mapping):
             raise TypeError(
-                f"infer_from expects a Record or a mapping of fields, got {type(value).__name__}."
+                f"infer_from() expects a Record or a mapping of fields, got {type(value).__name__}"
             )
 
         def _leaf_spec(val: Any) -> _FieldSpecInput:
@@ -604,15 +605,13 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
                 continue
             if isinstance(spec, RecordSpec):
                 raise TypeError(
-                    f"NumericRecordSpec: nested field {name!r} is a "
-                    f"{type(spec).__name__}; nested sub-templates must "
-                    f"themselves be NumericRecordSpec."
+                    f"NumericRecordSpec nested field {name!r} must be numeric, got "
+                    f"{type(spec).__name__}; use RecordSpec for records with non-numeric fields"
                 )
             # Any non-numeric leaf — OpaqueSpec, DistributionSpec, or FunctionSpec.
             raise TypeError(
-                f"NumericRecordSpec: field {name!r} is a {type(spec).__name__}; "
-                f"only NumericArraySpec or other NumericSpec leaves (including nested numeric records) are "
-                f"allowed — use RecordSpec if you need a mixed template."
+                f"NumericRecordSpec field {name!r} must be numeric, got {type(spec).__name__}; "
+                f"use RecordSpec for records with non-numeric fields"
             )
 
     def __init__(
@@ -703,6 +702,14 @@ def _concretize_record_spec(
     return template._substitute_dims(bindings)
 
 
+def _field_mismatch(path: str, actual: Iterable[str], declared: Iterable[str]) -> ValueError:
+    """The error for the record at *path*, whose fields *actual* are not the *declared* ones."""
+    subject = f"{path} fields" if path else "fields"
+    return ValueError(
+        f"{subject} do not match the declared fields: {_name_mismatch(actual, declared)}"
+    )
+
+
 def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> None:
     """Refuse *value* unless it satisfies *spec*'s kind.
 
@@ -712,4 +719,4 @@ def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> N
     the only thing its own ``is_valid`` still tests.
     """
     if not around.is_valid(value):
-        raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
+        raise _kind_mismatch(path, spec, value)

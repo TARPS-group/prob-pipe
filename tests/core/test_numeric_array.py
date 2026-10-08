@@ -39,7 +39,7 @@ class TestNumericArrayHoldsOneValue:
         assert value.spec == NumericArraySpec(shape=(3,), dtype=jnp.float32)
 
     def test_a_supplied_spec_is_checked(self):
-        with pytest.raises(ValueError, match="does not satisfy its declaration"):
+        with pytest.raises(ValueError, match="does not match spec NumericArraySpec"):
             NumericArray(
                 "v",
                 jnp.arange(3.0),
@@ -47,7 +47,7 @@ class TestNumericArrayHoldsOneValue:
             )
 
     def test_a_value_that_is_not_an_array_is_refused(self):
-        with pytest.raises(TypeError, match="holds one numeric array"):
+        with pytest.raises(TypeError, match="value must be a numeric array or scalar"):
             NumericArray(
                 "v",
                 object(),
@@ -221,7 +221,7 @@ class TestNumericArrayStoresNativeForm:
         assert value.spec.dtype == jnp.float64
 
     def test_a_non_numeric_value_is_refused(self):
-        with pytest.raises(TypeError, match="is not a numeric leaf"):
+        with pytest.raises(TypeError, match="value must be a numeric array or scalar"):
             NumericArray(
                 "v",
                 "not numeric",
@@ -593,7 +593,7 @@ class TestNumericArrayBatchInfersItsElementSpec:
         assert batch.element_spec.shape == (3,)
 
     def test_an_array_with_fewer_axes_than_the_levels_is_refused(self):
-        with pytest.raises(ValueError, match="fewer axes than the 2 batch axes"):
+        with pytest.raises(ValueError, match="must have at least 2 batch axes"):
             NumericArrayBatch("draws", jnp.arange(4.0), ("chain", "draw"))
 
 
@@ -704,7 +704,7 @@ class TestNumericArrayBatchOverNativeContainers:
 class TestNumericArrayBatchRefusals:
     def test_a_stored_array_with_no_batch_axis_is_refused(self):
         """A batch has at least one batch axis; one value is a NumericArray."""
-        with pytest.raises(ValueError, match="at least one batch axis"):
+        with pytest.raises(ValueError, match="no batch axis before the event shape"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros(3),
@@ -713,7 +713,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_trailing_axes_that_are_not_the_event_shape_are_refused(self):
-        with pytest.raises(ValueError, match="where its elements declare the event shape"):
+        with pytest.raises(ValueError, match="but element_spec declares event shape"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros((4, 5)),
@@ -732,7 +732,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_values_that_are_not_an_array_are_refused(self):
-        with pytest.raises(TypeError, match="stores one array"):
+        with pytest.raises(TypeError, match="values must be a numeric array"):
             NumericArrayBatch(
                 "draws",
                 object(),
@@ -742,7 +742,7 @@ class TestNumericArrayBatchRefusals:
 
     def test_a_dtype_the_declaration_does_not_admit_is_refused(self):
         """The batch asserts the spec of every element, so it checks at build."""
-        with pytest.raises(TypeError, match="does not admit"):
+        with pytest.raises(TypeError, match="cannot be cast to the declared"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros((2, 3), dtype=jnp.float32),
@@ -770,7 +770,7 @@ class TestNumericArrayBatchRefusals:
         )
         store = _NoSingleDtype(np.zeros((4, 3)))
 
-        with pytest.raises(TypeError, match="reports no single dtype"):
+        with pytest.raises(TypeError, match="values have no single dtype"):
             NumericArrayBatch(
                 "draws",
                 store,
@@ -810,11 +810,11 @@ class TestNumericArrayBatchRefusals:
         """A partition that covers fewer axes than the elements have is refused —
         the one thing a caller can get wrong now that the sizes are read off the
         data rather than restated."""
-        with pytest.raises(ValueError, match="must account for every batch axis"):
+        with pytest.raises(ValueError, match=r"axes_per_level \(1,\) covers 1 axis"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), "cell", axes_per_level=(1,))
 
     def test_a_level_holds_at_least_one_axis(self):
-        with pytest.raises(ValueError, match="every level holds at least one axis"):
+        with pytest.raises(ValueError, match="axes_per_level entries must be at least 1"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), ("a", "b"), axes_per_level=(2, 0))
 
 
@@ -992,7 +992,7 @@ class TestNumericArrayBatchIsAPyTree:
 
     def test_a_partial_or_resized_rank_is_refused(self):
         """A shape is not a provenance: no reading says which level survived."""
-        with pytest.raises(ValueError, match="belongs to no level"):
+        with pytest.raises(ValueError, match="the batch shape changed from"):
             jax.tree_util.tree_map(lambda x: jnp.stack([x, x]), _batch())
 
     def test_a_skeleton_rebuilds_rather_than_raising(self):
@@ -1102,7 +1102,7 @@ class TestUnflattenChecksTheElementItRebuilds:
         would otherwise build and fail at the first selection instead."""
         _, treedef = jax.tree_util.tree_flatten(self._batch())
 
-        with pytest.raises(ValueError, match="not the event shape"):
+        with pytest.raises(ValueError, match="does not end with the event shape"):
             jax.tree_util.tree_unflatten(treedef, [jnp.zeros((4, 5))])
 
     def test_an_unchanged_store_round_trips(self):

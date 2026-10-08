@@ -207,8 +207,8 @@ class TestDeclaration:
 
         declined = doubled.check(Bare("b"))
         assert declined.feasible is False
-        assert "does not claim SupportsMean" in declined.description
-        with pytest.raises(ResolutionError, match="does not claim SupportsMean"):
+        assert "does not implement SupportsMean" in declined.description
+        with pytest.raises(ResolutionError, match="does not implement SupportsMean"):
             doubled(Bare("b"))
         report = doubled.check(Gaussian("g"))
         assert (report.route, report.exact) == ("identity", True)
@@ -216,7 +216,7 @@ class TestDeclaration:
         assert identity.condition == "The center has a route for the law."
 
     def test_a_primitive_takes_no_identity_check(self):
-        with pytest.raises(TypeError, match="derived"):
+        with pytest.raises(TypeError, match="empty body, so it cannot take identity_check"):
             _toy(identity_check=lambda d: True)
 
     def test_a_result_rule_reading_an_undeclared_name_raises(self):
@@ -452,7 +452,9 @@ class TestConditions:
 
         toy = _toy(conditions=(positive_scale,))
         toy.structural_route("any", exact=True, **_route(True, 0.0))
-        with pytest.raises(ApplicabilityError, match="The law's scale is declared positive"):
+        with pytest.raises(
+            ApplicabilityError, match="requirement not met: the law's scale is declared positive"
+        ):
             toy(Gaussian("g"))
 
     def test_an_unresolved_condition_is_deferred_to_the_return(self):
@@ -463,7 +465,7 @@ class TestConditions:
         toy = _toy(conditions=(later,))
         toy.structural_route("any", exact=True, **_route(True, 4.0))
         assert any(
-            "A condition the values settle" in item for item in toy.check(Gaussian("g")).deferred
+            "a condition the values settle" in item for item in toy.check(Gaussian("g")).deferred
         )
         assert float(jnp.asarray(toy(Gaussian("g")))) == 4.0
 
@@ -531,7 +533,7 @@ class TestSelection:
             _toy()(Gaussian("g"))
 
     def test_a_capability_route_requires_membership(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsMean"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsMean"):
             center(Bare("b"))
 
     def test_membership_suffices_where_the_class_defines_no_guard(self):
@@ -541,7 +543,7 @@ class TestSelection:
         report = center.check(GuardedMean("g", False))
         assert (report.route, report.exact) == ("monte_carlo", False)
         declined = {info.method_name: info for info in report.routes}["closed_form"]
-        assert "The stand-in's answer admits the closed form" in declined.description
+        assert "the stand-in's answer admits the closed form" in declined.description
 
     def test_each_probed_route_reports_its_own_exactness(self):
         report = center.check(GuardedMean("g", False))
@@ -596,7 +598,9 @@ class TestNamingAMethod:
 
     def test_a_name_held_by_two_registries_asks_for_route_slash_method(self):
         toy = self._two_registries().with_options(method="nuts")
-        with pytest.raises(ResolutionError, match=r"left/nuts, right/nuts.*route/method"):
+        with pytest.raises(
+            ResolutionError, match=r"ambiguous; it matches left/nuts, right/nuts\. Pass one"
+        ):
             toy(Gaussian("g"))
 
     def test_the_qualified_form_selects_the_method_within_its_route(self):
@@ -625,7 +629,7 @@ class TestNamingAMethod:
         assert (report.route, report.method) == ("second", "nuts")
 
     def test_a_qualified_name_no_route_holds_raises(self):
-        with pytest.raises(ResolutionError, match="no registry route 'left' holds"):
+        with pytest.raises(ResolutionError, match="route 'left' has no method 'hmc'"):
             self._two_registries().with_options(method="left/hmc")(Gaussian("g"))
 
 
@@ -685,7 +689,7 @@ class TestRegistryRoutes:
     def test_a_budget_is_not_a_control_of_its_own(self):
         toy = _toy()
         toy.registry_route("methods", registry=_registry(precise=(True, True, 2.0)))
-        with pytest.raises(TypeError, match="Unknown controls"):
+        with pytest.raises(TypeError, match="unknown control"):
             toy.with_options(num_warmup=7)
 
     def test_a_registry_route_is_listed_with_its_exactness_delegated(self):
@@ -715,7 +719,7 @@ class TestControls:
         assert abs(float(jnp.asarray(estimate)) - 3.0) < 0.1
 
     def test_method_naming_no_route_raises_resolution_error(self):
-        with pytest.raises(ResolutionError, match="no route or registered method named 'nope'"):
+        with pytest.raises(ResolutionError, match="unknown method 'nope'"):
             center.with_options(method="nope")(Gaussian("g"))
 
     def test_exact_only_with_a_named_approximate_route_raises(self):
@@ -728,7 +732,7 @@ class TestControls:
             center.with_options(exact_only=True)(Sampler("s"))
 
     def test_an_unknown_control_raises_type_error(self):
-        with pytest.raises(TypeError, match="Unknown controls"):
+        with pytest.raises(TypeError, match="unknown control"):
             center.with_options(tolerance=0.1)
 
     @pytest.mark.parametrize("controls", [{"exact_only": "yes"}, {"raw": 1}, {"method": 3}])
@@ -749,7 +753,7 @@ class TestControls:
         )
         toy.with_options(method_options={"tolerance": 0.5})(Gaussian("g"))
         assert seen == [0.5]
-        with pytest.raises(TypeError, match="Unknown controls"):
+        with pytest.raises(TypeError, match="unknown control"):
             toy.with_options(tolerance=0.5)
 
     def test_a_capability_route_passes_the_method_options_to_the_capability(self):
@@ -834,8 +838,8 @@ class TestLiftedChecks:
         report = center.check(batch)
         assert report.feasible is False
         assert "sweep cell (1,)" in report.description
-        assert "Bare does not claim SupportsMean" in report.description
-        with pytest.raises(ResolutionError, match="Bare does not claim SupportsMean"):
+        assert "does not implement SupportsMean" in report.description
+        with pytest.raises(ResolutionError, match=r"Bare '\S+' does not implement SupportsMean"):
             center(batch)
 
     def test_elements_that_select_different_routes_leave_the_route_undecided(self):
@@ -844,9 +848,9 @@ class TestLiftedChecks:
 
     def test_an_element_kind_the_role_refuses_raises_as_the_call_does(self):
         values = NumericArrayBatch("values", jnp.zeros(3), "values", element_spec=REAL)
-        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+        with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
             center.check(values)
-        with pytest.raises(ApplicabilityError, match="received a NumericArray"):
+        with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
             center(values)
 
     def test_an_empty_sweep_is_planned_at_its_element_kind_and_selects_no_route(self):
@@ -976,7 +980,7 @@ class TestResultAndRandomness:
         assert toy(Gaussian("g")).label == "g_toy"
 
     def test_a_label_rule_reads_only_the_declarations_parameters(self):
-        with pytest.raises(TypeError, match="label rule reading"):
+        with pytest.raises(TypeError, match="the label rule reads"):
             _toy(label=lambda law: "x")
 
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
@@ -1071,7 +1075,7 @@ class TestRegistry:
             OperationRegistry().register(Function("plain", lambda x: x))
 
     def test_an_unknown_name_raises_key_error(self):
-        with pytest.raises(KeyError, match="no operation named 'absent'"):
+        with pytest.raises(KeyError, match="unknown operation 'absent'"):
             _REGISTRY["absent"]
 
     def test_list_summarizes_operands_derivation_and_routes(self):

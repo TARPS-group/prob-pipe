@@ -132,7 +132,7 @@ class TestRequirements:
             sample(Gaussian("g"), sample_shape=shape)
 
     def test_a_law_that_does_not_sample_raises_resolution_error(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsSampling"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsSampling"):
             sample(Bare("b"))
 
     def test_the_operation_takes_no_key(self):
