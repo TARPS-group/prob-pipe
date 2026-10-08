@@ -80,7 +80,7 @@ class TestBatches:
         assert isinstance(whole.spec, BatchSpec)
         record = sample.check(Pair("p"), (4,)).result
         assert list(record.components) == list(Pair("p").event_spec.components)
-        assert record.spec == BatchSpec(Pair("p").event_spec.spec, ((4,),), ("sample",))
+        assert record.spec == BatchSpec(Pair("p").event_spec.spec, sample=4)
 
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))

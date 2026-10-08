@@ -172,7 +172,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         groups = _axis_groups_for(batch_shape, names, axes, kind="NumericArrayBatch")
         object.__setattr__(self, "_values", _read_only(values))
         self._init_batch(
-            BatchSpec(element_spec, groups, names),
+            BatchSpec._from_groups(element_spec, groups, names),
             label=label,
             provenance=provenance,
         )

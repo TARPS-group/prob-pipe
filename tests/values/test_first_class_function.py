@@ -211,7 +211,7 @@ class TestApplyContract:
         wrapped = Function(
             label="function",
             fn=lambda: returned,
-            output_spec=BatchSpec(declared, returned.axis_groups, returned.level_names),
+            output_spec=BatchSpec(declared, returned.spec.levels),
         )
 
         assert wrapped.apply() is returned
@@ -241,7 +241,7 @@ class TestApplyContract:
         wrapped = Function(
             label="function",
             fn=lambda: returned,
-            output_spec=BatchSpec(template, returned.axis_groups, returned.level_names),
+            output_spec=BatchSpec(template, returned.spec.levels),
         )
 
         assert wrapped.apply() is returned
@@ -262,7 +262,7 @@ class TestApplyContract:
         wrapped = Function(
             label="function",
             fn=lambda: returned,
-            output_spec=BatchSpec(RecordSpec(y=()), returned.axis_groups, returned.level_names),
+            output_spec=BatchSpec(RecordSpec(y=()), returned.spec.levels),
         )
 
         with pytest.raises(ValueError, match=r"shape"):
@@ -282,9 +282,7 @@ class TestApplyContract:
             Function(
                 label="function",
                 fn=lambda: float_array,
-                output_spec=BatchSpec(
-                    dtype_template, float_array.axis_groups, float_array.level_names
-                ),
+                output_spec=BatchSpec(dtype_template, float_array.spec.levels),
             ).apply()
 
         support_template = RecordSpec(y=NumericArraySpec((), support=positive))
@@ -300,9 +298,7 @@ class TestApplyContract:
             Function(
                 label="function",
                 fn=lambda: invalid_array,
-                output_spec=BatchSpec(
-                    support_template, invalid_array.axis_groups, invalid_array.level_names
-                ),
+                output_spec=BatchSpec(support_template, invalid_array.spec.levels),
             ).apply()
 
     @pytest.mark.parametrize(
@@ -1786,7 +1782,7 @@ class TestDeclaredSupportOnABatchedOutput:
         result = Function(
             label="function",
             fn=lambda: valid,
-            output_spec=BatchSpec(template, valid.axis_groups, valid.level_names),
+            output_spec=BatchSpec(template, valid.spec.levels),
         ).apply()
 
         assert result is valid
@@ -1808,5 +1804,5 @@ class TestDeclaredSupportOnABatchedOutput:
             Function(
                 label="function",
                 fn=lambda: invalid,
-                output_spec=BatchSpec(template, invalid.axis_groups, invalid.level_names),
+                output_spec=BatchSpec(template, invalid.spec.levels),
             ).apply()

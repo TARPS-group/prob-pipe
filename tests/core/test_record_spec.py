@@ -948,7 +948,7 @@ class TestTermSpecs:
             pytest.param(NumericRecordSpec(x=(3,)), id="numeric-record"),
             pytest.param(DistributionSpec(RecordSpec(x=(3,))), id="distribution"),
             pytest.param(FunctionSpec(), id="function"),
-            pytest.param(BatchSpec(NumericArraySpec((3,)), [(2,)], ["draw"]), id="batch"),
+            pytest.param(BatchSpec(NumericArraySpec((3,)), draw=2), id="batch"),
         ],
     )
     def test_spec_subclasses_preserve_weak_reference_support(self, spec):
@@ -2181,7 +2181,7 @@ class TestWithDimSizes:
         """It is reported by `free_dims`, so it must be substitutable."""
         from probpipe import BatchSpec
 
-        template = RecordSpec(b=BatchSpec(NumericArraySpec(shape=(3,)), [("S",)], ["draw"]))
+        template = RecordSpec(b=BatchSpec(NumericArraySpec(shape=(3,)), draw="S"))
 
         bound = template.with_dim_sizes(S=4)
 
@@ -2555,7 +2555,7 @@ class TestMultiplicityBindsFromAValue:
         fields: dict[str, Any] = {}
         if field is not None:
             fields["data"] = NumericArraySpec(shape=(field,))
-        fields["b"] = BatchSpec(OpaqueSpec(), [(axis,)], ["item"])
+        fields["b"] = BatchSpec(OpaqueSpec(), item=axis)
         return RecordSpec(fields)
 
     def test_an_axis_size_is_inferred_from_the_batch(self):
@@ -2585,10 +2585,10 @@ class TestMultiplicityBindsFromAValue:
         other, so both directions are asserted.
         """
         array_first = RecordSpec(
-            data=NumericArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), [("n",)], ["item"])
+            data=NumericArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), item="n")
         )
         batch_first = RecordSpec(
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=NumericArraySpec(shape=("n",))
+            b=BatchSpec(OpaqueSpec(), item="n"), data=NumericArraySpec(shape=("n",))
         )
 
         for declared in (array_first, batch_first):
@@ -2609,7 +2609,7 @@ class TestMultiplicityBindsFromAValue:
     def test_the_disagreement_raises_in_either_order(self):
         """The batch-first direction, which a copied scope would let through."""
         declared = RecordSpec(
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=NumericArraySpec(shape=("n",))
+            b=BatchSpec(OpaqueSpec(), item="n"), data=NumericArraySpec(shape=("n",))
         )
 
         with pytest.raises(
@@ -2623,7 +2623,7 @@ class TestMultiplicityBindsFromAValue:
         concrete = Record(
             "r",
             b=self._batch(3),
-            event_template=RecordSpec(b=BatchSpec(OpaqueSpec(), [(3,)], ["item"])),
+            event_template=RecordSpec(b=BatchSpec(OpaqueSpec(), item=3)),
         )
 
         assert inferred.event_template == concrete.event_template
@@ -2631,11 +2631,11 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_concrete_axis_still_requires_an_exact_match(self):
         """A fixed multiplicity is fixed, as a fixed array dimension is."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [(4,)], ["item"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), item=4))
 
         with pytest.raises(
             ValueError,
-            match=r"value at 'b' does not match event_template: expected .*levels=\{'item': 4\}",
+            match=r"value at 'b' does not match event_template: expected .*item=4\)",
         ):
             Record("r", b=self._batch(3), event_template=declared)
 
@@ -2648,14 +2648,14 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_level_name_mismatch_is_refused_rather_than_bound(self):
         """The tiling is structure, so it is checked rather than inferred."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("n",)], ["draw"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), draw="n"))
 
         with pytest.raises(ValueError, match=r"has levels \['item'\], expected \['draw'\]"):
             Record("r", b=self._batch(3), event_template=declared)
 
     def test_one_level_may_hold_several_symbolic_axes(self):
         """A level holding two axes binds each in turn."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("rows", "cols")], ["grid"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("rows", "cols")))
 
         record = Record("r", b=self._grid((3, 4)), event_template=declared)
 
@@ -2663,7 +2663,7 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_name_repeated_within_one_level_declares_a_square_grid(self):
         """`("n", "n")` binds once and demands both axes agree."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("n", "n")))
 
         record = Record("r", b=self._grid((3, 3)), event_template=declared)
         assert record.event_template["b"].axis_groups == ((3, 3),)
@@ -2673,7 +2673,7 @@ class TestMultiplicityBindsFromAValue:
 
     def test_levels_bind_independently(self):
         """Two levels, two dimensions, each read off its own axis."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("c",), ("d",)], ["chain", "draw"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), chain="c", draw="d"))
 
         record = Record(
             "r",
@@ -2685,7 +2685,7 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_level_arity_mismatch_names_the_tiling(self):
         """Two declared axes in a level do not bind against an actual one."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("a", "b")], ["grid"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("a", "b")))
 
         with pytest.raises(ValueError, match=r"has \[1\] axes per level, expected \[2\]"):
             Record("r", b=self._batch(3, level="grid"), event_template=declared)
@@ -2699,7 +2699,7 @@ class TestMultiplicityBindsFromAValue:
         """
         declared = RecordSpec(
             f=FunctionSpec(InputSpec(RecordSpec(x=NumericArraySpec(shape=("k",))).children), None),
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]),
+            b=BatchSpec(OpaqueSpec(), item="n"),
         )
 
         record = Record("r", f=lambda x: x, b=self._batch(3), event_template=declared)

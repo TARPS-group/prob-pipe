@@ -295,7 +295,7 @@ class TestConstructionRefusals:
 class TestSpec:
     def test_the_batch_is_specified_at_the_family_kind(self, functions):
         assert isinstance(functions.spec, BatchSpec)
-        assert functions.spec == BatchSpec(FunctionSpec(), ((3,),), ("variant",))
+        assert functions.spec == BatchSpec(FunctionSpec(), variant=3)
 
     def test_element_spec_is_a_view_of_the_declared_kind(self, functions, labels):
         assert isinstance(functions.element_spec, FunctionSpec)
@@ -537,7 +537,7 @@ class TestTheStorageContractIsSatisfiable:
         assert empty._store.size == 0
 
     def test_a_view_carries_the_spec_the_abc_computed(self, grid):
-        assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(type=str), ((3,),), ("draw",))
+        assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(type=str), draw=3)
 
 
 class TestNaming:

@@ -206,7 +206,7 @@ class RecordBatch(Batch[Record]):
 
         object.__setattr__(self, "_columns", store)
         self._init_batch(
-            BatchSpec(spec, groups, names),
+            BatchSpec._from_groups(spec, groups, names),
             label=label,
             provenance=provenance,
         )
@@ -467,7 +467,7 @@ class RecordBatch(Batch[Record]):
         return self._inherit_provenance(
             column_cls._over_store(
                 column,
-                spec=BatchSpec(spec, self.axis_groups, self.level_names),
+                spec=self.spec._replace(element_spec=spec),
                 label=key,
             )
         )
@@ -489,7 +489,7 @@ class RecordBatch(Batch[Record]):
         view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
-            BatchSpec(template, self.axis_groups, self.level_names),
+            self.spec._replace(element_spec=template),
             label=path,
         )
         return self._inherit_provenance(view)
@@ -506,7 +506,7 @@ class RecordBatch(Batch[Record]):
         view = object.__new__(self._view_class(element_spec))
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
-            BatchSpec(element_spec, self.axis_groups, self.level_names),
+            self.spec._replace(element_spec=element_spec),
             label=key,
         )
         return self._inherit_provenance(view)

@@ -342,9 +342,7 @@ class TestFunctionDeclarations:
         from probpipe.core.constraints import positive
 
         stored = NumericArrayBatch("stored", jnp.ones(2), "draw", element_spec=NumericArraySpec(()))
-        declared = BatchSpec(
-            NumericArraySpec((), support=positive), stored.axis_groups, stored.level_names
-        )
+        declared = BatchSpec(NumericArraySpec((), support=positive), stored.spec.levels)
         wrapped = Function("load", lambda: stored, output_spec=declared)
         result = wrapped()
         assert wrapped.apply() is stored
@@ -358,9 +356,7 @@ class TestFunctionDeclarations:
 
         values = jnp.array([1.0, invalid_value])
         stored = NumericArrayBatch("stored", values, "draw", element_spec=NumericArraySpec(()))
-        declaration = BatchSpec(
-            NumericArraySpec((), support=positive), stored.axis_groups, stored.level_names
-        )
+        declaration = BatchSpec(NumericArraySpec((), support=positive), stored.spec.levels)
         wrapped = Function("load", lambda: stored, output_spec=declaration)
         with pytest.raises(ValueError, match="output/load does not conform to declared support"):
             (wrapped.apply if raw else wrapped)()
@@ -1035,7 +1031,7 @@ def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kin
         declaration = RecordSpec(stats=RecordSpec(x=NumericArraySpec((3,))))
     else:
         stored = NumericArrayBatch("stored", values[None, :], "item", element_spec=leaf)
-        declaration = BatchSpec(NumericArraySpec((3,)), ((1,),), ("item",))
+        declaration = BatchSpec(NumericArraySpec((3,)), item=1)
     factory = Function(
         "factory", lambda row: stored, output_spec=declaration, dispatch="sequential"
     )

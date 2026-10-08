@@ -121,7 +121,7 @@ class _ObjectBatch[E](Batch[E]):
             kind=type(self).__name__,
         )
         self._init_batch(
-            BatchSpec(element_spec, groups, names),
+            BatchSpec._from_groups(element_spec, groups, names),
             label=label,
             provenance=provenance,
         )

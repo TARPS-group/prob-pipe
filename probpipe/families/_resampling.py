@@ -340,7 +340,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
 
 def _replicate_spec(source: Distribution, size: int, level: str) -> TermSpec:
     """The term spec of one replicate: *size* of the source's draws on *level*."""
-    return BatchSpec(source.event_spec.spec, ((size,),), (level,))
+    return BatchSpec(source.event_spec.spec, {level: size})
 
 
 def _completed(term: TermSpec, event_spec: OutputSpec | None) -> OutputSpec | TermSpec:

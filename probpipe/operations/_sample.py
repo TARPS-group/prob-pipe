@@ -127,7 +127,7 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
         )
     if not shape:
         return d.event_spec
-    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, (shape,), (SAMPLE_LEVEL,)))
+    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
 
 
 @operation(result=_sample_result)

@@ -683,9 +683,7 @@ class TestTheReplicateLevel:
 
     def test_level_names_the_replicates_level(self):
         replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 3, level="obs")
-        assert replicate.event_spec.spec == BatchSpec(
-            Normal("x", 0.0, 1.0).event_spec.spec, ((3,),), ("obs",)
-        )
+        assert replicate.event_spec.spec == BatchSpec(Normal("x", 0.0, 1.0).event_spec.spec, obs=3)
 
     def test_a_level_follows_the_rule_for_component_names(self):
         replicate = BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), 3, level="my level")

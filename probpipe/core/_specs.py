@@ -612,8 +612,10 @@ def _renamed_exposed(
     if kind == "law":
         event = cast(OutputSpec, spec.event_spec)  # type: ignore[attr-defined]
         return replace(spec, event_spec=event.with_path_names(mapping, **kwargs))  # type: ignore[type-var]
-    element = _renamed_exposed(spec.element_spec, mapping, kwargs)  # type: ignore[attr-defined]
-    return replace(spec, element_spec=element)  # type: ignore[type-var]
+    from ._batch import BatchSpec
+
+    batch = cast(BatchSpec, spec)
+    return batch._replace(element_spec=_renamed_exposed(batch.element_spec, mapping, kwargs))
 
 
 def _components_record(declaration: OutputSpec) -> RecordSpec:
