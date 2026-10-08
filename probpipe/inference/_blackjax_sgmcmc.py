@@ -43,12 +43,14 @@ from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
     as_prng_key,
+    described,
     flat_unflatten,
     get_init_state,
     model_factors,
     run_seed,
+    unfactored_model_reason,
 )
-from ._minibatch import MinibatchedDistribution, _reads_observations
+from ._minibatch import MinibatchedDistribution, _reads_observations, _subset_scoring_reason
 
 __all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
 
@@ -95,7 +97,6 @@ _SGMCMC_OPTIONS = (
     "init",
     "num_results",
     "num_warmup",
-    "random_seed",
     "step_size",
     "with_replacement",
 )
@@ -131,37 +132,25 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         """Require a joint whose likelihood scores a subset of its observations, and a batch size."""
         factors = model_factors(target)
         if factors is None:
-            return Feasibility(
-                feasible=False,
-                description=(
-                    f"{self.name} requires a factored joint at observed values of its fields, "
-                    f"whose other factors form the prior"
-                ),
-            )
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
         if not isinstance(factors.prior, SupportsLogProb):
             return Feasibility(
                 feasible=False,
                 description=(
-                    f"{self.name} requires a prior with a log-density; got "
-                    f"{type(factors.prior).__name__}."
+                    f"the prior must have a log-density (SupportsLogProb); got "
+                    f"{described(factors.prior)}"
                 ),
             )
         if not _reads_observations(factors.likelihood):
             return Feasibility(
                 feasible=False,
-                description=(
-                    f"{self.name} requires a likelihood whose observations are conditionally "
-                    f"independent and which scores a subset of them, such as glm_likelihood's "
-                    f"kernel; got {type(factors.likelihood).__name__}."
-                ),
+                description=_subset_scoring_reason(factors.likelihood),
             )
         if "batch_size" not in kwargs:
             return Feasibility(
                 feasible=False,
-                description=(
-                    f"{self.name} requires an explicit batch_size= kwarg. "
-                    f"There is no canonical default for a stochastic sampler."
-                ),
+                description='batch_size is required; pass method_options={"batch_size": ...}',
+                actionable=True,
             )
         return Feasibility(feasible=True)
 
@@ -175,7 +164,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 0)
         step_size: float = kwargs.get("step_size", 1e-3)
-        random_seed: int | PRNGKey = run_seed(kwargs, self.name)
+        random_seed: PRNGKey = run_seed(self.name)
         with_replacement: bool = kwargs.get("with_replacement", False)
 
         # The minibatched random measure supplies the stochastic gradients from

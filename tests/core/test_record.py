@@ -68,8 +68,12 @@ class TestConstruction:
         with pytest.raises(ValueError, match="must not contain '/'"):
             Record("r", **{"a/b": 1.0})
 
+    def test_merge_refuses_a_field_against_a_group(self):
+        with pytest.raises(ValueError, match="single field in one record but a group of fields"):
+            Record("a", x=1.0).merge(Record("b", x=Record("c", z=1.0)))
+
     def test_dict_and_kwargs_raises(self):
-        with pytest.raises(ValueError, match="Cannot pass both"):
+        with pytest.raises(ValueError, match="takes either a mapping of fields or keyword fields"):
             Record("r", {"a": 1.0}, b=2.0)
 
     def test_the_empty_record_is_legal(self):
@@ -192,7 +196,7 @@ class TestFieldAccess:
         """Descending past a leaf via path syntax must raise ``KeyError`` with
         a path-aware message — not a numpy ``IndexError``."""
         v = Record("r", a=np.array([1.0, 2.0]))
-        with pytest.raises(KeyError, match="non-tree leaf"):
+        with pytest.raises(KeyError, match="is a field, not a group"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v
@@ -273,7 +277,7 @@ class TestImmutability:
     def test_merge_overlap_raises(self):
         v1 = Record("r", a=1.0)
         v2 = Record("r", a=2.0)
-        with pytest.raises(ValueError, match="Overlapping"):
+        with pytest.raises(ValueError, match="cannot merge: both have the field 'a'"):
             v1.merge(v2)
 
     def test_without(self):
@@ -294,7 +298,7 @@ class TestImmutability:
 
     def test_without_all_raises(self):
         v = Record("r", a=1.0)
-        with pytest.raises(ValueError, match="Cannot remove all"):
+        with pytest.raises(ValueError, match=r"without\(\) cannot remove every field"):
             v.without("a")
 
     # replace / merge / without must preserve the subclass (regression:
@@ -826,7 +830,7 @@ class TestLeafOps:
 
     def test_map_rejects_node_return(self):
         v = Record("r", a=1.0)
-        with pytest.raises(ValueError, match="introduce nesting"):
+        with pytest.raises(ValueError, match="must return a single value"):
             v.map(lambda x: Record("r", z=x))
 
 
@@ -993,7 +997,7 @@ class TestProvenance:
     def test_with_provenance_is_write_once(self):
         r = Record("r", x=1.0)
         r.with_provenance(Provenance("first", parents=()))
-        with pytest.raises(RuntimeError, match="write-once"):
+        with pytest.raises(RuntimeError, match="set only once"):
             r.with_provenance(Provenance("second", parents=()))
 
     # Semantic transformations reset the source — the new Record is a
@@ -1279,14 +1283,14 @@ class TestRecordSpecStorage:
 
         # A cross-kind dtype (a float value against an int-dtype spec) fails the
         # spec's is_valid -> construction raises.
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="does not match event_template"):
             Record(
                 "r",
                 {"x": jnp.asarray(1.0, dtype=jnp.float32)},
                 event_template=RecordSpec(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
             )
         # A shape mismatch also raises.
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="does not match event_template"):
             Record(
                 "r",
                 {"x": jnp.zeros(3)},

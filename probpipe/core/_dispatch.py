@@ -35,6 +35,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .._messages import unknown_names
 from ._repr import call_repr
 
 __all__ = [
@@ -92,6 +93,11 @@ class Feasibility:
         One entry per missing declaration, each describing what is required
         for the method to be feasible. Non-empty exactly when ``feasible`` is
         ``None``.
+    actionable : bool
+        ``True`` when the method accepts this kind of argument and fails on a
+        detail of the call that the caller can fix, such as a field name the
+        argument does not have. A message that lists several reports leads
+        with an actionable one. Only an infeasible report is actionable.
 
     Raises
     ------
@@ -101,12 +107,14 @@ class Feasibility:
         or ``""`` would make ``check`` and ``execute`` disagree.
     ValueError
         If ``pending`` is empty while ``feasible`` is ``None``, or non-empty
-        while it is not.
+        while it is not, or if ``actionable`` is set on a report that is not
+        infeasible.
     """
 
     feasible: bool | None
     description: str = ""
     pending: tuple[str, ...] = field(default_factory=tuple)
+    actionable: bool = False
 
     def __post_init__(self) -> None:
         if self.feasible is not None and type(self.feasible) is not bool:
@@ -115,6 +123,8 @@ class Feasibility:
             raise ValueError("an unresolved Feasibility must name its pending declarations")
         if self.feasible is not None and self.pending:
             raise ValueError("only an unresolved Feasibility carries pending declarations")
+        if self.actionable and self.feasible is not False:
+            raise ValueError("only an infeasible Feasibility can be actionable")
 
     @property
     def unresolved(self) -> bool:
@@ -126,12 +136,14 @@ class Feasibility:
         return call_repr(type(self).__name__, [repr(self.feasible)], self._repr_arguments())
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The description and the pending declarations, where there are any."""
+        """The description, the pending declarations, and actionability, where there are any."""
         fields = []
         if self.description:
             fields.append(("description", repr(self.description)))
         if self.pending:
             fields.append(("pending", repr(self.pending)))
+        if self.actionable:
+            fields.append(("actionable", "True"))
         return fields
 
 
@@ -277,7 +289,7 @@ def _validated_priority(name: str, priority: Any) -> int | None:
     """``priority`` if it is an ``int`` or ``None``; ``TypeError`` otherwise, ``bool`` included."""
     if priority is None or (isinstance(priority, int) and not isinstance(priority, bool)):
         return priority
-    raise TypeError(f"Method {name!r} priority must be an int or None; got {priority!r}")
+    raise TypeError(f"method {name!r} priority must be an int or None, got {priority!r}")
 
 
 class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
@@ -307,8 +319,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
 
     # -- registration -------------------------------------------------------
 
-    def _available(self) -> str:
-        return ", ".join(sorted(self._by_name)) or "(none)"
+    def _unknown(self, name: str) -> str:
+        """The message for a request of the method *name*, which is not registered."""
+        return unknown_names("method", [name], sorted(self._by_name))
 
     def register(self, method: M) -> None:
         """Register a method.
@@ -336,14 +349,14 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         """
         name = method.name
         if not isinstance(name, str):
-            raise TypeError(f"Method.name must be a str; got {name!r}")
+            raise TypeError(f"method name must be a string, got {name!r}")
         if not name:
-            raise ValueError("Method.name must be a non-empty string; got ''")
+            raise ValueError("method name must be a non-empty string, got ''")
         if name in self._by_name:
-            raise ValueError(f"Method name {name!r} is already registered")
+            raise ValueError(f"a method named {name!r} is already registered")
         exact = method.exact
         if type(exact) is not bool:
-            raise TypeError(f"Method {name!r} must declare exact as a bool; got {exact!r}")
+            raise TypeError(f"method {name!r} must declare exact as a bool, got {exact!r}")
         priority = _validated_priority(name, method.priority)
         supported_types = method.supported_types()
         self._validate_supported_types(name, supported_types)
@@ -408,20 +421,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         overrides: dict[str, int | None] = dict(priorities or {})
         for name, value in kwargs.items():
             if name in overrides:
-                raise ValueError(f"Method {name!r} given both in the mapping and as a keyword")
+                raise ValueError(f"method {name!r} is given both in the mapping and as a keyword")
             overrides[name] = value
         for name, value in overrides.items():
             if name not in self._by_name:
-                raise KeyError(f"No method named {name!r}. Available: {self._available()}")
+                raise KeyError(self._unknown(name))
             _validated_priority(name, value)
         for name, new_priority in overrides.items():
             old_priority = self._effective_priority(self._by_name[name])
             if (old_priority is None) != (new_priority is None):
-                direction = "out of opt-in-only" if old_priority is None else "into opt-in-only"
+                effect = (
+                    "automatic dispatch can now select it"
+                    if old_priority is None
+                    else f"it now runs only when requested with method={name!r}"
+                )
                 warnings.warn(
-                    f"Priority override for {name!r} moves it {direction} "
-                    f"({old_priority} -> {new_priority}); auto-dispatch "
-                    f"participation changes accordingly.",
+                    f"method {name!r} changed from priority {old_priority} to {new_priority}, "
+                    f"so {effect}",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -451,7 +467,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         try:
             return self._by_name[name].method
         except KeyError:
-            raise KeyError(f"No method named {name!r}. Available: {self._available()}") from None
+            raise KeyError(self._unknown(name)) from None
 
     def _named(self, name: str) -> _Registration[M]:
         """The registration of the method a caller requested with ``method=``.
@@ -463,9 +479,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         try:
             return self._by_name[name]
         except KeyError:
-            raise ResolutionError(
-                f"No method named {name!r}. Available: {self._available()}"
-            ) from None
+            raise ResolutionError(self._unknown(name)) from None
 
     def list_methods(self) -> list[str]:
         """Every registered method name, ranked by exactness, priority, and registration order.
@@ -545,20 +559,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             if not self._passes_exact_only(named, exact_only):
                 return MethodInfo(
                     feasible=False,
-                    description=f"Method {method!r} is approximate and exact_only was requested",
+                    description=_approximate(method),
                     method_name=method,
                     exact=named.exact,
                 )
             return self._report(named, named.method.check(*args, **kwargs))
         tried: list[str] = []
+        lead = ""
         for candidate in self._candidates(key, exact_only):
             info = self._report(candidate, candidate.method.check(*args, **kwargs))
             if info.feasible is not False:
                 return info
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
+            if info.actionable and not lead:
+                lead = info.description
         return MethodInfo(
             feasible=False,
-            description=self._no_method_message(key, tried, exact_only, listing=False),
+            description=self._no_method_message(key, tried, exact_only, listing=False, lead=lead),
         )
 
     def execute(
@@ -608,28 +625,25 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         if method is not None:
             named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
-                raise ResolutionError(
-                    f"Method {method!r} is approximate and exact_only was requested"
-                )
+                raise ResolutionError(_approximate(method))
             info = named.method.check(*args, **kwargs)
             if info.feasible is None:
-                raise ResolutionError(
-                    f"Method {method!r} is unresolved; pending: {', '.join(info.pending)}"
-                )
+                raise ResolutionError(_unresolved(method, info.pending))
             if not info.feasible:
-                raise ResolutionError(f"Method {method!r} is not applicable: {info.description}")
+                raise ResolutionError(f"method {method!r} does not apply: {info.description}")
             return named.method.execute(*args, **kwargs)
         tried: list[str] = []
+        lead = ""
         for candidate in self._candidates(key, exact_only):
             info = candidate.method.check(*args, **kwargs)
             if info.feasible is None:
-                raise ResolutionError(
-                    f"Method {candidate.name!r} is unresolved; pending: {', '.join(info.pending)}"
-                )
+                raise ResolutionError(_unresolved(candidate.name, info.pending))
             if info.feasible is True:
                 return candidate.method.execute(*args, **kwargs)
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
-        raise ResolutionError(self._no_method_message(key, tried, exact_only))
+            if info.actionable and not lead:
+                lead = info.description
+        raise ResolutionError(self._no_method_message(key, tried, exact_only, lead=lead))
 
     # -- internals ----------------------------------------------------------
 
@@ -640,25 +654,35 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             feasible=feasibility.feasible,
             description=feasibility.description,
             pending=feasibility.pending,
+            actionable=feasibility.actionable,
             method_name=registration.name,
             exact=registration.exact,
         )
 
     def _no_method_message(
-        self, key: Any, tried: list[str], exact_only: bool, *, listing: bool = True
+        self,
+        key: Any,
+        tried: list[str],
+        exact_only: bool,
+        *,
+        listing: bool = True,
+        lead: str = "",
     ) -> str:
         """Why no method applies: each method tried, or, when none admits the key, that none does.
 
         With *listing*, a key no method admits also lists the registered
         methods. A report leaves them out, since a call's report lists each
-        registry's methods once.
+        registry's methods once. A *lead*, the first reason the caller can fix,
+        opens the message.
         """
         formatted = self._format_key(key)
         restriction = " with exact_only" if exact_only else ""
         if tried:
-            return f"No feasible method for {formatted}{restriction}. Tried: " + "; ".join(tried)
-        message = f"No method registered for {formatted}{restriction}"
-        return f"{message}. Available: {self.list_methods()}" if listing else message
+            if lead:
+                return f"{lead}. Methods tried for {formatted}{restriction}: " + "; ".join(tried)
+            return f"no method applies to {formatted}{restriction}. Tried: " + "; ".join(tried)
+        message = f"no method is registered for {formatted}{restriction}"
+        return f"{message}; available methods: {self.list_methods()}" if listing else message
 
     @abstractmethod
     def _cache_key(self, args: tuple[Any, ...]) -> Any:
@@ -733,6 +757,16 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         ...
 
 
+def _approximate(method: str) -> str:
+    """The message for a request of the approximate *method* under ``exact_only``."""
+    return f"method {method!r} is approximate, but exact_only=True was requested"
+
+
+def _unresolved(method: str, pending: tuple[str, ...]) -> str:
+    """The message for *method*, whose feasibility waits on the *pending* declarations."""
+    return f"method {method!r} cannot tell yet whether it applies: {', '.join(pending)}"
+
+
 def _refuse_declaration_markers(name: str, supported_types: Any) -> None:
     """Raise ``TypeError`` if *supported_types* lists a declaration-membership marker.
 
@@ -747,8 +781,9 @@ def _refuse_declaration_markers(name: str, supported_types: Any) -> None:
             stack.extend(entry)
         elif isinstance(entry, type) and vars(entry).get("_membership_follows_declaration"):
             raise TypeError(
-                f"Method {name!r} lists {entry.__name__}, whose membership follows an "
-                f"instance's declaration rather than its class, so it is not a dispatch type"
+                f"method {name!r} cannot dispatch on {entry.__name__}: membership depends on an "
+                f"object's declared specs, not its class. List ordinary classes in "
+                f"supported_types instead."
             )
 
 
@@ -772,15 +807,13 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
 
     def _cache_key(self, args: tuple[Any, ...]) -> type:
         if not args:
-            raise TypeError(
-                "UnaryDispatchRegistry requires a positional argument to dispatch on; got none"
-            )
+            raise TypeError("UnaryDispatchRegistry requires a positional argument to dispatch on")
         return type(args[0])
 
     def _validate_supported_types(self, name: str, supported_types: Any) -> None:
         if not _is_tuple_of_classes(supported_types):
             raise TypeError(
-                f"Method {name!r} must declare supported_types as a tuple of classes; "
+                f"method {name!r} must declare supported_types as a tuple of classes, "
                 f"got {supported_types!r}"
             )
 
@@ -801,8 +834,7 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
     def _cache_key(self, args: tuple[Any, ...]) -> tuple[type, type]:
         if len(args) < 2:
             raise TypeError(
-                "BinaryDispatchRegistry requires at least two positional "
-                f"arguments; got {len(args)}"
+                f"BinaryDispatchRegistry requires two positional arguments, got {len(args)}"
             )
         return (type(args[0]), type(args[1]))
 
@@ -813,8 +845,8 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
             and all(_is_tuple_of_classes(side) for side in supported_types)
         ):
             raise TypeError(
-                f"Method {name!r} must declare supported_types as a (left_types, right_types) "
-                f"pair of tuples of classes; got {supported_types!r}"
+                f"method {name!r} must declare supported_types as a (left_types, right_types) "
+                f"pair of tuples of classes, got {supported_types!r}"
             )
 
     def _distance(

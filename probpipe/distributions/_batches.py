@@ -50,14 +50,14 @@ def _first_element_spec(store: np.ndarray, kind: type, owner: str) -> object:
     """
     if store.size == 0:
         raise ValueError(
-            f"{owner} of no elements has no declaration to read; pass element_spec explicitly"
+            f"cannot infer element_spec from {owner} with no elements; pass element_spec explicitly"
         )
     first = store.flat[0]
     if not isinstance(first, kind):
         position = (0,) * store.ndim
         raise TypeError(
-            f"{owner} holds {kind.__name__} elements, got {type(first).__name__} at position "
-            f"{position}"
+            f"{owner} must hold {kind.__name__} elements; got {type(first).__name__} at "
+            f"position {position}"
         )
     return first.spec
 
@@ -125,10 +125,10 @@ class DistributionBatch(_ObjectBatch[Distribution]):
             )
         elif not isinstance(element_spec, DistributionSpec):
             raise TypeError(
-                f"DistributionBatch.element_spec must be a DistributionSpec, "
+                f"DistributionBatch.element_spec must be a DistributionSpec; "
                 f"got {type(element_spec).__name__}"
             )
-        _check_declarations(elements, element_spec, self._element_rule)
+        _check_declarations(elements, element_spec)
         super().__init__(
             label,
             elements,
@@ -161,7 +161,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         return view
 
 
-def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule: str) -> None:
+def _check_declarations(store: np.ndarray, element_spec: DistributionSpec) -> None:
     """Raise ``TypeError`` for the first law of *store* whose declaration departs from *element_spec*.
 
     The message names the position and how the law's declaration departs, such
@@ -174,9 +174,6 @@ def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule:
         The batch's elements, as an object array of any shape.
     element_spec : DistributionSpec
         The spec every element must satisfy.
-    rule : str
-        The requirement on every element, worded to follow "must" in the message,
-        as the batch class's ``_element_rule`` is.
 
     Raises
     ------
@@ -192,8 +189,8 @@ def _check_declarations(store: np.ndarray, element_spec: DistributionSpec, rule:
         )
         if difference is not None:
             raise TypeError(
-                f"every element of a DistributionBatch must {rule}, and the law at {position} "
-                f"departs from it: {difference}"
+                f"element {position} of the DistributionBatch does not match the batch's "
+                f"declaration: {difference}"
             )
 
 
@@ -262,7 +259,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
         elif not isinstance(element_spec, ConditionalDistributionSpec):
             raise TypeError(
                 f"ConditionalDistributionBatch.element_spec must be a "
-                f"ConditionalDistributionSpec, got {type(element_spec).__name__}"
+                f"ConditionalDistributionSpec; got {type(element_spec).__name__}"
             )
         super().__init__(
             label,

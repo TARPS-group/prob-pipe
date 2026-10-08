@@ -25,17 +25,14 @@ def _validate_positive_int(name: str, value: Any) -> int:
     return count
 
 
-def _resolve_validation_key(
-    key: PRNGKey | None,
+def _claim_validation_key(
     *,
     operation_kind: str,
     execution_mode: str,
     sample_shape: tuple[int, ...] | None,
     provider_abi: str,
 ) -> PRNGKey:
-    """Preserve a caller key or claim one validation singleton event."""
-    if key is not None:
-        return key
+    """Claim one validation singleton event of the workflow scope and return its key."""
     return _broker._resolve_automatic_key(
         None,
         _broker._singleton_effect_plan(

@@ -151,7 +151,7 @@ class TestConvert:
             convert.with_options(exact_only=True)(_Source("s"), _RoughTarget)
 
     def test_a_converter_that_changes_the_declaration_raises_value_error(self, suite_converters):
-        with pytest.raises(ValueError, match="component"):
+        with pytest.raises(ValueError, match="fields"):
             convert(_Source("s"), _Unfaithful)
 
     def test_the_route_delegates_to_the_converter_registry(self):
@@ -162,7 +162,7 @@ class TestConvert:
         report = convert.check(Gaussian("g"), _Target)
         identity = {info.method_name: info for info in report.routes}["identity"]
         assert identity.feasible is False
-        assert "is not a _Target" in identity.description
+        assert "is not an instance of _Target" in identity.description
         assert "already" not in identity.description
 
     def test_no_applicable_converter_raises_resolution_error(self):
@@ -184,8 +184,8 @@ class TestTheSupportCheck:
 
     def test_a_family_on_another_support_is_refused(self):
         refusal = (
-            "moment_match: Normal is supported on real, and 'tau' declares the support positive; "
-            "pass check_support=False to the converter registry to fit it anyway"
+            "moment_match: Normal is supported on real, but 'tau' declares the support positive; "
+            "set the converter option check_support=False to fit it anyway"
         )
         with pytest.raises(ResolutionError, match=re.escape(refusal)):
             convert(_tau(), Normal)

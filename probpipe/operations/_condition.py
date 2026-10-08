@@ -65,6 +65,7 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from .._messages import unknown_names
 from ..core._dispatch import (
     BaseDispatchRegistry,
     Feasibility,
@@ -74,7 +75,7 @@ from ..core._dispatch import (
 )
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, format_value, grouped_label
+from ..core._repr import format_names, format_value, grouped_label, public_class_name
 from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
 from ..core._specs import OutputSpec, _components_record
 from ..core.provenance import Provenance
@@ -92,7 +93,7 @@ from ..distributions._capabilities import (
     _kernel_is_normalized,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec, _fixes_every_field
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import (
     FactoredDistribution,
@@ -142,7 +143,10 @@ class InferenceMethod(UnaryDispatchMethod):
 
     A method validates the ``method_options`` entries it receives when it runs:
     a subclass names the entries its ``execute`` reads in ``_method_options``
-    and calls :meth:`_check_options` before it computes anything.
+    and calls :meth:`_check_options` before it computes anything. A built-in
+    method reads no seed among them: each of its runs draws its key from a
+    workflow-owned random event, so ``workflow_run(seed=...)`` reproduces the
+    run.
 
     Notes
     -----
@@ -183,8 +187,8 @@ class InferenceMethod(UnaryDispatchMethod):
         unread = sorted(set(options) - set(reads))
         if unread:
             raise TypeError(
-                f"method_options {unread} are not options of the inference method "
-                f"{self.name!r}, which reads {sorted(reads)}"
+                f"inference method {self.name!r}: "
+                f"{unknown_names('method option', unread, sorted(reads))}"
             )
 
 
@@ -272,7 +276,7 @@ class _InferenceMethodRegistry(UnaryDispatchRegistry[UnaryDispatchMethod]):
         if len(args) != 2:
             return args
         if _observed_target is None:
-            raise TypeError("the target of a model and its data needs probpipe.inference")
+            raise TypeError("conditioning a model on data requires probpipe.inference; import it")
         return (_observed_target(*args),)
 
 
@@ -312,6 +316,74 @@ def _head(path: str) -> str:
 def _slots_of(d: Any) -> frozenset[str]:
     """The given slots of *d*, none for a law."""
     return frozenset(d.given_spec) if isinstance(d, ConditionalDistribution) else frozenset()
+
+
+# ---------------------------------------------------------------------------
+# The reasons a route gives
+# ---------------------------------------------------------------------------
+
+
+def _named(d: Any) -> str:
+    """*d* as a message names it: its public class and its label, such as ``Normal 'mu'``."""
+    return f"{public_class_name(type(d))} {d.label!r}"
+
+
+def _given_kind(call: BoundCall) -> Feasibility | None:
+    """Why the given names no field path: it is no Record or mapping, or it is empty."""
+    given = call.operands["given"]
+    keys = _given_keys(given)
+    if keys is None:
+        return Feasibility(
+            False,
+            f"given is not a Record or a mapping keyed by field path; "
+            f"got {public_class_name(type(given))}",
+        )
+    if not keys:
+        return Feasibility(False, "given is empty; name at least one field", actionable=True)
+    return None
+
+
+def _unknown_paths(d: Any, keys: Iterable[str]) -> list[str]:
+    """The keys among *keys* that name neither a given slot of *d* nor a field it declares."""
+    slots = _slots_of(d)
+    return [key for key in keys if _head(key) not in slots and _spec_at(d.event_spec, key) is None]
+
+
+def _unknown(d: Any, unknown: list[str]) -> Feasibility:
+    """The actionable report that the keys *unknown* name nothing *d* declares."""
+    fields = list(d.event_spec.components)
+    slots = sorted(_slots_of(d))
+    if not slots:
+        return Feasibility(False, unknown_names("field", unknown, fields), actionable=True)
+    head = (
+        f"unknown given slot or field {unknown[0]!r}"
+        if len(unknown) == 1
+        else f"unknown given slots or fields {unknown}"
+    )
+    return Feasibility(False, f"{head}; given slots: {slots}, fields: {fields}", actionable=True)
+
+
+def _nested_field(key: str) -> Feasibility:
+    """The actionable report that conditioning on the nested field *key* is not supported."""
+    return Feasibility(
+        False,
+        f"conditioning on the nested field {key!r} is not supported yet; condition on the "
+        f"whole field {_head(key)!r}",
+        actionable=True,
+    )
+
+
+def _part_of_a_slot(key: str) -> str:
+    """The message that binding *key*, part of a structured given slot, is not supported."""
+    return (
+        f"binding part of the given slot {_head(key)!r} ({key!r}) is not supported yet; "
+        f"pass a value for the whole slot"
+    )
+
+
+def _fixes_every(d: Any) -> Feasibility:
+    """The actionable report that the given fixes every field of *d*."""
+    return Feasibility(False, _fixes_every_field(d.label), actionable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -536,10 +608,8 @@ def _joined(first: Record, second: Record) -> Record:
 # ---------------------------------------------------------------------------
 
 
-_NO_EXACT_METHOD = (
-    "the exact stage's result is unnormalized, and no exact method normalizes it; "
-    'method="unnormalized" returns that result'
-)
+_NO_EXACT_METHOD = "the conditional is unnormalized and no exact inference method applies"
+_UNNORMALIZED_FIX = 'use method="unnormalized" to get the unnormalized conditional'
 
 
 def _packaged_alike(declared: OutputSpec, expected: OutputSpec) -> bool:
@@ -610,7 +680,10 @@ class _Normalization:
             held, method=self.method, exact_only=self.exact_only, **self.options
         )
         if report.feasible is False and self.exact_only:
-            return replace(report, description=f"{_NO_EXACT_METHOD}: {report.description}")
+            return replace(
+                report,
+                description=f"{_NO_EXACT_METHOD}; {_UNNORMALIZED_FIX} ({report.description})",
+            )
         return report
 
     def normalize(self, law: Any) -> Any:
@@ -742,8 +815,8 @@ class _PerValueNormalization(ConditionalDistribution):
         if produced:
             return Feasibility(
                 False,
-                f"{produced} are not given slots of the kernel normalized per value, and "
-                f"Bayes' rule conditions them through the kernel it normalizes",
+                f"{self.label!r} conditions exactly only on its given slots "
+                f"{sorted(self.given_spec)}, not on {produced}",
             )
         return Feasibility(True)
 
@@ -839,13 +912,19 @@ def _can_curry(call: BoundCall) -> Feasibility:
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
     if not isinstance(d, ConditionalDistribution):
-        return Feasibility(False, "route 'curry' declined: the conditioned object is not a kernel")
-    if not keys:
-        return Feasibility(False, "route 'curry' declined: the given names no field")
-    if not {_head(key) for key in keys} <= _slots_of(d):
-        return Feasibility(False, "route 'curry' declined: the given names a produced field")
-    if any(_PATH_SEP in key for key in keys):
-        raise NotImplementedError("condition_on.curry: binding part of a structured slot")
+        return Feasibility(False, f"{_named(d)} is not a ConditionalDistribution")
+    kind = _given_kind(call)
+    if kind is not None:
+        return kind
+    unknown = _unknown_paths(d, keys)
+    if unknown:
+        return _unknown(d, unknown)
+    fields = [key for key in keys if _head(key) not in _slots_of(d)]
+    if fields:
+        return Feasibility(False, f"{fields} are fields of {d.label!r}, not given slots")
+    for key in keys:
+        if _PATH_SEP in key:
+            raise NotImplementedError(f"condition_on: {_part_of_a_slot(key)}")
     return Feasibility(True)
 
 
@@ -887,38 +966,25 @@ def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
     unconditioned fields.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not keys:
-        return Feasibility(
-            False, "route 'inference_methods' declined: the given is not field-keyed"
-        )
+    kind = _given_kind(call)
+    if kind is not None:
+        return kind
+    unknown = _unknown_paths(d, keys)
+    if unknown:
+        return _unknown(d, unknown)
     slots = _slots_of(d)
     produced = [key for key in keys if _head(key) not in slots]
     if not produced:
-        return Feasibility(
-            False, "route 'inference_methods' declined: the given names no produced field"
-        )
+        return Feasibility(False, f"given binds only given slots of {d.label!r} and no field")
     components = set(d.event_spec.components)
     for key in produced:
-        if _head(key) not in components:
-            return Feasibility(
-                False,
-                f"route 'inference_methods' declined: {key!r} is neither a given slot nor an event path",
-            )
         if key not in components:
-            return Feasibility(
-                False,
-                f"route 'inference_methods' declined: conditioning the interior path {key!r} is not implemented",
-            )
-    if any(_PATH_SEP in key for key in keys if _head(key) in slots):
-        return Feasibility(
-            False,
-            "route 'inference_methods' declined: binding part of a structured slot is not implemented",
-        )
+            return _nested_field(key)
+    for key in keys:
+        if _head(key) in slots and _PATH_SEP in key:
+            return Feasibility(False, _part_of_a_slot(key), actionable=True)
     if components <= set(produced):
-        return Feasibility(
-            False,
-            "route 'inference_methods' declined: the given names every produced field, leaving no law",
-        )
+        return _fixes_every(d)
     return Feasibility(True)
 
 
@@ -985,14 +1051,12 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         for component in factor.event_spec.components
     }
     fixed: dict[int, set[str]] = {}
+    unknown = [key for key in keys if key not in producer and _spec_at(d.event_spec, key) is None]
+    if unknown:
+        return _unknown(d, unknown), {}
     for key in keys:
         if key not in producer:
-            reason = (
-                f"conditioning the interior path {key!r} is not implemented"
-                if _head(key) in producer
-                else f"{key!r} is not a component of the factors"
-            )
-            return Feasibility(False, f"route 'slice' declined: {reason}"), {}
+            return _nested_field(key), {}
         fixed.setdefault(producer[key], set()).add(key)
     whole = {
         index
@@ -1000,9 +1064,7 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         if components == set(factors[index].event_spec.components)
     }
     if len(whole) == len(factors):
-        return Feasibility(
-            False, "route 'slice' declined: the given names every produced field, leaving no law"
-        ), {}
+        return _fixes_every(d), {}
     for index, components in sorted(fixed.items()):
         factor = factors[index]
         slots = factor.given_spec if isinstance(factor, ConditionalDistribution) else {}
@@ -1014,9 +1076,8 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         if free:
             return Feasibility(
                 False,
-                f"route 'slice' declined: the factor producing {sorted(components)} conditions "
-                f"on {free}, which the given leaves free, so the conditional is not a product "
-                f"of the factors",
+                f"the factor that defines {sorted(components)} conditions on {free}, which "
+                f"given does not fix, so the conditional is not a product of the factors",
             ), {}
         if index in whole:
             continue
@@ -1026,9 +1087,8 @@ def _slice_plan(d: Any, keys: tuple[str, ...]) -> tuple[Feasibility, dict[int, f
         ):
             return Feasibility(
                 False,
-                f"route 'slice' declined: the factor producing {sorted(components)} produces "
-                f"{others} as well, and it does not condition on them exactly, since its fields "
-                f"are not assumed independent",
+                f"given fixes {sorted(components)} but not {others} of the same factor, which "
+                f"cannot condition on part of its fields exactly",
             ), {}
         guard = _capability_guard(factor, "_condition_on", tuple(sorted(components)))
         if guard.feasible is not True:
@@ -1046,12 +1106,13 @@ def _can_slice(call: BoundCall) -> Feasibility:
     the fixed values. At least one component stays unconditioned.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
-    if not isinstance(d, SupportsFactors) or isinstance(d, ConditionalDistribution):
-        return Feasibility(
-            False, "route 'slice' declined: the conditioned object is not a joint law"
-        )
-    if not keys:
-        return Feasibility(False, "route 'slice' declined: the given names no field")
+    if isinstance(d, ConditionalDistribution):
+        return Feasibility(False, f"{_named(d)} is a ConditionalDistribution, not a Distribution")
+    if not isinstance(d, SupportsFactors):
+        return Feasibility(False, f"{_named(d)} does not implement SupportsFactors")
+    kind = _given_kind(call)
+    if kind is not None:
+        return kind
     return _slice_plan(d, keys)[0]
 
 
@@ -1205,7 +1266,11 @@ def _given_conformance(call: BoundCall) -> Feasibility | None:
         try:
             expected._bind_dims_from_value(value, {}, repr(path))
         except ValueError as error:
-            return Feasibility(False, f"the given at {path!r} does not conform: {error}")
+            return Feasibility(
+                False,
+                f"the value given for {path!r} does not match its declaration: {error}",
+                actionable=True,
+            )
     return None
 
 
@@ -1306,8 +1371,8 @@ class _NormalizingRoute(_RegistryRoute):
         if exact_only and not exact:
             return Feasibility(
                 False,
-                f"route {self.name!r} declined: the kernel claims "
-                f"SupportsApproximateConditioning, so evaluating it is approximate",
+                "binding the given slots runs approximate conditioning "
+                "(SupportsApproximateConditioning), which exact_only excludes",
             )
         result = None
         normalized = self._stage.normalized(call)
@@ -1316,9 +1381,8 @@ class _NormalizingRoute(_RegistryRoute):
                 return Feasibility(
                     None,
                     pending=(
-                        f"route {self.name!r}: {type(call.operands['d']).__name__} declares no "
-                        f"conditional capability that states whether its laws are normalized, "
-                        f"so a call reads the computed law's own",
+                        f"route {self.name!r}: {_named(call.operands['d'])} does not declare "
+                        f"whether its laws are normalized, which only a call can tell",
                     ),
                 )
             result = self._stage.compute(call)
@@ -1327,8 +1391,9 @@ class _NormalizingRoute(_RegistryRoute):
             if method is not None:
                 return Feasibility(
                     False,
-                    f"route {self.name!r} declined: the exact stage's result is normalized, "
-                    f"so no inference method runs on it",
+                    f"the conditional is already normalized, so inference method {method!r} "
+                    f"does not apply; drop method",
+                    actionable=True,
                 )
             d = call.operands["d"]
             if isinstance(d, _PerValueNormalization) and not self._stage.yields_kernel(call):
@@ -1339,12 +1404,12 @@ class _NormalizingRoute(_RegistryRoute):
             return self._per_value_report(call, normalization, exact)
         if result is None:
             if checking() and not exact:
-                evaluated = type(_evaluated(call.operands["d"])).__name__
+                evaluated = _named(_evaluated(call.operands["d"]))
                 return Feasibility(
                     None,
                     pending=(
-                        f"route {self.name!r}: the target is the law the approximate kernel "
-                        f"{evaluated} yields, which a call computes",
+                        f"route {self.name!r}: the law that the approximate {evaluated} gives "
+                        f"at given, which only a call computes",
                     ),
                 )
             result = self._stage.compute(call)
@@ -1365,8 +1430,8 @@ class _NormalizingRoute(_RegistryRoute):
             return Feasibility(
                 None,
                 pending=(
-                    f"route {self.name!r}: the law the approximate kernel "
-                    f"{type(kernel.kernel).__name__} yields is the target, which a call computes",
+                    f"route {self.name!r}: the law that the approximate "
+                    f"{_named(kernel.kernel)} gives at given, which only a call computes",
                 ),
             )
         info = kernel._normalization_report(call.operands["given"], self.method_options(call))
@@ -1387,14 +1452,15 @@ class _NormalizingRoute(_RegistryRoute):
         if normalization.exact_only and not call.controls["exact_only"]:
             return Feasibility(
                 False,
-                f"route {self.name!r} declined: the kernel's laws are normalized once its "
-                f"last given is bound, by a method that may be approximate",
+                "the result is a ConditionalDistribution whose laws an inference method that "
+                "may be approximate normalizes",
             )
         if normalization.exact_only and not normalization.admits_an_exact_method():
             return Feasibility(
                 False,
-                f"route {self.name!r} declined: the kernel's laws are unnormalized, and no "
-                f'exact method normalizes them; method="unnormalized" returns the kernel',
+                "the result is a ConditionalDistribution whose laws are unnormalized, and no "
+                'exact inference method applies; use method="unnormalized" to get it '
+                "unnormalized",
             )
         exact = exact and normalization.exact_only
         if normalization.method is not None:
@@ -1562,21 +1628,24 @@ def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     the unnormalized conditional that applies.
     """
     if call.controls["method"] != _UNNORMALIZED:
-        return Feasibility(
-            False, f'route {_UNNORMALIZED!r} declined: it is selected only by method="unnormalized"'
-        )
+        return Feasibility(False, 'used only with method="unnormalized"')
     reports = []
-    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
+    for name, stage in _NAMED_STAGES:
         report = stage.check(call)
         if report.feasible is not False:
             return report if report.feasible is None else PointReport(True, exact=stage.exact(call))
-        reports.append(report.description)
-    return Feasibility(False, f"route {_UNNORMALIZED!r} declined: {'; '.join(reports)}")
+        reports.append((name, report))
+    actionable = next((report for _, report in reports if report.actionable), None)
+    if actionable is not None:
+        return actionable
+    return Feasibility(
+        False, "; ".join(f"{name}: {report.description}" for name, report in reports)
+    )
 
 
 def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
     """The result of the exact stage that applies, normalized or not."""
-    for stage in (_CURRY, _SLICE, _EXACT_CONDITIONING, _BAYES):
+    for _, stage in _NAMED_STAGES:
         if stage.check(call).feasible is True:
             return stage.compute(call)
     raise AssertionError("the exact stage ran with no stage that applies")
@@ -1647,6 +1716,15 @@ _EXACT_CONDITIONING = _ExactStage(
     yields_kernel=_leaves_a_slot,
 )
 
+#: The ways the exact stage computes the conditional, in the order it tries them,
+#: each under the name of the route that runs it.
+_NAMED_STAGES: tuple[tuple[str, _ExactStage], ...] = (
+    ("curry", _CURRY),
+    ("slice", _SLICE),
+    ("exact_conditioning", _EXACT_CONDITIONING),
+    ("inference_methods", _BAYES),
+)
+
 
 # ---------------------------------------------------------------------------
 # The draws and conversions of an unnormalized law
@@ -1689,8 +1767,10 @@ class _NormalizingThen(_RegistryRoute):
         states.
         """
         law = call.operands["d"]
-        if not isinstance(law, Distribution) or _is_normalized(law):
-            return Feasibility(False, f"route {self.name!r} declined: the law is normalized")
+        if not isinstance(law, Distribution):
+            return Feasibility(False, f"{_named(law)} is not a Distribution")
+        if _is_normalized(law):
+            return Feasibility(False, f"{_named(law)} is already normalized")
         admitted = self._admits(call)
         if admitted.feasible is not True:
             return admitted
@@ -1744,8 +1824,9 @@ def _an_empirical_target(call: BoundCall) -> Feasibility:
     target = call.operands["target"]
     if issubclass(EmpiricalDistribution, target):
         return Feasibility(True)
+    relation = "does not support" if getattr(target, "_is_protocol", False) else "is not a"
     return Feasibility(
-        False, f"route 'normalize' declined: an empirical law does not satisfy {target.__name__}"
+        False, f"normalizing gives an EmpiricalDistribution, which {relation} {target.__name__}"
     )
 
 
@@ -1783,7 +1864,10 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
     )
     empirical._init_annotations(law.annotations)
     if not isinstance(empirical, target):
-        raise TypeError(f"the normalized law of {source.label!r} is not a {target.__name__}")
+        raise TypeError(
+            f"cannot convert {source.label!r} to {target.__name__}: its normalized law is an "
+            f"EmpiricalDistribution"
+        )
     return empirical
 
 

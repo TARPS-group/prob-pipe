@@ -114,7 +114,7 @@ class TestBernoulli:
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             Bernoulli(probs=0.5, logits=0.0, label="x")
 
 
@@ -176,7 +176,7 @@ class TestNegativeBinomial:
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             NegativeBinomial(total_count=5, probs=0.4, logits=0.0, label="x")
 
 
@@ -216,11 +216,11 @@ class TestNegativeBinomial:
 )
 class TestProbsLogitsValidation:
     def test_error_both_provided(self, cls, kwargs_both, kwargs_neither):
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             cls(**kwargs_both)
 
     def test_error_neither_provided(self, cls, kwargs_both, kwargs_neither):
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             cls(**kwargs_neither)
 
 

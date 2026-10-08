@@ -92,6 +92,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or an unscoped run resamples afresh. Replace
   `iterate(with_resampling(step, seed=0), ...)` with
   `iterate(with_resampling(step), ...)` inside `workflow_run(seed=0)`.
+- **Every inference method takes its seed from the workflow scope.** Each run of
+  an inference method, and each training of an amortized learner, draws its
+  seed from a workflow-owned random event. `workflow_run(seed=...)` therefore
+  reproduces it, and another seed or an unscoped call runs afresh.
+  - The `random_seed` method option is removed from `blackjax_nuts`,
+    `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`,
+    `blackjax_sgld`, `blackjax_sghmc`, `tfp_nuts`, `nutpie_nuts`, `pymc_nuts`,
+    `pymc_advi`, `cmdstan_nuts`, and `pyabc_smcabc`, and setting it raises the
+    `TypeError` of an unknown option.
+  - The `random_seed` parameter is removed from `rwmh`, `elliptical_slice`,
+    `condition_on_nutpie`, `learn_amortized_posterior`,
+    `learn_amortized_likelihood`, and `learn_amortized_ratio`, so the learners
+    no longer train at the seed 0 by default. A `random_seed=` or `seed=`
+    keyword raises the `TypeError` of an unexpected keyword, including in the
+    keywords that `condition_on_nutpie` passes to `nutpie.sample` and the
+    learners pass to `approximator.fit`.
+  - `pymc_advi` seeds the draws of an empirical result from the run's key, so
+    `workflow_run(seed=...)` reproduces them.
+  - `pyabc_smcabc` with a sampler whose workers run in other processes gives
+    each worker its own JAX keys, folded from the worker's numpy generator, so
+    the workers no longer repeat one another's prior draws and simulations.
+
+  Replace
+  `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.with_options(method_options={"num_results": 500})(model, data)`
+  inside `workflow_run(seed=0)`, and
+  `learn_amortized_posterior(prior, simulator, random_seed=0)` with
+  `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
 - **A result names each component by what its value means.**
   - `mean`, `variance`, and `quantile` name each component of the law's event
     by their call. The mean of a law over `mu` and `tau` is a record whose
@@ -115,6 +143,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A repr writes names that are no Python identifiers, such as `mean(mu)`,
     in order inside one `**{...}` mapping, as in
     `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+- **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
+  from the workflow scope.** The three drop their `key` parameter, and a `key=`
+  keyword raises `TypeError`. A call claims one workflow-owned random event of
+  the enclosing workflow scope, as a call without a key did. A call inside
+  `workflow_run(seed=...)` therefore reproduces its result, and a call outside
+  every scope draws afresh. `score_posterior` claims the event only when it
+  scores `sliced_wasserstein`. Move a call that passed a key into a seeded scope,
+  so `predictive_check(likelihood, posterior, test_fn, y, key=jax.random.key(0))`
+  becomes
+
+  ```python
+  with workflow_run(seed=0):
+      check = predictive_check(likelihood, posterior, test_fn, y)
+  ```
+
+  The scope derives the call's key from the seed and the call's position in the
+  scope, so the result differs from the one the old key gave.
+  `score_posterior` raises `TypeError` before claiming an event when sliced
+  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
+  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
+  supported, including their composition, and mapped calls share random
+  projections across the batch. For staged computation, use
+  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  skipping sliced Wasserstein when the reference has no draws, remains
+  compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -504,15 +557,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anonymous, and nested `workflow_run` scopes derive keys from stable call,
   source, and logical-unit identities. All omitted-key sampling, conversion,
   validation, and diagnostics routes use the same broker. Explicit sampling
-  keys and inference `random_seed` arguments remain caller-owned, are passed
-  through unchanged, and do not advance the workflow stream. A wrapped user
-  callable's own `seed` parameter is still an ordinary input.
+  keys remain caller-owned, are passed through unchanged, and do not advance
+  the workflow stream. Each run of an inference method draws its seed from the
+  stream, as the entry "Every inference method takes its seed from the
+  workflow scope" states. A wrapped user callable's own `seed` parameter is
+  still an ordinary input.
 
-  `score_posterior(..., key=None)` no longer uses a fixed
-  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
-  the same ownership rule: a bare score receives a fresh ephemeral root, while
-  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
-  explicit `key=`) to remain reproducible.
+  `score_posterior` no longer uses a fixed `jax.random.PRNGKey(0)` for sliced
+  Wasserstein projections. It now follows the same ownership rule: a bare score
+  receives a fresh ephemeral root, while benchmark scoring must run inside
+  `workflow_run(seed=...)` to remain reproducible.
 
   PPC test functions must have unique `__name__` values because those names
   label the returned statistics; use distinct named functions instead of
@@ -2018,6 +2072,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Error and warning messages say what went wrong in the caller's terms.**
+  Each message names the call that failed, the argument and value at fault,
+  and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
+  §9.3. Messages no longer use design vocabulary such as "packaging", "whole
+  term", or "claim", and no longer name private helpers. A lookup of a name
+  that does not exist lists the names that do, as in
+  `unknown level 'test'; available levels: ['quantile']`. Code that matches
+  on the old wording needs updating, since the exception types are unchanged.
+- **A "no route applies" error leads with the reason the caller can fix.** A
+  `Feasibility` report takes `actionable=True` when it fails on a detail of the
+  call, such as a field name the argument does not have, and the error opens
+  with the first such reason before it lists every route tried. So
+  `condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})` raises
+  `condition_on: unknown field 'x'; available fields: ['mu']. Routes tried: ...`.
+  A route's reason no longer repeats the route's name, and a missing capability
+  reads "does not implement SupportsSampling".
 - **Error messages and a repr call a term's label its label.** A `Record` built
   without a label says it requires its label as the first positional argument,
   and that every keyword argument, `name=` and `label=` included, is a field.

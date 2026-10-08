@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from .._messages import unknown_names
 from ._record_spec import NumericRecordSpec, RecordSpec
 from ._repr import call_repr, term_repr
 from ._spec_base import (
@@ -20,6 +21,7 @@ from ._spec_base import (
     OpaqueSpec,
     TermSpec,
     _known_type,
+    _name_mismatch,
     _require_hashable,
     _unify_specs,
 )
@@ -42,7 +44,7 @@ def _check_slot(name: str, spec: TermSpec) -> None:
     # An input slot is a Python parameter, so its name is an identifier.
     if not isinstance(name, str) or not name.isidentifier() or keyword.iskeyword(name):
         raise ValueError(f"input slot names must be Python identifiers, got {name!r}")
-    _check_term(name, spec, allow_hole=False)
+    _check_term(name, spec, allow_hole=False, noun="input slot")
 
 
 def _check_component_name(name: str, *, context: str = "component names") -> None:
@@ -67,13 +69,16 @@ def _check_component_name(name: str, *, context: str = "component names") -> Non
 
 def _check_component(name: str, spec: TermSpec | None, *, allow_hole: bool = False) -> None:
     _check_component_name(name)
-    _check_term(name, spec, allow_hole=allow_hole)
+    _check_term(name, spec, allow_hole=allow_hole, noun="component")
 
 
-def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool) -> None:
+def _check_term(name: str, spec: TermSpec | None, *, allow_hole: bool, noun: str) -> None:
     if not isinstance(spec, TermSpec) and not (allow_hole and spec is None):
-        raise TypeError(f"component {name!r} must have a TermSpec, got {type(spec).__name__}")
-    _require_hashable(spec, context=f"Component {name!r} spec")
+        message = f"{noun} {name!r} needs a TermSpec, got {type(spec).__name__}"
+        if isinstance(spec, tuple):
+            message += f"; use NumericArraySpec({spec!r}) for an array of that shape"
+        raise TypeError(message)
+    _require_hashable(spec, context=f"the spec of {noun} {name!r}")
 
 
 @dataclass(frozen=True, init=False, eq=False)
@@ -111,8 +116,12 @@ class InputSpec(Mapping[str, TermSpec]):
         self, slots: Mapping[str, TermSpec] | None = None, /, **components: TermSpec
     ) -> None:
         if slots is not None:
-            if not isinstance(slots, Mapping) or components:
-                raise TypeError("InputSpec expects a mapping or keyword slots, not both")
+            if not isinstance(slots, Mapping):
+                raise TypeError(
+                    f"InputSpec expects a mapping of slot names to specs, got {type(slots).__name__}"
+                )
+            if components:
+                raise TypeError("pass InputSpec slots as a mapping or as keywords, not both")
         else:
             slots = components
         for name, spec in slots.items():
@@ -175,7 +184,7 @@ class InputSpec(Mapping[str, TermSpec]):
         """
         unknown = [name for name in names if name not in self._slots]
         if unknown:
-            raise KeyError(f"{unknown} are not slots of {list(self._slots)}")
+            raise KeyError(f"with_optional(): {unknown_names('slot', unknown, self._slots)}")
         return self._with_slots(self._slots, self._optional | frozenset(names))
 
     def without(self, *names: str) -> InputSpec:
@@ -227,9 +236,13 @@ class InputSpec(Mapping[str, TermSpec]):
         Raises ValueError for missing/extra slots or conflicting sizes.
         """
         if not isinstance(value, Mapping):
-            raise TypeError("InputSpec.bind_dims_from_value expects a mapping")
+            raise TypeError(
+                f"InputSpec.bind_dims_from_value() expects a mapping, got {type(value).__name__}"
+            )
         if self._slots.keys() != value.keys():
-            raise ValueError(f"InputSpec slots {list(self)} do not match values {list(value)}")
+            raise ValueError(
+                f"values do not match the InputSpec slots: {_name_mismatch(value, self)}"
+            )
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
             spec._bind_dims_from_value(value[name], bindings, f"InputSpec/{name}")
@@ -238,9 +251,13 @@ class InputSpec(Mapping[str, TermSpec]):
     def bind_dims_from_spec(self, other: InputSpec) -> InputSpec:
         """Bind against another input declaration in one shared dimension scope."""
         if not isinstance(other, InputSpec):
-            raise TypeError("InputSpec.bind_dims_from_spec expects an InputSpec")
+            raise TypeError(
+                f"InputSpec.bind_dims_from_spec() expects an InputSpec, got {type(other).__name__}"
+            )
         if self._slots.keys() != other._slots.keys():
-            raise ValueError(f"InputSpec slots {list(self)} do not match slots {list(other)}")
+            raise ValueError(
+                f"the other InputSpec's slots do not match these: {_name_mismatch(other, self)}"
+            )
         bindings: dict[str, int] = {}
         for name, spec in self._slots.items():
             _unify_specs(spec, other[name], bindings, f"InputSpec/{name}")
@@ -252,6 +269,13 @@ _EXPOSED_SPECS = {
     "record": "RecordSpec",
     "law": "DistributionSpec or ConditionalDistributionSpec",
     "batch": "BatchSpec of a record or a law",
+}
+
+#: What the components of each kind of exposed term are, as a message names them.
+_EXPOSED_OF = {
+    "record": "a record's fields",
+    "law": "a distribution's event components",
+    "batch": "a batch element's components",
 }
 
 
@@ -319,12 +343,18 @@ class OutputSpec:
 
     def __init__(self, *args: TermSpec, **term: TermSpec | None) -> None:
         if args:
-            if len(args) != 1 or term or _exposed_kind(args[0]) is None:
-                raise TypeError(
-                    "OutputSpec expects one positional RecordSpec, DistributionSpec, "
-                    "ConditionalDistributionSpec, or BatchSpec of one of them, or one keyword"
-                )
+            if term:
+                raise TypeError("OutputSpec takes one positional spec or one keyword, not both")
+            if len(args) != 1:
+                raise TypeError(f"OutputSpec takes one positional spec, got {len(args)}")
             spec = args[0]
+            if _exposed_kind(spec) is None:
+                raise TypeError(
+                    f"OutputSpec cannot take a {type(spec).__name__} positionally; name a single "
+                    f"output with a keyword, such as OutputSpec(x=...). A positional spec must be "
+                    f"a RecordSpec, DistributionSpec, ConditionalDistributionSpec, or a BatchSpec "
+                    f"of one"
+                )
             if isinstance(spec, RecordSpec):
                 for name, child in spec.children.items():
                     _check_component(name, child)
@@ -333,9 +363,10 @@ class OutputSpec:
             name, spec = next(iter(term.items()))
             _check_component(name, spec, allow_hole=True)
         elif term:
+            fields = ", ".join(f"{name}=..." for name in term)
             raise TypeError(
-                f"OutputSpec takes one keyword, which names the whole term, but got "
-                f"{sorted(term)}; declare an exposed record as OutputSpec(RecordSpec(...))"
+                f"OutputSpec takes one keyword, got {list(term)}; for several named outputs, "
+                f"pass a record: OutputSpec(RecordSpec({fields}))"
             )
         else:
             raise ValueError("OutputSpec requires one keyword or an explicit RecordSpec")
@@ -427,8 +458,8 @@ class OutputSpec:
         kind = None if self._component_name is not None else _exposed_kind(self._term_spec)
         if kind is not None and _exposed_kind(spec) != kind:
             raise TypeError(
-                f"an exposed {kind} declaration needs a {_EXPOSED_SPECS[kind]}, "
-                f"got {type(spec).__name__}"
+                f"with_spec() needs a {_EXPOSED_SPECS[kind]} for an OutputSpec of "
+                f"{_EXPOSED_OF[kind]}, got {type(spec).__name__}"
             )
         if self._term_spec is not None:
             bindings: dict[str, int] = {}
@@ -483,14 +514,21 @@ class OutputSpec:
         renamed_component = renames.get(component, component)
         if _PATH_SEP in renamed_component:
             raise ValueError(
-                f"with_path_names() keeps the packaging, so the whole term's component "
-                f"{component!r} is renamed in place, not moved to {renamed_component!r}"
+                f"cannot rename {component!r} to {renamed_component!r}: with_path_names() can "
+                f"rename a single-component output but cannot move it into a group. Choose a "
+                f"name without {_PATH_SEP!r}."
             )
+        prefix = renamed_component + _PATH_SEP
         for source, target in renames.items():
-            if source != component and not target.startswith(renamed_component + _PATH_SEP):
+            if source != component and not target.startswith(prefix):
+                owner = (
+                    repr(component)
+                    if renamed_component == component
+                    else f"{component!r}, renamed to {renamed_component!r},"
+                )
                 raise ValueError(
-                    f"with_path_names() keeps the packaging, so the fields of the whole term "
-                    f"{renamed_component!r} stay under it; {source!r} cannot move to {target!r}"
+                    f"cannot move {source!r} to {target!r}: fields of {owner} must stay "
+                    f"under {prefix!r}"
                 )
         ((name, term),) = components.with_path_names(renames).children.items()
         return OutputSpec(**{name: None if spec is None else term})
@@ -524,7 +562,11 @@ def _root_path(component: str | None, kind: str | None) -> str:
     """
     if component is not None:
         return component
-    return "" if kind == "record" else f"the exposed {kind}"
+    return "" if kind == "record" else _ROOT_NAMES[cast(str, kind)]
+
+
+#: The name a unification error gives the root of an exposed law or batch.
+_ROOT_NAMES = {"law": "the distribution", "batch": "the batch"}
 
 
 def _unification(declared: TermSpec, produced: TermSpec, bindings: Mapping[str, int]) -> TermSpec:
@@ -599,12 +641,14 @@ def _components_record(declaration: OutputSpec) -> RecordSpec:
     """
     if declaration.exposes_record:
         if not isinstance(declaration.spec, RecordSpec):
-            raise TypeError(f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}")
+            raise TypeError(
+                f"expected an output that is a record, got {type(declaration.spec).__name__}"
+            )
         return declaration.spec
     if declaration._component_name is None:
         raise TypeError(
-            f"an exposed declaration holds a RecordSpec, got {declaration.spec!r}, whose "
-            f"components are no record's fields"
+            f"expected an output that is a record or a single named value, but it holds the "
+            f"components of {declaration.spec!r}"
         )
     return RecordSpec(dict(declaration.components))
 

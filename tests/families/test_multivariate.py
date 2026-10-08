@@ -150,10 +150,10 @@ class TestMultinomial:
 
     def test_probs_logits_validation(self):
         # Must provide exactly one of probs or logits.
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             Multinomial(total_count=10, label="m")
 
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             Multinomial(
                 total_count=10,
                 probs=[0.2, 0.3, 0.5],
@@ -179,7 +179,7 @@ class TestWishart:
         assert s.shape == (3, 3)
 
     def test_error_if_both_given(self):
-        with pytest.raises(ValueError, match="exactly one"):
+        with pytest.raises(ValueError, match="cannot both be given"):
             Wishart(df=5.0, scale_tril=jnp.eye(3), scale=jnp.eye(3), label="w")
 
     def test_samples_positive_semi_definite(self, key):

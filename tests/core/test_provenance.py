@@ -611,17 +611,25 @@ class TestSerialization:
         assert restored.diagnostics == diagnostics
 
     @pytest.mark.parametrize(
-        "field,value",
+        "field,value,message",
         [
-            ("controls", {"bad": (1, 2)}),
-            ("controls", {1: "non-string key"}),
-            ("diagnostics", {"bad": jnp.asarray([1, 2])}),
+            (
+                "controls",
+                {"bad": (1, 2)},
+                r"controls\.bad must be a JSON-native value .*, got tuple",
+            ),
+            ("controls", {1: "non-string key"}, "controls keys must be strings, got 1"),
+            (
+                "diagnostics",
+                {"bad": jnp.asarray([1, 2])},
+                r"diagnostics\.bad must be a JSON-native value .*, got an array of shape \(2,\)",
+            ),
         ],
     )
-    def test_control_fields_reject_non_json_native_values(self, field, value):
+    def test_control_fields_reject_non_json_native_values(self, field, value, message):
         kwargs = {field: value}
 
-        with pytest.raises(TypeError, match="JSON-native"):
+        with pytest.raises(TypeError, match=message):
             Provenance("op", **kwargs)
 
     def test_control_fields_reject_non_finite_numbers(self):
