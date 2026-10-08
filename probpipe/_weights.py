@@ -230,7 +230,13 @@ def weighted_choice(
     ValueError
         If a size is negative.
     """
-    sizes = _as_shape(shape, what="weighted_choice shape", symbolic=False)
+    return _weighted_choice(
+        key, n, weights, _as_shape(shape, what="weighted_choice shape", symbolic=False)
+    )
+
+
+def _weighted_choice(key: PRNGKey, n: int, weights: Array | None, sizes: tuple[int, ...]) -> Array:
+    """``weighted_choice`` over a shape already read as a tuple of sizes."""
     if not sizes:
         sizes = (1,)
         squeeze = True
@@ -570,11 +576,11 @@ class Weights:
 
         A single int is one axis, so ``shape=10`` draws ten indices.
         """
-        return weighted_choice(
+        return _weighted_choice(
             key,
             self._n,
-            weights=None if self._is_uniform else self.normalized,
-            shape=_as_shape(shape, what="Weights.choice shape", symbolic=False),
+            None if self._is_uniform else self.normalized,
+            _as_shape(shape, what="Weights.choice shape", symbolic=False),
         )
 
     def subsample(self, indices: Array) -> Weights:

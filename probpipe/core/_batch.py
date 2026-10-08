@@ -111,8 +111,9 @@ class BatchSpec(TermSpec):
 
     Each level's shape is read as :class:`NumericArraySpec` reads ``shape``, so a
     single int or str is one axis: ``draw=4`` is ``draw=(4,)``. A level name that
-    is no Python keyword, such as ``"my level"``, is given in a mapping passed
-    positionally instead, and the two forms are not combined. :attr:`levels`
+    cannot be written as a keyword argument, such as ``"my level"`` or
+    ``"class"``, is given in a mapping passed positionally instead, and the two
+    forms are not combined. :attr:`levels`
     returns the mapping, so ``BatchSpec(other_spec, batch.spec.levels)`` declares
     another element type over the same levels.
 

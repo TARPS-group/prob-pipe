@@ -13,8 +13,8 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-from ._repr import format_dtype, public_class_name, term_repr
-from ._shapes import ShapeLike, _as_shape
+from ._repr import format_dtype, public_class_name, term_repr, type_name
+from ._shapes import ShapeLike, _as_dim, _as_shape
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -83,9 +83,9 @@ class TermSpec(ABC):
         Parameters
         ----------
         **names : str
-            Old dimension names mapped to non-empty new names. Fixed sizes and
-            unrelated metadata are preserved; unknown old names are ignored.
-            Renaming two symbols to one intentionally joins their scopes.
+            Old dimension names mapped to new names, each a Python identifier.
+            Fixed sizes and unrelated metadata are preserved; unknown old names
+            are ignored. Renaming two symbols to one joins their scopes.
 
         Returns
         -------
@@ -95,14 +95,17 @@ class TermSpec(ABC):
         Raises
         ------
         TypeError
-            If a new name is not a non-empty string.
+            If a new name is not a string.
+        ValueError
+            If a new name is not a Python identifier.
         """
         for old, new in names.items():
-            if not isinstance(new, str) or not new:
+            if not isinstance(new, str):
                 raise TypeError(
-                    f"with_dim_names(): the new name for {old!r} must be a non-empty string, "
-                    f"got {new!r}"
+                    f"with_dim_names(): the new name for {old!r} must be a str, "
+                    f"got {type_name(new)} {new!r}"
                 )
+            _as_dim(new, what=f"with_dim_names(): the new name for {old!r}")
         return self._substitute_dims(names)
 
     def bind_dims_from_value(self, value: Any) -> Self:

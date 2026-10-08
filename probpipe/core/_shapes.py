@@ -87,7 +87,7 @@ def _as_dim(entry: Any, *, what: str, symbolic: bool = True) -> int | str:
     Returns
     -------
     int or str
-        The size as a Python ``int``, or the name.
+        The size as a Python ``int``, or the name as a Python ``str``.
 
     Raises
     ------
@@ -104,7 +104,7 @@ def _as_dim(entry: Any, *, what: str, symbolic: bool = True) -> int | str:
             raise ValueError(
                 f"{what} dimension names must be Python identifiers such as 'n_obs', got {entry!r}"
             )
-        return entry
+        return str(entry)
     size = _as_int(entry)
     if size is None:
         kinds = "non-negative ints or dimension names" if symbolic else "non-negative ints"

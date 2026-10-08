@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
   and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
   rank-0 shape. A dimension name must be a Python identifier, so
-  `NumericArraySpec(("n obs",))` raises `ValueError`. A negative size raises
+  `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
+  `ValueError`. A negative size raises
   `ValueError` rather than `TypeError`, and a `bool` size raises `TypeError`.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when

@@ -517,8 +517,11 @@ class TestDimensionBinding:
         assert renamed["function"].input_spec["x"].shape == ("n",)
         assert renamed["function"].output_spec.spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
-        for value in (None, "", 2):
+        for value in (None, 2):
             with pytest.raises(TypeError):
+                spec.with_dim_names(n=value)
+        for value in ("", "my dim"):
+            with pytest.raises(ValueError, match="must be Python identifiers"):
                 spec.with_dim_names(n=value)
         with pytest.raises(ValueError):
             spec.with_dim_sizes(n=-1)

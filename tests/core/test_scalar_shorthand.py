@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     BatchSpec,
     DistributionBatch,
     Normal,
@@ -31,7 +32,6 @@ from probpipe import (
     Weights,
     sample,
 )
-from probpipe.functions._call import ApplicabilityError
 
 
 @dataclass(frozen=True)

@@ -1144,6 +1144,24 @@ class TestTermSpecs:
         with pytest.raises(ValueError, match="got ''"):
             NumericArraySpec("")
 
+    def test_a_numpy_string_name_is_stored_as_a_str(self):
+        spec = NumericArraySpec(np.str_("n"))
+
+        assert type(spec.shape[0]) is str
+        assert repr(spec) == repr(NumericArraySpec("n"))
+
+    @pytest.mark.parametrize(
+        ("new", "error", "match"),
+        [
+            ("my dim", ValueError, r"with_dim_names\(\): the new name for 'n' dimension names"),
+            ("", ValueError, "must be Python identifiers such as 'n_obs', got ''"),
+            (3, TypeError, r"with_dim_names\(\): the new name for 'n' must be a str, got int 3"),
+        ],
+    )
+    def test_a_renamed_dimension_must_be_an_identifier(self, new, error, match):
+        with pytest.raises(error, match=match):
+            NumericArraySpec(("n",)).with_dim_names(n=new)
+
     def test_distribution_spec_requires_an_output_declaration(self):
         with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):
             DistributionSpec(event_spec=(3,))  # type: ignore[arg-type]
