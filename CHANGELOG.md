@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
+  maps each level's name to the shape of its axes, outermost first, as in
+  `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
+  is one axis. A level name that no keyword spells goes in a mapping passed
+  positionally, as `BatchSpec(spec, {"my level": 2})`. Replace
+  `BatchSpec(spec, ((4,), (100,)), ("chain", "draw"))` with
+  `BatchSpec(spec, chain=4, draw=100)`, and
+  `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
+  `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
+  mapping, and the repr is the keyword call. `dataclasses.replace` no longer
+  rebuilds a `BatchSpec`, so construct a new one instead.
+- **A string shape is one dimension.** `NumericArraySpec("loc")` is
+  `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
+  and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
+  rank-0 shape. A dimension name must be a Python identifier, so
+  `NumericArraySpec(("n obs",))` raises `ValueError`. A negative size raises
+  `ValueError` rather than `TypeError`, and a `bool` size raises `TypeError`.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,
@@ -1165,6 +1182,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A single int is a shape of one axis wherever a shape is taken.**
+  `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
+  `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
+  each read the int as a tuple of one, and these arguments take any iterable,
+  such as a list or a 1-D array. A `numpy` integer size is stored as a Python
+  `int`.
 - **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
   warmup's step-size adaptation targets is a method option, 0.75 unless set,
   so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and

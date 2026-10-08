@@ -872,6 +872,23 @@ if not isinstance(dist, SupportsMean):
     raise TypeError(f"{type(dist).__name__} does not support mean; it must implement SupportsMean")
 ```
 
+### 9.4 A scalar where a sequence is expected
+
+An argument that takes a shape, level names, or one axis count per level also
+takes a single item as a sequence of one:
+
+- a shape takes a single int or str as one dimension, so `3` is `(3,)` and
+  `"n"` is `("n",)`, by the rule of design II.1;
+- level names take a single str as one name, so `"draw"` is `("draw",)`;
+- axis counts take a single int as the count of one level.
+
+Any other iterable is read as one item per entry and stored as a tuple, and
+`bytes` and a mapping are refused. `probpipe/core/_shapes.py` is the one place
+these arguments are read. A function that takes one calls the reader there
+rather than calling `tuple()` on the argument, passes its own name and the
+argument's for the error messages (§9.3 rule 7), and annotates the parameter
+with the alias there, such as `ShapeLike` or `LevelNamesLike`.
+
 ---
 
 ## 10. Writing
