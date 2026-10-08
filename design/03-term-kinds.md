@@ -358,7 +358,7 @@ class NumericRecordBatch(RecordBatch):
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 
-Its elements implement `Numeric` (II.3), and the batch's `to_vector` stacks their vectors. A `RecordBatch` is promoted as a `Record` is (III.5): `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when every column is numeric and no explicit non-numeric `element_spec` vetoes it.
+Its elements implement `Numeric` (II.3), and the batch's `to_vector` stacks their vectors. A `RecordBatch` is promoted as a `Record` is (III.5): `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when every column is numeric and no explicit non-numeric `element_spec` vetoes it, and a view over numeric fields, such as a field selected from a batch that also holds opaque fields, is a `NumericRecordBatch` too.
 
 A constructor that mints a level takes the name to give it (II.5), so both constructions here require one: `from_vector` names the levels it reconstructs, which is what lets a multi-level batch round-trip, and `stack` names the single level it introduces.
 

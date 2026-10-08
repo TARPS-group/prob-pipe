@@ -687,6 +687,15 @@ class TestTheClassFollowsTheColumns:
         with pytest.raises(ValueError, match=r"^RecordBatch requires at least one field"):
             RecordBatch("b", {}, "draw")
 
+    def test_a_view_of_the_numeric_fields_of_a_mixed_batch_is_numeric(self):
+        batch = RecordBatch(
+            "b", {"x": jnp.arange(3.0), "tag": np.array(["a", "b", "c"], dtype=object)}, "row"
+        )
+
+        assert type(batch.select("x")["x"]) is NumericRecordBatch
+        assert type(batch.select("tag")["tag"]) is RecordBatch
+        assert type(batch[0:2]) is RecordBatch
+
 
 class TestProvenance:
     def test_every_derived_view_inherits_the_batchs_provenance(self):

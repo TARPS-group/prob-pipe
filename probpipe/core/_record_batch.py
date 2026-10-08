@@ -320,6 +320,22 @@ class RecordBatch(Batch[Record]):
             )
         )
 
+    def _view_class(self, element_spec: RecordSpec) -> type[RecordBatch]:
+        """The class of a view over this batch's columns whose elements satisfy *element_spec*.
+
+        A view whose :attr:`_view_type` is a plain batch takes the class that
+        *element_spec* calls for, so a view of numeric fields is a
+        ``NumericRecordBatch``, as construction gives. A subclass's own view type
+        is kept.
+        """
+        # Lazy: the numeric module builds on this one.
+        from ._numeric_record_batch import NumericRecordBatch
+
+        view_type = self._view_type
+        if view_type in (RecordBatch, NumericRecordBatch):
+            return _batch_class_for(element_spec)
+        return view_type
+
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same columns, indexed on the batch axes as given.
 
@@ -332,7 +348,7 @@ class RecordBatch(Batch[Record]):
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a
         # host's own ``__new__`` may select a class from constructor arguments and
         # must not run again where there are none.
-        view = object.__new__(self._view_type)
+        view = object.__new__(self._view_class(spec.element_spec))
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
@@ -485,7 +501,7 @@ class RecordBatch(Batch[Record]):
             for key, column in self._columns.items()
             if key.startswith(prefix)
         }
-        view = object.__new__(self._view_type)
+        view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
             BatchSpec(template, self.axis_groups, self.level_names),
@@ -501,14 +517,11 @@ class RecordBatch(Batch[Record]):
         an operation aligning operands by level name lines it up with its
         siblings and with the batch it came from.
         """
-        view = object.__new__(self._view_type)
+        element_spec = RecordSpec({key: self.event_template[key]})
+        view = object.__new__(self._view_class(element_spec))
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
-            BatchSpec(
-                RecordSpec({key: self.event_template[key]}),
-                self.axis_groups,
-                self.level_names,
-            ),
+            BatchSpec(element_spec, self.axis_groups, self.level_names),
             label=key,
         )
         return self._inherit_provenance(view)
