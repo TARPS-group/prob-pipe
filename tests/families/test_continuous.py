@@ -272,7 +272,7 @@ class TestMomentsThatDivergeOrAreUndefined:
 
         assert float(jax.jit(mean_of)(3.0)) == 0.0
         assert reports[0].feasible is None
-        assert "needs values not yet known" in reports[0].pending[0]
+        assert "depends on values not yet known" in reports[0].pending[0]
 
 
 # ---------------------------------------------------------------------------

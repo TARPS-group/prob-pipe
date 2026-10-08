@@ -118,7 +118,10 @@ class TestTheResponseFamilies:
             def build(self, label, mean, dispersion=None, *, event_spec=None):
                 raise AssertionError("unreachable")
 
-        with pytest.raises(ResolutionError, match="not invertible"):
+        with pytest.raises(
+            ResolutionError,
+            match="Opaque needs an invertible link, but 'square' does not implement SupportsInverse",
+        ):
             Opaque()
 
     @pytest.mark.parametrize("family", _FAMILIES)
@@ -309,7 +312,7 @@ class TestTheConstructionErrors:
             glm_likelihood("y", PoissonFamily(), jnp.exp)
 
     def test_a_link_that_is_not_invertible_raises(self):
-        with pytest.raises(ResolutionError, match="not invertible"):
+        with pytest.raises(ResolutionError, match="glm_likelihood needs an invertible link"):
             glm_likelihood("y", PoissonFamily(), Function("square", lambda mean: mean**2))
 
     def test_a_dispersion_for_a_family_without_one_raises(self):
@@ -401,7 +404,7 @@ class TestTheLaw:
         assert list(likelihood.given_spec) == ["X", "beta"]
 
     def test_an_unknown_slot_raises(self, X, beta):
-        with pytest.raises(KeyError, match="not given slots"):
+        with pytest.raises(KeyError, match="unknown given slot 'gamma'; available given slots"):
             glm_likelihood("y", PoissonFamily(), X=X)._condition_on({"beta": beta, "gamma": 1.0})
 
     def test_a_value_of_the_wrong_shape_raises(self, X):
@@ -490,7 +493,9 @@ class TestTheConditionalCapabilities:
         )
 
     def test_a_capability_needs_every_given_slot(self, likelihood, beta):
-        with pytest.raises(KeyError, match="every given slot"):
+        with pytest.raises(
+            KeyError, match=r"'y' is missing values for the given slots \['dispersion'\]"
+        ):
             likelihood._conditional_mean({"beta": beta})
 
 

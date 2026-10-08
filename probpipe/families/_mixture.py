@@ -16,6 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .. import _messages
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
@@ -31,7 +32,7 @@ from ..distributions._capabilities import (
     _capability_subclass,
     _conjunction,
 )
-from ..distributions._conversion import _event_difference
+from ..distributions._conversion import _event_difference, _term_difference
 from ..distributions._distribution import Distribution
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
@@ -293,23 +294,80 @@ def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
     """
     laws = tuple(components)
     if not laws:
-        raise ValueError("a mixture has at least one component")
+        raise ValueError("MixtureDistribution needs at least one component")
     for index, law in enumerate(laws):
         if not isinstance(law, Distribution):
             raise TypeError(
-                f"a mixture's components are distributions, and component {index} is a "
-                f"{type(law).__name__}"
+                f"MixtureDistribution components must be distributions, but component {index} "
+                f"is {type(law).__name__}"
             )
-    declaration = laws[0].event_spec
+    first = laws[0]
     for index, law in enumerate(laws[1:], start=1):
-        sides = (f"component 0 ({laws[0].label!r})", f"component {index} ({law.label!r})")
-        difference = _event_difference(declaration, law.event_spec, sides, dtypes=False)
-        if difference is not None:
-            raise ValueError(
-                f"a mixture's components share one event declaration, and {difference}; "
-                f"rename the components with with_path_names to agree"
-            )
+        sides = (f"component 0 ({first.label!r})", f"component {index} ({law.label!r})")
+        if _event_difference(first.event_spec, law.event_spec, sides, dtypes=False) is not None:
+            raise ValueError(_component_mismatch(first, law, index))
     return laws
+
+
+def _component_mismatch(first: Distribution, other: Distribution, index: int) -> str:
+    """The message for component *index*, *other*, drawing a different event than component 0."""
+    head = "MixtureDistribution components must draw the same event"
+    expected, actual = first.event_spec, other.event_spec
+    if expected.exposes_record != actual.exposes_record:
+        return (
+            f"{head}: component 0 ({first.label!r}) draws {_drawn(expected)} but "
+            f"component {index} ({other.label!r}) draws {_drawn(actual)}"
+        )
+    if tuple(expected.components) != tuple(actual.components):
+        return (
+            f"{head}: component 0 ({first.label!r}) has components "
+            f"{list(expected.components)} but component {index} ({other.label!r}) has "
+            f"{list(actual.components)}. Rename them with with_path_names() so they match."
+        )
+    for name, spec in expected.components.items():
+        mismatch = _first_mismatch(spec, actual.components[name], name)
+        if mismatch is not None:
+            path, left, right = mismatch
+            return (
+                f"{head}: {path!r} is {_term(left)} in component 0 but {_term(right)} in "
+                f"component {index}"
+            )
+    return head  # pragma: no cover - _event_difference found a difference above
+
+
+def _drawn(declaration: OutputSpec) -> str:
+    """What a law with *declaration* draws, in a mixture's mismatch message."""
+    if declaration.exposes_record:
+        return f"a record with fields {list(declaration.components)}"
+    (name,) = declaration.components
+    return f"a single value {name!r}"
+
+
+def _first_mismatch(
+    left: TermSpec | None, right: TermSpec | None, path: str
+) -> tuple[str, TermSpec | None, TermSpec | None] | None:
+    """The first path at which the terms *left* and *right* differ, with the two terms there."""
+    if _term_difference(left, right, path, dtypes=False) is None:
+        return None
+    if (
+        isinstance(left, RecordSpec)
+        and isinstance(right, RecordSpec)
+        and tuple(left.children) == tuple(right.children)
+    ):
+        for name, child in left.children.items():
+            found = _first_mismatch(child, right.children[name], f"{path}/{name}")
+            if found is not None:
+                return found
+    return path, left, right
+
+
+def _term(spec: TermSpec | None) -> str:
+    """The term *spec* in plain words, for a mixture's mismatch message."""
+    if isinstance(spec, NumericArraySpec):
+        return f"an array of shape {spec.shape}"
+    if isinstance(spec, RecordSpec):
+        return f"a record with fields {list(spec.children)}"
+    return f"a {type(spec).__name__}" if spec is not None else "undeclared"
 
 
 def _joined(specs: Sequence[TermSpec]) -> TermSpec:
@@ -365,15 +423,17 @@ def _weights(weights: ArrayLike, count: int) -> Array:
     array = array.astype(jnp.result_type(array.dtype, jnp.float32))
     if array.shape != (count,):
         raise ValueError(
-            f"a mixture of {count} components takes {count} weights, got weights of shape "
-            f"{array.shape}"
+            f"MixtureDistribution has {_messages.count(count, 'component')} but got weights of "
+            f"shape {array.shape}; pass one weight per component"
         )
     if isinstance(array, jax.core.Tracer):
         return array
     if bool(jnp.any(array < 0)):
-        raise ValueError(f"a mixture's weights are nonnegative, got {array}")
+        raise ValueError(f"mixture weights must be nonnegative, got {array}")
     if not bool(jnp.isclose(jnp.sum(array), 1.0, atol=1e-5)):
-        raise ValueError(f"a mixture's weights sum to one, got {array} summing to {jnp.sum(array)}")
+        raise ValueError(
+            f"mixture weights must sum to 1, got {array} (sum {float(jnp.sum(array)):.6g})"
+        )
     return array
 
 
