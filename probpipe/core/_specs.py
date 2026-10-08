@@ -20,6 +20,8 @@ from ._spec_base import (
     NumericSpec,
     OpaqueSpec,
     TermSpec,
+    _dim_renames,
+    _dim_sizes,
     _known_type,
     _name_mismatch,
     _require_hashable,
@@ -211,6 +213,7 @@ class InputSpec(Mapping[str, TermSpec]):
 
     def with_dim_sizes(self, **sizes: int) -> InputSpec:
         """Return the slots with supplied sizes substituted in their shared scope."""
+        _dim_sizes(sizes)
         return self._with_slots(
             {name: spec.with_dim_sizes(**sizes) for name, spec in self._slots.items()},
             self._optional,
@@ -218,6 +221,7 @@ class InputSpec(Mapping[str, TermSpec]):
 
     def with_dim_names(self, **names: str) -> InputSpec:
         """Return the slots with simultaneous symbolic-dimension renaming."""
+        _dim_renames(names)
         return self._with_slots(
             {name: spec.with_dim_names(**names) for name, spec in self._slots.items()},
             self._optional,
@@ -545,10 +549,12 @@ class OutputSpec:
 
     def with_dim_sizes(self, **sizes: int) -> OutputSpec:
         """Substitute dimensions while preserving component exposure and holes."""
+        _dim_sizes(sizes)
         return self._with_spec(None if self.spec is None else self.spec.with_dim_sizes(**sizes))
 
     def with_dim_names(self, **names: str) -> OutputSpec:
         """Rename dimensions while preserving component exposure and holes."""
+        _dim_renames(names)
         return self._with_spec(None if self.spec is None else self.spec.with_dim_names(**names))
 
 

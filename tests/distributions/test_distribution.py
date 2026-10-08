@@ -1294,7 +1294,7 @@ class TestDimensionTransforms:
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))
         with pytest.raises(ValueError, match="must be non-negative"):
             law.with_dim_sizes(n=-1)
-        with pytest.raises(TypeError, match="must be an integer"):
+        with pytest.raises(TypeError, match="must be a non-negative int"):
             law.with_dim_sizes(n=2.5)
 
     def test_a_library_law_transforms_its_declaration(self):

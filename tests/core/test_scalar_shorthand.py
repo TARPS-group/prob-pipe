@@ -41,8 +41,9 @@ class _Case:
     build: Callable[[Any], Any]
     item: Any
     read: Callable[[Any], Any] = lambda result: result
-    #: The error each malformed input raises: ``""``, ``True``, ``b"ab"``, ``{"a": 1}``.
-    errors: tuple[type[Exception], ...] = (ValueError, TypeError, TypeError, TypeError)
+    #: The error each malformed input raises: ``""``, ``True``, ``b"ab"``, ``{"a": 1}``,
+    #: a generator, and a set.
+    errors: tuple[type[Exception], ...] = (ValueError, *(TypeError,) * 5)
 
 
 def _objects(n: int) -> np.ndarray:
@@ -79,19 +80,19 @@ _CASES = {
         lambda axes: NumericArrayBatch("b", jnp.zeros((2, 3)), "draw", axes_per_level=axes),
         2,
         lambda b: b.spec,
-        (TypeError, TypeError, TypeError, TypeError),
+        (TypeError,) * 6,
     ),
     "sample sample_shape": _Case(
         lambda shape: sample(Normal("n", 0.0, 1.0), sample_shape=shape),
         5,
         lambda draws: draws.batch_shape,
-        (ApplicabilityError,) * 4,
+        (ApplicabilityError,) * 6,
     ),
     "Weights.choice shape": _Case(
         lambda shape: Weights(n=10).choice(jax.random.PRNGKey(0), shape=shape),
         5,
         lambda indices: indices.shape,
-        (TypeError,) * 4,
+        (TypeError,) * 6,
     ),
 }
 
@@ -110,9 +111,16 @@ def test_a_single_item_and_its_tuple_of_one_build_alike(case):
 
 @pytest.mark.parametrize(
     ("index", "malformed"),
-    [(0, ""), (1, True), (2, b"ab"), (3, {"a": 1})],
-    ids=["empty-str", "bool", "bytes", "mapping"],
+    [
+        (0, lambda: ""),
+        (1, lambda: True),
+        (2, lambda: b"ab"),
+        (3, lambda: {"a": 1}),
+        (4, lambda: (item for item in ("a", "b"))),
+        (5, lambda: {"a", "b"}),
+    ],
+    ids=["empty-str", "bool", "bytes", "mapping", "generator", "set"],
 )
 def test_a_malformed_argument_is_refused_alike(case, index, malformed):
     with pytest.raises(case.errors[index]):
-        case.build(malformed)
+        case.build(malformed())

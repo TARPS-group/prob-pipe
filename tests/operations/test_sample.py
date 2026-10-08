@@ -133,11 +133,11 @@ class TestRequirements:
     @pytest.mark.parametrize(
         ("shape", "match"),
         [
-            (True, "sample_shape must be an int or an iterable of ints, got bool True"),
-            ((2.5,), "sample_shape entries must be non-negative ints, got float 2.5"),
-            ("3", "sample_shape entries must be ints, got str '3'"),
-            ("S", "sample_shape entries must be ints, got str 'S'"),
-            ((-1,), "sample_shape entries must be non-negative, got -1"),
+            (True, "sample_shape must be an int or a sequence of ints, got bool True"),
+            ((2.5,), "sample_shape entry must be a non-negative int, got float 2.5"),
+            ("3", "sample_shape must be an int or a sequence of ints, got str '3'"),
+            ("S", "sample_shape must be an int or a sequence of ints, got str 'S'"),
+            ((-1,), "sample_shape entry must be non-negative, got -1"),
         ],
     )
     def test_a_malformed_sample_shape_raises_applicability_error(self, shape, match):

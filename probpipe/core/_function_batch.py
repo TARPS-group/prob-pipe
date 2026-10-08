@@ -30,12 +30,12 @@ class FunctionBatch(_ObjectBatch[Callable]):
         holds.
     elements : numpy.ndarray or iterable of callable
         The callables, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
         specifies a callable and neither of its input/output declarations.
-    axes_per_level : int or iterable of int, optional
+    axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count); they must account for every batch axis. Defaults to one axis per
         level, which requires as many names as there are batch axes. The *sizes* are
@@ -58,6 +58,13 @@ class FunctionBatch(_ObjectBatch[Callable]):
         the elements are stored in, or gives a count that is not one per level; or
         if it is omitted and the number of level names does not match the number
         of axes.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----

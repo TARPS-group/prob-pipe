@@ -82,12 +82,12 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         The batch's label.
     elements : numpy.ndarray or iterable of Distribution
         The laws, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
     element_spec : DistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec, so
         the elements share its event declaration.
-    axes_per_level : int or iterable of int, optional
+    axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count). Defaults to one axis per level.
     provenance : Provenance, optional
@@ -101,6 +101,13 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
         level names disagree as for every batch.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
     """
 
     __slots__ = ()
@@ -215,11 +222,11 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
         The batch's label.
     elements : numpy.ndarray or iterable of ConditionalDistribution
         The kernels, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
     element_spec : ConditionalDistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec.
-    axes_per_level : int or iterable of int, optional
+    axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count).
     provenance : Provenance, optional
@@ -233,6 +240,13 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
         level names disagree as for every batch.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
     """
 
     __slots__ = ()

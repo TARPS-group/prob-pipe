@@ -15,17 +15,24 @@ argument has one reading and one set of error messages wherever it is taken:
 - **levels** (:func:`_as_levels`) are a mapping from level name to that level's
   shape, given as a mapping or as keyword arguments.
 
+A sequence is read as NumPy reads a shape: a tuple, a list, a ``range``, or a
+1-D array is one item per entry, stored as a tuple. An iterator such as a
+generator, a set, ``bytes``, a ``memoryview``, and a mapping are refused, since
+an iterator is used up by one reading, a set has no order, and the others
+iterate into byte values or keys.
+
 A dimension name is a Python identifier, such as ``n`` or ``n_obs``. An integer
 is anything ``operator.index`` accepts other than a ``bool``, and it is stored as
-a Python ``int``. A ``bytes`` or a mapping is refused where a sequence is taken,
-since iterating it yields byte values or keys.
+a Python ``int``. A name is stored as a Python ``str``.
 """
 
 from __future__ import annotations
 
 import operator
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import Any, Literal, overload
+
+import numpy as np
 
 from ._repr import type_name
 
@@ -35,21 +42,24 @@ __all__ = [
     "LevelNamesLike",
     "LevelsLike",
     "ShapeLike",
+    "SizesLike",
 ]
 
 #: One dimension: a non-negative size or a symbolic dimension name.
 type DimLike = int | str
-#: A shape: one dimension, or an iterable of them.
+#: A shape: one dimension, or a sequence of them.
 type ShapeLike = DimLike | Iterable[DimLike]
-#: Level names: one name, or an iterable of them.
+#: A shape of sizes only, such as a ``sample_shape``: one size, or a sequence of them.
+type SizesLike = int | Iterable[int]
+#: Level names: one name, or a sequence of them.
 type LevelNamesLike = str | Iterable[str]
-#: Axis counts: one count, or an iterable of one count per level.
+#: Axis counts: one count, or a sequence of one count per level.
 type AxisCountsLike = int | Iterable[int]
 #: Levels: each level's name mapped to the shape of its axes, outermost level first.
 type LevelsLike = Mapping[str, ShapeLike]
 
-#: The types whose iteration yields something other than their items.
-_NOT_SEQUENCES = (bytes, bytearray, Mapping)
+#: The iterables refused where a sequence is taken.
+_NOT_SEQUENCES = (bytes, bytearray, memoryview, Mapping, Set, Iterator)
 
 
 def _is_scalar(value: Any) -> bool:
@@ -62,12 +72,37 @@ def _is_scalar(value: Any) -> bool:
 
 def _as_int(value: Any) -> int | None:
     """*value* as a Python ``int``, or ``None`` when it is not an integer or is a ``bool``."""
-    if isinstance(value, bool):
+    if isinstance(value, bool | np.bool_):
         return None
     try:
         return operator.index(value)
     except TypeError:
         return None
+
+
+def _as_dim_name(name: str, *, what: str) -> str:
+    """*name* as a dimension name: a Python ``str`` that is a Python identifier.
+
+    Parameters
+    ----------
+    name : str
+        The name as the caller gave it.
+    what : str
+        The item the error message names, such as ``"NumericArraySpec shape entry"``.
+
+    Returns
+    -------
+    str
+        The name as a Python ``str``.
+
+    Raises
+    ------
+    ValueError
+        If *name* is not a Python identifier.
+    """
+    if not name.isidentifier():
+        raise ValueError(f"{what} must be a Python identifier such as 'n_obs', got {name!r}")
+    return str(name)
 
 
 def _as_dim(entry: Any, *, what: str, symbolic: bool = True) -> int | str:
@@ -78,8 +113,7 @@ def _as_dim(entry: Any, *, what: str, symbolic: bool = True) -> int | str:
     entry : Any
         The dimension as the caller gave it.
     what : str
-        The caller's function and argument, such as ``"NumericArraySpec shape"``,
-        which each error message names.
+        The item the error message names, such as ``"NumericArraySpec shape entry"``.
     symbolic : bool
         Whether a dimension name is accepted. A shape that counts draws or sizes
         an array takes integers only.
@@ -97,20 +131,14 @@ def _as_dim(entry: Any, *, what: str, symbolic: bool = True) -> int | str:
     ValueError
         If *entry* is a negative integer or a name that is not a Python identifier.
     """
-    if isinstance(entry, str):
-        if not symbolic:
-            raise TypeError(f"{what} entries must be ints, got str {entry!r}")
-        if not entry.isidentifier():
-            raise ValueError(
-                f"{what} dimension names must be Python identifiers such as 'n_obs', got {entry!r}"
-            )
-        return str(entry)
+    if isinstance(entry, str) and symbolic:
+        return _as_dim_name(entry, what=what)
     size = _as_int(entry)
     if size is None:
-        kinds = "non-negative ints or dimension names" if symbolic else "non-negative ints"
-        raise TypeError(f"{what} entries must be {kinds}, got {type_name(entry)} {entry!r}")
+        kinds = "a non-negative int or a dimension name" if symbolic else "a non-negative int"
+        raise TypeError(f"{what} must be {kinds}, got {type_name(entry)} {entry!r}")
     if size < 0:
-        raise ValueError(f"{what} entries must be non-negative, got {size}")
+        raise ValueError(f"{what} must be non-negative, got {size}")
     return size
 
 
@@ -121,7 +149,7 @@ def _as_shape(arg: Any, *, what: str, symbolic: bool = True) -> tuple[int | str,
 def _as_shape(arg: Any, *, what: str, symbolic: bool = True) -> tuple[int | str, ...]:
     """A shape argument as a tuple of dimensions; a bare ``int`` or ``str`` is one dimension.
 
-    ``3`` reads as ``(3,)`` and ``"n"`` as ``("n",)``. Any other iterable reads
+    ``3`` reads as ``(3,)`` and ``"n"`` as ``("n",)``. Any other sequence reads
     as one dimension per item, and an empty one is the shape ``()`` of rank 0.
 
     Parameters
@@ -129,35 +157,34 @@ def _as_shape(arg: Any, *, what: str, symbolic: bool = True) -> tuple[int | str,
     arg : Any
         The shape as the caller gave it.
     what : str
-        The caller's function and argument, which each error message names.
+        The caller's function and argument, such as ``"NumericArraySpec shape"``,
+        which each error message names.
     symbolic : bool
         Whether a dimension name is accepted.
 
     Returns
     -------
     tuple of int or str
-        One entry per dimension, each a Python ``int`` or a name.
+        One entry per dimension, each a Python ``int`` or a Python ``str``.
 
     Raises
     ------
     TypeError
-        If *arg* is not an integer, a string, or an iterable, is a ``bool``,
-        ``bytes``, or a mapping, or holds an entry :func:`_as_dim` refuses.
+        If *arg* is not an integer, a string, or a sequence, is a ``bool``, is a
+        string where *symbolic* is false, is one of the iterables the module
+        refuses, or holds an entry :func:`_as_dim` refuses.
     ValueError
         If an entry is negative or is a name that is not a Python identifier.
     """
+    forms = "an int, a str, or a sequence of them" if symbolic else "an int or a sequence of ints"
     if isinstance(arg, str):
-        return (_as_dim(arg, what=what, symbolic=symbolic),)
-    if (_is_scalar(arg) and _as_int(arg) is None) or isinstance(arg, _NOT_SEQUENCES):
-        raise TypeError(f"{what} must be {_shape_forms(symbolic)}, got {type_name(arg)} {arg!r}")
-    if _is_scalar(arg):
-        return (_as_dim(arg, what=what, symbolic=symbolic),)
-    return tuple(_as_dim(entry, what=what, symbolic=symbolic) for entry in arg)
-
-
-def _shape_forms(symbolic: bool) -> str:
-    """The accepted forms of a shape argument, as an error message lists them."""
-    return "an int, a str, or an iterable of them" if symbolic else "an int or an iterable of ints"
+        if not symbolic:
+            raise TypeError(f"{what} must be {forms}, got str {arg!r}")
+        return (_as_dim_name(arg, what=f"{what} entry"),)
+    if isinstance(arg, _NOT_SEQUENCES) or (_is_scalar(arg) and _as_int(arg) is None):
+        raise TypeError(f"{what} must be {forms}, got {type_name(arg)} {arg!r}")
+    entries = (arg,) if _is_scalar(arg) else arg
+    return tuple(_as_dim(entry, what=f"{what} entry", symbolic=symbolic) for entry in entries)
 
 
 def _as_level_names(arg: Any, *, what: str) -> tuple[str, ...]:
@@ -176,23 +203,23 @@ def _as_level_names(arg: Any, *, what: str) -> tuple[str, ...]:
     Returns
     -------
     tuple of str
-        One name per level, outermost first.
+        One name per level, outermost first, each a Python ``str``.
 
     Raises
     ------
     TypeError
-        If *arg* is neither a string nor an iterable, is ``bytes`` or a mapping,
-        or holds an entry that is not a string.
+        If *arg* is neither a string nor a sequence, is one of the iterables the
+        module refuses, or holds an entry that is not a string.
     """
     if isinstance(arg, str):
-        return (arg,)
+        return (str(arg),)
     if _is_scalar(arg) or isinstance(arg, _NOT_SEQUENCES):
-        raise TypeError(f"{what} must be a str or an iterable of str, got {type_name(arg)} {arg!r}")
+        raise TypeError(f"{what} must be a str or a sequence of str, got {type_name(arg)} {arg!r}")
     names = tuple(arg)
     for name in names:
         if not isinstance(name, str):
-            raise TypeError(f"{what} entries must be str, got {type_name(name)} {name!r}")
-    return names
+            raise TypeError(f"{what} entry must be a str, got {type_name(name)} {name!r}")
+    return tuple(str(name) for name in names)
 
 
 def _as_axis_count(entry: Any, *, what: str) -> int:
@@ -203,7 +230,7 @@ def _as_axis_count(entry: Any, *, what: str) -> int:
     entry : Any
         The count as the caller gave it.
     what : str
-        The caller's function and argument, which each error message names.
+        The item the error message names, such as ``"axes_per_level entry"``.
 
     Returns
     -------
@@ -219,9 +246,9 @@ def _as_axis_count(entry: Any, *, what: str) -> int:
     """
     count = _as_int(entry)
     if count is None:
-        raise TypeError(f"{what} entries must be ints, got {type_name(entry)} {entry!r}")
+        raise TypeError(f"{what} must be an int, got {type_name(entry)} {entry!r}")
     if count < 1:
-        raise ValueError(f"{what} entries must be at least 1, got {count}")
+        raise ValueError(f"{what} must be at least 1, got {count}")
     return count
 
 
@@ -243,18 +270,18 @@ def _as_axis_counts(arg: Any, *, what: str) -> tuple[int, ...]:
     Raises
     ------
     TypeError
-        If *arg* is neither an integer nor an iterable, is a string, ``bytes``,
-        or a mapping, or holds an entry that is not an integer.
+        If *arg* is neither an integer nor a sequence, is a string or one of the
+        iterables the module refuses, or holds an entry that is not an integer.
     ValueError
         If a count is less than 1.
     """
     if isinstance(arg, (str, *_NOT_SEQUENCES)) or (_is_scalar(arg) and _as_int(arg) is None):
         raise TypeError(
-            f"{what} must be an int or an iterable of ints, got {type_name(arg)} {arg!r}"
+            f"{what} must be an int or a sequence of ints, got {type_name(arg)} {arg!r}"
         )
     if _is_scalar(arg):
         return (_as_axis_count(arg, what=what),)
-    return tuple(_as_axis_count(entry, what=what) for entry in arg)
+    return tuple(_as_axis_count(entry, what=f"{what} entry") for entry in arg)
 
 
 def _as_levels(
@@ -309,6 +336,6 @@ def _as_levels(
         group = _as_shape(shape, what=f"{what} level {name!r}")
         if not group:
             raise ValueError(f"{what} level {name!r} must have at least one axis, got ()")
-        names.append(name)
+        names.append(str(name))
         groups.append(group)
     return tuple(names), tuple(groups)

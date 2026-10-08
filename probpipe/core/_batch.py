@@ -67,7 +67,7 @@ from __future__ import annotations
 import operator
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import prod
 from types import MappingProxyType
 from typing import Any, Self, cast
@@ -134,7 +134,7 @@ class BatchSpec(TermSpec):
     levels : Mapping of str to shape, optional
         The levels as a mapping from level name to shape, outermost first.
         Positional-only, and given only when no level is given as a keyword.
-    **level_shapes : int, str, or iterable of int or str
+    **level_shapes : int, str, or sequence of int or str
         The levels as keywords, outermost first, each mapping a level name to the
         shape of its axes. A level name follows the rule for component names, so
         it is any non-empty string without ``/``. Every level holds at least one
@@ -155,9 +155,10 @@ class BatchSpec(TermSpec):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`TermSpec`, both a mapping and
-        keywords are given, ``levels`` is not a mapping, or a level's shape is
-        not an int, a str, or an iterable of them.
+        If ``element_spec`` is not a :class:`TermSpec`; both a mapping and
+        keywords are given; ``levels`` is not a mapping, or is given as a keyword
+        holding a mapping; a key of the mapping is not a str; or a level's shape is
+        not an int, a str, or a sequence of them.
     ValueError
         If no level is given, a level holds no axes, an axis size is negative or
         is a name that is not a Python identifier, or a level name is empty or
@@ -184,9 +185,12 @@ class BatchSpec(TermSpec):
     mints a level takes the name to give it.
     """
 
-    element_spec: TermSpec
-    axis_groups: tuple[tuple[int | str, ...], ...]
-    level_names: tuple[str, ...]
+    # ``init=False``: the constructor takes levels by name rather than these
+    # fields, so ``dataclasses.replace`` refuses them; ``copy.replace`` and
+    # ``_replace`` rebuild a spec from them instead.
+    element_spec: TermSpec = field(init=False)
+    axis_groups: tuple[tuple[int | str, ...], ...] = field(init=False)
+    level_names: tuple[str, ...] = field(init=False)
 
     def __init__(
         self,
@@ -236,6 +240,32 @@ class BatchSpec(TermSpec):
             self.level_names if level_names is None else level_names,
         )
 
+    def __replace__(self, **changes: Any) -> BatchSpec:
+        """This spec with the given fields replaced, for ``copy.replace``.
+
+        Parameters
+        ----------
+        **changes : Any
+            New values of ``element_spec``, ``axis_groups``, or ``level_names``.
+
+        Returns
+        -------
+        BatchSpec
+            The rebuilt spec, checked as a constructed one is.
+
+        Raises
+        ------
+        TypeError
+            If a change names any other field.
+        """
+        unknown = sorted(set(changes) - {"element_spec", "axis_groups", "level_names"})
+        if unknown:
+            raise TypeError(
+                f"copy.replace() can change element_spec, axis_groups, and level_names of a "
+                f"BatchSpec, got {', '.join(unknown)}"
+            )
+        return self._replace(**changes)
+
     def _init_fields(
         self,
         element_spec: TermSpec,
@@ -265,7 +295,7 @@ class BatchSpec(TermSpec):
                     f"BatchSpec level {level_name!r} must have at least one axis, got ()"
                 )
         tiled = tuple(
-            tuple(_as_dim(size, what=f"BatchSpec level {name!r}") for size in group)
+            tuple(_as_dim(size, what=f"BatchSpec level {name!r} entry") for size in group)
             for name, group in zip(level_names, axis_groups, strict=True)
         )
         if len(set(level_names)) != len(level_names):

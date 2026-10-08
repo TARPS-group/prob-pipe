@@ -88,7 +88,7 @@ class RecordBatch(Batch[Record]):
         where the event shape is the field spec's for a ``NumericArraySpec`` and empty
         otherwise — so a field that is not an array takes an object array, one
         entry per element. The keys must be exactly the fields of *element_spec*.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names a single
         level. There is no default, for the reason
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
@@ -99,7 +99,7 @@ class RecordBatch(Batch[Record]):
         its values: an array column's axes past those the levels hold are its
         field's event shape, and an object column's entries decide its field's
         spec.
-    axes_per_level : int or iterable of int, optional
+    axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count); they must account for every batch axis. Defaults to one axis per
         level, which requires as many names as there are batch axes. The *sizes* are
@@ -132,6 +132,13 @@ class RecordBatch(Batch[Record]):
         declares a symbolic dimension, which gives its event shape no size to
         split by; if a column leaves no batch axis; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----

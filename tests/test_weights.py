@@ -178,9 +178,13 @@ class TestWeightedChoice:
     @pytest.mark.parametrize(
         ("shape", "error", "match"),
         [
-            ("n", TypeError, "weighted_choice shape entries must be ints, got str 'n'"),
-            (True, TypeError, "weighted_choice shape must be an int or an iterable of ints"),
-            ((-1,), ValueError, "weighted_choice shape entries must be non-negative, got -1"),
+            (
+                "n",
+                TypeError,
+                "weighted_choice shape must be an int or a sequence of ints, got str 'n'",
+            ),
+            (True, TypeError, "weighted_choice shape must be an int or a sequence of ints"),
+            ((-1,), ValueError, "weighted_choice shape entry must be non-negative, got -1"),
         ],
     )
     def test_a_malformed_shape_is_refused(self, shape, error, match):
@@ -374,7 +378,9 @@ class TestWeightsMethods:
         w = Weights(n=10)
 
         assert w.choice(jax.random.PRNGKey(0), shape=50).shape == (50,)
-        with pytest.raises(TypeError, match=r"Weights\.choice shape entries must be ints"):
+        with pytest.raises(
+            TypeError, match=r"Weights\.choice shape must be an int or a sequence of ints"
+        ):
             w.choice(jax.random.PRNGKey(0), shape="n")
 
     def test_subsample_uniform(self):

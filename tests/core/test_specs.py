@@ -524,10 +524,16 @@ class TestDimensionBinding:
             with pytest.raises(TypeError):
                 spec.with_dim_names(n=value)
         for value in ("", "my dim"):
-            with pytest.raises(ValueError, match="must be Python identifiers"):
+            with pytest.raises(ValueError, match="must be a Python identifier"):
                 spec.with_dim_names(n=value)
         with pytest.raises(ValueError):
             spec.with_dim_sizes(n=-1)
+
+    def test_a_declaration_checks_renames_and_sizes_with_no_spec_to_pass_them_to(self):
+        with pytest.raises(ValueError, match="must be a Python identifier"):
+            InputSpec({}).with_dim_names(n="a b")
+        with pytest.raises(TypeError, match="must be a non-negative int, got bool True"):
+            OutputSpec(x=None).with_dim_sizes(n=True)
 
     def test_binding_array_values_checks_dtype_and_record_kind(self):
         spec = NumericArraySpec(("n",), dtype="int32")

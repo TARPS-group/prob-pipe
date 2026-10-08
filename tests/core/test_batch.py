@@ -893,8 +893,8 @@ class TestSpecValidation:
     def test_an_axis_size_must_be_integral(self):
         with pytest.raises(
             TypeError,
-            match=r"BatchSpec level 'draw' entries must be non-negative ints or dimension "
-            r"names, got float 2\.7",
+            match=r"BatchSpec level 'draw' entry must be a non-negative int or a dimension "
+            r"name, got float 2\.7",
         ):
             BatchSpec(_ELEMENT_SPEC, draw=(2.7,))
         with pytest.raises(TypeError, match="BatchSpec level 'draw' must be an int, a str"):
@@ -915,17 +915,30 @@ class TestSpecValidation:
         assert BatchSpec(_ELEMENT_SPEC, draw=("draws",)).axis_groups == (("draws",),)
 
     def test_a_symbolic_axis_size_must_be_an_identifier(self):
-        with pytest.raises(ValueError, match="must be Python identifiers"):
+        with pytest.raises(ValueError, match="must be a Python identifier"):
             BatchSpec(_ELEMENT_SPEC, draw="not an identifier")
 
     def test_a_numeric_string_is_not_a_size(self):
         """The likeliest slip: "3" is a name, and not one with_dim_sizes could bind."""
-        with pytest.raises(ValueError, match="must be Python identifiers"):
+        with pytest.raises(ValueError, match="must be a Python identifier"):
             BatchSpec(_ELEMENT_SPEC, draw="3")
 
     def test_an_empty_name_is_refused(self):
-        with pytest.raises(ValueError, match="must be Python identifiers"):
+        with pytest.raises(ValueError, match="must be a Python identifier"):
             BatchSpec(_ELEMENT_SPEC, draw="")
+
+    def test_copy_replace_rebuilds_the_spec_and_dataclasses_replace_refuses(self):
+        import copy
+        import dataclasses
+        import sys
+
+        spec = BatchSpec(_ELEMENT_SPEC, chain=2, draw=3)
+        with pytest.raises((TypeError, ValueError), match="init=False"):
+            dataclasses.replace(spec, level_names=("a", "b"))
+        if sys.version_info >= (3, 13):
+            assert copy.replace(spec, level_names=("a", "b")) == BatchSpec(_ELEMENT_SPEC, a=2, b=3)
+            with pytest.raises(TypeError, match="can change element_spec, axis_groups"):
+                copy.replace(spec, levels={"a": 2})
 
     def test_replacing_a_field_revalidates_the_levels(self):
         with pytest.raises(ValueError, match="has 2 level names but 1 axis group"):
@@ -1945,9 +1958,9 @@ class TestTheConstructorSignatureContract:
         [
             (0, ValueError, "must be at least 1"),
             (-1, ValueError, "must be at least 1"),
-            (True, TypeError, "axes_per_level entries must be ints, got bool True"),
-            (2.0, TypeError, "axes_per_level entries must be ints, got float 2.0"),
-            ("2", TypeError, "axes_per_level entries must be ints, got str '2'"),
+            (True, TypeError, "axes_per_level entry must be an int, got bool True"),
+            (2.0, TypeError, "axes_per_level entry must be an int, got float 2.0"),
+            ("2", TypeError, "axes_per_level entry must be an int, got str '2'"),
         ],
         ids=["zero", "negative", "bool", "float", "str"],
     )
@@ -1980,8 +1993,8 @@ class TestTheConstructorSignatureContract:
     @pytest.mark.parametrize(
         ("levels", "match"),
         [
-            (b"draw", "level_names must be a str or an iterable of str, got bytes b'draw'"),
-            (("draw", 3), "level_names entries must be str, got int 3"),
+            (b"draw", "level_names must be a str or a sequence of str, got bytes b'draw'"),
+            (("draw", 3), "level_names entry must be a str, got int 3"),
         ],
         ids=["bytes", "int-entry"],
     )

@@ -58,7 +58,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         Stored verbatim in its native form, as a :class:`NumericArray`'s value
         is, so a lazy or disk-backed column is not materialised to be batched,
         and a NumPy array is marked read-only in place.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names one level.
     element_spec : NumericArraySpec, optional
         What every element satisfies. Its ``shape`` is the event shape, so it is
@@ -66,7 +66,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         the spec the array implies, as a :class:`NumericArray` infers its spec
         from its value: the axes past those the levels hold are the event shape,
         and the array's dtype is the elements' dtype.
-    axes_per_level : int or iterable of int, optional
+    axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count); they must account for every batch axis. Defaults to one axis per
         level, which requires as many names as there are batch axes. The *sizes* are
@@ -93,6 +93,13 @@ class NumericArrayBatch(Batch[NumericArray]):
         no size to split by; if *values* has fewer axes than the levels hold,
         when the element spec is inferred; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----

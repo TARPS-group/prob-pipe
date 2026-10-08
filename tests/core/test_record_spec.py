@@ -330,11 +330,11 @@ class TestConstruction:
             RecordSpec(x=3.0)
 
     def test_invalid_shape_raises(self):
-        with pytest.raises(ValueError, match="entries must be non-negative, got -1"):
+        with pytest.raises(ValueError, match="entry must be non-negative, got -1"):
             RecordSpec(x=(-1,))
 
     def test_invalid_shape_float_raises(self):
-        with pytest.raises(TypeError, match="non-negative ints"):
+        with pytest.raises(TypeError, match="must be a non-negative int or a dimension name"):
             RecordSpec(x=(1.5,))
 
 
@@ -885,7 +885,7 @@ class TestTermSpecs:
         assert isinstance(spec.shape, tuple)
 
     def test_numeric_array_spec_rejects_negative_dims(self):
-        with pytest.raises(ValueError, match="entries must be non-negative, got -1"):
+        with pytest.raises(ValueError, match="entry must be non-negative, got -1"):
             NumericArraySpec((-1,))
 
     @pytest.mark.parametrize(
@@ -1116,12 +1116,12 @@ class TestTermSpecs:
     @pytest.mark.parametrize(
         ("dimension", "error", "match"),
         [
-            ("", ValueError, "must be Python identifiers such as 'n_obs', got ''"),
-            ("n obs", ValueError, "must be Python identifiers such as 'n_obs', got 'n obs'"),
+            ("", ValueError, "must be a Python identifier such as 'n_obs', got ''"),
+            ("n obs", ValueError, "must be a Python identifier such as 'n_obs', got 'n obs'"),
             (-1, ValueError, "must be non-negative, got -1"),
-            (1.5, TypeError, "must be non-negative ints or dimension names, got float 1.5"),
-            (None, TypeError, "must be non-negative ints or dimension names, got NoneType"),
-            (True, TypeError, "must be non-negative ints or dimension names, got bool True"),
+            (1.5, TypeError, "must be a non-negative int or a dimension name, got float 1.5"),
+            (None, TypeError, "must be a non-negative int or a dimension name, got NoneType"),
+            (True, TypeError, "must be a non-negative int or a dimension name, got bool True"),
         ],
     )
     def test_numeric_array_spec_rejects_invalid_dimensions(self, dimension, error, match):
@@ -1153,8 +1153,12 @@ class TestTermSpecs:
     @pytest.mark.parametrize(
         ("new", "error", "match"),
         [
-            ("my dim", ValueError, r"with_dim_names\(\): the new name for 'n' dimension names"),
-            ("", ValueError, "must be Python identifiers such as 'n_obs', got ''"),
+            (
+                "my dim",
+                ValueError,
+                r"with_dim_names\(\): the new name for 'n' must be a Python identifier",
+            ),
+            ("", ValueError, "must be a Python identifier such as 'n_obs', got ''"),
             (3, TypeError, r"with_dim_names\(\): the new name for 'n' must be a str, got int 3"),
         ],
     )
@@ -2210,8 +2214,10 @@ class TestWithDimSizes:
         """A string would be read as a dimension *name*, silently renaming it."""
         template = RecordSpec(x=NumericArraySpec(shape=("n",)))
 
-        for size in ("m", 2.0, None):
-            with pytest.raises(TypeError, match="must be an integer"):
+        for size in ("m", 2.0, None, True):
+            with pytest.raises(
+                TypeError, match=r"with_dim_sizes\(\): the size for 'n' must be a non-negative int"
+            ):
                 template.with_dim_sizes(n=size)
 
     def test_binding_some_names_reports_only_the_rest(self):

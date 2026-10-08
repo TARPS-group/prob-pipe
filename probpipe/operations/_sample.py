@@ -17,7 +17,7 @@ import numpy as np
 from ..core._batch import BatchSpec, _ranks_of
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
-from ..core._shapes import _as_shape
+from ..core._shapes import SizesLike, _as_shape
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution, DistributionSpec
@@ -62,7 +62,7 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
 
     Parameters
     ----------
-    sample_shape : int or iterable of int
+    sample_shape : int or sequence of int
         The sample shape as the caller gave it.
 
     Returns
@@ -92,7 +92,7 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     ----------
     d : DistributionSpec
         The law's spec, whose event declaration one draw takes.
-    sample_shape : int or iterable of int
+    sample_shape : int or sequence of int
         The sample shape as the caller gave it.
 
     Returns
@@ -121,14 +121,14 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
 
 
 @operation(result=_sample_result)
-def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
+def sample(d: Distribution, sample_shape: SizesLike = ()):
     """Draw from a distribution.
 
     Parameters
     ----------
     d : Distribution
         The law to draw from.
-    sample_shape : int or iterable of int
+    sample_shape : int or sequence of int
         The batch axes to prepend; ``()`` draws once, and a single int is one
         axis, so ``sample_shape=100`` is ``sample_shape=(100,)``.
 

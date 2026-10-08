@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import operator
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
@@ -14,7 +13,7 @@ import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ._repr import format_dtype, public_class_name, term_repr, type_name
-from ._shapes import ShapeLike, _as_dim, _as_shape
+from ._shapes import ShapeLike, _as_dim, _as_dim_name, _as_shape
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -58,24 +57,11 @@ class TermSpec(ABC):
         Raises
         ------
         TypeError
-            If a size is not an integer.
+            If a size is not an integer or is a ``bool``.
         ValueError
             If a size is negative.
         """
-        bindings = {}
-        for name, size in sizes.items():
-            try:
-                size = operator.index(size)
-            except TypeError:
-                raise TypeError(
-                    f"with_dim_sizes(): size for {name!r} must be an integer, got {size!r}"
-                ) from None
-            if size < 0:
-                raise ValueError(
-                    f"with_dim_sizes(): size for {name!r} must be non-negative, got {size}"
-                )
-            bindings[name] = size
-        return self._substitute_dims(bindings)
+        return self._substitute_dims(_dim_sizes(sizes))
 
     def with_dim_names(self, **names: str) -> Self:
         """Return a spec with symbolic dimensions renamed simultaneously.
@@ -99,14 +85,7 @@ class TermSpec(ABC):
         ValueError
             If a new name is not a Python identifier.
         """
-        for old, new in names.items():
-            if not isinstance(new, str):
-                raise TypeError(
-                    f"with_dim_names(): the new name for {old!r} must be a str, "
-                    f"got {type_name(new)} {new!r}"
-                )
-            _as_dim(new, what=f"with_dim_names(): the new name for {old!r}")
-        return self._substitute_dims(names)
+        return self._substitute_dims(_dim_renames(names))
 
     def bind_dims_from_value(self, value: Any) -> Self:
         """Unify against a value and return the resulting spec.
@@ -299,6 +278,63 @@ class NumericSpec(TermSpec):
         raise NotImplementedError(f"{type(self).__name__}._vector_size is not implemented")
 
 
+def _dim_sizes(sizes: Mapping[str, Any]) -> dict[str, int]:
+    """The ``with_dim_sizes`` keywords, each size read as a non-negative ``int``.
+
+    Parameters
+    ----------
+    sizes : Mapping of str to Any
+        The sizes by dimension name, as the caller gave them.
+
+    Returns
+    -------
+    dict of str to int
+        Each size as a Python ``int``.
+
+    Raises
+    ------
+    TypeError
+        If a size is not an integer or is a ``bool``.
+    ValueError
+        If a size is negative.
+    """
+    return {
+        name: _as_dim(size, what=f"with_dim_sizes(): the size for {name!r}", symbolic=False)
+        for name, size in sizes.items()
+    }
+
+
+def _dim_renames(names: Mapping[str, Any]) -> dict[str, str]:
+    """The ``with_dim_names`` keywords, each new name checked as a dimension name.
+
+    Parameters
+    ----------
+    names : Mapping of str to Any
+        The new names by old dimension name, as the caller gave them.
+
+    Returns
+    -------
+    dict of str to str
+        Each new name as a Python ``str``.
+
+    Raises
+    ------
+    TypeError
+        If a new name is not a string.
+    ValueError
+        If a new name is not a Python identifier.
+    """
+    renames = {}
+    for old, new in names.items():
+        if not isinstance(new, str):
+            raise TypeError(
+                f"with_dim_names(): the new name for {old!r} must be a str, "
+                f"got {type_name(new)} {new!r}"
+            )
+        renames[old] = _as_dim_name(new, what=f"with_dim_names(): the new name for {old!r}")
+    return renames
+
+
 @dataclass(frozen=True, eq=False, init=False)
 class NumericArraySpec(NumericSpec):
     """A numeric-array value spec: an event ``shape`` plus optional metadata.
@@ -316,7 +352,7 @@ class NumericArraySpec(NumericSpec):
 
     Parameters
     ----------
-    shape : int, str, or iterable of int or str
+    shape : int, str, or sequence of int or str
         The event shape, which holds one dimension per axis and is stored as a
         tuple. A single int or str is one dimension: ``3`` means ``(3,)`` and
         ``"n"`` means ``("n",)``. A dimension that is an integer of another type,

@@ -536,7 +536,7 @@ def _reconstruct_from_vector(
         block of *vec*.
     vec : Array
         The flat values, of shape ``(*batch_shape, template.vector_size)``.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         The level names of a rebuilt batch. A single name takes every leading axis
         of *vec* as one level, and several names take one axis each.
 
