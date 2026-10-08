@@ -10,10 +10,13 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import jax
 import jax.numpy as jnp
 
 from ._dtype import _as_float_array, _default_float_dtype
+from .core._shapes import _as_shape
 from .custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
@@ -199,7 +202,7 @@ def weighted_choice(
     n: int,
     *,
     weights: Array | None = None,
-    shape: tuple[int, ...] = (),
+    shape: int | Iterable[int] = (),
 ) -> Array:
     """Draw random indices with optional weighting.
 
@@ -211,14 +214,23 @@ def weighted_choice(
         Number of items to choose from (indices ``0..n-1``).
     weights : Array or None
         Normalized weights of shape ``(n,)``.  ``None`` for uniform.
-    shape : tuple of int
-        Output shape of index array.
+    shape : int or iterable of int
+        Output shape of index array. A single int is one axis, so ``shape=10``
+        is ``shape=(10,)``.
 
     Returns
     -------
     Array
         Integer index array of the given *shape*.
+
+    Raises
+    ------
+    TypeError
+        If *shape* is not an int or an iterable of ints, or a size is a ``bool``.
+    ValueError
+        If a size is negative.
     """
+    shape = _as_shape(shape, what="weighted_choice shape", symbolic=False)
     if not shape:
         shape = (1,)
         squeeze = True
@@ -553,13 +565,16 @@ class Weights:
             mean=mean,
         )
 
-    def choice(self, key: PRNGKey, *, shape: tuple[int, ...] = ()) -> Array:
-        """Draw weighted random indices from ``0..n-1``."""
+    def choice(self, key: PRNGKey, *, shape: int | Iterable[int] = ()) -> Array:
+        """Draw weighted random indices from ``0..n-1``, of shape *shape*.
+
+        A single int is one axis, so ``shape=10`` draws ten indices.
+        """
         return weighted_choice(
             key,
             self._n,
             weights=None if self._is_uniform else self.normalized,
-            shape=shape,
+            shape=_as_shape(shape, what="Weights.choice shape", symbolic=False),
         )
 
     def subsample(self, indices: Array) -> Weights:
