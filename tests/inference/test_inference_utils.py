@@ -333,6 +333,16 @@ class TestModelFactorsWithOptionalSlots:
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
         assert set(given) == {"mu", "shift"}
 
+    @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
+    def test_a_prior_of_several_factors_is_labeled_as_the_model_is(self, labeled):
+        from probpipe.distributions._factored import _is_named
+
+        model = _shifted() * Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        model = model.with_label("model") if labeled else model
+        factors = model_factors(observed_target(model, {"y": Y}))
+        assert isinstance(factors.prior, FactoredDistribution)
+        assert _is_named(factors.prior) is labeled
+
     def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
         hyper = conditional_distribution("mu", lambda loc=0.0: Normal("mu", loc, 1.0))
         factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))

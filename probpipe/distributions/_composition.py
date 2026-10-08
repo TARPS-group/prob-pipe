@@ -6,7 +6,8 @@ condition on what the right produces, so ``lik * prior`` reads as the density
 C`` is one flat joint, and composition reads only component and slot names,
 never a label. The result is a ``FactoredDistribution`` when no given is left
 unmet and a ``FactoredConditionalDistribution`` over the unmet givens
-otherwise; its label joins the operands' current labels with ``·``.
+otherwise; its label joins the operands' current labels with ``·``, and it is
+unlabeled, so it displays factor by factor.
 
 The base classes expose the operator through ``__mul__``, which delegates to the
 engine this module installs at import.
@@ -21,6 +22,7 @@ from ._factored import (
     FactoredDistribution,
     _factor_graph,
     _joined_label,
+    _with_named,
 )
 
 __all__: list[str] = []
@@ -43,7 +45,8 @@ def _compose(
     -------
     FactoredDistribution or FactoredConditionalDistribution
         The joint, or ``NotImplemented`` when *right* is neither distribution
-        kind.
+        kind. The joint is unlabeled, so its notation joins its factors'
+        notations with ``·``.
 
     Raises
     ------
@@ -58,8 +61,8 @@ def _compose(
     operands = (left, right)
     label = _joined_label((left.label, right.label))
     if _factor_graph(operands).unmet is None:
-        return FactoredDistribution(label, operands)
-    return FactoredConditionalDistribution(label, operands)
+        return _with_named(FactoredDistribution(label, operands), False)
+    return _with_named(FactoredConditionalDistribution(label, operands), False)
 
 
 _install_composition(_compose)

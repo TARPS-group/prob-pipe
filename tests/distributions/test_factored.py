@@ -66,8 +66,9 @@ from probpipe.distributions import (
     SupportsMarginals,
 )
 from probpipe.distributions._capabilities import _capability_guard
+from probpipe.distributions._distribution import _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
-from probpipe.distributions._factored import _SoleField
+from probpipe.distributions._factored import _is_named, _SoleField
 from probpipe.linalg import DenseLinOp
 
 SCALAR = NumericArraySpec(())
@@ -1276,6 +1277,123 @@ class TestPathRenames:
         assert list(renamed._sample(key)["g"]) == ["a", "b"]
 
 
+# -- Notation -----------------------------------------------------------------------
+
+
+def _with_fixed_paths(term: Any, *paths: str) -> Any:
+    """*term* holding *paths* fixed, as conditioning on them records."""
+    object.__setattr__(term, "_fixed_paths", paths)
+    return term
+
+
+class TestNotation:
+    """An unlabeled joint reads factor by factor, and a labeled one by its label."""
+
+    def test_a_composed_joint_reads_factor_by_factor(self):
+        joint = _likelihood() * _prior()
+        assert str(joint) == joint.notation == "lik(y | beta)·prior(beta)"
+        assert joint.label == "lik·prior"
+
+    def test_a_relabeled_joint_reads_by_its_label_and_its_components(self):
+        model = (_likelihood() * _prior()).with_label("model")
+        assert model.notation == "model(y, beta)"
+
+    def test_a_constructed_joint_reads_by_its_label(self):
+        model = FactoredDistribution("model", [_likelihood(), _prior()])
+        assert model.notation == "model(y, beta)"
+
+    def test_a_joint_relabeled_with_its_own_label_reads_by_it(self):
+        joint = _likelihood() * _prior()
+        assert joint.with_label(joint.label).notation == "(lik·prior)(y, beta)"
+
+    def test_a_conditional_joint_reads_as_an_unconditional_one_does(self):
+        _, _, joint = _sigma_model()
+        assert joint.notation == "lik(y | beta, sigma)·prior(beta)"
+        assert joint.with_label("model").notation == "model(y, beta | sigma)"
+
+    def test_a_chain_reads_one_factor_after_another_under_either_grouping(self):
+        a, b, c = _law("a", "x"), _law("b", "z"), _law("c", "w")
+        assert ((a * b) * c).notation == (a * (b * c)).notation == "a(x)·b(z)·c(w)"
+
+    def test_a_labeled_factor_reads_by_its_own_notation(self):
+        model = (_likelihood() * _prior()).with_label("model").with_path_names(y="obs")
+        joint = _law("d", "d") * model
+        assert joint.notation == "d(d)·lik(obs | beta)·prior(beta)"
+
+    def test_the_repr_keeps_the_label_first(self):
+        assert repr(_likelihood() * _prior()).startswith("FactoredDistribution(\n    'lik·prior',")
+
+    def test_an_unlabeled_joint_that_holds_paths_fixed_reads_by_its_label(self):
+        """Its factors' notations would leave out the fixed paths."""
+        joint = _with_fixed_paths(_law("a", "x") * _law("b", "z"), "y")
+        assert joint.notation == "(a·b)(x, z; y)"
+        model = _with_fixed_paths((_law("a", "x") * _law("b", "z")).with_label("model"), "y")
+        assert model.notation == "model(x, z; y)"
+
+
+class TestTheLabeledFlag:
+    """A law derived from a joint is labeled or unlabeled as the joint is."""
+
+    @staticmethod
+    def _joints() -> tuple[FactoredDistribution, FactoredDistribution]:
+        joint = _symbolic_joint()
+        return joint, joint.with_label("model")
+
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(lambda j: j.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda j: j.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda j: j.with_path_names(a="u"), id="rename-through-factors"),
+            pytest.param(lambda j: j.with_path_names({"a": "g/a", "b": "g/b"}), id="regroup"),
+            pytest.param(lambda j: j._marginal(("a", "b")), id="marginal-over-two-factors"),
+            pytest.param(lambda j: copy.copy(j), id="copy"),
+            pytest.param(lambda j: pickle.loads(pickle.dumps(j)), id="pickle"),
+        ],
+    )
+    def test_a_derived_joint_keeps_the_flag(self, derive):
+        unlabeled, labeled = self._joints()
+        assert _is_named(derive(unlabeled)) is False
+        assert _is_named(derive(labeled)) is True
+
+    def test_a_packaged_sub_joint_is_labeled_as_the_joint_is(self):
+        unlabeled, labeled = self._joints()
+        for joint, named in ((unlabeled, False), (labeled, True)):
+            regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
+            group = next(
+                factor for factor in regrouped.factors if isinstance(factor, SupportsFactors)
+            )
+            assert _is_named(group) is named
+
+    def test_binding_a_conditional_joint_keeps_the_flag(self):
+        _, _, joint = _sigma_model()
+        for kernel, named in ((joint, False), (joint.with_label("model"), True)):
+            assert _is_named(kernel._condition_on({"sigma": 1.0})) is named
+
+    def test_a_relabeled_derived_joint_is_labeled(self):
+        derived = _symbolic_joint().with_dim_sizes(n=3)
+        assert derived.with_label("model").notation == "model(a, b, c)"
+
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(lambda j: j.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda j: j.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda j: j.with_label("model"), id="with_label"),
+            pytest.param(lambda j: j.with_path_names(a="u"), id="rename-through-factors"),
+            pytest.param(lambda j: j.with_path_names({"a": "g/a", "b": "g/b"}), id="regroup"),
+            pytest.param(lambda j: j._marginal(("a", "b")), id="marginal-over-two-factors"),
+        ],
+    )
+    def test_a_derived_joint_keeps_the_fixed_paths(self, derive):
+        joint = _with_fixed_paths(_symbolic_joint(), "y")
+        assert _fixed_paths(derive(joint)) == ("y",)
+
+    def test_a_bound_conditional_joint_keeps_the_fixed_paths(self):
+        _, _, joint = _sigma_model()
+        assert _fixed_paths(_with_fixed_paths(joint, "y")._condition_on({"sigma": 1.0})) == ("y",)
+
+
 # -- Round trips ----------------------------------------------------------------------
 
 
@@ -1290,7 +1408,11 @@ _JOINTS = [
 
 def _assert_same_joint(restored: Any, joint: Any) -> None:
     assert type(restored) is type(joint)
-    assert (restored.label, restored.spec) == (joint.label, joint.spec)
+    assert (restored.label, restored.spec, restored.notation) == (
+        joint.label,
+        joint.spec,
+        joint.notation,
+    )
     assert [(type(f), f.label, f.spec) for f in restored.factors] == [
         (type(f), f.label, f.spec) for f in joint.factors
     ]

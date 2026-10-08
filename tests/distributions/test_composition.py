@@ -39,6 +39,7 @@ from probpipe.distributions import (
     SupportsFactors,
     conditional_distribution,
 )
+from probpipe.distributions._factored import _is_named
 
 SCALAR = NumericArraySpec(())
 VECTOR = NumericArraySpec((3,))
@@ -624,6 +625,37 @@ class TestLabels:
         posterior = _prior().with_label("model | y")
         assert (_likelihood() * posterior).label == "lik·(model | y)"
         assert (_likelihood() * _prior().with_label("my prior")).label == "lik·[my prior]"
+
+    def test_a_product_operand_joins_as_it_is(self):
+        """Labels join associatively, so a product's label is never parenthesized in a joint."""
+        assert ((_likelihood() * _prior()) * _law("d", "d")).label == "lik·prior·d"
+        product = _prior().with_label("x·y")
+        assert (_likelihood() * product * _law("d", "d")).label == "lik·x·y·d"
+
+    def test_a_product_inside_another_expression_is_parenthesized_with_it(self):
+        posterior = _prior().with_label("(x·y) | y")
+        assert (_likelihood() * posterior).label == "lik·((x·y) | y)"
+
+
+class TestTheJointIsUnlabeled:
+    """A joint that ``*`` builds is unlabeled, so it reads factor by factor."""
+
+    def test_a_composed_joint_of_either_kind_is_unlabeled(self):
+        assert _is_named(_likelihood() * _prior()) is False
+        assert _is_named(_likelihood() * _law("c", "c")) is False
+
+    def test_a_composed_joint_reads_factor_by_factor(self):
+        assert (_likelihood() * _prior()).notation == "lik(y | beta)·prior(beta)"
+        assert (_likelihood() * _law("c", "c")).notation == "lik(y | beta)·c(c)"
+
+    def test_composing_a_labeled_joint_gives_an_unlabeled_one(self):
+        """The labeled joint enters as its factors, so its label shows only in the joint's label."""
+        model = (_likelihood() * _prior()).with_label("model")
+        joint = model * _law("d", "d")
+        assert _is_named(model) is True
+        assert _is_named(joint) is False
+        assert joint.label == "model·d"
+        assert joint.notation == "lik(y | beta)·prior(beta)·d(d)"
 
     def test_exchanging_independent_operands_changes_the_label_and_the_order(self):
         a, b = _law("a", "a"), _law("b", "b")

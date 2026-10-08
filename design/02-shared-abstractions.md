@@ -7,7 +7,7 @@ Part II introduces the shared abstractions the rest of the library is built on.
 | II.1 | Typing | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. |
 | II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named input slots and the component interface of one produced term. |
 | II.3 | Numeric values | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
-| II.4 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation, with `raw()` as its access to that representation. |
+| II.4 | Identity | `TrackedTerm` / `Provenance` | The label, type (spec), lineage, and annotations an object carries beyond its raw representation, with `raw()` as its access to that representation. |
 | II.5 | Multiplicity | `Batch` | An indexed collection of *separate* objects, with its `BatchSpec`. |
 | II.6 | Structure | `NamedTree` | Abstract named, ordered tree addressed by path with leaf-keyed mapping contract and navigation. |
 | II.7 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved, and the catalog that makes every registry discoverable. |
@@ -180,18 +180,45 @@ One flat-vector interface over the numeric kinds is `D2 – Generality first`: e
 ### Contract
 
 Every tracked term carries four things through the one mixin `TrackedTerm`:
-1. a **name**: what the object is called;
+1. a **label**: what a reader calls the object;
 2. a **spec**: the declaration of its type (II.1);
 3. a **provenance**: how it was produced;
 4. **annotations**: free-form auxiliary information supplied by the user or an algorithm.
 
-A tracked term's label is supplied by the user at explicit construction, as the required first argument `label`, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is labeled by that function's `output_label` (III.3), and an operation's result takes the label of its primary operand, which is the first in its signature. That operand is the law for the functionals and `convert`, so `mean(schools)` is labeled `schools`. The primary operand of `evaluate` is the map, and its result takes the map's `output_label`, as the map's own result does (V.10). Composition (IV.2), `condition_on` (VI.6), and `marginal` and `factor` (VI.8) return a part or a conditional of a law, so their rules label the result by what it is: a product of factors joins the factors' labels, and a conditional formed by Bayes' rule is labeled by its expression, as `condition_on(schools, data)` is labeled `schools | y`. A label is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the label it had, and only `with_label` replaces it. No operation reads a label to decide anything, so the origin of a label is never recorded in object state, constructor parameters, temporary carriers, pytree auxiliary data, or serialized state. No lookup resolves an object by its label, two objects may share a label, and derived labels need no escaping scheme.
+A tracked term's label is supplied by the user at explicit construction, as the required first argument `label`, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is labeled by that function's `output_label` (III.3), and an operation's result takes the label of its primary operand, which is the first in its signature. That operand is the law for the functionals and `convert`, so `mean(schools)` is labeled `schools`. The primary operand of `evaluate` is the map, and its result takes the map's `output_label`, as the map's own result does (V.10). Composition (IV.2), `condition_on` (VI.6), and `marginal` and `factor` (VI.8) return a part or a conditional of a law, so their rules label the result by what it is: a product of factors joins the factors' labels, and a conditional formed by Bayes' rule is labeled by its expression, as `condition_on(schools, data)` is labeled `schools | y`. A label is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the label it had, and only `with_label` replaces it. No lookup resolves an object by its label, and derived labels need no escaping scheme.
+
+**Label, signature, and notation.** A label names an object for a reader, and each other mechanism that names or identifies something has a responsibility of its own:
+
+| Mechanism | Responsibility | Section |
+|---|---|---|
+| label | names an object for a reader | II.4 |
+| signature | states what a law, a kernel, or a function is over, read from its declaration | II.4 |
+| component name | names a produced component, which composition and indexing match | II.2 |
+| input slot | names where an argument or a given value binds | II.2 |
+| source identity, random-event identity, fingerprints, replay, and caching | identify objects, content, and random events, and decide reuse | V.5, V.8, II.4 |
+
+The **signature** of a term is read from its declaration:
+1. a law: its event components in declaration order, as `mu, tau`;
+2. a kernel: its event components, then `|` and its given slots, as `y | beta`;
+3. a function: its parameters, as `x, y`.
+
+A law or a kernel that holds paths fixed at given values lists them after `;`, as `mu; y` for the posterior of `mu` given `y` and `y | sigma; beta` for a kernel applied at `beta`. A component rename changes the signature, and `with_label` changes the label. The **notation** is the label followed by the signature in parentheses, as `prior(mu)`, `glm(y | beta)`, or `predict(x, y)`, and the property `notation` returns it. `str()` shows the notation, and the repr keeps the label first. The signature has no public attribute of its own, since `Function.signature` is the Python call signature that binding reads (III.3). No operation reads a label or a signature to decide anything, and two objects may share either. A product records whether it was given a label, which its notation reads (IV.2), and nothing else records where a label came from.
+
+**Grouping.** A label is grouped where another label is built from it, so it reads as one operand:
+1. an **expression** is parenthesized, and a label is an expression when it has one of these forms:
+   - an operator at its top level, as `model | y` or the draw `mu ~ prior`;
+   - a product of labels, as `lik·prior`;
+   - a unary operator or `log` at its start, as `-x` or the score `log prior(mu)`;
+2. any other label of several words is bracketed, as `[other effect]`;
+3. a label of one word is used as it is, and a call such as `prior(mu)` is one word.
+
+So a selection of a batch labeled `x·y` is labeled `(x·y)[sample=0:2]`, and a law derived from an unlabeled product displays as `(lik·prior)(y)`. A draw and a score are grouped inside a selection, as in `(mu ~ prior)[sample=0]` and `(log prior(mu))[sample=0]`. Two rules join labels without grouping them. The right side of `~` is not grouped, since `~` binds most loosely, as in `(y, mu) ~ lik·prior`. Labels join associatively, so a product joins a further factor's label as it is, and `(lik * prior) * d` is labeled `lik·prior·d` (IV.2).
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
 Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
 
-Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied. A batch whose label is an expression has it parenthesized before the selection, as in `(model | y)[dataset=0]`, so the selection reads as applying to the whole label.
+Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied. A batch's label is grouped before the selection, as in `(model | y)[dataset=0]`, so the selection reads as applying to the whole label.
 
 **The repr.** A term's repr reads as a call of its public class's constructor:
 1. the label: first and positionally, as in `RecordBatch('schools', ...)`;
@@ -245,7 +272,7 @@ Fingerprints are best-effort and tiered, from a content hash, through the code h
 
 ### Rationale
 
-`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps names inert in computation, so a name never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone.
+`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived labels keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps labels inert in computation, so a label never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone. Reading the signature from the declaration is `D6 – Single source of truth`: the notation states what a term is over from the one place that fixes it, so a label chosen by the user cannot misstate it.
 
 ### Notes
 

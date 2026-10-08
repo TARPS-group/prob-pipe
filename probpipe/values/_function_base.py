@@ -31,7 +31,13 @@ from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import (
+    format_names,
+    format_notation,
+    format_signature,
+    public_class_name,
+    term_repr,
+)
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.config import WorkflowKind
@@ -759,9 +765,11 @@ class Function(Node, TrackedTerm, Annotated):
 
     ``spec`` contains only input/output declarations. ``with_label`` changes the
     function label and callable metadata; output_label and component names are
-    preserved. ``with_options`` returns a shallow copy with revised controls.
-    A Function stores only the controls set on it, so ``options`` reads every
-    other control's default when it is read.
+    preserved. ``str(f)`` returns :attr:`notation`, the label followed by the
+    parameters, as ``predict(x, y)``, and the repr keeps the label first.
+    ``with_options`` returns a shallow copy with revised controls. A Function
+    stores only the controls set on it, so ``options`` reads every other
+    control's default when it is read.
 
     The engine reads three declarations from the Function it runs (V.1): what
     each parameter accepts, the result declaration, and the realization. A
@@ -1182,6 +1190,23 @@ class Function(Node, TrackedTerm, Annotated):
             If the result violates the completed declaration.
         """
         return _call_engine(self, *args, **kwargs)
+
+    @property
+    def notation(self) -> str:
+        """The function's label followed by its parameters, as ``predict(x, y)``, which ``str()`` returns.
+
+        The parameters are the names of :attr:`signature`, in order, joined by
+        ``", "``. No operation reads the notation.
+        """
+        return format_notation(self.label, self._signature_text())
+
+    def _signature_text(self) -> str:
+        """The signature: the names of the parameters, in order."""
+        return format_signature(self.signature.parameters)
+
+    def __str__(self) -> str:
+        """The function's :attr:`notation`, as ``predict(x, y)``."""
+        return self.notation
 
     def __repr__(self) -> str:
         """The public class, the label, the parameters, and the declarations set on the function.

@@ -54,6 +54,36 @@ def _unnamed_callables():
     return {"partial": partial(add, 1), "instance": AddOne()}
 
 
+class TestNotation:
+    """A function reads as its label followed by its parameters, which ``str()`` returns."""
+
+    def test_a_function_reads_by_its_label_and_its_parameters(self):
+        predict = Function("predict", lambda x, y: x + y)
+        assert str(predict) == predict.notation == "predict(x, y)"
+
+    def test_a_relabeled_function_reads_by_its_new_label(self):
+        assert Function("predict", lambda x, y: x + y).with_label("fit").notation == "fit(x, y)"
+
+    def test_the_decorated_function_reads_by_its_name(self):
+        @function
+        def predict(x, theta=1.0):
+            return x * theta
+
+        assert predict.notation == "predict(x, theta)"
+
+    def test_a_function_of_no_parameters_reads_as_an_empty_call(self):
+        assert Function("draw", lambda: 1.0).notation == "draw()"
+
+    def test_the_signature_stays_the_python_signature(self):
+        predict = Function("predict", lambda x, y: x + y)
+        assert isinstance(predict.signature, inspect.Signature)
+        assert list(predict.signature.parameters) == ["x", "y"]
+
+    def test_the_repr_keeps_the_label_first(self):
+        predict = Function("predict", lambda x, y: x + y)
+        assert repr(predict) == "Function('predict', parameters=('x', 'y'))"
+
+
 class TestFunctionSpecMatching:
     @pytest.mark.parametrize("from_value", [False, True])
     @pytest.mark.parametrize(

@@ -101,6 +101,7 @@ from ..distributions._factored import (
     _bound_factor,
     _joined_label,
     _law_at_defaults,
+    _with_named,
 )
 from ..distributions._views import _RenamedDistribution
 from ..functions._call import checking
@@ -1183,7 +1184,9 @@ def _slice(call: BoundCall) -> Any:
     law = (
         _law_at_defaults(factors[0], ())
         if len(factors) == 1
-        else FactoredDistribution(_joined_label(f.label for f in factors), factors)
+        else _with_named(
+            FactoredDistribution(_joined_label(f.label for f in factors), factors), False
+        )
     )
     if law.provenance is None:
         law.with_provenance(

@@ -19,6 +19,7 @@ from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
     _detached_term,
+    _keeps_fixed_paths,
     _shared_final_names,
 )
 from ..distributions._factored import SupportsFactors, _joined_label
@@ -183,10 +184,11 @@ def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distributi
     A marginal can be a factor of a factored joint, and a factor can record a
     batch it was an element of or a law it renames, which a lift reads to draw
     it with that law. The detached marginal records neither, so a lift draws it
-    independently of the joint (V.5). The result boundary then records the
-    call's provenance on it.
+    independently of the joint (V.5). It holds the paths the law holds fixed.
+    The result boundary then records the call's provenance on it.
     """
-    return _detached_term(call.operands["d"]._marginal(call.operands["field"]))
+    d = call.operands["d"]
+    return _keeps_fixed_paths(_detached_term(d._marginal(call.operands["field"])), d)
 
 
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:

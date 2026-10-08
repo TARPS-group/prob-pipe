@@ -36,6 +36,7 @@ from probpipe.distributions import (
     NumericConditionalDistribution,
     NumericDistribution,
 )
+from probpipe.distributions._distribution import _detached_term, _fixed_paths
 
 SCALAR = NumericArraySpec(())
 LABEL = OpaqueSpec()
@@ -644,6 +645,56 @@ class TestWithPathNames:
     def test_a_rename_the_kernel_cannot_take_raises(self, rename, error):
         with pytest.raises(error):
             rename(_kernel())
+
+
+def _with_fixed_paths(term, *paths: str):
+    """*term* holding *paths* fixed, as applying a kernel at given values records."""
+    object.__setattr__(term, "_fixed_paths", paths)
+    return term
+
+
+class TestNotation:
+    """A kernel reads as its label, its components, ``|``, and its given slots."""
+
+    def test_a_kernel_reads_by_its_components_and_its_given_slots(self):
+        glm = _kernel(given={"beta": SCALAR}, label="glm")
+        assert glm.notation == "glm(y | beta)"
+
+    def test_every_given_slot_is_listed_in_declaration_order(self):
+        glm = _kernel(given={"beta": SCALAR, "sigma": SCALAR}, label="glm")
+        assert glm.notation == "glm(y | beta, sigma)"
+
+    def test_every_component_is_listed_in_declaration_order(self):
+        kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())), label="k")
+        assert kernel.notation == "k(y, z | mu)"
+
+    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+        glm = _kernel(given={"beta": SCALAR}, label="glm")
+        assert str(glm) == "glm(y | beta)"
+        assert repr(glm).startswith("Kernel('glm', given=('beta',)")
+
+    def test_fixed_paths_follow_the_given_slots(self):
+        glm = _with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
+        assert glm.notation == "glm(y | sigma; beta)"
+
+    def test_a_kernel_holds_no_path_fixed_by_default(self):
+        assert _fixed_paths(_kernel()) == ()
+
+    @pytest.mark.parametrize(
+        "copy",
+        [
+            pytest.param(lambda k: k.raw(), id="raw"),
+            pytest.param(lambda k: _detached_term(k), id="detached"),
+            pytest.param(lambda k: k.with_label("glm2"), id="with_label"),
+            pytest.param(lambda k: k.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda k: k.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda k: k.with_path_names(sigma="s"), id="rename-a-slot"),
+            pytest.param(lambda k: k.with_path_names(y="obs"), id="rename-a-component"),
+        ],
+    )
+    def test_a_copy_keeps_the_fixed_paths(self, copy):
+        kernel = _kernel(given={"sigma": _array("n")}, event=OutputSpec(y=_array("n")))
+        assert _fixed_paths(copy(_with_fixed_paths(kernel, "beta"))) == ("beta",)
 
 
 class TestConditionOnOperation:

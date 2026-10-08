@@ -25,7 +25,13 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import (
+    format_names,
+    format_notation,
+    format_signature,
+    public_class_name,
+    term_repr,
+)
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
@@ -50,6 +56,7 @@ from ._distribution import (
     _complete_event_spec,
     _compose_operands,
     _detached_term,
+    _fixed_paths,
     _is_default_declaration,
     _no_free_dims,
     _unify_declarations,
@@ -485,6 +492,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     operation on ``condition_on(K, s)``. A subclass implements
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
+    ``str(K)`` returns the kernel's :attr:`notation`, its label followed by its
+    signature, as ``glm(y | beta)``, and the repr keeps the label first.
+
     Parameters
     ----------
     label : str
@@ -751,6 +761,28 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         see :meth:`Distribution.__mul__`.
         """
         return _compose_operands(self, other)
+
+    # -- notation ---------------------------------------------------------------
+
+    @property
+    def notation(self) -> str:
+        """The kernel's label followed by its signature, as ``glm(y | beta)``, which ``str()`` returns.
+
+        The signature lists the event components in declaration order, then
+        `` | `` and every given slot in declaration order, then ``;`` and the
+        paths the kernel holds fixed at given values when it holds any, as
+        ``glm(y | sigma; beta)``. Components, slots, and paths are each joined by
+        ``", "``. No operation reads the notation.
+        """
+        return format_notation(self.label, self._signature_text())
+
+    def _signature_text(self) -> str:
+        """The signature: the event components, ``|`` and the given slots, then any fixed paths."""
+        return format_signature(self.event_spec.components, self.given_spec, _fixed_paths(self))
+
+    def __str__(self) -> str:
+        """The kernel's :attr:`notation`, as ``glm(y | beta)``."""
+        return self.notation
 
     def __repr__(self) -> str:
         """The public class, the label, the family parameters, the given slots, and the declaration.

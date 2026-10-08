@@ -16,7 +16,7 @@ from probpipe import (
 from probpipe.core._dispatch import ResolutionError
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._conditional import ConditionalDistribution
-from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.functions import _descendants
 from probpipe.operations._marginal import factor, marginal
 
@@ -99,6 +99,30 @@ class TestMarginal:
 
     def test_the_marginal_of_a_law_without_factors_keeps_its_label(self):
         assert marginal(Marginalizing("law"), "a").label == "law"
+
+
+class TestTheMarginalsNotation:
+    """A marginal reads by its label and its own components, and keeps the law's fixed paths."""
+
+    def test_the_marginal_keeps_the_paths_the_law_holds_fixed(self):
+        law = Marginalizing("law")
+        object.__setattr__(law, "_fixed_paths", ("y",))
+        result = marginal(law, "a")
+        assert _fixed_paths(result) == ("y",)
+        assert result.notation == "law(a; y)"
+
+    def test_the_marginal_of_a_law_with_no_fixed_paths_holds_none(self):
+        assert _fixed_paths(marginal(Marginalizing("law"), "a")) == ()
+
+    def test_a_marginal_over_several_factors_of_an_unlabeled_joint_reads_factor_by_factor(self):
+        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
+        result = marginal(joint * Gaussian("c"), ("a", "b"))
+        assert result.label == "first·second"
+        assert result.notation == "first(a)·second(b)"
+
+    def test_a_marginal_over_several_factors_of_a_labeled_joint_reads_by_its_label(self):
+        joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
+        assert marginal(joint, ("a", "b")).notation == "(a·b)(a, b)"
 
 
 class TestOptionalSlots:

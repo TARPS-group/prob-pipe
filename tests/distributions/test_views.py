@@ -72,6 +72,7 @@ from probpipe.distributions._capabilities import (
     _capability_subclass,
     _marginal_claims,
 )
+from probpipe.distributions._distribution import _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import Cauchy, HalfCauchy, StudentT
 from probpipe.linalg import DenseLinOp, LinOp
@@ -1253,6 +1254,54 @@ class TestTheViewOfAWeightedLaw:
         # A KDE's mean is its atoms' weighted mean, whatever the bandwidth.
         law = KDEDistribution("kde", self._record_atoms(), weights=self._WEIGHTS)
         assert float(probpipe.mean(law["a"])) == pytest.approx(0.6)
+
+
+def _with_fixed_paths(term: Any, *paths: str) -> Any:
+    """*term* holding *paths* fixed, as conditioning on them records."""
+    object.__setattr__(term, "_fixed_paths", paths)
+    return term
+
+
+class TestNotation:
+    """A view reads as its parent's label followed by the view's own components."""
+
+    def test_a_view_reads_by_its_parents_label_and_its_component(self):
+        model = _dependent_joint().with_label("model")
+        assert str(model["y"]) == model["y"].notation == "model(y)"
+
+    def test_a_view_of_a_nested_path_reads_by_the_final_segment(self):
+        assert FieldView(_Law("parent", _EVENT), "model/theta").notation == "parent(theta)"
+
+    def test_a_selection_reads_by_its_components_in_order(self):
+        view = FieldView(_Law("parent", _EVENT), ("y", "model/theta"))
+        assert view.notation == "parent(y, theta)"
+
+    def test_a_view_of_an_unlabeled_product_groups_its_label(self):
+        assert _dependent_joint()["y"].notation == "(likelihood·beta)(y)"
+
+    def test_a_view_keeps_the_paths_its_parent_holds_fixed(self):
+        parent = _with_fixed_paths(_Law("model", _EVENT), "obs")
+        view = parent["y"]
+        assert _fixed_paths(view) == ("obs",)
+        assert view.notation == "model(y; obs)"
+
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(lambda view: view["model/theta/mu"], id="sub-view"),
+            pytest.param(lambda view: view.with_label("other"), id="with_label"),
+            pytest.param(lambda view: view.with_dim_names(n="m"), id="with_dim_names"),
+        ],
+    )
+    def test_a_view_derived_from_a_view_keeps_the_fixed_paths(self, derive):
+        parent = _with_fixed_paths(_Law("model", _EVENT), "obs")
+        assert _fixed_paths(derive(parent["model"])) == ("obs",)
+
+    def test_the_detached_marginal_keeps_the_fixed_paths(self):
+        parent = _with_fixed_paths(_product().with_label("model"), "obs")
+        detached = parent["b"].raw()
+        assert _fixed_paths(detached) == ("obs",)
+        assert detached.notation == "model(b; obs)"
 
 
 class TestSelections:

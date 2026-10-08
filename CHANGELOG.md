@@ -2081,6 +2081,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A law, a kernel, and a function print as their notation, and a derived
+  label groups a product.** `str()` of a law, a kernel, or a function returns
+  its new `notation` property: its label followed by its signature, which lists
+  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
+  kernel, and `predict(x, y)` for a function. It returned the repr before, and
+  the repr is unchanged. A product that `*` or `joint` builds prints factor by
+  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
+  `with_label` or by the `FactoredDistribution` constructor prints by that
+  label, as `model(y, mu)`. A label built from another label parenthesizes a
+  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
+  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` is labeled
+  `(lik·prior) | y`. A batch element brackets a batch label of several words,
+  as `[my draws][draw=1]`. Labels still join associatively, so
+  `(lik * prior) * d` is labeled `lik·prior·d`.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`

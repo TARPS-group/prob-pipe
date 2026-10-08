@@ -49,6 +49,7 @@ from ..distributions._distribution import Distribution
 from ..distributions._factored import (
     FactoredDistribution,
     FactoredNumericDistribution,
+    _derived_product,
     _register_refinement,
 )
 from ..linalg import DenseLinOp, LinOp
@@ -168,7 +169,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         ]
         if not kept:
             raise ValueError(self._every_component())
-        law = FactoredDistribution(self.label, kept)
+        law = _derived_product(FactoredDistribution(self.label, kept), self)
         return law.with_provenance(
             Provenance.create(
                 "condition_on", parents=[self], metadata={"conditioned": sorted(conditioned)}

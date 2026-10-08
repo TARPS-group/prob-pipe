@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    Distribution,
     DistributionSpec,
     Function,
     FunctionSpec,
@@ -31,6 +33,15 @@ from probpipe.core._fingerprint import (
     fingerprint,
 )
 from probpipe.core.provenance import ParentInfo, Provenance
+
+
+class _Located(Distribution):
+    """A scalar law outside the backend families, which the fingerprint hashes by its attributes."""
+
+    def __init__(self, label: str, loc: float) -> None:
+        super().__init__(label, NumericArraySpec(()))
+        self.loc = loc
+
 
 # ===========================================================================
 # 1. Return type and format
@@ -353,6 +364,20 @@ class TestDistributionHashing:
         law = Normal(loc=0.0, scale=1.0, label="x")
         assert fingerprint(law.with_label("y")) == fingerprint(law)
         assert fingerprint(Normal(loc=0.0, scale=1.0, label="y")) == fingerprint(law)
+
+    def test_the_fixed_paths_leave_the_fingerprint_unchanged(self):
+        """The paths a law holds fixed state how it displays, as its label does."""
+        law = _Located("x", 1.0)
+        held = copy.copy(law)
+        object.__setattr__(held, "_fixed_paths", ("y",))
+        assert fingerprint(held) == fingerprint(law)
+        assert fingerprint(_Located("x", 2.0)) != fingerprint(law)
+
+    def test_whether_a_joint_was_labeled_leaves_its_fingerprint_unchanged(self):
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        labeled = copy.copy(joint)
+        object.__setattr__(labeled, "_named", True)
+        assert fingerprint(labeled) == fingerprint(joint)
 
     def test_different_distribution_types_differ(self):
         from probpipe import Beta

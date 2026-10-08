@@ -69,6 +69,7 @@ from ._distribution import (
     _install_copy_source,
     _install_field_view,
     _install_renamed_law,
+    _keeps_fixed_paths,
     _no_free_dims,
     _shared_final_names,
     _whole_term_component,
@@ -77,10 +78,13 @@ from ._factored import (
     FactoredConditionalDistribution,
     FactoredDistribution,
     SupportsFactors,
+    _derived_product,
     _factor_graph,
     _FactorGraph,
+    _is_named,
     _joined_label,
     _raw_record,
+    _with_named,
 )
 
 if TYPE_CHECKING:
@@ -792,7 +796,8 @@ class FieldView(Distribution):
     rather than a detached law, so sibling views co-sample from one parent
     draw and the correlation between them is preserved. Its declaration is the
     parent's schema at the path, the leaf or subtree whole, under a component
-    named by the path's final segment, and it keeps its parent's label. A
+    named by the path's final segment, and it keeps its parent's label and the
+    paths its parent holds fixed, so ``model["y"]`` reads as ``model(y)``. A
     tuple of paths selects several nodes: the view declares an exposed record
     of them, in order, and keeps its parent's label as well.
 
@@ -865,6 +870,7 @@ class FieldView(Distribution):
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_path", path)
         self._init_declaration(declaration)
+        _keeps_fixed_paths(self, parent)
         self.with_provenance(
             Provenance.create("__getitem__", parents=[parent], metadata={"path": path})
         )
@@ -1018,7 +1024,7 @@ class FieldView(Distribution):
         -------
         Distribution
             A standalone law with no reference to the parent, and no provenance
-            or annotations.
+            or annotations, which holds the paths the parent holds fixed.
 
         Raises
         ------
@@ -1036,7 +1042,7 @@ class FieldView(Distribution):
             raise ResolutionError(
                 f"{parent.label!r} has no exact marginal at {self._path!r}: {reason}"
             )
-        return _detached(parent._marginal(self._path), self.label)
+        return _keeps_fixed_paths(_detached(parent._marginal(self._path), self.label), parent)
 
     def with_dim_sizes(self, **sizes: int) -> FieldView:
         """Bind named symbolic dimensions in the parent, and view the result at the same path.
@@ -1899,7 +1905,7 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
         )
     else:
         renamed = _RenamedDistribution(law, event, (arguments,))
-    renamed.with_provenance(
+    _keeps_fixed_paths(renamed, law).with_provenance(
         Provenance.create("with_path_names", parents=[law], metadata=dict(arguments))
     )
     return renamed
@@ -1926,11 +1932,12 @@ def _with_copy_source(
 
     The record is *parent* with the renames from its declaration to *law*'s,
     which :func:`_copy_source` reads. A factored joint orders its components
-    by its factors, so the renames end at *law*'s own declaration.
+    by its factors, so the renames end at *law*'s own declaration. *law* also
+    holds the paths *parent* holds fixed.
     """
     event = _EventRenames.of(parent.event_spec, law.event_spec, renames)
     object.__setattr__(law, _COPY_SOURCE, (parent, event))
-    return law
+    return _keeps_fixed_paths(law, parent)
 
 
 def _renamed_law(
@@ -2047,7 +2054,9 @@ def _renamed_through_factors(
             if isinstance(joint, ConditionalDistribution)
             else FactoredDistribution
         )
-        renamed = kind(joint.label, factors, _scope=graph.scope, **packaging)
+        renamed = _derived_product(
+            kind(joint.label, factors, _scope=graph.scope, **packaging), joint
+        )
     except (KeyError, ValueError):
         return None
     if _leaf_specs(renamed.event_spec) != _leaf_specs(event_spec):
@@ -2240,7 +2249,8 @@ def _regrouped(
                 else FactoredConditionalDistribution
             )
             label = _joined_label(part.label for part in parts)
-            units.append((indices[0], kind(label, parts, _scope=graph.scope, _component=node)))
+            unit = kind(label, parts, _scope=graph.scope, _component=node)
+            units.append((indices[0], _with_named(unit, _is_named(joint))))
     except (KeyError, TypeError, ValueError):
         return None
     units.extend((index, renamed[index]) for index, node in groups.items() if node is None)
@@ -2258,7 +2268,7 @@ def _regrouped(
         return None
     if _leaf_specs(result.event_spec) != _leaf_specs(event_spec):
         return None
-    return result.with_provenance(
+    return _derived_product(result, joint).with_provenance(
         Provenance.create("with_path_names", parents=[joint], metadata=dict(pairs))
     )
 
@@ -2750,7 +2760,7 @@ def _renamed_kernel(
                 return joint
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, event)
-    kernel.with_provenance(
+    _keeps_fixed_paths(kernel, parent).with_provenance(
         Provenance.create("with_path_names", parents=[parent], metadata=dict(pairs))
     )
     return kernel

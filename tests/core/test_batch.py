@@ -20,11 +20,13 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    Normal,
     NumericArraySpec,
     NumericRecordBatch,
     OpaqueSpec,
     RecordSpec,
     TermSpec,
+    sample,
 )
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._fingerprint import fingerprint
@@ -1124,6 +1126,35 @@ class TestLabelsStayOneFormPerSelection:
         """Same value, different objects, so the readings must not collide."""
         assert flat[1].label == "b[draw=1]"
         assert flat[1:2].label == "b[draw=1:2]"
+
+
+class TestTheBatchLabelIsGroupedBeforeTheSelection:
+    """A view's label groups the batch's label as II.4 groups an operand, so it reads as one unit."""
+
+    @pytest.mark.parametrize(
+        ("label", "element"),
+        [
+            ("x·y", "(x·y)[draw=1]"),
+            ("model | y", "(model | y)[draw=1]"),
+            ("mu ~ prior", "(mu ~ prior)[draw=1]"),
+            ("log prior(mu)", "(log prior(mu))[draw=1]"),
+            ("my batch", "[my batch][draw=1]"),
+            ("prior(mu)", "prior(mu)[draw=1]"),
+        ],
+    )
+    def test_an_element_groups_the_batch_label(self, label, element):
+        batch = _ListBatch(range(4), _spec([(4,)], ["draw"]), label=label)
+        assert batch[1].label == element
+
+    def test_a_sub_batch_and_its_elements_group_the_root_label(self):
+        batch = _ListBatch(range(4), _spec([(4,)], ["draw"]), label="x·y")
+        assert batch[0:2].label == "(x·y)[draw=0:2]"
+        assert batch[0:2][1].label == "(x·y)[draw=1]"
+
+    def test_draws_of_a_product_group_its_label(self):
+        draws = sample(Normal("x", 0.0, 1.0) * Normal("y", 0.0, 1.0), sample_shape=6)
+        assert draws.label == "x·y"
+        assert draws[0:2].label == "(x·y)[sample=0:2]"
 
 
 @pytest.fixture

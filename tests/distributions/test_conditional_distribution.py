@@ -255,6 +255,36 @@ class TestEvaluation:
         np.testing.assert_allclose(condition_on(curried, {"tau": 2.0})._mean(), 1.0)
 
 
+class TestNotation:
+    """A kernel from a function reads by its label, its component, and its slots."""
+
+    def test_the_kernel_lists_its_component_and_its_slots(self):
+        kernel = conditional_distribution("glm", _location, given_spec=SLOTS)
+        assert str(kernel) == kernel.notation == "glm(y | mu, tau)"
+
+    def test_a_curried_kernel_lists_its_fixed_paths_after_its_free_slots(self):
+        """``condition_on`` records the bound slots; here they are set by hand."""
+        kernel = conditional_distribution("glm", _location, given_spec=SLOTS)
+        curried = kernel._condition_on({"mu": 1.0})
+        assert curried.notation == "glm(y | tau)"
+        object.__setattr__(curried, "_fixed_paths", ("mu",))
+        assert curried.notation == "glm(y | tau; mu)"
+        assert kernel.notation == "glm(y | mu, tau)"
+
+    def test_currying_a_curried_kernel_keeps_its_fixed_paths(self):
+        kernel = conditional_distribution("glm", _scaled_location, given_spec=_THREE_SLOTS)
+        curried = kernel._condition_on({"mu": 1.0})
+        object.__setattr__(curried, "_fixed_paths", ("mu",))
+        assert curried._condition_on({"tau": 2.0}).notation == "glm(y | scale; mu)"
+
+
+def _scaled_location(mu: Any, tau: Any, scale: Any) -> Distribution:
+    return Normal("y", mu, tau * scale)
+
+
+_THREE_SLOTS = {**SLOTS, "scale": POSITIVE}
+
+
 #: An array default, which declares its slot's shape.
 _OFFSETS = jnp.zeros(3)
 

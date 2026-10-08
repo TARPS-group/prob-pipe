@@ -36,7 +36,9 @@ addresses: selecting chain 0 of ``posterior`` yields the label
 ``"posterior[chain=0]"``, and its draw 7 yields ``"posterior[chain=0, draw=7]"``.
 Levels selected whole are left out, and the levels that appear are listed in the
 batch's own order, so a derived label is a function of what the view selects: two
-ways of indexing one selection read alike, and two selections never do.
+ways of indexing one selection read alike, and two selections never do. The
+batch's label is grouped before the selection as design II.4 states, so a
+product reads as one label, as in ``"(x·y)[sample=0:2]"``.
 
 A view receives its label when selected. Renaming its levels preserves that
 label, and the new level names appear in the labels of later selections.
@@ -73,7 +75,7 @@ from typing import Any, Self, cast
 
 from .._messages import count, unknown_names
 from ._record_spec import RecordSpec, _check_kind_of
-from ._repr import format_levels, is_expression, public_class_name, term_repr, type_name
+from ._repr import format_levels, grouped_label, public_class_name, term_repr, type_name
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
 from ._specs import TermSpec, _check_component_name
 from .provenance import Provenance
@@ -923,8 +925,7 @@ class Batch[E](TrackedTerm, ABC):
         if selection == self._root_selection:
             label = self.label
         elif rendered:
-            root = f"({self._root_label})" if is_expression(self._root_label) else self._root_label
-            label = f"{root}[{rendered}]"
+            label = f"{grouped_label(self._root_label)}[{rendered}]"
         else:
             label = self._root_label
 

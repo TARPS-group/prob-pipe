@@ -40,7 +40,7 @@ from probpipe.distributions._conditional import (
 )
 from probpipe.distributions._distribution import Distribution, DistributionSpec
 from probpipe.distributions._empirical import EmpiricalDistribution
-from probpipe.distributions._factored import FactoredDistribution
+from probpipe.distributions._factored import FactoredDistribution, _is_named
 from probpipe.operations._condition import (
     InferenceMethod,
     _UnnormalizedConditional,
@@ -425,6 +425,18 @@ class TestTheConditionedLabel:
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
         label = condition_on._derived_label({"d": joint, "given": {"y": 0.3, "mu": 0.0}})
         assert label == "model | y, mu"
+
+    def test_bayes_rule_parenthesizes_the_label_of_an_unlabeled_joint(self):
+        joint = Kernel("y", ("mu",)) * Gaussian("mu")
+        label = condition_on._derived_label({"d": joint, "given": {"y": 0.3}})
+        assert label == "(y·mu) | y"
+
+    def test_the_factors_left_are_an_unlabeled_joint(self):
+        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
+        joint = (joint * Gaussian("c").with_label("third")).with_label("model")
+        left = condition_on(joint, {"a": 0.0})
+        assert _is_named(left) is False
+        assert left.notation == "second(b)·third(c)"
 
 
 class TestTheConditionedDeclaration:

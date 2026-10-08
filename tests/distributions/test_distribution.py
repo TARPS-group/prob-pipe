@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import pickle
 import pkgutil
 from typing import Any
 
@@ -72,6 +73,7 @@ from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions._capabilities import SupportsMean
+from probpipe.distributions._distribution import _detached_term, _fixed_paths
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
 from tests._posterior import posterior_of
@@ -298,6 +300,86 @@ class TestDistributionRepr:
         assert repr(Named().with_label("y")) == (
             "Named('y', event_spec=OutputSpec(beta=OpaqueSpec()))"
         )
+
+
+def _with_fixed_paths(term: Any, *paths: str) -> Any:
+    """*term* holding *paths* fixed, as conditioning on them records."""
+    object.__setattr__(term, "_fixed_paths", paths)
+    return term
+
+
+class TestNotation:
+    """A law reads as its label followed by its signature, which ``str()`` returns."""
+
+    def test_a_family_reads_by_its_label_and_its_component(self):
+        prior = Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))
+        assert prior.notation == "prior(mu)"
+        assert Normal("x", 0.0, 1.0).notation == "x(x)"
+
+    def test_a_law_over_a_record_lists_its_components_in_order(self):
+        law = _DeclaredLaw("model", OutputSpec(RecordSpec(y=(), mu=())))
+        assert law.notation == "model(y, mu)"
+
+    def test_a_whole_record_term_reads_by_its_one_component(self):
+        law = _DeclaredLaw("model", OutputSpec(theta=RecordSpec(y=(), mu=())))
+        assert law.notation == "model(theta)"
+
+    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+        prior = Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))
+        assert str(prior) == f"{prior}" == "prior(mu)"
+        assert repr(prior).startswith("Normal(\n    'prior',")
+
+    def test_a_label_of_several_words_is_grouped(self):
+        law = Normal("x", 0.0, 1.0).with_label("my prior")
+        assert law.notation == "[my prior](x)"
+
+    def test_fixed_paths_follow_the_components(self):
+        posterior = _with_fixed_paths(
+            _DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y"
+        )
+        assert posterior.notation == "model(mu; y)"
+        two = _with_fixed_paths(
+            _DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y", "x"
+        )
+        assert two.notation == "model(mu; y, x)"
+
+    def test_a_relabeled_law_reads_by_its_new_label_and_its_own_component(self):
+        assert Normal("x", 0.0, 1.0).with_label("prior").notation == "prior(x)"
+
+
+class TestFixedPaths:
+    """A law holds no path fixed by default, and each copy of a law keeps the paths it holds."""
+
+    def test_a_law_holds_no_path_fixed_by_default(self):
+        assert _fixed_paths(Normal("x", 0.0, 1.0)) == ()
+
+    def test_detaching_keeps_the_fixed_paths(self):
+        law = _with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(())), "y")
+        assert _fixed_paths(law.raw()) == _fixed_paths(_detached_term(law)) == ("y",)
+
+    @pytest.mark.parametrize(
+        "copy",
+        [
+            pytest.param(lambda law: law.with_label("posterior"), id="with_label"),
+            pytest.param(lambda law: law.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda law: law.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda law: law.with_path_names(x="z"), id="with_path_names"),
+        ],
+    )
+    def test_a_copy_keeps_the_fixed_paths(self, copy):
+        law = _with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(("n",))), "y")
+        assert _fixed_paths(copy(law)) == ("y",)
+        assert copy(law).notation.endswith("; y)")
+
+    def test_a_rename_that_holds_its_law_keeps_the_fixed_paths(self):
+        law = _with_fixed_paths(_DeclaredLaw("model", OutputSpec(RecordSpec(a=(), b=()))), "y")
+        renamed = law.with_path_names({"a": "g/a"})
+        assert type(renamed) is not type(law)
+        assert renamed.notation == "model(b, g; y)"
+
+    def test_copies_pickle_with_their_fixed_paths(self):
+        law = _with_fixed_paths(Normal("x", 0.0, 1.0), "y")
+        assert _fixed_paths(pickle.loads(pickle.dumps(law))) == ("y",)
 
 
 class TestConstructorLabelCheck:

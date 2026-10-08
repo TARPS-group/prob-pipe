@@ -55,7 +55,9 @@ def joint(A: Any, B: Any, **align: str):
     Returns
     -------
     Distribution or ConditionalDistribution
-        The joint; a kernel when a given is left unmet.
+        The joint; a kernel when a given is left unmet. The joint is unlabeled,
+        as one that ``*`` builds is, so its notation joins its factors'
+        notations with ``·``.
 
     Raises
     ------

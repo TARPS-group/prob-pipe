@@ -262,6 +262,19 @@ class TestEventCompletion:
         assert isinstance(EmpiricalDistribution("x", atoms), NumericDistribution) is numeric
 
 
+class TestNotation:
+    """An empirical law reads by its label and the components of its atoms."""
+
+    def test_a_law_of_array_atoms_reads_by_its_one_component(self):
+        assert str(_array_law()) == _array_law().notation == "theta(theta)"
+
+    def test_a_law_of_record_atoms_reads_by_its_fields_in_order(self):
+        assert _record_law().notation == "post(b, a)"
+
+    def test_a_law_of_opaque_atoms_reads_by_its_one_component(self):
+        assert _opaque_law().notation == "where(where)"
+
+
 class TestConstructionErrors:
     @pytest.mark.parametrize(
         "atoms",

@@ -23,7 +23,7 @@ from ..core._dispatch import Feasibility, ResolutionError
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import grouped_label, sequence_repr
+from ..core._repr import PRODUCT_SYMBOL, grouped_label, is_product, sequence_repr
 from ..core._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -70,6 +70,8 @@ from ._distribution import (
     Distribution,
     DistributionSpec,
     _declares_numeric_event,
+    _fixed_paths,
+    _keeps_fixed_paths,
     _no_free_dims,
     _recorded_copy,
     _shared_final_names,
@@ -91,17 +93,56 @@ __all__ = [
 
 _PATH_SEP = "/"
 
-#: The separator a joint's label places between the labels it joins.
-_LABEL_SEP = "·"
-
 
 def _joined_label(labels: Iterable[str]) -> str:
-    """The labels of factors joined with ``·``, each grouped as an operator groups an operand's.
+    """The labels of factors joined with ``·``, each read as one unit.
 
-    An expression is parenthesized, as a posterior labeled ``model | y`` is, and
-    a label with a space is bracketed, so each factor's label reads as one unit.
+    A label that is itself a product joins as it is, so labels join
+    associatively: ``lik·prior`` joined with ``d`` is ``lik·prior·d``. Any other
+    label is grouped as :func:`~probpipe.core._repr.grouped_label` groups an
+    operand: an expression is parenthesized, as a posterior labeled ``model | y``
+    is, and a label with a space is bracketed.
     """
-    return _LABEL_SEP.join(grouped_label(label) for label in labels)
+    return PRODUCT_SYMBOL.join(
+        label if is_product(label) else grouped_label(label) for label in labels
+    )
+
+
+def _is_named(joint: Any) -> bool:
+    """Whether the product *joint* was given a label, so it displays by that label."""
+    return getattr(joint, "_named", True)
+
+
+def _with_named(joint: Any, named: bool) -> Any:
+    """*joint*, a product just built, which displays by its label when *named*.
+
+    A product built by ``*`` or by the ``joint`` operation is unlabeled, so it
+    displays factor by factor, and a product given a label displays by it.
+    """
+    object.__setattr__(joint, "_named", named)
+    return joint
+
+
+def _derived_product(joint: Any, source: Any) -> Any:
+    """*joint*, a product just built from the product *source*, displayed as *source* is.
+
+    *joint* displays by its label exactly when *source* does, and it holds the
+    paths *source* holds fixed.
+    """
+    _keeps_fixed_paths(joint, source)
+    return _with_named(joint, _is_named(source))
+
+
+def _factorwise_notation(joint: Any) -> str | None:
+    """The notation of an unlabeled product: its factors' notations joined with ``·``.
+
+    Returns None for a product given a label, and for one that holds paths
+    fixed, which displays by its label and its signature so the fixed paths
+    show.
+    """
+    if _is_named(joint) or _fixed_paths(joint):
+        return None
+    return PRODUCT_SYMBOL.join(factor.notation for factor in joint.factors)
 
 
 type Factor = Distribution | ConditionalDistribution
@@ -1488,7 +1529,7 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         marginal = _law_at_defaults(kept[0], ())
         marginal = marginal if marginal.label == label else marginal.with_label(label)
     else:
-        marginal = FactoredDistribution(label, kept)
+        marginal = _derived_product(FactoredDistribution(label, kept), self)
     return marginal if projection else _in_requested_order(marginal, paths)
 
 
@@ -1738,7 +1779,7 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
     rebuilt = base(
         joint.label, _each_factor(joint.factors, method, mapping), _scope=scope, **_packaging(joint)
     )
-    return rebuilt.with_provenance(
+    return _derived_product(rebuilt, joint).with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
     )
 
@@ -1834,6 +1875,14 @@ class FactoredDistribution(Distribution, SupportsFactors):
     it names. Scoring sums the factors' densities, each at its own event
     reconstructed from the components.
 
+    A joint constructed by this class is labeled, so its :attr:`notation` is
+    its label followed by its signature, as ``model(y, mu)``. A joint that
+    ``*`` or the ``joint`` operation builds is unlabeled, and its notation joins
+    its factors' notations with ``·``, as ``lik(y | mu)·prior(mu)``, until
+    ``with_label`` gives it a label. A law built from a joint, such as a copy,
+    a marginal over several factors, or a packaged sub-joint, is labeled when
+    the joint is.
+
     Parameters
     ----------
     label : str
@@ -1893,11 +1942,49 @@ class FactoredDistribution(Distribution, SupportsFactors):
             )
         super().__init__(label, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
+        object.__setattr__(self, "_named", True)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
         """The factors, in conditional-first order."""
         return self._graph.factors
+
+    @property
+    def notation(self) -> str:
+        """The joint's notation, which ``str()`` returns.
+
+        A labeled joint reads as its label followed by its signature, as
+        ``model(y, mu)``. An unlabeled joint, which ``*`` builds, joins its
+        factors' notations with ``·``, as ``lik(y | mu)·prior(mu)``, unless it
+        holds paths fixed, when it reads as its grouped label followed by its
+        signature, as ``(lik·prior)(mu; y)``.
+        """
+        return _factorwise_notation(self) or super().notation
+
+    def with_label(self, label: str) -> Self:
+        """Return a copy of this joint under a new label, which it displays by.
+
+        The copy is labeled, so its notation is *label* followed by its
+        signature, as ``model(y, mu)``, and it is otherwise the copy
+        :meth:`Distribution.with_label` returns.
+
+        Parameters
+        ----------
+        label : str
+            The new label, a non-empty string.
+
+        Returns
+        -------
+        Self
+            A labeled copy of the same class under *label*; the original is
+            unchanged.
+
+        Raises
+        ------
+        TypeError
+            If *label* is not a non-empty string.
+        """
+        return _with_named(super().with_label(label), True)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The factors, in conditional-first order."""
@@ -1960,6 +2047,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     of the call, and each factor is called through its own capability at that
     value.
 
+    The joint is labeled or unlabeled as :class:`FactoredDistribution` states,
+    so an unlabeled one reads factor by factor, as ``lik(y | mu)·prior(mu | tau)``,
+    and a labeled one by its label, as ``model(y, mu | tau)``.
+
     Parameters
     ----------
     label : str
@@ -2013,11 +2104,43 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
             )
         super().__init__(label, graph.unmet, _joint_declaration(graph, _component))
         object.__setattr__(self, "_graph", graph)
+        object.__setattr__(self, "_named", True)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
         """The factors, in conditional-first order."""
         return self._graph.factors
+
+    @property
+    def notation(self) -> str:
+        """The joint's notation, which ``str()`` returns, as :attr:`FactoredDistribution.notation` states."""
+        return _factorwise_notation(self) or super().notation
+
+    def with_label(self, label: str) -> Self:
+        """Return a copy of this joint under a new label, which it displays by.
+
+        The copy is labeled, so its notation is *label* followed by its
+        signature, as ``model(y, mu | tau)``, and it is otherwise the copy
+        :meth:`~probpipe.core.tracked.TrackedTerm.with_label`
+        returns.
+
+        Parameters
+        ----------
+        label : str
+            The new label, a non-empty string.
+
+        Returns
+        -------
+        Self
+            A labeled copy of the same class under *label*; the original is
+            unchanged.
+
+        Raises
+        ------
+        TypeError
+            If *label* is not a non-empty string.
+        """
+        return _with_named(super().with_label(label), True)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The factors, in conditional-first order."""
@@ -2098,8 +2221,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(self.given_spec.required) <= set(values):
-            return FactoredDistribution(self.label, factors, **_packaging(self))
-        return FactoredConditionalDistribution(self.label, factors, **_packaging(self))
+            joint = FactoredDistribution(self.label, factors, **_packaging(self))
+        else:
+            joint = FactoredConditionalDistribution(self.label, factors, **_packaging(self))
+        return _derived_product(joint, self)
 
 
 def _bound_factor(

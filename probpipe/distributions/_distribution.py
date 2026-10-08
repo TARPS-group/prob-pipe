@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from ._views import _EventRenames
 
 from ..core._record_spec import RecordSpec
-from ..core._repr import public_class_name, term_repr
+from ..core._repr import format_notation, format_signature, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -255,15 +255,42 @@ _COPY_SOURCE = "_copy_source"
 def _detached_term(term: Any) -> Any:
     """*term*, a law or a kernel, detached from the workflow under its own label.
 
-    The copy shares the representation, and it carries no provenance, no
-    annotations, and no reference to a container or a parent, such as a batch
-    it was an element of or a law it is a copy of.
+    The copy shares the representation and keeps the paths *term* holds fixed,
+    and it carries no provenance, no annotations, and no reference to a
+    container or a parent, such as a batch it was an element of or a law it is
+    a copy of.
     """
     clone = term._shallow_copy()
     object.__setattr__(clone, "_provenance", None)
     for workflow_state in ("_annotations", _ELEMENT_SOURCE, _COPY_SOURCE):
         clone.__dict__.pop(workflow_state, None)
     return clone
+
+
+#: The attribute that holds the paths a law or a kernel holds fixed at given
+#: values, which its signature lists after ``;``. A term that does not set it
+#: holds no path fixed.
+_FIXED_PATHS = "_fixed_paths"
+
+
+def _fixed_paths(term: Any) -> tuple[str, ...]:
+    """The paths the law or kernel *term* holds fixed at given values, in the order they were fixed."""
+    return getattr(term, _FIXED_PATHS, ())
+
+
+def _keeps_fixed_paths(term: Any, source: Any) -> Any:
+    """*term*, a law or kernel just derived from *source*, holding the paths *source* holds fixed.
+
+    *term* keeps the paths it holds itself, followed by those of *source* it
+    does not hold. *term* is set in place only when that adds a path, so a
+    caller passes a term it has just built, or one that holds every path of
+    *source* already.
+    """
+    own = _fixed_paths(term)
+    added = tuple(path for path in _fixed_paths(source) if path not in own)
+    if added:
+        object.__setattr__(term, _FIXED_PATHS, own + added)
+    return term
 
 
 def _compose_operands(left: Any, right: Any) -> Any:
@@ -336,7 +363,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     :attr:`~Annotated.annotations`).  A distribution's constructor takes
     its label as the required first argument, as ``Normal("x", 0.0, 1.0)``
     does; a joint that ``*`` composes is labeled by its operands' labels. Every
-    transform preserves the label; only ``with_label`` replaces it.
+    transform preserves the label; only ``with_label`` replaces it. ``str(d)``
+    returns the law's :attr:`notation`, its label followed by its signature, as
+    ``prior(mu)``, and the repr keeps the label first.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -712,7 +741,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         prior`` reads as ``p(y | β) · p(β)``. The result is a
         ``FactoredDistribution`` when no given is left unmet and a
         ``FactoredConditionalDistribution`` otherwise, flattened over the
-        operands' factors and labeled by their labels joined with ``·``.
+        operands' factors and labeled by their labels joined with ``·``. The
+        joint is unlabeled, so its notation joins its factors' notations, as
+        ``lik(y | mu)·prior(mu)``.
 
         Parameters
         ----------
@@ -929,6 +960,28 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             Always.
         """
         raise NotImplementedError("from_batched_params is not implemented yet")
+
+    # -- notation -----------------------------------------------------------
+
+    @property
+    def notation(self) -> str:
+        """The law's label followed by its signature, as ``prior(mu)``, which ``str()`` returns.
+
+        The signature lists the event components in declaration order, joined
+        by ``", "``, then ``;`` and the paths the law holds fixed at given
+        values when it holds any, as ``model(mu; y)``. The label is grouped so
+        the call applies to all of it, as in ``(lik·prior)(y)``. No operation
+        reads the notation.
+        """
+        return format_notation(self.label, self._signature_text())
+
+    def _signature_text(self) -> str:
+        """The signature: the event components, then ``;`` and the fixed paths when there are any."""
+        return format_signature(self.event_spec.components, fixed=_fixed_paths(self))
+
+    def __str__(self) -> str:
+        """The law's :attr:`notation`, as ``prior(mu)``."""
+        return self.notation
 
     # -- repr ---------------------------------------------------------------
 

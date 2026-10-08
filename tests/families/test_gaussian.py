@@ -1241,6 +1241,23 @@ class TestTheFactoredGaussian:
         assert conditioned.factors == (joint.factors[1],)
         assert conditioned.label == joint.label
 
+    def test_conditioning_keeps_whether_the_joint_was_labeled(self):
+        from probpipe.distributions._factored import _is_named
+
+        joint = _gaussian_joint()
+        assert _is_named(joint._condition_on({"a": 3.0})) is False
+        assert joint._condition_on({"a": 3.0}).notation == "b(b)"
+        model = joint.with_label("model")
+        assert _is_named(model._condition_on({"a": 3.0})) is True
+        assert model._condition_on({"a": 3.0}).notation == "model(b)"
+
+    def test_conditioning_keeps_the_paths_the_joint_holds_fixed(self):
+        from probpipe.distributions._distribution import _fixed_paths
+
+        joint = _gaussian_joint()
+        object.__setattr__(joint, "_fixed_paths", ("y",))
+        assert _fixed_paths(joint._condition_on({"a": 3.0})) == ("y",)
+
     def test_the_conditioning_guard_needs_components_and_a_remainder(self):
         from probpipe.distributions._capabilities import _capability_guard
 

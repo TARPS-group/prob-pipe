@@ -1,4 +1,4 @@
-"""The repr convention of design II.4, across the kinds."""
+"""The repr convention of design II.4 across the kinds, the grouping of labels, and the notation."""
 
 from __future__ import annotations
 
@@ -27,7 +27,14 @@ from probpipe import (
     positive,
 )
 from probpipe.core._dispatch import MethodInfo
-from probpipe.core._repr import WIDTH
+from probpipe.core._repr import (
+    WIDTH,
+    format_notation,
+    format_signature,
+    grouped_label,
+    is_expression,
+    is_product,
+)
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
 
@@ -199,3 +206,80 @@ class TestLayout:
     def test_a_repr_copies_and_pickles_as_a_string(self):
         text = repr(Normal("x", 0.0, 1.0))
         assert type(copy.deepcopy(text)) is str and pickle.loads(pickle.dumps(text)) == text
+
+
+class TestGrouping:
+    """A label is grouped where a derived label is built from it (II.4)."""
+
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "effect + 1.0",
+            "model | y",
+            "-effect",
+            "mu ~ prior",
+            "(y, mu) ~ lik·prior",
+            "lik·prior",
+            "lik·(model | y)",
+            "log prior(mu)",
+        ],
+    )
+    def test_an_expression_is_parenthesized(self, label):
+        assert is_expression(label)
+        assert grouped_label(label) == f"({label})"
+
+    @pytest.mark.parametrize("label", ["prior", "prior(mu)", "x[sample=0]", "E[mu ~ prior]"])
+    def test_a_label_of_one_word_is_used_as_it_is(self, label):
+        """A call or a selection holds its spaces and symbols inside its brackets."""
+        assert not is_expression(label)
+        assert grouped_label(label) == label
+
+    @pytest.mark.parametrize("label", ["my prior", "logit prior"])
+    def test_any_other_label_of_several_words_is_bracketed(self, label):
+        """Only the word ``log`` opens a score, so ``logit prior`` is a label of two words."""
+        assert not is_expression(label)
+        assert grouped_label(label) == f"[{label}]"
+
+    @pytest.mark.parametrize("label", ["f(lik·prior)", "E[lik·prior]", "f(mu ~ prior)"])
+    def test_a_symbol_inside_parentheses_or_brackets_is_not_at_the_top_level(self, label):
+        assert not is_expression(label)
+        assert grouped_label(label) == label
+
+    @pytest.mark.parametrize("label", ["lik·prior", "a·b·c", "lik·(model | y)", "lik·[my prior]"])
+    def test_a_product_is_one_word_that_joins_labels_with_a_middle_dot(self, label):
+        assert is_product(label)
+
+    @pytest.mark.parametrize(
+        "label", ["lik", "(lik·prior) | y", "(y, mu) ~ lik·prior", "log lik·prior", "-x·y"]
+    )
+    def test_any_other_label_is_not_a_product(self, label):
+        assert not is_product(label)
+
+
+class TestSignatureAndNotation:
+    """The signature states what a term is over, and the notation is ``label(signature)``."""
+
+    def test_a_signature_joins_the_components(self):
+        assert format_signature(["y", "mu"]) == "y, mu"
+
+    def test_given_slots_follow_a_bar(self):
+        assert format_signature(["y"], ["beta", "sigma"]) == "y | beta, sigma"
+
+    def test_fixed_paths_follow_a_semicolon(self):
+        assert format_signature(["mu"], fixed=["y"]) == "mu; y"
+        assert format_signature(["y"], ["sigma"], ["beta"]) == "y | sigma; beta"
+
+    def test_a_signature_of_no_components_is_empty(self):
+        assert format_signature([]) == ""
+
+    @pytest.mark.parametrize(
+        ("label", "notation"),
+        [
+            ("prior", "prior(mu)"),
+            ("lik·prior", "(lik·prior)(mu)"),
+            ("my prior", "[my prior](mu)"),
+            ("model | y", "(model | y)(mu)"),
+        ],
+    )
+    def test_the_notation_groups_the_label(self, label, notation):
+        assert format_notation(label, "mu") == notation
