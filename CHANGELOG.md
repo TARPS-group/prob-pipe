@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,
@@ -169,12 +184,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The scope derives the call's key from the seed and the call's position in the
   scope, so the result differs from the one the old key gave.
-  `score_posterior` raises `TypeError` before claiming an event when sliced
-  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
-  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
-  supported, including their composition, and mapped calls share random
-  projections across the batch. For staged computation, use
-  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
   skipping sliced Wasserstein when the reference has no draws, remains
   compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
@@ -3002,6 +3014,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
 - **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
   constructors document `label` as the first parameter, but a keyword call
   `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
