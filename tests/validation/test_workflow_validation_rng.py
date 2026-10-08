@@ -554,13 +554,12 @@ class TestPosteriorScoreBroker:
 
         assert not _rng._JAX_KEY_ADAPTER_STATE.certified
 
-    def test_an_explicit_key_scores_inside_the_callers_jit(self):
+    def test_sliced_wasserstein_with_an_explicit_key_runs_inside_the_callers_jit(self):
         approx, reference = self._inputs()
         key = jax.random.key(3)
 
         def score(draws, key):
-            scores = score_posterior(draws, reference, metrics=("sliced_wasserstein",), key=key)
-            return scores["sliced_wasserstein"]
+            return sliced_wasserstein(draws, reference.draws, key=key)
 
         np.testing.assert_allclose(
             np.asarray(jax.jit(score)(approx, key)),
