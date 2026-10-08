@@ -23,7 +23,7 @@ See design III.3.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any, Self, cast
 
 import jax
@@ -40,6 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
+from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
 
@@ -72,9 +73,9 @@ class NumericRecordBatch(RecordBatch):
     element_spec : RecordSpec, optional
         The all-numeric schema every element satisfies. Defaults to the spec the
         columns imply.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first. Defaults to one axis per
-        level.
+    axes_per_level : int or iterable of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count). Defaults to one axis per level.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -92,15 +93,19 @@ class NumericRecordBatch(RecordBatch):
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: RecordSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:
-            names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-            axes_per_level = None if axes_per_level is None else tuple(axes_per_level)
+            names = _as_level_names(level_names, what=f"{type(self).__name__} level_names")
+            axes_per_level = (
+                None
+                if axes_per_level is None
+                else _as_axis_counts(axes_per_level, what=f"{type(self).__name__} axes_per_level")
+            )
             n_batch = _batch_axis_count(names, axes_per_level)
             element_spec = _inferred_element_spec(fields, n_batch, kind=type(self).__name__)
         template = _record_element_spec(element_spec, kind=type(self).__name__)
@@ -222,8 +227,8 @@ class NumericRecordBatch(RecordBatch):
         spec: NumericRecordSpec,
         vec: Array,
         *,
-        level_names: str | Iterable[str],
-        axes_per_level: Iterable[int] | None = None,
+        level_names: LevelNamesLike,
+        axes_per_level: AxisCountsLike | None = None,
     ) -> Self:
         """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
 
@@ -242,12 +247,12 @@ class NumericRecordBatch(RecordBatch):
             single string names a single level. Required for the reason
             :meth:`RecordBatch.stack` states, and plural because *vec* may carry
             several batch axes: naming them is how a multi-level batch round-trips.
-        axes_per_level : iterable of int, optional
+        axes_per_level : int or iterable of int, optional
             How many axes each level holds, as for the constructor. Omitted, a
-            single name takes **all** of *vec*'s batch axes as one level and
-            several names take one axis each. The first is why a draw of several
-            axes reconstructs without naming each: a ``sample_shape`` is one
-            multiplicity however many axes it spans.
+            single name takes **all** of *vec*'s batch axes as one level and several
+            names take one axis each. The first is why a draw of several axes
+            reconstructs without naming each: a ``sample_shape`` is one multiplicity
+            however many axes it spans.
 
         Returns
         -------
@@ -308,7 +313,7 @@ class NumericRecordBatch(RecordBatch):
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        names = _as_level_names(level_names, what=f"{cls.__name__}.from_vector level_names")
         if axes_per_level is None and len(names) == 1:
             axes_per_level = (len(batch_shape),)
         return cls(

@@ -29,6 +29,7 @@ import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._repr import type_name
+from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -54,12 +55,13 @@ class _ObjectBatch[E](Batch[E]):
         level. There is no default, deliberately — see *Notes*.
     element_spec : TermSpec
         What every element satisfies, checked against each at construction.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or iterable of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -103,15 +105,21 @@ class _ObjectBatch[E](Batch[E]):
         label: str,
         elements: np.ndarray | Iterable[E],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: TermSpec,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        groups = _axis_groups_for(store.shape, names, axes_per_level, kind=type(self).__name__)
+        kind = type(self).__name__
+        names = _as_level_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
+        groups = _axis_groups_for(store.shape, names, axes, kind=kind)
 
         object.__setattr__(self, "_store", store)
         _check_elements(

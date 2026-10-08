@@ -5,7 +5,6 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any, Self, cast
 
 import jax
@@ -33,6 +32,7 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
+from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 
@@ -66,12 +66,13 @@ class NumericArrayBatch(Batch[NumericArray]):
         the spec the array implies, as a :class:`NumericArray` infers its spec
         from its value: the axes past those the levels hold are the event shape,
         and the array's dtype is the elements' dtype.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or iterable of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -112,14 +113,18 @@ class NumericArrayBatch(Batch[NumericArray]):
         label: str,
         values: Any,
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: NumericArraySpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        axes = None if axes_per_level is None else tuple(axes_per_level)
+        names = _as_level_names(level_names, what="NumericArrayBatch level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what="NumericArrayBatch axes_per_level")
+        )
         if element_spec is None:
             element_spec = _inferred_element_spec(values, _batch_axis_count(names, axes))
         if not isinstance(element_spec, NumericArraySpec):

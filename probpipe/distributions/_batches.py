@@ -15,6 +15,7 @@ import numpy as np
 
 from ..core._kinds import register_kind
 from ..core._object_batch import _as_object_array, _ObjectBatch
+from ..core._shapes import AxisCountsLike, LevelNamesLike
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
 from ._conditional import ConditionalDistribution, ConditionalDistributionSpec
@@ -86,9 +87,9 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     element_spec : DistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec, so
         the elements share its event declaration.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first. Defaults to one axis
-        per level.
+    axes_per_level : int or iterable of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count). Defaults to one axis per level.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -111,10 +112,10 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         label: str,
         elements: np.ndarray | Iterable[Distribution],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: DistributionSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         elements = _as_object_array(elements, kind=type(self).__name__)
@@ -218,8 +219,9 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
         One name per level, outermost first.
     element_spec : ConditionalDistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first.
+    axes_per_level : int or iterable of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count).
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -242,10 +244,10 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
         label: str,
         elements: np.ndarray | Iterable[ConditionalDistribution],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: ConditionalDistributionSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:

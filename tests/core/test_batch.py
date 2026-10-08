@@ -1943,9 +1943,9 @@ class TestTheConstructorSignatureContract:
         [
             (0, ValueError, "must be at least 1"),
             (-1, ValueError, "must be at least 1"),
-            (True, TypeError, "must be integers, got bool"),
-            (2.0, TypeError, "must be integers, got float"),
-            ("2", TypeError, "must be integers, got str"),
+            (True, TypeError, "axes_per_level entries must be ints, got bool True"),
+            (2.0, TypeError, "axes_per_level entries must be ints, got float 2.0"),
+            ("2", TypeError, "axes_per_level entries must be ints, got str '2'"),
         ],
         ids=["zero", "negative", "bool", "float", "str"],
     )
@@ -1956,6 +1956,40 @@ class TestTheConstructorSignatureContract:
 
         with pytest.raises(exc, match=match):
             cls("b", *args, axes_per_level=(count,), **kwargs)
+
+    def test_a_single_axis_count_is_one_level(self, cls, kind):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        batch = cls("b", *args, axes_per_level=2, **kwargs)
+
+        assert batch.axis_groups == ((2, 3),)
+        assert batch.spec == cls("b", *args, axes_per_level=(2,), **kwargs).spec
+
+    def test_a_single_level_name_is_one_level(self, cls, kind):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        bare, _ = _args_for(kind, shape=(2,), levels="draw")
+        tupled, kwargs = _args_for(kind, shape=(2,), levels=("draw",))
+
+        assert cls("b", *bare, **kwargs).spec == cls("b", *tupled, **kwargs).spec
+
+    @pytest.mark.parametrize(
+        ("levels", "match"),
+        [
+            (b"draw", "level_names must be a str or an iterable of str, got bytes b'draw'"),
+            (("draw", 3), "level_names entries must be str, got int 3"),
+        ],
+        ids=["bytes", "int-entry"],
+    )
+    def test_level_names_that_are_not_strings_are_refused(self, cls, kind, levels, match):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2,), levels=levels)
+
+        with pytest.raises(TypeError, match=match):
+            cls("b", *args, **kwargs)
 
     @pytest.mark.parametrize("count", [np.int64(2), np.uint8(2)], ids=["int64", "uint8"])
     def test_an_integer_like_count_is_accepted(self, cls, kind, count):

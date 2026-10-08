@@ -1155,7 +1155,7 @@ def _unbound_axis_sizes(failed: str, dims: Iterable[str]) -> str:
 def _axis_groups_for(
     shape: tuple[int, ...],
     names: tuple[str, ...],
-    axes_per_level: Iterable[int] | None,
+    axes_per_level: tuple[int, ...] | None,
     *,
     kind: str,
 ) -> tuple[tuple[int, ...], ...]:
@@ -1180,7 +1180,7 @@ def _axis_groups_for(
             )
         return tuple((size,) for size in shape)
 
-    counts = tuple(_axis_count(entry) for entry in axes_per_level)
+    counts = axes_per_level
     if len(counts) != len(names):
         raise ValueError(
             f"axes_per_level must give one count per level, got {counts} for level names "
@@ -1198,7 +1198,7 @@ def _axis_groups_for(
     return tuple(groups)
 
 
-def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | None) -> int:
+def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[int, ...] | None) -> int:
     """How many batch axes the levels hold: the sum of *axes_per_level*, or one per name.
 
     A constructor that infers its element spec reads the event axes as the axes
@@ -1208,50 +1208,18 @@ def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | 
     ----------
     names : tuple of str
         The level names, of which only the count is read.
-    axes_per_level : tuple or None
-        The axis count of each level, outermost first; ``None`` gives each level one
-        axis.
+    axes_per_level : tuple of int or None
+        The axis count of each level, outermost first, as ``_as_axis_counts``
+        returns it; ``None`` gives each level one axis.
 
     Returns
     -------
     int
         The number of batch axes, which lead each stored array.
-
-    Raises
-    ------
-    TypeError
-        If a count is not an integer.
-    ValueError
-        If a count is not positive.
     """
     if axes_per_level is None:
         return len(names)
-    return sum(_axis_count(entry) for entry in axes_per_level)
-
-
-def _axis_count(entry: Any) -> int:
-    """One entry of *axes_per_level*: how many axes a level holds.
-
-    Read through ``operator.index``, as :func:`_axis_size` reads a size, so a
-    ``numpy`` or other integer-like count is accepted — a caller who computed one
-    from an array's rank should not have to convert it back. A ``bool`` is refused
-    first: it satisfies ``operator.index`` as 0 or 1, and a level count is not a
-    thing anyone means to write as ``True``.
-
-    A level holds at least one axis, so zero is refused here rather than left to
-    produce a level that indexes nothing.
-    """
-    if isinstance(entry, bool):
-        raise TypeError(f"axes_per_level entries must be integers, got bool: {entry!r}")
-    try:
-        axes = operator.index(entry)
-    except TypeError:
-        raise TypeError(
-            f"axes_per_level entries must be integers, got {type(entry).__name__}: {entry!r}"
-        ) from None
-    if axes < 1:
-        raise ValueError(f"axes_per_level entries must be at least 1, got {axes}")
-    return axes
+    return sum(axes_per_level)
 
 
 def _ranks_of(groups: Iterable[Iterable[Any]]) -> tuple[int, ...]:

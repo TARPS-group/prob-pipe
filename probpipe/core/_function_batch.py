@@ -13,6 +13,7 @@ import numpy as np
 from ..values._function_base import Function, FunctionSpec
 from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
+from ._shapes import AxisCountsLike, LevelNamesLike
 from .provenance import Provenance
 
 __all__ = ["FunctionBatch"]
@@ -34,12 +35,13 @@ class FunctionBatch(_ObjectBatch[Callable]):
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
         specifies a callable and neither of its input/output declarations.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or iterable of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -91,10 +93,10 @@ class FunctionBatch(_ObjectBatch[Callable]):
         label: str,
         elements: np.ndarray | Iterable[Callable],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: FunctionSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:
