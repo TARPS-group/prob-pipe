@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A conditioned law keeps the label of the law it conditions, and prints the
+  paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
+  where it was `model | y`, and it prints as `model(mu; y)`: its signature
+  lists the fixed paths after `;`, after any paths the conditioned law held
+  fixed. A kernel applied at some of its given slots prints the other slots
+  as given, as `glm(y | sigma; beta)`. Fixing the whole events of upstream
+  factors still gives the labels of the factors left, so
+  `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
+  `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
+  inference method's included, and a marginal, a view, and `raw()` keep them.
+  Replace a comparison with a label such as `"model | y"` by one with
+  `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
+- **`raw()` of a field view returns the raw form of the marginal at its path.**
+  `d[p].raw()` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw()` for a `Normal` prior over `mu` is
+  the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
+  labeled as `marginal(d, p)` labels it, where it was always a detached law
+  under the view's label. A parameter annotated with a TFP class, such as
+  `tfd.Distribution`, therefore receives the TFP marginal for each view of a
+  swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,
@@ -2092,10 +2112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label, as `model(y, mu)`. A label built from another label parenthesizes a
   product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
   a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
-  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` is labeled
-  `(lik·prior) | y`. A batch element brackets a batch label of several words,
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
   as `[my draws][draw=1]`. Labels still join associatively, so
-  `(lik * prior) * d` is labeled `lik·prior·d`.
+  `(lik * prior) * d` is labeled `lik·prior·d`. A marginal over the whole
+  events of several factors prints factor by factor, in the order the paths
+  name them where a product can take that order, so
+  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
+  where it was labeled `a·b`. A product that a function returns prints by the
+  function's output label, as `predict(y, mu)`.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`

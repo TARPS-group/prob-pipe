@@ -88,6 +88,12 @@ class TestTheRoute:
 
 
 class TestThePosterior:
+    def test_the_posterior_keeps_the_models_label_and_holds_the_data_fixed(self):
+        model = (_normal_kernel() * _grid_prior()).with_label("model")
+        posterior = condition_on(model, {"y": Y})
+        assert posterior.label == "model"
+        assert str(posterior) == posterior.notation == "model(mu; y)"
+
     def test_the_weights_are_the_prior_weights_times_the_likelihood(self):
         posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": Y})
         np.testing.assert_allclose(

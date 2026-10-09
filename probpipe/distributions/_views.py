@@ -64,8 +64,9 @@ from ._distribution import (
     _COPY_SOURCE,
     _EMPTY_SELECTION,
     Distribution,
-    _detached_term,
+    _fixed_paths,
     _fixes_every_field,
+    _holding_fixed_paths,
     _install_copy_source,
     _install_field_view,
     _install_renamed_law,
@@ -326,13 +327,6 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     return project
 
 
-def _detached(law: Distribution, label: str) -> Distribution:
-    """*law* detached from the workflow under *label*, as :meth:`Distribution.raw` detaches a law."""
-    clone = _detached_term(law)
-    object.__setattr__(clone, "_label", label)
-    return clone
-
-
 def _labeled(law: Distribution, label: str) -> Distribution:
     """*law* under *label*, which a marginal takes from the law it is a marginal of."""
     return law if law.label == label else law.with_label(label)
@@ -524,7 +518,7 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
 
     *path* is an event path of the view, or a tuple of them, and the result's
     components are named by the paths of the view. The result keeps the view's
-    label.
+    label, as ``marginal`` labels a marginal of a law without factors.
 
     Parameters
     ----------
@@ -828,9 +822,11 @@ class FieldView(Distribution):
     ``_marginal_capabilities``, and a parent that defines none reports its own
     claims; the view reads the report once, at construction.
 
-    The view's ``raw()`` is the parent's detached marginal at the path, and
-    ``with_dim_sizes`` and ``with_dim_names`` apply to the parent and return
-    the view of the result at the same path.
+    The view's ``raw()`` is the raw form of the parent's marginal at the path,
+    ``parent._marginal(path).raw()``: the backend object where the marginal
+    has one, such as the TFP distribution of a TFP family, and the detached
+    law otherwise. ``with_dim_sizes`` and ``with_dim_names`` apply to the
+    parent and return the view of the result at the same path.
 
     Parameters
     ----------
@@ -1017,14 +1013,17 @@ class FieldView(Distribution):
         selection = FieldView(self._parent, tuple(self._parent_paths(key)))
         return _named_as(selection, [_final_segment(each) for each in key])
 
-    def raw(self) -> Distribution:
-        """The parent's detached marginal at the path, under the view's label.
+    def raw(self) -> Any:
+        """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw()``.
 
         Returns
         -------
-        Distribution
-            A standalone law with no reference to the parent, and no provenance
-            or annotations, which holds the paths the parent holds fixed.
+        Any
+            The marginal's backend object where it has one, such as the TFP
+            distribution of a TFP family. Otherwise the marginal detached: a
+            standalone law with no reference to the parent, and no provenance
+            or annotations, labeled as ``marginal`` labels it and holding the
+            paths the parent holds fixed.
 
         Raises
         ------
@@ -1042,7 +1041,10 @@ class FieldView(Distribution):
             raise ResolutionError(
                 f"{parent.label!r} has no exact marginal at {self._path!r}: {reason}"
             )
-        return _keeps_fixed_paths(_detached(parent._marginal(self._path), self.label), parent)
+        raw = parent._marginal(self._path).raw()
+        if not isinstance(raw, Distribution):
+            return raw
+        return _holding_fixed_paths(raw, _fixed_paths(parent))
 
     def with_dim_sizes(self, **sizes: int) -> FieldView:
         """Bind named symbolic dimensions in the parent, and view the result at the same path.

@@ -33,7 +33,7 @@ from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
-from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.operations import (
     BoundCall,
     OperandSummary,
@@ -45,7 +45,7 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import _workflow_draws
+from probpipe.operations._operation import _install_fixed_path_rule, _workflow_draws
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
@@ -982,6 +982,36 @@ class TestResultAndRandomness:
     def test_a_label_rule_reads_only_the_declarations_parameters(self):
         with pytest.raises(TypeError, match="the label rule reads"):
             _toy(label=lambda law: "x")
+
+    def test_a_fixed_path_rule_records_its_paths_on_a_law_result(self):
+        returned = Gaussian("g")
+        toy = _toy()
+        toy.structural_route(
+            "law",
+            check=lambda call, result: True,
+            execute=lambda call, result: returned,
+            exact=True,
+        )
+        _install_fixed_path_rule(toy, lambda d: ("y",))
+        result = toy(Gaussian("g"))
+        assert _fixed_paths(result) == ("y",)
+        assert result.notation == "g(g; y)"
+        assert _fixed_paths(returned) == ()
+
+    def test_a_fixed_path_rule_leaves_a_value_result_as_it_is(self):
+        toy = _toy()
+        toy.structural_route("value", **_route(True, 1.0), exact=True)
+        _install_fixed_path_rule(toy, lambda d: ("y",))
+        assert float(toy(Gaussian("g"))) == 1.0
+
+    def test_an_operation_without_a_fixed_path_rule_derives_none(self):
+        assert _toy()._derived_fixed_paths({"d": Gaussian("g")}) == ()
+
+    def test_a_fixed_path_rule_reads_only_the_declarations_parameters(self):
+        with pytest.raises(TypeError, match="the fixed-path rule reads"):
+            _install_fixed_path_rule(_toy(), lambda law: ("y",))
+        with pytest.raises(TypeError, match="needs a callable fixed-path rule"):
+            _install_fixed_path_rule(_toy(), ("y",))
 
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
         laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")

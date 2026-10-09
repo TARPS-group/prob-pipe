@@ -29,6 +29,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 import probpipe
 from probpipe import (
@@ -1208,13 +1209,20 @@ class TestDerivedBehavior:
             FieldView(parent, "model/theta/tau")._condition_on({"tau": jnp.zeros(2)})
         assert parent.given_calls == []
 
-    def test_the_raw_form_of_a_view_is_the_detached_marginal(self):
+    def test_the_raw_form_of_a_view_is_the_backend_object_of_the_marginal(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
+        raw = FieldView(parent, "model/theta/mu").raw()
+        assert parent.marginal_calls == ["model/theta/mu"]
+        assert isinstance(raw, tfd.Normal)
+
+    def test_the_raw_form_of_a_view_is_the_detached_marginal_without_a_backend(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT, scores=False)
         view = FieldView(parent, "model/theta/mu")
         raw = view.raw()
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
-        assert (raw.label, raw.spec, raw.provenance) == (view.label, view.spec, None)
+        # The double labels its marginal by the component.
+        assert (raw.label, raw.spec, raw.provenance) == ("mu", view.spec, None)
 
 
 class TestTheViewOfAWeightedLaw:
@@ -1298,10 +1306,55 @@ class TestNotation:
         assert _fixed_paths(derive(parent["model"])) == ("obs",)
 
     def test_the_detached_marginal_keeps_the_fixed_paths(self):
-        parent = _with_fixed_paths(_product().with_label("model"), "obs")
+        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        parent = _with_fixed_paths(joint.with_label("model"), "obs")
         detached = parent["b"].raw()
         assert _fixed_paths(detached) == ("obs",)
-        assert detached.notation == "model(b; obs)"
+        assert detached.notation == "b(b; obs)"
+
+    def test_a_view_at_a_whole_factor_keeps_its_parents_label(self):
+        """The view keeps the parent's label, and the marginal there takes the factor's."""
+        model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
+        assert model["mu"].notation == "model(mu)"
+        assert marginal(model, "mu").notation == "prior(mu)"
+
+    def test_a_view_and_the_marginal_of_a_law_without_factors_share_a_notation(self):
+        atoms = NumericRecordBatch(
+            "atoms",
+            {"y": jnp.array([0.0, 1.0]), "mu": jnp.array([2.0, 3.0])},
+            "obs",
+            element_spec=NumericRecordSpec(y=(), mu=()),
+        )
+        model = EmpiricalDistribution("model", atoms)
+        assert model["y"].notation == marginal(model, "y").notation == "model(y)"
+
+
+def _prior() -> Distribution:
+    """``prior``, a standard normal law over ``mu``."""
+    return Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))
+
+
+class TestTheRawFormOfAView:
+    """A view's ``raw()`` is the raw form of its parent's marginal at the path."""
+
+    def test_a_view_at_a_tfp_factor_gives_the_tfp_distribution(self):
+        model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
+        raw = model["mu"].raw()
+        assert isinstance(raw, tfd.Normal)
+        assert (float(raw.loc), float(raw.scale)) == (0.0, 1.0)
+
+    def test_a_view_of_a_gaussian_joint_gives_the_tfp_marginal_of_the_factor(self):
+        raw = _joint_gaussian()["y"].raw()
+        assert isinstance(raw, tfd.MultivariateNormalLinearOperator)
+        assert jnp.allclose(raw.mean(), _MEAN[1:])
+
+    def test_a_view_of_a_law_without_a_backend_gives_the_detached_marginal(self):
+        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        view = joint.with_label("model")["b"]
+        raw = view.raw()
+        assert isinstance(raw, EmpiricalDistribution) and not isinstance(raw, FieldView)
+        assert (raw.notation, raw.provenance) == ("b(b)", None)
+        assert raw.notation == marginal(joint.with_label("model"), "b").notation
 
 
 class TestSelections:

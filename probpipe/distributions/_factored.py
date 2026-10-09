@@ -100,8 +100,8 @@ def _joined_label(labels: Iterable[str]) -> str:
     A label that is itself a product joins as it is, so labels join
     associatively: ``lik·prior`` joined with ``d`` is ``lik·prior·d``. Any other
     label is grouped as :func:`~probpipe.core._repr.grouped_label` groups an
-    operand: an expression is parenthesized, as a posterior labeled ``model | y``
-    is, and a label with a space is bracketed.
+    operand: an expression is parenthesized, as a label ``model | y`` is, and a
+    label with a space is bracketed.
     """
     return PRODUCT_SYMBOL.join(
         label if is_product(label) else grouped_label(label) for label in labels
@@ -131,6 +131,21 @@ def _derived_product(joint: Any, source: Any) -> Any:
     """
     _keeps_fixed_paths(joint, source)
     return _with_named(joint, _is_named(source))
+
+
+def _labeled_product(term: Any) -> Any:
+    """*term*, the result of a function, displayed by its label when it is a product.
+
+    A product a function returns takes the function's output label as its
+    label, so it displays by that label, as ``predict(y, mu)``. An unlabeled
+    product is returned as a labeled copy that shares its factors, and any
+    other term is returned as it is.
+    """
+    if isinstance(term, (FactoredDistribution, FactoredConditionalDistribution)) and not _is_named(
+        term
+    ):
+        return _with_named(term._shallow_copy(), True)
+    return term
 
 
 def _factorwise_notation(joint: Any) -> str | None:
@@ -1477,8 +1492,15 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     exposed record: the one factor itself when it exposes a record, and
     otherwise the joint of the kept factors in factor order, repackaged when
     the paths name the fields in another order, so its fields follow the
-    order of the paths (III.8). The marginal keeps the joint's label, as the
-    view at *path* does.
+    order of the paths (III.8).
+
+    The marginal is labeled as the ``marginal`` operation labels it (VI.8).
+    A marginal over the whole events of some factors, none of which
+    conditions on a component outside them, is those factors: one factor
+    keeps its own label, and several form a product without a label, in the
+    order the paths name them where a product in that order declares the
+    fields in the order of the paths. Any other marginal keeps the joint's
+    label.
 
     Parameters
     ----------
@@ -1515,7 +1537,8 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
         raise ResolutionError(f"{self.label!r} has no exact marginal at {path!r}: {reason}")
     graph: _FactorGraph = self._graph
     projection = isinstance(path, str)
-    label = self.label
+    closed = _closed_factors(self, (path,) if projection else tuple(path))
+    label = self.label if closed is None else _joined_label(part.label for part in closed)
     kept: list[Distribution] = []
     for index, requested in _requests(graph, paths).items():
         factor = graph.factors[index]
@@ -1528,9 +1551,76 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
         marginal = _law_at_defaults(kept[0], ())
         marginal = marginal if marginal.label == label else marginal.with_label(label)
-    else:
+    elif closed is None:
         marginal = _derived_product(FactoredDistribution(label, kept), self)
+    else:
+        product = _keeps_fixed_paths(FactoredDistribution(label, closed), self)
+        marginal = _with_named(product, False)
     return marginal if projection else _in_requested_order(marginal, paths)
+
+
+def _closed_factors(d: Any, paths: tuple[Any, ...]) -> list[Factor] | None:
+    """The factors of *d* whose events are the components *paths* name, if none conditions outside them.
+
+    A marginal over these components is the product of the factors (VI.8).
+    The factors are listed in the order the paths name their components when
+    a product in that order declares the components in the order of the
+    paths, and in factor order otherwise. An optional slot that no factor of
+    *d* produces takes its default, so it conditions on nothing.
+
+    Parameters
+    ----------
+    d : Any
+        A law; only one with ``factors`` has closed factors.
+    paths : tuple
+        The requested paths, in the order requested.
+
+    Returns
+    -------
+    list of Factor or None
+        The closed factors, or None when *d* has no factors, a path is not a
+        whole component, the components split a factor's event, or a factor
+        conditions on a component outside them.
+    """
+    parts = getattr(d, "factors", None)
+    wanted = set(paths)
+    if not parts or not all(isinstance(path, str) and _PATH_SEP not in path for path in wanted):
+        return None
+    selected = [part for part in parts if wanted & set(part.event_spec.components)]
+    produced = {component for part in selected for component in part.event_spec.components}
+    if produced != wanted:
+        return None
+    components_of_d = set(d.event_spec.components)
+    for part in selected:
+        if not isinstance(part, ConditionalDistribution):
+            continue
+        given = part.given_spec
+        conditioned = [
+            slot for slot in given if slot in components_of_d or slot not in given.optional
+        ]
+        if any(slot not in wanted for slot in conditioned):
+            return None
+    return _in_selection_order(selected, paths) or selected
+
+
+def _in_selection_order(parts: list[Factor], paths: tuple[str, ...]) -> list[Factor] | None:
+    """*parts* in the order *paths* names their components, or None when no product of them has that order.
+
+    A product declares each factor's components in turn, and it places a
+    factor before every factor that produces a component it conditions on.
+    """
+    ordered = sorted(
+        parts, key=lambda part: min(paths.index(name) for name in part.event_spec.components)
+    )
+    declared = [name for part in ordered for name in part.event_spec.components]
+    if declared != list(paths):
+        return None
+    produced: set[str] = set()
+    for part in ordered:
+        if isinstance(part, ConditionalDistribution) and produced & set(part.given_spec):
+            return None
+        produced |= set(part.event_spec.components)
+    return ordered
 
 
 def _in_requested_order(marginal: Distribution, paths: tuple[str, ...]) -> Distribution:
@@ -1880,8 +1970,12 @@ class FactoredDistribution(Distribution, SupportsFactors):
     ``*`` or the ``joint`` operation builds is unlabeled, and its notation joins
     its factors' notations with ``·``, as ``lik(y | mu)·prior(mu)``, until
     ``with_label`` gives it a label. A law built from a joint, such as a copy,
-    a marginal over several factors, or a packaged sub-joint, is labeled when
-    the joint is.
+    a packaged sub-joint, or a marginal that reduces a factor to part of its
+    event, is labeled when the joint is. A marginal over the whole events of
+    several factors is a product without a label, as ``a(a)·b(b)``, and a
+    product that a function returns takes the function's output label. An
+    unlabeled product that holds paths fixed reads as its grouped label
+    followed by its signature, as ``(lik·prior)(mu; y)``.
 
     Parameters
     ----------

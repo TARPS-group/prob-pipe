@@ -9,7 +9,7 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
@@ -293,6 +293,23 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     return term
 
 
+def _holding_fixed_paths(term: Any, paths: Iterable[str]) -> Any:
+    """The law or kernel *term*, holding *paths* fixed after the paths it holds.
+
+    *term* is returned as it is when it holds every path of *paths* already,
+    and otherwise as a copy that shares its representation, so a term that is
+    also an operand of the call, such as a factor that conditioning leaves,
+    keeps its own paths.
+    """
+    own = _fixed_paths(term)
+    added = tuple(path for path in paths if path not in own)
+    if not added:
+        return term
+    clone = term._shallow_copy()
+    object.__setattr__(clone, _FIXED_PATHS, own + added)
+    return clone
+
+
 def _compose_operands(left: Any, right: Any) -> Any:
     """*left* ``*`` *right* through the installed engine.
 
@@ -439,8 +456,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         A law is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
         reference to a container or a parent, such as a batch it was an element
-        of or a law it is a copy of. A field view returns its detached marginal
-        instead, and a backend adapter its wrapped backend distribution.
+        of or a law it is a copy of. A field view returns the raw form of its
+        parent's marginal at its path instead, and a backend adapter its
+        wrapped backend distribution.
         """
         return _detached_term(self)
 

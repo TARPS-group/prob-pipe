@@ -272,6 +272,21 @@ class TestARawClassAnnotation:
 
         assert len(seen) == 1 and seen[0] is value
 
+    def test_each_view_of_a_swept_batch_arrives_as_the_tfp_marginal(self):
+        """A view's raw form is its marginal's, so a TFP parameter receives the TFP law.
+
+        A view passed alone is broadcast instead, since ``tfd.Distribution``
+        names no ProbPipe law, so the body receives its draws.
+        """
+        tfd = pytest.importorskip("tensorflow_probability.substrates.jax.distributions")
+        views = [(Normal("a", loc, 1.0) * Normal("b", 0.0, 1.0))["a"] for loc in (0.0, 2.0)]
+        wrapped, seen = _receiving({"x": tfd.Distribution})
+
+        wrapped(DistributionBatch("views", views, "row"))
+
+        assert [type(law) for law in seen] == [tfd.Normal, tfd.Normal]
+        assert [float(law.loc) for law in seen] == [0.0, 2.0]
+
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_each_element_of_a_swept_batch_arrives_in_its_raw_form(self, dispatch):
         wrapped, seen = _receiving({"x": jax.Array}, dispatch=dispatch)

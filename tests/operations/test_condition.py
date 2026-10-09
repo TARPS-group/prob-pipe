@@ -38,7 +38,7 @@ from probpipe.distributions._conditional import (
     ConditionalDistribution,
     ConditionalDistributionSpec,
 )
-from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.distributions._factored import FactoredDistribution, _is_named
 from probpipe.operations._condition import (
@@ -396,7 +396,7 @@ class TestSlice:
 
 
 class TestTheConditionedLabel:
-    """A conditioned law is labeled by what it is (II.4)."""
+    """A conditioned law keeps the label of the law it conditions (II.4, VI.6)."""
 
     def test_applying_a_kernel_at_its_givens_keeps_the_kernel_label(self):
         kernel = _NormalKernel("y", ("mu",)).with_label("likelihood")
@@ -412,31 +412,93 @@ class TestTheConditionedLabel:
         joint = joint * Gaussian("c").with_label("third")
         assert condition_on(joint, {"a": 0.0}).label == "second·third"
 
-    def test_conditioning_part_of_a_factor_is_labeled_by_the_expression(self):
+    def test_conditioning_part_of_a_factor_keeps_the_laws_label(self):
         joint = (_NormalKernel("w", ("theta",)) * ExactPosterior("model")).with_label("joint")
         assert condition_on.check(joint, {"y": 0.3}).route == "slice"
-        assert condition_on(joint, {"y": 0.3}).label == "joint | y"
+        result = condition_on(joint, {"y": 0.3})
+        assert (result.label, result.notation) == ("joint", "joint(w, theta; y)")
 
-    def test_bayes_rule_brackets_a_label_with_a_space(self, approximate_method):
+    def test_bayes_rule_keeps_a_label_with_a_space_and_groups_it(self, approximate_method):
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("my model")
-        assert condition_on(joint, {"y": 0.3}).label == "[my model] | y"
+        posterior = condition_on(joint, {"y": 0.3})
+        assert (posterior.label, posterior.notation) == ("my model", "[my model](mu; y)")
 
-    def test_the_expression_lists_every_conditioned_path(self):
-        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
-        label = condition_on._derived_label({"d": joint, "given": {"y": 0.3, "mu": 0.0}})
-        assert label == "model | y, mu"
+    def test_bayes_rule_keeps_the_label_of_an_unlabeled_joint(self, approximate_method):
+        posterior = condition_on(Kernel("y", ("mu",)) * Gaussian("mu"), {"y": 0.3})
+        assert (posterior.label, posterior.notation) == ("y·mu", "(y·mu)(mu; y)")
 
-    def test_bayes_rule_parenthesizes_the_label_of_an_unlabeled_joint(self):
-        joint = Kernel("y", ("mu",)) * Gaussian("mu")
-        label = condition_on._derived_label({"d": joint, "given": {"y": 0.3}})
-        assert label == "(y·mu) | y"
+    def test_a_given_that_names_no_path_keeps_the_laws_label_and_fixes_none(self):
+        law = Gaussian("mu").with_label("prior")
+        values = {"d": law, "given": 0.5}
+        assert condition_on._derived_label(values) == "prior"
+        assert condition_on._derived_fixed_paths(values) == ()
 
-    def test_the_factors_left_are_an_unlabeled_joint(self):
+    def test_the_factors_left_are_an_unlabeled_joint_that_shows_its_fixed_paths(self):
         joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
         joint = (joint * Gaussian("c").with_label("third")).with_label("model")
         left = condition_on(joint, {"a": 0.0})
         assert _is_named(left) is False
-        assert left.notation == "second(b)·third(c)"
+        assert left.notation == "(second·third)(b, c; a)"
+
+
+class TestTheFixedPaths:
+    """A conditioned law holds the paths it is conditioned on fixed, after any it held (II.4)."""
+
+    def test_a_posterior_holds_the_data_fixed(self, approximate_method):
+        joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
+        posterior = condition_on(joint, {"y": 0.3})
+        assert _fixed_paths(posterior) == ("y",)
+        assert str(posterior) == posterior.notation == "model(mu; y)"
+
+    def test_a_factor_at_a_value_holds_the_value_fixed(self):
+        likelihood = _NormalKernel("y", ("mu",)).with_label("likelihood")
+        joint = (likelihood * Gaussian("mu").with_label("prior")).with_label("model")
+        assert condition_on(joint, {"mu": 1.5}).notation == "likelihood(y; mu)"
+
+    def test_a_factor_returned_as_the_result_is_left_unchanged(self):
+        prior = Gaussian("mu").with_label("prior")
+        joint = Gaussian("y").with_label("other") * prior
+        left = condition_on(joint, {"y": 1.5})
+        assert left.notation == "prior(mu; y)"
+        assert _fixed_paths(prior) == () and prior.notation == "prior(mu)"
+
+    def test_a_kernel_at_its_givens_holds_them_fixed(self):
+        kernel = _NormalKernel("y", ("beta",)).with_label("glm")
+        assert condition_on(kernel, {"beta": 1.5}).notation == "glm(y; beta)"
+
+    def test_a_partial_curry_holds_the_bound_slots_fixed_and_the_others_given(self):
+        kernel = _NormalKernel("y", ("beta", "sigma")).with_label("glm")
+        curried = condition_on(kernel, {"beta": 1.5})
+        assert isinstance(curried, ConditionalDistribution)
+        assert _fixed_paths(curried) == ("beta",)
+        assert curried.notation == "glm(y | sigma; beta)"
+        assert _fixed_paths(kernel) == ()
+
+    def test_currying_again_appends_the_new_slots(self):
+        kernel = _NormalKernel("y", ("beta", "sigma")).with_label("glm")
+        law = condition_on(condition_on(kernel, {"beta": 1.5}), {"sigma": 2.0})
+        assert _fixed_paths(law) == ("beta", "sigma")
+        assert law.notation == "glm(y; beta, sigma)"
+
+    def test_conditioning_a_conditioned_law_again_appends_the_new_paths(self):
+        joint = Gaussian("a") * Gaussian("b") * Gaussian("c").with_label("third")
+        left = condition_on(condition_on(joint.with_label("model"), {"a": 0.0}), {"b": 1.0})
+        assert _fixed_paths(left) == ("a", "b")
+        assert left.notation == "third(c; a, b)"
+
+    def test_each_law_of_a_batch_of_givens_holds_the_paths_fixed(self):
+        kernel = _NormalKernel("y", ("beta",)).with_label("glm")
+        givens = NumericRecordBatch(
+            "betas", {"beta": jnp.array([0.0, 1.0])}, "row", element_spec=RecordSpec(beta=REAL)
+        )
+        laws = condition_on(kernel, givens)
+        assert isinstance(laws, DistributionBatch) and laws.label == "glm"
+        assert [_fixed_paths(laws[i]) for i in range(2)] == [("beta",), ("beta",)]
+        assert laws[0].notation == "glm[row=0](y; beta)"
+
+    def test_a_law_given_as_the_given_fixes_its_components(self):
+        values = {"d": _NormalKernel("y", ("mu",)), "given": Gaussian("mu")}
+        assert condition_on._derived_fixed_paths(values) == ("mu",)
 
 
 class TestTheConditionedDeclaration:
@@ -652,9 +714,9 @@ class TestTheExactStage:
 
 
 class TestTheNormalizationStage:
-    def test_the_posterior_is_labeled_by_the_conditioned_law_and_paths(self, approximate_method):
+    def test_the_posterior_keeps_the_conditioned_laws_label(self, approximate_method):
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
-        assert condition_on(joint, {"y": 0.0}).label == "model | y"
+        assert condition_on(joint, {"y": 0.0}).label == "model"
 
     def test_a_normalized_result_is_returned_without_inference(self, suite_methods):
         exact, approximate = suite_methods
@@ -1086,13 +1148,15 @@ class TestEndToEnd:
         assert _is_normalized(law)
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
-    def test_the_posterior_is_labeled_by_the_model_and_the_data_and_names_its_method(self):
+    def test_the_posterior_keeps_the_models_label_holds_the_data_and_names_its_method(self):
         model = _logistic_joint().with_label("logistic")
         with workflow_run(seed=0):
             posterior = condition_on.with_options(method_options=_MCMC)(
                 model, {"y": jnp.array([1, 0, 1, 0])}
             )
-        assert posterior.label == "logistic | y"
+        assert posterior.label == "logistic"
+        assert _fixed_paths(posterior) == ("y",)
+        assert posterior.notation == "logistic(beta; y)"
         assert method_of(posterior) == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
 
@@ -1109,6 +1173,7 @@ class TestEndToEnd:
             posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
         element = posteriors[1]
         assert method_of(element) == "blackjax_nuts"
+        assert _fixed_paths(element) == ("y",)
         operations = {
             ancestor.parent.provenance.operation
             for ancestor in provenance_ancestors(element)

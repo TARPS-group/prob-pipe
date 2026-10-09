@@ -11,6 +11,7 @@ from probpipe import (
     Function,
     Normal,
     RecordSpec,
+    condition_on,
     workflow_run,
 )
 from probpipe.core._dispatch import ResolutionError
@@ -120,9 +121,28 @@ class TestTheMarginalsNotation:
         assert result.label == "first·second"
         assert result.notation == "first(a)·second(b)"
 
-    def test_a_marginal_over_several_factors_of_a_labeled_joint_reads_by_its_label(self):
+    def test_a_marginal_over_several_factors_of_a_labeled_joint_reads_factor_by_factor(self):
         joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
-        assert marginal(joint, ("a", "b")).notation == "(a·b)(a, b)"
+        assert marginal(joint, ("a", "b")).notation == "a(a)·b(b)"
+
+    def test_factors_selected_out_of_factor_order_read_in_the_selection_order(self):
+        joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
+        result = marginal(joint, ("b", "a"))
+        assert (result.label, result.notation) == ("b·a", "b(b)·a(a)")
+        assert list(result.event_spec.components) == ["b", "a"]
+
+    def test_a_dependent_pair_selected_producer_first_reads_by_the_joined_label(self):
+        """No product lists ``beta`` before the kernel that conditions on it."""
+        joint = (Kernel("y", ("beta",)) * Gaussian("beta")).with_label("model")
+        result = marginal(joint, ("beta", "y"))
+        assert list(result.event_spec.components) == ["beta", "y"]
+        assert result.notation == "(y·beta)(beta, y)"
+
+    def test_a_marginal_of_a_conditioned_joint_keeps_its_fixed_paths(self):
+        joint = (Gaussian("a") * Gaussian("b") * Gaussian("c")).with_label("model")
+        conditioned = condition_on(joint, {"c": 0.5})
+        assert marginal(conditioned, "a").notation == "a(a; c)"
+        assert marginal(conditioned, ("a", "b")).notation == "(a·b)(a, b; c)"
 
 
 class TestOptionalSlots:

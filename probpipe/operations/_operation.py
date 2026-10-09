@@ -966,6 +966,7 @@ class Operation(Function):
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
+        set_attribute(self, "_fixed_path_rule", None)
         if derived:
             self.register_route(_identity_route(declaration, self.signature, identity_check))
 
@@ -991,6 +992,19 @@ class Operation(Function):
             return rule(**{name: values.get(name) for name in _parameter_names(rule)})
         primary = values.get(next(iter(self.signature.parameters), ""))
         return primary.label if isinstance(primary, TrackedTerm) else self.output_label
+
+    def _derived_fixed_paths(self, values: Mapping[str, Any]) -> tuple[str, ...]:
+        """The paths a law or kernel result of a call on *values* holds fixed, in order (II.4).
+
+        The operation's fixed-path rule derives them, called with the call's
+        arguments it names, as the label rule is, and
+        :func:`_install_fixed_path_rule` installs it. An operation without one
+        derives none, so its result holds the paths its route gave it.
+        """
+        rule = self._fixed_path_rule
+        if rule is None:
+            return ()
+        return tuple(rule(**{name: values.get(name) for name in _parameter_names(rule)}))
 
     @property
     def is_derived(self) -> bool:
@@ -1909,3 +1923,36 @@ def operation(
         return op
 
     return decorate
+
+
+def _install_fixed_path_rule(op: Operation, rule: Callable[..., Iterable[str]]) -> None:
+    """Install *rule* as *op*'s fixed-path rule, which the result boundary reads (II.4).
+
+    The rule is called with the call's arguments it names, as the label rule
+    is, and returns the paths a law or kernel result holds fixed, in order.
+    The result boundary records them on each point's result after the route
+    returns, so every route of *op* gives its result the same fixed paths.
+
+    Parameters
+    ----------
+    op : Operation
+        The operation whose results hold the fixed paths.
+    rule : callable
+        The fixed-path rule, whose parameters are parameters of *op*.
+
+    Raises
+    ------
+    TypeError
+        If *rule* is not callable, or it reads a name that *op* does not
+        declare as a parameter.
+    """
+    owner = f"operation {op.label!r}"
+    if not callable(rule):
+        raise TypeError(f"{owner} needs a callable fixed-path rule; got {rule!r}")
+    unknown = set(_parameter_names(rule)) - set(op.signature.parameters)
+    if unknown:
+        raise TypeError(
+            f"{owner}: the fixed-path rule reads {sorted(unknown)}, which the declaration "
+            f"does not declare as parameters"
+        )
+    object.__setattr__(op, "_fixed_path_rule", rule)

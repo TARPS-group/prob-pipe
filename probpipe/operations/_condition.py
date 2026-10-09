@@ -75,12 +75,11 @@ from ..core._dispatch import (
 )
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, format_value, grouped_label, public_class_name
+from ..core._repr import format_names, public_class_name
 from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
 from ..core._specs import OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
-from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsConditionalUnnormalizedLogProb,
@@ -93,7 +92,12 @@ from ..distributions._capabilities import (
     _kernel_is_normalized,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, DistributionSpec, _fixes_every_field
+from ..distributions._distribution import (
+    Distribution,
+    DistributionSpec,
+    _fixed_paths,
+    _fixes_every_field,
+)
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import (
     FactoredDistribution,
@@ -112,6 +116,7 @@ from ._operation import (
     BoundCall,
     RouteSource,
     _CheckedRoute,
+    _install_fixed_path_rule,
     _RegistryRoute,
     _workflow_draws,
     operation,
@@ -1507,25 +1512,29 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
 def _conditioned_label(d: Any, given: Any) -> str:
     """The label of the law that conditioning *d* on *given* returns (II.4).
 
-    Applying a kernel at given slots keeps the kernel's label. Fixing the whole
-    events of factors upstream of the rest leaves the other factors at the
-    given values, whose labels are joined, so ``condition_on(model, {"mu": 0.5})``
-    for ``model = likelihood * prior`` is labeled ``likelihood``. Any other
-    conditioning applies Bayes' rule, and its result is labeled by the
-    expression of the law and the conditioned paths, as ``model | y``.
+    The result keeps *d*'s label, so ``condition_on(model, {"y": data})`` is
+    labeled ``model`` and a kernel applied at given slots keeps the kernel's
+    label. Fixing the whole events of factors upstream of the rest leaves the
+    other factors at the given values, whose labels are joined, so
+    ``condition_on(model, {"mu": 0.5})`` for ``model = likelihood * prior`` is
+    labeled ``likelihood``.
     """
     paths = _conditioned_paths(given)
-    if paths:
-        if isinstance(d, ConditionalDistribution) and {_head(path) for path in paths} <= _slots_of(
-            d
-        ):
-            return d.label
-        kept = _factors_left(d, paths)
-        if kept is not None:
-            return _joined_label(factor.label for factor in kept)
-    else:
-        paths = (given.label if isinstance(given, TrackedTerm) else format_value(given),)
-    return f"{grouped_label(d.label)} | {', '.join(paths)}"
+    kept = _factors_left(d, paths) if paths else None
+    return d.label if kept is None else _joined_label(factor.label for factor in kept)
+
+
+def _conditioned_fixed_paths(d: Any, given: Any) -> tuple[str, ...]:
+    """The paths the result of conditioning *d* on *given* holds fixed (II.4).
+
+    They are the paths *d* holds fixed, followed by the paths *given* fixes
+    that *d* does not hold already, so conditioning a conditioned law again
+    appends the new paths. A kernel applied at some of its slots holds those
+    slots fixed, and its other slots stay given. A given that names no path,
+    such as a bare value, adds none.
+    """
+    held = _fixed_paths(d)
+    return held + tuple(path for path in _conditioned_paths(given) or () if path not in held)
 
 
 def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:
@@ -1600,7 +1609,11 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     Distribution, ConditionalDistribution, or DistributionBatch
         The conditional, normalized: an ordinary law once every given slot is
         bound, and otherwise a kernel over the slots left whose laws are
-        normalized; for a batch of givens, the batch of the conditionals.
+        normalized; for a batch of givens, the batch of the conditionals. It
+        keeps *d*'s label, except that fixing the whole events of factors
+        upstream of the rest gives the labels of the factors left, and it
+        holds the conditioned paths fixed after any that *d* holds, so a
+        posterior of ``model`` given ``y`` displays as ``model(mu; y)``.
 
     Raises
     ------
@@ -1610,6 +1623,9 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
         If no route applies under the controls, including an exact stage whose
         result is unnormalized under ``exact_only``.
     """
+
+
+_install_fixed_path_rule(condition_on, _conditioned_fixed_paths)
 
 
 def _given_paths(d: Any, given: Any) -> tuple[str, ...]:

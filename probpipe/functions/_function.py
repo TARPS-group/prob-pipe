@@ -54,7 +54,10 @@ from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
+from ..distributions._conditional import ConditionalDistribution
+from ..distributions._distribution import Distribution, _holding_fixed_paths
 from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import _labeled_product
 from ..values._function_base import (
     _WARNING_SKIP_PREFIXES,
     Function,
@@ -319,6 +322,20 @@ def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     return function.output_label if derive is None else derive(values)
 
 
+def _holding_the_fixed_paths(function: Function, values: Mapping[str, Any], term: Any) -> Any:
+    """*term*, the result of a call of *function* on *values*, holding the paths the call fixes (II.4).
+
+    An operation's fixed-path rule derives the paths, as ``condition_on``
+    derives the conditioned paths, and a law or kernel result holds them after
+    the paths it holds already. Any other result, and the result of an
+    operation without the rule, is returned as it is.
+    """
+    derive = getattr(function, "_derived_fixed_paths", None)
+    if derive is None or not isinstance(term, (Distribution, ConditionalDistribution)):
+        return term
+    return _holding_fixed_paths(term, derive(values))
+
+
 def _keeping_route_record(term: Any, value: Any) -> Any:
     """*term*, the declared form of a route's result *value*, with the record *value* carries.
 
@@ -347,7 +364,8 @@ def _realized_point(
 
     The point is planned, its route selected and run, and the raw result
     validated against the point's declaration, wrapped at the kind it names,
-    and labeled as the call's result is.
+    and labeled as the call's result is. A law or kernel result holds the
+    paths the point fixes, as the operation derives them.
 
     Parameters
     ----------
@@ -379,7 +397,7 @@ def _realized_point(
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
     term = _result.declared_term(value, result, _result_label(function, values))
-    return _keeping_route_record(term, value)
+    return _holding_the_fixed_paths(function, values, _keeping_route_record(term, value))
 
 
 def _run_call(
@@ -503,7 +521,8 @@ def _run_call(
                 and id(value) not in seen_parent_ids
             ):
                 route_records.append(value)
-            return _result.declared_term(value, result, label)
+            term = _result.declared_term(value, result, label)
+            return _holding_the_fixed_paths(function, values, term)
         if candidates is not None:
             return _realized_point(function, point_values, controls, candidates)
         try:
@@ -536,7 +555,8 @@ def _run_call(
                 function_name=function.output_label,
                 output_spec=point_output_spec,
             )
-        return result
+        # A product the function returns takes its output label as a label (IV.2).
+        return _labeled_product(result)
 
     resolved_dispatch: str | None = None
 
@@ -1272,7 +1292,7 @@ def _run_registered_rule(
         diagnostics=diagnostics,
     )
     return _result._coerce_output(
-        result,
+        _labeled_product(result),
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=label,

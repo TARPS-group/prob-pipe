@@ -24,6 +24,7 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
+    conditional_distribution,
     positive,
 )
 from probpipe.core._dispatch import MethodInfo
@@ -158,11 +159,24 @@ class TestDistributions:
         assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
 
     def test_a_reordered_marginal_reads_as_the_joint_under_its_declaration(self):
-        """No rename states a reorder, so the repr shows the reordered declaration."""
+        """No rename states a reorder, so the repr shows the reordered declaration.
+
+        The kernel ``y`` conditions on ``a``, so no product lists ``a`` first.
+        """
+        likelihood = conditional_distribution(
+            "y", lambda a: Normal("y", a, 1.0), given_spec={"a": NumericArraySpec(())}
+        )
+        joint = likelihood * Normal("a", 0.0, 1.0)
+        reordered = repr(joint._marginal(("a", "y")))
+        assert reordered.startswith("FactoredDistribution(\n    'y·a',\n    factors=(")
+        assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
+
+    def test_a_marginal_in_another_product_order_reads_as_that_product(self):
         joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
-        reordered = repr(joint._marginal(("b", "a")))
-        assert reordered.startswith("FactoredDistribution(\n    'a·b',\n    factors=(")
-        assert reordered.index("b=NumericArraySpec") < reordered.index("a=NumericArraySpec")
+        assert repr(joint._marginal(("b", "a"))) == (
+            "FactoredDistribution(\n    'b·a',\n    factors=(Gamma('b', concentration=2.0, "
+            "rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n)"
+        )
 
 
 class TestFunctionsAndOperators:

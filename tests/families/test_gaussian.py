@@ -1275,8 +1275,8 @@ class TestTheFactoredGaussian:
             _gaussian_joint()._condition_on({"c": 0.0})
 
     def test_the_marginal_at_a_component_is_its_factor(self):
-        joint = _gaussian_joint()
-        assert joint._marginal("b").label == joint.label
+        joint = _gaussian_joint().with_label("model")
+        assert joint._marginal("b").label == joint.factors[1].label == "b"
         np.testing.assert_allclose(
             np.asarray(joint._marginal("b")._mean()), np.asarray(joint.factors[1]._mean())
         )

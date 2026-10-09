@@ -70,6 +70,7 @@ from probpipe.distributions._distribution import _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.distributions._factored import _is_named, _SoleField
 from probpipe.linalg import DenseLinOp
+from probpipe.operations._marginal import marginal as marginal_operation
 
 SCALAR = NumericArraySpec(())
 SYMBOLIC = NumericArraySpec(("n",))
@@ -959,25 +960,45 @@ class TestMarginalValues:
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
 
-    def test_the_marginal_of_a_group_keeps_the_joint_label(self):
-        joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).label == joint.label
+    def test_the_marginal_of_a_group_of_whole_factors_is_their_product_without_a_label(self):
+        joint = (_law("u", "a") * _law("v", "b") * _law("w", "c")).with_label("model")
+        marginal = joint._marginal(("a", "c"))
+        assert (marginal.label, _is_named(marginal)) == ("u·w", False)
+        assert marginal.notation == "u(a)·w(c)"
+
+    def test_whole_factors_selected_out_of_factor_order_form_a_product_in_that_order(self):
+        joint = (_law("u", "a") * _law("v", "b") * _law("w", "c")).with_label("model")
+        marginal = joint._marginal(("c", "a"))
+        assert isinstance(marginal, FactoredDistribution)
+        assert [factor.label for factor in marginal.factors] == ["w", "u"]
+        assert list(marginal.event_spec.components) == ["c", "a"]
+        assert marginal.notation == "w(c)·u(a)"
+
+    def test_a_dependent_pair_selected_producer_first_keeps_the_factor_order_and_reorders(self):
+        """No product lists ``beta`` before the kernel that conditions on it."""
+        joint = (_likelihood() * _prior()).with_label("model")
+        marginal = joint._marginal(("beta", "y"))
+        assert list(marginal.event_spec.components) == ["beta", "y"]
+        assert marginal.notation == "(lik·prior)(beta, y)"
 
     @pytest.mark.parametrize(
-        "path",
+        ("path", "label"),
         [
-            pytest.param("beta", id="kept-factor"),
-            pytest.param(("y", "beta"), id="sub-joint"),
-            pytest.param(("beta",), id="selection-of-one"),
-            pytest.param("record", id="field-of-a-record"),
-            pytest.param("params/u", id="reduced-factor"),
+            pytest.param("beta", "prior", id="kept-factor"),
+            pytest.param(("y", "beta"), "lik·prior", id="sub-joint"),
+            pytest.param(("beta",), "prior", id="selection-of-one"),
+            pytest.param("record", "one", id="field-of-a-record"),
+            pytest.param("params/u", "model", id="reduced-factor"),
         ],
     )
-    def test_a_marginal_keeps_the_joint_label_as_the_view_there_does(self, path):
+    def test_a_marginal_is_labeled_as_the_marginal_operation_labels_it(self, path, label):
+        """The view keeps the joint's label, and the marginal takes what it is."""
         record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
-        joint = _likelihood() * _prior() * record * params
-        assert joint._marginal(path).label == FieldView(joint, path).label == joint.label
+        joint = (_likelihood() * _prior() * record * params).with_label("model")
+        assert joint._marginal(path).label == label
+        assert marginal_operation._derived_label({"d": joint, "field": path}) == label
+        assert FieldView(joint, path).label == "model"
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -990,7 +1011,7 @@ class TestMarginalValues:
         joint = pair * _law("other", "c")
         marginal = joint._marginal(("a", "b"))
         assert type(marginal) is type(pair) and marginal.spec == pair.spec
-        assert (marginal.label, pair.label) == (joint.label, "pair")
+        assert marginal.label == pair.label == "pair"
 
     @pytest.mark.parametrize(
         "path",
@@ -1346,7 +1367,6 @@ class TestTheLabeledFlag:
             pytest.param(lambda j: j.with_dim_names(n="m"), id="with_dim_names"),
             pytest.param(lambda j: j.with_path_names(a="u"), id="rename-through-factors"),
             pytest.param(lambda j: j.with_path_names({"a": "g/a", "b": "g/b"}), id="regroup"),
-            pytest.param(lambda j: j._marginal(("a", "b")), id="marginal-over-two-factors"),
             pytest.param(lambda j: copy.copy(j), id="copy"),
             pytest.param(lambda j: pickle.loads(pickle.dumps(j)), id="pickle"),
         ],
@@ -1355,6 +1375,12 @@ class TestTheLabeledFlag:
         unlabeled, labeled = self._joints()
         assert _is_named(derive(unlabeled)) is False
         assert _is_named(derive(labeled)) is True
+
+    def test_a_marginal_over_several_whole_factors_is_unlabeled_whether_or_not_the_joint_is(
+        self,
+    ):
+        for joint in self._joints():
+            assert _is_named(joint._marginal(("a", "b"))) is False
 
     def test_a_packaged_sub_joint_is_labeled_as_the_joint_is(self):
         unlabeled, labeled = self._joints()

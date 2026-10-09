@@ -57,7 +57,7 @@ from probpipe.distributions._capabilities import (
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.distributions._views import _EventRenames
 from probpipe.linalg import DenseLinOp
-from probpipe.operations import expectation
+from probpipe.operations import expectation, marginal
 
 _MOMENTS = (SupportsMean, SupportsVariance, SupportsCovariance, SupportsQuantile)
 _ALWAYS = (SupportsSampling, SupportsExpectation, SupportsMarginals)
@@ -692,6 +692,19 @@ class TestMarginals:
         law = EmpiricalDistribution("post", atoms)
         assert law._marginal("a").atoms.level_names == ("chain", "draw")
         assert law._marginal(("a", "b")).atoms.level_names == ("chain", "draw")
+
+    def test_the_atoms_of_a_selection_are_labeled_by_the_grouped_atoms_label(self):
+        atoms = NumericRecordBatch("x·y", {"b": _B, "a": _A}, "row", element_spec=_RECORD_SPEC)
+        law = EmpiricalDistribution("post", atoms)
+        assert law._marginal(("a", "b")).atoms.label == "(x·y)[('a', 'b')]"
+        assert _record_law()._marginal(("a", "b")).atoms.label == "rows[('a', 'b')]"
+
+    def test_the_marginal_of_a_posterior_keeps_its_fixed_paths(self):
+        law = _record_law()
+        object.__setattr__(law, "_fixed_paths", ("y",))
+        assert marginal(law, "a").notation == "post(a; y)"
+        assert law["a"].notation == "post(a; y)"
+        assert law["a"].raw().notation == "post(a; y)"
 
 
 # -- Renaming -----------------------------------------------------------------

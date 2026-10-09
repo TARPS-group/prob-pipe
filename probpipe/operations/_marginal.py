@@ -14,7 +14,7 @@ from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
-from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
+from ..distributions._conditional import ConditionalDistributionSpec
 from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
@@ -22,7 +22,7 @@ from ..distributions._distribution import (
     _keeps_fixed_paths,
     _shared_final_names,
 )
-from ..distributions._factored import SupportsFactors, _joined_label
+from ..distributions._factored import SupportsFactors, _closed_factors, _joined_label
 from ..distributions._views import _node_at
 from ..functions._call import ApplicabilityError
 from ._operation import BoundCall, operation
@@ -106,42 +106,15 @@ def _marginal_label(d: Any, field: Any) -> str:
     A marginal over the whole events of some factors of a joint, none of which
     conditions on a component outside them, is the product of those factors,
     so ``marginal(location * scale, "tau")`` is ``scale`` and takes its label.
-    Any other marginal integrates a factor out, as the prior predictive does,
-    and keeps the joint's label.
+    Several such factors form a product without a label, joined in the order
+    the paths name them where a product in that order declares the fields in
+    the order of the paths, as ``marginal(model, ("b", "a"))`` is ``b·a``. Any
+    other marginal integrates a factor out, as the prior predictive does, and
+    keeps the joint's label.
     """
     paths = field if isinstance(field, tuple) else (field,)
     parts = _closed_factors(d, paths)
     return d.label if parts is None else _joined_label(part.label for part in parts)
-
-
-def _closed_factors(d: Any, components: tuple[Any, ...]) -> list[Any] | None:
-    """The factors of *d* whose events are *components* together, if none conditions outside them.
-
-    Returns None when *d* has no factors, a path is not a whole component, the
-    components split a factor's event, or a factor conditions on a component
-    outside them.
-    """
-    parts = getattr(d, "factors", None)
-    wanted = set(components)
-    if not parts or not all(isinstance(path, str) and _PATH_SEP not in path for path in wanted):
-        return None
-    selected = [part for part in parts if wanted & set(part.event_spec.components)]
-    produced = {component for part in selected for component in part.event_spec.components}
-    if produced != wanted:
-        return None
-    components_of_d = set(d.event_spec.components)
-    for part in selected:
-        if not isinstance(part, ConditionalDistribution):
-            continue
-        # An optional slot that no factor of d produces takes its default, so it
-        # conditions on nothing.
-        given = part.given_spec
-        conditioned = [
-            slot for slot in given if slot in components_of_d or slot not in given.optional
-        ]
-        if any(slot not in wanted for slot in conditioned):
-            return None
-    return selected
 
 
 @operation(result=_marginal_result, label=_marginal_label)
@@ -162,7 +135,13 @@ def marginal(d: Distribution, field: str):
     Returns
     -------
     Distribution
-        The marginal.
+        The marginal, which holds the paths *d* holds fixed. A marginal over
+        the whole events of factors of a joint that condition on nothing
+        outside them is those factors: one factor keeps its own label, and
+        several form a product without a label, as
+        ``marginal(model, ("a", "b"))`` displays as ``a(a)·b(b)``. Any other
+        marginal keeps *d*'s label, as ``marginal(model, "y")`` displays as
+        ``model(y)``.
 
     Raises
     ------
