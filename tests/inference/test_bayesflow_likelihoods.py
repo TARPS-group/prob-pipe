@@ -10,6 +10,7 @@ likelihood on the same model.
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -242,7 +243,8 @@ class TestSurrogateContract:
     def test_repr(self, nle, nre):
         for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
             text = repr(kernel)
-            assert text.startswith(f"{cls}(\n    '{kernel.label}',\n")
+            # The label is the first argument, on one line or on its own line.
+            assert re.match(rf"{cls}\(\s*'{kernel.label}',", text)
             assert "theta_dim=2," in text and "data_dim=2," in text
 
     def test_data_width_guard(self, nle):
