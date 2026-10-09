@@ -6,6 +6,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import jax
+import jax.extend.random
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -18,6 +19,16 @@ from probpipe.functions._rng import (
     encode_random_event,
     jax_key_from_words,
     seed_to_root_words,
+)
+
+# A PRNG implementation other than Threefry2x32 whose keys hold two uint32 words.
+_TWO_WORD_PRNG_IMPL = jax.extend.random.define_prng_impl(
+    key_shape=(2,),
+    seed=lambda seed: jnp.zeros((2,), dtype=jnp.uint32),
+    split=lambda key, shape: jnp.zeros((*shape, 2), dtype=jnp.uint32),
+    random_bits=lambda key, bit_width, shape: jnp.zeros(shape, dtype=jnp.uint32),
+    fold_in=lambda key, data: key,
+    name="two_word_stand_in",
 )
 
 
@@ -173,7 +184,7 @@ class TestEventKeyDerivation:
         vmapped = jax.vmap(computation)(jnp.ones((3, 4)))
 
         assert jax.dtypes.issubdtype(event_key.dtype, jax.dtypes.prng_key)
-        assert event_key.dtype == jax.random.key_dtype("threefry2x32")
+        assert jax.random.key_impl(event_key) == "threefry2x32"
         assert jnp.array_equal(jax.random.key_data(event_key), expected_words)
         assert jnp.array_equal(jitted, expected_draw)
         assert jnp.array_equal(vmapped, jnp.broadcast_to(expected_draw, (3, 4)))
@@ -263,6 +274,28 @@ class TestEventKeyDerivation:
 
         with pytest.raises(RuntimeError, match="does not support Threefry2x32"):
             jax_key_from_words((1, 2))
+
+    def test_jax_adapter_check_accepts_a_threefry_key(self):
+        key = jax.random.wrap_key_data(
+            jnp.asarray((1, 2), dtype=jnp.uint32),
+            impl="threefry2x32",
+        )
+
+        _rng._certify_jax_key_adapter(key, (1, 2))
+
+    @pytest.mark.parametrize(
+        ("impl", "words"),
+        [
+            pytest.param("rbg", (1, 2, 3, 4), id="rbg"),
+            # Only the implementation check rejects a key with Threefry's raw layout.
+            pytest.param(_TWO_WORD_PRNG_IMPL, (1, 2), id="two-word-custom"),
+        ],
+    )
+    def test_jax_adapter_check_rejects_another_implementations_key(self, impl, words):
+        key = jax.random.wrap_key_data(jnp.asarray(words, dtype=jnp.uint32), impl=impl)
+
+        with pytest.raises(RuntimeError, match="does not support Threefry2x32"):
+            _rng._certify_jax_key_adapter(key, (1, 2))
 
     @pytest.mark.parametrize(
         ("round_trip", "message"),
