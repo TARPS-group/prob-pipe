@@ -649,13 +649,13 @@ class TestTheJointIsUnlabeled:
         assert (_likelihood() * _law("c", "c")).notation == "lik(y | beta)·c(c)"
 
     def test_composing_a_labeled_joint_gives_an_unlabeled_one(self):
-        """The labeled joint enters as its factors, so its label shows only in the joint's label."""
+        """The labeled joint is one operand, so it reads by its label in the label and the notation."""
         model = (_likelihood() * _prior()).with_label("model")
         joint = model * _law("d", "d")
         assert _is_named(model) is True
         assert _is_named(joint) is False
         assert joint.label == "model·d"
-        assert joint.notation == "lik(y | beta)·prior(beta)·d(d)"
+        assert joint.notation == "model(y, beta)·d(d)"
 
     def test_exchanging_independent_operands_changes_the_label_and_the_order(self):
         a, b = _law("a", "a"), _law("b", "b")

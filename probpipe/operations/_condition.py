@@ -73,6 +73,7 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from ..core._expression import Expression, embedded, with_fixed
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
@@ -105,6 +106,7 @@ from ..distributions._factored import (
     _bound_factor,
     _joined_label,
     _law_at_defaults,
+    _product_of,
     _with_named,
 )
 from ..distributions._views import _RenamedDistribution
@@ -116,7 +118,7 @@ from ._operation import (
     BoundCall,
     RouteSource,
     _CheckedRoute,
-    _install_fixed_path_rule,
+    _install_expression_rule,
     _RegistryRoute,
     _workflow_draws,
     operation,
@@ -1509,32 +1511,42 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     return None
 
 
-def _conditioned_label(d: Any, given: Any) -> str:
-    """The label of the law that conditioning *d* on *given* returns (II.4).
+def _conditioned_expression(d: Any, given: Any) -> Expression:
+    """The expression of the law that conditioning *d* on *given* returns (II.4).
 
-    The result keeps *d*'s label, so ``condition_on(model, {"y": data})`` is
-    labeled ``model`` and a kernel applied at given slots keeps the kernel's
-    label. Fixing the whole events of factors upstream of the rest leaves the
-    other factors at the given values, whose labels are joined, so
-    ``condition_on(model, {"mu": 0.5})`` for ``model = likelihood * prior`` is
-    labeled ``likelihood``.
+    The result is *d* conditioned on the paths *given* fixes, so it keeps
+    *d*'s label: ``condition_on(model, {"y": data})`` is labeled ``model`` and
+    displays as ``model(mu; y)``, and a kernel applied at given slots keeps the
+    kernel's label and holds those slots fixed, while its other slots stay
+    given. Fixing the whole events of factors upstream of the rest leaves the
+    other factors at the given values, so ``condition_on(model, {"mu": 0.5})``
+    for ``model = likelihood * prior`` is ``likelihood`` conditioned on ``mu``,
+    as ``likelihood(y; mu)``, and several factors left form a product without
+    a label. The result holds the paths *d* holds fixed, followed by the paths
+    *given* fixes that *d* does not hold already, so conditioning a conditioned
+    law again appends the new paths. A given that names no path, such as a
+    bare value, adds none.
+
+    Parameters
+    ----------
+    d : Distribution or ConditionalDistribution
+        The law or kernel conditioned.
+    given : Any
+        The given values, a batch of them, or a law whose draws they are.
+
+    Returns
+    -------
+    Expression
+        The conditioned law's expression.
     """
-    paths = _conditioned_paths(given)
+    paths = _conditioned_paths(given) or ()
     kept = _factors_left(d, paths) if paths else None
-    return d.label if kept is None else _joined_label(factor.label for factor in kept)
-
-
-def _conditioned_fixed_paths(d: Any, given: Any) -> tuple[str, ...]:
-    """The paths the result of conditioning *d* on *given* holds fixed (II.4).
-
-    They are the paths *d* holds fixed, followed by the paths *given* fixes
-    that *d* does not hold already, so conditioning a conditioned law again
-    appends the new paths. A kernel applied at some of its slots holds those
-    slots fixed, and its other slots stay given. A given that names no path,
-    such as a bare value, adds none.
-    """
-    held = _fixed_paths(d)
-    return held + tuple(path for path in _conditioned_paths(given) or () if path not in held)
+    if kept is None:
+        base = embedded(d)
+    else:
+        left = embedded(kept[0]) if len(kept) == 1 else _product_of(kept)
+        base = with_fixed(left, _fixed_paths(d))
+    return with_fixed(base, paths)
 
 
 def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:
@@ -1582,7 +1594,6 @@ _GIVEN_KINDS: tuple[type[TermSpec], ...] = (
 @operation(
     result=_condition_on_result,
     roles={"d": (DistributionSpec, ConditionalDistributionSpec), "given": _GIVEN_KINDS},
-    label=_conditioned_label,
 )
 def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
@@ -1625,7 +1636,7 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """
 
 
-_install_fixed_path_rule(condition_on, _conditioned_fixed_paths)
+_install_expression_rule(condition_on, _conditioned_expression)
 
 
 def _given_paths(d: Any, given: Any) -> tuple[str, ...]:

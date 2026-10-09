@@ -15,14 +15,25 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 
 from ..core._dispatch import Feasibility, ResolutionError
+from ..core._expression import (
+    Expression,
+    Product,
+    Selected,
+    embedded,
+    expression_of,
+    label_of,
+    own_signature,
+    with_fixed,
+    with_signature,
+)
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import PRODUCT_SYMBOL, WIDTH, call_repr, mapping_repr, term_repr
+from ..core._repr import WIDTH, call_repr, mapping_repr, term_repr
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.named_tree import _unflatten_paths
@@ -66,7 +77,6 @@ from ._distribution import (
     Distribution,
     _fixed_paths,
     _fixes_every_field,
-    _holding_fixed_paths,
     _install_copy_source,
     _install_field_view,
     _install_renamed_law,
@@ -85,6 +95,7 @@ from ._factored import (
     _FactorGraph,
     _is_named,
     _joined_label,
+    _product_of,
     _raw_record,
     _with_named,
 )
@@ -328,25 +339,24 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     return project
 
 
-def _labeled(law: Distribution, label: str) -> Distribution:
-    """*law* under *label*, which a marginal takes from the law it is a marginal of."""
-    return law if law.label == label else law.with_label(label)
-
-
 def _as_paths(path: str | tuple[str, ...]) -> tuple[str, ...]:
     """*path* as a tuple of paths: a selection as it is, and one path as a tuple of one."""
     return (path,) if isinstance(path, str) else tuple(path)
 
 
-def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
-    """The label of the marginal of *law* at *path*, which the view of *law* at *path* takes too.
+def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> Expression:
+    """The expression of the marginal of *law* at *path*, which the view of *law* at *path* carries too.
 
     A marginal over the whole events of some factors, none of which conditions
     on a component outside them, is those factors (VI.8): one factor gives its
-    own label, and several give their labels joined with ``·``. The factors of
-    a field view are its parent's, at the parent's paths. The marginal of a
-    view at its whole event is the view, and any other marginal keeps *law*'s
-    label.
+    own expression, and several their product without a label, which reads
+    factor by factor when it declares the components in the order of the
+    paths, as ``a(a)·b(b)``, and otherwise by the joined label, as
+    ``(lik·prior)(mu, y)``. The factors of a field view are its parent's, at
+    the parent's paths. The marginal of a view at its whole event is the view,
+    and any other marginal is *law* selected at *path*, which keeps *law*'s
+    label. The marginal holds the paths its factors hold fixed, followed by
+    those *law* holds.
 
     Parameters
     ----------
@@ -357,17 +367,64 @@ def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
 
     Returns
     -------
-    str
-        The label of the marginal.
+    Expression
+        The expression of the marginal.
     """
-    owner, paths = law, _as_paths(path)
+    requested = _as_paths(path)
+    owner, paths = law, requested
     if isinstance(law, FieldView):
-        parent_paths = tuple(law._parent_path(each) for each in paths)
-        if None in parent_paths or parent_paths == _as_paths(law.path):
-            return law.label
-        owner, paths = law.parent, parent_paths
+        parent_paths = tuple(law._parent_path(each) for each in requested)
+        if parent_paths == _as_paths(law.path):
+            return expression_of(law)
+        if None not in parent_paths:
+            owner, paths = law.parent, cast("tuple[str, ...]", parent_paths)
     closed = _closed_factors(owner, paths)
-    return law.label if closed is None else _joined_label(part.label for part in closed)
+    held = _fixed_paths(owner) + _fixed_paths(law)
+    if closed is None:
+        return Selected(embedded(law), requested)
+    if len(closed) == 1:
+        return with_fixed(embedded(closed[0]), held)
+    product: Expression = _product_of(closed)
+    declared = [name for part in closed for name in part.event_spec.components]
+    if declared != [_final_segment(each) for each in requested]:
+        product = Selected(product, requested)
+    return with_fixed(product, held)
+
+
+def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
+    """The label of the marginal of *law* at *path*, as :func:`_marginal_expression_at` gives it.
+
+    One whole factor gives its own label, several their labels joined with
+    ``·``, and any other marginal keeps *law*'s label.
+    """
+    return label_of(_marginal_expression_at(law, path))
+
+
+def _carrying(law: Any, expression: Expression) -> Any:
+    """*law* carrying *expression*: *law* itself when it carries it, and otherwise a copy that does.
+
+    Two expressions are the same when they read alike under *law*'s own
+    signature, so a factor that is its own marginal is returned as it is.
+    """
+    own = own_signature(law)
+    if with_signature(expression_of(law), own) == with_signature(expression, own):
+        return law
+    return law._with_expression(expression)
+
+
+def _keeps_expression(term: Any, source: Any) -> Any:
+    """*term*, a law or kernel just built to rename *source*, carrying *source*'s expression.
+
+    The rename keeps the label and the derivation, and the signature follows
+    *term*'s own declaration. A product without a label, which reads factor
+    by factor, reads by its joined label and *term*'s components instead, as
+    ``(lik·prior)(beta, y)``, since its factors keep their own names.
+    """
+    expression = expression_of(source)
+    if isinstance(expression, Product):
+        expression = Selected(expression, tuple(term.event_spec.components))
+    term._store_expression(expression)
+    return term
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
@@ -555,9 +612,9 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     """Path composition: the parent's marginal at the parent's paths for *path*.
 
     *path* is an event path of the view, or a tuple of them, and the result's
-    components are named by the paths of the view. The result is labeled as
-    ``marginal`` labels it: by the parent's factors whose whole events the
-    paths select, and otherwise by the view's label.
+    components are named by the paths of the view. The result carries the
+    expression ``marginal`` gives it: the parent's factors whose whole events
+    the paths select, and otherwise the view selected at *path*.
 
     Parameters
     ----------
@@ -583,7 +640,7 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
         parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
     named = _named_as(marginal, [_final_segment(each) for each in paths])
-    return _labeled(named, _marginal_label_at(self, path))
+    return _carrying(named, _marginal_expression_at(self, path))
 
 
 def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
@@ -908,15 +965,12 @@ class FieldView(Distribution):
 
     def __init__(self, parent: Distribution, path: str | tuple[str, ...]) -> None:
         declaration = _view_declaration(parent.event_spec, path)
-        self._init_tracked(_marginal_label_at(parent, path))
+        self._init_tracked(parent.label)
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_path", path)
         self._init_declaration(declaration)
-        closed = _closed_factors(parent, _as_paths(path))
-        if closed is not None and len(closed) == 1:
-            _keeps_fixed_paths(self, closed[0])
-        _keeps_fixed_paths(self, parent)
+        self._store_expression(_marginal_expression_at(parent, path))
         self.with_provenance(
             Provenance.create("__getitem__", parents=[parent], metadata={"path": path})
         )
@@ -930,28 +984,6 @@ class FieldView(Distribution):
     def path(self) -> str | tuple[str, ...]:
         """The event path of the parent that this view reads, or the tuple of them."""
         return self._path
-
-    @property
-    def notation(self) -> str:
-        """The view's notation, which ``str()`` returns and the detached marginal at its path shares.
-
-        A view of the whole events of several factors, under their joined
-        label, joins the factors' notations with ``·``, as ``a(a)·b(b)``, when
-        their product declares the view's components in order and the view
-        holds no path fixed. Any other view reads as its label followed by its
-        signature, as ``model(y)``, ``prior(mu)``, or ``(lik·prior)(mu, y)``.
-        """
-        parts = _closed_factors(self._parent, _as_paths(self._path))
-        if (
-            parts is None
-            or len(parts) < 2
-            or _fixed_paths(self)
-            or self.label != _joined_label(part.label for part in parts)
-            or [name for part in parts for name in part.event_spec.components]
-            != list(self.event_spec.components)
-        ):
-            return super().notation
-        return PRODUCT_SYMBOL.join(part.notation for part in parts)
 
     def _component_paths(self) -> dict[str, str]:
         """Each component of the view, with the parent's path of its node."""
@@ -1093,8 +1125,8 @@ class FieldView(Distribution):
     ) -> FieldView:
         """The parent's view at *parent_path*, for *key*, labeled as this view's marginal at *key*."""
         view = FieldView(self._parent, parent_path)
-        object.__setattr__(view, "_label", _marginal_label_at(self, key))
-        return _keeps_fixed_paths(view, self)
+        view._store_expression(_marginal_expression_at(self, key))
+        return view
 
     def raw(self) -> Any:
         """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw()``.
@@ -1105,8 +1137,9 @@ class FieldView(Distribution):
             The marginal's backend object where it has one, such as the TFP
             distribution of a TFP family. Otherwise the marginal detached: a
             standalone law with no reference to the parent, and no provenance
-            or annotations, labeled as ``marginal`` labels it and holding the
-            paths the parent holds fixed.
+            or annotations, which carries the view's expression, so it is
+            labeled as ``marginal`` labels it and holds the paths the parent
+            holds fixed.
 
         Raises
         ------
@@ -1127,7 +1160,7 @@ class FieldView(Distribution):
         raw = parent._marginal(self._path).raw()
         if not isinstance(raw, Distribution):
             return raw
-        return _holding_fixed_paths(raw, _fixed_paths(parent))
+        return _carrying(raw, expression_of(self))
 
     def with_dim_sizes(self, **sizes: int) -> FieldView:
         """Bind named symbolic dimensions in the parent, and view the result at the same path.
@@ -1657,7 +1690,7 @@ def _renamed_unnormalized_log_prob(self: _RenamedDistribution, value: Any) -> Ar
 def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Distribution:
     """The parent's marginal at the original nodes for *path*, named and arranged by *path*.
 
-    The marginal keeps this law's label.
+    The marginal is this law selected at *path*, so it keeps this law's label.
 
     Parameters
     ----------
@@ -1685,7 +1718,9 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
     if _shared_final_segment(paths):
         raise ValueError(_shared_final_names(paths))
     marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
-    return _labeled(self._event.marginal(marginal, paths, originals), self.label)
+    return _carrying(
+        self._event.marginal(marginal, paths, originals), _marginal_expression_at(self, path)
+    )
 
 
 def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, ...]) -> Feasibility:
@@ -1990,7 +2025,7 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
         )
     else:
         renamed = _RenamedDistribution(law, event, (arguments,))
-    _keeps_fixed_paths(renamed, law).with_provenance(
+    _keeps_expression(renamed, law).with_provenance(
         Provenance.create("with_path_names", parents=[law], metadata=dict(arguments))
     )
     return renamed
@@ -2042,7 +2077,7 @@ def _renamed_law(
     """
     if event_spec.spec == parent.event_spec.spec:
         copy = parent._with_declaration(event_spec, "with_path_names", renames)
-        return _with_copy_source(copy, parent, renames)
+        return _with_copy_source(_keeps_expression(copy, parent), parent, renames)
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
         if joint is None:
@@ -2845,7 +2880,7 @@ def _renamed_kernel(
                 return joint
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     kernel = _RenamedConditionalDistribution(parent, given_spec, event_spec, origins, event)
-    _keeps_fixed_paths(kernel, parent).with_provenance(
+    _keeps_expression(kernel, parent).with_provenance(
         Provenance.create("with_path_names", parents=[parent], metadata=dict(pairs))
     )
     return kernel

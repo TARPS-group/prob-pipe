@@ -52,6 +52,7 @@ from ._array_backend import (
     _to_numpy_array,
     array_backend_for,
 )
+from ._expression import Named
 from ._record_spec import _unify_record_spec_with_value
 from ._repr import format_names, public_class_name, term_repr, type_name
 from ._spec_base import OpaqueSpec, _full_array_shape_or_none
@@ -360,6 +361,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     __slots__ = (
         "_annotations",
+        "_expression",
         "_label",
         "_provenance",
         "_spec",
@@ -516,7 +518,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         if child._label == field_name:
             return child
         renamed = child._shallow_copy()
-        object.__setattr__(renamed, "_label", field_name)
+        renamed._store_expression(Named(field_name))
         return renamed
 
     def _validate_event_template(

@@ -42,6 +42,7 @@ from probpipe import (
     SupportsVariance,
 )
 from probpipe.core._dispatch import Feasibility
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalNumericDistribution,
@@ -1303,7 +1304,7 @@ class TestPathRenames:
 
 def _with_fixed_paths(term: Any, *paths: str) -> Any:
     """*term* holding *paths* fixed, as conditioning on them records."""
-    object.__setattr__(term, "_fixed_paths", paths)
+    term._store_expression(with_fixed(expression_of(term), paths))
     return term
 
 
@@ -1339,7 +1340,7 @@ class TestNotation:
     def test_a_labeled_factor_reads_by_its_own_notation(self):
         model = (_likelihood() * _prior()).with_label("model").with_path_names(y="obs")
         joint = _law("d", "d") * model
-        assert joint.notation == "d(d)·lik(obs | beta)·prior(beta)"
+        assert joint.notation == "d(d)·model(obs, beta)"
 
     def test_the_repr_keeps_the_label_first(self):
         assert repr(_likelihood() * _prior()).startswith("FactoredDistribution(\n    'lik·prior',")

@@ -280,7 +280,7 @@ BINARY_SYMBOLS = {
 #: The symbol that joins the labels of a product's factors, as in ``lik·prior``.
 PRODUCT_SYMBOL = "·"
 
-#: The symbols that make a label an expression as a top-level word: the binary
+#: The symbols that make a label compound as a top-level word: the binary
 #: operators', of which ``|`` also reads as conditioning, and the ``~`` of a
 #: draw, as in ``mu ~ prior``.
 _OPERATOR_SYMBOLS = frozenset(BINARY_SYMBOLS.values()) | {"~"}
@@ -322,10 +322,10 @@ def _top_level_text(label: str) -> str:
     return "".join(kept)
 
 
-def is_expression(label: str) -> bool:
-    """Whether *label* is an expression, which a derived label parenthesizes.
+def is_compound(label: str) -> bool:
+    """Whether *label* is compound, which a derived label parenthesizes.
 
-    A label is an expression when one of these holds:
+    A label is compound when one of these holds:
 
     1. a top-level word is an operator's symbol, as in ``effect + 1.0``,
        ``model | y``, or the draw ``mu ~ prior``;
@@ -335,7 +335,7 @@ def is_expression(label: str) -> bool:
        the score ``log prior(mu)`` does.
 
     A call such as ``prior(mu)`` is one word with no top-level symbol, so it is
-    not an expression.
+    not compound.
     """
     return (
         label.startswith((*_UNARY_PREFIXES, _SCORE_PREFIX))
@@ -360,13 +360,13 @@ def is_product(label: str) -> bool:
 def grouped_label(label: str) -> str:
     """*label* as it reads inside a derived label, grouped so it reads as one operand.
 
-    An expression (:func:`is_expression`) is parenthesized, so the derived
+    A compound label (:func:`is_compound`) is parenthesized, so the derived
     label states the order of evaluation, as in ``(x·y)[sample=0:2]``. Any
     other label with a top-level space, such as a user's label ``other
     effect``, is bracketed, so it reads as one label. A label of one word, a
     call such as ``prior(mu)`` included, is used as it is.
     """
-    if is_expression(label):
+    if is_compound(label):
         return f"({label})"
     return f"[{label}]" if len(_top_level_words(label)) > 1 else label
 

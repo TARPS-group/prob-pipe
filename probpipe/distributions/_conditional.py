@@ -24,14 +24,9 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
+from ..core._expression import Signature, expression_of, notation_of
 from ..core._record_spec import RecordSpec
-from ..core._repr import (
-    format_names,
-    format_notation,
-    format_signature,
-    public_class_name,
-    term_repr,
-)
+from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
@@ -56,7 +51,6 @@ from ._distribution import (
     _complete_event_spec,
     _compose_operands,
     _detached_term,
-    _fixed_paths,
     _is_default_declaration,
     _no_free_dims,
     _unify_declarations,
@@ -772,13 +766,15 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         `` | `` and every given slot in declaration order, then ``;`` and the
         paths the kernel holds fixed at given values when it holds any, as
         ``glm(y | sigma; beta)``. Components, slots, and paths are each joined by
-        ``", "``. No operation reads the notation.
+        ``", "``. A product without a label reads factor by factor, as
+        ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
+        kernel's expression. No operation reads the notation.
         """
-        return format_notation(self.label, self._signature_text())
+        return notation_of(expression_of(self), self._own_signature())
 
-    def _signature_text(self) -> str:
-        """The signature: the event components, ``|`` and the given slots, then any fixed paths."""
-        return format_signature(self.event_spec.components, self.given_spec, _fixed_paths(self))
+    def _own_signature(self) -> Signature:
+        """The signature the declaration states: the event components, then the given slots."""
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec))
 
     def __str__(self) -> str:
         """The kernel's :attr:`notation`, as ``glm(y | beta)``."""

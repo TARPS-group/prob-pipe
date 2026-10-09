@@ -39,13 +39,14 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True)
 def _reset_provenance_config():
-    """Always restore provenance_config to defaults after each test.
+    """Always restore provenance_config and notation_config to defaults after each test.
 
-    Under pytest-xdist, a test that sets the mode and raises before its own
-    cleanup would otherwise leak the mode into subsequent tests on that worker.
+    Under pytest-xdist, a test that sets a setting and raises before its own
+    cleanup would otherwise leak it into subsequent tests on that worker.
     """
     yield
     probpipe.provenance_config.reset()
+    probpipe.notation_config.reset()
 
 
 @pytest.fixture(autouse=True, scope="module")

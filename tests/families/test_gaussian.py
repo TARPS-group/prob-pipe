@@ -28,6 +28,7 @@ from probpipe import (
     sample,
     variance,
 )
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions import FactoredNumericDistribution
 from probpipe.families import (
     FactoredMultivariateGaussian,
@@ -1246,7 +1247,7 @@ class TestTheFactoredGaussian:
 
         joint = _gaussian_joint()
         assert _is_named(joint._condition_on({"a": 3.0})) is False
-        assert joint._condition_on({"a": 3.0}).notation == "b(b)"
+        assert joint._condition_on({"a": 3.0}).notation == "(a·b)(b)"
         model = joint.with_label("model")
         assert _is_named(model._condition_on({"a": 3.0})) is True
         assert model._condition_on({"a": 3.0}).notation == "model(b)"
@@ -1255,7 +1256,7 @@ class TestTheFactoredGaussian:
         from probpipe.distributions._distribution import _fixed_paths
 
         joint = _gaussian_joint()
-        object.__setattr__(joint, "_fixed_paths", ("y",))
+        joint._store_expression(with_fixed(expression_of(joint), ("y",)))
         assert _fixed_paths(joint._condition_on({"a": 3.0})) == ("y",)
 
     def test_the_conditioning_guard_needs_components_and_a_remainder(self):

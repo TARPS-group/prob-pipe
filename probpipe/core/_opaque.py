@@ -58,6 +58,7 @@ class Opaque(TrackedTerm, Annotated):
 
     __slots__ = (
         "_annotations",
+        "_expression",
         "_label",
         "_provenance",
         "_spec",

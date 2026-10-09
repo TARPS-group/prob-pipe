@@ -47,6 +47,16 @@ except ImportError:
 
 from ..core._batch import Batch
 from ..core._dispatch import MethodInfo, ResolutionError
+from ..core._expression import (
+    Applied,
+    Draw,
+    Expression,
+    Named,
+    constant,
+    draw_of,
+    embedded,
+    expression_of,
+)
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
@@ -54,8 +64,6 @@ from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
-from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution, _holding_fixed_paths
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _labeled_product
 from ..values._function_base import (
@@ -316,24 +324,100 @@ def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     """The label of the result of a call of *function* on the arguments *values* (V.10).
 
     A function's result takes its output label, and an operation's result the
-    label its operands give it (II.4).
+    label of the expression its operands give it (II.4). The label names a
+    term built before the result boundary gives it its expression, and it is
+    never a component or a level name.
     """
     derive = getattr(function, "_derived_label", None)
     return function.output_label if derive is None else derive(values)
 
 
-def _holding_the_fixed_paths(function: Function, values: Mapping[str, Any], term: Any) -> Any:
-    """*term*, the result of a call of *function* on *values*, holding the paths the call fixes (II.4).
+def _result_expression(function: Function, values: Mapping[str, Any]) -> Expression | None:
+    """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
-    An operation's fixed-path rule derives the paths, as ``condition_on``
-    derives the conditioned paths, and a law or kernel result holds them after
-    the paths it holds already. Any other result, and the result of an
-    operation without the rule, is returned as it is.
+    A function's result carries its output label, and an operation's result
+    the expression its expression rule builds from the operands'. ``None``
+    leaves the result the expression its route gave it.
     """
-    derive = getattr(function, "_derived_fixed_paths", None)
-    if derive is None or not isinstance(term, (Distribution, ConditionalDistribution)):
+    derive = getattr(function, "_derived_expression", None)
+    return Named(function.output_label) if derive is None else derive(values)
+
+
+def _lifted_expression(
+    function: Function, values: Mapping[str, Any], plan: _plan.StochasticPlan
+) -> Applied:
+    """The expression of the law of *function* lifted over the laws among *values* (II.4).
+
+    It is the function applied to its arguments in parameter order, as
+    ``f(beta ~ model; y)``: a draw of each law the plan lifts, where arguments
+    whose laws the plan draws together from one root share one draw of the
+    root, as ``f((a, b) ~ model)``; each other tracked argument by its
+    expression; and each other value by its formatted value, except a value
+    left at its parameter's default.
+
+    Parameters
+    ----------
+    function : Function
+        The function lifted, whose output label names the call.
+    values : Mapping of str to Any
+        The call's arguments, by parameter name.
+    plan : StochasticPlan
+        The plan of the lift, whose source groups say which arguments are
+        drawn together.
+
+    Returns
+    -------
+    Applied
+        The applied function.
+    """
+    group_of = {
+        consumer.arg_ref: group.index
+        for group in plan.source_groups
+        for consumer in group.consumers
+    }
+    parameters = function.signature.parameters
+    drawn: set[int] = set()
+    arguments: list[Expression] = []
+    for ref in _binding.iter_input_refs(function._signature_info, values):
+        value = _binding.input_ref_value(values, ref)
+        index = group_of.get(ref)
+        if index is not None:
+            if index in drawn:
+                continue
+            drawn.add(index)
+            consumers = plan.source_groups[index].consumers
+            if len(consumers) == 1:
+                arguments.append(draw_of(value))
+                continue
+            components = dict.fromkeys(
+                name
+                for consumer in consumers
+                for name in _binding.input_ref_value(values, consumer.arg_ref).event_spec.components
+            )
+            arguments.append(Draw(tuple(components), embedded(plan.runtime_bindings[index].root)))
+        elif isinstance(value, TrackedTerm):
+            arguments.append(embedded(value))
+        elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
+            arguments.append(constant(value))
+    return Applied(function.output_label, tuple(arguments))
+
+
+def _expressed(term: Any, expression: Expression | None) -> Any:
+    """*term*, a point's result, carrying *expression*, on a copy that keeps its provenance.
+
+    A result that is not a tracked term, an expression of ``None``, and a term
+    that carries the expression already are returned as they are, so a term
+    that is also an operand of the call, such as a factor that conditioning
+    returns, keeps its own expression.
+    """
+    if expression is None or not isinstance(term, TrackedTerm):
         return term
-    return _holding_fixed_paths(term, derive(values))
+    expression = _result._prepared(term, expression)
+    if expression_of(term) == expression:
+        return term
+    clone = term._shallow_copy()
+    clone._store_expression(expression)
+    return clone
 
 
 def _keeping_route_record(term: Any, value: Any) -> Any:
@@ -364,8 +448,8 @@ def _realized_point(
 
     The point is planned, its route selected and run, and the raw result
     validated against the point's declaration, wrapped at the kind it names,
-    and labeled as the call's result is. A law or kernel result holds the
-    paths the point fixes, as the operation derives them.
+    and given the expression the operation builds for the point, from which
+    it takes its label.
 
     Parameters
     ----------
@@ -397,7 +481,7 @@ def _realized_point(
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
     term = _result.declared_term(value, result, _result_label(function, values))
-    return _holding_the_fixed_paths(function, values, _keeping_route_record(term, value))
+    return _expressed(_keeping_route_record(term, value), _result_expression(function, values))
 
 
 def _run_call(
@@ -433,6 +517,7 @@ def _run_call(
         roles=function._roles,
     )
     label = _result_label(function, values)
+    expression = _result_expression(function, values)
     controls = function.options
     candidates = function._route_candidates(controls)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
@@ -522,7 +607,7 @@ def _run_call(
             ):
                 route_records.append(value)
             term = _result.declared_term(value, result, label)
-            return _holding_the_fixed_paths(function, values, term)
+            return _expressed(term, expression)
         if candidates is not None:
             return _realized_point(function, point_values, controls, candidates)
         try:
@@ -620,7 +705,10 @@ def _run_call(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
-            output_label=label,
+            # The component of an undeclared output is the function's output
+            # label, which is a name, and the law carries the applied function.
+            output_label=function.output_label,
+            output_expression=_lifted_expression(function, row_values, plan),
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
             output_template=concrete_output_template,
@@ -631,7 +719,14 @@ def _run_call(
         )
 
     if route.rule is not None and route.name not in _rules._ENGINE_RULES:
-        return _run_registered_rule(function, route, provenance_parents, provenance_inputs, label)
+        lifted = (
+            expression
+            if stochastic_plan is None
+            else _lifted_expression(function, values, stochastic_plan)
+        )
+        return _run_registered_rule(
+            function, route, provenance_parents, provenance_inputs, label, lifted
+        )
     if broadcast_plan.regime == "distribution":
         if stochastic_plan is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("distribution broadcast is missing its stochastic plan")
@@ -674,6 +769,7 @@ def _run_call(
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
+            output_expression=_result.KEEP_EXPRESSION if expression is None else expression,
             output_spec=concrete_output_spec,
             include_inputs=function.options["include_inputs"],
             output_template=concrete_output_template,
@@ -719,6 +815,7 @@ def _run_call(
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=label,
+        expression=_result.KEEP_EXPRESSION if expression is None else expression,
     )
 
 
@@ -1268,11 +1365,13 @@ def _run_registered_rule(
     provenance_parents: list[TrackedTerm],
     provenance_inputs: Mapping[str, Any],
     label: str,
+    expression: Expression | None,
 ) -> Any:
     """Execute a registered evaluation rule and give its result the call's identity.
 
     The rule returns the result over raw forms, and the return step wraps it at
-    its kind under the call's result label, with provenance recording the
+    its kind under the call's result label and gives it *expression*, the
+    function applied to draws of its inputs, with provenance recording the
     function, its inputs, and the rule.
     """
     result = route.rule.execute(
@@ -1296,6 +1395,7 @@ def _run_registered_rule(
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=label,
+        expression=expression,
     )
 
 

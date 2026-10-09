@@ -20,6 +20,7 @@ import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
 from ..core._batch import Batch, BatchSpec, _ranks_of
+from ..core._expression import Expression, Named, expression_of
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -188,26 +189,50 @@ def _wrap_as_term(value: Any, result_name: str) -> Any:
             return Opaque(result_name, value)
 
 
+#: The expression :func:`_coerce_output` takes to keep a tracked return's own expression.
+KEEP_EXPRESSION: Any = object()
+
+
 def _coerce_output(
     value: Any,
     *,
     broadcast_mode: BroadcastMode,
     provenance: Provenance | None,
     field_name: str,
+    expression: Expression | None = None,
 ) -> Any:
     """Return an independently labeled term with this call's provenance.
 
-    ``field_name`` is the Function's output_label, separate from the function
-    label in provenance and the declared output components. A tracked
-    return is shallow-copied, sharing value data while owning its metadata.
+    ``field_name`` is the call's result label, separate from the function
+    label in provenance and the declared output components, and it labels a
+    wrapped raw return. A tracked return is shallow-copied, sharing value data
+    while owning its metadata. The result carries *expression*, the expression
+    the call gives its result; a label alone keeps the paths a law holds
+    fixed, as ``with_label`` does. :data:`KEEP_EXPRESSION` keeps the
+    expression of a tracked return, as for an operation whose rule leaves the
+    route's expression, and ``None`` relabels the result by ``field_name``.
     """
+    if expression is None:
+        expression = Named(field_name)
     if broadcast_mode == BROADCAST_WRAP and not isinstance(value, TrackedTerm):
         value = _wrap_as_term(value, field_name)
+        if isinstance(value, TrackedTerm) and expression is not KEEP_EXPRESSION:
+            value._store_expression(_prepared(value, expression))
     elif isinstance(value, TrackedTerm):
-        value = value._with_label(field_name)
+        if expression is KEEP_EXPRESSION:
+            value = value._with_expression(expression_of(value))
+        else:
+            value = value._with_expression(_prepared(value, expression))
     if isinstance(value, TrackedTerm) and provenance is not None:
         value.with_provenance(provenance)
     return value
+
+
+def _prepared(term: Any, expression: Expression) -> Expression:
+    """*expression* as *term* carries it: a label alone keeps the paths a law or kernel holds fixed."""
+    if isinstance(expression, Named) and expression.signature is None:
+        return term._relabeled_expression(expression.label)
+    return expression
 
 
 def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = None) -> TrackedTerm:

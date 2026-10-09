@@ -31,6 +31,7 @@ from probpipe import (
     Uniform,
     workflow_run,
 )
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.core.constraints import positive, real
 from probpipe.distributions import (
     ConditionalDistribution,
@@ -267,14 +268,14 @@ class TestNotation:
         kernel = conditional_distribution("glm", _location, given_spec=SLOTS)
         curried = kernel._condition_on({"mu": 1.0})
         assert curried.notation == "glm(y | tau)"
-        object.__setattr__(curried, "_fixed_paths", ("mu",))
+        curried._store_expression(with_fixed(expression_of(curried), ("mu",)))
         assert curried.notation == "glm(y | tau; mu)"
         assert kernel.notation == "glm(y | mu, tau)"
 
     def test_currying_a_curried_kernel_keeps_its_fixed_paths(self):
         kernel = conditional_distribution("glm", _scaled_location, given_spec=_THREE_SLOTS)
         curried = kernel._condition_on({"mu": 1.0})
-        object.__setattr__(curried, "_fixed_paths", ("mu",))
+        curried._store_expression(with_fixed(expression_of(curried), ("mu",)))
         assert curried._condition_on({"tau": 2.0}).notation == "glm(y | scale; mu)"
 
 

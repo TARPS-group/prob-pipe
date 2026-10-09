@@ -34,6 +34,7 @@ from ._array_backend import (
     _numpy_dtype_of,
     _to_jax_array,
 )
+from ._expression import Named
 from ._numeric import Numeric
 from ._specs import (
     NumericArraySpec,
@@ -604,7 +605,7 @@ def _reconstruct_from_vector(
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
-    object.__setattr__(value, "_label", label)
+    value._store_expression(Named(label))
     return value
 
 

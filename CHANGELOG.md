@@ -1194,6 +1194,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`notation_config.max_depth` sets how many nested levels a label or a
+  notation shows.** A label derived from other terms, such as
+  `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
+  value or law they are computed from. A rendering shows at most
+  `notation_config.max_depth` levels, 8 by default or the value of the
+  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`. A part nested deeper
+  shows as its label, the name of a law or a function, or as `…` for a value,
+  and the rendering warns with a `UserWarning` that names the setting, so a
+  label derived through a long loop of operations stays short.
 - **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
   warmup's step-size adaptation targets is a method option, 0.75 unless set,
   so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
@@ -2124,7 +2133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
   `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
   as `[my draws][draw=1]`. Labels still join associatively, so
-  `(lik * prior) * d` is labeled `lik·prior·d`. A marginal over the whole
+  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model * d` prints as
+  `model(y, mu)·d(z)`. A marginal over the whole
   events of several factors prints factor by factor, in the order the paths
   name them where a product can take that order, so
   `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,

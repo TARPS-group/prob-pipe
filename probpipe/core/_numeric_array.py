@@ -103,6 +103,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     __slots__ = (
         "_annotations",
+        "_expression",
         "_jax_cache",
         "_label",
         "_provenance",

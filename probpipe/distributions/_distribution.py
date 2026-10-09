@@ -21,8 +21,15 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
+from ..core._expression import (
+    Signature,
+    expression_of,
+    fixed_paths_of,
+    notation_of,
+    with_fixed,
+)
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_notation, format_signature, public_class_name, term_repr
+from ..core._repr import public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -267,29 +274,27 @@ def _detached_term(term: Any) -> Any:
     return clone
 
 
-#: The attribute that holds the paths a law or a kernel holds fixed at given
-#: values, which its signature lists after ``;``. A term that does not set it
-#: holds no path fixed.
-_FIXED_PATHS = "_fixed_paths"
-
-
 def _fixed_paths(term: Any) -> tuple[str, ...]:
-    """The paths the law or kernel *term* holds fixed at given values, in the order they were fixed."""
-    return getattr(term, _FIXED_PATHS, ())
+    """The paths the law or kernel *term* holds fixed at given values, in the order they were fixed.
+
+    They are read from the term's expression, where a conditioning records the
+    paths it fixes, and the signature lists them after ``;``.
+    """
+    return fixed_paths_of(expression_of(term))
 
 
 def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     """*term*, a law or kernel just derived from *source*, holding the paths *source* holds fixed.
 
     *term* keeps the paths it holds itself, followed by those of *source* it
-    does not hold. *term* is set in place only when that adds a path, so a
-    caller passes a term it has just built, or one that holds every path of
-    *source* already.
+    does not hold, which its expression records as a conditioning on them.
+    *term* is set in place only when that adds a path, so a caller passes a
+    term it has just built, or one that holds every path of *source* already.
     """
-    own = _fixed_paths(term)
-    added = tuple(path for path in _fixed_paths(source) if path not in own)
-    if added:
-        object.__setattr__(term, _FIXED_PATHS, own + added)
+    expression = expression_of(term)
+    held = with_fixed(expression, _fixed_paths(source))
+    if held is not expression:
+        term._store_expression(held)
     return term
 
 
@@ -301,12 +306,12 @@ def _holding_fixed_paths(term: Any, paths: Iterable[str]) -> Any:
     also an operand of the call, such as a factor that conditioning leaves,
     keeps its own paths.
     """
-    own = _fixed_paths(term)
-    added = tuple(path for path in paths if path not in own)
-    if not added:
+    expression = expression_of(term)
+    held = with_fixed(expression, paths)
+    if held is expression:
         return term
     clone = term._shallow_copy()
-    object.__setattr__(clone, _FIXED_PATHS, own + added)
+    clone._store_expression(held)
     return clone
 
 
@@ -988,14 +993,19 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         The signature lists the event components in declaration order, joined
         by ``", "``, then ``;`` and the paths the law holds fixed at given
         values when it holds any, as ``model(mu; y)``. The label is grouped so
-        the call applies to all of it, as in ``(lik·prior)(y)``. No operation
-        reads the notation.
+        the call applies to all of it, as in ``(lik·prior)(y)``. A product
+        without a label reads factor by factor, as ``lik(y | mu)·prior(mu)``,
+        and the law of a function lifted over laws reads as the function at
+        draws of its inputs, as ``f(beta ~ model; y)``. The notation is a
+        rendering of the law's expression, which shows at most
+        ``notation_config.max_depth`` nested levels. No operation reads the
+        notation.
         """
-        return format_notation(self.label, self._signature_text())
+        return notation_of(expression_of(self), self._own_signature())
 
-    def _signature_text(self) -> str:
-        """The signature: the event components, then ``;`` and the fixed paths when there are any."""
-        return format_signature(self.event_spec.components, fixed=_fixed_paths(self))
+    def _own_signature(self) -> Signature:
+        """The signature the declaration states: the event components, in declaration order."""
+        return Signature(tuple(self.event_spec.components))
 
     def __str__(self) -> str:
         """The law's :attr:`notation`, as ``prior(mu)``."""

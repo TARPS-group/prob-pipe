@@ -74,8 +74,17 @@ from math import prod
 from typing import Any, Self, cast
 
 from .._messages import count, unknown_names
+from ._expression import (
+    Expression,
+    Indexed,
+    Named,
+    expression_of,
+    fixed_paths_of,
+    label_of,
+    with_fixed,
+)
 from ._record_spec import RecordSpec, _check_kind_of
-from ._repr import format_levels, grouped_label, public_class_name, term_repr, type_name
+from ._repr import format_levels, public_class_name, term_repr, type_name
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
 from ._specs import TermSpec, _check_component_name
 from .provenance import Provenance
@@ -401,19 +410,21 @@ class Batch[E](TrackedTerm, ABC):
     """
 
     __slots__ = (
+        "_expression",
         "_label",
         "_provenance",
-        "_root_label",
+        "_root_expression",
         "_root_selection",
         "_root_spec",
         "_spec",
     )
 
-    # The three ``_root_*`` slots derive a view's label: they hold the label and
-    # spec of the batch a derivation starts from, and which of *that* batch's
+    # The three ``_root_*`` slots derive a view's label: they hold the expression
+    # and spec of the batch a derivation starts from, and which of *that* batch's
     # positions this object selects — one entry per root axis, an integer where an
     # axis has been dropped and a range of positions where one is kept. ``_label``
-    # is read off them, which is what makes two routes to one selection agree: the
+    # and the expression are read off them, which is what makes two routes to one
+    # selection agree: the
     # reading is a function of the selection, not of the calls that reached it.
     #
     # They are never ``None``, not even on a batch nobody has indexed. Such a batch
@@ -469,10 +480,10 @@ class Batch[E](TrackedTerm, ABC):
         if spec.free_axis_dims:
             raise ValueError(_unbound_axis_sizes("cannot build a batch", spec.free_axis_dims))
         object.__setattr__(self, "_spec", spec)
-        object.__setattr__(self, "_root_label", label)
+        self._init_tracked(label, provenance=provenance)
+        object.__setattr__(self, "_root_expression", self._expression)
         object.__setattr__(self, "_root_spec", spec)
         object.__setattr__(self, "_root_selection", _whole_of(spec))
-        self._init_tracked(label, provenance=provenance)
 
     # -- the specification --------------------------------------------------
 
@@ -587,36 +598,25 @@ class Batch[E](TrackedTerm, ABC):
             )
         return self._with_level_names(renamed)
 
-    def _with_label(self, label: str) -> Self:
-        """Relabel the batch, which becomes the root its view labels derive from.
+    def _store_expression(self, expression: Expression) -> None:
+        """Store *expression* and its label, and make the batch the root its view labels derive from.
 
-        The new label starts a new view root, so the copy selects all of
-        itself: its own label is *label*, and a view of it reads
+        A new expression starts a new view root, so the batch selects all of
+        itself: its own label is the expression's, and a view of it reads
         ``label[level=...]`` rather than carrying any selection the original had
-        accumulated. This is the way to rename a level a view derives its label
-        from but no longer carries, which :meth:`with_level_names` refuses.
+        accumulated. Relabeling is therefore the way to rename a level a view
+        derives its label from but no longer carries, which
+        :meth:`with_level_names` refuses.
 
         Parameters
         ----------
-        label : str
-            The new label, preserved by later transforms.
-
-        Returns
-        -------
-        Self
-            A shallow copy over the same axes, elements, and spec, labeled
-            *label* and rooted at itself.
-
-        Raises
-        ------
-        TypeError
-            If *label* is not a non-empty string.
+        expression : Expression
+            The batch's new expression, preserved by later transforms.
         """
-        renamed = super()._with_label(label)
-        object.__setattr__(renamed, "_root_label", label)
-        object.__setattr__(renamed, "_root_spec", renamed._spec)
-        object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
-        return renamed
+        super()._store_expression(expression)
+        object.__setattr__(self, "_root_expression", expression)
+        object.__setattr__(self, "_root_spec", self._spec)
+        object.__setattr__(self, "_root_selection", _whole_of(self._spec))
 
     # -- reading ------------------------------------------------------------
 
@@ -820,7 +820,9 @@ class Batch[E](TrackedTerm, ABC):
         own label and provenance, since the caller may still hold it.
 
         Provenance is this hook's own, because only it knows whether the element
-        was built or borrowed.
+        was built or borrowed. An element built under *label* alone then
+        carries the expression of the selection, as ``(mu ~ prior)[sample=0]``,
+        and a stored object returned as it is keeps its own.
         """
 
     @abstractmethod
@@ -923,22 +925,31 @@ class Batch[E](TrackedTerm, ABC):
         selection = self._compose_selection(normalized)
         rendered = _render_index(self._root_spec, selection)
         if selection == self._root_selection:
-            label = self.label
+            expression = self._expression
         elif rendered:
-            label = f"{grouped_label(self._root_label)}[{rendered}]"
+            expression = Indexed(self._root_expression, rendered)
         else:
-            label = self._root_label
+            expression = self._root_expression
+        label = label_of(expression)
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
-            return self._element_at(dropped, label=label)
+            element = self._element_at(dropped, label=label)
+            given = expression_of(element) if isinstance(element, TrackedTerm) else None
+            if isinstance(given, Named) and given.label == label:
+                # A view built under the derived label carries the selection, and a
+                # stored law keeps the paths it holds fixed, after the batch's own.
+                held = with_fixed(expression, fixed_paths_of(given))
+                _assign_expression(element, held, label)
+            return element
 
         groups, names = self._surviving_levels(normalized)
         spec = replace(self._spec, axis_groups=groups, level_names=names)
         view = self._sub_batch_at(
             tuple(_as_storage_slice(i) for i in normalized), spec=spec, label=label
         )
-        object.__setattr__(view, "_root_label", self._root_label)
+        _assign_expression(view, expression, label)
+        object.__setattr__(view, "_root_expression", self._root_expression)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
         return self._inherit_provenance(view)
@@ -1365,3 +1376,13 @@ def _render_index(root_spec: BatchSpec, selection: tuple[int | range, ...]) -> s
         positions = rendered[0] if len(rendered) == 1 else f"({', '.join(rendered)})"
         parts.append(f"{level_name}={positions}")
     return ", ".join(parts)
+
+
+def _assign_expression(term: Any, expression: Expression, label: str) -> None:
+    """Give *term*, a view just selected, *expression* and its rendered *label*.
+
+    A view keeps the root it was selected from, so the assignment stores the
+    expression without re-rooting it, as :meth:`Batch._store_expression` would.
+    """
+    object.__setattr__(term, "_expression", expression)
+    object.__setattr__(term, "_label", label)

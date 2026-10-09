@@ -27,12 +27,14 @@ from probpipe import (
     RecordSpec,
     TermSpec,
 )
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
     _update_function,
     fingerprint,
 )
 from probpipe.core.provenance import ParentInfo, Provenance
+from probpipe.distributions._factored import _with_named
 
 
 class _Located(Distribution):
@@ -369,14 +371,14 @@ class TestDistributionHashing:
         """The paths a law holds fixed state how it displays, as its label does."""
         law = _Located("x", 1.0)
         held = copy.copy(law)
-        object.__setattr__(held, "_fixed_paths", ("y",))
+        held._store_expression(with_fixed(expression_of(held), ("y",)))
         assert fingerprint(held) == fingerprint(law)
         assert fingerprint(_Located("x", 2.0)) != fingerprint(law)
 
     def test_whether_a_joint_was_labeled_leaves_its_fingerprint_unchanged(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         labeled = copy.copy(joint)
-        object.__setattr__(labeled, "_named", True)
+        _with_named(labeled, True)
         assert fingerprint(labeled) == fingerprint(joint)
 
     def test_different_distribution_types_differ(self):

@@ -202,7 +202,28 @@ The **signature** of a term is read from its declaration:
 2. a kernel: its event components, then `|` and its given slots, as `y | beta`;
 3. a function: its parameters, as `x, y`.
 
-A law or a kernel that holds paths fixed at given values lists them after `;`, as `mu; y` for the posterior of `mu` given `y` and `y | sigma; beta` for a kernel applied at `beta`. A component rename changes the signature, and `with_label` changes the label. The **notation** is the label followed by the signature in parentheses, as `prior(mu)`, `glm(y | beta)`, or `predict(x, y)`, and the property `notation` returns it. `str()` shows the notation, and the repr keeps the label first. The signature has no public attribute of its own, since `Function.signature` is the Python call signature that binding reads (III.3). No operation reads a label or a signature to decide anything, and two objects may share either. A product records whether it was given a label, which its notation reads (IV.2), and nothing else records where a label came from.
+A law or a kernel that holds paths fixed at given values lists them after `;`, as `mu; y` for the posterior of `mu` given `y` and `y | sigma; beta` for a kernel applied at `beta`. A component rename changes the signature, and `with_label` changes the label. The **notation** is the label followed by the signature in parentheses, as `prior(mu)`, `glm(y | beta)`, or `predict(x, y)`, and the property `notation` returns it. `str()` shows the notation, and the repr keeps the label first. The signature has no public attribute of its own, since `Function.signature` is the Python call signature that binding reads (III.3). No operation reads a label or a signature to decide anything, and two objects may share either.
+
+**The expression.** Every tracked term carries one immutable **expression**, a tree that states what the term is, and its label, its notation, `str()`, and every label derived from it are renderings of that tree. A term constructed directly carries its label alone. The operation that makes a term builds the term's expression from its operands' expressions, so no operation builds a label of its own, and no operation reads an expression. A node of the tree is one of these:
+1. a label, with the signature of a law, a kernel, or a function;
+2. a product of factors without a label;
+3. a law or a kernel conditioned at given values of some paths;
+4. a law selected at some of its paths;
+5. a draw from a law;
+6. a function applied to draws of laws and to values;
+7. a summary of a law or a draw: an expectation, a variance, a covariance, a quantile, a score, or a density;
+8. an operator applied to values;
+9. a selection of a batch.
+
+A term's label is the name part of the rendering:
+1. a conditioned or a selected law keeps its base's label;
+2. a product without a label joins its factors' labels;
+3. an applied function takes the function's label;
+4. a value renders in full, as `mu ~ prior` or `E[mu ~ prior]`.
+
+The notation is the whole rendering, grouped by the rules below. A law's signature is read from its declaration, and the paths it holds fixed and whether a product was given a label are read from its expression (IV.2). `with_label` replaces the expression with the new label, so a user's label hides the derivation, which provenance still records. Provenance records how a term was computed, and the expression records what the term is, for a reader. Fingerprints and replay omit the expression, as they omit the label, and copies and pickles keep it.
+
+A rendering shows at most `notation_config.max_depth` nested levels, eight by default, and a term's label is rendered when the term is made. A part nested deeper renders as its label, the name of a law or a function, or as `…` for a value, and the rendering warns with a `UserWarning` that names the setting.
 
 **Grouping.** A label is grouped where another label is built from it, so it reads as one operand:
 1. an **expression** is parenthesized, and a label is an expression when it has one of these forms:

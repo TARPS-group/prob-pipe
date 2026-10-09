@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core._dispatch import Feasibility
+from ..core._expression import Expression, embedded
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
@@ -19,13 +20,12 @@ from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
     _detached_term,
-    _keeps_fixed_paths,
     _shared_final_names,
 )
 from ..distributions._factored import SupportsFactors
-from ..distributions._views import _marginal_label_at, _node_at
+from ..distributions._views import _marginal_expression_at, _node_at
 from ..functions._call import ApplicabilityError
-from ._operation import BoundCall, operation
+from ._operation import BoundCall, _install_expression_rule, operation
 
 __all__ = ["factor", "marginal"]
 
@@ -100,8 +100,8 @@ def _marginal_result(d: DistributionSpec, field: Any) -> OutputSpec:
     return OutputSpec(DistributionSpec(OutputSpec(**{component: _node(d, field)})))
 
 
-def _marginal_label(d: Any, field: Any) -> str:
-    """The joined labels of the factors the marginal is, and *d*'s label for any other marginal.
+def _marginal_expression(d: Any, field: Any) -> Expression:
+    """The expression of the marginal of *d* at *field*: the factors it is, or *d* selected at *field*.
 
     A marginal over the whole events of some factors of a joint, none of which
     conditions on a component outside them, is the product of those factors,
@@ -110,13 +110,14 @@ def _marginal_label(d: Any, field: Any) -> str:
     the paths name them where a product in that order declares the fields in
     the order of the paths, as ``marginal(model, ("b", "a"))`` is ``b·a``. The
     factors of a field view are its parent's. Any other marginal integrates a
-    factor out, as the prior predictive does, and keeps the law's label. The
-    view ``d[field]`` takes the same label.
+    factor out, as the prior predictive does, so it is *d* selected at
+    *field* and keeps *d*'s label. The view ``d[field]`` carries the same
+    expression.
     """
-    return _marginal_label_at(d, field)
+    return _marginal_expression_at(d, field)
 
 
-@operation(result=_marginal_result, label=_marginal_label)
+@operation(result=_marginal_result)
 def marginal(d: Distribution, field: str):
     """The detached marginal of *d* at *field*, a standalone law with no reference back to *d*.
 
@@ -162,11 +163,11 @@ def _detached_marginal(call: BoundCall, result: OutputSpec | None) -> Distributi
     A marginal can be a factor of a factored joint, and a factor can record a
     batch it was an element of or a law it renames, which a lift reads to draw
     it with that law. The detached marginal records neither, so a lift draws it
-    independently of the joint (V.5). It holds the paths the law holds fixed.
-    The result boundary then records the call's provenance on it.
+    independently of the joint (V.5). The result boundary then gives it the
+    marginal's expression, which holds the paths the law holds fixed, and
+    records the call's provenance on it.
     """
-    d = call.operands["d"]
-    return _keeps_fixed_paths(_detached_term(d._marginal(call.operands["field"])), d)
+    return _detached_term(call.operands["d"]._marginal(call.operands["field"]))
 
 
 def _can_sample(call: BoundCall, result: OutputSpec | None) -> Any:
@@ -218,17 +219,16 @@ def _factor_of(d: Any, component_name: str) -> Any:
     )
 
 
-def _factor_label(d: Any, component_name: str) -> str:
-    """The factor's own label, which the detached factor keeps; the joint's without one."""
+def _factor_expression(d: Any, component_name: str) -> Expression:
+    """The factor's own expression, which the detached factor keeps; the joint's without one."""
     part = _factor_of(d, component_name)
-    return d.label if part is None else part.label
+    return embedded(d if part is None else part)
 
 
 @operation(
     result=_factor_result,
     conditions=(_names_a_component,),
     roles={"d": (DistributionSpec, ConditionalDistributionSpec)},
-    label=_factor_label,
 )
 def factor(d: Distribution, component_name: str):
     """The complete factor of the joint *d* that produces the component *component_name*.
@@ -283,3 +283,7 @@ factor.capability_route(
     execute=_detached_factor,
     exact=True,
 )
+
+
+_install_expression_rule(marginal, _marginal_expression)
+_install_expression_rule(factor, _factor_expression)

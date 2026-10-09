@@ -21,7 +21,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -29,15 +29,10 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
+from ..core._expression import Expression, Signature, expression_of, notation_of
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
-from ..core._repr import (
-    format_names,
-    format_notation,
-    format_signature,
-    public_class_name,
-    term_repr,
-)
+from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.config import WorkflowKind
@@ -1055,12 +1050,14 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def _with_label(self, label: str) -> Self:
-        """Relabel the function and its Python names, preserving output_label and its declaration."""
-        renamed = cast(Self, TrackedTerm._with_label(self, label))
-        object.__setattr__(renamed, "__name__", label)
-        object.__setattr__(renamed, "__qualname__", label)
-        return renamed
+    def _store_expression(self, expression: Expression) -> None:
+        """Store *expression* and its label, which the function's Python names follow.
+
+        The output label and its declaration are kept.
+        """
+        super()._store_expression(expression)
+        object.__setattr__(self, "__name__", self._label)
+        object.__setattr__(self, "__qualname__", self._label)
 
     def raw(self) -> Callable[..., Any]:
         """Return the wrapped callable, or the raw evaluator of a private payload."""
@@ -1198,11 +1195,11 @@ class Function(Node, TrackedTerm, Annotated):
         The parameters are the names of :attr:`signature`, in order, joined by
         ``", "``. No operation reads the notation.
         """
-        return format_notation(self.label, self._signature_text())
+        return notation_of(expression_of(self), self._own_signature())
 
-    def _signature_text(self) -> str:
+    def _own_signature(self) -> Signature:
         """The signature: the names of the parameters, in order."""
-        return format_signature(self.signature.parameters)
+        return Signature(tuple(self.signature.parameters))
 
     def __str__(self) -> str:
         """The function's :attr:`notation`, as ``predict(x, y)``."""

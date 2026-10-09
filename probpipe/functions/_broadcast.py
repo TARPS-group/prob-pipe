@@ -28,6 +28,7 @@ except ImportError:
 
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch
+from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._object_batch import _from_iterable, _ObjectBatch
@@ -109,6 +110,7 @@ def execute_distribution_broadcast(
     require_jax_traceable: Callable[[dict[str, Any], list[FunctionInputRef]], None],
     function_name: str,
     output_label: str | None = None,
+    output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
     workflow_kind: WorkflowKind,
     output_template: RecordSpec | None = None,
@@ -162,6 +164,10 @@ def execute_distribution_broadcast(
     output_label : str or None
         The result's label, and the component of an undeclared whole-term
         output; the function's label by default.
+    output_expression : Expression or None
+        The result's expression, the function applied to draws of its
+        inputs, which gives the result its label; *output_label* labels the
+        result when it is ``None``.
     output_spec : OutputSpec or None
         The function's output declaration with the call's shared dimensions
         bound, which the outputs complete.
@@ -263,6 +269,8 @@ def execute_distribution_broadcast(
         output_spec=output_spec,
         include_inputs=include_inputs,
     )
+    if output_expression is not None:
+        result._store_expression(output_expression)
     provenance = _make_broadcast_provenance(
         values=values,
         broadcast_args=broadcast_args,

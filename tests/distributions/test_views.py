@@ -46,6 +46,7 @@ from probpipe import (
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility, MathematicalDomainError
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
@@ -1221,8 +1222,10 @@ class TestDerivedBehavior:
         raw = view.raw()
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
-        # The double labels its marginal by the component.
-        assert (raw.label, raw.spec, raw.provenance) == ("mu", view.spec, None)
+        # The detached marginal carries the view's expression, whatever label the
+        # double gives its marginal.
+        assert (raw.label, raw.spec, raw.provenance) == ("parent", view.spec, None)
+        assert raw.notation == view.notation == "parent(mu)"
 
 
 class TestTheViewOfAWeightedLaw:
@@ -1266,7 +1269,7 @@ class TestTheViewOfAWeightedLaw:
 
 def _with_fixed_paths(term: Any, *paths: str) -> Any:
     """*term* holding *paths* fixed, as conditioning on them records."""
-    object.__setattr__(term, "_fixed_paths", paths)
+    term._store_expression(with_fixed(expression_of(term), paths))
     return term
 
 

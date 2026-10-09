@@ -13,8 +13,7 @@ from typing import Any
 from ..core._specs import OutputSpec
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
-from ..distributions._factored import _joined_label
-from ._operation import BoundCall, operation
+from ._operation import BoundCall, _install_expression_rule, operation
 
 __all__ = ["joint"]
 
@@ -26,15 +25,18 @@ def _joint_result(A: Any, B: Any, align: Any) -> None:
     return None
 
 
-def _composed_label(A: Any, B: Any) -> str:
-    """The factors' labels joined as composition joins them (IV.2); a rename keeps a label."""
-    return _joined_label((A.label, B.label))
+def _composed_expression() -> None:
+    """None: the joint carries the product of its operands' expressions, as ``*`` gives it (IV.2).
+
+    The route composes *A* with *B* after renaming *B*'s fields, so the joint
+    reads factor by factor under the realigned names.
+    """
+    return None
 
 
 @operation(
     result=_joint_result,
     roles={"A": _FACTOR_KINDS, "B": _FACTOR_KINDS},
-    label=_composed_label,
 )
 def joint(A: Any, B: Any, **align: str):
     """Compose *A* with *B* after renaming *B*'s fields, as ``A * B.with_path_names(**align)``.
@@ -82,3 +84,4 @@ def _compose(call: BoundCall, result: OutputSpec | None) -> Any:
 
 
 joint.structural_route("compose", check=_can_compose, execute=_compose, exact=True)
+_install_expression_rule(joint, _composed_expression)

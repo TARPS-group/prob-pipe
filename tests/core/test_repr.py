@@ -33,7 +33,7 @@ from probpipe.core._repr import (
     format_notation,
     format_signature,
     grouped_label,
-    is_expression,
+    is_compound,
     is_product,
 )
 from probpipe.distributions._batches import DistributionBatch
@@ -240,24 +240,24 @@ class TestGrouping:
         ],
     )
     def test_an_expression_is_parenthesized(self, label):
-        assert is_expression(label)
+        assert is_compound(label)
         assert grouped_label(label) == f"({label})"
 
     @pytest.mark.parametrize("label", ["prior", "prior(mu)", "x[sample=0]", "E[mu ~ prior]"])
     def test_a_label_of_one_word_is_used_as_it_is(self, label):
         """A call or a selection holds its spaces and symbols inside its brackets."""
-        assert not is_expression(label)
+        assert not is_compound(label)
         assert grouped_label(label) == label
 
     @pytest.mark.parametrize("label", ["my prior", "logit prior"])
     def test_any_other_label_of_several_words_is_bracketed(self, label):
         """Only the word ``log`` opens a score, so ``logit prior`` is a label of two words."""
-        assert not is_expression(label)
+        assert not is_compound(label)
         assert grouped_label(label) == f"[{label}]"
 
     @pytest.mark.parametrize("label", ["f(lik·prior)", "E[lik·prior]", "f(mu ~ prior)"])
     def test_a_symbol_inside_parentheses_or_brackets_is_not_at_the_top_level(self, label):
-        assert not is_expression(label)
+        assert not is_compound(label)
         assert grouped_label(label) == label
 
     @pytest.mark.parametrize("label", ["lik·prior", "a·b·c", "lik·(model | y)", "lik·[my prior]"])

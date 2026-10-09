@@ -47,7 +47,7 @@ def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
 class _Leaf(TrackedTerm):
     """A minimal tracked element."""
 
-    __slots__ = ("_label", "_provenance", "value")
+    __slots__ = ("_expression", "_label", "_provenance", "value")
 
     def __init__(self, value, label="leaf"):
         object.__setattr__(self, "value", value)
