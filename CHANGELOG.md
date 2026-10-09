@@ -1334,7 +1334,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
   value or law they are computed from. A rendering shows at most
   `notation_config.max_depth` levels, 8 by default or the value of the
-  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`. A part nested deeper
+  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
+  number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
   and the rendering warns with a `UserWarning` that names the setting, so a
   label derived through a long loop of operations stays short.

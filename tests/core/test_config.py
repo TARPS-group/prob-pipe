@@ -2,6 +2,7 @@
 
 import pytest
 
+from probpipe.core._expression import _STORED_DEPTH
 from probpipe.core.config import (
     _NOTATION_MAX_DEPTH_ENV_VAR,
     _PROVENANCE_MODE_ENV_VAR,
@@ -79,3 +80,16 @@ class TestNotationMaxDepth:
     def test_a_depth_below_one_raises_value_error(self, value):
         with pytest.raises(ValueError, match="max_depth must be a positive integer"):
             NotationConfig().max_depth = value
+
+    def test_a_depth_above_the_stored_depth_raises_value_error(self):
+        """A rendering never shows more levels than a stored expression keeps."""
+        config = NotationConfig()
+        config.max_depth = _STORED_DEPTH
+        assert config.max_depth == _STORED_DEPTH
+        with pytest.raises(ValueError, match=f"max_depth must be at most {_STORED_DEPTH}"):
+            config.max_depth = _STORED_DEPTH + 1
+
+    def test_an_environment_depth_above_the_stored_depth_raises(self, monkeypatch):
+        monkeypatch.setenv(_NOTATION_MAX_DEPTH_ENV_VAR, str(_STORED_DEPTH + 1))
+        with pytest.raises(ValueError, match=f"at most {_STORED_DEPTH}"):
+            _initial_max_depth()

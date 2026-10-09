@@ -35,6 +35,8 @@ __all__ = [
 from enum import Enum
 from typing import Any
 
+from ._expression import _STORED_DEPTH
+
 # ---------------------------------------------------------------------------
 # WorkflowKind enum
 # ---------------------------------------------------------------------------
@@ -314,7 +316,10 @@ _DEFAULT_MAX_DEPTH = 8
 
 
 def _checked_max_depth(value: Any, source: str) -> int:
-    """*value* as a number of nested levels, which must be a positive integer.
+    """*value* as a number of nested levels, a positive integer of at most ``_STORED_DEPTH``.
+
+    A stored expression keeps at most ``_STORED_DEPTH`` levels, so a rendering
+    of more levels would meet parts that storage collapsed without a warning.
 
     Parameters
     ----------
@@ -333,12 +338,17 @@ def _checked_max_depth(value: Any, source: str) -> int:
     TypeError
         If *value* is not an integer, a bool included.
     ValueError
-        If *value* is less than 1.
+        If *value* is less than 1 or greater than ``_STORED_DEPTH``.
     """
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{source} must be a positive integer, got {type(value).__name__}")
     if value < 1:
         raise ValueError(f"{source} must be a positive integer, got {value}")
+    if value > _STORED_DEPTH:
+        raise ValueError(
+            f"{source} must be at most {_STORED_DEPTH}, the number of levels a stored "
+            f"expression keeps, got {value}"
+        )
     return value
 
 
@@ -346,8 +356,9 @@ def _initial_max_depth() -> int:
     """Resolve the initial ``max_depth`` from the environment.
 
     Reads ``PROBPIPE_NOTATION_MAX_DEPTH``. Unset gives 8, and a value that is
-    not a positive integer raises ``ValueError``, so a typo in a deployment's
-    configuration surfaces rather than falling back to the default.
+    not a positive integer of at most ``_STORED_DEPTH`` raises ``ValueError``,
+    so a typo in a deployment's configuration surfaces rather than falling back
+    to the default.
     """
     raw = os.environ.get(_NOTATION_MAX_DEPTH_ENV_VAR)
     if raw is None:
@@ -356,10 +367,10 @@ def _initial_max_depth() -> int:
         value = int(raw)
     except ValueError:
         value = 0
-    if value < 1:
+    if value < 1 or value > _STORED_DEPTH:
         raise ValueError(
-            f"{_NOTATION_MAX_DEPTH_ENV_VAR}={raw!r} is not a valid depth; it must be a "
-            f"positive integer"
+            f"{_NOTATION_MAX_DEPTH_ENV_VAR}={raw!r} is not a valid depth. It must be a "
+            f"positive integer of at most {_STORED_DEPTH}."
         )
     return value
 
@@ -378,7 +389,9 @@ class NotationConfig:
         probpipe.notation_config.max_depth = 12
 
     The initial depth can also be set by the ``PROBPIPE_NOTATION_MAX_DEPTH``
-    environment variable, a positive integer.
+    environment variable. The depth is a positive integer of at most 64, the
+    number of levels a stored expression keeps, so a rendering never shows a
+    part that storage collapsed.
     """
 
     def __init__(self) -> None:
@@ -407,7 +420,8 @@ class NotationConfig:
         TypeError
             On assignment of a value that is not an integer, a bool included.
         ValueError
-            On assignment of an integer less than 1.
+            On assignment of an integer less than 1 or greater than 64, the
+            number of levels a stored expression keeps.
         """
         return self._max_depth
 
