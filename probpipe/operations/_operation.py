@@ -44,7 +44,7 @@ from typing import Any, Protocol, runtime_checkable
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
-from ..core._expression import Expression, Named, label_of
+from ..core._expression import Expression, Named
 from ..core._kinds import _KINDS
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
@@ -1033,7 +1033,7 @@ class Operation(Function):
         """
         expression = self._derived_expression(values)
         if expression is not None:
-            return label_of(expression)
+            return expression.render_label()
         rule = self._label_rule
         if rule is not None:
             return rule(**{name: values.get(name) for name in _parameter_names(rule)})

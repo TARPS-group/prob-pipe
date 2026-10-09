@@ -42,7 +42,6 @@ from probpipe import (
     SupportsVariance,
 )
 from probpipe.core._dispatch import Feasibility
-from probpipe.core._expression import with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalNumericDistribution,
@@ -1302,7 +1301,7 @@ class TestPathRenames:
 
 def _with_fixed_paths(term: Any, *paths: str) -> Any:
     """*term* holding *paths* fixed, as conditioning on them records."""
-    term._store_expression(with_fixed(term._expression, paths))
+    term._store_expression(term._expression.with_fixed(paths))
     return term
 
 

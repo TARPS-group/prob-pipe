@@ -47,7 +47,7 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.core._expression import Signature, notation_of
+from probpipe.core._expression import Signature
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
 from probpipe.distributions._batches import DistributionBatch
@@ -660,7 +660,7 @@ class TestTheLabelsOfResults:
     def test_the_prior_predictive_keeps_the_models_label(self):
         """``marginal(model, "y")`` integrates ``mu`` out, which no route of this model does."""
         expression = marginal._derived_expression({"d": _model(), "field": "y"})
-        assert notation_of(expression, Signature(("y",))) == "model(y)"
+        assert expression.render_notation(Signature(("y",))) == "model(y)"
 
 
 #: A default that is not a scalar, which a signature shows as ``…``.

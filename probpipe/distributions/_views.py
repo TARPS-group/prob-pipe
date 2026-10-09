@@ -24,8 +24,6 @@ from ..core._expression import (
     Expression,
     Product,
     Selected,
-    label_of,
-    with_fixed,
 )
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -383,12 +381,12 @@ def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> E
     if closed is None:
         return Selected(law._embedded_expression(), requested)
     if len(closed) == 1:
-        return with_fixed(closed[0]._embedded_expression(), held)
+        return closed[0]._embedded_expression().with_fixed(held)
     product: Expression = _product_of(closed)
     declared = [name for part in closed for name in part.event_spec.components]
     if declared != [_final_segment(each) for each in requested]:
         product = Selected(product, requested)
-    return with_fixed(product, held)
+    return product.with_fixed(held)
 
 
 def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
@@ -397,7 +395,7 @@ def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
     One whole factor gives its own label, several their labels joined with
     ``·``, and any other marginal keeps *law*'s label.
     """
-    return label_of(_marginal_expression_at(law, path))
+    return _marginal_expression_at(law, path).render_label()
 
 
 def _carrying(law: Any, expression: Expression) -> Any:

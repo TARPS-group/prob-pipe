@@ -79,9 +79,6 @@ from ._expression import (
     Expression,
     Indexed,
     Named,
-    fixed_paths_of,
-    label_of,
-    with_fixed,
 )
 from ._record_spec import RecordSpec, _check_kind_of
 from ._repr import (
@@ -1040,7 +1037,7 @@ class Batch[E](TrackedTerm, ABC):
             expression = Indexed(self._root_expression, rendered)
         else:
             expression = self._root_expression
-        label = label_of(expression)
+        label = expression.render_label()
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
@@ -1052,7 +1049,7 @@ class Batch[E](TrackedTerm, ABC):
             if isinstance(given, Named) and given.label == label:
                 # A view built under the derived label carries the selection, and a
                 # stored law keeps the paths it holds fixed, after the batch's own.
-                held = with_fixed(expression, fixed_paths_of(given))
+                held = expression.with_fixed(given.fixed_paths())
                 _assign_expression(element, held, label)
             return element
 

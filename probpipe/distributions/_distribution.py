@@ -23,9 +23,6 @@ if TYPE_CHECKING:
 
 from ..core._expression import (
     Signature,
-    fixed_paths_of,
-    notation_of,
-    with_fixed,
 )
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name, term_repr
@@ -430,7 +427,7 @@ def _fixed_paths(term: Any) -> tuple[str, ...]:
     They are read from the term's expression, where a conditioning records the
     paths it fixes, and the signature lists them after ``;``.
     """
-    return fixed_paths_of(term._expression)
+    return term._expression.fixed_paths()
 
 
 def _keeps_fixed_paths(term: Any, source: Any) -> Any:
@@ -442,7 +439,7 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     term it has just built, or one that holds every path of *source* already.
     """
     expression = term._expression
-    held = with_fixed(expression, _fixed_paths(source))
+    held = expression.with_fixed(_fixed_paths(source))
     if held is not expression:
         term._store_expression(held)
     return term
@@ -457,7 +454,7 @@ def _holding_fixed_paths(term: Any, paths: Iterable[str]) -> Any:
     keeps its own paths.
     """
     expression = term._expression
-    held = with_fixed(expression, paths)
+    held = expression.with_fixed(paths)
     if held is expression:
         return term
     clone = term._shallow_copy()
@@ -1154,7 +1151,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``notation_config.max_depth`` nested levels. No operation reads the
         notation.
         """
-        return notation_of(self._expression, self._own_signature())
+        return self._expression.render_notation(self._own_signature())
 
     def _own_signature(self) -> Signature:
         """The signature the declaration states: the event components, in declaration order."""

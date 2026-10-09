@@ -73,7 +73,7 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._expression import Expression, with_fixed
+from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
@@ -1545,8 +1545,8 @@ def _conditioned_expression(d: Any, given: Any) -> Expression:
         base = d._embedded_expression()
     else:
         left = kept[0]._embedded_expression() if len(kept) == 1 else _product_of(kept)
-        base = with_fixed(left, _fixed_paths(d))
-    return with_fixed(base, paths)
+        base = left.with_fixed(_fixed_paths(d))
+    return base.with_fixed(paths)
 
 
 def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:

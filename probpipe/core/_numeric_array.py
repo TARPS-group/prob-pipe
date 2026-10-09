@@ -22,7 +22,7 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
-from ._expression import Expression, Operator, constant, label_of
+from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
 from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
@@ -406,7 +406,7 @@ def _tracked_result(
     )
     dtype = _numpy_dtype_of(value) if declared else None
     result = NumericArray(
-        label_of(expression),
+        expression.render_label(),
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),

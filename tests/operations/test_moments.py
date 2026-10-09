@@ -28,7 +28,6 @@ from probpipe.core._dispatch import (
     MathematicalDomainError,
     ResolutionError,
 )
-from probpipe.core._expression import with_fixed
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
 from probpipe.distributions._capabilities import SupportsConditionalSampling, SupportsSampling
@@ -165,7 +164,7 @@ class TestDerivedLabelsAreNeverComponents:
     def _held() -> Distribution:
         """A law holding the nested path ``y/obs`` fixed, as conditioning on it records."""
         law = Gaussian("g", 2.0)
-        return law._with_expression(with_fixed(law._expression, ("y/obs",)))
+        return law._with_expression(law._expression.with_fixed(("y/obs",)))
 
     @pytest.mark.parametrize(
         ("moment", "label", "component"),

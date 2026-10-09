@@ -68,14 +68,8 @@ __all__ = [
     "Signature",
     "Summary",
     "constant",
-    "core_of",
     "draw_of",
-    "fixed_paths_of",
     "joined_labels",
-    "label_of",
-    "notation_of",
-    "with_defaulted_givens",
-    "with_fixed",
 ]
 
 #: The text a collapsed value renders as.
@@ -145,8 +139,8 @@ class _Rendering:
 class Expression:
     """A node of a term's expression.
 
-    Every node renders a label and a notation (:func:`label_of`,
-    :func:`notation_of`), states the paths it holds fixed (:func:`fixed_paths_of`),
+    Every node renders a label and a notation (:meth:`render_label`,
+    :meth:`render_notation`), states the paths it holds fixed (:meth:`fixed_paths`),
     and stores its nesting depth in its field ``depth``. A subclass is a frozen
     dataclass whose fields are strings, tuples of strings, and child nodes, and
     its ``__post_init__`` sets ``depth`` once the children are final.
@@ -169,9 +163,29 @@ class Expression:
 
     # -- reading the tree ----------------------------------------------------
 
-    def _fixed_paths(self) -> tuple[str, ...]:
-        """The paths this node's law or kernel holds fixed, in the order they were fixed."""
+    def fixed_paths(self) -> tuple[str, ...]:
+        """The paths the law or kernel this node describes holds fixed, in the order fixed.
+
+        A :class:`Named` node holds those of its signature, and a
+        :class:`Conditioned` node holds its base's followed by its own. A
+        selection and an indexed batch hold their base's, and any other node
+        holds none.
+        """
         return ()
+
+    def core(self) -> Expression:
+        """This node without the conditionings and selections around it."""
+        return self
+
+    def with_fixed(self, paths: Iterable[str]) -> Expression:
+        """This node holding *paths* fixed after the paths it holds.
+
+        The node is returned as it is when it holds every path already, and
+        otherwise conditioned on the paths it does not hold.
+        """
+        held = self.fixed_paths()
+        added = tuple(path for path in dict.fromkeys(paths) if path not in held)
+        return Conditioned(self, added) if added else self
 
     def signed(self, signature: Signature) -> Expression:
         """This node recording *signature*, the signature of the term it describes.
@@ -192,6 +206,25 @@ class Expression:
         ``counts(y | K, n0=50.0)`` at ``K`` is ``counts(y | n0=50.0; K)``.
         """
         return ()
+
+    def full_signature(self, signature: Signature) -> Signature:
+        """*signature* followed by the defaulted given slots this node leaves free.
+
+        A slot that *signature* names already is left as it is.
+        """
+        free = [
+            (name, text)
+            for name, text in self._defaulted_givens()
+            if name not in signature.given and name not in signature.components
+        ]
+        if not free:
+            return signature
+        return Signature(
+            signature.components,
+            signature.given + tuple(name for name, _ in free),
+            signature.fixed,
+            signature.defaults + tuple(free),
+        )
 
     # -- rendering -----------------------------------------------------------
 
@@ -232,13 +265,73 @@ class Expression:
 
         It lists the node's fixed paths and the defaulted slots the node leaves free.
         """
-        signature = with_defaulted_givens(signature, self)
+        signature = self.full_signature(signature)
         return format_signature(
             signature.components,
             signature.given,
-            self._fixed_paths(),
+            self.fixed_paths(),
             dict(signature.defaults),
         )
+
+    def render_label(self) -> str:
+        """The label this node renders.
+
+        The label of a law, a kernel, or a function is its name, and a value's
+        label is its rendering.
+
+        A conditioning and a selection keep their base's label, a product without
+        a label joins its factors' labels with ``·``, and an applied function takes
+        the function's label. A value renders in full, as ``(y, mu) ~ model`` or
+        ``E[mu ~ prior]``, with each part grouped by design II.4.
+
+        Returns
+        -------
+        str
+            The label, which shows at most ``notation_config.max_depth`` nested
+            levels.
+
+        Warns
+        -----
+        UserWarning
+            When the rendering nests more levels than ``notation_config.max_depth``.
+        """
+        rendering = _Rendering(_max_depth())
+        text = self._label(rendering, 1)
+        _warn_if_collapsed(rendering)
+        return text
+
+    def render_notation(self, own: Signature | None = None) -> str:
+        """The notation this node renders.
+
+        *own* is the signature that the term's declaration states.
+
+        A law, a kernel, or a function reads as its grouped label followed by its
+        signature, which lists the fixed paths after ``;``, as ``model(mu; y)``. A
+        product without a label reads factor by factor, as ``lik(y | mu)·prior(mu)``,
+        and the law of a function lifted over laws reads as the function's call,
+        as ``f(beta ~ model; y)``.
+
+        Parameters
+        ----------
+        own : Signature or None, optional
+            The components and given slots that the term's declaration states,
+            which replace those the node records.
+
+        Returns
+        -------
+        str
+            The notation, which shows at most ``notation_config.max_depth``
+            nested levels.
+
+        Warns
+        -----
+        UserWarning
+            When the rendering nests more levels than ``notation_config.max_depth``.
+        """
+        rendering = _Rendering(_max_depth())
+        text = self._notation(rendering, 1, own)
+        _warn_if_collapsed(rendering)
+        return text
 
 
 def _kept(child: Expression) -> Expression:
@@ -310,7 +403,7 @@ class Named(_Signed):
     def __post_init__(self) -> None:
         self._set_depth()
 
-    def _fixed_paths(self) -> tuple[str, ...]:
+    def fixed_paths(self) -> tuple[str, ...]:
         return () if self.signature is None else self.signature.fixed
 
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
@@ -327,7 +420,7 @@ class Named(_Signed):
         return Named(
             self.label,
             Signature(
-                signature.components, signature.given, self._fixed_paths(), signature.defaults
+                signature.components, signature.given, self.fixed_paths(), signature.defaults
             ),
         )
 
@@ -418,11 +511,14 @@ class Conditioned(_Signed):
     def _children(self) -> tuple[Expression, ...]:
         return (self.base,)
 
-    def _fixed_paths(self) -> tuple[str, ...]:
-        return _merged(self.base._fixed_paths(), self.fixed)
+    def fixed_paths(self) -> tuple[str, ...]:
+        return _merged(self.base.fixed_paths(), self.fixed)
+
+    def core(self) -> Expression:
+        return self.base.core()
 
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
-        fixed = self._fixed_paths()
+        fixed = self.fixed_paths()
         return tuple(
             (name, text) for name, text in self.base._defaulted_givens() if name not in fixed
         )
@@ -463,8 +559,11 @@ class Selected(_Signed):
     def _children(self) -> tuple[Expression, ...]:
         return (self.base,)
 
-    def _fixed_paths(self) -> tuple[str, ...]:
-        return self.base._fixed_paths()
+    def fixed_paths(self) -> tuple[str, ...]:
+        return self.base.fixed_paths()
+
+    def core(self) -> Expression:
+        return self.base.core()
 
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
         return self.base._defaulted_givens()
@@ -514,7 +613,7 @@ class Draw(Expression):
             return rendering.collapse(self)
         law = self.law
         text = f"{format_components(self.components)} ~ {law._label(rendering, level + 1)}"
-        fixed = law._fixed_paths()
+        fixed = law.fixed_paths()
         return f"{text}; {', '.join(fixed)}" if fixed else text
 
 
@@ -714,8 +813,8 @@ class Indexed(_Signed):
     def _children(self) -> tuple[Expression, ...]:
         return (self.base,) if self.element is None else (self.base, self.element)
 
-    def _fixed_paths(self) -> tuple[str, ...]:
-        return self.base._fixed_paths()
+    def fixed_paths(self) -> tuple[str, ...]:
+        return self.base.fixed_paths()
 
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
         return self.base._defaulted_givens()
@@ -750,56 +849,8 @@ def _merged(held: tuple[str, ...], added: Iterable[str]) -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Reading the tree
+# Building nodes
 # ---------------------------------------------------------------------------
-
-
-def core_of(expression: Expression) -> Expression:
-    """*expression* without the conditionings and selections around it."""
-    while isinstance(expression, (Conditioned, Selected)):
-        expression = expression.base
-    return expression
-
-
-def fixed_paths_of(expression: Expression) -> tuple[str, ...]:
-    """The paths the law or kernel that *expression* describes holds fixed, in the order fixed.
-
-    A :class:`Named` node holds those of its signature, and a
-    :class:`Conditioned` node holds its base's followed by its own. A selection
-    and an indexed batch hold their base's, and any other node holds none.
-    """
-    return expression._fixed_paths()
-
-
-def with_fixed(expression: Expression, paths: Iterable[str]) -> Expression:
-    """*expression* holding *paths* fixed after the paths it holds.
-
-    *expression* is returned as it is when it holds every path already, and
-    otherwise conditioned on the paths it does not hold.
-    """
-    held = expression._fixed_paths()
-    added = tuple(path for path in dict.fromkeys(paths) if path not in held)
-    return Conditioned(expression, added) if added else expression
-
-
-def with_defaulted_givens(signature: Signature, expression: Expression) -> Signature:
-    """*signature* followed by the defaulted given slots that *expression* leaves free.
-
-    A slot that *signature* names already is left as it is.
-    """
-    free = [
-        (name, text)
-        for name, text in expression._defaulted_givens()
-        if name not in signature.given and name not in signature.components
-    ]
-    if not free:
-        return signature
-    return Signature(
-        signature.components,
-        signature.given + tuple(name for name, _ in free),
-        signature.fixed,
-        signature.defaults + tuple(free),
-    )
 
 
 def draw_of(term: Any, components: Iterable[str] | None = None) -> Draw:
@@ -849,72 +900,3 @@ def _max_depth() -> int:
     from .config import notation_config
 
     return notation_config.max_depth
-
-
-def label_of(expression: Expression) -> str:
-    """The label that *expression* renders.
-
-    The label of a law, a kernel, or a function is its name, and a value's
-    label is its rendering.
-
-    A conditioning and a selection keep their base's label, a product without
-    a label joins its factors' labels with ``·``, and an applied function takes
-    the function's label. A value renders in full, as ``(y, mu) ~ model`` or
-    ``E[mu ~ prior]``, with each part grouped by design II.4.
-
-    Parameters
-    ----------
-    expression : Expression
-        The expression to render.
-
-    Returns
-    -------
-    str
-        The label, which shows at most ``notation_config.max_depth`` nested
-        levels.
-
-    Warns
-    -----
-    UserWarning
-        When the rendering nests more levels than ``notation_config.max_depth``.
-    """
-    rendering = _Rendering(_max_depth())
-    text = expression._label(rendering, 1)
-    _warn_if_collapsed(rendering)
-    return text
-
-
-def notation_of(expression: Expression, own: Signature | None = None) -> str:
-    """The notation that *expression* renders.
-
-    *own* is the signature that the term's declaration states.
-
-    A law, a kernel, or a function reads as its grouped label followed by its
-    signature, which lists the fixed paths after ``;``, as ``model(mu; y)``. A
-    product without a label reads factor by factor, as ``lik(y | mu)·prior(mu)``,
-    and the law of a function lifted over laws reads as the function's call,
-    as ``f(beta ~ model; y)``.
-
-    Parameters
-    ----------
-    expression : Expression
-        The expression to render.
-    own : Signature or None, optional
-        The components and given slots that the term's declaration states,
-        which replace those the expression records at its root.
-
-    Returns
-    -------
-    str
-        The notation, which shows at most ``notation_config.max_depth``
-        nested levels.
-
-    Warns
-    -----
-    UserWarning
-        When the rendering nests more levels than ``notation_config.max_depth``.
-    """
-    rendering = _Rendering(_max_depth())
-    text = expression._notation(rendering, 1, own)
-    _warn_if_collapsed(rendering)
-    return text

@@ -36,9 +36,6 @@ from ._expression import (
     Expression,
     Named,
     Signature,
-    fixed_paths_of,
-    label_of,
-    with_defaulted_givens,
 )
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
@@ -223,7 +220,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         overrides this, so the state follows the expression.
         """
         object.__setattr__(self, "_expression", expression)
-        object.__setattr__(self, "_label", label_of(expression))
+        object.__setattr__(self, "_label", expression.render_label())
 
     def _own_signature(self) -> Signature | None:
         """The signature the term's declaration states; ``None`` for a value, which has none."""
@@ -245,9 +242,9 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         if own is None:
             return Named(label)
         expression = self._expression
-        kept = with_defaulted_givens(own, expression)
+        kept = expression.full_signature(own)
         return Named(
-            label, Signature(kept.components, kept.given, fixed_paths_of(expression), kept.defaults)
+            label, Signature(kept.components, kept.given, expression.fixed_paths(), kept.defaults)
         )
 
     # -- identity ------------------------------------------------------------

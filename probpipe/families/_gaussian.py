@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
-from ..core._expression import Operator, label_of
+from ..core._expression import Operator
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -857,7 +857,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
         expression = Operator("+", (left._embedded_expression(), right._embedded_expression()))
         super().__init__(
             _component_of(left),
-            label=label_of(expression),
+            label=expression.render_label(),
             output_spec=left._output_spec,
             event_spec=left.event_spec,
         )

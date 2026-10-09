@@ -32,11 +32,6 @@ from probpipe.core._expression import (
     Signature,
     Summary,
     constant,
-    core_of,
-    fixed_paths_of,
-    label_of,
-    notation_of,
-    with_fixed,
 )
 from probpipe.core._fingerprint import fingerprint
 
@@ -137,7 +132,7 @@ class TestRendering:
         ],
     )
     def test_a_law_renders_its_label_and_its_notation(self, expression, label, notation):
-        assert (label_of(expression), notation_of(expression)) == (label, notation)
+        assert (expression.render_label(), expression.render_notation()) == (label, notation)
 
     @pytest.mark.parametrize(
         ("expression", "label"),
@@ -219,16 +214,16 @@ class TestRendering:
         ],
     )
     def test_a_value_renders_in_full_as_its_label(self, expression, label):
-        assert label_of(expression) == notation_of(expression) == label
+        assert expression.render_label() == expression.render_notation() == label
 
     def test_a_terms_own_signature_replaces_the_recorded_one(self):
         expression = Conditioned(_named("model", "y", "mu"), ("y",))
-        assert notation_of(expression) == "model"
-        assert notation_of(expression, Signature(("mu",))) == "model(mu; y)"
+        assert expression.render_notation() == "model"
+        assert expression.render_notation(Signature(("mu",))) == "model(mu; y)"
 
     def test_labels_join_associatively_and_group_other_labels(self):
         product = Product((Named("lik·prior"), Named("model | y"), Named("my prior")))
-        assert label_of(product) == "lik·prior·(model | y)·[my prior]"
+        assert product.render_label() == "lik·prior·(model | y)·[my prior]"
 
 
 class TestFixedPaths:
@@ -236,21 +231,21 @@ class TestFixedPaths:
 
     def test_each_node_holds_its_bases_fixed_paths(self):
         named = Named("post", Signature(("mu",), (), ("y",)))
-        assert fixed_paths_of(named) == ("y",)
+        assert named.fixed_paths() == ("y",)
         conditioned = Conditioned(named, ("z", "y"))
-        assert fixed_paths_of(conditioned) == ("y", "z")
-        assert fixed_paths_of(Selected(conditioned, ("mu",))) == ("y", "z")
-        assert fixed_paths_of(Indexed(conditioned, "row=0")) == ("y", "z")
-        assert fixed_paths_of(Product((conditioned,))) == ()
+        assert conditioned.fixed_paths() == ("y", "z")
+        assert Selected(conditioned, ("mu",)).fixed_paths() == ("y", "z")
+        assert Indexed(conditioned, "row=0").fixed_paths() == ("y", "z")
+        assert Product((conditioned,)).fixed_paths() == ()
 
     def test_with_fixed_adds_only_the_paths_not_held(self):
         base = Conditioned(Named("model"), ("y",))
-        assert with_fixed(base, ("y",)) is base
-        assert fixed_paths_of(with_fixed(base, ("z/a", "y"))) == ("y", "z/a")
+        assert base.with_fixed(("y",)) is base
+        assert base.with_fixed(("z/a", "y")).fixed_paths() == ("y", "z/a")
 
     def test_core_of_strips_conditionings_and_selections(self):
         product = Product((Named("a"), Named("b")))
-        assert core_of(Selected(Conditioned(product, ("y",)), ("a",))) is product
+        assert Selected(Conditioned(product, ("y",)), ("a",)).core() is product
 
 
 class TestDepth:
@@ -266,22 +261,22 @@ class TestDepth:
     def test_a_shallow_rendering_does_not_warn(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert label_of(self._chain(2)) == "(x + 1) + 1"
+            assert self._chain(2).render_label() == "(x + 1) + 1"
 
     def test_a_deeper_rendering_collapses_a_value_to_an_ellipsis_and_warns(self):
         probpipe.notation_config.max_depth = 2
         with pytest.warns(UserWarning, match="notation_config.max_depth=2"):
-            assert label_of(self._chain(3)) == "(… + 1) + 1"
+            assert self._chain(3).render_label() == "(… + 1) + 1"
 
     def test_a_collapsed_law_or_function_shows_its_label(self):
         probpipe.notation_config.max_depth = 1
         lifted = Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),))))
         with pytest.warns(UserWarning, match="max_depth"):
-            assert label_of(lifted) == "E[f]"
+            assert lifted.render_label() == "E[f]"
         product = Draw(("a", "b"), Product((_named("a", "a"), _named("b", "b"))))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert label_of(product) == "(a, b) ~ a·b"
+            assert product.render_label() == "(a, b) ~ a·b"
 
     def test_a_law_reads_in_full_at_any_depth(self):
         """A conditioning or a selection nests no level, so a draw from one reads in full."""
@@ -289,16 +284,16 @@ class TestDepth:
         draw = Draw(("mu",), Selected(Conditioned(Named("model"), ("y",)), ("mu",)))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert label_of(Summary("E", draw)) == "E[mu ~ model; y]"
+            assert Summary("E", draw).render_label() == "E[mu ~ model; y]"
 
     def test_raising_the_depth_shows_the_collapsed_levels(self):
         deep = self._chain(10)
         with pytest.warns(UserWarning):
-            assert "…" in label_of(deep)
+            assert "…" in deep.render_label()
         probpipe.notation_config.max_depth = 12
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert "…" not in label_of(deep)
+            assert "…" not in deep.render_label()
 
     def test_a_stored_tree_is_bounded(self):
         """A long derivation stores a tree of bounded depth, which copies and pickles."""
@@ -350,7 +345,7 @@ class TestTheLabelIsTheExpressionsLabel:
 
     def test_every_term_carries_the_label_of_its_expression(self):
         for term in self._terms():
-            assert term.label == label_of(term._expression), term
+            assert term.label == term._expression.render_label(), term
 
     def test_with_label_replaces_the_expression_with_the_label(self):
         """A user's label hides the derivation, and the paths the law holds fixed stay."""

@@ -24,9 +24,7 @@ from ..core._expression import (
     Named,
     Product,
     Selected,
-    core_of,
     joined_labels,
-    with_fixed,
 )
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
@@ -121,7 +119,7 @@ def _is_named(joint: Any) -> bool:
     expression, possibly conditioned or selected, and a labeled one carries
     its label.
     """
-    return not isinstance(core_of(joint._expression), Product)
+    return not isinstance(joint._expression.core(), Product)
 
 
 def _product_of(factors: Iterable[Any]) -> Product:
@@ -139,7 +137,7 @@ def _with_named(joint: Any, named: bool) -> Any:
     if named == _is_named(joint):
         return joint
     core = Named(joint.label) if named else _product_of(joint.factors)
-    joint._store_expression(with_fixed(core, _fixed_paths(joint)))
+    joint._store_expression(core.with_fixed(_fixed_paths(joint)))
     return joint
 
 
@@ -165,8 +163,8 @@ def _derived_product(joint: Any, source: Any) -> Any:
     held = _fixed_paths(joint)
     expression = source._expression
     if [factor.label for factor in joint.factors] != [part.label for part in source.factors]:
-        expression = Selected(core_of(expression), tuple(joint.event_spec.components))
-    joint._store_expression(with_fixed(expression, held))
+        expression = Selected(expression.core(), tuple(joint.event_spec.components))
+    joint._store_expression(expression.with_fixed(held))
     return joint
 
 
