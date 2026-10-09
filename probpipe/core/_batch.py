@@ -825,6 +825,15 @@ class Batch[E](TrackedTerm, ABC):
         and a stored object returned as it is keeps its own.
         """
 
+    def _element_call(self, index: tuple[int, ...]) -> Expression | None:
+        """The call of the row at *index* of a batch of lifted laws, which the element's notation reads.
+
+        A batch that stores the laws a function lifted over laws gives returns
+        the stored law's call, as ``f(mu ~ prior, 4.0)``; this default, and any
+        other batch, returns ``None``.
+        """
+        return None
+
     @abstractmethod
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the sub-batch at a partial positional *index*.
@@ -934,6 +943,9 @@ class Batch[E](TrackedTerm, ABC):
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
+            call = self._element_call(dropped)
+            if call is not None and isinstance(expression, Indexed):
+                expression = replace(expression, element=call)
             element = self._element_at(dropped, label=label)
             given = expression_of(element) if isinstance(element, TrackedTerm) else None
             if isinstance(given, Named) and given.label == label:

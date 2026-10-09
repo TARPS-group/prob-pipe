@@ -385,7 +385,11 @@ class Indexed(Expression):
     """A selection of a batch, labeled by the batch's grouped label and the selected levels.
 
     It holds its base's fixed paths, so an element of a batch of posteriors
-    reads as ``model[dataset=0](mu; y)``.
+    reads as ``model[dataset=0](mu; y)``. A selection of a batch of laws that
+    a function lifted over laws gives keeps the call in its notation, as
+    ``effect_of(mu ~ prior, tau)[tau=1:3]``, and an element of that batch
+    reads as its own row's call, :attr:`element`, as
+    ``effect_of(mu ~ prior, 4.0)``.
 
     Attributes
     ----------
@@ -396,17 +400,23 @@ class Indexed(Expression):
     signature : Signature or None
         The components of an element law, recorded where the node is a child
         of another node; ``None`` for a term's own expression.
+    element : Expression or None
+        The call of the row an element of a lifted batch holds, which its
+        notation and its draws read; ``None`` for any other selection.
     """
 
     base: Expression
     index: str
     signature: Signature | None = None
+    element: Expression | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base", _kept(self.base))
+        if self.element is not None:
+            object.__setattr__(self, "element", _kept(self.element))
 
     def _children(self) -> tuple[Expression, ...]:
-        return (self.base,)
+        return (self.base,) if self.element is None else (self.base, self.element)
 
 
 # Each node class caches nothing and holds only its fields, so a node compares
@@ -570,10 +580,10 @@ class _Rendering:
                 return joined_labels(self.label(factor, level + 1) for factor in expression.factors)
             case Applied():
                 return expression.function
-            case Draw() if isinstance(expression.law, Applied):
+            case Draw() if (call := self._call(expression.law, level)) is not None:
                 # The law of a lifted function is the function at draws of its
                 # inputs, so a draw from it is that call, at the draw's level.
-                return self.notation(expression.law, level, None)
+                return call
         if level > self.max_depth:
             return self._collapse(expression)
         match expression:
@@ -600,6 +610,33 @@ class _Rendering:
                     f"{grouped_label(self.label(expression.base, level + 1))}[{expression.index}]"
                 )
         raise TypeError(f"cannot render {type(expression).__name__}")
+
+    def _call(self, law: Expression, level: int) -> str | None:
+        """The call the law of a lifted function renders as, or ``None`` for any other law.
+
+        The law of a function lifted over laws renders as the call, as
+        ``f(mu ~ prior, tau)``; an element of a lifted batch as its row's
+        call, as ``f(mu ~ prior, 4.0)``; and any other selection of a lifted
+        batch as the batch's call and the selected levels, as
+        ``f(mu ~ prior, tau)[tau=1:3]``.
+        """
+        if isinstance(law, Applied):
+            return self.notation(law, level, None)
+        if isinstance(law, Indexed):
+            if law.element is not None:
+                return self._call(law.element, level)
+            call = self._call(law.base, level + 1)
+            if call is not None:
+                return f"{grouped_label(call)}[{law.index}]"
+        return None
+
+    def _argument(self, argument: Expression, level: int) -> str:
+        """An applied function's argument: a law or a kernel by its notation, and a value by its label."""
+        if isinstance(argument, (Named, Conditioned, Selected, Indexed)) and (
+            argument.signature is not None
+        ):
+            return self.notation(argument, level, None)
+        return self.label(argument, level)
 
     def _operator(self, expression: Operator, level: int) -> str:
         """The rendering of an operator over its operands, each grouped as an operand."""
@@ -628,8 +665,12 @@ class _Rendering:
             case Applied():
                 if level > self.max_depth:
                     return self._collapse(expression)
-                arguments = ", ".join(self.label(arg, level + 1) for arg in expression.arguments)
+                arguments = ", ".join(
+                    self._argument(arg, level + 1) for arg in expression.arguments
+                )
                 return f"{expression.function}({arguments})"
+            case Indexed() if (call := self._call(expression, level)) is not None:
+                return call
             case Named() | Conditioned() | Selected() | Indexed():
                 signature = own or expression.signature
                 if signature is None:

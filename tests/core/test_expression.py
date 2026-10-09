@@ -121,6 +121,28 @@ class TestRendering:
                 "f(beta ~ m; y)",
                 id="applied",
             ),
+            pytest.param(
+                Applied("log_prob", (_named("g", "g"), Draw(("q",), _named("q", "q")))),
+                "log_prob",
+                "log_prob(g(g), q ~ q)",
+                id="applied-to-a-law",
+            ),
+            pytest.param(
+                Indexed(
+                    Applied("f", (Draw(("mu",), Named("m")), Named("tau"))),
+                    "tau=3",
+                    element=Applied("f", (Draw(("mu",), Named("m")), constant(4.0))),
+                ),
+                "f[tau=3]",
+                "f(mu ~ m, 4.0)",
+                id="element-of-a-lifted-batch",
+            ),
+            pytest.param(
+                Indexed(Applied("f", (Draw(("mu",), Named("m")), Named("tau"))), "tau=1:3"),
+                "f[tau=1:3]",
+                "f(mu ~ m, tau)[tau=1:3]",
+                id="selection-of-a-lifted-batch",
+            ),
         ],
     )
     def test_a_law_renders_its_label_and_its_notation(self, expression, label, notation):
@@ -164,6 +186,21 @@ class TestRendering:
                 Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),)))),
                 "E[f(b ~ m)]",
                 id="mean-of-a-lifted-law",
+            ),
+            pytest.param(
+                Summary(
+                    "E",
+                    Draw(
+                        ("f",),
+                        Indexed(
+                            Applied("f", (Named("tau"),)),
+                            "tau=1",
+                            element=Applied("f", (constant(2.0),)),
+                        ),
+                    ),
+                ),
+                "E[f(2.0)]",
+                id="mean-of-an-element-of-a-lifted-batch",
             ),
             pytest.param(Operator("*", (constant(2), Named("effect"))), "2 * effect", id="binary"),
             pytest.param(

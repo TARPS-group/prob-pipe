@@ -197,7 +197,7 @@ class TestLiftedScores:
         assert isinstance(lifted, Distribution)
         # The law of the score at draws of the value is the operation at a draw,
         # and its component is the operation's name, never a derived label.
-        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g, v ~ v)")
+        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), v ~ v)")
         assert list(lifted.event_spec.components) == ["log_prob"]
 
     def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):

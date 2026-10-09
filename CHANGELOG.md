@@ -2184,7 +2184,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name them where a product can take that order, so
   `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
   where it was labeled `a·b`. A product that a function returns prints by the
-  function's output label, as `predict(y, mu)`.
+  function's output label, as `predict(y, mu)`. A batch of laws prints as the
+  notation of one law under its label, `over`, and its levels, as
+  `schools(effect) over school`, and a batch that a function lifted over a
+  law and swept over a batch gives prints as the call, as
+  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
+  position, as `effect_of[tau=3]`, and prints as its row's call, as
+  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
+  notation, as `log_prob(g(g), q ~ q)`.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`

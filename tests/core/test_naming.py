@@ -741,6 +741,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
         assert scores.label == "log schools(effect)"
         assert scores[1].label == "(log schools(effect))[school=1]"
         assert laws[1].notation == "schools[school=1](effect)"
+        assert str(laws) == "schools(effect) over school"
 
     def test_a_field_of_a_draw_takes_its_key(self):
         with workflow_run(seed=0):
@@ -808,6 +809,30 @@ class TestTheLabelsOfALiftedFunction:
         assert laws[1].label == "shifted[tau=1]"
         assert means.label == "E[shifted(mu ~ mu, tau)]"
         assert means[1].label == "E[shifted(mu ~ mu, tau)][tau=1]"
+
+    def test_a_lifted_batch_displays_its_call_and_its_element_its_rows_call(self):
+        @function
+        def effect_of(mu: jax.Array, tau: jax.Array) -> jax.Array:
+            return mu + tau
+
+        taus = NumericArrayBatch("tau", jnp.arange(1.0, 6.0), "tau")
+        with workflow_run(seed=0):
+            laws = effect_of.with_options(n_broadcast_samples=8)(Normal("mu", 0.0, 1.0), taus)
+            element = laws[3]
+            assert mean(element).label == "E[effect_of(mu ~ mu, 4.0)]"
+            assert sample(element).label == "effect_of(mu ~ mu, 4.0)"
+        assert str(laws) == "effect_of(mu ~ mu, tau) over tau"
+        # The element keeps the label of its position, and displays as its row's call.
+        assert (element.label, str(element)) == ("effect_of[tau=3]", "effect_of(mu ~ mu, 4.0)")
+        selection = laws[1:3]
+        assert selection.label == "effect_of[tau=1:3]"
+        assert str(selection) == "effect_of(mu ~ mu, tau)[tau=1:3] over tau"
+
+    def test_a_law_passed_to_a_lifted_call_displays_by_its_notation(self):
+        with workflow_run(seed=0):
+            lifted = log_prob(Normal("g", 0.0, 1.0), Normal("q", 0.0, 1.0))
+        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), q ~ q)")
+        assert list(lifted.event_spec.components) == ["log_prob"]
 
     def test_a_function_called_on_values_takes_its_output_label(self):
         @function

@@ -345,7 +345,10 @@ def _result_expression(function: Function, values: Mapping[str, Any]) -> Express
 
 
 def _lifted_expression(
-    function: Function, values: Mapping[str, Any], plan: _plan.StochasticPlan
+    function: Function,
+    values: Mapping[str, Any],
+    plan: _plan.StochasticPlan,
+    call_values: Mapping[str, Any] | None = None,
 ) -> Applied:
     """The expression of the law of *function* lifted over the laws among *values* (II.4).
 
@@ -355,17 +358,22 @@ def _lifted_expression(
     root, as ``f((a, b) ~ model)``; each other tracked argument by its
     expression; and each other value by its value when it is a scalar, as
     ``2.0``, and by its parameter's name otherwise, as ``X``, except a value
-    left at its parameter's default.
+    left at its parameter's default. A row of a sweep shows each scalar it
+    takes from a swept batch by its value, as ``f(mu ~ prior, 4.0)``.
 
     Parameters
     ----------
     function : Function
         The function lifted, whose output label names the call.
     values : Mapping of str to Any
-        The call's arguments, by parameter name.
+        The call's arguments, by parameter name, or a row's arguments in a
+        sweep.
     plan : StochasticPlan
         The plan of the lift, whose source groups say which arguments are
         drawn together.
+    call_values : Mapping of str to Any or None, optional
+        The arguments of the sweep *values* is a row of; an argument whose
+        row value is not the call's is a row of a swept batch.
 
     Returns
     -------
@@ -396,6 +404,8 @@ def _lifted_expression(
             arguments.append(
                 Draw(tuple(components), embedded(_drawn_together_from(laws, plan, index)))
             )
+        elif _is_swept_scalar(value, ref, call_values):
+            arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
         elif isinstance(value, TrackedTerm):
             arguments.append(embedded(value))
         elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
@@ -417,6 +427,15 @@ def _swept_expression(
     if plan is not None:
         return _lifted_expression(function, values, plan)
     return _result.KEEP_EXPRESSION if expression is None else expression
+
+
+def _is_swept_scalar(
+    value: Any, ref: _binding.FunctionInputRef, call_values: Mapping[str, Any] | None
+) -> bool:
+    """Whether *value*, a row's argument at *ref*, is a scalar row of a batch the call sweeps."""
+    if call_values is None or not _is_scalar(value):
+        return False
+    return _binding.input_ref_value(call_values, ref) is not value
 
 
 def _is_scalar(value: Any) -> bool:
@@ -745,7 +764,7 @@ def _run_call(
             # The component of an undeclared output is the function's output
             # label, which is a name, and the law carries the applied function.
             output_label=function.output_label,
-            output_expression=_lifted_expression(function, row_values, plan),
+            output_expression=_lifted_expression(function, row_values, plan, values),
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
             output_template=concrete_output_template,
