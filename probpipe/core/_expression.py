@@ -188,12 +188,10 @@ class Expression:
         return Conditioned(self, added) if added else self
 
     def signed(self, signature: Signature) -> Expression:
-        """This node recording *signature*, the signature of the term it describes.
+        """This node recording *signature* as the signature of the term it describes.
 
-        A node that has a law, a kernel, or a function as a child records the
-        child's signature, since the node holds no term. A label, a
-        conditioning, a selection, and an indexed batch record it, and any
-        other node is returned as it is.
+        A label, a conditioning, a selection, and an indexed batch record it,
+        and any other node is returned as it is.
         """
         return self
 
@@ -379,6 +377,9 @@ class _Signed(Expression):
     """
 
     __slots__ = ()
+
+    #: The recorded signature, which each subclass stores in its field.
+    signature: Signature | None
 
     def signed(self, signature: Signature) -> Expression:
         if self.signature == signature:
