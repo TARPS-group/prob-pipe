@@ -2212,8 +2212,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   label groups a product.** `str()` of a law, a kernel, or a function returns
   its new `notation` property: its label followed by its signature, which lists
   what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
-  kernel, and `predict(x, y)` for a function. It returned the repr before, and
-  the repr is unchanged. A product that `*` or `joint` builds prints factor by
+  kernel, and `predict(x, y)` for a function. A given slot or a parameter
+  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
+  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
+  A slot with a default stays given once conditioning binds the others, so
+  `condition_on(counts, {"K": k, "r": q})` prints as
+  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
+  It returned the repr before. A product that `*` or `joint` builds prints factor by
   factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
   `with_label` or by the `FactoredDistribution` constructor prints by that
   label, as `model(y, mu)`. A label built from another label parenthesizes a

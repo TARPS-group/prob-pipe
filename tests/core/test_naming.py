@@ -663,6 +663,71 @@ class TestTheLabelsOfResults:
         assert notation_of(expression, Signature(("y",))) == "model(y)"
 
 
+#: A default that is not a scalar, which a signature shows as ``…``.
+_OFFSETS = jnp.zeros(3)
+
+
+def _counts() -> Any:
+    """A kernel over ``y`` given ``K`` and ``r``, with the slot ``n0`` defaulting to 50.0."""
+
+    def counts(K: jax.Array, r: jax.Array, n0: float = 50.0) -> Normal:
+        return Normal("y", K * r * n0, 1.0)
+
+    return conditional_distribution(
+        counts, given_spec={"K": NumericArraySpec(()), "r": NumericArraySpec(())}
+    )
+
+
+class TestADefaultedSlotShowsItsDefault:
+    """A given slot or a parameter with a default reads ``name=value`` until a given binds it."""
+
+    def test_a_kernel_shows_its_defaulted_slot(self):
+        assert str(_counts()) == "counts(y | K, r, n0=50.0)"
+
+    def test_a_law_left_at_a_default_keeps_the_slot_as_given(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
+        assert at.notation == "counts(y | n0=50.0; K, r)"
+        assert not hasattr(at, "given_spec")
+
+    def test_a_curried_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
+        assert str(condition_on(_counts(), {"K": 300.0})) == "counts(y | r, n0=50.0; K)"
+
+    def test_binding_the_defaulted_slot_moves_it_to_the_fixed_paths(self):
+        bound = condition_on(_counts(), {"K": 300.0, "r": 0.4, "n0": 10.0})
+        assert bound.notation == "counts(y; K, r, n0)"
+        assert str(condition_on(_counts(), {"n0": 10.0})) == "counts(y | K, r; n0)"
+
+    def test_a_factor_left_by_conditioning_a_joint_keeps_the_defaulted_slot(self):
+        prior = (Normal("K", 300.0, 10.0) * Normal("r", 0.4, 0.1)).with_label("prior")
+        model = _counts() * prior
+        assert str(model) == "counts(y | K, r, n0=50.0)·prior(K, r)"
+        assert condition_on(model, {"K": 300.0, "r": 0.4}).notation == ("counts(y | n0=50.0; K, r)")
+
+    def test_a_relabeled_law_keeps_the_defaulted_slot(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
+        assert at.notation == "at_values(y | n0=50.0; K, r)"
+
+    def test_a_value_computed_from_the_law_reads_its_notation(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
+        assert log_prob(at, 1.0).label == "log counts(y | n0=50.0; K, r)"
+        with workflow_run(seed=0):
+            assert sample(at).label == "y ~ counts; K, r"
+
+    def test_a_non_scalar_default_shows_an_ellipsis(self):
+        def shifted(mu: jax.Array, offsets: jax.Array = _OFFSETS) -> Normal:
+            return Normal("y", mu + offsets, 1.0)
+
+        kernel = conditional_distribution(shifted, given_spec={"mu": NumericArraySpec(())})
+        assert str(kernel) == "shifted(y | mu, offsets=…)"
+
+    def test_a_function_shows_its_parameters_defaults(self):
+        @function
+        def predict(x: jax.Array, scale: float = 1.0) -> jax.Array:
+            return x * scale
+
+        assert str(predict) == "predict(x, scale=1.0)"
+
+
 class TestTheLabelsOfValuesComputedFromALaw:
     """A value computed from a law is labeled by the value over the law, in probability notation."""
 

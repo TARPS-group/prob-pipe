@@ -69,7 +69,7 @@ class TestNotation:
         def predict(x, theta=1.0):
             return x * theta
 
-        assert predict.notation == "predict(x, theta)"
+        assert predict.notation == "predict(x, theta=1.0)"
 
     def test_a_function_of_no_parameters_reads_as_an_empty_call(self):
         assert Function("draw", lambda: 1.0).notation == "draw()"

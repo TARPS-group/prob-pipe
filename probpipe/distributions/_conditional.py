@@ -24,9 +24,9 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
-from ..core._expression import Signature, expression_of, notation_of
+from ..core._expression import ELLIPSIS, Signature, expression_of, notation_of
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
@@ -779,8 +779,22 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return notation_of(expression_of(self), self._own_signature())
 
     def _own_signature(self) -> Signature:
-        """The signature the declaration states: the event components, then the given slots."""
-        return Signature(tuple(self.event_spec.components), tuple(self.given_spec))
+        """The signature the declaration states: the event components, then the given slots.
+
+        An optional slot shows its default, as ``n0=50.0``, or ``n0=…`` where
+        the default is not a scalar or the kernel does not know its value.
+        """
+        known = self._given_defaults()
+        defaults = tuple(
+            (slot, format_default(known[slot]) if slot in known else ELLIPSIS)
+            for slot in self.given_spec
+            if slot in self.given_spec.optional
+        )
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), (), defaults)
+
+    def _given_defaults(self) -> Mapping[str, Any]:
+        """The value each optional given slot takes when a binding omits it, where the kernel knows it."""
+        return {}
 
     def __str__(self) -> str:
         """The kernel's :attr:`notation`, as ``glm(y | beta)``."""
@@ -1039,6 +1053,18 @@ class _FunctionKernel(ConditionalDistribution):
         object.__setattr__(self, "_slots", given_spec)
         object.__setattr__(self, "_bound", {})
         object.__setattr__(self, "_guards", dict(guards))
+
+    def _given_defaults(self) -> Mapping[str, Any]:
+        """The defaults of the function's parameters, which its optional slots take."""
+        try:
+            parameters = inspect.signature(self._fn).parameters
+        except (TypeError, ValueError):
+            return {}
+        return {
+            name: parameter.default
+            for name, parameter in parameters.items()
+            if parameter.default is not parameter.empty
+        }
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any

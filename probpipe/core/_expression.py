@@ -68,6 +68,7 @@ __all__ = [
     "Summary",
     "constant",
     "core_of",
+    "defaulted_givens_of",
     "draw_of",
     "embedded",
     "expression_of",
@@ -76,6 +77,7 @@ __all__ = [
     "label_of",
     "notation_of",
     "own_signature",
+    "with_defaulted_givens",
     "with_fixed",
     "with_signature",
 ]
@@ -106,11 +108,16 @@ class Signature:
         The paths a law or a kernel holds fixed at given values, in the order
         they were fixed. Only a :class:`Named` node reads them from its
         signature; every other node reads them from the tree.
+    defaults : tuple of (str, str)
+        Each given slot or parameter that has a default, with the default as
+        :func:`~probpipe.core._repr.format_default` formats it, in declaration
+        order; the signature writes it ``name=value``.
     """
 
     components: tuple[str, ...]
     given: tuple[str, ...] = ()
     fixed: tuple[str, ...] = ()
+    defaults: tuple[tuple[str, str], ...] = ()
 
 
 class Expression:
@@ -468,6 +475,52 @@ def with_fixed(expression: Expression, paths: Iterable[str]) -> Expression:
     return Conditioned(expression, added) if added else expression
 
 
+def defaulted_givens_of(expression: Expression) -> tuple[tuple[str, str], ...]:
+    """The given slots with a default that the law or kernel *expression* describes leaves free.
+
+    A kernel's given slot that has a default stays a given of every law and
+    kernel conditioning makes from it until a conditioning fixes it, so a
+    kernel ``counts(y | K, n0=50.0)`` at ``K`` is ``counts(y | n0=50.0; K)``.
+    A :class:`Named` node gives those its signature records, a
+    :class:`Conditioned` node its base's that it does not fix, and a selection
+    or an indexed batch its base's. Any other node gives none.
+    """
+    if isinstance(expression, Named):
+        signature = expression.signature
+        if signature is None:
+            return ()
+        return tuple(
+            (name, text)
+            for name, text in signature.defaults
+            if name in signature.given and name not in signature.fixed
+        )
+    if isinstance(expression, Conditioned):
+        fixed = fixed_paths_of(expression)
+        return tuple(
+            (name, text) for name, text in defaulted_givens_of(expression.base) if name not in fixed
+        )
+    if isinstance(expression, (Selected, Indexed)):
+        return defaulted_givens_of(expression.base)
+    return ()
+
+
+def with_defaulted_givens(signature: Signature, expression: Expression) -> Signature:
+    """*signature* with the defaulted given slots *expression* leaves free appended to its givens."""
+    free = [
+        (name, text)
+        for name, text in defaulted_givens_of(expression)
+        if name not in signature.given and name not in signature.components
+    ]
+    if not free:
+        return signature
+    return Signature(
+        signature.components,
+        signature.given + tuple(name for name, _ in free),
+        signature.fixed,
+        signature.defaults + tuple(free),
+    )
+
+
 def with_signature(expression: Expression, signature: Signature | None) -> Expression:
     """*expression* recording *signature*, the components and given slots of the term it describes.
 
@@ -480,10 +533,15 @@ def with_signature(expression: Expression, signature: Signature | None) -> Expre
     if isinstance(expression, Named):
         return Named(
             expression.label,
-            Signature(signature.components, signature.given, fixed_paths_of(expression)),
+            Signature(
+                signature.components,
+                signature.given,
+                fixed_paths_of(expression),
+                signature.defaults,
+            ),
         )
     if isinstance(expression, (Conditioned, Selected, Indexed)):
-        own = Signature(signature.components, signature.given)
+        own = Signature(signature.components, signature.given, defaults=signature.defaults)
         return expression if expression.signature == own else replace(expression, signature=own)
     return expression
 
@@ -675,17 +733,26 @@ class _Rendering:
                 signature = own or expression.signature
                 if signature is None:
                     return self.label(expression, level)
-                text = format_signature(
-                    signature.components, signature.given, fixed_paths_of(expression)
+                return format_notation(
+                    self.label(expression, level), _signature_text(signature, expression)
                 )
-                return format_notation(self.label(expression, level), text)
         label = self.label(expression, level)
         if own is None:
             return label
         # A law whose expression is a value's, as a sum of random functions is,
         # reads as that expression grouped and followed by its signature.
-        text = format_signature(own.components, own.given, fixed_paths_of(expression))
-        return format_notation(label, text)
+        return format_notation(label, _signature_text(own, expression))
+
+
+def _signature_text(signature: Signature, expression: Expression) -> str:
+    """The signature of the term *expression* describes, with its fixed paths and free defaults."""
+    signature = with_defaulted_givens(signature, expression)
+    return format_signature(
+        signature.components,
+        signature.given,
+        fixed_paths_of(expression),
+        dict(signature.defaults),
+    )
 
 
 def _warn_if_collapsed(rendering: _Rendering) -> None:

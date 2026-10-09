@@ -257,9 +257,9 @@ When `given` names several fields, the cases combine: the exact bindings, curry 
 **The result's label and fixed paths.** The result keeps the label of the law it conditions and records the paths it fixes (II.4):
 
 1. **The label.** The result keeps the label of `d`, so `condition_on(model, {"y": data})` is labeled `model`, and a kernel applied at given slots keeps the kernel's label. A joint whose given fixes the whole events of the factors upstream of the rest leaves the other factors at the given values, and the result takes their labels joined with `·`, so `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik`.
-2. **The fixed paths.** The result holds the paths the given fixes, after any paths `d` holds, and its signature lists them after `;`. A law used as the given fixes its components, and a kernel applied at some of its slots holds those slots fixed while its other slots stay given. A given that names no path fixes none. The result of every route holds them, an inference method's included.
+2. **The fixed paths.** The result holds the paths the given fixes, after any paths `d` holds, and its signature lists them after `;`. A law used as the given fixes its components, and a kernel applied at some of its slots holds those slots fixed while its other slots stay given. A slot with a default that the given leaves out stays given with its default, as `n0=50.0`, also once the result is a law, since the law is the kernel's at that default; a given that binds it moves it to the fixed paths. A given that names no path fixes none. The result of every route holds them, an inference method's included.
 
-For `model = (lik * prior).with_label("model")`, with `lik` over `y` given `mu` and `prior` over `mu`, and a kernel `glm` over `y`:
+For `model = (lik * prior).with_label("model")`, with `lik` over `y` given `mu` and `prior` over `mu`, a kernel `glm` over `y`, and a kernel `counts` over `y` given `K` and `r` and the slot `n0` whose default is `50.0`:
 
 | Call | Label | Notation |
 |---|---|---|
@@ -267,6 +267,8 @@ For `model = (lik * prior).with_label("model")`, with `lik` over `y` given `mu` 
 | `condition_on(model, {"mu": 0.5})` | `lik` | `lik(y; mu)` |
 | `condition_on(glm, {"beta": b})` for `glm` given `beta` | `glm` | `glm(y; beta)` |
 | `condition_on(glm, {"beta": b})` for `glm` given `beta` and `sigma` | `glm` | `glm(y \| sigma; beta)` |
+| `condition_on(counts, {"K": k, "r": q})` | `counts` | `counts(y \| n0=50.0; K, r)` |
+| `condition_on(counts, {"K": k, "r": q, "n0": n})` | `counts` | `counts(y; K, r, n0)` |
 
 A batch of givens labels its batch of laws by the same rule, read at the paths each element fixes, and each law of the batch holds those paths fixed. The result exposes its event (VI.0), so its components are the conditional law's.
 

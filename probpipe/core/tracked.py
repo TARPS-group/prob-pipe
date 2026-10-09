@@ -32,7 +32,15 @@ from collections.abc import Mapping
 # exposes; the conflict-avoidance constraint itself doesn't change.
 from typing import Any, Self, _ProtocolMeta
 
-from ._expression import Expression, Named, Signature, expression_of, fixed_paths_of, label_of
+from ._expression import (
+    Expression,
+    Named,
+    Signature,
+    expression_of,
+    fixed_paths_of,
+    label_of,
+    with_defaulted_givens,
+)
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
@@ -227,8 +235,11 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         own = self._own_signature()
         if own is None:
             return Named(label)
-        fixed = fixed_paths_of(expression_of(self))
-        return Named(label, Signature(own.components, own.given, fixed))
+        expression = expression_of(self)
+        kept = with_defaulted_givens(own, expression)
+        return Named(
+            label, Signature(kept.components, kept.given, fixed_paths_of(expression), kept.defaults)
+        )
 
     # -- identity ------------------------------------------------------------
 

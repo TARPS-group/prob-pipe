@@ -34,6 +34,7 @@ __all__ = [
     "WIDTH",
     "call_repr",
     "format_components",
+    "format_default",
     "format_dtype",
     "format_levels",
     "format_names",
@@ -373,7 +374,10 @@ def grouped_label(label: str) -> str:
 
 
 def format_signature(
-    components: Iterable[str], given: Iterable[str] = (), fixed: Iterable[str] = ()
+    components: Iterable[str],
+    given: Iterable[str] = (),
+    fixed: Iterable[str] = (),
+    defaults: Mapping[str, str] | None = None,
 ) -> str:
     """The signature of a law, a kernel, or a function, which states what it is over.
 
@@ -386,21 +390,44 @@ def format_signature(
         A kernel's given slots, in declaration order.
     fixed : iterable of str, optional
         The paths fixed at given values.
+    defaults : Mapping[str, str], optional
+        The formatted default of each given slot or parameter that has one,
+        as :func:`format_default` gives it.
 
     Returns
     -------
     str
         The components joined by ``", "``, then `` | `` and the given slots when
         there are any, then ``; `` and the fixed paths when there are any, as
-        ``y, mu``, ``y | beta``, or ``y | sigma; beta``.
+        ``y, mu``, ``y | beta``, or ``y | sigma; beta``. A name with a default
+        reads ``name=value``, as ``y | K, n0=50.0``.
     """
-    text = ", ".join(components)
+    defaults = defaults or {}
+
+    def entry(name: str) -> str:
+        return f"{name}={defaults[name]}" if name in defaults else name
+
+    text = ", ".join(entry(name) for name in components)
     given, fixed = list(given), list(fixed)
     if given:
-        text = f"{text} | {', '.join(given)}"
+        text = f"{text} | {', '.join(entry(name) for name in given)}"
     if fixed:
         text = f"{text}; {', '.join(fixed)}"
     return text
+
+
+def format_default(value: Any) -> str:
+    """The default of a given slot or a parameter as a signature shows it.
+
+    A number, a string, ``None``, or an array of no axes reads as its value,
+    as ``50.0``, and any other value as ``…``, since its entries would not
+    read as one name's value.
+    """
+    if isinstance(value, bool | int | float | complex | str | type(None)):
+        return repr(value)
+    if getattr(value, "shape", None) == () and getattr(value, "dtype", None) is not None:
+        return format_value(value)
+    return "…"
 
 
 def format_components(components: Iterable[str]) -> str:

@@ -32,7 +32,7 @@ from ..core._dispatch import Feasibility
 from ..core._expression import Expression, Signature, expression_of, notation_of
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.config import WorkflowKind
@@ -1198,8 +1198,14 @@ class Function(Node, TrackedTerm, Annotated):
         return notation_of(expression_of(self), self._own_signature())
 
     def _own_signature(self) -> Signature:
-        """The signature: the names of the parameters, in order."""
-        return Signature(tuple(self.signature.parameters))
+        """The signature: the names of the parameters, in order, each default as ``name=value``."""
+        parameters = self.signature.parameters
+        defaults = tuple(
+            (name, format_default(parameter.default))
+            for name, parameter in parameters.items()
+            if parameter.default is not parameter.empty
+        )
+        return Signature(tuple(parameters), (), (), defaults)
 
     def __str__(self) -> str:
         """The function's :attr:`notation`, as ``predict(x, y)``."""

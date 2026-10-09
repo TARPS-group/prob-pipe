@@ -36,6 +36,7 @@ from probpipe import (
 from probpipe.core._dispatch import MethodInfo
 from probpipe.core._repr import (
     WIDTH,
+    format_default,
     format_notation,
     format_signature,
     grouped_label,
@@ -385,6 +386,21 @@ class TestSignatureAndNotation:
     def test_fixed_paths_follow_a_semicolon(self):
         assert format_signature(["mu"], fixed=["y"]) == "mu; y"
         assert format_signature(["y"], ["sigma"], ["beta"]) == "y | sigma; beta"
+
+    def test_a_name_with_a_default_reads_name_equals_value(self):
+        assert format_signature(["y"], ["K", "n0"], defaults={"n0": "50.0"}) == "y | K, n0=50.0"
+        assert format_signature(["x", "scale"], defaults={"scale": "1.0"}) == "x, scale=1.0"
+
+    @pytest.mark.parametrize(
+        ("value", "text"),
+        [(50.0, "50.0"), (3, "3"), ("exact", "'exact'"), (None, "None"), (jnp.asarray(2.0), "2.0")],
+    )
+    def test_a_scalar_default_reads_as_its_value(self, value, text):
+        assert format_default(value) == text
+
+    def test_any_other_default_reads_as_an_ellipsis(self):
+        assert format_default(jnp.zeros(3)) == "…"
+        assert format_default({"a": 1}) == "…"
 
     def test_a_signature_of_no_components_is_empty(self):
         assert format_signature([]) == ""
