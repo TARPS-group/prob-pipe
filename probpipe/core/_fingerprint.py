@@ -794,10 +794,12 @@ def _update_distribution(
         h.update(b"scales=")
         _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
-        # Generic fallback for other non-TFP distributions. The label and the
-        # expression state how the law displays, and record nothing about what
-        # it computes.
-        _SKIP = frozenset({"_label", "_expression", "_provenance", "_annotations"})
+        # Generic fallback for other non-TFP distributions. The label, the
+        # default label, and the expression state how the law displays, and
+        # record nothing about what it computes.
+        _SKIP = frozenset(
+            {"_label", "_default_label", "_expression", "_provenance", "_annotations"}
+        )
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue

@@ -62,7 +62,7 @@ from ..distributions._capabilities import (
     _capability_subclass,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution, _given_label
+from ..distributions._distribution import Distribution, _constructor_label, _given_label
 
 __all__ = ["PyMCModel", "StanModel"]
 
@@ -927,7 +927,7 @@ class StanModel(
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            _given_label(label, "StanModel"),
+            _constructor_label(self, label, "StanModel"),
             program.given_spec(bound),
             OutputSpec(program.parameter_record(bound)),
         )
@@ -1274,7 +1274,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
             ) from e
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         super().__init__(
-            _given_label(label, "PyMCModel"), OutputSpec(program.event_record(symbolic=False))
+            _constructor_label(self, label, "PyMCModel"),
+            OutputSpec(program.event_record(symbolic=False)),
         )
         self._program = program
 

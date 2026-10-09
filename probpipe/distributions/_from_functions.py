@@ -178,6 +178,7 @@ class _FunctionLaw(Distribution):
         SupportsLogProb: {"_log_prob": _normalized_density},
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _unnormalized_density},
     }
+    _default_label: ClassVar[str | None] = DEFAULT_LABEL
 
     def __new__(
         cls,

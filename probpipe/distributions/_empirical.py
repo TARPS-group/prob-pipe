@@ -51,7 +51,7 @@ from ._distribution import (
     _EMPTY_SELECTION,
     DEFAULT_LABEL,
     Distribution,
-    _given_label,
+    _constructor_label,
     _shared_final_names,
     _whole_term_component,
     _whole_term_event,
@@ -576,7 +576,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                 f"with_level_names"
             )
         super().__init__(
-            _given_label(label, DEFAULT_LABEL), _atoms_declaration(atom_spec, component, event_spec)
+            _constructor_label(self, label, DEFAULT_LABEL),
+            _atoms_declaration(atom_spec, component, event_spec),
         )
         if isinstance(atoms, Batch):
             stored = atoms

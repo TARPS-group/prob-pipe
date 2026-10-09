@@ -55,6 +55,7 @@ from ._distribution import (
     _event_repr_fields,
     _no_free_dims,
     _ordered_fields,
+    _repr_label,
     _unify_declarations,
 )
 
@@ -489,7 +490,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
     ``str(K)`` returns the kernel's :attr:`notation`, its label followed by its
-    signature, as ``glm(y | beta)``, and the repr keeps the label first.
+    signature, as ``glm(y | beta)``, and the repr shows the label first unless
+    it is the constructor's default.
 
     Parameters
     ----------
@@ -517,6 +519,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         If *given_spec* has no slots, *event_spec* has a type hole, or a given
         slot shares a name with a produced component.
     """
+
+    #: The label the constructor gives when it is given none, which the repr leaves out;
+    #: ``None`` for a class whose constructor requires a label.
+    _default_label: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -783,11 +789,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def __repr__(self) -> str:
         """The public class, the label, the family parameters, the given slots, and the declaration.
 
-        The event shows its component, or its declaration, as for a law.
+        The event shows its component, or its declaration, and the label is left
+        out where it is the default, as for a law.
         """
         arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
         fields = _ordered_fields(arguments, self._event_repr_arguments())
-        return term_repr(self._repr_class_name(), self.label, fields)
+        return term_repr(self._repr_class_name(), _repr_label(self), fields)
 
     def _repr_class_name(self) -> str:
         """The first public class in this kernel's method-resolution order, which the repr names."""
@@ -1005,6 +1012,7 @@ class _FunctionKernel(ConditionalDistribution):
     """
 
     _capability_table: ClassVar = _FUNCTION_KERNEL_CAPABILITIES
+    _default_label: ClassVar[str | None] = DEFAULT_LABEL
 
     def __new__(
         cls,

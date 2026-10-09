@@ -43,7 +43,7 @@ from ..distributions._capabilities import (
     SupportsConditionalVariance,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import DEFAULT_LABEL, _given_label, _whole_term_event
+from ..distributions._distribution import DEFAULT_LABEL, _constructor_label, _whole_term_event
 from ..linalg import LinOp
 from ..values import Function, SupportsInverse
 from ._backend import TFPDistribution
@@ -587,7 +587,9 @@ class _GLMLikelihood(
         object.__setattr__(self, "_link", link)
         object.__setattr__(self, "_canonical", link is family.canonical_link)
         object.__setattr__(self, "_fixed", {})
-        super().__init__(_given_label(label, DEFAULT_LABEL), InputSpec(slots), declaration)
+        super().__init__(
+            _constructor_label(self, label, DEFAULT_LABEL), InputSpec(slots), declaration
+        )
         fixed: dict[str, Array] = {}
         if X is not None:
             fixed["X"] = jnp.asarray(X)

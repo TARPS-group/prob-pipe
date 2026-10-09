@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 if TYPE_CHECKING:
     from ..core.constraints import Constraint
@@ -169,6 +169,46 @@ def _given_label(label: Any, default: str) -> str:
     if not isinstance(label, str) or not label:
         raise TypeError(f"label must be a non-empty string; got {label!r}")
     return label
+
+
+def _constructor_label(term: Any, label: Any, default: str) -> str:
+    """*label*, or *default* when it is ``None``, recording *default* as *term*'s default label.
+
+    The repr leaves out a label equal to the recorded default, as
+    :func:`_repr_label` states.
+
+    Parameters
+    ----------
+    term : Any
+        The law or kernel under construction.
+    label : Any
+        The label its constructor received.
+    default : str
+        Its constructor's default label.
+
+    Returns
+    -------
+    str
+        *label*, or *default* for ``None``.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
+    """
+    given = _given_label(label, default)
+    object.__setattr__(term, "_default_label", default)
+    return given
+
+
+def _repr_label(term: Any) -> str | None:
+    """The label the repr of the law or kernel *term* shows: ``None`` for its default label.
+
+    A default label repeats what the class and the arguments already state, as
+    ``Normal('Normal', ...)`` would, so the repr shows a label only where a
+    caller or an operation gave one.
+    """
+    return None if term.label == term._default_label else term.label
 
 
 #: The message for a selection of field paths that names none.
@@ -493,7 +533,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ``p``, and a joint that ``*`` composes is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
-    ``prior(mu)``, and the repr keeps the label first.
+    ``prior(mu)``, and the repr shows the label first, leaving out a label equal
+    to the constructor's default, as ``Normal(component='mu', loc=0.0, scale=1.0)``.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -527,6 +568,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ValueError
         If *event_spec* has a type hole.
     """
+
+    #: The label the constructor gives when it is given none, which the repr leaves out;
+    #: ``None`` for a class whose constructor requires a label.
+    _default_label: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -1124,7 +1169,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """
         return term_repr(
             self._repr_class_name(),
-            self.label,
+            _repr_label(self),
             _ordered_fields(self._repr_arguments(), self._event_repr_arguments()),
         )
 

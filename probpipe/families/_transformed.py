@@ -37,7 +37,7 @@ from ..distributions._capabilities import (
 from ..distributions._distribution import (
     Distribution,
     _class_label,
-    _given_label,
+    _constructor_label,
     _whole_term_event,
 )
 from ..functions._descendants import _Descent, _register_descendant_type
@@ -285,7 +285,7 @@ class BijectorTransformedDistribution(Distribution):
         label: str | None = None,
     ) -> None:
         owner = _class_label(self)
-        label = _given_label(label, owner)
+        label = _constructor_label(self, label, owner)
         if not isinstance(base, Distribution):
             raise TypeError(
                 f"base of BijectorTransformedDistribution must be a Distribution, got "

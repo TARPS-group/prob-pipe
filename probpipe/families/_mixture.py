@@ -33,7 +33,7 @@ from ..distributions._capabilities import (
     _conjunction,
 )
 from ..distributions._conversion import _event_difference, _term_difference
-from ..distributions._distribution import Distribution, _class_label, _given_label
+from ..distributions._distribution import Distribution, _class_label, _constructor_label
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
@@ -493,7 +493,7 @@ class MixtureDistribution(Distribution):
         laws = _components(components)
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
-        super().__init__(_given_label(label, _class_label(self)), _declaration(laws))
+        super().__init__(_constructor_label(self, label, _class_label(self)), _declaration(laws))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The components, by their count when there are more than four, and the weights."""

@@ -22,7 +22,7 @@ from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
     _class_label,
-    _given_label,
+    _constructor_label,
     _whole_term_event,
 )
 from ..values._function_base import FunctionSpec
@@ -126,7 +126,7 @@ class RandomFunction(Distribution):
     ) -> None:
         owner = _class_label(self)
         declaration = _event_of_kind(component, event_spec, FunctionSpec, FunctionSpec(), owner)
-        super().__init__(_given_label(label, owner), declaration)
+        super().__init__(_constructor_label(self, label, owner), declaration)
 
     @abstractmethod
     def __call__(self, x: Any) -> Distribution:
@@ -181,4 +181,4 @@ class RandomMeasure(Distribution):
             )
         opaque_law = DistributionSpec(OutputSpec(**{component: OpaqueSpec()}))
         declaration = _event_of_kind(component, event_spec, DistributionSpec, opaque_law, owner)
-        super().__init__(_given_label(label, owner), declaration)
+        super().__init__(_constructor_label(self, label, owner), declaration)

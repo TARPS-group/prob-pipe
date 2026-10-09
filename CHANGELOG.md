@@ -45,7 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
   a `RecordSpec` no longer takes the label as its component. The repr shows
   the label and then the component, as
-  `Normal('Normal', component='mu', loc=0.0, scale=1.0)`, and a family
+  `Normal('prior', component='mu', loc=0.0, scale=1.0)`, and leaves out a
+  label equal to the constructor's default, the class name or `p`, as
+  `Normal(component='mu', loc=0.0, scale=1.0)`; a family
   pickled before this change loads to the same law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default
   label stay two ancestors.

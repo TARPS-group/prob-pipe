@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import pickle
 
+import jax
 import jax.numpy as jnp
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     EmpiricalDistribution,
@@ -24,7 +26,10 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
+    TFPDistribution,
+    condition_on,
     conditional_distribution,
+    distribution,
     positive,
 )
 from probpipe.core._dispatch import MethodInfo
@@ -37,6 +42,7 @@ from probpipe.core._repr import (
     is_product,
 )
 from probpipe.distributions._batches import DistributionBatch
+from probpipe.families import BernoulliFamily, glm_likelihood
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
 
 
@@ -126,8 +132,53 @@ class TestDistributions:
             "Normal('prior', component='mu', loc=0.0, scale=1.0)"
         )
 
-    def test_a_family_without_a_label_reads_by_its_class_name(self):
-        assert repr(Normal("x", 0.0, 1.0)) == "Normal('Normal', component='x', loc=0.0, scale=1.0)"
+    def test_a_family_under_its_default_label_leaves_the_label_out(self):
+        assert repr(Normal("x", 0.0, 1.0)) == "Normal(component='x', loc=0.0, scale=1.0)"
+
+    def test_a_label_equal_to_the_default_is_left_out_however_it_was_given(self):
+        relabeled = Normal("x", 0.0, 1.0, label="prior").with_label("Normal")
+        assert repr(relabeled) == "Normal(component='x', loc=0.0, scale=1.0)"
+        assert repr(Normal("x", 0.0, 1.0, label="Normal")) == repr(relabeled)
+
+    def test_a_law_labeled_by_an_operation_shows_the_label(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
+        )
+        assert repr(condition_on(kernel, {"mu": 0.5})).startswith("Normal('lik', component='y'")
+
+    def test_the_adapter_under_its_backend_name_leaves_the_label_out(self):
+        law = TFPDistribution("x", tfd.Normal(0.0, 1.0))
+        assert repr(law).startswith("TFPDistribution(\n    component='x',\n    backend_dist=")
+        labeled = TFPDistribution("x", tfd.Normal(0.0, 1.0), label="q")
+        assert repr(labeled).startswith("TFPDistribution(\n    'q',\n    component='x',")
+
+    def test_a_law_under_the_label_p_leaves_the_label_out(self):
+        law = EmpiricalDistribution(jnp.arange(3.0), component="theta")
+        assert repr(law).startswith("EmpiricalDistribution(\n    component='theta',\n    atoms=")
+        drawn = distribution(
+            sample=lambda key: jax.random.normal(key),
+            event_spec=NumericArraySpec(()),
+            component="z",
+        )
+        assert repr(drawn).startswith("Distribution(\n    component='z',\n    sample=")
+
+    def test_a_kernel_under_the_label_p_leaves_the_label_out(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec(())}
+        )
+        assert repr(kernel) == "ConditionalDistribution(component='y', given=('mu',))"
+        assert repr(glm_likelihood("damage", BernoulliFamily())).startswith(
+            "ConditionalDistribution(\n    component='damage',\n    family=BernoulliFamily(),"
+        )
+
+    def test_a_kernel_named_by_its_function_shows_the_label(self):
+        def y_given_mu(mu):
+            return Normal("y", mu, 1.0)
+
+        kernel = conditional_distribution(y_given_mu, given_spec={"mu": NumericArraySpec(())})
+        assert repr(kernel) == (
+            "ConditionalDistribution('y_given_mu', component='y', given=('mu',))"
+        )
 
     def test_a_whole_term_event_shows_its_component_and_no_declaration(self):
         law = Normal("beta", 0.0, 1.0, label="prior")
@@ -184,8 +235,8 @@ class TestDistributions:
             "FactoredDistribution(\n"
             "    'Gamma·Normal',\n"
             "    factors=(\n"
-            "        Gamma('Gamma', component='b', concentration=2.0, rate=1.0),\n"
-            "        Normal('Normal', component='a', loc=0.0, scale=1.0),\n"
+            "        Gamma(component='b', concentration=2.0, rate=1.0),\n"
+            "        Normal(component='a', loc=0.0, scale=1.0),\n"
             "    ),\n"
             ")"
         )

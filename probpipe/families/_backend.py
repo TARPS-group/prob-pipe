@@ -49,7 +49,7 @@ from ..distributions._capabilities import (
 from ..distributions._distribution import (
     NumericDistribution,
     _class_label,
-    _given_label,
+    _constructor_label,
     _whole_term_event,
 )
 from ..linalg import DenseLinOp, DiagonalLinOp, LinOp
@@ -312,7 +312,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
             tuple(backend_dist.event_shape), backend_dist.dtype, self._event_support()
         )
         declaration = _whole_term_event(component, produced, event_spec, owner)
-        super().__init__(_given_label(label, default), declaration)
+        super().__init__(_constructor_label(self, label, default), declaration)
 
     def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
         """*backend* with its batch axes leading the event's, over independent coordinates or rows."""
