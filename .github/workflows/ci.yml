@@ -346,6 +346,82 @@ jobs:
           name: coverage-html
           path: htmlcov/
 
+  lowest-versions:
+    # The core dependencies at the lowest versions that pyproject.toml allows.
+    # The other jobs install the locked versions, so a call to an API that is
+    # newer than a declared floor, such as a JAX function added after the JAX
+    # floor, fails only here. The job installs the lock, then replaces each core
+    # dependency, such as jax and tfp-nightly, with the lowest version that its
+    # specifier admits. Every other package keeps its locked version unless a
+    # floor requires another, so the job tests the floors alone and is
+    # reproducible. One leg, on the lowest supported Python.
+    name: test (lowest versions)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # need full history for git diff
+
+      - name: Check if source or test files changed
+        id: lowest_check
+        # Run on pushes to main, on foundational changes (deps / this workflow),
+        # or on a change under probpipe/ or tests/, since any module of probpipe/
+        # can call an API that is newer than a floor.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          CHANGED=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD \
+            -- 'probpipe/' 'tests/' || true)
+          CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
+          RUN_LOWEST=false
+          if [ "${{ github.event_name }}" = "push" ]; then
+            RUN_LOWEST=true
+          else
+            for f in $CHANGED_ALL; do
+              case "$f" in
+                pyproject.toml|uv.lock|setup.cfg|setup.py|.github/workflows/ci.yml)
+                  RUN_LOWEST=true ;;
+              esac
+            done
+            [ -n "$CHANGED" ] && RUN_LOWEST=true
+          fi
+          if [ "$RUN_LOWEST" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Running the lowest-versions leg."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No source, test, or dependency changes — skipping."
+          fi
+
+      - name: Install uv
+        if: steps.lowest_check.outputs.skip != 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies at the core floors
+        if: steps.lowest_check.outputs.skip != 'true'
+        # `uv pip compile --resolution lowest-direct --no-deps` pins each core
+        # dependency of pyproject.toml to the lowest version that its specifier
+        # admits, and `uv pip check` fails if those pins conflict with a locked
+        # package.
+        run: |
+          uv sync --frozen --python 3.12 --extra dev
+          uv pip compile pyproject.toml --python 3.12 --resolution lowest-direct \
+            --no-deps --no-header --no-annotate -o "$RUNNER_TEMP/floors.txt"
+          uv pip install -r "$RUNNER_TEMP/floors.txt"
+          uv pip check
+
+      - name: Run tests at the core floors
+        if: steps.lowest_check.outputs.skip != 'true'
+        # --no-sync keeps uv run from restoring the locked versions, and
+        # --no-cov skips coverage, which the test job measures.
+        run: uv run --no-sync pytest tests/functions tests/converters tests/operations --no-cov
+
   bayesflow:
     # Amortized SBI backend (keras-on-jax). BayesFlow 2.x caps Python <3.14, so
     # this leg runs on 3.12 & 3.13 only — kept separate from the main matrix so
