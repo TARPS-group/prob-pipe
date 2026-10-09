@@ -586,11 +586,17 @@ class TestNumericArrayBatchInfersItsElementSpec:
         assert batch.batch_shape == (2, 4)
         assert batch.element_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
 
-    def test_a_level_of_several_axes_counts_them_all(self):
-        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
+    @pytest.mark.parametrize("axes", [2, [2], (2,)])
+    def test_a_level_of_several_axes_counts_them_all(self, axes):
+        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=axes)
 
         assert batch.axis_groups == ((2, 4),)
         assert batch.element_spec.shape == (3,)
+
+    def test_a_one_shot_iterator_of_counts_is_refused(self):
+        """The counts are read more than once, so an iterator would arrive empty."""
+        with pytest.raises(TypeError, match="axes_per_level must be an int or a sequence of ints"):
+            NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
 
     def test_an_array_with_fewer_axes_than_the_levels_is_refused(self):
         with pytest.raises(ValueError, match="must have at least 2 batch axes"):
@@ -814,7 +820,7 @@ class TestNumericArrayBatchRefusals:
             _batch(jnp.arange(24.0).reshape(2, 4, 3), "cell", axes_per_level=(1,))
 
     def test_a_level_holds_at_least_one_axis(self):
-        with pytest.raises(ValueError, match="axes_per_level entries must be at least 1"):
+        with pytest.raises(ValueError, match="axes_per_level entry must be at least 1"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), ("a", "b"), axes_per_level=(2, 0))
 
 

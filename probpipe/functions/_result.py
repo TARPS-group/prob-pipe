@@ -133,7 +133,7 @@ def _aggregate_output_spec(output_spec: OutputSpec, outputs: Any) -> OutputSpec:
     for row in rows:
         if isinstance(row, (_MappedBatchColumns, _MappedBatchStore)):
             actual = (
-                BatchSpec(row.element_spec, row.axis_groups, row.level_names)
+                BatchSpec._from_groups(row.element_spec, row.axis_groups, row.level_names)
                 if row.axis_groups
                 else row.element_spec
             )
@@ -650,7 +650,7 @@ def _record_stored_dtypes(aggregate: Any) -> Any:
     else:
         return aggregate
     if element != aggregate.element_spec:
-        object.__setattr__(aggregate, "_spec", replace(aggregate.spec, element_spec=element))
+        object.__setattr__(aggregate, "_spec", aggregate.spec._replace(element_spec=element))
     return aggregate
 
 

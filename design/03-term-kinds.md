@@ -28,6 +28,8 @@ class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a Numeric
     support: Constraint            # the support (II.3)
 ```
 
+The constructor reads `shape` as a shape argument (II.1), so `NumericArraySpec("n")` is `NumericArraySpec(("n",))`.
+
 It carries the full set of array operators, for example arithmetic and comparison, and the coordinate protocols. An operator returns a tracked term under a deterministically derived, evaluation-order name, such as `x + 1` or `(x + y) * x`, with identity attached as for any operation (II.4). Each operand reads as one unit in the name: an expression is parenthesized whatever the precedence, as in `(2 * x) + 1` and `(-x) ** 2`, and any other label with a space, such as a user's `other effect`, is bracketed, as in `x + [other effect]`. The result declares its value's shape, and its value's dtype when every tracked operand declares a dtype. Indexing and iteration return bare arrays.
 
 `NumericArray` implements the `Numeric` interface of II.3. Its vector is the array raveled in row-major order, and its coordinate protocols present the array itself, so NumPy and JAX functions see its shape:
@@ -354,7 +356,7 @@ class NumericRecordBatch(RecordBatch):
     @classmethod
     def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array, *,
                     level_names: str | Iterable[str],
-                    axes_per_level: Iterable[int] | None = None) -> NumericRecordBatch: ...
+                    axes_per_level: int | Iterable[int] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 

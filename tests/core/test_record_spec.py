@@ -330,11 +330,11 @@ class TestConstruction:
             RecordSpec(x=3.0)
 
     def test_invalid_shape_raises(self):
-        with pytest.raises(TypeError, match="non-negative ints"):
+        with pytest.raises(ValueError, match="entry must be non-negative, got -1"):
             RecordSpec(x=(-1,))
 
     def test_invalid_shape_float_raises(self):
-        with pytest.raises(TypeError, match="non-negative ints"):
+        with pytest.raises(TypeError, match="must be a non-negative int or a dimension name"):
             RecordSpec(x=(1.5,))
 
 
@@ -885,7 +885,7 @@ class TestTermSpecs:
         assert isinstance(spec.shape, tuple)
 
     def test_numeric_array_spec_rejects_negative_dims(self):
-        with pytest.raises(TypeError, match="non-negative ints"):
+        with pytest.raises(ValueError, match="entry must be non-negative, got -1"):
             NumericArraySpec((-1,))
 
     @pytest.mark.parametrize(
@@ -948,7 +948,7 @@ class TestTermSpecs:
             pytest.param(NumericRecordSpec(x=(3,)), id="numeric-record"),
             pytest.param(DistributionSpec(RecordSpec(x=(3,))), id="distribution"),
             pytest.param(FunctionSpec(), id="function"),
-            pytest.param(BatchSpec(NumericArraySpec((3,)), [(2,)], ["draw"]), id="batch"),
+            pytest.param(BatchSpec(NumericArraySpec((3,)), draw=2), id="batch"),
         ],
     )
     def test_spec_subclasses_preserve_weak_reference_support(self, spec):
@@ -1113,10 +1113,58 @@ class TestTermSpecs:
         assert spec.is_valid(np.zeros((4, 3, 4)))
         assert not spec.is_valid(np.zeros((4, 3, 5)))
 
-    @pytest.mark.parametrize("dimension", ["", -1, 1.5, None])
-    def test_numeric_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
-        with pytest.raises(TypeError, match="symbolic dimension"):
+    @pytest.mark.parametrize(
+        ("dimension", "error", "match"),
+        [
+            ("", ValueError, "must be a Python identifier such as 'n_obs', got ''"),
+            ("n obs", ValueError, "must be a Python identifier such as 'n_obs', got 'n obs'"),
+            (-1, ValueError, "must be non-negative, got -1"),
+            (1.5, TypeError, "must be a non-negative int or a dimension name, got float 1.5"),
+            (None, TypeError, "must be a non-negative int or a dimension name, got NoneType"),
+            (True, TypeError, "must be a non-negative int or a dimension name, got bool True"),
+        ],
+    )
+    def test_numeric_array_spec_rejects_invalid_dimensions(self, dimension, error, match):
+        with pytest.raises(error, match=match):
             NumericArraySpec((dimension,))
+
+    @pytest.mark.parametrize(
+        ("shape", "expected"),
+        [("loc", ("loc",)), (3, (3,)), (np.int64(3), (3,)), (["n", 2], ("n", 2))],
+    )
+    def test_a_single_int_or_str_is_one_dimension(self, shape, expected):
+        spec = NumericArraySpec(shape)
+
+        assert spec.shape == expected
+        assert spec == NumericArraySpec(expected)
+        assert hash(spec) == hash(NumericArraySpec(expected))
+        assert repr(spec) == repr(NumericArraySpec(expected))
+
+    def test_an_empty_name_is_not_rank_zero(self):
+        with pytest.raises(ValueError, match="got ''"):
+            NumericArraySpec("")
+
+    def test_a_numpy_string_name_is_stored_as_a_str(self):
+        spec = NumericArraySpec(np.str_("n"))
+
+        assert type(spec.shape[0]) is str
+        assert repr(spec) == repr(NumericArraySpec("n"))
+
+    @pytest.mark.parametrize(
+        ("new", "error", "match"),
+        [
+            (
+                "my dim",
+                ValueError,
+                r"with_dim_names\(\): the new name for 'n' must be a Python identifier",
+            ),
+            ("", ValueError, "must be a Python identifier such as 'n_obs', got ''"),
+            (3, TypeError, r"with_dim_names\(\): the new name for 'n' must be a str, got int 3"),
+        ],
+    )
+    def test_a_renamed_dimension_must_be_an_identifier(self, new, error, match):
+        with pytest.raises(error, match=match):
+            NumericArraySpec(("n",)).with_dim_names(n=new)
 
     def test_distribution_spec_requires_an_output_declaration(self):
         with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):
@@ -2155,7 +2203,7 @@ class TestWithDimSizes:
         """It is reported by `free_dims`, so it must be substitutable."""
         from probpipe import BatchSpec
 
-        template = RecordSpec(b=BatchSpec(NumericArraySpec(shape=(3,)), [("S",)], ["draw"]))
+        template = RecordSpec(b=BatchSpec(NumericArraySpec(shape=(3,)), draw="S"))
 
         bound = template.with_dim_sizes(S=4)
 
@@ -2166,8 +2214,10 @@ class TestWithDimSizes:
         """A string would be read as a dimension *name*, silently renaming it."""
         template = RecordSpec(x=NumericArraySpec(shape=("n",)))
 
-        for size in ("m", 2.0, None):
-            with pytest.raises(TypeError, match="must be an integer"):
+        for size in ("m", 2.0, None, True):
+            with pytest.raises(
+                TypeError, match=r"with_dim_sizes\(\): the size for 'n' must be a non-negative int"
+            ):
                 template.with_dim_sizes(n=size)
 
     def test_binding_some_names_reports_only_the_rest(self):
@@ -2529,7 +2579,7 @@ class TestMultiplicityBindsFromAValue:
         fields: dict[str, Any] = {}
         if field is not None:
             fields["data"] = NumericArraySpec(shape=(field,))
-        fields["b"] = BatchSpec(OpaqueSpec(), [(axis,)], ["item"])
+        fields["b"] = BatchSpec(OpaqueSpec(), item=axis)
         return RecordSpec(fields)
 
     def test_an_axis_size_is_inferred_from_the_batch(self):
@@ -2559,10 +2609,10 @@ class TestMultiplicityBindsFromAValue:
         other, so both directions are asserted.
         """
         array_first = RecordSpec(
-            data=NumericArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), [("n",)], ["item"])
+            data=NumericArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), item="n")
         )
         batch_first = RecordSpec(
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=NumericArraySpec(shape=("n",))
+            b=BatchSpec(OpaqueSpec(), item="n"), data=NumericArraySpec(shape=("n",))
         )
 
         for declared in (array_first, batch_first):
@@ -2583,7 +2633,7 @@ class TestMultiplicityBindsFromAValue:
     def test_the_disagreement_raises_in_either_order(self):
         """The batch-first direction, which a copied scope would let through."""
         declared = RecordSpec(
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=NumericArraySpec(shape=("n",))
+            b=BatchSpec(OpaqueSpec(), item="n"), data=NumericArraySpec(shape=("n",))
         )
 
         with pytest.raises(
@@ -2597,7 +2647,7 @@ class TestMultiplicityBindsFromAValue:
         concrete = Record(
             "r",
             b=self._batch(3),
-            event_template=RecordSpec(b=BatchSpec(OpaqueSpec(), [(3,)], ["item"])),
+            event_template=RecordSpec(b=BatchSpec(OpaqueSpec(), item=3)),
         )
 
         assert inferred.event_template == concrete.event_template
@@ -2605,11 +2655,11 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_concrete_axis_still_requires_an_exact_match(self):
         """A fixed multiplicity is fixed, as a fixed array dimension is."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [(4,)], ["item"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), item=4))
 
         with pytest.raises(
             ValueError,
-            match=r"value at 'b' does not match event_template: expected .*levels=\{'item': 4\}",
+            match=r"value at 'b' does not match event_template: expected .*item=4\)",
         ):
             Record("r", b=self._batch(3), event_template=declared)
 
@@ -2622,14 +2672,14 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_level_name_mismatch_is_refused_rather_than_bound(self):
         """The tiling is structure, so it is checked rather than inferred."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("n",)], ["draw"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), draw="n"))
 
         with pytest.raises(ValueError, match=r"has levels \['item'\], expected \['draw'\]"):
             Record("r", b=self._batch(3), event_template=declared)
 
     def test_one_level_may_hold_several_symbolic_axes(self):
         """A level holding two axes binds each in turn."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("rows", "cols")], ["grid"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("rows", "cols")))
 
         record = Record("r", b=self._grid((3, 4)), event_template=declared)
 
@@ -2637,7 +2687,7 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_name_repeated_within_one_level_declares_a_square_grid(self):
         """`("n", "n")` binds once and demands both axes agree."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("n", "n")))
 
         record = Record("r", b=self._grid((3, 3)), event_template=declared)
         assert record.event_template["b"].axis_groups == ((3, 3),)
@@ -2647,7 +2697,7 @@ class TestMultiplicityBindsFromAValue:
 
     def test_levels_bind_independently(self):
         """Two levels, two dimensions, each read off its own axis."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("c",), ("d",)], ["chain", "draw"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), chain="c", draw="d"))
 
         record = Record(
             "r",
@@ -2659,7 +2709,7 @@ class TestMultiplicityBindsFromAValue:
 
     def test_a_level_arity_mismatch_names_the_tiling(self):
         """Two declared axes in a level do not bind against an actual one."""
-        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), [("a", "b")], ["grid"]))
+        declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("a", "b")))
 
         with pytest.raises(ValueError, match=r"has \[1\] axes per level, expected \[2\]"):
             Record("r", b=self._batch(3, level="grid"), event_template=declared)
@@ -2673,7 +2723,7 @@ class TestMultiplicityBindsFromAValue:
         """
         declared = RecordSpec(
             f=FunctionSpec(InputSpec(RecordSpec(x=NumericArraySpec(shape=("k",))).children), None),
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]),
+            b=BatchSpec(OpaqueSpec(), item="n"),
         )
 
         record = Record("r", f=lambda x: x, b=self._batch(3), event_template=declared)

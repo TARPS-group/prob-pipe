@@ -1117,7 +1117,7 @@ class TestEmpiricalDeclarations:
     def test_a_replicate_of_an_array_law_is_a_batch_of_its_term(self):
         law = BootstrapReplicateDistribution("reps", Normal("x", 0.0, 1.0), replicate_size=4)
         assert law.event_spec == OutputSpec(
-            reps=BatchSpec(NumericArraySpec((), jnp.asarray(0.0).dtype, real), ((4,),), ("x",))
+            reps=BatchSpec(NumericArraySpec((), jnp.asarray(0.0).dtype, real), x=4)
         )
 
     def test_a_replicate_needs_a_law_that_samples(self):
@@ -1294,7 +1294,7 @@ class TestDimensionTransforms:
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))
         with pytest.raises(ValueError, match="must be non-negative"):
             law.with_dim_sizes(n=-1)
-        with pytest.raises(TypeError, match="must be an integer"):
+        with pytest.raises(TypeError, match="must be a non-negative int"):
             law.with_dim_sizes(n=2.5)
 
     def test_a_library_law_transforms_its_declaration(self):

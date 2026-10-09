@@ -88,8 +88,11 @@ class TestOutputSpec:
         assert law.with_path_names({"mu": "center"}).spec == DistributionSpec(
             OutputSpec(record.with_path_names({"mu": "center"}))
         )
-        batch = OutputSpec(BatchSpec(record, ((3,),), ("sample",)))
+        batch = OutputSpec(BatchSpec(record, sample=3))
         assert (list(batch.components), batch.exposes_record) == (["mu", "tau"], False)
+        assert batch.with_path_names({"mu": "center"}).spec == BatchSpec(
+            record.with_path_names({"mu": "center"}), sample=3
+        )
         with pytest.raises(TypeError, match=r"with_spec\(\) needs a DistributionSpec"):
             law.with_spec(record)
         with pytest.raises(TypeError, match="a record or a single named value"):
@@ -97,7 +100,7 @@ class TestOutputSpec:
 
     def test_a_batch_of_arrays_exposes_no_components(self):
         with pytest.raises(TypeError):
-            OutputSpec(BatchSpec(NumericArraySpec(()), ((3,),), ("sample",)))
+            OutputSpec(BatchSpec(NumericArraySpec(()), sample=3))
 
     def test_a_record_field_given_none_is_refused_naming_the_opaque_spec(self):
         """None is a pending type, so a record field takes OpaqueSpec() instead."""
@@ -416,8 +419,8 @@ class TestDimensionBinding:
         if kind == "array":
             declared, actual = NumericArraySpec(("n",)), NumericArraySpec(("n",))
         else:
-            declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
-            actual = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
+            declared = BatchSpec(OpaqueSpec(), draw="n")
+            actual = BatchSpec(OpaqueSpec(), draw="n")
         assert declared.bind_dims_from_spec(actual).free_dims == {"n"}
 
     @pytest.mark.parametrize("kind", ["array", "batch"])
@@ -425,8 +428,8 @@ class TestDimensionBinding:
         if kind == "array":
             declared, actual = NumericArraySpec(("n",)), NumericArraySpec(("m",))
         else:
-            declared = BatchSpec(OpaqueSpec(), [("n",)], ["draw"])
-            actual = BatchSpec(OpaqueSpec(), [("m",)], ["draw"])
+            declared = BatchSpec(OpaqueSpec(), draw="n")
+            actual = BatchSpec(OpaqueSpec(), draw="m")
         with pytest.raises(ValueError, match="symbolic dimension 'm' where 'n' is expected"):
             declared.bind_dims_from_spec(actual)
 
@@ -474,11 +477,11 @@ class TestDimensionBinding:
     def test_shared_symbol_scope_across_input_slots_and_nested_batch(self):
         slots = InputSpec(
             data=NumericArraySpec(("n",)),
-            batch=BatchSpec(NumericArraySpec(("n",)), [("n",)], ["draw"]),
+            batch=BatchSpec(NumericArraySpec(("n",)), draw="n"),
         )
         actual = InputSpec(
             data=NumericArraySpec((3,)),
-            batch=BatchSpec(NumericArraySpec((3,)), [(3,)], ["draw"]),
+            batch=BatchSpec(NumericArraySpec((3,)), draw=3),
         )
         assert slots.bind_dims_from_spec(actual) == actual
         conflict = InputSpec(dict(actual) | {"data": NumericArraySpec((4,))})
@@ -500,7 +503,7 @@ class TestDimensionBinding:
     def test_dimension_renaming_is_simultaneous_and_crosses_all_containers(self):
         spec = RecordSpec(
             data=NumericArraySpec(("n", "m"), dtype="float32"),
-            batch=BatchSpec(NumericArraySpec(("n",)), [("m",)], ["draw"]),
+            batch=BatchSpec(NumericArraySpec(("n",)), draw="m"),
             law=DistributionSpec(RecordSpec(x=("n",))),
             function=FunctionSpec(
                 InputSpec(RecordSpec(x=("m",)).children),
@@ -517,11 +520,20 @@ class TestDimensionBinding:
         assert renamed["function"].input_spec["x"].shape == ("n",)
         assert renamed["function"].output_spec.spec.shape == ("m",)
         assert spec["data"].shape == ("n", "m")
-        for value in (None, "", 2):
+        for value in (None, 2):
             with pytest.raises(TypeError):
+                spec.with_dim_names(n=value)
+        for value in ("", "my dim"):
+            with pytest.raises(ValueError, match="must be a Python identifier"):
                 spec.with_dim_names(n=value)
         with pytest.raises(ValueError):
             spec.with_dim_sizes(n=-1)
+
+    def test_a_declaration_checks_renames_and_sizes_with_no_spec_to_pass_them_to(self):
+        with pytest.raises(ValueError, match="must be a Python identifier"):
+            InputSpec({}).with_dim_names(n="a b")
+        with pytest.raises(TypeError, match="must be a non-negative int, got bool True"):
+            OutputSpec(x=None).with_dim_sizes(n=True)
 
     def test_binding_array_values_checks_dtype_and_record_kind(self):
         spec = NumericArraySpec(("n",), dtype="int32")
@@ -962,7 +974,7 @@ class TestNestedSpecBinding:
                 case "input":
                     return InputSpec(value=spec)
                 case "batch":
-                    return BatchSpec(spec, [(2,)], ["draw"])
+                    return BatchSpec(spec, draw=2)
 
         return wrap
 

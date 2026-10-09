@@ -58,6 +58,7 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | the batch dimensions | `batch_shape` |
 | the batch axes tiled into levels | `axis_groups`, as reported; construction takes `axes_per_level` |
 | one name per level of a batch | `level_names` |
+| a batch's level names mapped to their axis sizes | `levels`, which `BatchSpec` reports and its construction takes |
 | the spec every element of a batch satisfies | `element_spec` |
 | the objects a batch is built from | `elements` |
 | the independent-draw shape prefix of `sample` | `sample_shape` |

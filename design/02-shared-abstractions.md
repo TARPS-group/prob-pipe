@@ -20,7 +20,7 @@ A **term specification** ("term spec") describes the typing information availabl
 
 **Base and batch kinds.** The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **base form**, and one **batch form**. Since a batch of batches is a batch, the base form and batch form of a batch are identical. The correspondence is recorded in the **kind table**: `register_kind` records the tracked class and the batch form of a spec class, and `term_class_for_spec` and `batch_class_for_spec` look them up through the spec's class and its bases, so a spec subclass inherits its base's kind unless it registers its own. A second registration that disagrees raises.
 
-**Symbolic dimensions.** A dimension size for a numeric value spec may be an integer or a **named symbolic dimension**. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, *rename* a dimension, and *bind* names by unification against a value, reading the sizes off that value's spec, or against another spec. In binding, a name takes its size from its first occurrence, and a later occurrence that disagrees raises. Names form one scope wherever specs meet: within a schema (III.5), between a batch and its element (II.5), across the slots of one map (V.6), and across the operands of a composition (IV.2). Two dimensions that are different quantities are renamed apart before they meet.
+**Symbolic dimensions.** A dimension size for a numeric value spec may be an integer or a **named symbolic dimension**. A dimension name is a Python identifier, such as `n_obs`, so that a call such as `with_dim_sizes(n_obs=100)` can name it; a reserved word such as `class` is an identifier too, and is named in a mapping, as `with_dim_sizes(**{"class": 100})`. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, *rename* a dimension, and *bind* names by unification against a value, reading the sizes off that value's spec, or against another spec. In binding, a name takes its size from its first occurrence, and a later occurrence that disagrees raises. Names form one scope wherever specs meet: within a schema (III.5), between a batch and its element (II.5), across the slots of one map (V.6), and across the operands of a composition (IV.2). Two dimensions that are different quantities are renamed apart before they meet.
 
 The base API is validation plus the dimension protocol:
 
@@ -43,6 +43,8 @@ def register_kind(spec_type: type[TermSpec], *, term_class: type, batch_class: t
 def term_class_for_spec(spec: TermSpec) -> type: ...    # the tracked class of the spec's kind
 def batch_class_for_spec(spec: TermSpec) -> type: ...   # its batch form
 ```
+
+**Shape arguments.** An argument that takes a shape, such as `NumericArraySpec`'s `shape`, a level of a `BatchSpec` (II.5), or `sample_shape` (VI.3), takes a single int or str as one dimension and a sequence, such as a tuple, a list, a `range`, or a 1-D array, as one dimension per item, and it stores the tuple. So `3` is `(3,)` and `"n"` is `("n",)`, as NumPy reads `np.zeros(3)`. An iterator such as a generator, a set, `bytes`, a `memoryview`, and a mapping are refused: an iterator is used up by one reading, a set has no order, and the others iterate into byte values or keys. An integer of another type, such as `numpy.int64`, is stored as a Python `int`, a name of a `str` subclass is stored as a `str`, and a `bool` is refused. A shape that sizes draws or an array, such as `sample_shape`, takes integers only. Two arguments that hold sizes are not shape arguments: a `RecordSpec` field given as a shape takes a tuple only (III.5), and `with_dim_sizes` takes one non-negative int per name.
 
 `with_dim_sizes` substitutes supplied sizes and leaves other dimensions symbolic. `with_dim_names` renames simultaneously. Binding reads concrete sizes in one shared scope and rejects disagreements; unobserved dimensions remain symbolic.
 
@@ -100,7 +102,7 @@ OutputSpec(parameters=RecordSpec(beta=beta_spec, sigma=sigma_spec))
 # record out; parameters names the whole record, its one component
 OutputSpec(DistributionSpec(OutputSpec(RecordSpec(mu=mu_spec, tau=tau_spec))))
 # law out; mu and tau are its event components, and the law is one term
-OutputSpec(BatchSpec(RecordSpec(mu=mu_spec, tau=tau_spec), ((3,),), ("sample",)))
+OutputSpec(BatchSpec(RecordSpec(mu=mu_spec, tau=tau_spec), sample=3))
 # batch of records out; mu and tau are its fields
 ```
 
@@ -263,7 +265,15 @@ class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a m
     axis_groups: tuple[tuple[int | str, ...], ...]  # the multiplicity, tiled into levels below;
                                                     #   a str names a symbolic dimension (II.1)
     level_names: tuple[str, ...]
+    def __init__(self, element_spec: TermSpec,
+                 levels: Mapping[str, int | str | Iterable[int | str]] | None = None, /,
+                 **level_shapes: int | str | Iterable[int | str]) -> None: ...
+    # one keyword per level, outermost first, giving the shape of its axes
+    @property
+    def levels(self) -> Mapping[str, tuple[int | str, ...]]: ...   # level name -> its axis sizes
 ```
+
+**Constructing a `BatchSpec`.** `BatchSpec(element_spec, **levels)` names each level and gives the shape of its axes, outermost first, as in `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`. Each level's shape is a shape argument (II.1), so `draw=4` is one axis of size 4 and `grid=(3, 4)` is one level of two axes. A level name that no keyword spells is given in a mapping passed positionally, as `BatchSpec(spec, {"my level": 2})`, and the two forms are not combined. `levels` returns that mapping, so `BatchSpec(other_spec, batch.spec.levels)` declares another element type over a batch's levels. A batch constructor takes `level_names`, where a single str names one level, and `axes_per_level`, where a single int is one level's count, since a live batch reads its sizes off its elements.
 
 Construction checks every element against `element_spec` and reports the position that failed, since the batch asserts that spec of all of them. A constructor given no `element_spec` infers it from the elements, as the element kind's constructor infers a term's spec from its value. The axes past those the levels hold are an array's event shape, so `NumericArrayBatch('draws', jnp.arange(4.0), 'draw')` holds four scalars. A batch of records infers each field's spec from its column in the same way. A constructor over raw elements completes a bare element spec as any constructor does (III.7): a record exposes its fields, and any other element is a whole term whose component defaults to the batch's label, captured once. A batch an operation produces carries the producer's declaration, the event declaration for draws (VI.3) and the completed output declaration for a sweep (V.6).
 
