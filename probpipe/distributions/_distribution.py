@@ -204,7 +204,7 @@ def _repr_label(term: Any) -> str | None:
     ``Normal('Normal', ...)`` would, so the repr shows a label only where a
     caller or an operation gave one.
     """
-    return None if term.label == term._default_label else term.label
+    return None if term.label == term._default_label else term._displayed_label()
 
 
 #: The message for a selection of field paths that names none.
@@ -1151,7 +1151,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``notation_config.max_depth`` nested levels. No operation reads the
         notation.
         """
-        return self._expression.render_notation(self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
         """The signature the declaration states: the event components, in declaration order."""

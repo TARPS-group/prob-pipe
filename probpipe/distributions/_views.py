@@ -1985,7 +1985,7 @@ class _RenamedDistribution(Distribution):
         if not all(renames):
             return term_repr(
                 self._repr_class_name(),
-                self.label,
+                self._displayed_label(),
                 [*parent._repr_arguments(), ("event_spec", repr(self.event_spec))],
             )
         text = repr(parent)
@@ -1993,7 +1993,7 @@ class _RenamedDistribution(Distribution):
             mapping = mapping_repr({old: repr(new) for old, new in step.items()})
             text = _method_call(text, "with_path_names", mapping)
         if self.label != parent.label:
-            text = _method_call(text, "with_label", repr(self.label))
+            text = _method_call(text, "with_label", repr(self._displayed_label()))
         return text
 
     def _repr_class_name(self) -> str:

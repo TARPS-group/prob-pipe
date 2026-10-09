@@ -735,7 +735,9 @@ class Batch[E](TrackedTerm, ABC):
         """
         levels = ("levels", format_levels(self.level_names, self.axis_groups))
         return term_repr(
-            public_class_name(type(self)), self.label, [levels, *self._element_repr_arguments()]
+            public_class_name(type(self)),
+            self._displayed_label(),
+            [levels, *self._element_repr_arguments()],
         )
 
     def _element_repr_arguments(self) -> list[tuple[str, str]]:

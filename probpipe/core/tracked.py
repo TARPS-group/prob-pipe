@@ -251,6 +251,15 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """Human-readable label of this object."""
         return self._label
 
+    def _displayed_label(self) -> str:
+        """The label as ``str()`` and the repr show it.
+
+        Showing a label warns when its rendering collapses a level beyond
+        ``notation_config.max_depth``, and reading :attr:`label` never warns.
+        """
+        self._expression.render_label(warn=True)
+        return self._label
+
     def with_label(self, label: str) -> Self:
         """Return a copy of this object under a new label.
 

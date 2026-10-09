@@ -1337,8 +1337,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
   number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
-  and the rendering warns with a `UserWarning` that names the setting, so a
-  label derived through a long loop of operations stays short.
+  so a label derived through a long loop of operations stays short. Showing a
+  term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` that
+  names the setting when what they show has a collapsed part.
 - **A single int is a shape of one axis wherever a shape is taken.**
   `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
   `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`

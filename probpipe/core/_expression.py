@@ -32,11 +32,13 @@ child records the law's signature, because the node holds no term.
 
 A rendering shows at most :attr:`~probpipe.core.config.NotationConfig.max_depth`
 nested levels. A node deeper than that renders as its collapsed text, which is
-the name of a law or a function, or ``…`` for a value, and the rendering warns.
+the name of a law or a function, or ``…`` for a value. A display of a term warns
+when its rendering collapses a node, and storing a label renders it silently.
 """
 
 from __future__ import annotations
 
+import os
 import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
@@ -74,6 +76,10 @@ __all__ = [
 
 #: The text a collapsed value renders as.
 ELLIPSIS = "…"
+
+#: The package directory, whose frames a collapse warning skips, so the warning
+#: names the user's line that displays the term.
+_WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 
 #: The greatest depth of a stored expression. A node built over a child that
 #: nests this many levels stores the child's collapsed text in its place, so a
@@ -126,7 +132,7 @@ class _Rendering:
         return level > self.max_depth
 
     def collapse(self, node: Expression) -> str:
-        """The collapsed text of *node*, recorded as a collapse so the rendering warns."""
+        """The collapsed text of *node*, recorded so that a rendering for display warns."""
         self.collapsed = True
         return node._collapsed()
 
@@ -266,7 +272,7 @@ class Expression:
             dict(signature.defaults),
         )
 
-    def render_label(self) -> str:
+    def render_label(self, *, warn: bool = False) -> str:
         """The label this node renders.
 
         The label of a law, a kernel, or a function is its name, and a value's
@@ -277,6 +283,12 @@ class Expression:
         the function's label. A value renders in full, as ``(y, mu) ~ model`` or
         ``E[mu ~ prior]``, with each part grouped by design II.4.
 
+        Parameters
+        ----------
+        warn : bool, optional
+            Whether the rendering warns when it collapses a node, as a display
+            of a term does. A label stored on a term renders without a warning.
+
         Returns
         -------
         str
@@ -286,14 +298,16 @@ class Expression:
         Warns
         -----
         UserWarning
-            When the rendering nests more levels than ``notation_config.max_depth``.
+            When *warn* is true and the rendering nests more levels than
+            ``notation_config.max_depth``.
         """
         rendering = _Rendering(_max_depth())
         text = self._label(rendering, 1)
-        _warn_if_collapsed(rendering)
+        if warn:
+            _warn_if_collapsed(rendering)
         return text
 
-    def render_notation(self, own: Signature | None = None) -> str:
+    def render_notation(self, own: Signature | None = None, *, warn: bool = False) -> str:
         """The notation this node renders.
 
         *own* is the signature that the term's declaration states.
@@ -309,6 +323,9 @@ class Expression:
         own : Signature or None, optional
             The components and given slots that the term's declaration states,
             which replace those the node records.
+        warn : bool, optional
+            Whether the rendering warns when it collapses a node, as the
+            ``notation`` of a term does.
 
         Returns
         -------
@@ -319,11 +336,13 @@ class Expression:
         Warns
         -----
         UserWarning
-            When the rendering nests more levels than ``notation_config.max_depth``.
+            When *warn* is true and the rendering nests more levels than
+            ``notation_config.max_depth``.
         """
         rendering = _Rendering(_max_depth())
         text = self._notation(rendering, 1, own)
-        _warn_if_collapsed(rendering)
+        if warn:
+            _warn_if_collapsed(rendering)
         return text
 
 
@@ -870,7 +889,7 @@ def _warn_if_collapsed(rendering: _Rendering) -> None:
             f"{rendering.max_depth} levels, so its deeper parts show as their labels or "
             f"{ELLIPSIS!r}. Raise notation_config.max_depth to show them.",
             UserWarning,
-            stacklevel=3,
+            skip_file_prefixes=_WARNING_SKIP_PREFIXES,
         )
 
 

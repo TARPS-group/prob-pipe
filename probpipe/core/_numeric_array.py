@@ -311,7 +311,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         fields = [("shape", repr(tuple(spec.shape))), ("dtype", format_dtype(dtype))]
         if spec.support is not None:
             fields.append(("support", repr(spec.support)))
-        return term_repr("NumericArray", self.label, fields)
+        return term_repr("NumericArray", self._displayed_label(), fields)
 
     # -- the array surface --------------------------------------------------
 

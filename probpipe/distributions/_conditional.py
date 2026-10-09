@@ -776,7 +776,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
         kernel's expression. No operation reads the notation.
         """
-        return self._expression.render_notation(self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
         """The signature the declaration states: the event components, then the given slots.

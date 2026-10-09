@@ -1162,7 +1162,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def __repr__(self) -> str:
         """The label, then the field paths in canonical order, read from the schema."""
         return term_repr(
-            public_class_name(type(self)), self.label, [("fields", format_names(self.keys()))]
+            public_class_name(type(self)),
+            self._displayed_label(),
+            [("fields", format_names(self.keys()))],
         )
 
     # -- Call-forwarding shim for single-field Records ----------------------

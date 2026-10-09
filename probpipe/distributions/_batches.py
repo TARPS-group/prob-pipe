@@ -189,7 +189,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
 def _batch_notation(batch: DistributionBatch | ConditionalDistributionBatch) -> str:
     """The notation of *batch*'s elements under its label, then ``over`` and its levels."""
-    notation = batch._expression.render_notation(batch._own_signature())
+    notation = batch._expression.render_notation(batch._own_signature(), warn=True)
     return f"{notation} over {', '.join(batch.level_names)}"
 
 

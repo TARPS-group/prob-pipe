@@ -1270,7 +1270,7 @@ class Function(Node, TrackedTerm, Annotated):
         The parameters are the names of :attr:`signature`, in order, joined by
         ``", "``. No operation reads the notation.
         """
-        return self._expression.render_notation(self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
         """The signature: the names of the parameters, in order, each default as ``name=value``."""
@@ -1291,7 +1291,9 @@ class Function(Node, TrackedTerm, Annotated):
 
         The result label is shown where it differs from the function's own.
         """
-        return term_repr(public_class_name(type(self)), self.label, self._repr_arguments())
+        return term_repr(
+            public_class_name(type(self)), self._displayed_label(), self._repr_arguments()
+        )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the repr shows after the label, each by name and formatted value."""
