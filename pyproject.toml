@@ -55,6 +55,7 @@ dev = [
   "probpipe-core[prefect,viz,docs]",
   "pytest>=8.4",
   "pytest-cov",
+  "pytest-split",
   "pytest-xdist",
   "ruff",
   "ipykernel",
