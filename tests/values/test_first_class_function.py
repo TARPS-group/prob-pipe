@@ -769,7 +769,7 @@ class TestApplyContract:
             output_spec=RecordSpec(left=(), right=()),
         )
 
-        with pytest.raises(ValueError, match="must be a record or a mapping of fields, got int"):
+        with pytest.raises(ValueError, match=r"output.*NumericRecordSpec"):
             wrapped.apply(1)
 
     def test_existing_record_requires_matching_authoritative_template(self):
