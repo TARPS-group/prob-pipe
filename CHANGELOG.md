@@ -3019,7 +3019,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside `workflow_run`, raised `AttributeError` on any JAX release before
   0.10.1. The check of the draw's key called `jax.random.key_dtype`, which JAX
   added in 0.10.1. The check now compares `jax.random.key_impl(key)` with
-  `"threefry2x32"`.
+  `"threefry2x32"`. A CI job installs the lowest version of each core
+  dependency that `pyproject.toml` allows and runs the tests of the functions,
+  converters, and operations packages against them.
 - **Caller trace detection supports JAX 0.9.** Workflow random-event guards
   use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
   unavailable.
