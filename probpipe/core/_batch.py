@@ -1046,10 +1046,11 @@ class Batch[E](TrackedTerm, ABC):
                 expression = replace(expression, element=call)
             element = self._element_at(dropped, label=label)
             given = element._expression if isinstance(element, TrackedTerm) else None
-            if isinstance(given, Named) and given.label == label:
+            core = None if given is None else given.core()
+            if isinstance(core, Named) and core.label == label:
                 # A view built under the derived label carries the selection, and a
                 # stored law keeps the paths it holds fixed, after the batch's own.
-                held = expression.with_fixed(given.fixed_paths())
+                held = expression.with_fixed(element._expression.fixed_paths())
                 _assign_expression(element, held, label)
             return element
 

@@ -1280,7 +1280,7 @@ class Function(Node, TrackedTerm, Annotated):
             for name, parameter in parameters.items()
             if parameter.default is not parameter.empty
         )
-        return Signature(tuple(parameters), (), (), defaults)
+        return Signature(tuple(parameters), defaults=defaults)
 
     def __str__(self) -> str:
         """The function's :attr:`notation`, as ``predict(x, y)``."""

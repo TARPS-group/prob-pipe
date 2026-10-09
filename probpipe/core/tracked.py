@@ -242,10 +242,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         if own is None:
             return Named(label)
         expression = self._expression
-        kept = expression.full_signature(own)
-        return Named(
-            label, Signature(kept.components, kept.given, expression.fixed_paths(), kept.defaults)
-        )
+        return Named(label, expression.full_signature(own)).with_fixed(expression.fixed_paths())
 
     # -- identity ------------------------------------------------------------
 

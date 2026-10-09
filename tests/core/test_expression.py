@@ -230,9 +230,9 @@ class TestFixedPaths:
     """A law's fixed paths are read from its expression."""
 
     def test_each_node_holds_its_bases_fixed_paths(self):
-        named = Named("post", Signature(("mu",), (), ("y",)))
-        assert named.fixed_paths() == ("y",)
-        conditioned = Conditioned(named, ("z", "y"))
+        named = _named("post", "mu")
+        assert named.fixed_paths() == ()
+        conditioned = Conditioned(Conditioned(named, ("y",)), ("z", "y"))
         assert conditioned.fixed_paths() == ("y", "z")
         assert Selected(conditioned, ("mu",)).fixed_paths() == ("y", "z")
         assert Indexed(conditioned, "row=0").fixed_paths() == ("y", "z")
@@ -243,7 +243,7 @@ class TestFixedPaths:
         assert base.with_fixed(("y",)) is base
         assert base.with_fixed(("z/a", "y")).fixed_paths() == ("y", "z/a")
 
-    def test_core_of_strips_conditionings_and_selections(self):
+    def test_core_strips_conditionings_and_selections(self):
         product = Product((Named("a"), Named("b")))
         assert Selected(Conditioned(product, ("y",)), ("a",)).core() is product
 
@@ -352,7 +352,9 @@ class TestTheLabelIsTheExpressionsLabel:
         model = _prior() * Normal("y", 0.0, 1.0)
         derived = model._with_expression(Conditioned(model._expression, ("y",)))
         relabeled = derived.with_label("posterior")
-        assert relabeled._expression == Named("posterior", Signature(("mu", "y"), (), ("y",)))
+        assert relabeled._expression == Conditioned(
+            Named("posterior", Signature(("mu", "y"))), ("y",)
+        )
         assert relabeled.notation == "posterior(mu, y; y)"
         assert relabeled.provenance.operation == "with_label"
 

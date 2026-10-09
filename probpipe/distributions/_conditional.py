@@ -790,7 +790,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             for slot in self.given_spec
             if slot in self.given_spec.optional
         )
-        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), (), defaults)
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), defaults)
 
     def _given_defaults(self) -> Mapping[str, Any]:
         """The value each optional given slot takes when a binding omits it, where the kernel knows it."""

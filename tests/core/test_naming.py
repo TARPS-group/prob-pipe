@@ -707,6 +707,11 @@ class TestADefaultedSlotShowsItsDefault:
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
         assert at.notation == "at_values(y | n0=50.0; K, r)"
 
+    def test_a_relabeled_law_keeps_the_defaulted_slot_inside_another_term(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
+        assert log_prob(at, 1.0).label == "log at_values(y | n0=50.0; K, r)"
+        assert str(at * Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
+
     def test_a_value_computed_from_the_law_reads_its_notation(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
         assert log_prob(at, 1.0).label == "log counts(y | n0=50.0; K, r)"

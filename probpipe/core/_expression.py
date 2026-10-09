@@ -97,10 +97,6 @@ class Signature:
     given : tuple of str
         A kernel's given slots, in declaration order. A law and a function have
         none.
-    fixed : tuple of str
-        The paths a law or a kernel holds fixed at given values, in the order
-        they were fixed. Only a :class:`Named` node reads them from its
-        signature, and every other node reads them from the tree.
     defaults : tuple of (str, str)
         Each given slot or parameter that has a default, paired with the
         default as :func:`~probpipe.core._repr.format_default` formats it, in
@@ -109,7 +105,6 @@ class Signature:
 
     components: tuple[str, ...]
     given: tuple[str, ...] = ()
-    fixed: tuple[str, ...] = ()
     defaults: tuple[tuple[str, str], ...] = ()
 
 
@@ -166,8 +161,7 @@ class Expression:
     def fixed_paths(self) -> tuple[str, ...]:
         """The paths the law or kernel this node describes holds fixed, in the order fixed.
 
-        A :class:`Named` node holds those of its signature, and a
-        :class:`Conditioned` node holds its base's followed by its own. A
+        A :class:`Conditioned` node holds its base's followed by its own, a
         selection and an indexed batch hold their base's, and any other node
         holds none.
         """
@@ -222,7 +216,6 @@ class Expression:
         return Signature(
             signature.components,
             signature.given + tuple(name for name, _ in free),
-            signature.fixed,
             signature.defaults + tuple(free),
         )
 
@@ -369,7 +362,6 @@ class _Signed(Expression):
     __slots__ = ()
 
     def signed(self, signature: Signature) -> Expression:
-        signature = Signature(signature.components, signature.given, defaults=signature.defaults)
         if self.signature == signature:
             return self
         return replace(self, signature=signature)  # type: ignore[type-var]
@@ -391,9 +383,11 @@ class Named(_Signed):
         The label the node renders, as ``prior`` or ``2.0``.
     signature : Signature or None
         The signature of a law, a kernel, or a function, which the notation
-        follows the label with, and whose fixed paths the node holds. It is
-        ``None`` for a value, and for a term's own expression, whose
-        declaration supplies the signature.
+        follows the label with. It is ``None`` for a value and for the
+        expression a term is constructed with, whose declaration supplies the
+        signature. The expression that ``with_label`` gives a law or a kernel
+        records the signature, so its notation keeps the defaulted given slots
+        the law leaves free.
     """
 
     label: str
@@ -403,26 +397,11 @@ class Named(_Signed):
     def __post_init__(self) -> None:
         self._set_depth()
 
-    def fixed_paths(self) -> tuple[str, ...]:
-        return () if self.signature is None else self.signature.fixed
-
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
         signature = self.signature
         if signature is None:
             return ()
-        return tuple(
-            (name, text)
-            for name, text in signature.defaults
-            if name in signature.given and name not in signature.fixed
-        )
-
-    def signed(self, signature: Signature) -> Expression:
-        return Named(
-            self.label,
-            Signature(
-                signature.components, signature.given, self.fixed_paths(), signature.defaults
-            ),
-        )
+        return tuple((name, text) for name, text in signature.defaults if name in signature.given)
 
     def _collapsed(self) -> str:
         return self.label
