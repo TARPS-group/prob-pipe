@@ -366,6 +366,14 @@ GitHub Actions (`.github/workflows/ci.yml`):
   test that needs BridgeStan another way carries `@pytest.mark.stan`. Gated like
   the bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
+- A separate `test (lowest versions)` leg (Python 3.12) syncs `dev` from the
+  lock, replaces each core dependency of `pyproject.toml` with the lowest version
+  that its specifier admits, and runs `tests/functions`, `tests/converters`, and
+  `tests/operations`. The other jobs install the locked versions, so a call to an
+  API that is newer than a floor fails only in this leg. Fix such a failure by
+  raising the floor in `pyproject.toml` or by calling an API that the floor
+  provides. The leg runs on every push, on the nightly schedule, on dependency
+  changes, and on changes under `probpipe/` or `tests/`
 - Only the Python 3.12 shards measure coverage. The `coverage` job combines
   their data, enforces the 88% floor on a full-suite run, and uploads one report
   to Codecov

@@ -127,9 +127,9 @@ def _certify_jax_key_adapter(
     key: PRNGKey,
     expected_words: tuple[int, int],
 ) -> None:
-    """Certify JAX's typed-key contract and raw-word round trip."""
+    """Certify that ``key`` is a typed Threefry2x32 key whose raw data is ``expected_words``."""
     if not jnp.issubdtype(key.dtype, jax.dtypes.prng_key) or (
-        key.dtype != jax.random.key_dtype("threefry2x32")
+        jax.random.key_impl(key) != "threefry2x32"
     ):
         raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
     round_trip = jax.random.key_data(key)
