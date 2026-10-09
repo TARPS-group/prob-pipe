@@ -71,9 +71,7 @@ class TestTheKindDirectedWrap:
         assert wrapped.apply() is value
 
     def test_a_declared_batch_still_accepts_a_raw_sequence(self):
-        wrapped = Function(
-            "produce", lambda: [1.0, 2.0], output_spec=BatchSpec(SCALAR, ((2,),), ("row",))
-        )
+        wrapped = Function("produce", lambda: [1.0, 2.0], output_spec=BatchSpec(SCALAR, row=2))
 
         result = wrapped()
 
@@ -299,7 +297,7 @@ class TestResultErrors:
             pytest.param(RecordSpec(y=SCALAR), 1.0, id="array-for-record"),
             pytest.param(FunctionSpec(), 1.0, id="array-for-function"),
             pytest.param(DistributionSpec(OutputSpec(y=SCALAR)), 1.0, id="array-for-distribution"),
-            pytest.param(BatchSpec(SCALAR, ((2,),), ("row",)), jnp.ones(2), id="array-for-batch"),
+            pytest.param(BatchSpec(SCALAR, row=2), jnp.ones(2), id="array-for-batch"),
             pytest.param(OpaqueSpec(), {"y": 1.0}, id="mapping-for-opaque"),
             pytest.param(OpaqueSpec(), NumericArray("stored", 1.0), id="tracked-array-for-opaque"),
         ],

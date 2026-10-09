@@ -32,7 +32,7 @@ from ..core._dispatch import Feasibility
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
@@ -309,7 +309,23 @@ def _validate_return_kind(spec: TermSpec, result: Any, path: str) -> None:
     else:
         accepted = isinstance(result, kind)
     if not accepted:
-        raise _ResultKindMismatch(f"{path} returned a {type(result).__name__}, expected {spec!r}")
+        raise _ResultKindMismatch(
+            f"{path} is declared {spec!r}, so it must be {_kind_description(spec, kind)}, "
+            f"but got {type_name(result)!r} instead"
+        )
+
+
+def _kind_description(spec: TermSpec, kind: type) -> str:
+    """The kind a declaration asks a result to be, as an error message states it."""
+    if isinstance(spec, RecordSpec):
+        return "a record or a mapping of fields"
+    if isinstance(spec, NumericArraySpec):
+        return "a numeric array"
+    if isinstance(spec, FunctionSpec):
+        return "a callable"
+    if isinstance(spec, OpaqueSpec):
+        return "a value other than a mapping"
+    return f"a {public_class_name(kind)}"
 
 
 def _validate_function_output(

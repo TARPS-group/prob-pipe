@@ -904,9 +904,7 @@ def _untracked(tree: Any) -> bool:
 
 class TestRawResults:
     @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
-    @pytest.mark.parametrize(
-        "spec", [NumericArraySpec(()), BatchSpec(NumericArraySpec(()), ((2,),), ("row",))]
-    )
+    @pytest.mark.parametrize("spec", [NumericArraySpec(()), BatchSpec(NumericArraySpec(()), row=2)])
     def test_a_route_returning_the_wrong_kind_is_refused(self, mode, spec):
         toy = _toy(result=lambda d: OutputSpec(toy=spec))
         toy.structural_route(
