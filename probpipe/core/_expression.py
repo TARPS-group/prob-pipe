@@ -43,6 +43,7 @@ from typing import Any
 
 from ._repr import (
     PRODUCT_SYMBOL,
+    format_components,
     format_notation,
     format_signature,
     format_value,
@@ -534,11 +535,6 @@ def _joined(labels: Iterable[str]) -> str:
     )
 
 
-def _components_text(components: tuple[str, ...]) -> str:
-    """The components of a draw: one as it is, as ``mu``, and several in parentheses, as ``(y, mu)``."""
-    return components[0] if len(components) == 1 else f"({', '.join(components)})"
-
-
 class _Rendering:
     """One rendering of an expression, which counts the levels it nests and the nodes it collapses.
 
@@ -577,7 +573,7 @@ class _Rendering:
         match expression:
             case Draw():
                 law = expression.law
-                text = f"{_components_text(expression.components)} ~ {self.label(law, level + 1)}"
+                text = f"{format_components(expression.components)} ~ {self.label(law, level + 1)}"
                 fixed = fixed_paths_of(law)
                 return f"{text}; {', '.join(fixed)}" if fixed else text
             case Summary():

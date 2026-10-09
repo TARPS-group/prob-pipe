@@ -19,6 +19,7 @@ from probpipe import (
     EmpiricalDistribution,
     Normal,
     NumericArraySpec,
+    OutputSpec,
     Poisson,
     condition_on,
     conditional_distribution,
@@ -93,6 +94,12 @@ class TestThePosterior:
         posterior = condition_on(model, {"y": Y})
         assert posterior.label == "model"
         assert str(posterior) == posterior.notation == "model(mu; y)"
+
+    def test_the_atoms_are_labeled_by_the_posteriors_components(self):
+        prior = EmpiricalDistribution("prior", GRID, event_spec=OutputSpec(mu=None))
+        posterior = condition_on(_normal_kernel() * prior, {"y": Y})
+        assert posterior.atoms.label == "mu"
+        assert prior.atoms.label == "prior"
 
     def test_the_weights_are_the_prior_weights_times_the_likelihood(self):
         posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": Y})

@@ -33,6 +33,7 @@ import numpy as np
 __all__ = [
     "WIDTH",
     "call_repr",
+    "format_components",
     "format_dtype",
     "format_levels",
     "format_names",
@@ -400,6 +401,26 @@ def format_signature(
     if fixed:
         text = f"{text}; {', '.join(fixed)}"
     return text
+
+
+def format_components(components: Iterable[str]) -> str:
+    """Several components as one label: one as it is, as ``mu``, and several in parentheses, as ``(y, mu)``.
+
+    A draw's components read this way before its ``~``, and the atoms of a
+    posterior are labeled this way by its components.
+
+    Parameters
+    ----------
+    components : iterable of str
+        A law's event components, in declaration order.
+
+    Returns
+    -------
+    str
+        The one component, or the components joined by ``", "`` in parentheses.
+    """
+    names = list(components)
+    return names[0] if len(names) == 1 else f"({', '.join(names)})"
 
 
 def format_notation(label: str, signature: str) -> str:

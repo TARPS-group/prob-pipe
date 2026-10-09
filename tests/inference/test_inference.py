@@ -245,6 +245,17 @@ class TestMakePosteriorRecordTarget:
         assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
         assert draws["r"].shape == (100,)
 
+    def test_the_atoms_are_labeled_by_the_components(self, posterior_with_template):
+        assert posterior_with_template.atoms.label == "(r, K, phi)"
+        assert posterior_with_template.atoms.at_levels(draw=0).label == "(r, K, phi)[draw=0]"
+
+    def test_the_atoms_of_one_component_are_labeled_by_it(self):
+        chain = jax.random.normal(jax.random.PRNGKey(0), (10, 2))
+        posterior = make_posterior(
+            [chain], parents=(), method="test", event_spec=OutputSpec(beta=NumericArraySpec((2,)))
+        )
+        assert posterior.atoms.label == "beta"
+
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = flat_draws(posterior_with_template)
         assert tuple(draws.event_template.keys()) == ("r", "K", "phi")

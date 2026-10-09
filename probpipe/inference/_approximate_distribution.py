@@ -17,6 +17,7 @@ from .._weights import Weights
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._opaque import OpaqueSpec
+from ..core._repr import format_components
 from ..core._specs import (
     NumericArraySpec,
     NumericRecordSpec,
@@ -379,7 +380,8 @@ def make_posterior(
     """The empirical law of an inference run's draws, with its record of the run.
 
     The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
-    whose atoms are the draws on the levels ``chain`` and ``draw``. Its event declaration is the target's: a whole-term target stays
+    whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
+    the law's components, as ``beta`` or ``(K, r, phi)``. Its event declaration is the target's: a whole-term target stays
     whole, and a record target keeps its fields' supports, scalar shapes, and
     nested groups. Its provenance names the method and the target. Its
     annotations are a ``DataTree`` whose root attribute ``method`` is *method*,
@@ -423,7 +425,8 @@ def make_posterior(
     Returns
     -------
     EmpiricalDistribution
-        The posterior, with its atoms on the levels ``chain`` and ``draw``.
+        The posterior, with its atoms on the levels ``chain`` and ``draw``,
+        labeled by its components.
 
     Raises
     ------
@@ -458,7 +461,8 @@ def make_posterior(
     lengths = sorted({int(chain.shape[0]) for chain in flat_chains})
     if len(lengths) > 1:
         raise ValueError(f"all chains must have the same length; got lengths {lengths}")
-    atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
+    components = (label,) if declaration is None else declaration.components
+    atoms = _chain_atoms(format_components(components), jnp.stack(flat_chains), declaration)
     result = EmpiricalDistribution(label, atoms, weights, event_spec=declaration)
     if annotations is not None:
         annotations = _named_draw_groups(annotations, result)

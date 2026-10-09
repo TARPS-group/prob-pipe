@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `log_prob(prior, q)` for a law `q` of values, names its component by the
   operation, as `log_prob`, where it took the label of the scored law. Replace a
   lookup of the component `log_prob` by one of `log_prob(mu)`.
+- **The atoms of a posterior are labeled by its components.** The atoms of the
+  empirical law that `condition_on` or an inference method returns are labeled
+  by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
+  `posterior`, so an atom reads as `(K, r, phi)[chain=0, draw=7]`. The atoms of
+  an `EmpiricalDistribution` a user constructs keep the label they were given.
 - **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
   and a batch of either flatten with their spec alone as the static data, where
   the label rode with it, so two terms that differ only in their labels have
