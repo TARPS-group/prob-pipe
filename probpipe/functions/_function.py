@@ -476,6 +476,21 @@ def _expressed(term: Any, expression: Expression | None) -> Any:
     return clone
 
 
+def _recorded_route_result(term: Any, value: TrackedTerm) -> TrackedTerm:
+    """The route's result *value* as the call's record names it among its parents.
+
+    *term* is *value* after the result boundary gave it the call's expression,
+    on a copy that keeps *value*'s record, so the parent reads under the
+    result's label, as ``model`` for a posterior of ``model``, where it read
+    under the label the route chose, such as an inference method's
+    ``posterior``. A *term* that carries another record, or none, leaves
+    *value* as the parent.
+    """
+    if isinstance(term, TrackedTerm) and term.provenance is value.provenance:
+        return term
+    return value
+
+
 def _keeping_route_record(term: Any, value: Any) -> Any:
     """*term*, the declared form of a route's result *value*, with the record *value* carries.
 
@@ -649,21 +664,21 @@ def _run_call(
             provenance_inputs[ref.label] = value
 
     # The selected route's result, when it carries a record of its own, which the
-    # call's record keeps as a parent.
+    # call's record keeps as a parent under the call's expression.
     route_records: list[TrackedTerm] = []
 
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
             point, result, candidate, report = selection
             value = candidate.run(point, result, report)
+            term = _expressed(_result.declared_term(value, result, label), expression)
             if (
                 isinstance(value, TrackedTerm)
                 and value.provenance is not None
                 and id(value) not in seen_parent_ids
             ):
-                route_records.append(value)
-            term = _result.declared_term(value, result, label)
-            return _expressed(term, expression)
+                route_records.append(_recorded_route_result(term, value))
+            return term
         if candidates is not None:
             return _realized_point(function, point_values, controls, candidates)
         try:

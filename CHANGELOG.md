@@ -108,6 +108,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The repr shows them after the component, as
   `Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)` or
   `EmpiricalDistribution('model', fixed=('y',), atoms=...)`.
+  The posterior an inference method returns, which the result's provenance
+  keeps as a parent with the method's own record, is recorded under the
+  result's label, as `model`, where it was recorded as `posterior`.
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
 - **`raw()` of a field view returns the raw form of the marginal at its path.**

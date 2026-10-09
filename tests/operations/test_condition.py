@@ -442,6 +442,32 @@ class TestTheConditionedLabel:
         assert left.notation == "(second·third)(b, c; a)"
 
 
+class TestThePosteriorsRecord:
+    """The method's posterior is a parent of the result under the result's label (V.10)."""
+
+    def _posterior(self) -> Any:
+        likelihood = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": REAL}
+        )
+        prior = EmpiricalDistribution(jnp.linspace(-2.0, 2.0, 9), component="mu", label="prior")
+        with workflow_run(seed=0):
+            return condition_on((likelihood * prior).with_label("model"), {"y": 0.5})
+
+    def test_the_methods_posterior_is_recorded_under_the_posteriors_label(self):
+        posterior = self._posterior()
+        parents = posterior.provenance.parents
+        assert [(p.label, p.type_name) for p in parents] == [
+            ("condition_on", "Operation"),
+            ("model", "FactoredDistribution"),
+            ("model", "EmpiricalDistribution"),
+        ]
+
+    def test_the_recorded_posterior_keeps_the_methods_record(self):
+        route_result = self._posterior().provenance.parents[-1]
+        assert route_result.provenance.operation == "empirical_reweighting"
+        assert [p.label for p in route_result.provenance.parents] == ["model"]
+
+
 class TestTheFixedPaths:
     """A conditioned law holds the paths it is conditioned on fixed, after any it held (II.4)."""
 
