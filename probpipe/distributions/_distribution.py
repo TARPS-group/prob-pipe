@@ -29,7 +29,7 @@ from ..core._expression import (
     with_fixed,
 )
 from ..core._record_spec import RecordSpec
-from ..core._repr import public_class_name, term_repr
+from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -255,12 +255,19 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
 
 
 def _ordered_fields(
-    arguments: list[tuple[str, str]], event: list[tuple[str, str]]
+    arguments: list[tuple[str, str]], event: list[tuple[str, str]], term: Any
 ) -> list[tuple[str, str]]:
-    """The repr's fields: the component first, then the *arguments*, then a declaration."""
+    """The repr's fields: the component, the fixed paths, the *arguments*, then a declaration.
+
+    The paths the law or kernel *term* holds fixed show as ``fixed=('y',)``
+    after the component, or first when there is none, and only where it holds
+    any, so a conditioned law reads apart from an unconditioned one.
+    """
+    paths = _fixed_paths(term)
+    fixed = [("fixed", format_names(paths))] if paths else []
     if event and event[0][0] == "component":
-        return [*event, *arguments]
-    return [*arguments, *event]
+        return [*event, *fixed, *arguments]
+    return [*fixed, *arguments, *event]
 
 
 def _event_repr_fields(declaration: OutputSpec) -> list[tuple[str, str]]:
@@ -1161,16 +1168,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        """The public class, the label, the component, and the family parameters.
+        """The public class, the label, the component, the fixed paths, and the family parameters.
 
         A whole-term event shows its component, as ``component='mu'``, an
         exposed record its fields in no field of its own, and any other
-        packaging its declaration, as ``event_spec=...``.
+        packaging its declaration, as ``event_spec=...``. The paths the law
+        holds fixed follow the component, as ``fixed=('y',)``.
         """
         return term_repr(
             self._repr_class_name(),
             _repr_label(self),
-            _ordered_fields(self._repr_arguments(), self._event_repr_arguments()),
+            _ordered_fields(self._repr_arguments(), self._event_repr_arguments(), self),
         )
 
     def _repr_class_name(self) -> str:

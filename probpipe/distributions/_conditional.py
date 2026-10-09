@@ -789,11 +789,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def __repr__(self) -> str:
         """The public class, the label, the family parameters, the given slots, and the declaration.
 
-        The event shows its component, or its declaration, and the label is left
-        out where it is the default, as for a law.
+        The event shows its component, or its declaration, the label is left
+        out where it is the default, and the slots bound by conditioning show as
+        ``fixed=(...)``, as for a law.
         """
         arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
-        fields = _ordered_fields(arguments, self._event_repr_arguments())
+        fields = _ordered_fields(arguments, self._event_repr_arguments(), self)
         return term_repr(self._repr_class_name(), _repr_label(self), fields)
 
     def _repr_class_name(self) -> str:

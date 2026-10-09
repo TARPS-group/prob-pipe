@@ -31,6 +31,7 @@ from probpipe import (
     conditional_distribution,
     distribution,
     positive,
+    workflow_run,
 )
 from probpipe.core._dispatch import MethodInfo
 from probpipe.core._repr import (
@@ -170,6 +171,45 @@ class TestDistributions:
         assert repr(glm_likelihood("damage", BernoulliFamily())).startswith(
             "ConditionalDistribution(\n    component='damage',\n    family=BernoulliFamily(),"
         )
+
+    def test_a_conditioned_law_shows_its_fixed_paths_after_the_component(self):
+        kernel = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
+        )
+        assert repr(condition_on(kernel, {"mu": 0.5})) == (
+            "Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)"
+        )
+
+    def test_a_curried_kernel_shows_its_fixed_slots(self):
+        def two_slot(beta, sigma):
+            return Normal("y", beta, sigma)
+
+        kernel = conditional_distribution(
+            two_slot,
+            label="glm",
+            given_spec={"beta": NumericArraySpec(()), "sigma": NumericArraySpec(())},
+        )
+        assert repr(condition_on(kernel, {"beta": 0.5})) == (
+            "ConditionalDistribution('glm', component='y', fixed=('beta',), given=('sigma',))"
+        )
+
+    def test_a_posterior_reads_apart_from_its_atoms_law(self):
+        """The fixed paths come first when no component shows, so a posterior differs."""
+        likelihood = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
+        )
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
+        model = (likelihood * prior).with_label("model")
+        with workflow_run(seed=0):
+            posterior = condition_on(model, {"y": 0.5})
+        text = repr(posterior)
+        assert text.startswith(
+            "EmpiricalDistribution(\n    'model',\n    fixed=('y',),\n    atoms="
+        )
+        assert "fixed=" not in repr(EmpiricalDistribution(posterior.atoms, label="model"))
+
+    def test_a_law_that_holds_nothing_fixed_shows_no_fixed_item(self):
+        assert "fixed=" not in repr(Normal("x", 0.0, 1.0, label="prior"))
 
     def test_a_kernel_named_by_its_function_shows_the_label(self):
         def y_given_mu(mu):

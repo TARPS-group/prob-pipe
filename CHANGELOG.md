@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
   inference method's included, and a marginal, a view, and `raw()` keep them.
+  The repr shows them after the component, as
+  `Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)` or
+  `EmpiricalDistribution('model', fixed=('y',), atoms=...)`.
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
 - **`raw()` of a field view returns the raw form of the marginal at its path.**

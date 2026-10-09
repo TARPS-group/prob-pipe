@@ -263,7 +263,7 @@ Accessing a container returns a **view**, for example a record field or a batch 
    - a record: its field paths, as in `fields=('data/effect', 'data/se', 'label')`;
    - an array: its shape and dtype, as in `NumericArray('x', shape=(3,), dtype=float32)`;
    - a batch of arrays or laws: its element spec;
-   - a distribution: the component of a whole-term event as the keyword `component=`, its family parameters, and its event declaration where that differs from the default of III.7.
+   - a distribution: the component of a whole-term event as the keyword `component=`, the paths it holds fixed as `fixed=` where it holds any, its family parameters, and its event declaration where that differs from the default of III.7. A posterior of `oring_model` given `damage` therefore reads `EmpiricalDistribution('oring_model', fixed=('damage',), atoms=...)` and differs in its repr from a law of the same atoms that holds nothing fixed, and a kernel applied at `beta` reads `ConditionalDistribution('glm', component='y', fixed=('beta',), given=('sigma',))`.
 
 A spec reads as its own constructor call, with the attributes it sets, and so does a report, such as a `MethodInfo` or a `CallReport` (V.1). A name that is not a Python identifier, such as the component `mean(mu)`, cannot be a keyword, so a call with one writes its names in order inside one `**{...}` mapping, as in `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`. A private class reads as its public class or kind, so a law that renames another reads as the class of the law it renames. A repr longer than about 100 characters shows one argument per line. In a notebook a `CallReport` also displays as a table, with a row for each route and the selected route marked.
 
