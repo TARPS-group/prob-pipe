@@ -388,8 +388,8 @@ def _tracked_result(
 ) -> Any:
     """The operator's *value* as a ``NumericArray`` carrying *expression*, the operator over its operands.
 
-    The result is labeled by the expression, as ``2 * effect``, an operand that
-    is itself an expression parenthesized, as ``(effect + 1.0) * 2``.
+    The result is labeled by the expression, as ``2 * effect``, with an operand
+    whose label is compound parenthesized, as ``(effect + 1.0) * 2``.
 
     Its tracked *operands* are its parents. The result declares its value's
     shape, and its value's dtype when every tracked operand declares a dtype, so

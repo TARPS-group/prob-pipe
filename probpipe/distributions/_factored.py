@@ -27,12 +27,13 @@ from ..core._expression import (
     core_of,
     embedded,
     expression_of,
+    joined_labels,
     with_fixed,
 )
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import PRODUCT_SYMBOL, grouped_label, is_product, sequence_repr
+from ..core._repr import sequence_repr
 from ..core._spec_base import (
     NumericArraySpec,
     NumericSpec,
@@ -104,17 +105,15 @@ _PATH_SEP = "/"
 
 
 def _joined_label(labels: Iterable[str]) -> str:
-    """The labels of factors joined with ``·``, each read as one unit.
+    """The labels of factors joined with ``·``, each read as one unit, as a product's label joins them.
 
     A label that is itself a product joins as it is, so labels join
     associatively: ``lik·prior`` joined with ``d`` is ``lik·prior·d``. Any other
     label is grouped as :func:`~probpipe.core._repr.grouped_label` groups an
-    operand: an expression is parenthesized, as a label ``model | y`` is, and a
+    operand: a compound label is parenthesized, as a label ``model | y`` is, and a
     label with a space is bracketed.
     """
-    return PRODUCT_SYMBOL.join(
-        label if is_product(label) else grouped_label(label) for label in labels
-    )
+    return joined_labels(labels)
 
 
 def _is_named(joint: Any) -> bool:

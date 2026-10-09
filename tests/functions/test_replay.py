@@ -30,6 +30,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core._expression import Conditioned, expression_of
 from probpipe.functions import _replay
 from probpipe.functions._managed import (
     ManagedAttemptState,
@@ -1079,6 +1080,24 @@ class TestReplayPreflight:
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert list(replayed.event_spec.components) == ["b"]
+
+    def test_an_input_that_differs_only_in_its_expression_replays_to_the_same_draws(self):
+        """Replay omits the expression, as it omits the label, so a relabeled input replays."""
+
+        def lifted():
+            return Function(
+                label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            )
+
+        law = Normal(loc=0.0, scale=1.0, label="value")
+        derived = law._with_expression(Conditioned(expression_of(law), ("y",)))
+        with workflow_run(seed=4):
+            original = lifted()(value=law)
+        with replay_run(original.provenance):
+            replayed = lifted()(value=derived)
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert replayed.notation == "replayable_identity(value ~ value; y)"
 
     @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
     def test_output_contract_drift_fails_before_sampling(self, change):

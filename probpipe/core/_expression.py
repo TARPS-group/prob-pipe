@@ -52,6 +52,9 @@ from ._repr import (
 )
 
 __all__ = [
+    "DENSITY",
+    "ELLIPSIS",
+    "SCORE",
     "Applied",
     "Conditioned",
     "Draw",
@@ -69,9 +72,12 @@ __all__ = [
     "embedded",
     "expression_of",
     "fixed_paths_of",
+    "joined_labels",
     "label_of",
     "notation_of",
+    "own_signature",
     "with_fixed",
+    "with_signature",
 ]
 
 #: The text a collapsed value renders as.
@@ -522,13 +528,13 @@ def _collapsed_text(expression: Expression) -> str:
     if isinstance(core, Named):
         return core.label
     if isinstance(core, Product):
-        return _joined(_collapsed_text(factor) for factor in core.factors)
+        return joined_labels(_collapsed_text(factor) for factor in core.factors)
     if isinstance(core, Applied):
         return core.function
     return ELLIPSIS
 
 
-def _joined(labels: Iterable[str]) -> str:
+def joined_labels(labels: Iterable[str]) -> str:
     """The labels of factors joined with ``·``, a product's joining as it is and any other grouped."""
     return PRODUCT_SYMBOL.join(
         label if is_product(label) else grouped_label(label) for label in labels
@@ -561,7 +567,7 @@ class _Rendering:
             case Conditioned() | Selected():
                 return self.label(expression.base, level)
             case Product():
-                return _joined(self.label(factor, level + 1) for factor in expression.factors)
+                return joined_labels(self.label(factor, level + 1) for factor in expression.factors)
             case Applied():
                 return expression.function
             case Draw() if isinstance(expression.law, Applied):

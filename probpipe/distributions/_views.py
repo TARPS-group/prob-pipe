@@ -340,8 +340,12 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
 
 
 def _as_paths(path: str | tuple[str, ...]) -> tuple[str, ...]:
-    """*path* as a tuple of paths: a selection as it is, and one path as a tuple of one."""
-    return (path,) if isinstance(path, str) else tuple(path)
+    """*path* as a tuple of paths: a selection as it is, and anything else as a tuple of one.
+
+    A malformed path, such as an integer, is a tuple of one, so the expression
+    of a call on it is built and the call's result rule refuses the path.
+    """
+    return tuple(path) if isinstance(path, tuple) else (path,)
 
 
 def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> Expression:

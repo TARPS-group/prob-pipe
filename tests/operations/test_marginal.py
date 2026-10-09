@@ -60,6 +60,10 @@ class TestMarginal:
         ):
             marginal(Marginalizing("law"), "c")
 
+    def test_a_path_that_is_not_a_string_raises_applicability_error(self):
+        with pytest.raises(ApplicabilityError, match="field must be a path string"):
+            marginal(Marginalizing("law"), 3)
+
     def test_a_rejecting_guard_and_no_sampling_raise_resolution_error(self):
         with pytest.raises(ResolutionError, match="the marginal is exact at the field a"):
             marginal(Marginalizing("law"), "b")

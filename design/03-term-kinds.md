@@ -45,7 +45,7 @@ class NumericArray(TrackedTerm, Numeric):
 
 ### Rationale
 
-The full set of array operators is safe here and only here: with no fields, an expression on one array has exactly one meaning (`D1 – Mathematical fidelity`).
+The full set of array operators is safe here and only here: with no fields, an operator applied to one array has exactly one meaning (`D1 – Mathematical fidelity`).
 
 ## III.2 — `Opaque`
 

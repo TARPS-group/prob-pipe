@@ -238,14 +238,14 @@ The notation is the whole rendering, grouped by the rules below. A law's signatu
 A rendering shows at most `notation_config.max_depth` nested levels, eight by default, and a term's label is rendered when the term is made. A part nested deeper renders as its label, the name of a law or a function, or as `…` for a value, and the rendering warns with a `UserWarning` that names the setting.
 
 **Grouping.** A label is grouped where another label is built from it, so it reads as one operand:
-1. an **expression** is parenthesized, and a label is an expression when it has one of these forms:
+1. a **compound** label is parenthesized, and a label is compound when it has one of these forms:
    - an operator at its top level, as `model | y` or the draw `mu ~ prior`;
    - a product of labels, as `lik·prior`;
    - a unary operator or `log` at its start, as `-x` or the score `log prior(mu)`;
 2. any other label of several words is bracketed, as `[other effect]`;
 3. a label of one word is used as it is, and a call such as `prior(mu)` is one word.
 
-So a selection of a batch labeled `x·y` is labeled `(x·y)[sample=0:2]`, and a law derived from an unlabeled product displays as `(lik·prior)(y)`. A draw and a score are grouped inside a selection, as in `(mu ~ prior)[sample=0]` and `(log prior(mu))[sample=0]`. Two rules join labels without grouping them. The right side of `~` is not grouped, since `~` binds most loosely, as in `(y, mu) ~ lik·prior`. Labels join associatively, so a product joins a further factor's label as it is, and `(lik * prior) * d` is labeled `lik·prior·d` (IV.2).
+So a selection of a batch labeled `x·y` is labeled `(x·y)[sample=0:2]`, and a law derived from an unlabeled product displays as `(lik·prior)(y)`. A draw and a score are grouped inside a selection, as in `(mu ~ prior)[sample=0]` and `(log prior(mu))[sample=0]`, and the notation of a product without a label is grouped after `log`, as in `log (lik(y | mu)·prior(mu))`. Two rules join labels without grouping them. The right side of `~` is not grouped, since `~` binds most loosely, as in `(y, mu) ~ lik·prior`. Labels join associatively, so a product joins a further factor's label as it is, and `(lik * prior) * d` is labeled `lik·prior·d` (IV.2).
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
