@@ -3056,6 +3056,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
   where it computed nothing. `add_mcmc_diagnostics` raises `ValueError` for an
   unknown metric, where it ignored it.
+- A function whose returned overall kind differs from its output declaration
+  raises `ResultKindError`. A result of the declared kind with an incompatible
+  schema raises `ResultSchemaError`. The distinction applies to lifted calls
+  and operation routes. A call with `raw=True` validates its result before
+  detachment. `apply` reports output declaration violations as `ValueError`.
 - **Workflow-owned sampling works on every JAX version the package accepts.**
   The package requires `jax>=0.9`, but a workflow-owned draw, such as `sample`
   inside `workflow_run`, raised `AttributeError` on any JAX release before

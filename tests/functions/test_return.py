@@ -18,12 +18,15 @@ from probpipe import (
     Batch,
     BatchSpec,
     Distribution,
+    DistributionSpec,
     Function,
+    FunctionSpec,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecordBatch,
     Opaque,
+    OpaqueSpec,
     OutputSpec,
     Record,
     RecordSpec,
@@ -59,6 +62,22 @@ class TestTheKindDirectedWrap:
     )
     def test_a_returned_collection_is_opaque(self, value):
         assert isinstance(Function("produce", lambda: value)(), Opaque)
+
+    @pytest.mark.parametrize("value", [2.0, jnp.ones(2), lambda x: x])
+    def test_an_explicit_opaque_declaration_accepts_raw_numeric_values_and_callables(self, value):
+        wrapped = Function("produce", lambda: value, output_spec=OpaqueSpec())
+
+        assert isinstance(wrapped(), Opaque)
+        assert wrapped.apply() is value
+
+    def test_a_declared_batch_still_accepts_a_raw_sequence(self):
+        wrapped = Function("produce", lambda: [1.0, 2.0], output_spec=BatchSpec(SCALAR, row=2))
+
+        result = wrapped()
+
+        assert isinstance(result, NumericArrayBatch)
+        assert result.level_names == ("row",)
+        np.testing.assert_array_equal(result.values, [1.0, 2.0])
 
     def test_an_array_under_one_component_stays_an_array(self):
         wrapped = Function("f", lambda: jnp.ones(2), output_spec=OutputSpec(beta=None))
@@ -264,11 +283,79 @@ class TestResultErrors:
         with pytest.raises(ResultSchemaError):
             wrapped(rows)
 
-    @pytest.mark.pending(
-        reason="a returned kind other than the declared one raises ResultKindError",
-        raises=AssertionError,
-    )
     def test_a_wrong_returned_kind_raises_result_kind_error(self):
         wrapped = Function("f", lambda: "text", output_spec=NumericArraySpec(()))
 
         assert isinstance(error_of(wrapped), ResultKindError)
+
+    @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
+    @pytest.mark.parametrize(
+        ("declaration", "value"),
+        [
+            pytest.param(SCALAR, Opaque("stored", "text"), id="tracked-opaque-for-array"),
+            pytest.param(SCALAR, {"y": 1.0}, id="mapping-for-array"),
+            pytest.param(RecordSpec(y=SCALAR), 1.0, id="array-for-record"),
+            pytest.param(FunctionSpec(), 1.0, id="array-for-function"),
+            pytest.param(DistributionSpec(OutputSpec(y=SCALAR)), 1.0, id="array-for-distribution"),
+            pytest.param(BatchSpec(SCALAR, row=2), jnp.ones(2), id="array-for-batch"),
+            pytest.param(OpaqueSpec(), {"y": 1.0}, id="mapping-for-opaque"),
+            pytest.param(OpaqueSpec(), NumericArray("stored", 1.0), id="tracked-array-for-opaque"),
+        ],
+    )
+    def test_an_overall_kind_mismatch_is_distinguished_from_a_schema_error(
+        self, declaration, value, mode
+    ):
+        wrapped = Function("produce", lambda: value, output_spec=declaration)
+        invoke = wrapped.apply if mode == "apply" else wrapped.with_options(raw=mode == "raw")
+
+        with pytest.raises(ValueError if mode == "apply" else ResultKindError, match="output"):
+            invoke()
+
+    @pytest.mark.parametrize("dispatch", ["jax", "sequential", "thread", "auto"])
+    @pytest.mark.parametrize("regime", ["broadcast", "sweep"])
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_a_lifted_kind_mismatch_raises_result_kind_error(self, dispatch, regime, raw):
+        wrapped = Function(
+            "produce",
+            lambda x: {"y": x},
+            output_spec=SCALAR,
+            dispatch=dispatch,
+            n_broadcast_samples=6,
+            raw=raw,
+        )
+        operand = (
+            standard_normal()
+            if regime == "broadcast"
+            else NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=SCALAR)
+        )
+
+        with (
+            workflow_run(seed=0),
+            pytest.raises(ResultKindError, match=r"output.*NumericArraySpec"),
+        ):
+            wrapped(operand)
+
+    @pytest.mark.parametrize("value", [{"y": "text"}, {"other": 1.0}])
+    def test_a_field_kind_or_structure_mismatch_remains_a_schema_error(self, value):
+        wrapped = Function("produce", lambda: value, output_spec=RecordSpec(y=SCALAR))
+
+        with pytest.raises(ResultSchemaError, match="output"):
+            wrapped()
+
+    @pytest.mark.parametrize("error", [TypeError("body failed"), ValueError("body failed")])
+    @pytest.mark.parametrize("regime", ["plain", "broadcast", "sweep"])
+    def test_an_exception_from_the_body_is_propagated_unchanged(self, error, regime):
+        def body(x):
+            raise error
+
+        wrapped = Function("produce", body, output_spec=SCALAR, dispatch="sequential")
+        operand = {
+            "plain": 1.0,
+            "broadcast": standard_normal(),
+            "sweep": NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=SCALAR),
+        }[regime]
+
+        with workflow_run(seed=0), pytest.raises(type(error)) as raised:
+            wrapped(operand)
+
+        assert raised.value is error
