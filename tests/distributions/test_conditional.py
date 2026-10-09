@@ -89,7 +89,8 @@ class LocationKernel(ConditionalDistribution):
         super().__init__(label, {"mu": SCALAR}, OutputSpec(y=SCALAR))
 
     def _condition_on(self, given, /, **kwargs):
-        return Normal(self.label, given["mu"], 1.0, event_spec=self.event_spec)
+        (component,) = self.event_spec.components
+        return Normal(component, given["mu"], 1.0, label=self.label)
 
 
 def _kernel(given=None, event=None, label: str = "k") -> Kernel:
@@ -142,13 +143,8 @@ class TestConstruction:
         given = InputSpec(mu=SCALAR, theta=RecordSpec(a=SCALAR, b=_array(2)))
         assert _kernel(given=given).given_spec == given
 
-    def test_a_bare_term_spec_completes_to_a_whole_term_under_the_kernel_name(self):
-        kernel = _kernel(event=_array(3), label="lik")
-        assert kernel.event_spec == OutputSpec(lik=_array(3))
-        assert not kernel.event_spec.exposes_record
-
-    def test_the_default_component_is_captured_once(self):
-        kernel = _kernel(event=SCALAR, label="lik")
+    def test_the_declared_component_survives_a_relabel(self):
+        kernel = _kernel(event=OutputSpec(lik=SCALAR), label="lik")
         renamed = kernel.with_label("other")
         assert renamed.label == "other"
         assert kernel.label == "lik"
@@ -193,7 +189,6 @@ class TestConstructionErrors:
         [
             pytest.param({"y": SCALAR}, OutputSpec(y=SCALAR), "k", id="whole-term-component"),
             pytest.param({"a": SCALAR}, RecordSpec(a=SCALAR, b=SCALAR), "k", id="record-field"),
-            pytest.param({"lik": SCALAR}, SCALAR, "lik", id="default-component"),
         ],
     )
     def test_a_given_slot_named_like_a_produced_component_raises(self, given, event, name):
@@ -206,7 +201,7 @@ class TestConstructionErrors:
 
     @pytest.mark.parametrize("name", ["", None, 3])
     def test_a_name_that_is_not_a_non_empty_string_raises(self, name):
-        with pytest.raises(TypeError, match="non-empty label"):
+        with pytest.raises(TypeError, match="label must be a non-empty string"):
             _kernel(label=name)
 
     @pytest.mark.parametrize("event", [3.0, (3,), "y", None])
@@ -233,9 +228,10 @@ class TestConstructionErrors:
         with pytest.raises(TypeError, match="TermSpec"):
             _kernel(given={"mu": slot_spec})
 
-    def test_a_bare_event_needs_a_name_that_is_a_valid_component(self):
-        with pytest.raises(ValueError, match="component names"):
-            _kernel(event=SCALAR, label="a/b")
+    @pytest.mark.parametrize("event", [SCALAR, _array(3)])
+    def test_a_bare_term_spec_event_raises_asking_for_a_component(self, event):
+        with pytest.raises(TypeError, match="needs a component"):
+            _kernel(event=event, label="lik")
 
     def test_a_kernel_that_leaves_its_declaration_unset_raises(self):
         class Undeclared(ConditionalDistribution):
@@ -672,7 +668,7 @@ class TestNotation:
     def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
         glm = _kernel(given={"beta": SCALAR}, label="glm")
         assert str(glm) == "glm(y | beta)"
-        assert repr(glm).startswith("Kernel('glm', given=('beta',)")
+        assert repr(glm).startswith("Kernel('glm', component='y', given=('beta',)")
 
     def test_fixed_paths_follow_the_given_slots(self):
         glm = _with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")

@@ -141,13 +141,13 @@ class TestTheBijectorTransform:
             transformed._log_prob(ys), reference.log_prob(ys), rtol=1e-5, atol=1e-6
         )
 
-    def test_the_label_names_the_event_and_the_base_is_its_parent(self, standard):
+    def test_the_component_names_the_event_and_the_base_is_its_parent(self, standard):
         transformed = BijectorTransformedDistribution("log_normal", standard, tfb.Exp())
-        assert transformed.label == "log_normal"
+        assert transformed.label == "BijectorTransformedDistribution"
         assert list(transformed.event_spec.components) == ["log_normal"]
         assert transformed.base is standard
         assert transformed.provenance.operation == "transform"
-        assert transformed.provenance.parents[0].label == "x"
+        assert transformed.provenance.parents[0].label == "Normal"
 
     def test_the_repr_names_the_class_the_base_and_the_bijector(self, standard):
         r = repr(BijectorTransformedDistribution("td", standard, tfb.Exp()))
@@ -224,7 +224,7 @@ class TestSampling:
     def test_an_empirical_base(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
-            "td", EmpiricalDistribution("x", atoms), tfb.Exp()
+            "td", EmpiricalDistribution(atoms, component="x"), tfb.Exp()
         )
         draws = jnp.asarray(transformed._sample(key, (10,)))
         assert draws.shape == (10, 2)
@@ -309,7 +309,7 @@ class TestTheCapabilities:
         )
 
     def test_a_base_without_a_density_gives_none(self):
-        empirical = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
         transformed = BijectorTransformedDistribution("td", empirical, tfb.Exp())
         assert isinstance(transformed, SupportsSampling)
         assert not isinstance(transformed, SupportsLogProb)
@@ -322,7 +322,7 @@ class TestTheCapabilities:
     def test_the_mean_of_a_nonlinear_map_is_estimated(self, key):
         atoms = jax.random.normal(key, (50, 2))
         transformed = BijectorTransformedDistribution(
-            "td", EmpiricalDistribution("x", atoms), tfb.Exp()
+            "td", EmpiricalDistribution(atoms, component="x"), tfb.Exp()
         )
         assert jnp.all(jnp.isfinite(mean(transformed)))
 

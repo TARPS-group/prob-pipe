@@ -23,11 +23,11 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **guard**: a predicate on a capability's instance and a call's arguments that decides whether the capability supports the call, as a `LinOp`'s inverse guard rejects a non-square operator (III.8).
 - **key**: a path that addresses a field, so the keys of a named tree are its field paths (II.6). A PRNG key is the random-number key that a workflow scope derives for each draw (V.8).
 - **kind**: a sort of tracked term, such as `NumericArray`, `Record`, or `Distribution`, identified by the class of its term spec; the kind table records each kind's tracked class and batch form (II.1).
-- **label**: the string that names a tracked term for a reader, its `label` attribute, which has no mathematical meaning and which no operation reads (C5). It is the name part of the rendering of the term's expression. II.4 owns how a label is set, derived, and grouped, and III.7 and III.8 own the labels of a field view and of a marginal. A law, a kernel, or a function displays its label in its notation.
+- **label**: the string that names a tracked term for a reader, its `label` attribute, which has no mathematical meaning and which no operation reads (C5). It is the name part of the rendering of the term's expression. A value's constructor takes it first, and a law's or a kernel's constructor takes it as the optional keyword `label=`, with a default label such as a family's class name. II.4 owns how a label is set, defaulted, derived, and grouped, and III.7 and III.8 own the labels of a field view and of a marginal. A law, a kernel, or a function displays its label in its notation.
 - **level**: a named group of contiguous batch axes; a batch's `axis_groups` tiles its batch shape into levels, outermost first (II.5).
 - **lift**: the application of a function to a distribution or a batch where it expects a value, which is a broadcast for a distribution and a sweep for a batch (C4, V.5). The sampling lift is the generic evaluation rule that realizes a broadcast from draws (V.7).
 - **marginal**: the law of the field or field group at a path of a distribution, detached from that distribution; `marginal(d, path)` returns it, and `_marginal` is its capability (VI.8, III.8).
-- **method**: a dispatch method, which is one named implementation that a dispatch registry selects by type and feasibility (II.7). Elsewhere the word keeps its Python sense of a function defined on a class, as `with_name` is.
+- **method**: a dispatch method, which is one named implementation that a dispatch registry selects by type and feasibility (II.7). Elsewhere the word keeps its Python sense of a function defined on a class, as `with_label` is.
 - **name**: the identifier of a matched part or a registry entry: a component name, a field name, or a level name (II.2, II.5, II.6), a method's or a route's name, and an operation's key in `operation_registry`. A tracked term's own identifier is its label.
 - **normalized and unnormalized**: a law is normalized when it claims a capability defined only for a probability law, such as sampling or a normalized density, and unnormalized otherwise (III.8). Step 3 of a call is argument normalization (V.4).
 - **notation**: how a law, a kernel, or a function displays, which is the whole rendering of its expression: its label followed by its signature in parentheses, as `prior(mu)`, `glm(y | beta)`, or `predict(x, y)`, which the property `notation` and `str()` return (II.4). An unlabeled product's notation joins its factors' notations with `·` unless the product holds fixed paths (IV.2).
@@ -67,7 +67,8 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | a distribution's event declaration, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
 | a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |
-| a tracked term's identity, the required first argument of `Record` and of a distribution | `label` |
+| a tracked term's identity for a reader: the first argument of a value's constructor, as of `Record`, and the optional keyword of a law's or a kernel's | `label` |
+| the component of a law's whole-term event, the first argument of a family's constructor and a keyword of `EmpiricalDistribution` and `distribution` | `component` |
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |
 | the attributes an immutable class restores into a container of their own, such as a store written in place | `_decoupled_state` |

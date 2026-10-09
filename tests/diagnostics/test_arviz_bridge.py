@@ -23,7 +23,7 @@ from tests._posterior import posterior_of
 
 
 def test_extract_draws_reads_an_empirical_law_and_refuses_others():
-    empirical = EmpiricalDistribution("x", jnp.array([4.0, 5.0]))
+    empirical = EmpiricalDistribution(jnp.array([4.0, 5.0]), component="x")
     np.testing.assert_array_equal(extract_draws(empirical)["x"], [4.0, 5.0])
 
     with pytest.raises(TypeError, match="cannot extract draws"):
@@ -37,7 +37,7 @@ def test_extract_draws_supports_record_atoms():
         "row",
         element_spec=RecordSpec(alpha=(), beta=()),
     )
-    post = EmpiricalDistribution("post", atoms)
+    post = EmpiricalDistribution(atoms, label="post")
 
     draws = extract_draws(post)
 
@@ -52,7 +52,7 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
         "row",
         element_spec=RecordSpec(alpha=(), beta=(2,)),
     )
-    post = EmpiricalDistribution("post", atoms)
+    post = EmpiricalDistribution(atoms, label="post")
     ds = to_arviz_dataset(post, var_names=["alpha"])
     assert isinstance(ds, xr.Dataset)
     assert set(ds.data_vars) == {"alpha"}
@@ -62,7 +62,7 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
 
 def test_to_arviz_dataset_prepends_chain_for_matrix_valued_params():
     omega = np.arange(24.0).reshape(4, 2, 3)
-    post = EmpiricalDistribution("omega", jnp.asarray(omega))
+    post = EmpiricalDistribution(jnp.asarray(omega), component="omega")
 
     ds = to_arviz_dataset(post)
 
@@ -101,7 +101,7 @@ def test_to_arviz_dataset_requires_xarray(monkeypatch):
     monkeypatch.setattr(arviz_bridge, "xr", None)
 
     with pytest.raises(ImportError, match="xarray is required"):
-        to_arviz_dataset(EmpiricalDistribution("x", jnp.array([1.0])))
+        to_arviz_dataset(EmpiricalDistribution(jnp.array([1.0]), component="x"))
 
 
 def test_check_arviz_installed_reports_missing_dependencies(monkeypatch):

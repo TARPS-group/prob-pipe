@@ -41,17 +41,15 @@ from tests.operations._laws import Sampler
 def _components():
     """Two bivariate normal laws over one declaration, the component ``x``."""
     return [
-        MultivariateNormal("a", jnp.zeros(2), cov=jnp.eye(2), event_spec=OutputSpec(x=None)),
-        MultivariateNormal(
-            "b", jnp.array([2.0, -1.0]), cov=2.0 * jnp.eye(2), event_spec=OutputSpec(x=None)
-        ),
+        MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2), label="a"),
+        MultivariateNormal("x", jnp.array([2.0, -1.0]), cov=2.0 * jnp.eye(2), label="b"),
     ]
 
 
 def test_the_components_share_one_event_declaration_and_labels_may_differ():
-    first = Normal("a", 0.0, 1.0, event_spec=OutputSpec(x=None))
-    second = Normal("b", 1.0, 1.0, event_spec=OutputSpec(x=None))
-    mixture = MixtureDistribution("m", [first, second], jnp.array([0.5, 0.5]))
+    first = Normal("x", 0.0, 1.0, label="a")
+    second = Normal("x", 1.0, 1.0, label="b")
+    mixture = MixtureDistribution([first, second], jnp.array([0.5, 0.5]), label="m")
     assert mixture.event_spec == first.event_spec
     assert mixture.label == "m"
 
@@ -59,46 +57,46 @@ def test_the_components_share_one_event_declaration_and_labels_may_differ():
 def test_components_with_different_declarations_raise():
     with pytest.raises(ValueError, match=r"must draw the same event.*Rename them with"):
         MixtureDistribution(
-            "m", [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)], jnp.array([0.5, 0.5])
+            [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)], jnp.array([0.5, 0.5]), label="m"
         )
 
 
 def test_components_with_different_shapes_raise_without_a_rename_hint():
     vector = MultivariateNormal("a", jnp.zeros(2), cov=jnp.eye(2))
     with pytest.raises(ValueError, match=r"'a' is an array of shape \(\) in component 0") as info:
-        MixtureDistribution("m", [Normal("a", 0.0, 1.0), vector], jnp.array([0.5, 0.5]))
+        MixtureDistribution([Normal("a", 0.0, 1.0), vector], jnp.array([0.5, 0.5]), label="m")
     assert "with_path_names" not in str(info.value)
 
 
 def test_a_mixture_has_at_least_one_component():
     with pytest.raises(ValueError, match="at least one component"):
-        MixtureDistribution("m", [], jnp.array([]))
+        MixtureDistribution([], jnp.array([]), label="m")
 
 
 def test_a_component_is_a_law():
     with pytest.raises(TypeError, match="component 1"):
-        MixtureDistribution("m", [_components()[0], 3.0], jnp.array([0.5, 0.5]))
+        MixtureDistribution([_components()[0], 3.0], jnp.array([0.5, 0.5]), label="m")
 
 
 def test_weights_that_do_not_sum_to_one_raise():
     with pytest.raises(ValueError, match=r"must sum to 1, got .* \(sum 1\.2\)"):
-        MixtureDistribution("m", _components(), jnp.array([0.5, 0.7]))
+        MixtureDistribution(_components(), jnp.array([0.5, 0.7]), label="m")
 
 
 def test_negative_weights_raise():
     with pytest.raises(ValueError, match="nonnegative"):
-        MixtureDistribution("m", _components(), jnp.array([1.5, -0.5]))
+        MixtureDistribution(_components(), jnp.array([1.5, -0.5]), label="m")
 
 
 def test_one_weight_per_component():
     with pytest.raises(ValueError, match=r"has 2 components but got weights of shape \(1,\)"):
-        MixtureDistribution("m", _components(), jnp.array([1.0]))
+        MixtureDistribution(_components(), jnp.array([1.0]), label="m")
 
 
 def test_the_log_density_is_the_weighted_log_sum_exp():
     components = _components()
     weights = jnp.array([0.3, 0.7])
-    mixture = MixtureDistribution("m", components, weights)
+    mixture = MixtureDistribution(components, weights, label="m")
     assert isinstance(mixture, SupportsSampling)
     assert isinstance(mixture, SupportsLogProb)
     x = jnp.array([0.5, 0.5])
@@ -109,14 +107,14 @@ def test_the_log_density_is_the_weighted_log_sum_exp():
 
 
 def test_the_log_density_keeps_the_leading_axes_of_a_batch_of_values():
-    mixture = MixtureDistribution("m", _components(), jnp.array([0.3, 0.7]))
+    mixture = MixtureDistribution(_components(), jnp.array([0.3, 0.7]), label="m")
     assert mixture._log_prob(jnp.zeros((4, 2))).shape == (4,)
 
 
 def test_the_moments_combine_componentwise():
     components = _components()
     weights = jnp.array([0.3, 0.7])
-    mixture = MixtureDistribution("m", components, weights)
+    mixture = MixtureDistribution(components, weights, label="m")
     means = jnp.stack([c._mean() for c in components])
     mean_ = weights @ means
     second = sum(
@@ -130,12 +128,12 @@ def test_the_moments_combine_componentwise():
 
 
 def test_the_variance_is_the_diagonal_of_the_covariance():
-    mixture = MixtureDistribution("m", _components(), jnp.array([0.3, 0.7]))
+    mixture = MixtureDistribution(_components(), jnp.array([0.3, 0.7]), label="m")
     np.testing.assert_allclose(mixture._variance(), jnp.diag(mixture._cov().to_dense()), rtol=1e-6)
 
 
 def test_the_draws_follow_the_mixture():
-    mixture = MixtureDistribution("m", _components(), jnp.array([0.25, 0.75]))
+    mixture = MixtureDistribution(_components(), jnp.array([0.25, 0.75]), label="m")
     draws = mixture._sample(jax.random.PRNGKey(0), (4000,))
     assert draws.shape == (4000, 2)
     np.testing.assert_allclose(jnp.mean(draws, axis=0), mixture._mean(), atol=0.1)
@@ -155,7 +153,7 @@ def _draw_count(component: Sampler) -> int:
 
 def test_each_component_draws_as_many_times_as_it_is_chosen():
     components = _counting_components()
-    mixture = MixtureDistribution("m", components, jnp.array([0.5, 0.5, 0.0]))
+    mixture = MixtureDistribution(components, jnp.array([0.5, 0.5, 0.0]), label="m")
     draws = mixture._sample(jax.random.PRNGKey(0), (200,))
     assert draws.shape == (200,)
     counts = [_draw_count(component) for component in components]
@@ -165,7 +163,7 @@ def test_each_component_draws_as_many_times_as_it_is_chosen():
 
 def test_each_draw_comes_from_its_chosen_component():
     """The chosen components' locations, 10 apart, show which component drew each value."""
-    mixture = MixtureDistribution("m", _counting_components(), jnp.array([0.2, 0.3, 0.5]))
+    mixture = MixtureDistribution(_counting_components(), jnp.array([0.2, 0.3, 0.5]), label="m")
     draws = np.asarray(mixture._sample(jax.random.PRNGKey(3), (20, 100)))
     assert draws.shape == (20, 100)
     nearest = np.rint(draws / 10.0)
@@ -176,7 +174,7 @@ def test_each_draw_comes_from_its_chosen_component():
 
 def test_one_draw_draws_one_component_once():
     components = _counting_components()
-    one = MixtureDistribution("m", components, jnp.array([0.2, 0.3, 0.5]))._sample(
+    one = MixtureDistribution(components, jnp.array([0.2, 0.3, 0.5]), label="m")._sample(
         jax.random.PRNGKey(4)
     )
     assert np.shape(one) == ()
@@ -184,7 +182,7 @@ def test_one_draw_draws_one_component_once():
 
 
 def test_a_traced_draw_still_follows_the_mixture():
-    mixture = MixtureDistribution("m", _components(), jnp.array([0.25, 0.75]))
+    mixture = MixtureDistribution(_components(), jnp.array([0.25, 0.75]), label="m")
     draws = jax.jit(lambda key: mixture._sample(key, (4000,)))(jax.random.PRNGKey(0))
     np.testing.assert_allclose(jnp.mean(draws, axis=0), mixture._mean(), atol=0.1)
 
@@ -192,9 +190,9 @@ def test_a_traced_draw_still_follows_the_mixture():
 def test_it_claims_what_every_component_claims():
     """An empirical component has moments but no density, so the mixture has none."""
     empirical = EmpiricalDistribution(
-        "e", jnp.array([[0.0, 0.0], [1.0, 1.0]]), event_spec=OutputSpec(x=None)
+        jnp.array([[0.0, 0.0], [1.0, 1.0]]), event_spec=OutputSpec(x=None), label="e"
     )
-    mixture = MixtureDistribution("m", [_components()[0], empirical], jnp.array([0.5, 0.5]))
+    mixture = MixtureDistribution([_components()[0], empirical], jnp.array([0.5, 0.5]), label="m")
     assert isinstance(mixture, SupportsSampling)
     assert isinstance(mixture, SupportsMean)
     assert isinstance(mixture, SupportsVariance)
@@ -206,14 +204,14 @@ def test_it_claims_what_every_component_claims():
 def test_a_record_event_combines_leaf_by_leaf():
     spec = NumericRecordSpec(a=(), b=())
     first = EmpiricalDistribution(
-        "p",
         NumericRecordBatch("p", {"a": jnp.zeros(3), "b": jnp.ones(3)}, "atom", element_spec=spec),
+        label="p",
     )
     second = EmpiricalDistribution(
-        "q",
         NumericRecordBatch("q", {"a": jnp.ones(3), "b": jnp.ones(3)}, "atom", element_spec=spec),
+        label="q",
     )
-    mixture = MixtureDistribution("m", [first, second], jnp.array([0.5, 0.5]))
+    mixture = MixtureDistribution([first, second], jnp.array([0.5, 0.5]), label="m")
     moment = mixture._mean()
     np.testing.assert_allclose(moment["a"], 0.5)
     np.testing.assert_allclose(moment["b"], 1.0)
@@ -222,14 +220,14 @@ def test_a_record_event_combines_leaf_by_leaf():
 
 
 def test_the_sample_operation_draws_the_mixture():
-    mixture = MixtureDistribution("m", _components(), jnp.array([0.5, 0.5]))
+    mixture = MixtureDistribution(_components(), jnp.array([0.5, 0.5]), label="m")
     with workflow_run(seed=0):
         draws = sample(mixture, sample_shape=(3,))
     assert draws.batch_shape == (3,)
 
 
 def test_a_mixture_pickles():
-    mixture = MixtureDistribution("m", _components(), jnp.array([0.3, 0.7]))
+    mixture = MixtureDistribution(_components(), jnp.array([0.3, 0.7]), label="m")
     restored = pickle.loads(pickle.dumps(mixture))
     assert isinstance(restored, SupportsLogProb)
     np.testing.assert_allclose(restored._mean(), mixture._mean(), rtol=1e-6)
@@ -242,7 +240,7 @@ def test_the_monte_carlo_mean_of_a_law_over_laws_is_the_mixture_of_its_draws():
         atoms[index] = Normal("x", location, 1.0)
     from probpipe import DistributionBatch
 
-    laws = EmpiricalDistribution("laws", DistributionBatch("laws", atoms, "law"))
+    laws = EmpiricalDistribution(DistributionBatch("laws", atoms, "law"), component="laws")
     with workflow_run(seed=0):
         estimate = mean.with_options(n_broadcast_samples=60)(laws)
     assert isinstance(estimate, SupportsMean)

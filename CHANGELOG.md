@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A law's label is optional, and the component of its event is required.**
+  A family takes the component first and the label as the keyword `label=`,
+  which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps
+  its syntax and is labeled `Normal` over the component `mu`, where it was
+  labeled `mu`, and displays as `Normal(mu)`. Pass `label=` to name the law,
+  as `Normal("mu", 0.0, 1.0, label="prior")`, which replaces
+  `Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))`; an
+  `event_spec` that names another component than the first argument raises
+  `ValueError`. The other catalog families follow: `TFPDistribution`,
+  `BootstrapDistribution`, `BootstrapReplicateDistribution`,
+  `BijectorTransformedDistribution`, `GaussianProcess`,
+  `LinearBasisFunction`, `RandomFunction`, `RandomMeasure`, and
+  `glm_likelihood` take the component first, and `GLMFamily.build` takes it
+  in place of the label. Laws and kernels without a family default to the
+  label `p`, and the calls change:
+
+  | Before | After |
+  |---|---|
+  | `EmpiricalDistribution("theta", draws)` | `EmpiricalDistribution(draws, component="theta")` |
+  | `EmpiricalDistribution("post", record_atoms)` | `EmpiricalDistribution(record_atoms, label="post")` |
+  | `KDEDistribution("x", atoms, 0.5)` | `KDEDistribution(atoms, 0.5, component="x")` |
+  | `distribution("z", sample=f, event_spec=NumericArraySpec(()))` | `distribution(sample=f, event_spec=NumericArraySpec(()), component="z")` |
+  | `conditional_distribution("lik", fn, given_spec=...)` | `conditional_distribution(fn, label="lik", given_spec=...)` |
+  | `MixtureDistribution("mix", laws, weights)` | `MixtureDistribution(laws, weights, label="mix")` |
+  | `PyMCModel("model", model_fn)` | `PyMCModel(model_fn, label="model")` |
+  | `StanModel("model", "model.stan", data=data)` | `StanModel("model.stan", data=data, label="model")` |
+
+  `EmpiricalDistribution` and `KDEDistribution` require `component` for atoms
+  that are not records and refuse it for record atoms, whose fields are the
+  components, and array atoms are labeled by the component.
+  `conditional_distribution` labels a kernel after its function's
+  `__name__`, and `p` for a lambda. A subclass of `Distribution` or
+  `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
+  as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
+  a `RecordSpec` no longer takes the label as its component. The repr shows
+  the label and then the component, as
+  `Normal('Normal', component='mu', loc=0.0, scale=1.0)`, and a family
+  pickled before this change loads to the same law. Lightweight provenance
+  keys a root parent by its identity, so two root laws under one default
+  label stay two ancestors.
 - **A value computed from a law is labeled by that value in probability
   notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
   `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled

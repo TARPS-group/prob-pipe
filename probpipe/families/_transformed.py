@@ -34,7 +34,12 @@ from ..distributions._capabilities import (
     SupportsVariance,
     _capability_subclass,
 )
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import (
+    Distribution,
+    _class_label,
+    _given_label,
+    _whole_term_event,
+)
 from ..functions._descendants import _Descent, _register_descendant_type
 from ..functions._reparameterization import _as_bijector, _BackendBijector, _image, _is_affine
 from ..linalg import DenseLinOp, LinOp
@@ -54,12 +59,14 @@ class LinearPushforwardDistribution(Distribution):
 
     Parameters
     ----------
-    label : str
-        The pushforward's label, and the component of its event.
+    component : str
+        The component of the pushforward's event.
     base : Distribution
         The law of ``X``, whose numeric event is ``op``'s input.
     op : LinOp
         The linear map.
+    label : str, optional
+        The pushforward's label, ``LinearPushforwardDistribution`` by default.
 
     Raises
     ------
@@ -67,7 +74,9 @@ class LinearPushforwardDistribution(Distribution):
         Always, until the linear evaluation rule is implemented.
     """
 
-    def __init__(self, label: str, base: Distribution, op: LinOp) -> None:
+    def __init__(
+        self, component: str, base: Distribution, op: LinOp, *, label: str | None = None
+    ) -> None:
         raise NotImplementedError("LinearPushforwardDistribution is not implemented yet")
 
 
@@ -218,25 +227,30 @@ class BijectorTransformedDistribution(Distribution):
     estimate the others by their Monte Carlo fallback.
 
     One draw is an array whose shape and dtype are those of the bijector's
-    output at a draw of the base, declared as a whole term whose component
-    defaults to the law's label; its support is the one the bijector maps onto
-    when that is known.
+    output at a draw of the base, declared as a whole term under *component*;
+    its support is the one the bijector maps onto when that is known.
 
     Parameters
     ----------
-    label : str
-        The transformed law's label.
+    component : str
+        The component of the transformed law's event.
     base : Distribution
         The law of ``X``, whose draws are arrays.
     bijector : Function
         The invertible map ``f``, claiming the inverse and the log-determinant
         of its Jacobian; a backend bijector enters as such a ``Function``.
+    label : str, optional
+        The transformed law's label, ``BijectorTransformedDistribution`` by
+        default.
 
     Raises
     ------
     TypeError
-        If *base* is not a ``Distribution`` whose draws are arrays, or
-        *bijector* is neither a ``Function`` nor a backend bijector.
+        If *base* is not a ``Distribution`` whose draws are arrays, *component*
+        is not a string, or *bijector* is neither a ``Function`` nor a backend
+        bijector.
+    ValueError
+        If *component* is not a valid component name.
     ResolutionError
         If *bijector* does not claim ``SupportsInverse``, or its guard
         rejects, or it does not claim ``SupportsLogDetJacobian``.
@@ -252,12 +266,26 @@ class BijectorTransformedDistribution(Distribution):
     }
 
     def __new__(
-        cls, label: str, base: Distribution, bijector: Function | Any
+        cls,
+        component: str,
+        base: Distribution,
+        bijector: Function | Any,
+        *,
+        label: str | None = None,
     ) -> BijectorTransformedDistribution:
         claimed = _claimed(base, _as_bijector(bijector)) if isinstance(base, Distribution) else ()
         return object.__new__(_capability_subclass(cls, claimed))
 
-    def __init__(self, label: str, base: Distribution, bijector: Function | Any) -> None:
+    def __init__(
+        self,
+        component: str,
+        base: Distribution,
+        bijector: Function | Any,
+        *,
+        label: str | None = None,
+    ) -> None:
+        owner = _class_label(self)
+        label = _given_label(label, owner)
         if not isinstance(base, Distribution):
             raise TypeError(
                 f"base of BijectorTransformedDistribution must be a Distribution, got "
@@ -290,7 +318,8 @@ class BijectorTransformedDistribution(Distribution):
         image = jax.eval_shape(_forward(bijector), point)
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
-        super().__init__(label, NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector)))
+        image_spec = NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector))
+        super().__init__(label, _whole_term_event(component, image_spec, None, owner))
         self.with_provenance(
             Provenance.create("transform", parents=[base], metadata={"bijector": bijector.label})
         )

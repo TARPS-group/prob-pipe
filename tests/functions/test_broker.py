@@ -554,7 +554,7 @@ class TestFunctionBrokerScope:
             ) as key_for,
             workflow_run(seed=7),
         ):
-            result = identity(Normal(loc=0.0, scale=1.0, label="x"))
+            result = identity(Normal("x", loc=0.0, scale=1.0))
 
         assert result.num_atoms == 8
         key_for.assert_called_once()

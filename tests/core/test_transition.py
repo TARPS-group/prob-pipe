@@ -29,7 +29,7 @@ from probpipe import (
 @pytest.fixture
 def initial():
     """A simple 2-D EmpiricalDistribution centered at zero."""
-    return EmpiricalDistribution("initial", jnp.zeros((50, 2)))
+    return EmpiricalDistribution(jnp.zeros((50, 2)), component="initial", label="initial")
 
 
 def _component(dist):
@@ -39,13 +39,15 @@ def _component(dist):
 
 
 def shift_step(dist, offset):
-    """Shift every atom by a scalar. Returns a bare Distribution."""
-    return EmpiricalDistribution(_component(dist), dist.atoms.values + offset)
+    """Shift every atom by a scalar. Returns a bare Distribution under *dist*'s label."""
+    return EmpiricalDistribution(
+        dist.atoms.values + offset, component=_component(dist), label=dist.label
+    )
 
 
 def provenance_step(dist, value):
     """A step that sets its own provenance."""
-    new_dist = EmpiricalDistribution(_component(dist), dist.atoms.values + value)
+    new_dist = EmpiricalDistribution(dist.atoms.values + value, component=_component(dist))
     new_dist.with_provenance(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
     return new_dist
 
@@ -164,7 +166,7 @@ class TestIterate:
         """The visited laws share one event declaration, as a batch's elements do."""
 
         def widen(dist, inp):
-            return EmpiricalDistribution(_component(dist), jnp.zeros((50, 3)))
+            return EmpiricalDistribution(jnp.zeros((50, 3)), component=_component(dist))
 
         with pytest.raises(TypeError):
             iterate(step_fn=widen, initial=initial, inputs=[1.0])
@@ -205,9 +207,9 @@ class TestWithConversion:
 
         def parametric_step(dist, shift):
             samples = jnp.asarray(pp_sample(dist, sample_shape=(50,))) + shift
-            return EmpiricalDistribution("x", samples)
+            return EmpiricalDistribution(samples, component="x")
 
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="x")
+        initial = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         step = with_conversion(parametric_step, MultivariateNormal)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0, 2.0, 3.0])
         for d in dists[1:]:
@@ -226,19 +228,19 @@ def ten_heavy_particles(dist, inp):
     """The particles 0 to 99, of which the first ten hold the weight equally, so ESS / N is 0.1."""
     log_w = jnp.where(jnp.arange(_PARTICLES) < 10, 0.0, -100.0)
     atoms = jnp.arange(_PARTICLES, dtype=jnp.float32).reshape(_PARTICLES, 1)
-    return EmpiricalDistribution("x", atoms, Weights(log_weights=log_w))
+    return EmpiricalDistribution(atoms, Weights(log_weights=log_w), component="x")
 
 
 def drawn_heavy_particles(dist, inp):
     """Draws of *dist* by the converter registry, of which the first ten hold the weight equally."""
     drawn = converter_registry.convert(dist, EmpiricalDistribution, num_samples=_PARTICLES)
     log_w = jnp.where(jnp.arange(_PARTICLES) < 10, 0.0, -100.0)
-    return EmpiricalDistribution("x", drawn.atoms.values, Weights(log_weights=log_w))
+    return EmpiricalDistribution(drawn.atoms.values, Weights(log_weights=log_w), component="x")
 
 
 def _resampled_atoms(step, seed=None):
     """The atoms of one step of *step*, in ``workflow_run(seed=seed)`` when *seed* is given."""
-    initial = EmpiricalDistribution("x", jnp.zeros((_PARTICLES, 1)))
+    initial = EmpiricalDistribution(jnp.zeros((_PARTICLES, 1)), component="x")
     with contextlib.nullcontext() if seed is None else workflow_run(seed=seed):
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
     return np.asarray(dists[-1].atoms.values)
@@ -254,7 +256,7 @@ class TestWithResampling:
 
     def test_no_resample_uniform(self):
         """Uniform weights -> no resampling (ESS = N)."""
-        initial = EmpiricalDistribution("x", jnp.zeros((100, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((100, 2)), component="x")
         step = with_resampling(shift_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         assert _produced(dists[-1]).operation == "workflow.with_resampling(shift_step)"
@@ -266,9 +268,9 @@ class TestWithResampling:
         samples = jnp.arange(n * 2, dtype=jnp.float32).reshape(n, 2)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution("x", samples, Weights(log_weights=log_w))
+            return EmpiricalDistribution(samples, Weights(log_weights=log_w), component="x")
 
-        initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((n, 2)), component="x")
         step = with_resampling(weighted_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
@@ -281,9 +283,11 @@ class TestWithResampling:
         log_w = jnp.full(n, -100.0).at[0].set(0.0)
 
         def weighted_step(dist, inp):
-            return EmpiricalDistribution("x", jnp.zeros((n, 2)), Weights(log_weights=log_w))
+            return EmpiricalDistribution(
+                jnp.zeros((n, 2)), Weights(log_weights=log_w), component="x"
+            )
 
-        initial = EmpiricalDistribution("x", jnp.zeros((n, 2)))
+        initial = EmpiricalDistribution(jnp.zeros((n, 2)), component="x")
         step = with_resampling(weighted_step, ess_threshold=0.5)
         raw = step.apply(initial, 0.0)
         wrapped = iterate(step_fn=step, initial=initial, inputs=[0.0])[-1]
@@ -295,10 +299,10 @@ class TestWithResampling:
 
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""
-        initial = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
+        initial = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
 
         def mvn_step(dist, inp):
-            return MultivariateNormal(loc=jnp.ones(2) * inp, cov=jnp.eye(2), label="z")
+            return MultivariateNormal("z", loc=jnp.ones(2) * inp, cov=jnp.eye(2))
 
         step = with_resampling(mvn_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
@@ -321,7 +325,7 @@ class TestResamplingRandomness:
         assert not np.array_equal(first, second)
 
     def test_two_resamplings_in_one_scope_differ(self):
-        initial = EmpiricalDistribution("x", jnp.zeros((_PARTICLES, 1)))
+        initial = EmpiricalDistribution(jnp.zeros((_PARTICLES, 1)), component="x")
         step = with_resampling(ten_heavy_particles)
         with workflow_run(seed=0):
             dists = iterate(step_fn=step, initial=initial, inputs=[0.0, 0.0])
@@ -335,7 +339,7 @@ class TestResamplingRandomness:
     def test_apply_resamples_after_a_step_that_draws(self):
         """The step's draw and the resampling are two events of one ``apply`` evaluation."""
         step = with_resampling(drawn_heavy_particles)
-        initial = Normal(loc=0.0, scale=1.0, label="x")
+        initial = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             first = step.apply(initial, 0.0)
         with workflow_run(seed=0):
@@ -356,7 +360,7 @@ class TestNestability:
         """A step function can call iterate internally."""
 
         def inner_step(dist, value):
-            return EmpiricalDistribution(_component(dist), dist.atoms.values + value)
+            return EmpiricalDistribution(dist.atoms.values + value, component=_component(dist))
 
         def outer_step(dist, batch):
             """Each outer step runs an inner iterate loop."""

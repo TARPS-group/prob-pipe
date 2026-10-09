@@ -55,7 +55,7 @@ class TestCompileForNutpie:
 
         program = tmp_path / "program.stan"
         program.write_text("data { int N; } parameters { real mu; } model { }")
-        posterior = StanModel("program", str(program), data={"N": 3})
+        posterior = StanModel(str(program), data={"N": 3}, label="program")
         with (
             patch.object(_StanPosterior, "_bridgestan_model", lambda self: "bs_model"),
             patch.object(nutpie, "compile_stan_model", _compile_stan_model),
@@ -72,7 +72,7 @@ class TestCompileForNutpie:
 
         program = tmp_path / "program.stan"
         program.write_text("data { int N; vector[N] y; } parameters { real mu; } model { }")
-        kernel = StanModel("program", str(program), data={"N": 2})
+        kernel = StanModel(str(program), data={"N": 2}, label="program")
         with patch.object(nutpie, "compile_stan_model", _compile_stan_model):
             compiled, _ = _compile_for_nutpie(kernel, data={"y": [1.0, 2.0]})
         assert compiled.data == {"N": 2, "y": [1.0, 2.0]}
@@ -89,7 +89,7 @@ class TestCompileForNutpie:
             "data { int N; } parameters { real mu; vector[2] theta; } model { } "
             "generated quantities { real twice = 2 * mu; }"
         )
-        posterior = StanModel("program", str(program), data={"N": 3})
+        posterior = StanModel(str(program), data={"N": 3}, label="program")
         mu = np.array([[0.0, 1.0, 2.0], [10.0, 11.0, 12.0]])
         trace = xr.DataTree.from_dict(
             {
@@ -122,7 +122,7 @@ class TestCompileForNutpie:
 
         program = tmp_path / "program.stan"
         program.write_text("data { int N; } parameters { real mu; } model { }")
-        posterior = StanModel("program", str(program), data={"N": 3})
+        posterior = StanModel(str(program), data={"N": 3}, label="program")
         bridgestan = MagicMock()
         with patch.dict("sys.modules", {"bridgestan": bridgestan}):
             first = posterior._bridgestan_model()
@@ -163,7 +163,7 @@ class TestCompileForNutpie:
             "data { int N; vector[N] y; } parameters { real mu; real<lower=0> sigma; } "
             "model { y ~ normal(mu, sigma); }"
         )
-        posterior = StanModel("program", str(program), data={"N": 2, "y": [1.0, 2.0]})
+        posterior = StanModel(str(program), data={"N": 2, "y": [1.0, 2.0]}, label="program")
         target = condition_on.with_options(method="unnormalized")(posterior, {"mu": 0.3})
         report = NutpieNutsMethod().check(target)
         assert report.feasible is False
@@ -189,7 +189,7 @@ class TestMethodOptions:
 
         program = tmp_path / "program.stan"
         program.write_text("parameters { real mu; } model { }")
-        posterior = StanModel("program", str(program))
+        posterior = StanModel(str(program), label="program")
         with (
             patch.object(nutpie, "compile_stan_model", _compile_stan_model),
             patch.object(nutpie, "sample", return_value=_stan_trace()) as sample,
@@ -360,9 +360,9 @@ class TestNutpieStanIntegration:
         x = rng.normal(size=N)
         y = 0.5 + 1.5 * x + rng.normal(size=N)
         model = StanModel(
-            "linreg",
             str(stan_file),
             data={"N": N, "x": x.tolist(), "y": y.tolist()},
+            label="linreg",
         )
 
         with workflow_run(seed=0):
@@ -400,7 +400,7 @@ class TestNutpieStanIntegration:
             """
         )
         data = {"N": 3, "y": [0.5, -0.2, 1.0]}
-        renamed = StanModel("location", str(stan_file)).with_path_names(
+        renamed = StanModel(str(stan_file), label="location").with_path_names(
             {"mu": "scale_free/mu", "sigma": "scale_free/sigma"}
         )
         assert condition_on.check(renamed, data).method == "nutpie_nuts"
@@ -438,7 +438,7 @@ class TestNutpieIntegration:
         """Nutpie recovers the analytical posterior mean for a simple Gaussian."""
         np.random.seed(0)
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
-        model = PyMCModel("gaussian", _gaussian_pymc_fn)
+        model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
         with workflow_run(seed=42):
             result = condition_on_nutpie.apply(
                 model,
@@ -476,7 +476,7 @@ class TestNutpieIntegration:
         from probpipe.inference._nutpie import NutpieNutsMethod
         from probpipe.operations._condition import condition_on
 
-        model = PyMCModel("gaussian", _gaussian_pymc_fn)
+        model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
         target = condition_on.with_options(method="unnormalized")(
             model, {"y": np.array([0.0, 1.0])}
         )
@@ -494,7 +494,9 @@ class TestNutpieIntegration:
         from probpipe import workflow_run
         from probpipe.operations._condition import condition_on
 
-        renamed = PyMCModel("gaussian", _gaussian_pymc_fn).with_path_names({"mu": "location/mu"})
+        renamed = PyMCModel(_gaussian_pymc_fn, label="gaussian").with_path_names(
+            {"mu": "location/mu"}
+        )
         data = {"y": np.array([0.0, 1.0])}
         assert condition_on.check(renamed, data).method == "nutpie_nuts"
         options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
@@ -503,7 +505,7 @@ class TestNutpieIntegration:
         assert list(posterior.event_spec.components) == ["location"]
 
     def test_annotations_trace_attached(self):
-        model = PyMCModel("gaussian", _gaussian_pymc_fn)
+        model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
         y_obs = np.array([0.0, 1.0], dtype=float)
         with workflow_run(seed=0):
             result = condition_on_nutpie.apply(
@@ -536,7 +538,7 @@ class TestNutpieIntegration:
                 pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel("ordering", model_fn)
+        model = PyMCModel(model_fn, label="ordering")
         with workflow_run(seed=0):
             result = condition_on_nutpie.apply(
                 model,
@@ -569,7 +571,7 @@ class TestNutpieIntegration:
                 pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel("partial", model_fn)
+        model = PyMCModel(model_fn, label="partial")
         with workflow_run(seed=0):
             result = condition_on_nutpie.apply(
                 model,

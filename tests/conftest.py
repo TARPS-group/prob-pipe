@@ -88,7 +88,7 @@ def simple_samples():
 
 @pytest.fixture
 def empirical(simple_samples, key):
-    return EmpiricalDistribution("empirical", simple_samples)
+    return EmpiricalDistribution(simple_samples, component="empirical")
 
 
 @pytest.fixture

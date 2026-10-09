@@ -392,7 +392,9 @@ def _joint_gaussian() -> Distribution:
 
 def _dependent_joint() -> Distribution:
     """The joint ``p(y | beta) p(beta)``, whose marginal at ``y`` has no closed form."""
-    return _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal("beta", 0.0, 1.0)
+    return _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
+        "beta", 0.0, 1.0, label="beta"
+    )
 
 
 # -- The derivation table -----------------------------------------------------
@@ -779,7 +781,9 @@ class TestCapabilityDerivation:
         assert parent.report_calls == ["model/theta/mu"]
 
     def test_a_joint_reports_the_claims_of_the_factors_a_marginal_keeps(self):
-        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution(
+            jnp.array([0.0, 1.0, 3.0]), component="b"
+        )
         assert _claimed(joint["a"]) >= _DENSITIES
         assert not _DENSITIES & _claimed(joint["b"])
         assert SupportsSampling in _claimed(joint["b"])
@@ -1018,14 +1022,14 @@ class TestDerivedBehavior:
             "row",
             element_spec=RecordSpec(b=(2,), a=()),
         )
-        parent = EmpiricalDistribution("post", atoms)
+        parent = EmpiricalDistribution(atoms, label="post")
         quantiles = FieldView(parent, "a")._quantile(q)
         assert jnp.shape(quantiles) == shape
-        expected = EmpiricalDistribution("a", jnp.array([3.0, 1.0, 2.0]))._quantile(q)
+        expected = EmpiricalDistribution(jnp.array([3.0, 1.0, 2.0]), component="a")._quantile(q)
         assert jnp.allclose(quantiles, expected)
 
     def test_a_selection_of_a_whole_array_keeps_every_level(self):
-        parent = EmpiricalDistribution("theta", jnp.array([4.0, 1.0, 3.0, 2.0]))
+        parent = EmpiricalDistribution(jnp.array([4.0, 1.0, 3.0, 2.0]), component="theta")
         levels = jnp.array([0.25, 0.5, 1.0])
         quantiles = FieldView(parent, ("theta",))._quantile(levels)
         assert list(quantiles) == ["theta"]
@@ -1039,7 +1043,7 @@ class TestDerivedBehavior:
             "row",
             element_spec=RecordSpec(u=(), v=()),
         )
-        parent = EmpiricalDistribution("e", atoms)
+        parent = EmpiricalDistribution(atoms, label="e")
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(parent, "v")._quantile(levels)
         assert quantiles.shape == (2,)
@@ -1257,13 +1261,13 @@ class TestTheViewOfAWeightedLaw:
         assert float(probpipe.variance(view)) == pytest.approx(1.04)
 
     def test_a_weighted_record_empirical_law(self):
-        view = EmpiricalDistribution("d", self._record_atoms(), self._WEIGHTS)["a"]
+        view = EmpiricalDistribution(self._record_atoms(), self._WEIGHTS, label="d")["a"]
         assert float(probpipe.mean(view)) == pytest.approx(0.6)
         assert float(probpipe.variance(view)) == pytest.approx(1.04)
 
     def test_a_weighted_record_kde(self):
         # A KDE's mean is its atoms' weighted mean, whatever the bandwidth.
-        law = KDEDistribution("kde", self._record_atoms(), weights=self._WEIGHTS)
+        law = KDEDistribution(self._record_atoms(), weights=self._WEIGHTS, label="kde")
         assert float(probpipe.mean(law["a"])) == pytest.approx(0.6)
 
 
@@ -1309,7 +1313,9 @@ class TestNotation:
         assert _fixed_paths(derive(parent["model"])) == ("obs",)
 
     def test_the_detached_marginal_keeps_the_fixed_paths(self):
-        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
+            jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
+        )
         parent = _with_fixed_paths(joint.with_label("model"), "obs")
         detached = parent["b"].raw()
         assert _fixed_paths(detached) == ("obs",)
@@ -1331,9 +1337,11 @@ class TestNotation:
     def test_a_view_of_several_whole_factors_displays_factor_by_factor(
         self, paths, label, notation
     ):
-        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0) * Normal("c", 0.0, 1.0)).with_label(
-            "model"
-        )
+        model = (
+            Normal("a", 0.0, 1.0, label="a")
+            * Normal("b", 0.0, 1.0, label="b")
+            * Normal("c", 0.0, 1.0, label="c")
+        ).with_label("model")
         view, detached = model[paths], marginal(model, paths)
         assert (view.label, view.notation) == (detached.label, detached.notation)
         assert (view.label, view.notation) == (label, notation)
@@ -1352,15 +1360,19 @@ class TestNotation:
             "obs",
             element_spec=NumericRecordSpec(u=(), v=()),
         )
-        model = (EmpiricalDistribution("pair", atoms) * Normal("a", 0.0, 1.0)).with_label("model")
+        model = (
+            EmpiricalDistribution(atoms, label="pair") * Normal("a", 0.0, 1.0, label="a")
+        ).with_label("model")
         view, detached = model["u"], marginal(model, "u")
         assert (view.label, view.notation) == (detached.label, detached.notation)
         assert view.notation == "model(u)"
 
     def test_a_view_of_a_view_displays_as_the_marginal_of_the_view(self):
-        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0) * Normal("c", 0.0, 1.0)).with_label(
-            "model"
-        )
+        model = (
+            Normal("a", 0.0, 1.0, label="a")
+            * Normal("b", 0.0, 1.0, label="b")
+            * Normal("c", 0.0, 1.0, label="c")
+        ).with_label("model")
         selection = model[("b", "a")]
         for key, notation in [("a", "a(a)"), (("a", "b"), "a(a)·b(b)")]:
             view, detached = selection[key], marginal(selection, key)
@@ -1373,13 +1385,15 @@ class TestNotation:
         assert view["model/theta/mu"].notation == "theta(mu)"
 
     def test_a_relabeled_view_of_several_factors_displays_by_its_label(self):
-        model = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        model = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
         view = model[("a", "b")].with_label("pair")
         assert view.notation == "pair(a, b)"
         assert marginal(view, ("a", "b")).notation == "pair(a, b)"
 
     def test_a_view_of_several_factors_holding_fixed_paths_lists_them(self):
-        model = _with_fixed_paths((Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)), "obs")
+        model = _with_fixed_paths(
+            (Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")), "obs"
+        )
         view, detached = model[("a", "b")], marginal(model, ("a", "b"))
         assert view.notation == detached.notation == "(a·b)(a, b; obs)"
 
@@ -1400,13 +1414,13 @@ class TestNotation:
             "obs",
             element_spec=NumericRecordSpec(y=(), mu=()),
         )
-        model = EmpiricalDistribution("model", atoms)
+        model = EmpiricalDistribution(atoms, label="model")
         assert model["y"].notation == marginal(model, "y").notation == "model(y)"
 
 
 def _prior() -> Distribution:
     """``prior``, a standard normal law over ``mu``."""
-    return Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))
+    return Normal("mu", 0.0, 1.0, label="prior")
 
 
 class TestTheRawFormOfAView:
@@ -1424,7 +1438,9 @@ class TestTheRawFormOfAView:
         assert jnp.allclose(raw.mean(), _MEAN[1:])
 
     def test_a_view_of_a_law_without_a_backend_gives_the_detached_marginal(self):
-        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
+            jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
+        )
         view = joint.with_label("model")["b"]
         raw = view.raw()
         assert isinstance(raw, EmpiricalDistribution) and not isinstance(raw, FieldView)

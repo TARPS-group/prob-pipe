@@ -42,9 +42,9 @@ def _check_setup():
     """A normal kernel of six observations and its normal prior."""
     prior = Normal("mu", 0.0, 1.0)
     likelihood = conditional_distribution(
-        "y_given_mu",
         lambda mu: Normal("y", mu * jnp.ones(6), 1.0),
         given_spec=prior.event_spec.components,
+        label="y_given_mu",
     )
     return likelihood, prior
 
@@ -146,7 +146,7 @@ class _FakeConditionOn:
 
     def __call__(self, d, given):
         self.observations.append(np.asarray(given["y"]))
-        return EmpiricalDistribution("beta", jnp.zeros((4, 1)))
+        return EmpiricalDistribution(jnp.zeros((4, 1)), component="beta")
 
     def with_options(self, *, method=None, method_options=None):
         def fit(d, given):
@@ -160,14 +160,14 @@ def _conjugate_calibration(**options):
     """Calibration of the exact posterior kernel of a normal mean given three observations."""
     prior = Normal("mu", 0.0, 1.0)
     likelihood = conditional_distribution(
-        "y_given_mu",
         lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
         given_spec=prior.event_spec.components,
+        label="y_given_mu",
     )
     exact = conditional_distribution(
-        "posterior",
         lambda y: Normal("mu", jnp.sum(y) / 4.0, 0.5),
         given_spec={"y": NumericArraySpec((3,))},
+        label="posterior",
     )
     return simulation_based_calibration(
         likelihood * prior,
@@ -182,7 +182,7 @@ class TestSimulationBasedCalibrationBroker:
     @staticmethod
     def _model():
         x = jnp.ones((3, 1))
-        prior = MultivariateNormal(loc=jnp.zeros(1), cov=jnp.eye(1), label="beta")
+        prior = MultivariateNormal("beta", loc=jnp.zeros(1), cov=jnp.eye(1))
         return glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0) * prior
 
     def test_a_call_in_a_seeded_scope_reproduces_its_ranks(self):
@@ -236,9 +236,9 @@ class TestSimulationBasedCalibrationBroker:
         fake_condition_on = _FakeConditionOn()
         monkeypatch.setattr("probpipe.validation._calibration.condition_on", fake_condition_on)
         kernel = conditional_distribution(
-            "posterior",
-            lambda y: MultivariateNormal(loc=y[:1], cov=jnp.eye(1), label="beta"),
+            lambda y: MultivariateNormal("beta", loc=y[:1], cov=jnp.eye(1)),
             given_spec={"y": NumericArraySpec((3,))},
+            label="posterior",
         )
         with workflow_run(seed=7):
             first_draw = sample.with_options(raw=True)(self._model(), sample_shape=(3,))
@@ -310,9 +310,9 @@ class TestSimulationBasedCalibrationBroker:
 
     def test_a_posterior_whose_slots_miss_the_observed_fields_fails_before_event_commit(self):
         other_slot = conditional_distribution(
-            "posterior",
             lambda x, z: Normal("beta", x + z, 1.0),
             given_spec={"x": NumericArraySpec(()), "z": NumericArraySpec(())},
+            label="posterior",
         )
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,

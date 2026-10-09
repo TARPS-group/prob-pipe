@@ -33,6 +33,7 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    OutputSpec,
     Record,
     ResolutionError,
     function,
@@ -398,7 +399,7 @@ class TestGrouping:
         def identity(x):
             return x
 
-        law = Unsampled("bare", SCALAR)
+        law = Unsampled("bare", OutputSpec(bare=SCALAR))
 
         assert isinstance(error_of(lambda: identity(law)), ResolutionError)
 

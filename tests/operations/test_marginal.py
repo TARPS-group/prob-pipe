@@ -156,7 +156,7 @@ class TestOptionalSlots:
     def test_the_marginal_of_such_a_factor_is_its_law_at_the_defaults(self):
         from probpipe import Normal, conditional_distribution
 
-        kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
+        kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
         law = marginal(kernel * Normal("mu", 0.0, 1.0), "y")
         assert isinstance(law, Distribution)
         assert law.label == "lik"
@@ -165,7 +165,7 @@ class TestOptionalSlots:
     def test_a_renamed_joint_keeps_the_marginal_at_the_defaults(self):
         from probpipe import Normal, conditional_distribution
 
-        kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
+        kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
         joint = (kernel * Normal("mu", 0.0, 1.0)).with_path_names({"y": "obs"})
         law = marginal(joint, "obs")
         assert isinstance(law, Distribution)
@@ -174,7 +174,7 @@ class TestOptionalSlots:
     def test_a_factor_whose_optional_slot_is_produced_is_not_closed(self):
         from probpipe import HalfNormal, Normal, conditional_distribution
 
-        kernel = conditional_distribution("lik", lambda scale=2.0: Normal("y", 0.0, scale))
+        kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik")
         with pytest.raises(ResolutionError, match="integrates out the fields \\['scale'\\]"):
             marginal(kernel * HalfNormal("scale", 1.0), "y")
 

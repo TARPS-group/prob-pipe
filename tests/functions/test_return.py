@@ -113,7 +113,7 @@ class TestLabelAndProvenance:
 
         assert result.label == "predict"
         assert str(result) == result.notation == "predict(a, b)"
-        assert product.notation == "a(a)·b(b)"
+        assert product.notation == "Normal(a)·Gamma(b)"
 
     def test_each_product_of_a_sweep_displays_by_its_element_label(self):
         def predict(loc):

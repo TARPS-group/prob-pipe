@@ -318,7 +318,7 @@ class Weights:
     which is used as-is (no re-validation), so log-weights reach it as one::
 
         w = Weights(log_weights=log_w)
-        EmpiricalDistribution("x", samples, weights=w)
+        EmpiricalDistribution(samples, weights=w, component="x")
 
     **JAX compatibility** — ``Weights`` is registered as a JAX pytree
     whose single leaf is the **normalized** weight array, so it works

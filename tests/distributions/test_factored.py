@@ -149,9 +149,7 @@ class NormalKernel(ConditionalDistribution):
                 self.label, rest, self.event_spec, loc=self._loc, scale=self._scale, bound=values
             )
         (component,) = self.event_spec.components
-        return Normal(
-            self.label, self._loc(values), self._scale, event_spec=OutputSpec(**{component: None})
-        )
+        return Normal(component, self._loc(values), self._scale, label=self.label)
 
 
 class SamplingKernel(NormalKernel, SupportsConditionalSampling):
@@ -207,7 +205,7 @@ class RenamingKernel(NormalKernel):
     """A kernel whose bound law declares a component other than the kernel's own."""
 
     def _condition_on(self, given, /, **kwargs):
-        return Normal(self.label, 0.0, 1.0, event_spec=OutputSpec(elsewhere=None))
+        return Normal("elsewhere", 0.0, 1.0, label=self.label)
 
 
 class MarginalKernel(NormalKernel, SupportsConditionalMarginals):
@@ -407,7 +405,7 @@ def _likelihood(kernel: type[NormalKernel] = NormalKernel, **options: Any) -> No
 
 def _prior(scale: float = 1.0) -> Normal:
     """A normal law labeled ``prior`` whose component is ``beta``."""
-    return Normal("prior", 0.0, scale, event_spec=OutputSpec(beta=None))
+    return Normal("beta", 0.0, scale, label="prior")
 
 
 def _law(label: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
@@ -747,8 +745,8 @@ class TestMomentCapabilities:
             "row",
             element_spec=RecordSpec(b=(2,), a=()),
         )
-        record = EmpiricalDistribution("post", atoms, jnp.array([0.5, 0.25, 0.25]))
-        theta = EmpiricalDistribution("theta", jnp.array([4.0, 5.0, 6.0]))
+        record = EmpiricalDistribution(atoms, jnp.array([0.5, 0.25, 0.25]), label="post")
+        theta = EmpiricalDistribution(jnp.array([4.0, 5.0, 6.0]), component="theta")
         levels = jnp.array([0.25, 0.75])
         quantiles = FactoredDistribution("j", [record, theta])._quantile(levels)
         assert list(quantiles) == ["b", "a", "theta"]
@@ -761,9 +759,9 @@ class TestMomentCapabilities:
     def test_the_law_of_the_one_field_of_an_empirical_record_has_its_quantiles(self):
         column = jnp.array([3.0, 1.0, 2.0, 4.0])
         atoms = NumericRecordBatch("rows", {"x": column}, "row", element_spec=RecordSpec(x=()))
-        field = _SoleField(EmpiricalDistribution("one", atoms))
+        field = _SoleField(EmpiricalDistribution(atoms, label="one"))
         levels = jnp.array([0.25, 0.5])
-        expected = EmpiricalDistribution("x", column)._quantile(levels)
+        expected = EmpiricalDistribution(column, component="x")._quantile(levels)
         assert jnp.allclose(field._quantile(levels), expected)
         assert jnp.shape(field._quantile(0.5)) == ()
 
@@ -1190,7 +1188,7 @@ class TestNumericMarkers:
     def test_a_class_inheriting_the_marker_constructs_as_itself(self):
         joint = NumericJoint("model", [Normal("a", 0.0, 1.0)])
         assert isinstance(joint, NumericJoint)
-        assert joint.factors[0].label == "a"
+        assert tuple(joint.factors[0].event_spec.components) == ("a",)
 
     def test_a_class_inheriting_the_marker_has_its_claim_checked(self):
         with pytest.raises(TypeError, match="inherits FactoredNumericDistribution"):
@@ -1288,7 +1286,7 @@ class TestPathRenames:
 
     def test_gathering_components_of_two_factors_regroups_them(self, key):
         """The node ``g`` is one factor: the sub-joint of the two factors, packaged as ``g``."""
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
+        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 2.0, 1.0, label="b")
         renamed = joint.with_path_names({"a": "g/a", "b": "g/b"})
         assert isinstance(renamed, SupportsFactors)
         assert list(renamed.event_spec.components) == ["g"]

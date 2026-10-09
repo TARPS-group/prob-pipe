@@ -151,7 +151,7 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-**A law from functions.** `distribution` builds a `Distribution` from a sampling function, a log-density, or both, as `function` builds a `Function` from a callable (V.1). It takes the law's label first and each function under the name of the operation it realizes: `sample(key)` returns one draw at a PRNG key, at the kind the event declaration names, and `log_prob` or `unnormalized_log_prob` scores one value and returns a real scalar. A density receives an array for an array event, a `Record` for a record event, and the value itself for any other event. A call gives at least one function, at most one density, and an `event_spec` of any kind a `Distribution` declares, and a missing or non-callable function raises `TypeError`, which names it. The law claims the capability that each function given realizes:
+**A law from functions.** `distribution` builds a `Distribution` from a sampling function, a log-density, or both, as `function` builds a `Function` from a callable (V.1). It takes each function under the name of the operation it realizes, the event declaration, and the optional keywords `component` and `label`: `sample(key)` returns one draw at a PRNG key, at the kind the event declaration names, and `log_prob` or `unnormalized_log_prob` scores one value and returns a real scalar. A density receives an array for an array event, a `Record` for a record event, and the value itself for any other event. A call gives at least one function, at most one density, and an `event_spec` of any kind a `Distribution` declares, and a missing or non-callable function raises `TypeError`, which names it. An `OutputSpec` names its components and a bare `RecordSpec` exposes its fields, while any other bare spec is a whole term under `component`, which such a spec requires and the other two refuse, both with `TypeError`. The label defaults to `p`. The law claims the capability that each function given realizes:
 
 - `sample`: `SupportsSampling`;
 - `log_prob`: `SupportsLogProb`, which provides the unnormalized density as a normalized family's does;
@@ -163,20 +163,20 @@ Construction draws nothing and scores no value. It evaluates each function that 
 
 ```python
 def distribution(
-    label: str,
-    /,
     *,
     sample: Callable[[Key], Any] | None = None,
     log_prob: Callable[[Any], Array] | None = None,
     unnormalized_log_prob: Callable[[Any], Array] | None = None,
     event_spec: OutputSpec | TermSpec,
+    component: str | None = None,
+    label: str | None = None,
 ) -> Distribution: ...
-    # at least one function and at most one density
+    # at least one function and at most one density; component for a bare whole-term spec
 ```
 
-**A kernel from a function.** `conditional_distribution` builds a `ConditionalDistribution` (III.9) from a function of its given values that returns a law. Its call form takes the kernel's label and then the function, as in `conditional_distribution("y", lambda mu, tau: Normal("y", mu, tau), given_spec=...)`, and its decorator form on a `def` labels the kernel after the function. Each parameter of the function is a given slot, and its spec is its entry in `given_spec` or else its annotation, which must then be a term spec. A parameter with a default is an optional slot (II.2), which holds a constant of the model, and its default's value declares it when neither does. A parameter with no default and no declaration raises `TypeError`, whose message gives the `given_spec` entry that declares it. Construction evaluates the function once, abstractly, at a stand-in of each required slot's type and at the default of each optional slot, and reads three things from the law it returns:
+**A kernel from a function.** `conditional_distribution` builds a `ConditionalDistribution` (III.9) from a function of its given values that returns a law. Its call form takes the function and an optional label, as in `conditional_distribution(lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec=...)`, and its decorator form on a `def` takes the same keywords. The kernel's label defaults to the function's `__name__`, and to `p` for a lambda, so the decorator form labels the kernel after the function. Each parameter of the function is a given slot, and its spec is its entry in `given_spec` or else its annotation, which must then be a term spec. A parameter with a default is an optional slot (II.2), which holds a constant of the model, and its default's value declares it when neither does. A parameter with no default and no declaration raises `TypeError`, whose message gives the `given_spec` entry that declares it. Construction evaluates the function once, abstractly, at a stand-in of each required slot's type and at the default of each optional slot, and reads three things from the law it returns:
 
-1. the event declaration: the kernel declares the law's, or an explicit `event_spec` that names the law's components and unifies with its type, and a support that a given value sets is left undeclared;
+1. the event declaration: the kernel declares the law's, or an explicit `event_spec` that names the law's components and unifies with its type, where a bare spec other than a record names the law's one component, and a support that a given value sets is left undeclared;
 2. the claims: the kernel claims `SupportsConditionalSampling`, `SupportsConditionalLogProb`, and `SupportsConditionalUnnormalizedLogProb` exactly when the law claims the capability each one twins;
 3. the guards: each twin's guard reports what the law's guard of the capability reported.
 
@@ -184,18 +184,18 @@ Binding every required slot calls the function with each given value as the argu
 
 ```python
 def conditional_distribution(
-    label: str | Callable[..., Distribution] | None = None,
     fn: Callable[..., Distribution] | None = None,
     /,
     *,
+    label: str | None = None,
     given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> ConditionalDistribution | Callable[[Callable[..., Distribution]], ConditionalDistribution]: ...
-    # conditional_distribution(label, fn) is the kernel of fn; without fn it is a decorator, and
+    # conditional_distribution(fn) is the kernel of fn; without fn it is a decorator, and
     # @conditional_distribution on a def labels the kernel after the function
 ```
 
-A kernel whose function returns `distribution(...)` reads the law's claims as for any law, so the kernel of a simulator, `conditional_distribution("y", lambda rate: distribution("y", sample=lambda key: jax.random.poisson(key, rate, (10,)), event_spec=counts), given_spec={"rate": positive_scalar})`, claims conditional sampling and no density.
+A kernel whose function returns `distribution(...)` reads the law's claims as for any law, so the kernel of a simulator, `conditional_distribution(lambda rate: distribution(sample=lambda key: jax.random.poisson(key, rate, (10,)), event_spec=counts, component="y"), given_spec={"rate": positive_scalar})`, claims conditional sampling and no density.
 
 ### Rationale
 

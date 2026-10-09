@@ -69,7 +69,7 @@ def _labeled(kind):
         ),
         "Opaque": lambda: Opaque("given", object()),
         "Function": lambda: Function(fn=lambda: 1, label="given"),
-        "Normal": lambda: Normal("given", 0.0, 1.0),
+        "Normal": lambda: Normal("x", 0.0, 1.0, label="given"),
         "RecordBatch": lambda: RecordBatch(
             "given",
             COLUMNS,
@@ -216,17 +216,17 @@ class TestADerivedLabelSaysSo:
 class TestAnOperationLabelsItsResultByItsLaw:
     """A value computed from a law is labeled by that value over the law (II.4).
 
-    Each law here is labeled by its component, so a draw reads ``height ~ height``.
+    The law here is a prior over ``height``, so a draw reads ``height ~ prior``.
     """
 
-    LAW = Normal("height", 0.0, 1.0)
+    LAW = Normal("height", 0.0, 1.0, label="prior")
 
     @pytest.mark.parametrize(
         ("compute", "label"),
         [
-            (lambda d: mean(d), "E[height ~ height]"),
-            (lambda d: variance(d), "Var[height ~ height]"),
-            (lambda d: log_prob(d, jnp.asarray(0.0)), "log height(height)"),
+            (lambda d: mean(d), "E[height ~ prior]"),
+            (lambda d: variance(d), "Var[height ~ prior]"),
+            (lambda d: log_prob(d, jnp.asarray(0.0)), "log prior(height)"),
         ],
         ids=["mean", "variance", "log_prob"],
     )
@@ -241,13 +241,14 @@ class TestAnOperationLabelsItsResultByItsLaw:
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
     def test_draws_are_labeled_as_one_draw(self, sample_shape):
         """Both a single draw and a batch cross the same result boundary."""
-        given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape)
+        given = sample(Normal("height", 0.0, 1.0, label="prior"), sample_shape=sample_shape)
 
-        assert given.label == "height ~ height"
+        assert given.label == "height ~ prior"
 
     @staticmethod
     def _params():
-        return (Normal("x", 0.0, 1.0) * Normal("y", 2.0, 3.0)).with_label("params")
+        prior_x = Normal("x", 0.0, 1.0, label="prior_x")
+        return (prior_x * Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
 
     def test_a_record_mean_is_labeled_over_the_law_and_names_its_components(
         self, full_provenance_mode
@@ -267,7 +268,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
         """Fixing the whole event of a factor leaves the other factor (VI.6)."""
         law = self._params()
         result = condition_on(law, {"x": 1.0})
-        assert result.label == "y"
+        assert result.label == "prior_y"
         assert tuple(result.event_spec.components) == ("y",)
         assert tuple(law.event_spec.components) == ("x", "y")
         assert float(mean(result)) == 2.0
@@ -276,10 +277,10 @@ class TestAnOperationLabelsItsResultByItsLaw:
         assert result.provenance.parents[1].parent is law
 
     def test_a_converted_law_keeps_its_label(self, full_provenance_mode):
-        law = Normal("theta", 2.0, 3.0)
+        law = Normal("theta", 2.0, 3.0, label="prior")
         result = convert(law, Normal)
         assert result is not law
-        assert result.label == "theta"
+        assert result.label == "prior"
         assert tuple(result.event_spec.components) == ("theta",)
         assert float(mean(result)) == 2.0
         assert float(variance(result)) == 9.0
@@ -324,24 +325,30 @@ class TestLevelsAreNamedForWhatMintsThem:
         assert drawn.level_names == ("sample",)
 
     @pytest.mark.parametrize(
-        ("atoms", "expected"),
+        ("atoms", "component", "expected"),
         [
-            pytest.param(jnp.linspace(0.0, 1.0, 5), "NumericArrayBatch", id="numeric-atoms"),
+            pytest.param(
+                jnp.linspace(0.0, 1.0, 5), "atoms", "NumericArrayBatch", id="numeric-atoms"
+            ),
             pytest.param(
                 NumericRecordBatch(
                     "rows", {"u": jnp.arange(4.0)}, "row", element_spec=RecordSpec(u=())
                 ),
+                None,
                 "NumericRecordBatch",
                 id="record-atoms",
             ),
             pytest.param(
                 OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                "atoms",
                 "OpaqueBatch",
                 id="opaque-atoms",
             ),
         ],
     )
-    def test_a_law_that_assembles_its_own_draws_still_gets_the_level(self, atoms, expected):
+    def test_a_law_that_assembles_its_own_draws_still_gets_the_level(
+        self, atoms, component, expected
+    ):
         """The boundary mints the level for every kind of draw.
 
         These laws lay the draws out themselves, in the batch form of their atoms,
@@ -349,7 +356,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution("atoms", atoms), sample_shape=(3,))
+        drawn = sample(EmpiricalDistribution(atoms, component=component), sample_shape=(3,))
 
         assert type(drawn).__name__ == expected
         assert (drawn.batch_shape, drawn.level_names) == ((3,), ("sample",))
@@ -358,7 +365,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """No sample_shape, no level to mint."""
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution("atoms", jnp.linspace(0.0, 1.0, 5)))
+        drawn = sample(EmpiricalDistribution(jnp.linspace(0.0, 1.0, 5), component="atoms"))
 
         assert not isinstance(drawn, NumericArrayBatch)
 
@@ -367,12 +374,14 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         drawn = sample(
             EmpiricalDistribution(
-                "atoms", OpaqueBatch("objects", [object() for _ in range(3)], "atom")
+                OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                component="atoms",
+                label="empirical",
             ),
             sample_shape=(3,),
         )
 
-        assert drawn.label == "atoms ~ atoms"
+        assert drawn.label == "atoms ~ empirical"
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
@@ -389,7 +398,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     one op and as one wide value under another.
     """
 
-    LAW = Normal("height", 0.0, 1.0)
+    LAW = Normal("height", 0.0, 1.0, label="prior")
 
     @pytest.fixture(
         params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.label
@@ -409,7 +418,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
         drawn = sample(self.LAW, sample_shape=(3,))
 
         expected = (
-            "height(height)" if density_op in (prob, unnormalized_prob) else "log height(height)"
+            "prior(height)" if density_op in (prob, unnormalized_prob) else "log prior(height)"
         )
         assert density_op(self.LAW, drawn).label == expected
 
@@ -579,13 +588,13 @@ class TestNoKindInventsALabel:
 
 def _prior() -> Normal:
     """A law ``prior`` over ``mu``."""
-    return Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))
+    return Normal("mu", 0.0, 1.0, label="prior")
 
 
 def _likelihood() -> Any:
     """A kernel ``lik`` over ``y`` given ``mu``."""
     return conditional_distribution(
-        "lik", lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec(())}
+        lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec(())}, label="lik"
     )
 
 
@@ -597,7 +606,7 @@ def _model() -> Any:
 def _empirical_model() -> Any:
     """``model`` over ``y`` and ``mu`` whose prior is empirical, so conditioning on ``y`` is exact."""
     atoms = jnp.linspace(-2.0, 2.0, 41)
-    prior = EmpiricalDistribution("prior", atoms, event_spec=OutputSpec(mu=None))
+    prior = EmpiricalDistribution(atoms, event_spec=OutputSpec(mu=None), label="prior")
     return (_likelihood() * prior).with_label("model")
 
 
@@ -612,8 +621,10 @@ def _glm(*slots: str) -> Any:
 
     spec = {slot: NumericArraySpec(()) for slot in slots}
     if slots == ("beta",):
-        return conditional_distribution("glm", lambda beta: location(beta=beta), given_spec=spec)
-    return conditional_distribution("glm", body, given_spec=spec)
+        return conditional_distribution(
+            lambda beta: location(beta=beta), given_spec=spec, label="glm"
+        )
+    return conditional_distribution(body, given_spec=spec, label="glm")
 
 
 class TestTheLabelsOfResults:
@@ -785,8 +796,9 @@ class TestTheLabelsOfALiftedFunction:
         model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_label("model")
         with workflow_run(seed=0):
             assert f(model["a"], model["b"]).notation == "f((a, b) ~ model)"
-            assert f(model["a"], 2.0).notation == "f(a ~ a, 2.0)"
-            assert f(Normal("x", 0.0, 1.0), NumericArray("c", 1.0)).notation == "f(x ~ x, c)"
+            assert f(model["a"], 2.0).notation == "f(a ~ Normal, 2.0)"
+            prior = Normal("x", 0.0, 1.0, label="prior")
+            assert f(prior, NumericArray("c", 1.0)).notation == "f(x ~ prior, c)"
 
     def test_an_array_argument_appears_by_its_parameters_name(self):
         @function
@@ -794,7 +806,8 @@ class TestTheLabelsOfALiftedFunction:
             return a
 
         with workflow_run(seed=0):
-            assert g(Normal("a", 0.0, 1.0), jnp.ones((5, 2))).notation == "g(a ~ a, X)"
+            prior = Normal("a", 0.0, 1.0, label="prior")
+            assert g(prior, jnp.ones((5, 2))).notation == "g(a ~ prior, X)"
 
     def test_a_sweep_of_broadcasts_carries_the_lifted_call(self):
         @function
@@ -803,12 +816,14 @@ class TestTheLabelsOfALiftedFunction:
 
         taus = NumericArrayBatch("tau", jnp.array([0.0, 1.0]), "tau")
         with workflow_run(seed=0):
-            laws = shifted.with_options(n_broadcast_samples=8)(Normal("mu", 0.0, 1.0), taus)
+            laws = shifted.with_options(n_broadcast_samples=8)(
+                Normal("mu", 0.0, 1.0, label="prior"), taus
+            )
             means = mean(laws)
         assert laws.label == "shifted"
         assert laws[1].label == "shifted[tau=1]"
-        assert means.label == "E[shifted(mu ~ mu, tau)]"
-        assert means[1].label == "E[shifted(mu ~ mu, tau)][tau=1]"
+        assert means.label == "E[shifted(mu ~ prior, tau)]"
+        assert means[1].label == "E[shifted(mu ~ prior, tau)][tau=1]"
 
     def test_a_lifted_batch_displays_its_call_and_its_element_its_rows_call(self):
         @function
@@ -817,21 +832,25 @@ class TestTheLabelsOfALiftedFunction:
 
         taus = NumericArrayBatch("tau", jnp.arange(1.0, 6.0), "tau")
         with workflow_run(seed=0):
-            laws = effect_of.with_options(n_broadcast_samples=8)(Normal("mu", 0.0, 1.0), taus)
+            laws = effect_of.with_options(n_broadcast_samples=8)(
+                Normal("mu", 0.0, 1.0, label="prior"), taus
+            )
             element = laws[3]
-            assert mean(element).label == "E[effect_of(mu ~ mu, 4.0)]"
-            assert sample(element).label == "effect_of(mu ~ mu, 4.0)"
-        assert str(laws) == "effect_of(mu ~ mu, tau) over tau"
+            assert mean(element).label == "E[effect_of(mu ~ prior, 4.0)]"
+            assert sample(element).label == "effect_of(mu ~ prior, 4.0)"
+        assert str(laws) == "effect_of(mu ~ prior, tau) over tau"
         # The element keeps the label of its position, and displays as its row's call.
-        assert (element.label, str(element)) == ("effect_of[tau=3]", "effect_of(mu ~ mu, 4.0)")
+        assert (element.label, str(element)) == ("effect_of[tau=3]", "effect_of(mu ~ prior, 4.0)")
         selection = laws[1:3]
         assert selection.label == "effect_of[tau=1:3]"
-        assert str(selection) == "effect_of(mu ~ mu, tau)[tau=1:3] over tau"
+        assert str(selection) == "effect_of(mu ~ prior, tau)[tau=1:3] over tau"
 
     def test_a_law_passed_to_a_lifted_call_displays_by_its_notation(self):
         with workflow_run(seed=0):
-            lifted = log_prob(Normal("g", 0.0, 1.0), Normal("q", 0.0, 1.0))
-        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), q ~ q)")
+            lifted = log_prob(
+                Normal("g", 0.0, 1.0, label="prior"), Normal("q", 0.0, 1.0, label="proposal")
+            )
+        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(prior(g), q ~ proposal)")
         assert list(lifted.event_spec.components) == ["log_prob"]
 
     def test_a_function_called_on_values_takes_its_output_label(self):

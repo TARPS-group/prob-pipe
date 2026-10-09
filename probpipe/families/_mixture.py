@@ -33,7 +33,7 @@ from ..distributions._capabilities import (
     _conjunction,
 )
 from ..distributions._conversion import _event_difference, _term_difference
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _class_label, _given_label
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
@@ -458,17 +458,18 @@ class MixtureDistribution(Distribution):
 
     Parameters
     ----------
-    label : str
-        The mixture's label.
     components : Sequence[Distribution]
         The component laws, at least one, sharing one event declaration.
     weights : Array
         One nonnegative weight per component, summing to one.
+    label : str, optional
+        The mixture's label, ``MixtureDistribution`` by default.
 
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``.
+        If a component is not a ``Distribution``, or *label* is not a non-empty
+        string.
     ValueError
         If there is no component, two components declare different events, or
         the weights are not one nonnegative weight per component summing to one.
@@ -480,17 +481,19 @@ class MixtureDistribution(Distribution):
     _weights: Array
 
     def __new__(
-        cls, label: str, components: Sequence[Distribution], weights: ArrayLike
+        cls, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
     ) -> MixtureDistribution:
         base = vars(cls).get("_capability_base", cls)
         laws = _components(components)
         return object.__new__(_capability_subclass(base, _claims(laws)))
 
-    def __init__(self, label: str, components: Sequence[Distribution], weights: ArrayLike) -> None:
+    def __init__(
+        self, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
+    ) -> None:
         laws = _components(components)
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
-        super().__init__(label, _declaration(laws))
+        super().__init__(_given_label(label, _class_label(self)), _declaration(laws))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The components, by their count when there are more than four, and the weights."""

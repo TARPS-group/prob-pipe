@@ -15,7 +15,6 @@ from probpipe import (
     Normal,
     NumericArray,
     NumericArraySpec,
-    OutputSpec,
     Record,
     RecordBatch,
     conditional_distribution,
@@ -45,7 +44,7 @@ from probpipe.core._fingerprint import fingerprint
 
 
 def _prior() -> Normal:
-    return Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))
+    return Normal("mu", 0.0, 1.0, label="prior")
 
 
 def _named(label: str, *components: str) -> Named:
@@ -333,9 +332,9 @@ class TestTheLabelIsTheExpressionsLabel:
     def _terms():
         prior = _prior()
         kernel = conditional_distribution(
-            "glm",
             lambda beta: Normal("y", beta, 1.0),
             given_spec={"beta": NumericArraySpec(())},
+            label="glm",
         )
         record = Record("r", {"a": 1.0, "b": 2.0})
         batch = RecordBatch.stack([record, record], level_name="row", label="rows")
@@ -372,9 +371,9 @@ class TestTheLabelIsTheExpressionsLabel:
 
     def test_embedding_a_law_records_its_signature(self):
         kernel = conditional_distribution(
-            "glm",
             lambda beta: Normal("y", beta, 1.0),
             given_spec={"beta": NumericArraySpec(())},
+            label="glm",
         )
         assert embedded(kernel) == Named("glm", Signature(("y",), ("beta",)))
         assert expression_of(kernel) == Named("glm")

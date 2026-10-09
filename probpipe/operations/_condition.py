@@ -635,7 +635,7 @@ def _as_declared(source: Any, law: Any) -> EmpiricalDistribution:
     record of it.
     """
     empirical = EmpiricalDistribution(
-        source.label, law.atoms, law.weights, event_spec=source.event_spec
+        law.atoms, law.weights, label=source.label, event_spec=source.event_spec
     )
     empirical._init_annotations(law.annotations)
     return empirical.with_provenance(law.provenance)
@@ -1890,7 +1890,7 @@ def _empirical_of(call: BoundCall, law: Any) -> Any:
         if isinstance(candidate, target) and candidate.event_spec == source.event_spec:
             return candidate
     empirical = EmpiricalDistribution(
-        source.label, law.atoms, law.weights, event_spec=source.event_spec
+        law.atoms, law.weights, label=source.label, event_spec=source.event_spec
     )
     empirical._init_annotations(law.annotations)
     if not isinstance(empirical, target):

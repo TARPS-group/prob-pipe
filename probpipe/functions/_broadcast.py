@@ -340,9 +340,11 @@ def _lift_result(
         # output label, as a function that declares no output places its result.
         declaration = OutputSpec(**{output_label: declaration.spec})
     if not include_inputs:
-        return EmpiricalDistribution(output_label, atoms, draws.weights, event_spec=declaration)
+        return EmpiricalDistribution(
+            atoms, draws.weights, label=output_label, event_spec=declaration
+        )
     joint = _joint_atoms(atoms, declaration, draws, values, broadcast_args, output_label)
-    return EmpiricalDistribution(output_label, joint, draws.weights)
+    return EmpiricalDistribution(joint, draws.weights, label=output_label)
 
 
 def _output_atoms(

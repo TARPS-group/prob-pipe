@@ -189,7 +189,9 @@ class EmpiricalReweightingMethod(InferenceMethod):
         atoms_label = format_components(target.event_spec.components)
         if atoms.label != atoms_label:
             atoms = atoms.with_label(atoms_label)
-        result = EmpiricalDistribution("posterior", atoms, weights, event_spec=target.event_spec)
+        result = EmpiricalDistribution(
+            atoms, weights, label="posterior", event_spec=target.event_spec
+        )
         return _record_run(
             result,
             (target,),

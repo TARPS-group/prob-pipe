@@ -122,31 +122,37 @@ class TestSpecs:
 
 class TestDistributions:
     def test_a_family_reads_by_the_arguments_it_was_built_with(self):
-        assert repr(Normal("x", 0.0, 1.0)) == "Normal('x', loc=0.0, scale=1.0)"
+        assert repr(Normal("mu", 0.0, 1.0, label="prior")) == (
+            "Normal('prior', component='mu', loc=0.0, scale=1.0)"
+        )
 
-    def test_a_declared_component_shows_the_event_declaration(self):
-        law = Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))
-        assert "event_spec=OutputSpec(beta=NumericArraySpec(" in repr(law)
+    def test_a_family_without_a_label_reads_by_its_class_name(self):
+        assert repr(Normal("x", 0.0, 1.0)) == "Normal('Normal', component='x', loc=0.0, scale=1.0)"
+
+    def test_a_whole_term_event_shows_its_component_and_no_declaration(self):
+        law = Normal("beta", 0.0, 1.0, label="prior")
+        assert "component='beta'" in repr(law)
+        assert "event_spec=" not in repr(law)
 
     def test_a_field_view_reads_as_a_field_view_at_its_path(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
         assert repr(joint["a"]) == "FieldView('a', path='a')"
         assert repr(joint.with_label("model")[("b", "a")]) == "FieldView('b·a', path=('b', 'a'))"
 
     def test_a_regrouped_rename_reads_as_a_factored_joint(self):
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
         renamed = repr(joint.with_path_names({"a": "g/a"}))
         assert renamed.startswith("FactoredMultivariateGaussian(\n    'a·b',\n    factors=(")
         assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):
-        law = EmpiricalDistribution("e", jnp.arange(5.0))
+        law = EmpiricalDistribution(jnp.arange(5.0), component="e", label="draws")
         assert repr(law).startswith(
-            "EmpiricalDistribution(\n    'e',\n    atoms=NumericArrayBatch("
+            "EmpiricalDistribution(\n    'draws',\n    component='e',\n    atoms=NumericArrayBatch("
         )
 
     def test_a_renamed_empirical_law_reads_by_its_renamed_atoms(self):
-        renamed = EmpiricalDistribution("e", _two_fields()).with_path_names({"a": "g/a"})
+        renamed = EmpiricalDistribution(_two_fields(), label="e").with_path_names({"a": "g/a"})
         assert repr(renamed) == (
             "EmpiricalDistribution('e', atoms=NumericRecordBatch('rows', levels={'row': 2}, "
             "fields=('b', 'g/a')))"
@@ -154,7 +160,7 @@ class TestDistributions:
 
     def test_a_rename_that_holds_its_law_reads_as_that_law_renamed(self):
         """A kernel density estimate does not rebuild itself, so its rename holds it."""
-        kde = KDEDistribution("kde", _two_fields())
+        kde = KDEDistribution(_two_fields(), label="kde")
         renamed = kde.with_path_names({"a": "g/a"})
         assert repr(renamed) == repr(kde) + ".with_path_names({'a': 'g/a'})"
         assert repr(renamed.with_label("other")) == repr(renamed) + ".with_label('other')"
@@ -165,9 +171,9 @@ class TestDistributions:
         The kernel ``y`` conditions on ``a``, so no product lists ``a`` first.
         """
         likelihood = conditional_distribution(
-            "y", lambda a: Normal("y", a, 1.0), given_spec={"a": NumericArraySpec(())}
+            lambda a: Normal("y", a, 1.0), given_spec={"a": NumericArraySpec(())}, label="y"
         )
-        joint = likelihood * Normal("a", 0.0, 1.0)
+        joint = likelihood * Normal("a", 0.0, 1.0, label="a")
         reordered = repr(joint._marginal(("a", "y")))
         assert reordered.startswith("FactoredDistribution(\n    'y·a',\n    factors=(")
         assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
@@ -175,8 +181,13 @@ class TestDistributions:
     def test_a_marginal_in_another_product_order_reads_as_that_product(self):
         joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
         assert repr(joint._marginal(("b", "a"))) == (
-            "FactoredDistribution(\n    'b·a',\n    factors=(Gamma('b', concentration=2.0, "
-            "rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n)"
+            "FactoredDistribution(\n"
+            "    'Gamma·Normal',\n"
+            "    factors=(\n"
+            "        Gamma('Gamma', component='b', concentration=2.0, rate=1.0),\n"
+            "        Normal('Normal', component='a', loc=0.0, scale=1.0),\n"
+            "    ),\n"
+            ")"
         )
 
 
@@ -211,7 +222,7 @@ class TestLayout:
         [
             _schools(),
             Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
-            EmpiricalDistribution("e", jnp.arange(5.0)),
+            EmpiricalDistribution(jnp.arange(5.0), component="e"),
         ],
         ids=["batch", "joint", "empirical"],
     )

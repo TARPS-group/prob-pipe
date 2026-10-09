@@ -268,7 +268,7 @@ class Record(NamedTree[Any], TrackedTerm):
     def __init__(self, label: str, fields: Mapping[str, Any] | None = None, /, *,
                  spec: RecordSpec | Mapping | None = None,
                  **kw_fields: Any) -> None: ...
-        # name is the required first argument (II.4)
+        # the label is the required first argument (II.4)
         # a mapping-valued field is a subtree, never a leaf (II.6)
         # Binds to the declaration if given (structural validation); nested mapping
         # data is normalized to a RecordSpec.
@@ -383,18 +383,19 @@ It indexes the batch axes and omits the leaf-keyed `Mapping` contract, so a batc
 
 ### Contract
 
-A `Distribution` is a probability measure over the values its event declaration describes. Its `DistributionSpec` carries the draw's `OutputSpec`, which the property `event_spec` returns. The declaration determines the kind of a draw and the components it exposes (II.2). It is the same declaration type a `Function` carries as `output_spec`, and the attribute names `event_spec` and `output_spec` distinguish a draw from a function's return value. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component defaults to the law's `name`, captured once at construction. An `OutputSpec`, such as the `event_spec` a family constructor takes, names the component otherwise, and a constructor fills its type hole from its parameters with `with_spec`, so the stored declaration is complete.
+A `Distribution` is a probability measure over the values its event declaration describes. Its `DistributionSpec` carries the draw's `OutputSpec`, which the property `event_spec` returns. The declaration determines the kind of a draw and the components it exposes (II.2). It is the same declaration type a `Function` carries as `output_spec`, and the attribute names `event_spec` and `output_spec` distinguish a draw from a function's return value. A bare `RecordSpec` is accepted and completed at construction to an exposed record, whose fields are the components. A whole-term event is declared under its component, which a constructor requires: a family takes it first, as `Normal("mu", 0.0, 1.0)` does, and an `OutputSpec`, such as the `event_spec` a family constructor also takes to declare the event's type, names that same component. A constructor fills the declaration's type hole from its parameters with `with_spec`, so the stored declaration is complete. The label is the optional keyword `label=`, which defaults to the family's class name, as `Normal`, and to `p` for any other law (II.4), so `Normal("mu", 0.0, 1.0)` is labeled `Normal` and displays as `Normal(mu)`.
 
 It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4). The `raw()` of a field view `d[p]` is the representation of the detached marginal, `d._marginal(p).raw()` (III.8): the backend object where the marginal has one, such as the TFP distribution of a parametric family (VII.1), and the detached law otherwise. That `raw()` raises `ResolutionError` where `d` has no exact marginal at `p`. A draw is a tracked term of the kind the event declaration names.
 
 **Components and fields.** The law's produced slots are exactly `event_spec.components`, and its event paths are the paths of its declaration, each starting with a component (II.2). `OutputSpec(beta=beta_spec)` and `OutputSpec(RecordSpec(beta=beta_spec))` both export `beta`, but the former draws an array and the latter a record. `d[path]` and `marginal` address event paths: for an exposed record, `d["beta"]` is the marginal law of that field under the component `beta`, and for a whole term named `beta` it is `d` itself, so a consumer addresses a law by component whatever its packaging. A projection onto one path returns the leaf or subtree whole, under a component named by the path's final segment; a selection of several paths returns an exposed record of those fields. A whole record declared as `OutputSpec(parameters=RecordSpec(beta=...))` has the output slot `parameters` and the event path `parameters/beta`, which addresses the field `beta` of each draw; composition extracts and reconstructs it as II.2 specifies.
 
-`with_path_names` returns the same law with `OutputSpec.with_path_names` (II.2) applied to its event declaration. A factored joint renames through its factors, and a rename that gathers its components under one node regroups their factors into a packaged sub-joint (IV.1). `with_name` changes only the object label. A polymorphic law binds its dimensions as II.1 specifies. Dimension transforms commute with renames: `d.with_path_names(m).with_dim_sizes(n=3)` is `d.with_dim_sizes(n=3).with_path_names(m)`, and likewise for `with_dim_names` and for a kernel (III.9). A renamed law conditions as the original does on the given translated to the original paths, with each value's fields in the original node's declared order whatever order the caller wrote (VI.6). Its marginal at a node that gathers fields of several of the original's nodes is the original's marginal at the selection of those fields, repackaged under the node, since a transform that preserves the event exposes what the law it wraps supports (III.8).
+`with_path_names` returns the same law with `OutputSpec.with_path_names` (II.2) applied to its event declaration. A factored joint renames through its factors, and a rename that gathers its components under one node regroups their factors into a packaged sub-joint (IV.1). `with_label` changes only the object label. A polymorphic law binds its dimensions as II.1 specifies. Dimension transforms commute with renames: `d.with_path_names(m).with_dim_sizes(n=3)` is `d.with_dim_sizes(n=3).with_path_names(m)`, and likewise for `with_dim_names` and for a kernel (III.9). A renamed law conditions as the original does on the given translated to the original paths, with each value's fields in the original node's declared order whatever order the caller wrote (VI.6). Its marginal at a node that gathers fields of several of the original's nodes is the original's marginal at the selection of those fields, repackaged under the node, since a transform that preserves the event exposes what the law it wraps supports (III.8).
 
 ```python
 class Distribution(TrackedTerm):
-    def __init__(self, label: str, event_spec: OutputSpec | TermSpec) -> None: ...
-        # a bare term spec completes to OutputSpec.default(event_spec, component=name) (II.2)
+    def __init__(self, label: str, event_spec: OutputSpec | RecordSpec) -> None: ...
+        # a subclass passes the label its caller gave, or its default;
+        # a bare RecordSpec completes to the exposed record, OutputSpec(event_spec) (II.2)
 
     @property
     def spec(self) -> DistributionSpec: ...
@@ -453,7 +454,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's ensures a view advertises only what it can compute (`D3 – Capability-based operations`). A view is labeled as the marginal at its path because the two are one law, and its component names that field (`C5 – Naming for unambiguous meaning`). A `Distribution` takes no type parameter, because the type of its draws is a function of the stored declaration and a static parameter could record only the declaration's kind (`D6 – Single source of truth`). Defaulting a whole-term component to the label and capturing it once serves `C5 – Naming for unambiguous meaning` on both counts: a draw is addressable by a meaningful component without a second name in the common case, and the label never enters the mathematics afterward.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's ensures a view advertises only what it can compute (`D3 – Capability-based operations`). A view is labeled as the marginal at its path because the two are one law, and its component names that field (`C5 – Naming for unambiguous meaning`). A `Distribution` takes no type parameter, because the type of its draws is a function of the stored declaration and a static parameter could record only the declaration's kind (`D6 – Single source of truth`). Requiring the component and defaulting the label serves `C5 – Naming for unambiguous meaning` on both counts: the component names what a draw holds, which composition and indexing match, and the label names the law for a reader, so neither stands in for the other and the label never enters the mathematics.
 
 ### Open points
 
@@ -567,7 +568,8 @@ A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of 
 
 ```python
 class ConditionalDistribution(TrackedTerm):
-    def __init__(self, label: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec) -> None: ...
+    def __init__(self, label: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | RecordSpec) -> None: ...
+        # a subclass passes the label its caller gave, or its default; the event is read as a law's (III.7)
         # given before event, as in FunctionSpec
     @property
     def spec(self) -> ConditionalDistributionSpec: ...

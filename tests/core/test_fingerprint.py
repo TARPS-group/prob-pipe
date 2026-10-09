@@ -41,7 +41,7 @@ class _Located(Distribution):
     """A scalar law outside the backend families, which the fingerprint hashes by its attributes."""
 
     def __init__(self, label: str, loc: float) -> None:
-        super().__init__(label, NumericArraySpec(()))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec(())}))
         self.loc = loc
 
 
@@ -52,13 +52,13 @@ class _Located(Distribution):
 
 class TestReturnFormat:
     def test_returns_string(self):
-        assert isinstance(fingerprint(Normal(loc=0.0, scale=1.0, label="n")), str)
+        assert isinstance(fingerprint(Normal("n", loc=0.0, scale=1.0)), str)
 
     def test_returns_16_chars(self):
-        assert len(fingerprint(Normal(loc=0.0, scale=1.0, label="n"))) == 16
+        assert len(fingerprint(Normal("n", loc=0.0, scale=1.0))) == 16
 
     def test_hex_characters_only(self):
-        fp = fingerprint(Normal(loc=0.0, scale=1.0, label="n"))
+        fp = fingerprint(Normal("n", loc=0.0, scale=1.0))
         assert all(c in "0123456789abcdef" for c in fp)
 
 
@@ -347,25 +347,25 @@ class TestRecordHashing:
 
 class TestDistributionHashing:
     def test_same_normal_stable(self):
-        n1 = Normal(loc=0.0, scale=1.0, label="x")
-        n2 = Normal(loc=0.0, scale=1.0, label="x")
+        n1 = Normal("x", loc=0.0, scale=1.0)
+        n2 = Normal("x", loc=0.0, scale=1.0)
         assert fingerprint(n1) == fingerprint(n2)
 
     def test_different_loc_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, label="x")
-        n2 = Normal(loc=1.0, scale=1.0, label="x")
+        n1 = Normal("x", loc=0.0, scale=1.0)
+        n2 = Normal("x", loc=1.0, scale=1.0)
         assert fingerprint(n1) != fingerprint(n2)
 
     def test_different_scale_differs(self):
-        n1 = Normal(loc=0.0, scale=1.0, label="x")
-        n2 = Normal(loc=0.0, scale=2.0, label="x")
+        n1 = Normal("x", loc=0.0, scale=1.0)
+        n2 = Normal("x", loc=0.0, scale=2.0)
         assert fingerprint(n1) != fingerprint(n2)
 
     def test_a_relabeled_law_keeps_its_fingerprint(self):
         """A label names a law for display, so it is no part of what the law computes."""
-        law = Normal(loc=0.0, scale=1.0, label="x")
+        law = Normal("x", loc=0.0, scale=1.0)
         assert fingerprint(law.with_label("y")) == fingerprint(law)
-        assert fingerprint(Normal(loc=0.0, scale=1.0, label="y")) == fingerprint(law)
+        assert fingerprint(Normal("y", loc=0.0, scale=1.0)) == fingerprint(law)
 
     def test_the_fixed_paths_leave_the_fingerprint_unchanged(self):
         """The paths a law holds fixed state how it displays, as its label does."""
@@ -384,23 +384,23 @@ class TestDistributionHashing:
     def test_different_distribution_types_differ(self):
         from probpipe import Beta
 
-        n = Normal(loc=0.0, scale=1.0, label="x")
-        b = Beta(alpha=1.0, beta=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
+        b = Beta("x", alpha=1.0, beta=1.0)
         assert fingerprint(n) != fingerprint(b)
 
     def test_empirical_distribution_stable(self):
         from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        e1 = EmpiricalDistribution("posterior", samples)
-        e2 = EmpiricalDistribution("posterior", samples)
+        e1 = EmpiricalDistribution(samples, component="posterior")
+        e2 = EmpiricalDistribution(samples, component="posterior")
         assert fingerprint(e1) == fingerprint(e2)
 
     def test_empirical_different_samples_differ(self):
         from probpipe import EmpiricalDistribution
 
-        e1 = EmpiricalDistribution("post", jnp.array([1.0, 2.0, 3.0]))
-        e2 = EmpiricalDistribution("post", jnp.array([1.0, 2.0, 9.0]))
+        e1 = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="post")
+        e2 = EmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), component="post")
         assert fingerprint(e1) != fingerprint(e2)
 
     def test_empirical_non_uniform_weights_differ(self):
@@ -408,8 +408,10 @@ class TestDistributionHashing:
         from probpipe import EmpiricalDistribution
 
         samples = jnp.array([1.0, 2.0, 3.0])
-        uniform = EmpiricalDistribution("post", samples)
-        reweighted = EmpiricalDistribution("post", samples, weights=jnp.array([0.7, 0.2, 0.1]))
+        uniform = EmpiricalDistribution(samples, component="post")
+        reweighted = EmpiricalDistribution(
+            samples, weights=jnp.array([0.7, 0.2, 0.1]), component="post"
+        )
         assert fingerprint(uniform) != fingerprint(reweighted)
 
     def test_kde_distribution_stable(self):
@@ -417,16 +419,16 @@ class TestDistributionHashing:
         from probpipe import KDEDistribution
 
         pts = jnp.array([0.0, 1.0, 2.0])
-        k1 = KDEDistribution("kde", pts)
-        k2 = KDEDistribution("kde", pts)
+        k1 = KDEDistribution(pts, component="kde")
+        k2 = KDEDistribution(pts, component="kde")
         assert fingerprint(k1) == fingerprint(k2)
 
     def test_kde_different_points_differ(self):
         """Two KDE distributions with different data must have different fingerprints."""
         from probpipe import KDEDistribution
 
-        k1 = KDEDistribution("kde", jnp.array([0.0, 1.0, 2.0]))
-        k2 = KDEDistribution("kde", jnp.array([0.0, 1.0, 99.0]))
+        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), component="kde")
+        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), component="kde")
         assert fingerprint(k1) != fingerprint(k2)
 
 
@@ -438,10 +440,10 @@ class TestBootstrapSourceFingerprint:
         from probpipe import BootstrapReplicateDistribution
 
         b1 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
+            "boot", Normal("x", loc=0.0, scale=1.0), replicate_size=10
         )
         b2 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=5.0, scale=1.0, label="x"), replicate_size=10
+            "boot", Normal("x", loc=5.0, scale=1.0), replicate_size=10
         )
         assert fingerprint(b1) != fingerprint(b2)
 
@@ -449,10 +451,10 @@ class TestBootstrapSourceFingerprint:
         from probpipe import BootstrapReplicateDistribution
 
         b1 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
+            "boot", Normal("x", loc=0.0, scale=1.0), replicate_size=10
         )
         b2 = BootstrapReplicateDistribution(
-            "boot", Normal(loc=0.0, scale=1.0, label="x"), replicate_size=10
+            "boot", Normal("x", loc=0.0, scale=1.0), replicate_size=10
         )
         assert fingerprint(b1) == fingerprint(b2)
 
@@ -675,7 +677,7 @@ class TestFunctionHashing:
 
 class TestFingerprintInProvenance:
     def test_parentinfo_fingerprint_set(self):
-        n = Normal(loc=0.0, scale=1.0, label="prior")
+        n = Normal("prior", loc=0.0, scale=1.0)
         prov = Provenance.create("op", parents=[n])
         assert prov is not None
         parent = prov.parents[0]
@@ -685,21 +687,21 @@ class TestFingerprintInProvenance:
         assert parent.fingerprint_is_weak is False
 
     def test_parentinfo_fingerprint_stable_across_create_calls(self):
-        n = Normal(loc=0.0, scale=1.0, label="prior")
+        n = Normal("prior", loc=0.0, scale=1.0)
         p1 = Provenance.create("op", parents=[n])
         p2 = Provenance.create("op", parents=[n])
         assert p1.parents[0].fingerprint == p2.parents[0].fingerprint
 
     def test_different_parents_different_fingerprints(self):
-        n1 = Normal(loc=0.0, scale=1.0, label="a")
-        n2 = Normal(loc=5.0, scale=1.0, label="b")
+        n1 = Normal("a", loc=0.0, scale=1.0)
+        n2 = Normal("b", loc=5.0, scale=1.0)
         prov = Provenance.create("op", parents=[n1, n2])
         fp1 = prov.parents[0].fingerprint
         fp2 = prov.parents[1].fingerprint
         assert fp1 != fp2
 
     def test_fingerprint_in_to_dict(self):
-        n = Normal(loc=0.0, scale=1.0, label="prior")
+        n = Normal("prior", loc=0.0, scale=1.0)
         prov = Provenance.create("op", parents=[n])
         d = prov.to_dict()
         assert "fingerprint" in d["parents"][0]
@@ -711,7 +713,7 @@ class TestFingerprintInProvenance:
 
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         try:
-            n = Normal(loc=0.0, scale=1.0, label="prior")
+            n = Normal("prior", loc=0.0, scale=1.0)
             prov = Provenance.create("op", parents=[n])
             assert prov is None
         finally:
@@ -733,7 +735,7 @@ class TestFingerprintInProvenance:
 
         monkeypatch.setattr(fp_mod, "_fingerprint_with_strength", _bad_fp)
 
-        n = Normal(loc=0.0, scale=1.0, label="prior")
+        n = Normal("prior", loc=0.0, scale=1.0)
         with caplog.at_level(logging.WARNING, logger="probpipe.core.provenance"):
             prov = Provenance.create("op", parents=[n])
 
@@ -854,7 +856,7 @@ class TestEmpiricalAtoms:
     def _opaque(labels, level="site"):
         from probpipe import EmpiricalDistribution, OpaqueBatch
 
-        return EmpiricalDistribution("o", OpaqueBatch("o", list(labels), level))
+        return EmpiricalDistribution(OpaqueBatch("o", list(labels), level), component="o")
 
     def test_equal_opaque_atoms_give_equal_strong_digests(self):
         first, second = self._opaque(["north", "south"]), self._opaque(["north", "south"])
@@ -870,8 +872,8 @@ class TestEmpiricalAtoms:
         from probpipe import EmpiricalDistribution
 
         atoms = jnp.arange(3.0)
-        assert fingerprint(EmpiricalDistribution("x", atoms, level="a")) != fingerprint(
-            EmpiricalDistribution("x", atoms, level="b")
+        assert fingerprint(EmpiricalDistribution(atoms, level="a", component="x")) != fingerprint(
+            EmpiricalDistribution(atoms, level="b", component="x")
         )
         assert fingerprint(self._opaque(["n", "s"], "a")) != fingerprint(
             self._opaque(["n", "s"], "b")
@@ -884,7 +886,7 @@ class TestEmpiricalAtoms:
             values = jnp.arange(6.0).reshape(shape)
             spec = NumericArraySpec((), jnp.float32)
             atoms = NumericArrayBatch("x", values, ("chain", "draw"), element_spec=spec)
-            return EmpiricalDistribution("x", atoms)
+            return EmpiricalDistribution(atoms, component="x")
 
         assert fingerprint(law((2, 3))) != fingerprint(law((3, 2)))
 
@@ -896,7 +898,9 @@ class TestEmpiricalReweighting:
         from probpipe import EmpiricalDistribution, Weights
 
         s = jnp.array([1.0, 2.0, 3.0])
-        return EmpiricalDistribution("p", s, Weights(log_weights=jnp.log(jnp.array(weights))))
+        return EmpiricalDistribution(
+            s, Weights(log_weights=jnp.log(jnp.array(weights))), component="p"
+        )
 
     def test_reweighted_differs(self):
         assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))

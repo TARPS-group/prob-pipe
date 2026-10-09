@@ -404,18 +404,21 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     name = _DRAWS
     event = call.operands["d"].event_spec.spec
     if isinstance(draws, Batch):
-        return EmpiricalDistribution(name, draws)
+        records = isinstance(draws.element_spec, RecordSpec)
+        return EmpiricalDistribution(draws, component=None if records else name, label=name)
     if not isinstance(event, RecordSpec):
-        return EmpiricalDistribution(name, jnp.asarray(draws), level=SAMPLE_LEVEL)
+        return EmpiricalDistribution(
+            jnp.asarray(draws), component=name, label=name, level=SAMPLE_LEVEL
+        )
     atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
-    return EmpiricalDistribution(name, atoms)
+    return EmpiricalDistribution(atoms, label=name)
 
 
-_mixture_factory: Callable[[str, list[Distribution], Any], Distribution] | None = None
-"""The finite mixture ``(label, components, weights)``, which the mixture family installs."""
+_mixture_factory: Callable[..., Distribution] | None = None
+"""The finite mixture ``(components, weights, *, label)``, which the mixture family installs."""
 
 
-def _install_mixture(factory: Callable[[str, list[Distribution], Any], Distribution]) -> None:
+def _install_mixture(factory: Callable[..., Distribution]) -> None:
     """Install the finite mixture that the Monte Carlo mean of a law over laws returns."""
     global _mixture_factory
     _mixture_factory = factory
@@ -439,7 +442,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     draws = _monte_carlo_draws(call, "mean")
     stored = draws.raw() if isinstance(draws, Batch) else draws
     laws = list(np.asarray(stored, dtype=object).reshape(-1))
-    return _mixture_factory(_call_label(call), laws, jnp.full(len(laws), 1.0 / len(laws)))
+    return _mixture_factory(laws, jnp.full(len(laws), 1.0 / len(laws)), label=_call_label(call))
 
 
 def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:

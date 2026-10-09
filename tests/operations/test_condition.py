@@ -203,7 +203,7 @@ class _StructuredKernel(ConditionalDistribution, SupportsConditionalSampling):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
     def __init__(self, label: str = "y") -> None:
-        super().__init__(label, {"theta": RecordSpec(a=REAL, b=REAL)}, REAL)
+        super().__init__(label, {"theta": RecordSpec(a=REAL, b=REAL)}, OutputSpec(**{label: REAL}))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Gaussian(self.name)
@@ -232,7 +232,7 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
     """A kernel whose laws are known only up to a constant, as a program's posterior targets are."""
 
     def __init__(self, label: str = "theta", slots: tuple[str, ...] = ("data",)) -> None:
-        super().__init__(label, {slot: REAL for slot in slots}, REAL)
+        super().__init__(label, {slot: REAL for slot in slots}, OutputSpec(**{label: REAL}))
         self.slots = tuple(slots)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
@@ -247,7 +247,7 @@ class _UndeclaredKernel(ConditionalDistribution):
     """A kernel whose laws are unnormalized, which it implements without declaring a capability."""
 
     def __init__(self, label: str = "theta") -> None:
-        super().__init__(label, {"data": REAL}, REAL)
+        super().__init__(label, {"data": REAL}, OutputSpec(**{label: REAL}))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Unnormalized(self.label)
@@ -259,7 +259,7 @@ class _AmortizedKernel(
     """A learned kernel from ``y`` to ``theta``, whose evaluation stands in for a posterior."""
 
     def __init__(self, label: str = "theta") -> None:
-        super().__init__(label, {"y": REAL}, REAL)
+        super().__init__(label, {"y": REAL}, OutputSpec(**{label: REAL}))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         object.__setattr__(self, "options", kwargs)
@@ -522,7 +522,7 @@ class TestOptionalSlots:
     @staticmethod
     def _scaled() -> ConditionalDistribution:
         return conditional_distribution(
-            "lik", lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}
+            lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}, label="lik"
         )
 
     def test_binding_the_required_slots_declares_the_kernel_law(self):
@@ -543,7 +543,7 @@ class TestOptionalSlots:
         np.testing.assert_allclose(law._variance(), 4.0)
 
     def test_slicing_off_every_producer_leaves_a_kernel_at_its_defaults(self):
-        kernel = conditional_distribution("lik0", lambda scale=2.0: Normal("y", 0.0, scale))
+        kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik0")
         law = condition_on(kernel * Normal("mu", 0.0, 1.0), {"mu": 0.0})
         assert isinstance(law, Normal)
         np.testing.assert_allclose(law._variance(), 4.0)
@@ -807,7 +807,7 @@ class TestTheNormalizationStage:
         program.write_text(
             "data { int N; vector[N] y; } parameters { real mu; } model { y ~ normal(mu, 1); }"
         )
-        kernel = condition_on(StanModel("mean", str(program)), {"N": 3})
+        kernel = condition_on(StanModel(str(program), label="mean"), {"N": 3})
         assert set(kernel.given_spec) == {"y"}
         view = condition_on.with_options(method_options={"num_results": 30, "num_warmup": 7})
         assert view(kernel, {"y": [1.0, 2.0, 3.0]}).loc == 4.0
@@ -1014,7 +1014,7 @@ class TestNoRouteMessages:
 
     def test_fixing_every_field_leads(self):
         with pytest.raises(
-            ResolutionError, match=r"^condition_on: given fixes every field of 'mu'"
+            ResolutionError, match=r"^condition_on: given fixes every field of 'Normal'"
         ):
             condition_on(Normal("mu", 0.0, 1.0), {"mu": 1.0})
 
@@ -1094,9 +1094,9 @@ def _unnormalized_pair():
         return -0.5 * (jnp.asarray(v["a"]) ** 2 + (jnp.asarray(v["b"]) - v["a"]) ** 2)
 
     return distribution(
-        "pair",
         unnormalized_log_prob=density,
         event_spec=OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))),
+        label="pair",
     )
 
 
@@ -1104,9 +1104,9 @@ def _unnormalized_vector():
     from probpipe import NumericArraySpec, distribution
 
     return distribution(
-        "u",
         unnormalized_log_prob=lambda x: -0.5 * jnp.sum((x - 1.0) ** 2),
         event_spec=OutputSpec(x=NumericArraySpec((2,))),
+        label="u",
     )
 
 
@@ -1127,9 +1127,9 @@ class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedL
 
         s = float(given["s"])
         return distribution(
-            "theta",
             unnormalized_log_prob=lambda x: -0.5 * jnp.sum((jnp.asarray(x) - s) ** 2),
             event_spec=self.event_spec,
+            label="theta",
         )
 
     def _conditional_unnormalized_log_prob(self, given: Any, value: Any) -> Any:
@@ -1255,7 +1255,7 @@ class TestEndToEnd:
                 pm.Normal("y", beta * x, sigma, observed=y)
             return model
 
-        kernel = PyMCModel("regression", regression)
+        kernel = PyMCModel(regression, label="regression")
         given = {"x": np.linspace(0.0, 1.0, 6), "y": np.linspace(0.0, 1.0, 6)}
         view = condition_on.with_options(
             method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
@@ -1284,7 +1284,7 @@ class TestEndToEnd:
         view = condition_on.with_options(
             method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
         )
-        kernel = view(PyMCModel("regression", regression), {"y": np.linspace(0.0, 1.0, 6)})
+        kernel = view(PyMCModel(regression, label="regression"), {"y": np.linspace(0.0, 1.0, 6)})
         given = {"x": np.linspace(0.0, 1.0, 6), "beta": 0.3}
         with monkeypatch.context() as patched:
             patched.setattr(inference_method_registry, "execute", _refuse_to_execute)
@@ -1304,7 +1304,9 @@ class TestEndToEnd:
             "data { int N; vector[N] y; } parameters { real mu; } "
             "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
         )
-        report = condition_on.check(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
+        report = condition_on.check(
+            StanModel(str(program), label="mean"), {"N": 3, "y": [1.0, 2.0, 3.0]}
+        )
         assert report.route == "curry"
         stan_methods = {"nutpie_nuts", "cmdstan_nuts"} & set(
             inference_method_registry.list_methods()
@@ -1325,7 +1327,7 @@ class TestEndToEnd:
         view = condition_on.with_options(
             method_options={"num_results": 200, "num_warmup": 200, "num_chains": 1}
         )
-        posterior = view(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
+        posterior = view(StanModel(str(program), label="mean"), {"N": 3, "y": [1.0, 2.0, 3.0]})
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("mu",)
         # mu ~ N(0, 1) and y_i ~ N(mu, 1) give mu | y ~ N(1.5, 0.25).

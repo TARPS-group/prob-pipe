@@ -30,12 +30,12 @@ def key():
 
 @pytest.fixture(
     params=[
-        pytest.param(lambda: Bernoulli(probs=0.7, label="x"), id="Bernoulli"),
-        pytest.param(lambda: Binomial(total_count=10, probs=0.3, label="x"), id="Binomial"),
-        pytest.param(lambda: Poisson(rate=5.0, label="x"), id="Poisson"),
-        pytest.param(lambda: Categorical(probs=[0.2, 0.3, 0.5], label="x"), id="Categorical"),
+        pytest.param(lambda: Bernoulli("x", probs=0.7), id="Bernoulli"),
+        pytest.param(lambda: Binomial("x", total_count=10, probs=0.3), id="Binomial"),
+        pytest.param(lambda: Poisson("x", rate=5.0), id="Poisson"),
+        pytest.param(lambda: Categorical("x", probs=[0.2, 0.3, 0.5]), id="Categorical"),
         pytest.param(
-            lambda: NegativeBinomial(total_count=5, probs=0.4, label="x"),
+            lambda: NegativeBinomial("x", total_count=5, probs=0.4),
             id="NegativeBinomial",
         ),
     ]
@@ -73,15 +73,17 @@ class TestGeneric:
         assert type(discrete_dist).__name__ in r
 
     def test_name(self, discrete_dist):
-        assert discrete_dist.label == "x"
+        class_name = type(discrete_dist).__name__
+        assert discrete_dist.label == class_name
+        assert str(discrete_dist) == f"{class_name}(x)"
 
 
 _LABELED_DISTS = {
-    "Bernoulli": lambda label: Bernoulli(probs=0.5, label=label),
-    "Binomial": lambda label: Binomial(total_count=10, probs=0.3, label=label),
-    "Poisson": lambda label: Poisson(rate=5.0, label=label),
-    "Categorical": lambda label: Categorical(probs=[0.2, 0.3, 0.5], label=label),
-    "NegativeBinomial": lambda label: NegativeBinomial(total_count=5, probs=0.4, label=label),
+    "Bernoulli": lambda label: Bernoulli("x", probs=0.5, label=label),
+    "Binomial": lambda label: Binomial("x", total_count=10, probs=0.3, label=label),
+    "Poisson": lambda label: Poisson("x", rate=5.0, label=label),
+    "Categorical": lambda label: Categorical("x", probs=[0.2, 0.3, 0.5], label=label),
+    "NegativeBinomial": lambda label: NegativeBinomial("x", total_count=5, probs=0.4, label=label),
 }
 
 
@@ -99,41 +101,41 @@ def test_label_set(family):
 
 class TestBernoulli:
     def test_samples_zero_or_one(self, key):
-        dist = Bernoulli(probs=0.7, label="x")
+        dist = Bernoulli("x", probs=0.7)
         samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all((samples == 0) | (samples == 1))
 
     def test_works_with_probs(self, key):
-        dist = Bernoulli(probs=0.7, label="x")
+        dist = Bernoulli("x", probs=0.7)
         samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_works_with_logits(self, key):
-        dist = Bernoulli(logits=0.0, label="x")
+        dist = Bernoulli("x", logits=0.0)
         samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
         with pytest.raises(ValueError, match="exactly one of probs or logits"):
-            Bernoulli(probs=0.5, logits=0.0, label="x")
+            Bernoulli("x", probs=0.5, logits=0.0)
 
 
 class TestBinomial:
     def test_samples_nonneg_leq_total_count(self, key):
-        dist = Binomial(total_count=10, probs=0.3, label="x")
+        dist = Binomial("x", total_count=10, probs=0.3)
         samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples <= 10)
 
     def test_samples_are_integers(self, key):
-        dist = Binomial(total_count=10, probs=0.3, label="x")
+        dist = Binomial("x", total_count=10, probs=0.3)
         samples = jnp.asarray(sample(dist, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
 
 
 class TestPoisson:
     def test_samples_nonneg_integers(self, key):
-        dist = Poisson(rate=5.0, label="x")
+        dist = Poisson("x", rate=5.0)
         samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
@@ -142,13 +144,13 @@ class TestPoisson:
 class TestCategorical:
     def test_samples_are_valid_indices(self, key):
         probs = [0.2, 0.3, 0.5]
-        dist = Categorical(probs=probs, label="x")
+        dist = Categorical("x", probs=probs)
         samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.all(samples < len(probs))
 
     def test_samples_are_integers(self, key):
-        dist = Categorical(probs=[0.2, 0.3, 0.5], label="x")
+        dist = Categorical("x", probs=[0.2, 0.3, 0.5])
         samples = jnp.asarray(sample(dist, sample_shape=(100,)))
         assert jnp.allclose(samples, jnp.round(samples))
 
@@ -160,24 +162,24 @@ class TestCategorical:
 
 class TestNegativeBinomial:
     def test_samples_nonneg_integers(self, key):
-        dist = NegativeBinomial(total_count=5, probs=0.4, label="x")
+        dist = NegativeBinomial("x", total_count=5, probs=0.4)
         samples = jnp.asarray(sample(dist, sample_shape=(1000,)))
         assert jnp.all(samples >= 0)
         assert jnp.allclose(samples, jnp.round(samples))
 
     def test_works_with_probs(self, key):
-        dist = NegativeBinomial(total_count=5, probs=0.4, label="x")
+        dist = NegativeBinomial("x", total_count=5, probs=0.4)
         samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_works_with_logits(self, key):
-        dist = NegativeBinomial(total_count=5, logits=0.0, label="x")
+        dist = NegativeBinomial("x", total_count=5, logits=0.0)
         samples = sample(dist, sample_shape=(10,))
         assert samples.shape == (10,)
 
     def test_error_if_both_probs_and_logits(self):
         with pytest.raises(ValueError, match="exactly one of probs or logits"):
-            NegativeBinomial(total_count=5, probs=0.4, logits=0.0, label="x")
+            NegativeBinomial("x", total_count=5, probs=0.4, logits=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -190,26 +192,26 @@ class TestNegativeBinomial:
     [
         pytest.param(
             Bernoulli,
-            {"probs": 0.5, "logits": 0.0, "label": "x"},
-            {"label": "x"},
+            {"probs": 0.5, "logits": 0.0},
+            {},
             id="Bernoulli",
         ),
         pytest.param(
             Binomial,
-            {"total_count": 10, "probs": 0.3, "logits": 0.0, "label": "x"},
-            {"total_count": 10, "label": "x"},
+            {"total_count": 10, "probs": 0.3, "logits": 0.0},
+            {"total_count": 10},
             id="Binomial",
         ),
         pytest.param(
             Categorical,
-            {"probs": [0.5, 0.5], "logits": [0.0, 0.0], "label": "x"},
-            {"label": "x"},
+            {"probs": [0.5, 0.5], "logits": [0.0, 0.0]},
+            {},
             id="Categorical",
         ),
         pytest.param(
             NegativeBinomial,
-            {"total_count": 5, "probs": 0.4, "logits": 0.0, "label": "x"},
-            {"total_count": 5, "label": "x"},
+            {"total_count": 5, "probs": 0.4, "logits": 0.0},
+            {"total_count": 5},
             id="NegativeBinomial",
         ),
     ],
@@ -217,11 +219,11 @@ class TestNegativeBinomial:
 class TestProbsLogitsValidation:
     def test_error_both_provided(self, cls, kwargs_both, kwargs_neither):
         with pytest.raises(ValueError, match="exactly one of probs or logits"):
-            cls(**kwargs_both)
+            cls("x", **kwargs_both)
 
     def test_error_neither_provided(self, cls, kwargs_both, kwargs_neither):
         with pytest.raises(ValueError, match="exactly one of probs or logits"):
-            cls(**kwargs_neither)
+            cls("x", **kwargs_neither)
 
 
 # ---------------------------------------------------------------------------
@@ -252,13 +254,13 @@ class TestDiscreteMoments:
     """Mean/variance match scipy; samples pass chi-squared goodness-of-fit."""
 
     def test_bernoulli_mean_and_variance(self):
-        d = Bernoulli(probs=0.7, label="x")
+        d = Bernoulli("x", probs=0.7)
         np.testing.assert_allclose(float(mean(d)), 0.7, rtol=1e-6)
         np.testing.assert_allclose(float(variance(d)), 0.7 * 0.3, rtol=1e-6)
 
     def test_bernoulli_samples_chi2(self, key):
         """Bernoulli(0.7) samples must pass a chi-squared test."""
-        d = Bernoulli(probs=0.7, label="x")
+        d = Bernoulli("x", probs=0.7)
         s = np.asarray(sample(d, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=2)
         _, p = _chi2_discrete(counts, np.array([0.3, 0.7]))
@@ -266,13 +268,13 @@ class TestDiscreteMoments:
 
     def test_binomial_mean_and_variance(self):
         n, p = 10, 0.3
-        d = Binomial(total_count=n, probs=p, label="x")
+        d = Binomial("x", total_count=n, probs=p)
         np.testing.assert_allclose(float(mean(d)), n * p, rtol=1e-6)
         np.testing.assert_allclose(float(variance(d)), n * p * (1 - p), rtol=1e-6)
 
     def test_binomial_samples_chi2(self, key):
         """Binomial(10, 0.3) samples must pass a chi-squared test."""
-        d = Binomial(total_count=10, probs=0.3, label="x")
+        d = Binomial("x", total_count=10, probs=0.3)
         s = np.asarray(sample(d, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=11)
         expected_probs = scipy.stats.binom.pmf(np.arange(11), 10, 0.3)
@@ -280,13 +282,13 @@ class TestDiscreteMoments:
         assert p > 0.001, f"chi2 failed: p={p:.4e}"
 
     def test_poisson_mean_and_variance(self):
-        d = Poisson(rate=5.0, label="x")
+        d = Poisson("x", rate=5.0)
         np.testing.assert_allclose(float(mean(d)), 5.0, rtol=1e-6)
         np.testing.assert_allclose(float(variance(d)), 5.0, rtol=1e-6)
 
     def test_poisson_samples_chi2(self, key):
         """Poisson(5) samples must pass a chi-squared test."""
-        d = Poisson(rate=5.0, label="x")
+        d = Poisson("x", rate=5.0)
         s = np.asarray(sample(d, sample_shape=(50_000,)))
         max_k = int(s.max()) + 1
         counts = np.bincount(s.astype(int), minlength=max_k)
@@ -296,7 +298,7 @@ class TestDiscreteMoments:
 
     def test_poisson_log_prob_matches_scipy(self):
         """log_prob must match scipy.stats.poisson.logpmf."""
-        d = Poisson(rate=5.0, label="x")
+        d = Poisson("x", rate=5.0)
         k = jnp.array([0, 1, 5, 10])
         np.testing.assert_allclose(
             np.asarray(log_prob(d, NumericArrayBatch("k", k, "point"))),
@@ -306,7 +308,7 @@ class TestDiscreteMoments:
 
     def test_binomial_log_prob_matches_scipy(self):
         """log_prob must match scipy.stats.binom.logpmf."""
-        d = Binomial(total_count=10, probs=0.3, label="x")
+        d = Binomial("x", total_count=10, probs=0.3)
         k = jnp.array([0, 3, 5, 10])
         np.testing.assert_allclose(
             np.asarray(log_prob(d, NumericArrayBatch("k", k, "point"))),

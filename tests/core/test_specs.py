@@ -582,7 +582,7 @@ class TestSpecKinds:
     def test_an_empirical_over_opaque_atoms_is_a_distribution_field(self):
         from probpipe import EmpiricalDistribution, OpaqueBatch
 
-        law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "law"))
+        law = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b"], "law"), component="law")
         schema = RecordSpec.infer_from({"law": law})
         assert schema["law"] == law.spec
         assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
@@ -826,7 +826,7 @@ class TestNestedValueBinding:
                 atoms = NumericRecordBatch(
                     "rows", {"x": np.zeros((2, width))}, "row", element_spec=RecordSpec(x=(width,))
                 )
-                return EmpiricalDistribution("x", atoms)
+                return EmpiricalDistribution(atoms, label="x")
 
             reference = law(3)
             actual = law(size)

@@ -100,7 +100,7 @@ class _ScalarGP(GaussianRandomFunction):
     """A scalar-output process with a squared-exponential kernel and a nugget."""
 
     def __init__(self, lengthscale=1.0, variance=1.0, noise=0.01, label="gp"):
-        super().__init__(label)
+        super().__init__(label, label=label)
         self._ls = lengthscale
         self._var = variance
         self._noise = noise
@@ -137,7 +137,7 @@ class _MarginalOnlyGRF(GaussianRandomFunction):
     """A member that gives only the marginal variance at each point."""
 
     def __init__(self, label="marginal_only"):
-        super().__init__(label)
+        super().__init__(label, label=label)
 
     def predict_mean(self, X):
         return jnp.zeros(X.shape[0])
@@ -205,7 +205,11 @@ class TestDeclarations:
 
     def test_output_spec_names_the_evaluated_component(self):
         process = GaussianProcess(
-            "f", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, output_spec=OutputSpec(y=None)
+            "f",
+            lambda X: jnp.zeros(X.shape[0]),
+            _rbf_kernel,
+            label="f",
+            output_spec=OutputSpec(y=None),
         )
         law = process(jnp.ones((3, 2)))
         assert law.label == "f"
@@ -213,34 +217,34 @@ class TestDeclarations:
         assert list(process.event_spec.components) == ["f"]
 
     def test_event_spec_names_the_event_and_its_hole_is_the_function(self):
-        process = GaussianProcess(
-            "f", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, event_spec=OutputSpec(g=None)
-        )
-        assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(f=None)))
+        process = GaussianProcess("g", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel, label="f")
+        assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(g=None)))
 
     def test_an_event_that_is_not_a_function_raises(self):
         with pytest.raises(TypeError, match="FunctionSpec"):
             GaussianProcess(
-                "f",
+                "g",
                 lambda X: jnp.zeros(X.shape[0]),
                 _rbf_kernel,
                 event_spec=OutputSpec(g=NumericArraySpec(())),
+                label="f",
             )
 
     def test_an_event_function_naming_another_output_raises(self):
         with pytest.raises(ValueError, match="names the function output"):
             GaussianProcess(
-                "f",
+                "g",
                 lambda X: jnp.zeros(X.shape[0]),
                 _rbf_kernel,
                 output_spec=OutputSpec(y=None),
                 event_spec=OutputSpec(g=FunctionSpec(output_spec=OutputSpec(z=None))),
+                label="f",
             )
 
     def test_an_event_function_naming_the_output_is_kept(self):
         event = OutputSpec(g=FunctionSpec(output_spec=OutputSpec(y=None)))
         process = GaussianProcess(
-            "f",
+            "g",
             lambda X: jnp.zeros(X.shape[0]),
             _rbf_kernel,
             output_spec=OutputSpec(y=None),
@@ -250,11 +254,12 @@ class TestDeclarations:
 
     def test_an_event_function_without_an_output_takes_the_output_declaration(self):
         process = GaussianProcess(
-            "f",
+            "g",
             lambda X: jnp.zeros(X.shape[0]),
             _rbf_kernel,
             output_spec=OutputSpec(y=None),
             event_spec=OutputSpec(g=FunctionSpec()),
+            label="f",
         )
         assert process.event_spec == OutputSpec(g=FunctionSpec(output_spec=OutputSpec(y=None)))
 
@@ -734,7 +739,7 @@ class TestAlgebraComposition:
 
 def _named_weight_grf(label):
     weights = MultivariateNormal("weights", jnp.array([1.0, 0.5]), cov=0.01 * jnp.eye(2))
-    return LinearBasisFunction(label, _weight_basis, weights)
+    return LinearBasisFunction(label, _weight_basis, weights, label=label)
 
 
 class TestAlgebraNames:
@@ -1198,7 +1203,8 @@ class TestTheFactoredGaussian:
     def test_composition_of_gaussian_factors_derives_it(self):
         joint = _gaussian_joint()
         assert isinstance(joint, FactoredMultivariateGaussian)
-        assert joint.label == "a·b"
+        assert joint.label == "Normal·MultivariateNormal"
+        assert joint.notation == "Normal(a)·MultivariateNormal(b)"
         assert list(joint.event_spec.components) == ["a", "b"]
 
     def test_constructing_the_factored_law_refines_to_it(self):
@@ -1252,7 +1258,7 @@ class TestTheFactoredGaussian:
 
         joint = _gaussian_joint()
         assert _is_named(joint._condition_on({"a": 3.0})) is False
-        assert joint._condition_on({"a": 3.0}).notation == "(a·b)(b)"
+        assert joint._condition_on({"a": 3.0}).notation == "(Normal·MultivariateNormal)(b)"
         model = joint.with_label("model")
         assert _is_named(model._condition_on({"a": 3.0})) is True
         assert model._condition_on({"a": 3.0}).notation == "model(b)"
@@ -1282,7 +1288,7 @@ class TestTheFactoredGaussian:
 
     def test_the_marginal_at_a_component_is_its_factor(self):
         joint = _gaussian_joint().with_label("model")
-        assert joint._marginal("b").label == joint.factors[1].label == "b"
+        assert joint._marginal("b").label == joint.factors[1].label == "MultivariateNormal"
         np.testing.assert_allclose(
             np.asarray(joint._marginal("b")._mean()), np.asarray(joint.factors[1]._mean())
         )

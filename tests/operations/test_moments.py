@@ -85,7 +85,8 @@ class _Ramp(Distribution, SupportsSampling):
 
     def __init__(self, label: str, *, record: bool = False) -> None:
         pair = RecordSpec(x=REAL, y=REAL)
-        super().__init__(label, pair if record else NumericArraySpec((2,), jnp.float32, real))
+        array = OutputSpec(**{label: NumericArraySpec((2,), jnp.float32, real)})
+        super().__init__(label, pair if record else array)
         self.record = record
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -103,7 +104,7 @@ def _record_empirical() -> EmpiricalDistribution:
         "row",
         element_spec=RecordSpec(b=(2,), a=()),
     )
-    return EmpiricalDistribution("post", atoms)
+    return EmpiricalDistribution(atoms, label="post")
 
 
 class _QuadratureStandIn(BinaryDispatchMethod):
@@ -128,7 +129,7 @@ class _QuadratureStandIn(BinaryDispatchMethod):
         return Feasibility(True)
 
     def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
-        return EmpiricalDistribution("stand_in", jnp.array([7.0]))
+        return EmpiricalDistribution(jnp.array([7.0]), component="stand_in")
 
 
 @pytest.fixture
@@ -384,7 +385,9 @@ class _RandomLine(Distribution, SupportsSampling):
     """A law over the maps ``x ↦ s x``, which only samples."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL)))
+        super().__init__(
+            label, OutputSpec(**{label: FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL))})
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         slopes = np.asarray(jax.random.normal(key, tuple(sample_shape)))

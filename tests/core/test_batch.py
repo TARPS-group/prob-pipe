@@ -1152,7 +1152,9 @@ class TestTheBatchLabelIsGroupedBeforeTheSelection:
         assert batch[0:2][1].label == "(x·y)[draw=1]"
 
     def test_draws_of_a_product_group_their_label(self):
-        draws = sample(Normal("x", 0.0, 1.0) * Normal("y", 0.0, 1.0), sample_shape=6)
+        draws = sample(
+            Normal("x", 0.0, 1.0, label="x") * Normal("y", 0.0, 1.0, label="y"), sample_shape=6
+        )
         assert draws.label == "(x, y) ~ x·y"
         assert draws[0:2].label == "((x, y) ~ x·y)[sample=0:2]"
         assert draws[0].label == "((x, y) ~ x·y)[sample=0]"

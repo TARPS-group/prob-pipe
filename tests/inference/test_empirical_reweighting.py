@@ -37,13 +37,13 @@ Y = jnp.array([0.4, 0.9, -0.1])
 
 def _grid_prior(weights: Any = None) -> EmpiricalDistribution:
     """An empirical law of ``mu`` on a grid, uniform unless *weights* are given."""
-    return EmpiricalDistribution("mu", GRID, weights)
+    return EmpiricalDistribution(GRID, weights, component="mu")
 
 
 def _normal_kernel() -> ConditionalDistribution:
     """``y_i ~ Normal(mu, 1)`` for the three observations of ``Y``."""
     return conditional_distribution(
-        "y", lambda mu: Normal("y", mu * jnp.ones(3), 1.0), given_spec={"mu": REAL}
+        lambda mu: Normal("y", mu * jnp.ones(3), 1.0), given_spec={"mu": REAL}, label="y"
     )
 
 
@@ -60,7 +60,7 @@ class _NumpyKernel(ConditionalDistribution, SupportsConditionalLogProb):
     """``y ~ Normal(mu, 1)`` whose density converts its given value to a Python float, so it does not trace."""
 
     def __init__(self) -> None:
-        super().__init__("y", {"mu": REAL}, NumericArraySpec((3,)))
+        super().__init__("y", {"mu": REAL}, OutputSpec(y=NumericArraySpec((3,))))
 
     def _condition_on(self, given: Any, /, **options: Any) -> Any:
         return Normal("y", float(given["mu"]) * jnp.ones(3), 1.0)
@@ -96,10 +96,10 @@ class TestThePosterior:
         assert str(posterior) == posterior.notation == "model(mu; y)"
 
     def test_the_atoms_are_labeled_by_the_posteriors_components(self):
-        prior = EmpiricalDistribution("prior", GRID, event_spec=OutputSpec(mu=None))
+        prior = EmpiricalDistribution(GRID, event_spec=OutputSpec(mu=None), label="prior")
         posterior = condition_on(_normal_kernel() * prior, {"y": Y})
         assert posterior.atoms.label == "mu"
-        assert prior.atoms.label == "prior"
+        assert prior.atoms.label == "mu"
 
     def test_the_weights_are_the_prior_weights_times_the_likelihood(self):
         posterior = condition_on(_normal_kernel() * _grid_prior(), {"y": Y})
@@ -127,11 +127,11 @@ class TestThePosterior:
             ("particle",),
             axes_per_level=(1,),
         )
-        particles = EmpiricalDistribution("particles", atoms)
+        particles = EmpiricalDistribution(atoms, label="particles")
         observe = conditional_distribution(
-            "count",
             lambda phi, N: Poisson("y", phi * N),
             given_spec=particles.event_spec.components,
+            label="count",
         )
         posterior = condition_on(observe * particles, {"y": 250.0})
         assert posterior.event_spec == particles.event_spec
@@ -149,9 +149,9 @@ class TestThePosterior:
 
     def test_an_optional_slot_of_the_likelihood_takes_its_default(self):
         kernel = conditional_distribution(
-            "y",
             lambda mu, scale=2.0: Normal("y", mu * jnp.ones(3), scale),
             given_spec={"mu": REAL},
+            label="y",
         )
         posterior = condition_on(kernel * _grid_prior(), {"y": Y})
         log_likelihood = np.array(
@@ -173,11 +173,11 @@ class TestThePosterior:
         assert posterior.annotations.attrs["method"] == "empirical_reweighting"
 
     def test_zero_likelihood_at_every_atom_raises(self):
-        prior = EmpiricalDistribution("rate", jnp.array([1.0, 2.0, 3.0]))
+        prior = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="rate")
         observe = conditional_distribution(
-            "count",
             lambda rate: Poisson("y", rate),
             given_spec=prior.event_spec.components,
+            label="count",
         )
         with pytest.raises(ValueError, match="zero likelihood at every atom"):
             condition_on.with_options(method="empirical_reweighting")(observe * prior, {"y": -1.0})
@@ -199,7 +199,7 @@ class TestWhenItApplies:
     def test_a_likelihood_without_a_density_does_not_apply(self):
         class _SamplingOnly(ConditionalDistribution):
             def __init__(self) -> None:
-                super().__init__("y", {"mu": REAL}, NumericArraySpec((3,)))
+                super().__init__("y", {"mu": REAL}, OutputSpec(y=NumericArraySpec((3,))))
 
             def _condition_on(self, given: Any, /, **options: Any) -> Any:
                 return Normal("y", float(given["mu"]) * jnp.ones(3), 1.0)
@@ -213,7 +213,7 @@ class TestWhenItApplies:
 
     def test_an_empirical_prior_of_draws_is_reweighted(self):
         draws = jax.random.normal(jax.random.PRNGKey(0), (500,))
-        prior = EmpiricalDistribution("mu", draws)
+        prior = EmpiricalDistribution(draws, component="mu")
         with workflow_run(seed=0):
             posterior = condition_on(_normal_kernel() * prior, {"y": Y})
         assert posterior.num_atoms == 500

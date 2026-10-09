@@ -57,7 +57,7 @@ class TestARecordFieldIsAViewOfItsKind:
         assert view.raw() is _square
 
     def test_a_stored_law_is_a_copy_under_its_key(self):
-        law = Normal("prior", 0.0, 1.0)
+        law = Normal("theta", 0.0, 1.0, label="prior")
         record = Record("r", theta=law)
 
         view = record["theta"]
@@ -89,7 +89,7 @@ class TestAViewRecordsItsContainer:
         assert view.provenance.metadata == {"path": "effect"}
 
     def test_a_stored_term_is_the_second_parent(self):
-        record = Record("r", theta=Normal("prior", 0.0, 1.0))
+        record = Record("r", theta=Normal("theta", 0.0, 1.0, label="prior"))
 
         parents = record["theta"].provenance.parents
 
