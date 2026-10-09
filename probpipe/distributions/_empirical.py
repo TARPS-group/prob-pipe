@@ -25,13 +25,14 @@ from .._weights import (
 from ..core._array_backend import _to_jax_array
 from ..core._batch import Batch
 from ..core._dispatch import Feasibility
+from ..core._expression import Indexed, expression_of, label_of
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._object_batch import _is_object_array, _ObjectBatch
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import NumericRecordSpec, RecordSpec
-from ..core._repr import format_value, grouped_label
+from ..core._repr import format_value
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.named_tree import _unflatten_paths
@@ -765,13 +766,18 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                     columns[f"{final}{_PATH_SEP}{leaf[len(prefix) + 1 :]}"] = column
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
-        return batch_class(
-            f"{grouped_label(atoms.label)}[{tuple(requested for requested, _, _ in selected)!r}]",
+        expression = Indexed(
+            expression_of(atoms), repr(tuple(requested for requested, _, _ in selected))
+        )
+        batch = batch_class(
+            label_of(expression),
             columns,
             atoms.level_names,
             element_spec=element,
             axes_per_level=_ranks(atoms),
         )
+        batch._store_expression(expression)
+        return batch
 
     # -- renaming ---------------------------------------------------------------
 

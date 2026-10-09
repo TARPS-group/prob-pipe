@@ -738,20 +738,25 @@ def _named_weight_grf(label):
 
 
 class TestAlgebraNames:
-    """A result of the algebra is labeled from its operands."""
+    """A map of a random function keeps its label, and a sum is labeled by its expression."""
 
     @pytest.mark.parametrize(
         ("build", "expected"),
         [
-            pytest.param(lambda f, g: jnp.eye(3) @ f, "linear_map(f)", id="linear-map"),
-            pytest.param(lambda f, g: f + 1.0, "shift(f)", id="shift"),
-            pytest.param(lambda f, g: 2.0 * f, "scale(f)", id="scale"),
-            pytest.param(lambda f, g: f + g, "sum(f,g)", id="sum"),
-            pytest.param(lambda f, g: (f + g) + f, "sum(sum(f,g),f)", id="nested"),
+            pytest.param(lambda f, g: jnp.eye(3) @ f, "f", id="linear-map"),
+            pytest.param(lambda f, g: f + 1.0, "f", id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, "f", id="scale"),
+            pytest.param(lambda f, g: f + g, "f + g", id="sum"),
+            pytest.param(lambda f, g: (f + g) + f, "(f + g) + f", id="nested"),
+            pytest.param(lambda f, g: (2.0 * f) + g, "f + g", id="sum-of-a-map"),
         ],
     )
-    def test_a_result_is_named_from_its_operands(self, build, expected):
+    def test_a_result_is_labeled_from_its_operands(self, build, expected):
         assert build(_named_weight_grf("f"), _named_weight_grf("g")).label == expected
+
+    def test_a_sum_displays_by_its_expression_and_its_component(self):
+        total = _named_weight_grf("f") + _named_weight_grf("g")
+        assert total.notation == "(f + g)(f)"
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A value computed from a law is labeled by that value in probability
+  notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
+  `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled
+  `E[(y, mu) ~ model]`, and `log_prob(prior, x)` is labeled `log prior(mu)`,
+  where each was labeled by its law, as `prior` or `model`. A draw from a
+  posterior lists the paths the posterior holds fixed, as `mu ~ model; y`.
+  `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
+  `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
+  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]`. A batch of draws has
+  the label of one draw, so its element is `(mu ~ prior)[sample=0]`. The law
+  of a function lifted over laws keeps the function's label and prints as the
+  function applied to draws of its inputs, as `f(beta ~ model; y)`, and its
+  mean is labeled `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
+  a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
+  as `x + (-1.0)`. Replace a comparison of such a result's label with
+  its law's label by one with the new label, or set a label with
+  `with_label`.
+- **A score's component names the scored components.** `log_prob(d, x)` for a
+  law over `mu` declares its result under the component `log_prob(mu)`, and
+  for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
+  `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
+  as `prob(mu)`. The law of an operation lifted over a law, such as
+  `log_prob(prior, q)` for a law `q` of values, names its component by the
+  operation, as `log_prob`, where it took the label of the scored law. Replace a
+  lookup of the component `log_prob` by one of `log_prob(mu)`.
+- **A map of a Gaussian random function keeps its label, and a sum is labeled
+  by its expression.** `A @ f`, `f + b`, and `alpha * f` are labeled `f`, where
+  they were labeled `linear_map(f)`, `shift(f)`, and `scale(f)`, and `f + g` is
+  labeled `f + g`, where it was `sum(f,g)`.
 - **A conditioned law keeps the label of the law it conditions, and prints the
   paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
   where it was `model | y`, and it prints as `model(mu; y)`: its signature

@@ -645,22 +645,26 @@ class TestLabelBinding:
 
 
 class TestDerivedLabels:
-    """An expectation's result takes the label of its law."""
+    """An expectation is labeled by the expectation of its integrand at a draw of its law."""
 
     @pytest.mark.parametrize(
-        ("make_operand", "f"),
+        ("make_operand", "f", "label"),
         [
-            pytest.param(lambda: Normal("law", 0.0, 1.0), lambda x: x, id="monte-carlo"),
+            pytest.param(
+                lambda: Normal("law", 0.0, 1.0), lambda x: x, "E[f(law ~ law)]", id="monte-carlo"
+            ),
             pytest.param(
                 lambda: EmpiricalDistribution(
                     "law", OpaqueBatch("labels", ["a", "b", "c", "d"], "atom")
                 ),
                 lambda x: jnp.asarray(1.0),
+                "E[f(law ~ law)]",
                 id="generic-empirical",
             ),
             pytest.param(
                 lambda: EmpiricalDistribution("law", jnp.arange(10.0)),
                 lambda x: x,
+                "E[f(law ~ law)]",
                 id="array-empirical",
             ),
             pytest.param(
@@ -668,19 +672,21 @@ class TestDerivedLabels:
                     "law", EmpiricalDistribution("data", jnp.arange(5.0))
                 ),
                 jnp.mean,
+                "E[mean(law ~ law)]",
                 id="bootstrap-replicate",
             ),
             pytest.param(
                 lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"],
                 lambda x: x,
+                "E[f(a ~ a)]",
                 id="field-view",
             ),
         ],
     )
-    def test_an_expectation_takes_the_laws_label(self, make_operand, f):
+    def test_an_expectation_is_labeled_over_its_law(self, make_operand, f, label):
         law = make_operand()
         result = expectation.with_options(n_broadcast_samples=3)(law, f)
-        assert result.label == law.label
+        assert result.label == label
 
 
 class TestPublicImportPaths:
@@ -1254,9 +1260,9 @@ class TestDerivedDeclarations:
         weights = MultivariateNormal("w", loc=jnp.zeros(2), cov=jnp.eye(2))
         f = LinearBasisFunction("f", lambda X: jnp.concatenate([X, X**2], -1), weights)
         assert f.event_spec == OutputSpec(f=FunctionSpec(output_spec=OutputSpec(f=None)))
-        # A derived function keeps its base's component; its label is not one.
+        # A derived function keeps its base's component and its label.
         shifted = f + 1.0
-        assert shifted.label == "shift(f)"
+        assert shifted.label == "f"
         assert shifted.event_spec is f.event_spec
 
     def test_a_minibatched_measure_draws_laws_over_the_prior_parameters(self):

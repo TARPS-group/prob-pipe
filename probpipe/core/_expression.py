@@ -586,7 +586,11 @@ class _Rendering:
                     return f"{SCORE} {grouped_label(law)}"
                 if expression.kind == DENSITY:
                     return self.notation(expression.argument, level + 1, None)
-                return f"{expression.kind}[{self.label(expression.argument, level + 1)}]"
+                argument = expression.argument
+                if isinstance(argument, Applied):
+                    # The expectation of a function at draws is of the call.
+                    return f"{expression.kind}[{self.notation(argument, level + 1, None)}]"
+                return f"{expression.kind}[{self.label(argument, level + 1)}]"
             case Operator():
                 return self._operator(expression, level)
             case Indexed():
@@ -632,7 +636,13 @@ class _Rendering:
                     signature.components, signature.given, fixed_paths_of(expression)
                 )
                 return format_notation(self.label(expression, level), text)
-        return self.label(expression, level)
+        label = self.label(expression, level)
+        if own is None:
+            return label
+        # A law whose expression is a value's, as a sum of random functions is,
+        # reads as that expression grouped and followed by its signature.
+        text = format_signature(own.components, own.given, fixed_paths_of(expression))
+        return format_notation(label, text)
 
 
 def _warn_if_collapsed(rendering: _Rendering) -> None:

@@ -22,8 +22,9 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
+from ._expression import Expression, Operator, constant, embedded, label_of
 from ._numeric import Numeric
-from ._repr import BINARY_SYMBOLS, format_dtype, format_value, grouped_label, term_repr
+from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -365,19 +366,24 @@ def _unwrap(other: Any) -> Any:
     return other._value if isinstance(other, NumericArray) else other
 
 
-#: The form each unary operator gives the label its result derives.
-_UNARY_FORMS = {"neg": "-{}", "pos": "+{}", "abs": "abs({})", "invert": "~{}"}
+#: The symbol each unary operator writes in the expression its result carries.
+_UNARY_SYMBOLS = {"neg": "-", "pos": "+", "abs": "abs", "invert": "~"}
 
 
-def _operand_label(operand: Any) -> str:
-    """How *operand* reads in a derived label: its grouped label, or its value when untracked."""
-    if isinstance(operand, NumericArray):
-        return grouped_label(operand.label)
-    return format_value(operand)
+def _operand(operand: Any) -> Expression:
+    """*operand* as a node of an operator's expression: a term's expression, or a constant's value."""
+    if isinstance(operand, TrackedTerm):
+        return embedded(operand)
+    return constant(operand)
 
 
-def _tracked_result(value: Any, label: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
-    """The operator's *value* as a ``NumericArray`` labeled *label*.
+def _tracked_result(
+    value: Any, expression: Expression, operator_name: str, operands: tuple[Any, ...]
+) -> Any:
+    """The operator's *value* as a ``NumericArray`` carrying *expression*, the operator over its operands.
+
+    The result is labeled by the expression, as ``2 * effect``, an operand that
+    is itself an expression parenthesized, as ``(effect + 1.0) * 2``.
 
     Its tracked *operands* are its parents. The result declares its value's
     shape, and its value's dtype when every tracked operand declares a dtype, so
@@ -393,12 +399,14 @@ def _tracked_result(value: Any, label: str, operator_name: str, operands: tuple[
         operand.spec.dtype is not None for operand in parents if isinstance(operand, NumericArray)
     )
     dtype = _numpy_dtype_of(value) if declared else None
-    return NumericArray(
-        label,
+    result = NumericArray(
+        label_of(expression),
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),
     )
+    result._store_expression(expression)
+    return result
 
 
 def _install_array_operators() -> None:
@@ -416,8 +424,8 @@ def _install_array_operators() -> None:
             value = getattr(self._value, f"__{name}__")(_unwrap(other))
             if symbol is None:
                 return value
-            label = f"{_operand_label(self)} {symbol} {_operand_label(other)}"
-            return _tracked_result(value, label, f"__{name}__", (self, other))
+            expression = Operator(symbol, (_operand(self), _operand(other)))
+            return _tracked_result(value, expression, f"__{name}__", (self, other))
 
         method.__name__ = f"__{name}__"
         return method
@@ -429,20 +437,19 @@ def _install_array_operators() -> None:
             value = getattr(self._value, f"__r{name}__")(_unwrap(other))
             if symbol is None:
                 return value
-            label = f"{_operand_label(other)} {symbol} {_operand_label(self)}"
-            return _tracked_result(value, label, f"__r{name}__", (other, self))
+            expression = Operator(symbol, (_operand(other), _operand(self)))
+            return _tracked_result(value, expression, f"__r{name}__", (other, self))
 
         method.__name__ = f"__r{name}__"
         return method
 
     def _unary(name: str):
-        form = _UNARY_FORMS[name]
+        symbol = _UNARY_SYMBOLS[name]
 
         def method(self: NumericArray) -> Any:
             value = getattr(self._value, f"__{name}__")()
-            # A call form brackets its operand already.
-            operand = self.label if form.endswith("({})") else _operand_label(self)
-            return _tracked_result(value, form.format(operand), f"__{name}__", (self,))
+            expression = Operator(symbol, (_operand(self),))
+            return _tracked_result(value, expression, f"__{name}__", (self,))
 
         method.__name__ = f"__{name}__"
         return method
@@ -457,7 +464,7 @@ def _install_array_operators() -> None:
         setattr(NumericArray, f"__i{op}__", _binary(op))
     for op in ("lt", "le", "eq", "ne", "gt", "ge"):
         setattr(NumericArray, f"__{op}__", _binary(op))
-    for op in _UNARY_FORMS:
+    for op in _UNARY_SYMBOLS:
         setattr(NumericArray, f"__{op}__", _unary(op))
 
 

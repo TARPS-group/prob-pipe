@@ -33,6 +33,7 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
+from ..core._expression import Operator, embedded, expression_of, label_of
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -315,7 +316,9 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
 
     Shifts ``f + b``, scalings ``alpha * f`` by a scalar, output-side linear
     maps ``A @ f``, and sums ``f + g`` of independent members are again
-    members, evaluated in closed form.
+    members, evaluated in closed form. A shift, a scaling, and a linear map of
+    ``f`` keep ``f``'s label, and a sum is labeled by its expression, as
+    ``f + g``.
 
     Parameters
     ----------
@@ -655,9 +658,9 @@ class _LinearMapGRF(GaussianRandomFunction):
             raise ValueError(f"A must be 2-D (d_out, d_in), got shape {A.shape}")
         self._base = base
         self._A = A
-        super().__init__(
-            f"linear_map({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
-        )
+        super().__init__(base.label, output_spec=base._output_spec, event_spec=base.event_spec)
+        # A map of a law keeps the law's label and its derivation (II.4).
+        self._store_expression(expression_of(base))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``A``."""
@@ -715,9 +718,9 @@ class _ShiftedGRF(GaussianRandomFunction):
     def __init__(self, base: GaussianRandomFunction, b: Array) -> None:
         self._base = base
         self._b = b
-        super().__init__(
-            f"shift({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
-        )
+        super().__init__(base.label, output_spec=base._output_spec, event_spec=base.event_spec)
+        # A map of a law keeps the law's label and its derivation (II.4).
+        self._store_expression(expression_of(base))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``b``."""
@@ -748,9 +751,9 @@ class _ScaledGRF(GaussianRandomFunction):
             )
         self._base = base
         self._alpha = alpha
-        super().__init__(
-            f"scale({base.label})", output_spec=base._output_spec, event_spec=base.event_spec
-        )
+        super().__init__(base.label, output_spec=base._output_spec, event_spec=base.event_spec)
+        # A map of a law keeps the law's label and its derivation (II.4).
+        self._store_expression(expression_of(base))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``alpha``."""
@@ -815,11 +818,11 @@ class _IndependentSumGRF(GaussianRandomFunction):
             )
         self._left = left
         self._right = right
+        expression = Operator("+", (embedded(left), embedded(right)))
         super().__init__(
-            f"sum({left.label},{right.label})",
-            output_spec=left._output_spec,
-            event_spec=left.event_spec,
+            label_of(expression), output_spec=left._output_spec, event_spec=left.event_spec
         )
+        self._store_expression(expression)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``left`` and ``right``."""

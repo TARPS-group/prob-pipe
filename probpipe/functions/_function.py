@@ -66,6 +66,7 @@ from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _labeled_product
+from ..distributions._views import FieldView
 from ..values._function_base import (
     _WARNING_SKIP_PREFIXES,
     Function,
@@ -389,17 +390,29 @@ def _lifted_expression(
             if len(consumers) == 1:
                 arguments.append(draw_of(value))
                 continue
-            components = dict.fromkeys(
-                name
-                for consumer in consumers
-                for name in _binding.input_ref_value(values, consumer.arg_ref).event_spec.components
+            laws = [_binding.input_ref_value(values, consumer.arg_ref) for consumer in consumers]
+            components = dict.fromkeys(name for law in laws for name in law.event_spec.components)
+            arguments.append(
+                Draw(tuple(components), embedded(_drawn_together_from(laws, plan, index)))
             )
-            arguments.append(Draw(tuple(components), embedded(plan.runtime_bindings[index].root)))
         elif isinstance(value, TrackedTerm):
             arguments.append(embedded(value))
         elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
             arguments.append(constant(value))
     return Applied(function.output_label, tuple(arguments))
+
+
+def _drawn_together_from(laws: list[Any], plan: _plan.StochasticPlan, index: int) -> Any:
+    """The law that the arguments *laws*, which the plan draws together, are drawn from.
+
+    It is the parent of field views of one law, as ``model`` is for
+    ``model["a"]`` and ``model["b"]``, and the root of the plan's source group
+    *index* otherwise.
+    """
+    parents = {id(law.parent): law.parent for law in laws if isinstance(law, FieldView)}
+    if len(parents) == 1 and all(isinstance(law, FieldView) for law in laws):
+        return next(iter(parents.values()))
+    return plan.runtime_bindings[index].root
 
 
 def _expressed(term: Any, expression: Expression | None) -> Any:

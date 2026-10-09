@@ -404,12 +404,15 @@ def _carrying(law: Any, expression: Expression) -> Any:
     """*law* carrying *expression*: *law* itself when it carries it, and otherwise a copy that does.
 
     Two expressions are the same when they read alike under *law*'s own
-    signature, so a factor that is its own marginal is returned as it is.
+    signature, so a factor that is its own marginal is returned as it is. The
+    copy keeps *law*'s provenance.
     """
     own = own_signature(law)
     if with_signature(expression_of(law), own) == with_signature(expression, own):
         return law
-    return law._with_expression(expression)
+    clone = law._shallow_copy()
+    clone._store_expression(expression)
+    return clone
 
 
 def _keeps_expression(term: Any, source: Any) -> Any:
@@ -1206,9 +1209,8 @@ class FieldView(Distribution):
         return self._viewed(self._parent.with_dim_names(**names))
 
     def _viewed(self, parent: Distribution) -> FieldView:
-        """The view of *parent* at this view's path, under this view's label."""
-        view = FieldView(parent, self._path)
-        return view if view.label == self.label else view.with_label(self.label)
+        """The view of *parent* at this view's path, carrying this view's expression."""
+        return _carrying(FieldView(parent, self._path), expression_of(self))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parent's path that the view reads."""

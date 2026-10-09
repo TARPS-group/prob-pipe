@@ -48,7 +48,7 @@ class TestLogProb:
     def test_log_prob_returns_the_normalized_log_density(self):
         score = log_prob(Gaussian("g", 1.0, 2.0), 0.5)
         assert isinstance(score, NumericArray)
-        assert score.label == "g"
+        assert score.label == "log g(g)"
         np.testing.assert_allclose(
             float(jnp.asarray(score)), jax.scipy.stats.norm.logpdf(0.5, 1.0, 2.0), rtol=1e-6
         )
@@ -192,8 +192,13 @@ class TestLiftedScores:
         report = log_prob.check(Gaussian("g"), Gaussian("v"))
         assert (report.feasible, report.route, report.exact) == (True, "exact", True)
         assert report.lifted == ("value",)
-        assert report.result == OutputSpec(log_prob=NumericArraySpec(()))
-        assert isinstance(log_prob(Gaussian("g"), Gaussian("v")), Distribution)
+        assert report.result == OutputSpec(**{"log_prob(g)": NumericArraySpec(())})
+        lifted = log_prob(Gaussian("g"), Gaussian("v"))
+        assert isinstance(lifted, Distribution)
+        # The law of the score at draws of the value is the operation at a draw,
+        # and its component is the operation's name, never a derived label.
+        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g, v ~ v)")
+        assert list(lifted.event_spec.components) == ["log_prob"]
 
     def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
         with pytest.raises(ApplicabilityError, match="does not conform"):
@@ -225,7 +230,7 @@ class TestDerivedDensities:
     def test_prob_is_the_exponential_of_log_prob(self):
         law = Gaussian("g", 0.0, 1.5)
         density = prob(law, 0.7)
-        assert density.label == "g"
+        assert density.label == "g(g)"
         assert density.spec.support is non_negative
         assert float(jnp.asarray(density)) == pytest.approx(
             float(np.exp(jax.scipy.stats.norm.logpdf(0.7, 0.0, 1.5))), rel=1e-6
