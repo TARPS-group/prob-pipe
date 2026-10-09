@@ -80,6 +80,8 @@ class TestAutomaticSample:
             pytest.param((np.int64(4),), id="numpy-tuple"),
             pytest.param(jnp.int32(4), id="jax-scalar"),
             pytest.param((jnp.int32(4),), id="jax-tuple"),
+            pytest.param([4], id="list"),
+            pytest.param(np.array([4]), id="numpy-array"),
         ],
     )
     def test_integer_protocol_sample_shapes_match_python_ints(self, sample_shape):
@@ -94,7 +96,7 @@ class TestAutomaticSample:
 
         np.testing.assert_array_equal(actual, expected)
 
-    @pytest.mark.parametrize("sample_shape", [True, -1, (2, -1), (2, 1.5), [2]])
+    @pytest.mark.parametrize("sample_shape", [True, -1, (2, -1), (2, 1.5), "S", b"ab"])
     def test_invalid_sample_shape_fails_before_event_commit(self, sample_shape):
         with (
             patch("probpipe.functions._context._commit_stochastic_invocation") as commit,

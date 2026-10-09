@@ -399,6 +399,40 @@ class TestAddMcmcDiagnostics:
     def test_does_not_return_value(self, posterior):
         assert add_mcmc_diagnostics(posterior) is None
 
+    def test_a_single_metric_name_is_one_metric(self, posterior):
+        add_mcmc_diagnostics(posterior, metrics="rhat")
+        assert _mcmc_has_field(posterior, "rhat")
+        assert not _mcmc_has_field(posterior, "ess_bulk")
+        assert not _mcmc_has_field(posterior, "mcse_mean")
+
+    def test_computes_only_the_named_metrics(self, posterior):
+        add_mcmc_diagnostics(posterior, metrics=["ess", "mcse"])
+        assert not _mcmc_has_field(posterior, "rhat")
+        assert _mcmc_has_field(posterior, "ess_bulk")
+        assert _mcmc_has_field(posterior, "mcse_mean")
+
+    def test_refuses_an_unknown_metric(self, posterior):
+        with pytest.raises(
+            ValueError,
+            match=r"unknown metric 'esss'; available metrics: \['rhat', 'ess', 'mcse', 'divergences'\]",
+        ):
+            add_mcmc_diagnostics(posterior, metrics=["rhat", "esss"])
+        assert not _mcmc_has_field(posterior, "rhat")
+
+    @pytest.mark.parametrize(
+        ("metrics", "match"),
+        [
+            (3, "add_mcmc_diagnostics metrics must be a str or a sequence of str, got int 3"),
+            (b"rhat", "got bytes"),
+            ({"rhat": 1}, "got dict"),
+            ({"rhat", "ess"}, "got set"),
+            (("rhat", 3), "add_mcmc_diagnostics metrics entry must be a str, got int 3"),
+        ],
+    )
+    def test_refuses_metrics_that_are_not_names(self, posterior, metrics, match):
+        with pytest.raises(TypeError, match=match):
+            add_mcmc_diagnostics(posterior, metrics=metrics)
+
     def test_a_run_without_divergence_statistics_records_no_count(self, posterior):
         add_mcmc_diagnostics(posterior)
         assert isinstance(posterior.diagnostics.mcmc.n_divergences, NotComputed)

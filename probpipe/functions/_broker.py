@@ -338,6 +338,7 @@ class _AutomaticKeyBroker:
         )
         _guard_remote_coordination(self._frame)
         _context._guard_automatic_key_request()
+        _context._guard_caller_jax_trace(plan.operation_kind)
         self.validate_replay_effect_plan(plan)
         with self._lock:
             if self._invocation is None:

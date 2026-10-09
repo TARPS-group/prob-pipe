@@ -99,7 +99,7 @@ class TestFunctionBoundary:
         f = Function(
             label="function",
             fn=lambda: batch,
-            output_spec=BatchSpec(RecordSpec(a=(), b=(2,)), batch.axis_groups, batch.level_names),
+            output_spec=BatchSpec(RecordSpec(a=(), b=(2,)), batch.spec.levels),
         )
 
         result = f()
@@ -116,7 +116,7 @@ class TestFunctionBoundary:
         f = Function(
             label="function",
             fn=lambda: batch,
-            output_spec=BatchSpec(declared, batch.axis_groups, batch.level_names),
+            output_spec=BatchSpec(declared, batch.spec.levels),
         )
 
         with pytest.raises(ValueError, match=r"output/function/a.*dtype.*does not conform"):
@@ -264,9 +264,7 @@ class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
 
         retyped = _copy_result_term(
             batch,
-            output_spec=OutputSpec(
-                result=BatchSpec(RecordSpec(b=(), a=()), batch.axis_groups, batch.level_names)
-            ),
+            output_spec=OutputSpec(result=BatchSpec(RecordSpec(b=(), a=()), batch.spec.levels)),
         )
         roundtripped = jax.jit(lambda x: x)(retyped)
 

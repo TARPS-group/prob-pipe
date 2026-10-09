@@ -1068,6 +1068,48 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     return None
 
 
+def _pymc_dimension_names(shapes: Mapping[str, tuple[Any, ...]]) -> dict[str, tuple[str, ...]]:
+    """A dimension name for each axis of each free variable, every one a distinct identifier.
+
+    Axis *i* of variable *name* is named ``f"{name}_{i}"``, with each character
+    that cannot appear in a Python identifier replaced by ``_`` and a leading
+    ``_`` added when the name would start with a digit, so a nested model's
+    ``"sub::beta"`` gives ``sub__beta_0``. A name that an earlier axis already
+    has takes the first of the suffixes ``_2``, ``_3``, ... that is free, so two
+    variables whose names differ only in such characters keep separate
+    dimensions. The variables are taken in model order, so every build of one
+    model names its axes alike, and a name that is already an identifier is
+    unchanged.
+
+    Parameters
+    ----------
+    shapes : Mapping of str to tuple
+        Each free variable's static shape, in model order.
+
+    Returns
+    -------
+    dict of str to tuple of str
+        One dimension name per axis of each variable.
+    """
+    taken: set[str] = set()
+    names: dict[str, tuple[str, ...]] = {}
+    for name, shape in shapes.items():
+        axes = []
+        for axis in range(len(shape)):
+            base = re.sub(r"\W", "_", f"{name}_{axis}")
+            if not base.isidentifier():
+                base = f"_{base}"
+            if not base.isidentifier():
+                base = "_" + re.sub(r"[^0-9A-Za-z_]", "_", base)
+            candidate, suffix = base, 2
+            while candidate in taken:
+                candidate, suffix = f"{base}_{suffix}", suffix + 1
+            taken.add(candidate)
+            axes.append(candidate)
+        names[name] = tuple(axes)
+    return names
+
+
 class _PyMCProgram:
     """A PyMC model-building function with some arguments bound, and the variables its build has.
 
@@ -1110,6 +1152,7 @@ class _PyMCProgram:
         self.given = tuple(p.name for p in arguments if p.name not in self.observed)
         self.parameters = tuple(name for name in free if name not in self.observed)
         self.shapes = {name: tuple(rv.type.shape) for name, rv in free.items()}
+        self.dimension_names = _pymc_dimension_names(self.shapes)
         self.dtypes = {name: np.dtype(rv.dtype) for name, rv in free.items()}
         self.supports = {name: _pymc_support(model, rv) for name, rv in free.items()}
         self.normalized = not model.potentials and not any(
@@ -1130,13 +1173,15 @@ class _PyMCProgram:
 
         Each variable carries its dtype and the support its transform states.
         Under *symbolic* every dimension is symbolic, for a kernel whose shapes
-        its given values may set.
+        its given values may set. A symbolic dimension takes its name from
+        ``dimension_names``, so it is a Python identifier whatever the
+        variable's name.
         """
         return RecordSpec(
             {
                 name: NumericArraySpec(
                     tuple(
-                        f"{name}_{axis}" if symbolic or size is None else int(size)
+                        self.dimension_names[name][axis] if symbolic or size is None else int(size)
                         for axis, size in enumerate(shape)
                     ),
                     _backend_dtype(self.dtypes[name]),

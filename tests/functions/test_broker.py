@@ -9,15 +9,23 @@ from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
 import jax
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import probpipe.functions._broker as broker_mod
 import probpipe.functions._context as context_mod
 import probpipe.functions._managed as managed_mod
+import probpipe.functions._rng as rng_mod
 from probpipe import (
     Function,
+    MultivariateNormal,
     Normal,
     UnmanagedConcurrentWorkflowEntryError,
+    condition_on,
+    conditional_distribution,
+    mean,
+    sample,
     workflow_run,
 )
 from probpipe.functions._broker import (
@@ -558,3 +566,122 @@ class TestFunctionBrokerScope:
 
         assert result.num_atoms == 8
         key_for.assert_called_once()
+
+
+_CALLER_TRACE_ERROR = "inside a JAX transformation"
+
+
+def _sample_sum(loc):
+    """The sum of three workflow-owned draws of a normal law at *loc*."""
+    return jnp.sum(jnp.asarray(sample(Normal("x", loc, 1.0), sample_shape=(3,))))
+
+
+class TestCallerJaxTraceDetection:
+    @pytest.mark.parametrize("use_core_fallback", [False, True])
+    @pytest.mark.parametrize(
+        ("transform", "argument"),
+        [
+            pytest.param(None, 0.0, id="eager"),
+            pytest.param(jax.jit, 0.0, id="jit"),
+            pytest.param(jax.vmap, jnp.zeros(2), id="vmap"),
+            pytest.param(jax.grad, 0.0, id="grad"),
+        ],
+    )
+    def test_trace_detection(self, monkeypatch, use_core_fallback, transform, argument):
+        if use_core_fallback:
+            monkeypatch.delattr(jax.extend.core, "find_top_trace", raising=False)
+        observed = []
+
+        def body(value):
+            observed.append(context_mod._caller_jax_trace_active())
+            return value * value
+
+        if transform is None:
+            body(argument)
+        else:
+            transform(body)(argument)
+
+        assert observed == [transform is not None]
+
+
+class TestCallerJaxTrace:
+    @pytest.fixture(autouse=True)
+    def _fresh_jax_key_adapter_state(self, monkeypatch):
+        monkeypatch.setattr(rng_mod, "_JAX_KEY_ADAPTER_STATE", rng_mod._JAXKeyAdapterState())
+
+    @pytest.mark.parametrize(
+        ("transform", "argument"),
+        [
+            pytest.param(jax.jit, 0.0, id="jit"),
+            pytest.param(jax.vmap, jnp.zeros(2), id="vmap"),
+            pytest.param(jax.grad, 0.0, id="grad"),
+        ],
+    )
+    def test_a_draw_inside_the_callers_transformation_raises(self, transform, argument):
+        with (
+            patch.object(
+                context_mod,
+                "derive_event_key_words_from_encoded",
+                wraps=context_mod.derive_event_key_words_from_encoded,
+            ) as derive,
+            workflow_run(seed=3),
+            pytest.raises(RuntimeError, match=_CALLER_TRACE_ERROR) as raised,
+        ):
+            transform(_sample_sum)(argument)
+
+        assert "'sample' operation" in str(raised.value)
+        assert "outside the transformation" in str(raised.value)
+        derive.assert_not_called()
+        assert not rng_mod._JAX_KEY_ADAPTER_STATE.certified
+
+    def test_a_lifted_call_inside_the_callers_jit_raises(self):
+        lifted = Function("affine", lambda z: 2.0 * z, n_broadcast_samples=8, dispatch="auto")
+
+        def body(loc):
+            return lifted(Normal("z", loc, 1.0))
+
+        with pytest.raises(RuntimeError, match="'function_lifting' operation"):
+            jax.jit(body)(0.0)
+
+    def test_a_jax_dispatched_function_over_a_law_draws(self):
+        lifted = Function("affine", lambda z: 2.0 * z, n_broadcast_samples=8, dispatch="jax")
+
+        with workflow_run(seed=3):
+            first = lifted(Normal("z", 0.0, 1.0))
+        with workflow_run(seed=3):
+            second = lifted(Normal("z", 0.0, 1.0))
+
+        assert first.num_atoms == 8
+        np.testing.assert_array_equal(
+            np.asarray(first.atoms.values), np.asarray(second.atoms.values)
+        )
+
+    def test_an_inference_method_that_jits_its_chains_draws(self):
+        prior = Normal("mu", 0.0, 1.0)
+        likelihood = condition_on.with_options(
+            method="blackjax_rwmh",
+            method_options={"num_results": 20, "num_warmup": 10},
+        )
+
+        with workflow_run(seed=3):
+            posterior = likelihood(_normal_model(prior), {"y": jnp.zeros(4)})
+
+        assert np.all(np.isfinite(np.asarray(mean(posterior)["mean(mu)"])))
+
+    def test_a_deterministic_operation_runs_under_the_callers_jit(self):
+        def body(loc):
+            return mean(MultivariateNormal("x", loc, jnp.eye(2)))
+
+        result = jax.jit(body)(jnp.ones(2))
+
+        np.testing.assert_allclose(np.asarray(result), np.ones(2))
+
+
+def _normal_model(prior):
+    """The joint of four unit-variance normal observations at *prior*'s location."""
+    likelihood = conditional_distribution(
+        lambda mu: Normal("y", mu * jnp.ones(4), 1.0),
+        label="y_given_mu",
+        given_spec=prior.event_spec.components,
+    )
+    return likelihood * prior

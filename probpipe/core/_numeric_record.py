@@ -18,7 +18,7 @@ lazy conversion contract, the flat-vector layout (``to_vector`` /
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from math import prod
 from typing import Any
 
@@ -36,6 +36,7 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
+from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
     NumericRecordSpec,
@@ -516,7 +517,7 @@ def _reconstruct_from_vector(
     template: NumericRecordSpec,
     vec: Array,
     *,
-    level_names: str | Iterable[str] = "sample",
+    level_names: NamesLike = "sample",
 ) -> NumericRecord | Any:
     """Reconstruct a numeric value from its flat vector, under *label*.
 
@@ -536,7 +537,7 @@ def _reconstruct_from_vector(
         block of *vec*.
     vec : Array
         The flat values, of shape ``(*batch_shape, template.vector_size)``.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         The level names of a rebuilt batch. A single name takes every leading axis
         of *vec* as one level, and several names take one axis each.
 
@@ -596,7 +597,7 @@ def _reconstruct_from_vector(
         # names take one axis each. The same rule ``from_vector`` states, and it
         # is stated once here rather than assumed: hardcoding one level made the
         # ``level_names`` parameter a lie for every caller who named two.
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        names = _as_names(level_names, what="from_vector level_names")
         return NumericRecordBatch(
             label,
             dict(zip(template.keys(), leaves, strict=True)),

@@ -11,6 +11,7 @@ import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    BatchSpec,
     EmpiricalDistribution,
     Function,
     Gamma,
@@ -125,7 +126,25 @@ class TestSpecs:
         assert eval(repr(output)) == output
 
     def test_a_batch_spec_names_its_levels(self):
-        assert repr(_schools().spec).endswith("    levels={'school': 8},\n)")
+        assert repr(_schools().spec).endswith("    school=8,\n)")
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            BatchSpec(NumericArraySpec(()), chain=4, draw="S"),
+            BatchSpec(NumericArraySpec(("n",)), grid=(3, "n")),
+            BatchSpec(NumericArraySpec(()), {"my level": 2, "draw": 3}),
+        ],
+        ids=["keywords", "multi-axis", "mapping"],
+    )
+    def test_a_batch_spec_reads_as_the_call_that_builds_it(self, spec):
+        """A level of one axis shows its size alone; a name no keyword spells uses ``**``."""
+        assert eval(repr(spec)) == spec
+
+    def test_a_batch_spec_level_no_keyword_spells_is_written_in_a_mapping(self):
+        spec = BatchSpec(NumericArraySpec(()), {"my level": 2})
+
+        assert repr(spec) == "BatchSpec(NumericArraySpec(shape=()), **{'my level': 2})"
 
 
 class TestDistributions:

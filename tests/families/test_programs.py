@@ -359,6 +359,70 @@ def _penalized_regression(x=None, y=None):
     return model
 
 
+#: A covariate default, which makes ``x`` a given slot of the kernel.
+_COVARIATE = np.zeros(3)
+
+
+class TestPyMCDimensionNames:
+    """A PyMC variable's symbolic dimensions are identifiers whatever the variable is called."""
+
+    def test_an_identifier_name_is_kept(self):
+        assert _programs._pymc_dimension_names({"z": (None, 3), "s": ()}) == {
+            "z": ("z_0", "z_1"),
+            "s": (),
+        }
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("sub::beta", "sub__beta_0"),
+            ("beta coef", "beta_coef_0"),
+            ("beta.0", "beta_0_0"),
+            ("2x", "_2x_0"),
+            ("σ", "σ_0"),
+        ],
+    )
+    def test_a_name_that_is_not_an_identifier_becomes_one(self, name, expected):
+        assert _programs._pymc_dimension_names({name: (None,)}) == {name: (expected,)}
+
+    def test_names_that_meet_after_replacement_stay_distinct(self):
+        """Two variables never share a dimension because their names differ only in symbols."""
+        names = _programs._pymc_dimension_names({"a b": (None,), "a_b": (None,), "a-b": (None,)})
+
+        assert names == {"a b": ("a_b_0",), "a_b": ("a_b_0_2",), "a-b": ("a_b_0_3",)}
+
+    def test_a_nested_model_declares_identifier_dimensions(self):
+        pm = pytest.importorskip("pymc")
+
+        def model_fn(y=None):
+            with pm.Model() as m:
+                with pm.Model(name="sub"):
+                    pm.Normal("beta", 0, 1, shape=(pm.Data("n", np.int64(2)),))
+                pm.Normal("y", 0, 1, observed=y)
+            return m
+
+        model = PyMCModel(model_fn, label="model")
+
+        assert model.event_spec.spec["sub::beta"].shape == ("sub__beta_0",)
+        assert model.event_spec.spec.free_dims == {"sub__beta_0"}
+        assert model.with_dim_sizes(sub__beta_0=2).event_spec.spec["sub::beta"].shape == (2,)
+
+    def test_a_kernel_over_a_nested_model_declares_identifier_dimensions(self):
+        pm = pytest.importorskip("pymc")
+
+        def model_fn(x=_COVARIATE, y=None):
+            with pm.Model() as m:
+                with pm.Model(name="sub"):
+                    beta = pm.Normal("beta", 0, 1, shape=3)
+                pm.Normal("y", (beta * x).sum(), 1, observed=y)
+            return m
+
+        kernel = PyMCModel(model_fn, label="model")
+
+        assert isinstance(kernel, ConditionalDistribution)
+        assert kernel.event_spec.spec["sub::beta"].shape == ("sub__beta_0",)
+
+
 class TestPyMCModel:
     @pytest.fixture(autouse=True)
     def _pymc(self):

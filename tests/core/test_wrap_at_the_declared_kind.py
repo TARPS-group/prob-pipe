@@ -252,7 +252,7 @@ class TestAReturnedSequenceIsOpaque:
     def test_a_declared_batch_takes_the_sequence_as_its_elements(self):
         from probpipe import BatchSpec, NumericArrayBatch, NumericArraySpec
 
-        declared = BatchSpec(NumericArraySpec(()), (("n",),), ("item",))
+        declared = BatchSpec(NumericArraySpec(()), item="n")
         result = self._returned([1.0, 2.0, 3.0], output_spec=declared)
 
         assert isinstance(result, NumericArrayBatch)
@@ -262,7 +262,7 @@ class TestAReturnedSequenceIsOpaque:
     def test_a_declared_batch_of_opaque_elements_stores_each_one(self):
         from probpipe import BatchSpec, OpaqueBatch, OpaqueSpec
 
-        declared = BatchSpec(OpaqueSpec(), ((2,),), ("item",))
+        declared = BatchSpec(OpaqueSpec(), item=2)
         result = self._returned(["a", "b"], output_spec=declared)
 
         assert isinstance(result, OpaqueBatch)

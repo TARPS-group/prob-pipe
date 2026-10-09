@@ -31,7 +31,7 @@ See design III.3.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Self, cast
 
 import jax
@@ -56,6 +56,7 @@ from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from ._repr import format_levels, format_names, public_class_name, type_name
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
@@ -93,7 +94,7 @@ class RecordBatch(Batch[Record]):
         where the event shape is the field spec's for a ``NumericArraySpec`` and empty
         otherwise — so a field that is not an array takes an object array, one
         entry per element. The keys must be exactly the fields of *element_spec*.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names a single
         level. There is no default, for the reason
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
@@ -104,12 +105,13 @@ class RecordBatch(Batch[Record]):
         its values: an array column's axes past those the levels hold are its
         field's event shape, and an object column's entries decide its field's
         spec.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -136,6 +138,13 @@ class RecordBatch(Batch[Record]):
         declares a symbolic dimension, which gives its event shape no size to
         split by; if a column leaves no batch axis; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -188,15 +197,19 @@ class RecordBatch(Batch[Record]):
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
         element_spec: RecordSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        axes = None if axes_per_level is None else tuple(axes_per_level)
+        names = _as_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
         if element_spec is None:
             element_spec = _inferred_element_spec(fields, _batch_axis_count(names, axes), kind=kind)
         spec = _record_element_spec(element_spec, kind=kind)
@@ -212,7 +225,7 @@ class RecordBatch(Batch[Record]):
 
         object.__setattr__(self, "_columns", store)
         self._init_batch(
-            BatchSpec(spec, groups, names),
+            BatchSpec._from_groups(spec, groups, names),
             label=label,
             provenance=provenance,
         )
@@ -473,7 +486,7 @@ class RecordBatch(Batch[Record]):
         return self._inherit_provenance(
             column_cls._over_store(
                 column,
-                spec=BatchSpec(spec, self.axis_groups, self.level_names),
+                spec=self.spec._replace(element_spec=spec),
                 label=key,
             )
         )
@@ -495,7 +508,7 @@ class RecordBatch(Batch[Record]):
         view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
-            BatchSpec(template, self.axis_groups, self.level_names),
+            self.spec._replace(element_spec=template),
             label=path,
         )
         return self._inherit_provenance(view)
@@ -512,7 +525,7 @@ class RecordBatch(Batch[Record]):
         view = object.__new__(self._view_class(element_spec))
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
-            BatchSpec(element_spec, self.axis_groups, self.level_names),
+            self.spec._replace(element_spec=element_spec),
             label=key,
         )
         return self._inherit_provenance(view)

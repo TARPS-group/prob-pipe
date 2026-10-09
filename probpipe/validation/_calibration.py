@@ -31,6 +31,7 @@ import numpy as np
 
 from .._messages import unknown_names
 from ..core._record_spec import RecordSpec
+from ..core._shapes import NamesLike, _as_names
 from ..core._specs import OutputSpec
 from ..custom_types import Array, ArrayLike
 from ..distributions._conditional import ConditionalDistribution
@@ -324,7 +325,7 @@ class SBCResult:
 def simulation_based_calibration(
     model: Distribution,
     *,
-    observed: str | Sequence[str],
+    observed: NamesLike,
     num_simulations: int,
     num_posterior_draws: int,
     posterior: ConditionalDistribution | None = None,
@@ -371,7 +372,7 @@ def simulation_based_calibration(
         such as ``likelihood * prior``.
     observed : str or sequence of str
         The fields of a draw that the posterior conditions on; the others are
-        the parameters.
+        the parameters. A str names one field.
     num_simulations : int
         The number of replications.
     num_posterior_draws : int
@@ -402,10 +403,10 @@ def simulation_based_calibration(
     ------
     TypeError
         If *model* does not sample; if *posterior* is not a
-        ``ConditionalDistribution``; if a count is not an integer; or if
-        *method* is not a non-empty string or *method_options* is not a mapping
-        of option names. A method's ``TypeError`` for an option it does not
-        read propagates.
+        ``ConditionalDistribution``; if *observed* is not a str or a sequence
+        of str; if a count is not an integer; or if *method* is not a non-empty
+        string or *method_options* is not a mapping of option names. A method's
+        ``TypeError`` for an option it does not read propagates.
     ValueError
         If a count is not positive; if an *observed* name is not a field of a
         draw, or no parameter is left; if *method* or *method_options* is given
@@ -484,7 +485,7 @@ def simulation_based_calibration(
             f"simulation_based_calibration: model must be a distribution that can be sampled; "
             f"got {type(model).__name__}"
         )
-    observed = (observed,) if isinstance(observed, str) else tuple(observed)
+    observed = _as_names(observed, what="simulation_based_calibration observed")
     components = tuple(model.event_spec.components)
     unknown = [name for name in observed if name not in components]
     if unknown:

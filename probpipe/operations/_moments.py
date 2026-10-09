@@ -300,7 +300,7 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
     element = _summary_declaration(d.event_spec, "quantile", _quantile_term(d.event_spec.spec))
     if not q.shape:
         return element
-    return element._with_spec(BatchSpec(element.spec, (q.shape,), ("quantile",)))
+    return element._with_spec(BatchSpec(element.spec, quantile=q.shape))
 
 
 def _expectation_result(f: TermSpec) -> OutputSpec | None:

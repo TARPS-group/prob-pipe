@@ -23,7 +23,7 @@ See design III.3.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any, Self, cast
 
 import jax
@@ -40,6 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
 
@@ -67,14 +68,14 @@ class NumericRecordBatch(RecordBatch):
     fields : Mapping of str to array
         The numeric columns, keyed by leaf path or given as a nested mapping, each
         shaped ``(*batch_shape, *event_shape)``.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names a single level.
     element_spec : RecordSpec, optional
         The all-numeric schema every element satisfies. Defaults to the spec the
         columns imply.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first. Defaults to one axis per
-        level.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count). Defaults to one axis per level.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -83,6 +84,13 @@ class NumericRecordBatch(RecordBatch):
     TypeError
         If *element_spec* does not describe an all-numeric element, or a column
         is not a numeric array.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
     """
 
     __slots__ = ()
@@ -92,20 +100,24 @@ class NumericRecordBatch(RecordBatch):
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
         element_spec: RecordSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
+        kind = type(self).__name__
+        names = _as_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
         if element_spec is None:
-            names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-            axes_per_level = None if axes_per_level is None else tuple(axes_per_level)
-            n_batch = _batch_axis_count(names, axes_per_level)
-            element_spec = _inferred_element_spec(fields, n_batch, kind=type(self).__name__)
+            n_batch = _batch_axis_count(names, axes)
+            element_spec = _inferred_element_spec(fields, n_batch, kind=kind)
         template = _record_element_spec(element_spec, kind=type(self).__name__)
         if not isinstance(template, NumericRecordSpec):
-            kind = type(self).__name__
             others = [k for k in template if not isinstance(template[k], NumericArraySpec)]
             if not others:
                 raise TypeError(
@@ -119,9 +131,9 @@ class NumericRecordBatch(RecordBatch):
         super().__init__(
             label,
             fields,
-            level_names,
+            names,
             element_spec=element_spec,
-            axes_per_level=axes_per_level,
+            axes_per_level=axes,
             provenance=provenance,
         )
 
@@ -222,8 +234,8 @@ class NumericRecordBatch(RecordBatch):
         spec: NumericRecordSpec,
         vec: Array,
         *,
-        level_names: str | Iterable[str],
-        axes_per_level: Iterable[int] | None = None,
+        level_names: NamesLike,
+        axes_per_level: AxisCountsLike | None = None,
     ) -> Self:
         """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
 
@@ -237,17 +249,17 @@ class NumericRecordBatch(RecordBatch):
         vec : Array
             Shape ``(*batch_shape, vector_size)`` — the trailing axis is the flat
             dimension, and every leading axis is a batch axis.
-        level_names : str or iterable of str
+        level_names : str or sequence of str
             One name per level of the reconstructed batch, outermost first; a
             single string names a single level. Required for the reason
             :meth:`RecordBatch.stack` states, and plural because *vec* may carry
             several batch axes: naming them is how a multi-level batch round-trips.
-        axes_per_level : iterable of int, optional
+        axes_per_level : int or sequence of int, optional
             How many axes each level holds, as for the constructor. Omitted, a
-            single name takes **all** of *vec*'s batch axes as one level and
-            several names take one axis each. The first is why a draw of several
-            axes reconstructs without naming each: a ``sample_shape`` is one
-            multiplicity however many axes it spans.
+            single name takes **all** of *vec*'s batch axes as one level and several
+            names take one axis each. The first is why a draw of several axes
+            reconstructs without naming each: a ``sample_shape`` is one multiplicity
+            however many axes it spans.
 
         Returns
         -------
@@ -308,7 +320,7 @@ class NumericRecordBatch(RecordBatch):
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        names = _as_names(level_names, what=f"{cls.__name__}.from_vector level_names")
         if axes_per_level is None and len(names) == 1:
             axes_per_level = (len(batch_shape),)
         return cls(

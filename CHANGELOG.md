@@ -130,6 +130,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
   view names `FieldView` and the path. Replace a comparison of such a view's
   label with its parent's label by one with the factor's label.
+- **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
+  maps each level's name to the shape of its axes, outermost first, as in
+  `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
+  is one axis. A level name that no keyword spells goes in a mapping passed
+  positionally, as `BatchSpec(spec, {"my level": 2})`. Replace
+  `BatchSpec(spec, ((4,), (100,)), ("chain", "draw"))` with
+  `BatchSpec(spec, chain=4, draw=100)`, and
+  `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
+  `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
+  mapping, and the repr is the keyword call. `dataclasses.replace` no longer
+  rebuilds a `BatchSpec`; use `copy.replace` on Python 3.13 or later, or
+  construct a new one.
+- **A string shape is one dimension.** `NumericArraySpec("loc")` is
+  `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
+  and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
+  rank-0 shape. A dimension name must be a Python identifier, so
+  `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
+  `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
+  and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
+  a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
+  level names, or axis counts are taken, so pass a tuple or a list. A
+  `PyMCModel` names the symbolic dimensions of a variable whose name is not
+  an identifier by replacing each other character with `_`, so a nested
+  model's `sub::beta` has the dimension `sub__beta_0`, where it was
+  `sub::beta_0`.
+- **A sequence of names is a str or a sequence of str.**
+  `score_posterior(metrics=...)`, `add_mcmc_diagnostics(metrics=...)`, and
+  `simulation_based_calibration(observed=...)` read their names as level names
+  are read. A set, an iterator, `bytes`, or a mapping raises `TypeError`, where
+  a set was read in an arbitrary order and a mapping by its keys, so pass a
+  tuple or a list.
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,
@@ -290,12 +336,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The scope derives the call's key from the seed and the call's position in the
   scope, so the result differs from the one the old key gave.
-  `score_posterior` raises `TypeError` before claiming an event when sliced
-  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
-  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
-  supported, including their composition, and mapped calls share random
-  projections across the batch. For staged computation, use
-  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
   skipping sliced Wasserstein when the reference has no draws, remains
   compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
@@ -1295,6 +1338,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows as its label, the name of a law or a function, or as `…` for a value,
   and the rendering warns with a `UserWarning` that names the setting, so a
   label derived through a long loop of operations stays short.
+- **A single int is a shape of one axis wherever a shape is taken.**
+  `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
+  `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
+  each read the int as a tuple of one, and these arguments take any sequence,
+  such as a list, a `range`, or a 1-D array. A `numpy` integer size is stored as
+  a Python `int`.
 - **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
   warmup's step-size adaptation targets is a method option, 0.75 unless set,
   so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
@@ -3166,6 +3215,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A single str is one name wherever a sequence of names is taken.**
+  `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
+  an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
+  where it computed nothing. `add_mcmc_diagnostics` raises `ValueError` for an
+  unknown metric, where it ignored it.
+- **Workflow-owned sampling works on every JAX version the package accepts.**
+  The package requires `jax>=0.9`, but a workflow-owned draw, such as `sample`
+  inside `workflow_run`, raised `AttributeError` on any JAX release before
+  0.10.1. The check of the draw's key called `jax.random.key_dtype`, which JAX
+  added in 0.10.1. The check now compares `jax.random.key_impl(key)` with
+  `"threefry2x32"`. A CI job installs the lowest version of each core
+  dependency that `pyproject.toml` allows and runs the tests of the functions,
+  converters, and operations packages against them.
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
 - **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
   constructors document `label` as the first parameter, but a keyword call
   `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
