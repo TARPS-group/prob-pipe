@@ -36,7 +36,7 @@ covariance yields NaN rather than raising.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -44,6 +44,7 @@ import jax
 import jax.numpy as jnp
 
 from .._messages import unknown_names
+from ..core._shapes import NamesLike, _as_names
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution, _coordinates
 from ..functions import _context
@@ -399,7 +400,7 @@ def score_posterior(
     approx: DrawsLike,
     reference: Reference,
     *,
-    metrics: Sequence[str] = _DEFAULT_METRICS,
+    metrics: NamesLike = _DEFAULT_METRICS,
 ) -> dict[str, Array]:
     """Score *approx* against *reference* on the named metrics → a scorecard dict.
 
@@ -421,11 +422,11 @@ def score_posterior(
         scalars, or an empirical law, read as the flat coordinates of its atoms.
     reference : Reference
         The reference posterior to score against.
-    metrics : sequence of str
+    metrics : str or sequence of str
         The metrics to score, among ``standardized_mean_error``,
         ``relative_cov_error``, ``std_ratios``, ``sliced_wasserstein``,
         ``mmd``, and ``ksd``. The default scores each metric but
-        ``std_ratios``.
+        ``std_ratios``. A str names one metric.
 
     Returns
     -------
@@ -443,6 +444,8 @@ def score_posterior(
         If sliced Wasserstein scoring claims workflow-owned randomness inside
         a JAX transformation opened by the caller, such as ``jax.jit``,
         ``jax.grad``, or ``jax.vmap``.
+    TypeError
+        If *metrics* is not a str or a sequence of str.
 
     Notes
     -----
@@ -452,7 +455,7 @@ def score_posterior(
     The random-event guard checks only metrics that claim workflow-owned randomness.
     """
     _context._assert_workflow_admission()
-    metric_names = tuple(metrics)
+    metric_names = _as_names(metrics, what="score_posterior metrics")
     supported_metrics = {
         "standardized_mean_error",
         "relative_cov_error",

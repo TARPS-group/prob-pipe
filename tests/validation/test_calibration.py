@@ -514,6 +514,40 @@ class TestSBCPosteriorKernel:
                 num_posterior_draws=10,
             )
 
+    def test_a_single_observed_name_and_its_tuple_of_one_rank_alike(self):
+        ranks = []
+        for observed in ("y", ("y",)):
+            with workflow_run(seed=0):
+                result = simulation_based_calibration(
+                    _conjugate_model(),
+                    observed=observed,
+                    posterior=_exact_posterior(),
+                    num_simulations=4,
+                    num_posterior_draws=9,
+                )
+            ranks.append(result.ranks)
+        np.testing.assert_array_equal(*ranks)
+
+    @pytest.mark.parametrize(
+        ("observed", "match"),
+        [
+            (3, "simulation_based_calibration observed must be a str or a sequence of str"),
+            (b"y", "got bytes"),
+            ({"y": 1}, "got dict"),
+            ({"y"}, "got set"),
+            (("y", 3), "simulation_based_calibration observed entry must be a str, got int 3"),
+        ],
+    )
+    def test_rejects_observed_that_is_not_names(self, observed, match):
+        with pytest.raises(TypeError, match=match):
+            simulation_based_calibration(
+                _conjugate_model(),
+                observed=observed,
+                posterior=_exact_posterior(),
+                num_simulations=2,
+                num_posterior_draws=10,
+            )
+
     def test_rejects_given_slots_that_do_not_take_the_observed_fields(self):
         two_slots = conditional_distribution(
             "posterior",

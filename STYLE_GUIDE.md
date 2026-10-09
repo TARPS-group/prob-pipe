@@ -874,12 +874,13 @@ if not isinstance(dist, SupportsMean):
 
 ### 9.4 A scalar where a sequence is expected
 
-An argument that takes a shape, level names, or one axis count per level also
-takes a single item as a sequence of one:
+An argument that takes a shape, a sequence of names, or one axis count per
+level also takes a single item as a sequence of one:
 
 - a shape takes a single int or str as one dimension, so `3` is `(3,)` and
   `"n"` is `("n",)`, by the rule of design II.1;
-- level names take a single str as one name, so `"draw"` is `("draw",)`;
+- a sequence of names, such as level names or metric names, takes a single str
+  as one name, so `"draw"` is `("draw",)`;
 - axis counts take a single int as the count of one level.
 
 Any other sequence, such as a tuple, a list, a `range`, or a 1-D array, is read
@@ -890,7 +891,7 @@ takes a tuple only, since a field's value may also be a spec. `probpipe/core/_sh
 is the one place these arguments are read. A function that takes one calls the reader there
 rather than calling `tuple()` on the argument, passes its own name and the
 argument's for the error messages (§9.3 rule 7), and annotates the parameter
-with the alias there, such as `ShapeLike` or `LevelNamesLike`.
+with the alias there, such as `ShapeLike` or `NamesLike`.
 
 ---
 

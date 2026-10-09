@@ -29,7 +29,7 @@ import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._repr import type_name
-from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -112,7 +112,7 @@ class _ObjectBatch[E](Batch[E]):
         label: str,
         elements: np.ndarray | Iterable[E],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: TermSpec,
         axes_per_level: AxisCountsLike | None = None,
@@ -120,7 +120,7 @@ class _ObjectBatch[E](Batch[E]):
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
         kind = type(self).__name__
-        names = _as_level_names(level_names, what=f"{kind} level_names")
+        names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
             if axes_per_level is None

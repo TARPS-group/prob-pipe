@@ -13,7 +13,7 @@ import numpy as np
 from ..values._function_base import Function, FunctionSpec
 from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
-from ._shapes import AxisCountsLike, LevelNamesLike
+from ._shapes import AxisCountsLike, NamesLike
 from .provenance import Provenance
 
 __all__ = ["FunctionBatch"]
@@ -100,7 +100,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         label: str,
         elements: np.ndarray | Iterable[Callable],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: FunctionSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
