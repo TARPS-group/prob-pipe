@@ -47,7 +47,7 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.core._expression import Signature, expression_of, notation_of
+from probpipe.core._expression import Signature, notation_of
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
 from probpipe.distributions._batches import DistributionBatch
@@ -794,7 +794,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
         with workflow_run(seed=0):
             posterior = condition_on(_empirical_model(), {"y": 0.5})
             assert sample(posterior).label == "mu ~ model; y"
-            assert log_prob(_prior()._with_expression(expression_of(posterior)), 0.1).label == (
+            assert log_prob(_prior()._with_expression(posterior._expression), 0.1).label == (
                 "log model(mu; y)"
             )
 

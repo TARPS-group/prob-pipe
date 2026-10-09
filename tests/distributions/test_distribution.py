@@ -69,7 +69,7 @@ from probpipe import (
     unit_interval,
 )
 from probpipe.core._batch import BatchSpec
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec, TermSpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
@@ -303,7 +303,7 @@ class TestDistributionRepr:
 
 def _with_fixed_paths(term: Any, *paths: str) -> Any:
     """*term* holding *paths* fixed, as conditioning on them records."""
-    term._store_expression(with_fixed(expression_of(term), paths))
+    term._store_expression(with_fixed(term._expression, paths))
     return term
 
 

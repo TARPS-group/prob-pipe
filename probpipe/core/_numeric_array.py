@@ -22,7 +22,7 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
-from ._expression import Expression, Operator, constant, embedded, label_of
+from ._expression import Expression, Operator, constant, label_of
 from ._numeric import Numeric
 from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
@@ -379,7 +379,7 @@ _UNARY_SYMBOLS = {"neg": "-", "pos": "+", "abs": "abs", "invert": "~"}
 def _operand(operand: Any) -> Expression:
     """*operand* as a node of an operator's expression: a term's expression, or a constant's value."""
     if isinstance(operand, TrackedTerm):
-        return embedded(operand)
+        return operand._embedded_expression()
     return constant(operand)
 
 

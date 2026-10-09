@@ -39,7 +39,7 @@ from probpipe import (
     sample,
 )
 from probpipe.core._dispatch import Feasibility
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.core.constraints import positive
 from probpipe.distributions import DistributionBatch, FieldView, NumericDistribution
 from probpipe.distributions._capabilities import (
@@ -727,7 +727,7 @@ class TestMarginals:
 
     def test_the_marginal_of_a_posterior_keeps_its_fixed_paths(self):
         law = _record_law()
-        law._store_expression(with_fixed(expression_of(law), ("y",)))
+        law._store_expression(with_fixed(law._expression, ("y",)))
         assert marginal(law, "a").notation == "post(a; y)"
         assert law["a"].notation == "post(a; y)"
         assert law["a"].raw().notation == "post(a; y)"

@@ -30,7 +30,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core._expression import Conditioned, expression_of
+from probpipe.core._expression import Conditioned
 from probpipe.functions import _replay
 from probpipe.functions._managed import (
     ManagedAttemptState,
@@ -1090,7 +1090,7 @@ class TestReplayPreflight:
             )
 
         law = Normal("value", loc=0.0, scale=1.0, label="value")
-        derived = law._with_expression(Conditioned(expression_of(law), ("y",)))
+        derived = law._with_expression(Conditioned(law._expression, ("y",)))
         with workflow_run(seed=4):
             original = lifted()(value=law)
         with replay_run(original.provenance):

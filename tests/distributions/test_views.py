@@ -46,7 +46,7 @@ from probpipe import (
     RecordSpec,
 )
 from probpipe.core._dispatch import Feasibility, MathematicalDomainError
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     Distribution,
@@ -1273,7 +1273,7 @@ class TestTheViewOfAWeightedLaw:
 
 def _with_fixed_paths(term: Any, *paths: str) -> Any:
     """*term* holding *paths* fixed, as conditioning on them records."""
-    term._store_expression(with_fixed(expression_of(term), paths))
+    term._store_expression(with_fixed(term._expression, paths))
     return term
 
 

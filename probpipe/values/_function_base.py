@@ -29,7 +29,7 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
-from ..core._expression import Expression, Signature, expression_of, notation_of
+from ..core._expression import Expression, Signature, notation_of
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
@@ -1270,7 +1270,7 @@ class Function(Node, TrackedTerm, Annotated):
         The parameters are the names of :attr:`signature`, in order, joined by
         ``", "``. No operation reads the notation.
         """
-        return notation_of(expression_of(self), self._own_signature())
+        return notation_of(self._expression, self._own_signature())
 
     def _own_signature(self) -> Signature:
         """The signature: the names of the parameters, in order, each default as ``name=value``."""

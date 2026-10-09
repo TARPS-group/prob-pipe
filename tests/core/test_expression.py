@@ -33,8 +33,6 @@ from probpipe.core._expression import (
     Summary,
     constant,
     core_of,
-    embedded,
-    expression_of,
     fixed_paths_of,
     label_of,
     notation_of,
@@ -75,12 +73,6 @@ class TestNodes:
     def test_an_unknown_summary_raises(self):
         with pytest.raises(ValueError, match="unknown summary kind"):
             Summary("median", Named("x"))
-
-    def test_a_term_restored_without_an_expression_carries_its_label(self):
-        value = NumericArray("x", jnp.zeros(2))
-        stripped = copy.copy(value)
-        object.__setattr__(stripped, "_expression", None)
-        assert expression_of(stripped) == Named("x")
 
 
 class TestRendering:
@@ -358,14 +350,14 @@ class TestTheLabelIsTheExpressionsLabel:
 
     def test_every_term_carries_the_label_of_its_expression(self):
         for term in self._terms():
-            assert term.label == label_of(expression_of(term)), term
+            assert term.label == label_of(term._expression), term
 
     def test_with_label_replaces_the_expression_with_the_label(self):
         """A user's label hides the derivation, and the paths the law holds fixed stay."""
         model = _prior() * Normal("y", 0.0, 1.0)
-        derived = model._with_expression(Conditioned(expression_of(model), ("y",)))
+        derived = model._with_expression(Conditioned(model._expression, ("y",)))
         relabeled = derived.with_label("posterior")
-        assert expression_of(relabeled) == Named("posterior", Signature(("mu", "y"), (), ("y",)))
+        assert relabeled._expression == Named("posterior", Signature(("mu", "y"), (), ("y",)))
         assert relabeled.notation == "posterior(mu, y; y)"
         assert relabeled.provenance.operation == "with_label"
 
@@ -375,8 +367,8 @@ class TestTheLabelIsTheExpressionsLabel:
             given_spec={"beta": NumericArraySpec(())},
             label="glm",
         )
-        assert embedded(kernel) == Named("glm", Signature(("y",), ("beta",)))
-        assert expression_of(kernel) == Named("glm")
+        assert kernel._embedded_expression() == Named("glm", Signature(("y",), ("beta",)))
+        assert kernel._expression == Named("glm")
 
 
 class TestIndependenceFromComputation:
@@ -384,15 +376,15 @@ class TestIndependenceFromComputation:
 
     def test_the_expression_leaves_the_fingerprint_unchanged(self):
         prior = _prior()
-        conditioned = prior._with_expression(Conditioned(expression_of(prior), ("y",)))
+        conditioned = prior._with_expression(Conditioned(prior._expression, ("y",)))
         assert fingerprint(conditioned) == fingerprint(prior)
 
     @pytest.mark.parametrize("round_trip", [copy.copy, copy.deepcopy, pickle.dumps])
     def test_copies_and_pickles_keep_the_expression(self, round_trip):
         prior = _prior()
-        conditioned = prior._with_expression(Conditioned(expression_of(prior), ("y",)))
+        conditioned = prior._with_expression(Conditioned(prior._expression, ("y",)))
         restored = round_trip(conditioned)
         if isinstance(restored, bytes):
             restored = pickle.loads(restored)
-        assert expression_of(restored) == expression_of(conditioned)
+        assert restored._expression == conditioned._expression
         assert restored.notation == "prior(mu; y)"

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core._dispatch import Feasibility
-from ..core._expression import Expression, embedded
+from ..core._expression import Expression
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsMarginals, _capability_guard
@@ -222,7 +222,7 @@ def _factor_of(d: Any, component_name: str) -> Any:
 def _factor_expression(d: Any, component_name: str) -> Expression:
     """The factor's own expression, which the detached factor keeps; the joint's without one."""
     part = _factor_of(d, component_name)
-    return embedded(d if part is None else part)
+    return (d if part is None else part)._embedded_expression()
 
 
 @operation(

@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
-from ..core._expression import Operator, embedded, expression_of, label_of
+from ..core._expression import Operator, label_of
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -686,7 +686,7 @@ class _LinearMapGRF(GaussianRandomFunction):
             event_spec=base.event_spec,
         )
         # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(expression_of(base))
+        self._store_expression(base._expression)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``A``."""
@@ -751,7 +751,7 @@ class _ShiftedGRF(GaussianRandomFunction):
             event_spec=base.event_spec,
         )
         # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(expression_of(base))
+        self._store_expression(base._expression)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``b``."""
@@ -789,7 +789,7 @@ class _ScaledGRF(GaussianRandomFunction):
             event_spec=base.event_spec,
         )
         # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(expression_of(base))
+        self._store_expression(base._expression)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``alpha``."""
@@ -854,7 +854,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
             )
         self._left = left
         self._right = right
-        expression = Operator("+", (embedded(left), embedded(right)))
+        expression = Operator("+", (left._embedded_expression(), right._embedded_expression()))
         super().__init__(
             _component_of(left),
             label=label_of(expression),

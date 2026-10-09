@@ -19,7 +19,7 @@ from probpipe import (
 )
 from probpipe.core._batch import BatchSpec
 from probpipe.core._dispatch import ResolutionError
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
 from probpipe.operations._sample import sample
@@ -47,7 +47,7 @@ class TestOneDraw:
 
     def test_a_draw_lists_a_nested_fixed_path_and_names_no_level_by_it(self):
         law = Gaussian("g")
-        held = law._with_expression(with_fixed(expression_of(law), ("y/obs",)))
+        held = law._with_expression(with_fixed(law._expression, ("y/obs",)))
         draws = sample(held, sample_shape=(3,))
         assert draws.label == "g ~ g; y/obs"
         assert draws.level_names == ("sample",)

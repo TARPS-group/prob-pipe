@@ -79,7 +79,6 @@ from ._expression import (
     Expression,
     Indexed,
     Named,
-    expression_of,
     fixed_paths_of,
     label_of,
     with_fixed,
@@ -1049,7 +1048,7 @@ class Batch[E](TrackedTerm, ABC):
             if call is not None and isinstance(expression, Indexed):
                 expression = replace(expression, element=call)
             element = self._element_at(dropped, label=label)
-            given = expression_of(element) if isinstance(element, TrackedTerm) else None
+            given = element._expression if isinstance(element, TrackedTerm) else None
             if isinstance(given, Named) and given.label == label:
                 # A view built under the derived label carries the selection, and a
                 # stored law keeps the paths it holds fixed, after the batch's own.

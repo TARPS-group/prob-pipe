@@ -15,7 +15,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._dispatch import ResolutionError
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
@@ -112,7 +112,7 @@ class TestTheMarginalsNotation:
 
     def test_the_marginal_keeps_the_paths_the_law_holds_fixed(self):
         law = Marginalizing("law")
-        law._store_expression(with_fixed(expression_of(law), ("y",)))
+        law._store_expression(with_fixed(law._expression, ("y",)))
         result = marginal(law, "a")
         assert _fixed_paths(result) == ("y",)
         assert result.notation == "law(a; y)"

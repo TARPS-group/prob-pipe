@@ -24,12 +24,8 @@ from ..core._expression import (
     Expression,
     Product,
     Selected,
-    embedded,
-    expression_of,
     label_of,
-    own_signature,
     with_fixed,
-    with_signature,
 )
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -379,15 +375,15 @@ def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> E
     if isinstance(law, FieldView):
         parent_paths = tuple(law._parent_path(each) for each in requested)
         if parent_paths == _as_paths(law.path):
-            return expression_of(law)
+            return law._expression
         if None not in parent_paths:
             owner, paths = law.parent, cast("tuple[str, ...]", parent_paths)
     closed = _closed_factors(owner, paths)
     held = _fixed_paths(owner) + _fixed_paths(law)
     if closed is None:
-        return Selected(embedded(law), requested)
+        return Selected(law._embedded_expression(), requested)
     if len(closed) == 1:
-        return with_fixed(embedded(closed[0]), held)
+        return with_fixed(closed[0]._embedded_expression(), held)
     product: Expression = _product_of(closed)
     declared = [name for part in closed for name in part.event_spec.components]
     if declared != [_final_segment(each) for each in requested]:
@@ -411,8 +407,8 @@ def _carrying(law: Any, expression: Expression) -> Any:
     signature, so a factor that is its own marginal is returned as it is. The
     copy keeps *law*'s provenance.
     """
-    own = own_signature(law)
-    if with_signature(expression_of(law), own) == with_signature(expression, own):
+    own = law._own_signature()
+    if law._expression.signed(own) == expression.signed(own):
         return law
     clone = law._shallow_copy()
     clone._store_expression(expression)
@@ -427,7 +423,7 @@ def _keeps_expression(term: Any, source: Any) -> Any:
     by factor, reads by its joined label and *term*'s components instead, as
     ``(lik·prior)(beta, y)``, since its factors keep their own names.
     """
-    expression = expression_of(source)
+    expression = source._expression
     if isinstance(expression, Product):
         expression = Selected(expression, tuple(term.event_spec.components))
     term._store_expression(expression)
@@ -1167,7 +1163,7 @@ class FieldView(Distribution):
         raw = parent._marginal(self._path).raw()
         if not isinstance(raw, Distribution):
             return raw
-        return _carrying(raw, expression_of(self))
+        return _carrying(raw, self._expression)
 
     def with_dim_sizes(self, **sizes: int) -> FieldView:
         """Bind named symbolic dimensions in the parent, and view the result at the same path.
@@ -1214,7 +1210,7 @@ class FieldView(Distribution):
 
     def _viewed(self, parent: Distribution) -> FieldView:
         """The view of *parent* at this view's path, carrying this view's expression."""
-        return _carrying(FieldView(parent, self._path), expression_of(self))
+        return _carrying(FieldView(parent, self._path), self._expression)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parent's path that the view reads."""

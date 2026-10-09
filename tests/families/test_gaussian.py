@@ -28,7 +28,7 @@ from probpipe import (
     sample,
     variance,
 )
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.distributions import FactoredNumericDistribution
 from probpipe.families import (
     FactoredMultivariateGaussian,
@@ -1267,7 +1267,7 @@ class TestTheFactoredGaussian:
         from probpipe.distributions._distribution import _fixed_paths
 
         joint = _gaussian_joint()
-        joint._store_expression(with_fixed(expression_of(joint), ("y",)))
+        joint._store_expression(with_fixed(joint._expression, ("y",)))
         assert _fixed_paths(joint._condition_on({"a": 3.0})) == ("y",)
 
     def test_the_conditioning_guard_needs_components_and_a_remainder(self):

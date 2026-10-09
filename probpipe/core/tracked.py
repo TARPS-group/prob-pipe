@@ -36,7 +36,6 @@ from ._expression import (
     Expression,
     Named,
     Signature,
-    expression_of,
     fixed_paths_of,
     label_of,
     with_defaulted_givens,
@@ -230,12 +229,22 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """The signature the term's declaration states; ``None`` for a value, which has none."""
         return None
 
+    def _embedded_expression(self) -> Expression:
+        """The term's expression as a child of another node, recording the term's own signature.
+
+        A node holds no term, so a node that has a law, a kernel, or a function
+        as a child records the signature that the term's declaration states. A
+        value's expression is returned as it is.
+        """
+        own = self._own_signature()
+        return self._expression if own is None else self._expression.signed(own)
+
     def _relabeled_expression(self, label: str) -> Expression:
         """The expression of this term under *label*, which keeps the paths the term holds fixed."""
         own = self._own_signature()
         if own is None:
             return Named(label)
-        expression = expression_of(self)
+        expression = self._expression
         kept = with_defaulted_givens(own, expression)
         return Named(
             label, Signature(kept.components, kept.given, fixed_paths_of(expression), kept.defaults)

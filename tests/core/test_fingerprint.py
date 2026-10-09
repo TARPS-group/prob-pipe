@@ -27,7 +27,7 @@ from probpipe import (
     RecordSpec,
     TermSpec,
 )
-from probpipe.core._expression import expression_of, with_fixed
+from probpipe.core._expression import with_fixed
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
     _update_function,
@@ -371,7 +371,7 @@ class TestDistributionHashing:
         """The paths a law holds fixed state how it displays, as its label does."""
         law = _Located("x", 1.0)
         held = copy.copy(law)
-        held._store_expression(with_fixed(expression_of(held), ("y",)))
+        held._store_expression(with_fixed(held._expression, ("y",)))
         assert fingerprint(held) == fingerprint(law)
         assert fingerprint(_Located("x", 2.0)) != fingerprint(law)
 

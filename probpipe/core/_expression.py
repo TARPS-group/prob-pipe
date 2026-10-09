@@ -25,10 +25,10 @@ child nodes. No node holds a reference to a term. The node classes are these:
 9. :class:`Indexed`: a selection of a batch, as ``(mu ~ prior)[sample=0]``.
 
 Each node renders itself: it gives its label, its notation, and the text it
-collapses to, and it states the paths it holds fixed. A law's own signature is
-read from the law's declaration when the law renders. A node that has a law as
-a child records the law's signature, which :func:`embedded` adds when an
-operation builds the node, since the node cannot read the law's declaration.
+collapses to, and it states the paths it holds fixed. A term reads the
+signature of its own expression from its declaration when it renders, so a
+stored expression never disagrees with its term. A node that has a law as a
+child records the law's signature, because the node holds no term.
 
 A rendering shows at most :attr:`~probpipe.core.config.NotationConfig.max_depth`
 nested levels. A node deeper than that renders as its collapsed text, which is
@@ -70,16 +70,12 @@ __all__ = [
     "constant",
     "core_of",
     "draw_of",
-    "embedded",
-    "expression_of",
     "fixed_paths_of",
     "joined_labels",
     "label_of",
     "notation_of",
-    "own_signature",
     "with_defaulted_givens",
     "with_fixed",
-    "with_signature",
 ]
 
 #: The text a collapsed value renders as.
@@ -177,6 +173,16 @@ class Expression:
         """The paths this node's law or kernel holds fixed, in the order they were fixed."""
         return ()
 
+    def signed(self, signature: Signature) -> Expression:
+        """This node recording *signature*, the signature of the term it describes.
+
+        A node that has a law, a kernel, or a function as a child records the
+        child's signature, since the node holds no term. A label, a
+        conditioning, a selection, and an indexed batch record it, and any
+        other node is returned as it is.
+        """
+        return self
+
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
         """The given slots with a default that this node's law or kernel leaves free.
 
@@ -269,6 +275,12 @@ class _Signed(Expression):
 
     __slots__ = ()
 
+    def signed(self, signature: Signature) -> Expression:
+        signature = Signature(signature.components, signature.given, defaults=signature.defaults)
+        if self.signature == signature:
+            return self
+        return replace(self, signature=signature)  # type: ignore[type-var]
+
     def _notation(self, rendering: _Rendering, level: int, own: Signature | None) -> str:
         signature = own or self.signature
         if signature is None:
@@ -309,6 +321,14 @@ class Named(_Signed):
             (name, text)
             for name, text in signature.defaults
             if name in signature.given and name not in signature.fixed
+        )
+
+    def signed(self, signature: Signature) -> Expression:
+        return Named(
+            self.label,
+            Signature(
+                signature.components, signature.given, self._fixed_paths(), signature.defaults
+            ),
         )
 
     def _collapsed(self) -> str:
@@ -782,66 +802,10 @@ def with_defaulted_givens(signature: Signature, expression: Expression) -> Signa
     )
 
 
-def with_signature(expression: Expression, signature: Signature | None) -> Expression:
-    """*expression* recording *signature*.
-
-    *signature* states the components and given slots of the term that
-    *expression* describes.
-
-    A :class:`Named` node keeps its fixed paths, and a conditioning, a
-    selection, or an indexed batch records the components and given slots.
-    Any other node, and a *signature* of ``None``, leaves *expression* as it is.
-    """
-    if signature is None:
-        return expression
-    if isinstance(expression, Named):
-        return Named(
-            expression.label,
-            Signature(
-                signature.components,
-                signature.given,
-                expression._fixed_paths(),
-                signature.defaults,
-            ),
-        )
-    if isinstance(expression, (Conditioned, Selected, Indexed)):
-        own = Signature(signature.components, signature.given, defaults=signature.defaults)
-        return expression if expression.signature == own else replace(expression, signature=own)
-    return expression
-
-
-def expression_of(term: Any) -> Expression:
-    """The expression *term* carries.
-
-    A tracked term restored without an expression carries its label alone.
-    """
-    expression = getattr(term, "_expression", None)
-    if isinstance(expression, Expression):
-        return expression
-    return Named(term._label)
-
-
-def own_signature(term: Any) -> Signature | None:
-    """The signature that *term*'s declaration states, or ``None`` for a term that has none."""
-    signature = getattr(term, "_own_signature", None)
-    return signature() if callable(signature) else None
-
-
-def embedded(term: Any) -> Expression:
-    """*term*'s expression as a child of another node.
-
-    The result records the signature that *term*'s declaration states.
-
-    A node holds no reference to a term, so a law's expression records the
-    law's components and given slots where an operation makes it a child.
-    """
-    return with_signature(expression_of(term), own_signature(term))
-
-
 def draw_of(term: Any, components: Iterable[str] | None = None) -> Draw:
     """A draw of *components* from the law *term*, by default every event component."""
     names = tuple(term.event_spec.components) if components is None else tuple(components)
-    return Draw(names, embedded(term))
+    return Draw(names, term._embedded_expression())
 
 
 def constant(value: Any) -> Named:

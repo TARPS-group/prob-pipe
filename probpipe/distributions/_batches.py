@@ -13,7 +13,7 @@ from typing import cast
 
 import numpy as np
 
-from ..core._expression import Signature, expression_of, notation_of
+from ..core._expression import Signature, notation_of
 from ..core._kinds import register_kind
 from ..core._object_batch import _as_object_array, _ObjectBatch
 from ..core._shapes import AxisCountsLike, NamesLike
@@ -189,7 +189,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
 def _batch_notation(batch: DistributionBatch | ConditionalDistributionBatch) -> str:
     """The notation of *batch*'s elements under its label, then ``over`` and its levels."""
-    notation = notation_of(expression_of(batch), batch._own_signature())
+    notation = notation_of(batch._expression, batch._own_signature())
     return f"{notation} over {', '.join(batch.level_names)}"
 
 

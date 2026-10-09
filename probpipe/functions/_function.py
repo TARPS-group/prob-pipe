@@ -54,8 +54,6 @@ from ..core._expression import (
     Named,
     constant,
     draw_of,
-    embedded,
-    expression_of,
 )
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
@@ -403,12 +401,15 @@ def _lifted_expression(
             laws = [_binding.input_ref_value(values, consumer.arg_ref) for consumer in consumers]
             components = dict.fromkeys(name for law in laws for name in law.event_spec.components)
             arguments.append(
-                Draw(tuple(components), embedded(_drawn_together_from(laws, plan, index)))
+                Draw(
+                    tuple(components),
+                    _drawn_together_from(laws, plan, index)._embedded_expression(),
+                )
             )
         elif _is_swept_scalar(value, ref, call_values):
             arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
         elif isinstance(value, TrackedTerm):
-            arguments.append(embedded(value))
+            arguments.append(value._embedded_expression())
         elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
             arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
     return Applied(function.output_label, tuple(arguments))
@@ -470,7 +471,7 @@ def _expressed(term: Any, expression: Expression | None) -> Any:
     if expression is None or not isinstance(term, TrackedTerm):
         return term
     expression = _result._prepared(term, expression)
-    if expression_of(term) == expression:
+    if term._expression == expression:
         return term
     clone = term._shallow_copy()
     clone._store_expression(expression)

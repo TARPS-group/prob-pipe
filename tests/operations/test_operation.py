@@ -31,7 +31,7 @@ from probpipe.core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from probpipe.core._expression import Conditioned, Named, Summary, draw_of, embedded
+from probpipe.core._expression import Conditioned, Named, Summary, draw_of
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
@@ -1027,7 +1027,7 @@ class TestResultAndRandomness:
             execute=lambda call, result: returned,
             exact=True,
         )
-        _install_expression_rule(toy, lambda d: Conditioned(embedded(d), ("y",)))
+        _install_expression_rule(toy, lambda d: Conditioned(d._embedded_expression(), ("y",)))
         result = toy(Gaussian("g"))
         assert _fixed_paths(result) == ("y",)
         assert (result.label, result.notation) == ("g", "g(g; y)")
@@ -1053,7 +1053,7 @@ class TestResultAndRandomness:
 
     def test_an_operation_without_an_expression_rule_carries_its_primary_operands(self):
         law = Gaussian("g")
-        assert _toy()._derived_expression({"d": law}) == embedded(law)
+        assert _toy()._derived_expression({"d": law}) == law._embedded_expression()
         labeled = _toy(label=lambda d: f"{d.label}_toy")
         assert labeled._derived_expression({"d": law}) == Named("g_toy")
 
