@@ -13,6 +13,7 @@ from typing import cast
 
 import numpy as np
 
+from ..core._expression import Signature
 from ..core._kinds import register_kind
 from ..core._object_batch import _as_object_array, _ObjectBatch
 from ..core._specs import InputSpec, OutputSpec
@@ -147,6 +148,14 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     def event_spec(self) -> OutputSpec:
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
+
+    def _own_signature(self) -> Signature:
+        """The signature the elements share, which a value computed from the batch shows.
+
+        A batch of laws reads as one law under the batch's label, so a draw of
+        it is labeled ``effect ~ schools`` and a score ``log schools(effect)``.
+        """
+        return Signature(tuple(self.event_spec.components))
 
     def _element_at(self, index: tuple[int, ...], *, label: str) -> Distribution:
         """The stored law at *index*, as a view that records the stored law as its source.
@@ -284,6 +293,10 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     def event_spec(self) -> OutputSpec:
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
+
+    def _own_signature(self) -> Signature:
+        """The signature the elements share: their event components, then their given slots."""
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec))
 
 
 register_kind(DistributionSpec, term_class=Distribution, batch_class=DistributionBatch)

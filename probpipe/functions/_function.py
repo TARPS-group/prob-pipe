@@ -353,7 +353,8 @@ def _lifted_expression(
     ``f(beta ~ model; y)``: a draw of each law the plan lifts, where arguments
     whose laws the plan draws together from one root share one draw of the
     root, as ``f((a, b) ~ model)``; each other tracked argument by its
-    expression; and each other value by its formatted value, except a value
+    expression; and each other value by its value when it is a scalar, as
+    ``2.0``, and by its parameter's name otherwise, as ``X``, except a value
     left at its parameter's default.
 
     Parameters
@@ -398,8 +399,31 @@ def _lifted_expression(
         elif isinstance(value, TrackedTerm):
             arguments.append(embedded(value))
         elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
-            arguments.append(constant(value))
+            arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
     return Applied(function.output_label, tuple(arguments))
+
+
+def _swept_expression(
+    function: Function,
+    values: Mapping[str, Any],
+    expression: Expression | None,
+    plan: _plan.StochasticPlan | None,
+) -> Any:
+    """The expression of a sweep's batch: the lifted call for a sweep of broadcasts, as ``f(mu ~ d, tau)``.
+
+    A sweep without a law keeps the call's *expression*, and ``None`` keeps
+    the expression of the aggregate.
+    """
+    if plan is not None:
+        return _lifted_expression(function, values, plan)
+    return _result.KEEP_EXPRESSION if expression is None else expression
+
+
+def _is_scalar(value: Any) -> bool:
+    """Whether *value* is a scalar, which an applied function's notation shows by its value."""
+    if isinstance(value, (bool, int, float, complex, str)):
+        return True
+    return getattr(value, "shape", None) == ()
 
 
 def _drawn_together_from(laws: list[Any], plan: _plan.StochasticPlan, index: int) -> Any:
@@ -782,7 +806,7 @@ def _run_call(
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
-            output_expression=_result.KEEP_EXPRESSION if expression is None else expression,
+            output_expression=_swept_expression(function, values, expression, stochastic_plan),
             output_spec=concrete_output_spec,
             include_inputs=function.options["include_inputs"],
             output_template=concrete_output_template,

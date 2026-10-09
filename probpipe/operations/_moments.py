@@ -403,10 +403,10 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     # label could not be: a label may hold ``~``, a space, ``;``, or ``/``.
     name = _DRAWS
     event = call.operands["d"].event_spec.spec
-    if isinstance(draws, Batch) or not isinstance(event, RecordSpec):
-        return EmpiricalDistribution(
-            name, draws if isinstance(draws, Batch) else jnp.asarray(draws), level=SAMPLE_LEVEL
-        )
+    if isinstance(draws, Batch):
+        return EmpiricalDistribution(name, draws)
+    if not isinstance(event, RecordSpec):
+        return EmpiricalDistribution(name, jnp.asarray(draws), level=SAMPLE_LEVEL)
     atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
     return EmpiricalDistribution(name, atoms)
 

@@ -50,6 +50,7 @@ from probpipe import (
 from probpipe.core._expression import Signature, expression_of, notation_of
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.functions._call import ApplicabilityError
 
 KEY = jax.random.PRNGKey(0)
@@ -729,6 +730,18 @@ class TestTheLabelsOfValuesComputedFromALaw:
         assert scores.label == "log prior(mu)"
         assert scores[0].label == "(log prior(mu))[sample=0]"
 
+    def test_a_batch_of_laws_reads_as_one_law_under_its_label(self):
+        laws = DistributionBatch(
+            "schools", [Normal("effect", float(i), 1.0) for i in range(3)], "school"
+        )
+        with workflow_run(seed=0):
+            assert sample(laws).label == "effect ~ schools"
+            assert mean(laws).label == "E[effect ~ schools]"
+            scores = log_prob(laws, 0.0)
+        assert scores.label == "log schools(effect)"
+        assert scores[1].label == "(log schools(effect))[school=1]"
+        assert laws[1].notation == "schools[school=1](effect)"
+
     def test_a_field_of_a_draw_takes_its_key(self):
         with workflow_run(seed=0):
             assert sample(_model())["y"].label == "y"
@@ -773,6 +786,28 @@ class TestTheLabelsOfALiftedFunction:
             assert f(model["a"], model["b"]).notation == "f((a, b) ~ model)"
             assert f(model["a"], 2.0).notation == "f(a ~ a, 2.0)"
             assert f(Normal("x", 0.0, 1.0), NumericArray("c", 1.0)).notation == "f(x ~ x, c)"
+
+    def test_an_array_argument_appears_by_its_parameters_name(self):
+        @function
+        def g(a: jax.Array, X: jax.Array) -> jax.Array:
+            return a
+
+        with workflow_run(seed=0):
+            assert g(Normal("a", 0.0, 1.0), jnp.ones((5, 2))).notation == "g(a ~ a, X)"
+
+    def test_a_sweep_of_broadcasts_carries_the_lifted_call(self):
+        @function
+        def shifted(mu: jax.Array, tau: jax.Array) -> jax.Array:
+            return mu + tau
+
+        taus = NumericArrayBatch("tau", jnp.array([0.0, 1.0]), "tau")
+        with workflow_run(seed=0):
+            laws = shifted.with_options(n_broadcast_samples=8)(Normal("mu", 0.0, 1.0), taus)
+            means = mean(laws)
+        assert laws.label == "shifted"
+        assert laws[1].label == "shifted[tau=1]"
+        assert means.label == "E[shifted(mu ~ mu, tau)]"
+        assert means[1].label == "E[shifted(mu ~ mu, tau)][tau=1]"
 
     def test_a_function_called_on_values_takes_its_output_label(self):
         @function

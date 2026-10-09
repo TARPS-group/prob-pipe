@@ -396,7 +396,7 @@ class NotationConfig:
         function, or as ``…`` for a value, and the rendering warns with a
         ``UserWarning``. Every label the library derives from one law and a
         few operators on it nests at most 5 levels, as
-        ``(E[f(beta ~ model; y)])[sample=0] + 1`` does, so the default shows
+        ``E[f(beta ~ model; y)][sample=0] + 1`` does, so the default shows
         each of them in full, while a label derived through a long chain of
         operations, such as a loop that adds to a value, stays bounded.
         Setting it changes the renderings made afterwards, and a term keeps

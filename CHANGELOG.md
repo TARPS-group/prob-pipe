@@ -18,10 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
   `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
   `expectation(prior, f)` is labeled `E[f(mu ~ prior)]`. A batch of draws has
-  the label of one draw, so its element is `(mu ~ prior)[sample=0]`. The law
-  of a function lifted over laws keeps the function's label and prints as the
-  function applied to draws of its inputs, as `f(beta ~ model; y)`, and its
-  mean is labeled `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
+  the label of one draw, so its element is `(mu ~ prior)[sample=0]`, and a
+  value computed from a batch of laws reads the batch as one law under its
+  label, as `E[effect ~ schools]`. The law of a function lifted over laws
+  keeps the function's label and prints as the function applied to draws of
+  its inputs, as `f(beta ~ model; y)`, and its mean is labeled
+  `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
   a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
   as `x + (-1.0)`. Replace a comparison of such a result's label with
   its law's label by one with the new label, or set a label with
