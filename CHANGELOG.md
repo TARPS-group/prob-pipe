@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an identifier by replacing each other character with `_`, so a nested
   model's `sub::beta` has the dimension `sub__beta_0`, where it was
   `sub::beta_0`.
+- **A sequence of names is a str or a sequence of str.**
+  `score_posterior(metrics=...)`, `add_mcmc_diagnostics(metrics=...)`, and
+  `simulation_based_calibration(observed=...)` read their names as level names
+  are read. A set, an iterator, `bytes`, or a mapping raises `TypeError`, where
+  a set was read in an arbitrary order and a mapping by its keys, so pass a
+  tuple or a list.
 - **A workflow-owned draw inside a JAX transformation that the caller opens
   raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
   event, such as `sample`, a lifted `Function` call, or `score_posterior` with
@@ -3045,6 +3051,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A single str is one name wherever a sequence of names is taken.**
+  `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
+  an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
+  where it computed nothing. `add_mcmc_diagnostics` raises `ValueError` for an
+  unknown metric, where it ignored it.
 - A function whose returned overall kind differs from its output declaration
   raises `ResultKindError`. A result of the declared kind with an incompatible
   schema raises `ResultSchemaError`. The distinction applies to lifted calls

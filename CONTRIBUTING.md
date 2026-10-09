@@ -342,7 +342,10 @@ full rationale.
 
 GitHub Actions (`.github/workflows/ci.yml`):
 
-- Tests on Python 3.12, 3.13, and 3.14
+- Tests on Python 3.12 and 3.14 for a pull request, and on 3.12, 3.13, and 3.14
+  for a push to `main` or `dev/overhaul` and for the nightly run of `main`.
+  Each version's selected tests run in four `test-shard` jobs, and a `test (<version>)`
+  job reports the version's result (see *Test shards* below)
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc,pyabc`. The notebooks job is a two-leg
@@ -369,9 +372,11 @@ GitHub Actions (`.github/workflows/ci.yml`):
   `tests/operations`. The other jobs install the locked versions, so a call to an
   API that is newer than a floor fails only in this leg. Fix such a failure by
   raising the floor in `pyproject.toml` or by calling an API that the floor
-  provides. The leg runs on pushes to main, foundational changes, or changes
-  under `probpipe/` or `tests/`
-- Coverage uploaded to Codecov
+  provides. The leg runs on every push, on the nightly schedule, on dependency
+  changes, and on changes under `probpipe/` or `tests/`
+- Only the Python 3.12 shards measure coverage. The `coverage` job combines
+  their data, enforces the 88% floor on a full-suite run, and uploads one report
+  to Codecov
 - The `lint & format` job runs the ruff gate and the docstring check of
   *Linting & pre-commit*
 - Both the `test` and `notebooks` jobs choose what to run via a shared,
@@ -383,6 +388,10 @@ GitHub Actions (`.github/workflows/ci.yml`):
   changed modules. A change to `design/` runs the four `test_design_conformance.py`
   files and `tests/docs/`, and a change to `probpipe/`, a rule document, an agent
   file, or the CHANGELOG runs `tests/docs/`.
+- The `test` job runs the full suite on a push, on the nightly run, and for a
+  pull request that changes a dependency file (`pyproject.toml`, `uv.lock`, or
+  `setup.py`), `tests/conftest.py`, or `probpipe/__init__.py`. A change to
+  `scripts/` or `.github/workflows/` runs `tests/ci/`.
 - The `design ledger (report)` job runs `scripts/design/ledger.py` and shows its
   counts of stubs, pending tests, and stale docs in the job summary. It fails
   only when the script errors.
@@ -392,6 +401,23 @@ GitHub Actions (`.github/workflows/ci.yml`):
   gate merges.
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
+
+### Test shards
+
+`pytest-split` divides the selected tests into four groups of about equal
+duration, using the per-test durations recorded in `.test_durations`. A test
+missing from the file counts as the average duration, so new tests keep the
+groups roughly balanced, and a group with no tests passes. Refresh the file
+when the shard times in CI drift apart, such as after adding a slow test module:
+
+```bash
+uv run pytest -o addopts="" -n 4 --store-durations --clean-durations
+```
+
+`--clean-durations` drops the durations of removed tests. Run the command with
+the extras of the `test` job installed, so that no test is skipped, and commit
+the updated `.test_durations`. To run one shard locally, add
+`--splits 4 --group <k> --splitting-algorithm least_duration` to the pytest command.
 
 ### Updating dependencies
 

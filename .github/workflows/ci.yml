@@ -2,15 +2,19 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev/overhaul]
   pull_request:
     # dev/** and consolidated/** cover stacked PRs (a PR based on another PR's
     # branch), which would otherwise get no CI until the base merges and the PR
     # retargets to main.
     branches: [main, "dev/**", "consolidated/**"]
+  # The nightly run tests the default branch on every Python version, including
+  # 3.13, which pull requests skip.
+  schedule:
+    - cron: "0 6 * * *"
 
 # Cancel superseded runs on PR pushes (saves CI minutes during iteration).
-# Pushes to main keep running — never cancel work that gates the merged history.
+# Pushes and scheduled runs keep running — never cancel work that gates the merged history.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -151,13 +155,17 @@ jobs:
             echo "_Full lists in the \"Run the ledger\" step log above._"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  test:
+  # The test suite runs in four jobs: `select` resolves the test targets once,
+  # `test-shard` runs one quarter of them per Python version, `coverage`
+  # combines the shards' coverage, and `test` reports one result per Python
+  # version under the check names that branch protection requires.
+  select:
+    name: select tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13", "3.14"]
-
+    outputs:
+      skip: ${{ steps.changed.outputs.skip }}
+      run_all: ${{ steps.changed.outputs.run_all }}
+      test_files: ${{ steps.changed.outputs.test_files }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -184,19 +192,18 @@ jobs:
           # or uv.lock touches no .py file but must still trigger the suite —
           # this is what makes a lockfile-only dependency change actually
           # verified by CI rather than silently skipped. A change to this
-          # workflow itself (ci.yml) also forces the suite so CI edits are
-          # self-tested, as does a change to scripts/ci/import_graph.py — it
-          # decides which tests every other change runs, but is not itself a
-          # probpipe source, so it would otherwise select nothing. Also force
-          # the full suite on direct pushes to main (post-merge safety net —
+          # workflow or to scripts/ci/import_graph.py runs tests/ci (the
+          # `scripts/*` and `.github/workflows/*` cases below), which tests the
+          # target selection and runs through every shard. A push or a
+          # scheduled run always runs the full suite (post-merge safety net —
           # targeted tests are for PRs only).
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
             RUN_ALL=true
           else
             RUN_ALL=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|scripts/ci/import_graph.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py)
                   RUN_ALL=true ;;
               esac
             done
@@ -249,14 +256,15 @@ jobs:
             # compare the code blocks of design/ with the code; tests/docs/
             # checks what the rule documents, the agent files, and the
             # CHANGELOG cite, including probpipe names; tests/ci/ covers the
-            # scripts; and tests/test_version.py checks the packaging lockstep.
+            # scripts and the workflows; and tests/test_version.py checks the
+            # packaging lockstep.
             for f in $CHANGED_ALL; do
               case "$f" in
                 design/*|scripts/design/*)
                   TEST_TARGETS="$TEST_TARGETS $(git ls-files 'tests/*/test_design_conformance.py' | xargs) tests/docs tests/ci" ;;
                 scripts/docs/*|docs/*|README.md|mkdocs.yml|mkdocs_hooks.py)
                   TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
-                scripts/*)
+                scripts/*|.github/workflows/*)
                   TEST_TARGETS="$TEST_TARGETS tests/ci" ;;
                 probpipe/*|AGENTS.md|CLAUDE.md|CONTRIBUTING.md|CONTRACTS.md|STYLE_GUIDE.md|CHANGELOG.md|.github/PULL_REQUEST_TEMPLATE.md|.claude/*)
                   TEST_TARGETS="$TEST_TARGETS tests/docs" ;;
@@ -280,6 +288,27 @@ jobs:
             fi
           fi
 
+  # Each shard runs the selected tests of its group: pytest-split divides them
+  # into four groups of about equal duration by the durations recorded in
+  # .test_durations (CONTRIBUTING.md § CI says how to refresh the file). A pull
+  # request runs Python 3.12 and 3.14; a push and the nightly run add 3.13. Only
+  # the 3.12 shards measure coverage, which the coverage job combines.
+  test-shard:
+    name: test (${{ matrix.python-version }}, shard ${{ matrix.group }}/4)
+    needs: select
+    if: needs.select.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12", "3.14"]' || '["3.12", "3.13", "3.14"]') }}
+        # The --splits value of the pytest step below is the length of this list.
+        group: [1, 2, 3, 4]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
@@ -296,43 +325,98 @@ jobs:
         # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
         run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc --extra pyabc
 
-      - name: Run tests (changed files only)
-        if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
-        # A targeted run executes a subset of tests but still measures
-        # --cov=probpipe (the whole package), so a global coverage floor
-        # would always fail here. The floor is enforced on the full-suite
-        # run below; keep partial runs exempt with --cov-fail-under=0.
+      - name: Run tests (shard ${{ matrix.group }} of 4)
+        # The selection is read from an env var. An empty TEST_FILES (the full
+        # suite) runs the testpaths of pyproject.toml. The 3.12 shards write
+        # their coverage data without a report; the other shards run --no-cov.
+        # A shard can collect no tests: a targeted run with fewer tests than
+        # shards leaves a group empty, and a changed test file can be entirely
+        # skipped in this job's environment (e.g. a bayesflow/stan test when
+        # that extra isn't installed here — the dedicated extra job runs it).
+        # pytest then exits 5, which counts as a pass.
+        env:
+          TEST_FILES: ${{ needs.select.outputs.test_files }}
         run: |
-          # A changed test file can be entirely skipped in this job's
-          # environment (e.g. a bayesflow/stan test when that extra isn't
-          # installed here — the dedicated extra job runs it). pytest then
-          # collects 0 tests and exits 5; treat that as a pass rather than
-          # failing the targeted run.
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            COV_ARGS="--cov-report="
+          else
+            COV_ARGS="--no-cov"
+          fi
           ec=0
-          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html || ec=$?
+          # shellcheck disable=SC2086  # TEST_FILES is a space-separated list
+          uv run pytest $TEST_FILES --splits 4 --group ${{ matrix.group }} \
+            --splitting-algorithm least_duration $COV_ARGS || ec=$?
           if [ "$ec" = 5 ]; then
-            echo "No tests collected (all skipped in this environment); treating as pass."
+            echo "No tests collected in this shard; treating as pass."
             ec=0
+          fi
+          if [ -f .coverage ]; then
+            mv .coverage ".coverage.shard-${{ matrix.group }}"
           fi
           exit "$ec"
 
-      - name: Run tests (full suite)
-        if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
-        # The 88% coverage floor is enforced here (full suite only): a
-        # foundational change or any push to main runs every test, so the
-        # whole-package measurement is meaningful. This overrides the
-        # --cov-fail-under=0 in pyproject's addopts.
+      - name: Upload coverage data
+        if: always() && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-data-${{ matrix.group }}
+          path: .coverage.shard-*
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Combines the coverage data of the 3.12 shards into one report. The 88%
+  # floor applies to a full-suite run only, since a targeted run executes a
+  # subset of tests but measures the whole package. Codecov receives the
+  # combined report: the targeted run covers exactly the changed files, which
+  # is what Codecov *patch* coverage needs, and the full-suite run gives the
+  # authoritative *project* number. The upload is tagged `unit` so the flag
+  # carries forward when a PR doesn't run it (see codecov.yml).
+  coverage:
+    needs: [select, test-shard]
+    if: ${{ !cancelled() && needs.select.outputs.skip == 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Download coverage data
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-data-*
+          merge-multiple: true
+
+      - name: Combine and report coverage
+        id: report
+        # The coverage version is the one uv.lock pins for the shards.
+        env:
+          RUN_ALL: ${{ needs.select.outputs.run_all }}
         run: |
-          uv run pytest --cov-fail-under=88 --cov-report=xml --cov-report=html
+          set -euo pipefail
+          if ! ls .coverage.shard-* > /dev/null 2>&1; then
+            echo "No coverage data (no shard collected a test)."
+            echo "data=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "data=true" >> "$GITHUB_OUTPUT"
+          COVERAGE=$(uv export --frozen --extra dev --no-hashes --no-header | grep -oE '^coverage==[^ ;]+')
+          cov() { uvx --python 3.12 --from "$COVERAGE" coverage "$@"; }
+          cov combine
+          cov xml
+          cov html
+          if [ "$RUN_ALL" = "true" ]; then
+            cov report --show-missing --fail-under=88
+          else
+            cov report --show-missing
+          fi
 
       - name: Upload coverage reports to Codecov
-        # Upload on 3.12 for BOTH the targeted and full-suite paths (gated only
-        # on the test step having run). The targeted run covers exactly the
-        # changed files — which is what Codecov *patch* coverage needs — so the
-        # patch gate is accurate even on targeted PRs. The full-suite path
-        # additionally gives the authoritative *project* number. Tagged `unit`
-        # so the flag carries forward when a PR doesn't run it (see codecov.yml).
-        if: matrix.python-version == '3.12' && steps.changed.outputs.skip != 'true'
+        if: steps.report.outputs.data == 'true' && needs.test-shard.result == 'success'
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -340,11 +424,39 @@ jobs:
           flags: unit
 
       - name: Upload coverage HTML report
-        if: always() && matrix.python-version == '3.12' && steps.changed.outputs.run_all == 'true'
+        if: always() && steps.report.outputs.data == 'true' && needs.select.outputs.run_all == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: coverage-html
           path: htmlcov/
+
+  # One result per Python version, under the check names `test (3.12)`,
+  # `test (3.13)`, and `test (3.14)`. Each passes when the selection succeeded
+  # and every shard passed or none ran; `test (3.12)` also requires the
+  # coverage job, which enforces the floor. The shards' result is the matrix's
+  # result, so a failing shard of any version fails all three. On a pull
+  # request no 3.13 shard runs, and `test (3.13)` reports the other versions.
+  test:
+    name: test (${{ matrix.python-version }})
+    needs: [select, test-shard, coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - name: Check the shards
+        env:
+          SELECT: ${{ needs.select.result }}
+          SHARDS: ${{ needs.test-shard.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+        run: |
+          echo "select: $SELECT, shards: $SHARDS, coverage: $COVERAGE"
+          [ "$SELECT" = success ] || exit 1
+          case "$SHARDS" in success|skipped) ;; *) exit 1 ;; esac
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then
+            case "$COVERAGE" in success|skipped) ;; *) exit 1 ;; esac
+          fi
 
   lowest-versions:
     # The core dependencies at the lowest versions that pyproject.toml allows.
@@ -365,7 +477,7 @@ jobs:
 
       - name: Check if source or test files changed
         id: lowest_check
-        # Run on pushes to main, on foundational changes (deps / this workflow),
+        # Run on pushes, on the nightly schedule, on dependency changes,
         # or on a change under probpipe/ or tests/, since any module of probpipe/
         # can call an API that is newer than a floor.
         run: |
@@ -378,7 +490,7 @@ jobs:
             -- 'probpipe/' 'tests/' || true)
           CHANGED_ALL=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD || true)
           RUN_LOWEST=false
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
             RUN_LOWEST=true
           else
             for f in $CHANGED_ALL; do

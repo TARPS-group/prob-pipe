@@ -13,7 +13,7 @@ import numpy as np
 from ._kinds import register_kind
 from ._object_batch import _as_object_array, _ObjectBatch
 from ._opaque import Opaque, OpaqueSpec
-from ._shapes import AxisCountsLike, LevelNamesLike
+from ._shapes import AxisCountsLike, NamesLike
 from ._spec_base import _opaque_spec_of
 from ._specs import TermSpec
 from .provenance import Provenance
@@ -110,7 +110,7 @@ class OpaqueBatch(_ObjectBatch[Any]):
         label: str,
         elements: np.ndarray | Iterable[Any],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: OpaqueSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,

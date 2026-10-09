@@ -1,15 +1,16 @@
-"""The reading of shape, level-name, and axis-count arguments.
+"""The reading of shape, name-list, and axis-count arguments.
 
-Every public argument that takes a shape, a sequence of level names, or one
-axis count per level is read by a function of this module, so each kind of
-argument has one reading and one set of error messages wherever it is taken:
+Every public argument that takes a shape, a sequence of names, or one axis
+count per level is read by a function of this module, so each kind of argument
+has one reading and one set of error messages wherever it is taken:
 
 - a **shape** (:func:`_as_shape`) is a tuple of dimensions, each a
   non-negative ``int`` size or a symbolic dimension name, and a bare ``int``
   or ``str`` is a shape of one dimension, so ``3`` is ``(3,)`` and ``"n"`` is
   ``("n",)``;
-- **level names** (:func:`_as_level_names`) are a tuple of strings, and a bare
-  ``str`` is one name, so ``"draw"`` is ``("draw",)``;
+- **names** (:func:`_as_names`), such as level names or metric names, are a
+  tuple of strings, and a bare ``str`` is one name, so ``"draw"`` is
+  ``("draw",)``;
 - **axis counts** (:func:`_as_axis_counts`) are a tuple of positive integers,
   one per level, and a bare ``int`` is one count;
 - **levels** (:func:`_as_levels`) are a mapping from level name to that level's
@@ -39,8 +40,8 @@ from ._repr import type_name
 __all__ = [
     "AxisCountsLike",
     "DimLike",
-    "LevelNamesLike",
     "LevelsLike",
+    "NamesLike",
     "ShapeLike",
     "SizesLike",
 ]
@@ -51,8 +52,8 @@ type DimLike = int | str
 type ShapeLike = DimLike | Iterable[DimLike]
 #: A shape of sizes only, such as a ``sample_shape``: one size, or a sequence of them.
 type SizesLike = int | Iterable[int]
-#: Level names: one name, or a sequence of them.
-type LevelNamesLike = str | Iterable[str]
+#: Names, such as level names or metric names: one name, or a sequence of them.
+type NamesLike = str | Iterable[str]
 #: Axis counts: one count, or a sequence of one count per level.
 type AxisCountsLike = int | Iterable[int]
 #: Levels: each level's name mapped to the shape of its axes, outermost level first.
@@ -187,23 +188,25 @@ def _as_shape(arg: Any, *, what: str, symbolic: bool = True) -> tuple[int | str,
     return tuple(_as_dim(entry, what=f"{what} entry", symbolic=symbolic) for entry in entries)
 
 
-def _as_level_names(arg: Any, *, what: str) -> tuple[str, ...]:
-    """A level-names argument as a tuple of strings; a bare ``str`` is one name.
+def _as_names(arg: Any, *, what: str) -> tuple[str, ...]:
+    """A name-list argument as a tuple of strings; a bare ``str`` is one name.
 
-    The names are not checked against the rule for level names here: every
-    batch is built through a :class:`~probpipe.BatchSpec`, which checks them.
+    Each name is kept as given, and the caller checks it against its own rule:
+    a :class:`~probpipe.BatchSpec` checks level names, and a function that
+    takes metric or variable names checks that each one exists. An empty
+    sequence reads as ``()``.
 
     Parameters
     ----------
     arg : Any
-        The level names as the caller gave them.
+        The names as the caller gave them.
     what : str
         The caller's function and argument, which each error message names.
 
     Returns
     -------
     tuple of str
-        One name per level, outermost first, each a Python ``str``.
+        One entry per name, in the order given, each a Python ``str``.
 
     Raises
     ------

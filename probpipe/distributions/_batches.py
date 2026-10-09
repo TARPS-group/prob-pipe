@@ -15,7 +15,7 @@ import numpy as np
 
 from ..core._kinds import register_kind
 from ..core._object_batch import _as_object_array, _ObjectBatch
-from ..core._shapes import AxisCountsLike, LevelNamesLike
+from ..core._shapes import AxisCountsLike, NamesLike
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
 from ._conditional import ConditionalDistribution, ConditionalDistributionSpec
@@ -119,7 +119,7 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         label: str,
         elements: np.ndarray | Iterable[Distribution],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: DistributionSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
@@ -258,7 +258,7 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
         label: str,
         elements: np.ndarray | Iterable[ConditionalDistribution],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: ConditionalDistributionSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,

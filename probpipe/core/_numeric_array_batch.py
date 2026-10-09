@@ -32,7 +32,7 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
-from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 
@@ -120,13 +120,13 @@ class NumericArrayBatch(Batch[NumericArray]):
         label: str,
         values: Any,
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: NumericArraySpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        names = _as_level_names(level_names, what="NumericArrayBatch level_names")
+        names = _as_names(level_names, what="NumericArrayBatch level_names")
         axes = (
             None
             if axes_per_level is None
