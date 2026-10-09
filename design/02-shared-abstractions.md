@@ -266,7 +266,7 @@ A spec reads as its own constructor call, with the attributes it sets, and so do
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
-Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so label, provenance, and annotations never enter a trace and a label can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
+Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so label, provenance, and annotations never enter a trace and a label can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary. A value, a record, and a batch of either are pytrees whose static data is their spec alone, so two terms that differ only in their labels or their expressions have equal treedefs and share a compilation. A term rebuilt from its leaves carries no label of its own and is labeled by its class, as `NumericArray` or `RecordBatch`, until a result boundary gives it the call's expression, as the boundary of a `Function` gives its result the function's output label.
 
 ```python
 class TrackedTerm(ABC):

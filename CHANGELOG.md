@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `log_prob(prior, q)` for a law `q` of values, names its component by the
   operation, as `log_prob`, where it took the label of the scored law. Replace a
   lookup of the component `log_prob` by one of `log_prob(mu)`.
+- **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
+  and a batch of either flatten with their spec alone as the static data, where
+  the label rode with it, so two terms that differ only in their labels have
+  equal treedefs and share a `jax.jit` compilation. A term rebuilt from its
+  leaves, as `jax.tree_util.tree_map` returns one, is labeled by its class, as
+  `NumericArray` or `RecordBatch`, where it kept the label it had; a
+  `Function` call still labels its result by the function's output label.
+  Relabel a rebuilt term with `with_label`.
 - **A map of a Gaussian random function keeps its label, and a sum is labeled
   by its expression.** `A @ f`, `f + b`, and `alpha * f` are labeled `f`, where
   they were labeled `linear_map(f)`, `shift(f)`, and `scale(f)`, and `f + g` is

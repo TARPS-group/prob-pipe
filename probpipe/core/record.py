@@ -350,11 +350,13 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     coincide when every field is an array (e.g. :class:`NumericRecord`).
 
     The PyTree registration's children are the field values and its static aux
-    data is the ``(spec, label)`` pair, so the declared type and
-    the label survive a ``tree_flatten`` / ``tree_unflatten``
-    round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
-    JAX transform boundary; re-attach provenance on the reconstructed Record
-    if you need to preserve the chain. On a :class:`NumericRecord`, the
+    data is the spec alone, so the declared type survives a ``tree_flatten`` /
+    ``tree_unflatten`` round-trip and two records that differ only in their
+    labels have equal treedefs and share a compilation. The label, the
+    expression, :attr:`provenance`, and :attr:`annotations` do **not** cross a
+    JAX transform boundary: a record rebuilt from its leaves is labeled
+    ``Record``, or ``NumericRecord``, until a result boundary labels it, and
+    ``with_label`` relabels it otherwise. On a :class:`NumericRecord`, the
     flatten boundary is also where native leaves convert to ``jax.Array``, so
     a value that crosses a JAX transform comes back with bare-array leaves.
     """
@@ -1346,40 +1348,41 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str]]:
+def _record_flatten(v: Record) -> tuple[list, RecordSpec]:
     """Flatten Record for JAX pytree traversal.
 
     The children are the stored field values exactly as-is; JAX further
     traverses any nested ``Record`` children because ``Record`` is a
     registered pytree type, and non-pytree objects (strings, opaque objects,
     native containers) become pytree leaves themselves. The static aux data
-    is the ``(spec, label)`` pair — the record's declared type
-    and label survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
-    provenance and annotations do not cross a JAX transform boundary.
-    (``NumericRecord`` registers its own flatten, which converts native
-    leaves to ``jax.Array`` at this boundary.)
+    is the record's declared type alone, which survives a ``tree_flatten`` /
+    ``tree_unflatten`` round-trip. The label, the expression, the provenance,
+    and the annotations do not cross a JAX transform boundary, so two records
+    that differ only in their labels have equal treedefs and share a
+    compilation (II.4). (``NumericRecord`` registers its own flatten, which
+    converts native leaves to ``jax.Array`` at this boundary.)
     """
     # Emit children in the template's field order so they realign with the
     # aux spec on unflatten. ``_tree`` order normally matches, but a
     # record built with an explicit template ordered differently would
     # otherwise zip each value against the wrong field name.
     children = [v._tree[name] for name in v.event_template.children]
-    return children, (v._spec, v._label)
+    return children, v._spec
 
 
-def _record_unflatten(aux: tuple[RecordSpec, str], children: list) -> Record:
+def _record_unflatten(spec: RecordSpec, children: list) -> Record:
     """Unflatten Record from JAX pytree traversal, threading the aux spec.
 
     Reconstructs a plain ``Record`` unconditionally — JAX requires the
     unflattened tree to reproduce the flattened treedef, so this path must
     not re-run the ``__new__`` promotion (a verbatim backend leaf, e.g. an
     ``xarray.DataArray``, has a numeric template but was flattened as a
-    plain ``Record``).
+    plain ``Record``). The label does not cross a transform, so the rebuilt
+    record is labeled ``Record`` until a result boundary labels it.
     """
-    spec, name = aux
     r = object.__new__(Record)
     r.__init__(
-        name,
+        "Record",
         dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,

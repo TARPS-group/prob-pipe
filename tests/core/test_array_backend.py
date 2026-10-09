@@ -295,7 +295,7 @@ class TestJaxBoundary:
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert type(back) is NumericRecord
         assert isinstance(back.raw("temps"), jnp.ndarray)  # native type does not cross
-        assert back.label == "nr"
+        assert back.label == "NumericRecord"  # the label does not cross either
         assert back.event_template == nr.event_template
 
     def test_tree_map_returns_bare_arrays(self, da):

@@ -1646,7 +1646,13 @@ class TestPyTree:
         assert len(leaves) == 3
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
         assert rebuilt == batch
-        assert rebuilt.label == "post"
+        # The label does not cross a transform, so the rebuilt batch takes its class's.
+        assert rebuilt.label == type(batch).__name__
+
+    def test_batches_that_differ_only_in_label_share_a_treedef(self):
+        assert jax.tree_util.tree_structure(
+            nested_batch(label="post")
+        ) == jax.tree_util.tree_structure(nested_batch(label="prior"))
 
     def test_the_spec_rides_in_the_aux_by_identity(self):
         batch = nested_batch()

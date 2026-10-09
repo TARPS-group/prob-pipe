@@ -92,6 +92,12 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     representation inside a JAX trace, so there an operator returns the bare
     result. Indexing and iteration return the stored value's entries and rows.
 
+    As a JAX pytree it flattens to its array, with its spec as the static
+    data. The label and the expression do not cross a transform, so two values
+    that differ only in their labels have equal treedefs and share a
+    compilation, and a value rebuilt from its leaves is labeled
+    ``NumericArray`` until a result boundary labels it.
+
     Examples
     --------
     >>> import jax.numpy as jnp
@@ -479,38 +485,43 @@ NumericArray.__hash__ = None  # type: ignore[assignment]
 # ---------------------------------------------------------------------------
 
 
-def _numeric_array_flatten(
-    value: NumericArray,
-) -> tuple[list, tuple[NumericArraySpec, str]]:
-    """Flatten for JAX traversal: the array, keyed by the declaration and identity.
+def _numeric_array_flatten(value: NumericArray) -> tuple[list, NumericArraySpec]:
+    """Flatten for JAX traversal: the array, keyed by the declaration alone.
 
-    The aux pair every tracked class flattens to. The declaration rides along
-    rather than being re-read off the child, because it is not recoverable from
-    one: ``is_valid`` admits a same-kind cast, so a float32 value under a
-    float64 declaration would come back declaring float32.
+    The declaration is the metadata every tracked class flattens to, so two
+    values that differ only in their labels or their expressions have equal
+    treedefs and share a compilation (II.4). It is carried rather than re-read
+    off the child, because it is not recoverable from one: ``is_valid`` admits
+    a same-kind cast, so a float32 value under a float64 declaration would come
+    back declaring float32.
     """
     # The boundary presents a bare array, as a ``NumericRecord``'s does: this
     # is one of the compute boundaries native form converts at.
-    return [value.as_jax()], (value._spec, value._label)
+    return [value.as_jax()], value._spec
 
 
-def _numeric_array_unflatten(aux: tuple[NumericArraySpec, str], children: list) -> NumericArray:
-    """Rebuild without converting or validating the child.
+def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericArray:
+    """Rebuild without converting or validating the child, labeled by its class.
 
     JAX unflattens with whatever it carries, and a skeleton from
     ``tree_map(lambda x: None, value)`` or an internal sentinel is not an array
     — the reason ``Record`` and ``RecordBatch`` take ``_validate_leaves=False``
     on this path. A transform may also have resized the value, which is why the
     spec a rebuilt value carries is the one it was declared with rather than one
-    read off the child: on this path a shape is transform-relative.
+    read off the child: on this path a shape is transform-relative. The label
+    does not cross a transform, so the rebuilt value is labeled ``NumericArray``
+    until a result boundary labels it.
     """
-    spec, name = aux
     (array,) = children
     value = object.__new__(NumericArray)
     object.__setattr__(value, "_value", array)
     object.__setattr__(value, "_spec", spec)
-    value._init_tracked(name)
+    value._init_tracked(_REBUILT_LABEL)
     return value
+
+
+#: The label of a value rebuilt from its leaves, which carry no label (II.4).
+_REBUILT_LABEL = "NumericArray"
 
 
 jax.tree_util.register_pytree_node(NumericArray, _numeric_array_flatten, _numeric_array_unflatten)
