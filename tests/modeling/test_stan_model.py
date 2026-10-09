@@ -103,29 +103,29 @@ class TestTheProgramText:
             model { }
             """,
         )
-        model = StanModel("program", stan_file)
+        model = StanModel(stan_file, label="program")
         assert list(model.given_spec) == ["N", "x"]
         shapes = {name: spec.shape for name, spec in model.event_spec.spec.children.items()}
         assert shapes == {"L": (3, 3), "z": (2, "N"), "p": (4,), "B": ("N", 2)}
 
     def test_a_scalar_entry_binds_the_sizes_it_names(self, tmp_path):
         stan_file = _program(tmp_path, "data { int K; } parameters { vector[K] b; } model { }")
-        assert StanModel("p", stan_file, data={"K": 3}).event_spec.spec["b"].shape == (3,)
+        assert StanModel(stan_file, data={"K": 3}, label="p").event_spec.spec["b"].shape == (3,)
 
     def test_a_size_expression_is_a_symbolic_dimension(self, tmp_path):
         stan_file = _program(
             tmp_path, "data { int K; vector[K] y; } parameters { vector[K - 1] b; } model { }"
         )
-        assert StanModel("p", stan_file).event_spec.spec["b"].shape == ("b_0",)
+        assert StanModel(stan_file, label="p").event_spec.spec["b"].shape == ("b_0",)
 
     def test_an_unreadable_declaration_raises(self, tmp_path):
         stan_file = _program(tmp_path, "parameters { tuple(real, real) t; } model { }")
         with pytest.raises(ValueError, match="Stan"):
-            StanModel("p", stan_file)
+            StanModel(stan_file, label="p")
 
     def test_a_program_without_parameters_raises(self, tmp_path):
         with pytest.raises(ValueError, match="no parameters"):
-            StanModel("p", _program(tmp_path, "data { int N; } model { }"))
+            StanModel(_program(tmp_path, "data { int N; } model { }"), label="p")
 
 
 class TestTheDensityBackend:
@@ -135,14 +135,16 @@ class TestTheDensityBackend:
             patch.dict("sys.modules", {"bridgestan": None, "bridgestan.compile": None}),
             pytest.raises(ImportError, match="pip install bridgestan"),
         ):
-            StanModel("model", stan_file)
+            StanModel(stan_file, label="model")
 
     @pytest.mark.usefixtures("_stanc")
     def test_the_density_needs_bridgestan(self, tmp_path):
         """The density raises ImportError with install instructions when bridgestan
         is missing — this *must* simulate bridgestan's absence, so it patches
         ``sys.modules`` rather than using a real backend."""
-        posterior = StanModel("model", _program(tmp_path, "parameters { real mu; } model { }"))
+        posterior = StanModel(
+            _program(tmp_path, "parameters { real mu; } model { }"), label="model"
+        )
         with (
             patch.dict("sys.modules", {"bridgestan": None}),
             pytest.raises(ImportError, match="pip install bridgestan"),
@@ -186,7 +188,7 @@ def conjugate_stan_file(_stan_toolchain, tmp_path_factory):
 @pytest.fixture(scope="module")
 def conjugate_model(conjugate_stan_file):
     """The conjugate program's posterior at three observations."""
-    return StanModel("normal_mean", conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
+    return StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]}, label="normal_mean")
 
 
 @pytest.fixture(scope="module")
@@ -213,7 +215,7 @@ def structured_model(_stan_toolchain, tmp_path_factory):
         }
         """
     )
-    return StanModel("structured", str(stan_file))
+    return StanModel(str(stan_file), label="structured")
 
 
 class TestTheModelLibrary:
@@ -322,7 +324,7 @@ class TestUnconstrainedStanView:
 class TestStanModelConditionOn:
     def test_binding_the_data_curries_then_a_stan_method_normalizes(self, conjugate_stan_file):
         report = condition_on.check(
-            StanModel("normal_mean", conjugate_stan_file), {"N": 3, "y": [1.0, 2.0, 3.0]}
+            StanModel(conjugate_stan_file, label="normal_mean"), {"N": 3, "y": [1.0, 2.0, 3.0]}
         )
         assert report.route == "curry"
         assert report.method in ("nutpie_nuts", "cmdstan_nuts", "blackjax_rwmh")

@@ -34,6 +34,7 @@ from ._array_backend import (
     _numpy_dtype_of,
     _to_jax_array,
 )
+from ._expression import Named
 from ._numeric import Numeric
 from ._specs import (
     NumericArraySpec,
@@ -604,7 +605,7 @@ def _reconstruct_from_vector(
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
-    object.__setattr__(value, "_label", label)
+    value._store_expression(Named(label))
     return value
 
 
@@ -618,7 +619,7 @@ def _reconstruct_from_vector(
 # ---------------------------------------------------------------------------
 
 
-def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, str]]:
+def _numeric_record_flatten(v: NumericRecord) -> tuple[list, RecordSpec]:
     """Flatten NumericRecord for JAX pytree traversal, converting at the boundary.
 
     Children are emitted in the template's field order (matching
@@ -626,22 +627,25 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
     converted to ``jax.Array`` through the conversion cache — this is the
     compute boundary where native containers materialise. Nested
     ``NumericRecord`` children pass through whole; JAX recurses into them via
-    their own registration. The static aux is the
-    ``(spec, label)`` pair; provenance, annotations,
-    and the native container types do not cross a JAX transform boundary.
+    their own registration. The static aux is the spec alone; the label, the
+    expression, the provenance, the annotations, and the native container
+    types do not cross a JAX transform boundary (II.4).
     """
     children = [
         child if isinstance(child, Record) else v._child_field_as_jax(name)
         for name, child in ((n, v._tree[n]) for n in v.event_template.children)
     ]
-    return children, (v._spec, v._label)
+    return children, v._spec
 
 
-def _numeric_record_unflatten(aux: tuple[RecordSpec, str], children: list) -> NumericRecord:
-    """Unflatten NumericRecord from JAX pytree traversal, threading the aux spec."""
-    spec, name = aux
+def _numeric_record_unflatten(spec: RecordSpec, children: list) -> NumericRecord:
+    """Unflatten NumericRecord from JAX pytree traversal, labeled ``NumericRecord``.
+
+    The label does not cross a transform, so the rebuilt record is labeled by
+    its class until a result boundary labels it.
+    """
     return NumericRecord(
-        name,
+        "NumericRecord",
         dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,

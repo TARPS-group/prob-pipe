@@ -116,8 +116,8 @@ def predictive_check[D](
     >>> from probpipe import Normal, conditional_distribution, workflow_run
     >>> prior = Normal("mu", 0.0, 1.0)
     >>> likelihood = conditional_distribution(
-    ...     "y_given_mu",
     ...     lambda mu: Normal("y", mu * jnp.ones(10), 1.0),
+    ...     label="y_given_mu",
     ...     given_spec=prior.event_spec.components,
     ... )
     >>> with workflow_run(seed=0):
@@ -133,7 +133,7 @@ def predictive_check[D](
     if isinstance(law, NumericRecord):
         name = getattr(law, "label", "posterior")
         row = _reshaped_template(law.event_template, lambda shape: shape[1:])
-        law = EmpiricalDistribution(name, _batch_form(name, law, "draw", row))
+        law = EmpiricalDistribution(_batch_form(name, law, "draw", row), label=name)
     joint = _predictive_joint(kernel, law, "predictive_check")
     observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
@@ -150,7 +150,9 @@ def predictive_check[D](
     for name, fn in statistics:
         stats_array = replicated[name]
         result: dict[str, Any] = {
-            "replicated_statistics": EmpiricalDistribution("replicated_statistics", stats_array),
+            "replicated_statistics": EmpiricalDistribution(
+                stats_array, component="replicated_statistics"
+            ),
             "test_fn_name": name,
         }
         if observed is not None:

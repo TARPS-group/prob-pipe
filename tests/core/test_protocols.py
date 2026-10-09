@@ -50,19 +50,19 @@ class _ShiftKernel(ConditionalDistribution):
 
 @pytest.fixture
 def normal():
-    return Normal(loc=0.0, scale=1.0, label="x")
+    return Normal("x", loc=0.0, scale=1.0)
 
 
 @pytest.fixture
 def empirical():
     samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-    return EmpiricalDistribution("x", samples)
+    return EmpiricalDistribution(samples, component="x")
 
 
 @pytest.fixture
 def bootstrap():
     data = jax.random.normal(jax.random.PRNGKey(1), (50,))
-    return BootstrapDistribution("bootstrap", EmpiricalDistribution("y", data))
+    return BootstrapDistribution("bootstrap", EmpiricalDistribution(data, component="y"))
 
 
 @pytest.fixture
@@ -81,11 +81,11 @@ class TestSupportsSampling:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "label": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "label": "b"}),
-            (Gamma, {"concentration": 3.0, "rate": 1.0, "label": "g"}),
-            (Bernoulli, {"probs": 0.5, "label": "d"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "label": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "component": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "component": "b"}),
+            (Gamma, {"concentration": 3.0, "rate": 1.0, "component": "g"}),
+            (Bernoulli, {"probs": 0.5, "component": "d"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "component": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -127,9 +127,9 @@ class TestSupportsLogProb:
     @pytest.mark.parametrize(
         "dist_cls,kwargs",
         [
-            (Normal, {"loc": 0.0, "scale": 1.0, "label": "x"}),
-            (Beta, {"alpha": 2.0, "beta": 5.0, "label": "b"}),
-            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "label": "z"}),
+            (Normal, {"loc": 0.0, "scale": 1.0, "component": "x"}),
+            (Beta, {"alpha": 2.0, "beta": 5.0, "component": "b"}),
+            (MultivariateNormal, {"loc": jnp.zeros(2), "cov": jnp.eye(2), "component": "z"}),
         ],
     )
     def test_tfp_distributions(self, dist_cls, kwargs):
@@ -203,14 +203,14 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution("x", OpaqueBatch("labels", ["a", "b", "c"], "atom"))
+        dist = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b", "c"], "atom"), component="x")
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
 
     def test_array_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (100, 2))
-        dist = EmpiricalDistribution("x", samples)
+        dist = EmpiricalDistribution(samples, component="x")
         assert isinstance(dist, SupportsMean)
         assert isinstance(dist, SupportsVariance)
         assert isinstance(dist, SupportsCovariance)
@@ -312,9 +312,7 @@ class TestFieldViewDynamicProtocols:
     def test_view_over_full_parent_gets_all_protocols(self):
         """A joint of normals supports sampling and (through its TFP
         factors) mean / variance — its views should match."""
-        dist = Normal(loc=0.0, scale=1.0, label="intercept") * Normal(
-            loc=0.0, scale=1.0, label="slope"
-        )
+        dist = Normal("intercept", loc=0.0, scale=1.0) * Normal("slope", loc=0.0, scale=1.0)
         view = dist["intercept"]
         assert isinstance(view, SupportsSampling)
         assert isinstance(view, SupportsMean)
@@ -340,7 +338,7 @@ class TestSampleReturnTypeConvention:
     def test_numeric_distribution_returns_array(self):
         import jax.numpy as jnp
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         k = jax.random.PRNGKey(0)
         assert isinstance(dist._sample(k, ()), jnp.ndarray)
         assert dist._sample(k, (5,)).shape == (5,)
@@ -350,7 +348,7 @@ class TestSampleReturnTypeConvention:
         from probpipe import Record, sample
         from probpipe.core._numeric_record_batch import NumericRecordBatch
 
-        dist = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=0.0, scale=1.0, label="y")
+        dist = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0)
         k = jax.random.PRNGKey(0)
         # unbatched
         s0 = dist._sample(k, ())
@@ -367,10 +365,12 @@ class TestSampleReturnTypeConvention:
         """``_sample_one`` was removed from the distribution surface —
         ``_sample(key, ())`` is the sole entry point for a single draw."""
         distributions = [
-            Normal(loc=0.0, scale=1.0, label="x"),
-            Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b"),
-            EmpiricalDistribution("x", jnp.arange(5.0)),
-            BootstrapDistribution("bootstrap", EmpiricalDistribution("y", jnp.arange(5.0))),
+            Normal("x", loc=0.0, scale=1.0),
+            Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0),
+            EmpiricalDistribution(jnp.arange(5.0), component="x"),
+            BootstrapDistribution(
+                "bootstrap", EmpiricalDistribution(jnp.arange(5.0), component="y")
+            ),
         ]
         for d in distributions:
             assert not hasattr(d, "_sample_one"), (
@@ -385,7 +385,7 @@ class TestSampleReturnTypeConvention:
             "row",
             element_spec=NumericRecordSpec(x=(1,), y=(1,)),
         )
-        law = EmpiricalDistribution("joint", rows)
+        law = EmpiricalDistribution(rows, label="joint")
         k = jax.random.PRNGKey(0)
         one, many = law._sample(k, ()), law._sample(k, (4,))
         assert set(one) == {"x", "y"} and one["x"].shape == (1,)
@@ -419,7 +419,7 @@ class TestTransformedDistributionDynamicProtocols:
 
         from probpipe import Normal
 
-        td = BijectorTransformedDistribution("td", Normal(loc=0.0, scale=1.0, label="x"), tfb.Exp())
+        td = BijectorTransformedDistribution("td", Normal("x", loc=0.0, scale=1.0), tfb.Exp())
         assert isinstance(td, SupportsSampling)
         assert isinstance(td, SupportsLogProb)
         assert not isinstance(td, SupportsMean)
@@ -436,7 +436,7 @@ class TestTransformedDistributionDynamicProtocols:
 
         class _LogProbOnly(NumericDistribution, SupportsLogProb):
             def __init__(self):
-                super().__init__("lpo", NumericArraySpec((), "float32", real))
+                super().__init__("lpo", OutputSpec(lpo=NumericArraySpec((), "float32", real)))
 
             def _log_prob(self, x):
                 return jnp.asarray(0.0)
@@ -451,7 +451,7 @@ class TestJointDynamicProtocols:
     """A joint's protocol claims match its factors'."""
 
     def test_all_tfp_components_all_protocols(self):
-        joint = Normal(loc=0.0, scale=1.0, label="z") * Normal(loc=0.0, scale=1.0, label="x")
+        joint = Normal("z", loc=0.0, scale=1.0) * Normal("x", loc=0.0, scale=1.0)
         assert isinstance(joint, SupportsSampling)
         assert isinstance(joint, SupportsLogProb)
         assert isinstance(joint, SupportsMean)
@@ -461,8 +461,8 @@ class TestJointDynamicProtocols:
     def test_empirical_component_drops_log_prob(self):
         """``EmpiricalDistribution`` lacks ``SupportsLogProb``; a
         joint containing one should not claim it."""
-        boot = EmpiricalDistribution("b", jnp.array([1.0, 2.0, 3.0]))
-        joint = boot * Normal(loc=0.0, scale=1.0, label="z")
+        boot = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="b")
+        joint = boot * Normal("z", loc=0.0, scale=1.0)
         # Sampling is always available; a joint that is not Gaussian claims no
         # conditioning capability, so the inference registry conditions it.
         assert isinstance(joint, SupportsSampling)
@@ -523,7 +523,7 @@ class TestSupportsArrayBackendProtocolSurface:
 
         # Protocol attributes via __annotations__ / methods via vars.
         members = set(dir(_DistributionArrayBackend))
-        for required in ("batch_shape", "event_shape", "cell_spec", "cell"):
+        for required in ("batch_shape", "event_shape", "cell_spec"):
             assert required in members, (
                 f"_DistributionArrayBackend missing required attr {required!r}"
             )

@@ -17,17 +17,18 @@ Parts III, IV, and VI fixed what a distribution *is* and what the operations do 
 
 ### Contract
 
-A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its event term spec from its parameters, including shape, dtype, and support, and wraps it in the component declaration of II.2. Parameters with more axes than one law needs give one law whose extra leading axes are event axes of independent coordinates: `Normal("y", jnp.zeros(3), 1.0)` draws a vector of three independent coordinates, and a `MultivariateNormal` whose `loc` has shape `(n, d)` draws an `(n, d)` array of n independent rows. Separate laws form a `DistributionBatch` (III.10). A family's claims are the capabilities it computes in closed form, recorded in a class-level table the adapter reads (III.8): the backend's methods, `SupportsQuantile` where the backend has a quantile, and the closed forms the backend lacks: the per-coordinate quantiles of `MultivariateNormal`, and the variance of `VonMisesFisher` as the diagonal of its covariance. A moment that diverges is the extended real ±∞, returned as `inf`, as the mean of a `HalfCauchy` is, and only an undefined moment, such as the mean of a `Cauchy`, raises `MathematicalDomainError` (II.7). The array event's component defaults to the law's `name`, captured once at construction. An `event_spec` declaration names another, usually with its type pending, and the family completes it with `with_spec` (II.2), so `Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))` is labeled `prior` and exports `beta`. Each family auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4).
+A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its event term spec from its parameters, including shape, dtype, and support, and wraps it in the component declaration of II.2. Parameters with more axes than one law needs give one law whose extra leading axes are event axes of independent coordinates: `Normal("y", jnp.zeros(3), 1.0)` draws a vector of three independent coordinates, and a `MultivariateNormal` whose `loc` has shape `(n, d)` draws an `(n, d)` array of n independent rows. Separate laws form a `DistributionBatch` (III.10). A family's claims are the capabilities it computes in closed form, recorded in a class-level table the adapter reads (III.8): the backend's methods, `SupportsQuantile` where the backend has a quantile, and the closed forms the backend lacks: the per-coordinate quantiles of `MultivariateNormal`, and the variance of `VonMisesFisher` as the diagonal of its covariance. A moment that diverges is the extended real ±∞, returned as `inf`, as the mean of a `HalfCauchy` is, and only an undefined moment, such as the mean of a `Cauchy`, raises `MathematicalDomainError` (II.7). A family's constructor takes the component of its array event first and the label as the optional keyword `label=`, which defaults to the family's class name (II.4), so `Normal("beta", 0.0, 1.0)` is labeled `Normal`, exports `beta`, and displays as `Normal(beta)`, and `Normal("beta", 0.0, 1.0, label="prior")` displays as `prior(beta)`. An `event_spec` declaration of the same component declares the event's type, which the family completes with `with_spec` (II.2), and a declaration of another component raises `ValueError`. The adapter itself takes the component first, and its label defaults to the name of the backend's class, as `Normal` for a `tfd.Normal`. Each family auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4). The `raw()` of a joint's view at a family factor is the raw form of the marginal there (III.7), which is the TFP marginal, so `model["mu"].raw()` is the TFP distribution of the factor over `mu`.
 
 ```python
 class TFPDistribution(Distribution):
-    def __init__(self, label: str, backend_dist: Any, *, event_spec: OutputSpec | None = None) -> None: ...   # the wrapped backend object
+    def __init__(self, component: str, backend_dist: Any, *, label: str | None = None,
+                 event_spec: OutputSpec | None = None) -> None: ...   # the wrapped backend object
     # closed-form _sample, _log_prob, _mean, _variance, and _quantile;
     # _cov and _marginal where the family defines them
 
 class Normal(TFPDistribution):
-    def __init__(self, label: str, loc: ArrayLike, scale: ArrayLike, *,
-                 event_spec: OutputSpec | None = None) -> None: ...
+    def __init__(self, component: str, loc: ArrayLike, scale: ArrayLike, *,
+                 label: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
 # and likewise for each family above: parameters in, event spec and capabilities derived
 ```
 
@@ -52,25 +53,29 @@ The atoms are stored in the batch form of the event's kind, such as a `NumericAr
 The constructor takes the atoms in one of two forms:
 
 1. **A batch** keeps its levels, which `with_level_names` renames, and passing `level` with a batch raises `TypeError`.
-2. **A plain array** holds one atom per entry of its leading axis, on one level named by `level`, which defaults to the law's component.
+2. **A plain array** holds one atom per entry of its leading axis, labeled by the law's component, on one level named by `level`, which defaults to the component.
 
 The event declaration comes from `event_spec` when one is given, and from the atoms otherwise:
 
 1. **An explicit `event_spec`** names the components and the packaging, and the atoms fix the kind of a draw: a type hole takes the atoms' spec, and a declared type must unify with it.
-2. **Without `event_spec`**, record atoms expose their fields, and any other atoms form a whole-term event whose component defaults to the law's label (III.7).
+2. **Without `event_spec`**, record atoms expose their fields, which are the law's components, and any other atoms form a whole-term event under `component`, which they require (III.7).
+
+`component` names the event of atoms that are not records, unless an `event_spec` names it, and a record's atoms refuse it with `TypeError`, since their fields are the components. The label is the optional keyword `label=`, which defaults to `p` (II.4).
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap, where an empirical source is resampled, and the parametric bootstrap, where a fitted law is redrawn, in one interface; `replicate_size` defaults to the source's atom count when the source is empirical and is required otherwise. A replicate's draws lie on one level named by `level`. It defaults to the source's atom level when the source is an empirical law with exactly one, and otherwise to the source's component when the source's event is a whole term; a source that exposes a record of several components requires it. A replicate of a dataset therefore keeps the dataset's level, so a statistic written for the data applies unchanged to every replicate.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in the event's batch form.
-- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. Their outer event declaration, for the batch-valued replicate or the measure-valued draw, is derived from the source and the replicate size and is distinct from the source's event interface; its component defaults to the law's `name`, and an `event_spec` declaration names another.
+- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. Their outer event declaration, for the batch-valued replicate or the measure-valued draw, is derived from the source and the replicate size and is distinct from the source's event interface; it is a whole term under the component the constructor takes first, and the label defaults to the class name (II.4).
 
-A `KDEDistribution` smooths the atoms of a numeric event with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. The scales broadcast against centers of shape `(n, *event)` by NumPy's rules, so a per-center scalar on an event of shape `(d,)` has shape `(n, 1)`. Records enter through their flat vectors (II.3): a `NumericRecordBatch` of centers as `(n, d)` and a `NumericRecord` of scales as `(d,)`. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, which is Scott's, and is resolved before the copies are built. Scott's rule is `hⱼ = n_eff^(-1/(d+4)) σⱼ` and Silverman's is `hⱼ = (4/(d+2))^(1/(d+4)) n_eff^(-1/(d+4)) σⱼ`, with `σⱼ` the weighted standard deviation of coordinate `j` and `n_eff = (Σwᵢ)²/Σwᵢ²` Kish's effective sample size, so the rules stay sensible under importance weights. A coordinate whose atoms all agree has `σⱼ = 0`, and either rule then raises `ValueError` asking for an explicit bandwidth. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Event completion follows `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event whose component `event_spec` names or else defaults to the law's `name`, and every placed kernel carries the completed declaration.
+A `KDEDistribution` smooths the atoms of a numeric event with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. The scales broadcast against centers of shape `(n, *event)` by NumPy's rules, so a per-center scalar on an event of shape `(d,)` has shape `(n, 1)`. Records enter through their flat vectors (II.3): a `NumericRecordBatch` of centers as `(n, d)` and a `NumericRecord` of scales as `(d,)`. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, which is Scott's, and is resolved before the copies are built. Scott's rule is `hⱼ = n_eff^(-1/(d+4)) σⱼ` and Silverman's is `hⱼ = (4/(d+2))^(1/(d+4)) n_eff^(-1/(d+4)) σⱼ`, with `σⱼ` the weighted standard deviation of coordinate `j` and `n_eff = (Σwᵢ)²/Σwᵢ²` Kish's effective sample size, so the rules stay sensible under importance weights. A coordinate whose atoms all agree has `σⱼ = 0`, and either rule then raises `ValueError` asking for an explicit bandwidth. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Event completion and the constructor's keywords follow `EmpiricalDistribution`: record atoms expose their fields, array atoms form a whole-term event under `component` or the component `event_spec` names, the label defaults to `KDEDistribution`, and every placed kernel carries the completed declaration.
 
 ```python
 class EmpiricalDistribution(Distribution):
-    def __init__(self, label: str, atoms: Batch | Array, weights: Array | None = None, *,
+    def __init__(self, atoms: Batch | Array, weights: Array | None = None, *,
+                 component: str | None = None, label: str | None = None,
                  level: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
     # atoms are given in the event's batch form; weights default to uniform;
-    # a plain array's atoms lie on level, which defaults to the law's component
+    # component is required for atoms that are not records and refused for records;
+    # a plain array's atoms lie on level, which defaults to the component
     @property
     def atoms(self) -> Batch | Array: ...    # the stored atoms, in the event's batch form
     @property
@@ -79,13 +84,15 @@ class EmpiricalDistribution(Distribution):
     def num_atoms(self) -> int: ...
 
 class BootstrapReplicateDistribution(Distribution):
-    def __init__(self, label: str, source: SupportsSampling, replicate_size: int | None = None, *,
-                 level: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
+    def __init__(self, component: str, source: SupportsSampling, replicate_size: int | None = None, *,
+                 label: str | None = None, level: str | None = None,
+                 event_spec: OutputSpec | None = None) -> None: ...
     # a draw is one replicate in the event's batch form: replicate_size iid draws from source
 
 class BootstrapDistribution(Distribution):   # a random measure: a draw is an EmpiricalDistribution
-    def __init__(self, label: str, source: SupportsSampling, replicate_size: int | None = None, *,
-                 level: str | None = None, event_spec: OutputSpec | None = None) -> None: ...
+    def __init__(self, component: str, source: SupportsSampling, replicate_size: int | None = None, *,
+                 label: str | None = None, level: str | None = None,
+                 event_spec: OutputSpec | None = None) -> None: ...
     # the empirical measure of one replicate
 
 class SmoothingKernel(ABC):                # a bank of mean-zero kernel copies, one per center
@@ -103,8 +110,9 @@ class GaussianKernel(SmoothingKernel): ...
 class EpanechnikovKernel(SmoothingKernel): ...   # the product kernel ∏ⱼ ¾(1 − uⱼ²); variance 1/5
 
 class KDEDistribution(Distribution):
-    def __init__(self, label: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,
+    def __init__(self, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,
                  weights: Array | None = None, kernel: type[SmoothingKernel] = GaussianKernel, *,
+                 component: str | None = None, label: str | None = None,
                  event_spec: OutputSpec | None = None) -> None: ...
 ```
 
@@ -124,7 +132,8 @@ A `MixtureDistribution` is a convex combination of component distributions over 
 
 ```python
 class MixtureDistribution(Distribution):
-    def __init__(self, label: str, components: Sequence[Distribution], weights: Array) -> None: ...
+    def __init__(self, components: Sequence[Distribution], weights: Array, *,
+                 label: str | None = None) -> None: ...
     # components share one event declaration; weights are nonnegative and sum to one
 ```
 
@@ -142,15 +151,17 @@ Each evaluation rule returns a family from this catalog. A closed-form rule retu
 
 ```python
 class LinearPushforwardDistribution(Distribution):
-    def __init__(self, label: str, base: Distribution, op: LinOp) -> None: ...
-    # the law of op @ X for X ~ base; the event type is op's output type, under the pushforward's own component.
+    def __init__(self, component: str, base: Distribution, op: LinOp, *,
+                 label: str | None = None) -> None: ...
+    # the law of op @ X for X ~ base; the event type is op's output type, under component.
     # _sample pushes base draws through op; _mean and _cov delegate exactly,
     # E[A X] = A E[X] and Cov(A X) = A Cov(X) Aᵀ, lazily through the operator algebra;
     # _log_prob only when op is invertible, by change of variables
 
 class BijectorTransformedDistribution(Distribution):
-    def __init__(self, label: str, base: Distribution, bijector: Function) -> None: ...
-    # bijector must satisfy is_invertible and claim SupportsLogDetJacobian, checked at construction;
+    def __init__(self, component: str, base: Distribution, bijector: Function, *,
+                 label: str | None = None) -> None: ...
+    # the event is the bijector's image under component; bijector must satisfy is_invertible and claim SupportsLogDetJacobian, checked at construction;
     # _sample pushes base draws through the bijector;
     # _log_prob(y) is the base log-density at the preimage minus the log-Jacobian determinant
 ```
@@ -167,7 +178,7 @@ Typing evaluation results as catalog families keeps the operation closed and its
 
 ### Contract
 
-A `RandomFunction` is a distribution declaring a `FunctionSpec` as its event: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random: a random measure that can compute it claims `SupportsRandomLogProb` (III.8), whose `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
+A `RandomFunction` is a distribution declaring a `FunctionSpec` as its event: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random: a random measure that can compute it claims `SupportsRandomLogProb` (III.8), whose `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member. Both take the component of their whole-term event first and the label as the optional keyword `label=`, which defaults to the class name (II.4).
 
 ```python
 class RandomFunction(Distribution):
@@ -192,7 +203,7 @@ The algebra is closed under the operations: an affine pushforward of any member 
 class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived by `*` / `joint`, never constructed
 ```
 
-**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. These laws preserve the evaluated function's output component name independently of their distribution labels. The drawn function's output component and the function-valued event's component both default to the random function's `name`; `output_spec` names the former otherwise, and `event_spec` the latter. A type hole in either is filled from the model, and evaluated shapes may stay symbolic until inputs bind them (II.1). Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
+**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. These laws carry the random function's label and preserve the evaluated function's output component name. The function-valued event is a whole term under the component the constructor takes first, and the drawn function's output component defaults to it; `output_spec` names the output component otherwise, and `event_spec` declares the event's type under the same component. A type hole in either is filled from the model, and evaluated shapes may stay symbolic until inputs bind them (II.1). Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
 
 ```python
 class GaussianRandomFunction(RandomFunction, ABC):
@@ -204,13 +215,14 @@ class GaussianRandomFunction(RandomFunction, ABC):
     def __call__(self, X: Array) -> Normal | MultivariateNormal: ...   # the finite-dimensional law at X
 
 class GaussianProcess(GaussianRandomFunction):
-    def __init__(self, label: str, mean_fn: Callable[[Array], Array],
-                 cov_kernel: Callable[[Array, Array], Array], *,
+    def __init__(self, component: str, mean_fn: Callable[[Array], Array],
+                 cov_kernel: Callable[[Array, Array], Array], *, label: str | None = None,
                  output_spec: OutputSpec | None = None, event_spec: OutputSpec | None = None) -> None: ...
 
 class LinearBasisFunction(GaussianRandomFunction):
-    def __init__(self, label: str, basis: Callable[[Array], Array], weights: MultivariateNormal, *,
-                 output_spec: OutputSpec | None = None, event_spec: OutputSpec | None = None) -> None: ...
+    def __init__(self, component: str, basis: Callable[[Array], Array], weights: MultivariateNormal, *,
+                 label: str | None = None, output_spec: OutputSpec | None = None,
+                 event_spec: OutputSpec | None = None) -> None: ...
     # f(x) = basis(x)ᵀ w; the covariance kernel is basis(x)ᵀ Σ_w basis(x′)
 ```
 
@@ -244,28 +256,29 @@ Approximation is a relation between a result and its target: a variational Gauss
 The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) pair.
 
 - A **linear-Gaussian conditional distribution** is `s ↦ N(A @ s + b, Σ)` with `A` a `LinOp`. It is the conditional member of the Gaussian algebra: composed with a Gaussian prior it yields a `FactoredMultivariateGaussian`, and conditioning through it is exact.
-- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion, event_spec=...)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `beta`, and `dispersion` when the family has one, its event is the response vector, and its law is `family.build(name, link⁻¹(X @ beta), dispersion, event_spec=event_spec)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. The dispersion is a positive scalar, as a Gaussian scale is, and a heteroscedastic family declares a per-observation slot of its own. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction as the exogenous curry of `condition_on` applied early. The response component defaults to the likelihood's `name`, and an `event_spec` declaration naming another is passed through to the family. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
+- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(component, mean, dispersion, label=..., event_spec=...)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `beta`, and `dispersion` when the family has one, its event is the response vector, and its law is `family.build(component, link⁻¹(X @ beta), dispersion, label=label)`, which carries the likelihood's label, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. The dispersion is a positive scalar, as a Gaussian scale is, and a heteroscedastic family declares a per-observation slot of its own. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction as the exogenous curry of `condition_on` applied early. `glm_likelihood` takes the response's component first and the label as the optional keyword `label=`, which defaults to `p` (II.4), and an `event_spec` declaration of the same component, which declares the response's type, is passed through to the family. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
 
 ```python
 class LinearGaussianConditional(ConditionalDistribution):
-    def __init__(self, label: str, A: LinOp, b: Array, cov: LinOp) -> None: ...
-    # s ↦ N(A @ s + b, cov); the given slot is A's input slot; the event type is A's output type, under the kernel's own component
+    def __init__(self, component: str, A: LinOp, b: Array, cov: LinOp, *,
+                 label: str | None = None) -> None: ...
+    # s ↦ N(A @ s + b, cov); the given slot is A's input slot; the event type is A's output type, under component
 
 class GLMFamily(ABC):                     # a mean-parameterized response family
     canonical_link: Function              # invertible: is_invertible checked at construction
     has_dispersion: bool                  # whether build takes a dispersion, e.g. a Gaussian scale
     @abstractmethod
-    def build(self, label: str, mean: Array, dispersion: ArrayLike | None = None, *,
-              event_spec: OutputSpec | None = None) -> Distribution: ...
+    def build(self, component: str, mean: Array, dispersion: ArrayLike | None = None, *,
+              label: str | None = None, event_spec: OutputSpec | None = None) -> Distribution: ...
     # the law of len(mean) conditionally independent observations with the given means
 
 class GaussianFamily(GLMFamily): ...      # canonical link: identity; dispersion: the scale
 class BernoulliFamily(GLMFamily): ...     # canonical link: logit; no dispersion
 class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
-def glm_likelihood(label: str, family: GLMFamily, link: Function | None = None,
-                   *, event_spec: OutputSpec | None = None, X: Array | None = None,
-                   dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
+def glm_likelihood(component: str, family: GLMFamily, link: Function | None = None,
+                   *, label: str | None = None, event_spec: OutputSpec | None = None,
+                   X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
     # shapes: X ("obs", "features"), beta ("features",), y ("obs",); the dimensions are symbolic until X binds them
 ```
 
@@ -281,18 +294,19 @@ A **program-defined model** exposes the law its program defines, in the kind tha
 
 - `StanModel` is a `ConditionalDistribution` through BridgeStan. Its given slots are the program's data-block variables, which the program does not divide into sizes, covariates, and observations. Each given slot carries the numeric spec of its variable's declared type, and a size that names a data variable is a symbolic dimension that the given slots share with the parameter record (III.9). Its event is the parameter record, whose fields carry their dtypes and the supports their declared constraints state, and a constraint that no ProbPipe support states, such as an ordered vector's, leaves its field's support undeclared. The adapter reads each data variable's and each parameter's element type and rank from `stanc --info` at construction, and their sizes and constraints from their declarations, so it declares both sides before any data are bound. It claims `SupportsConditionalUnnormalizedLogProb` alone, from BridgeStan's log density in the constrained parameterization without the Jacobian, so binding the data curries it to the unnormalized posterior, which `condition_on` normalizes with a method such as Stan's NUTS. Data given at construction curry the program early, and a construction that binds every data variable returns the unnormalized posterior as a `Distribution`. That posterior's class is private: the Stan methods dispatch on it, and users obtain the posterior through `StanModel`.
 - `PyMCModel` is the joint law that a PyMC model-building function defines over its free variables, the parameters and the observed variables alike. An argument that the function passes as an observed variable's `observed` value is an event field, and any other argument is a given slot, so a model with covariates is a `ConditionalDistribution` over them. The adapter builds the model with its defaults to tell them apart: an argument that defaults to `None` and names a free variable of that build is observed, an argument without a default is a given slot, and an argument that defaults to `None` and names no free variable raises `ValueError`. An observed variable's shape is the one the model function declares through `shape` or `dims`, and the shape of the build without data stands in where the model declares none. Each free variable carries its dtype and the support its transform states, such as the positive reals for a log transform, and a transform that no ProbPipe support states leaves the support undeclared. A `PyMCModel` with given slots is a kernel of a private class, which the constructor returns, as `StanModel`'s constructor returns a `Distribution` once every data variable is bound. Its laws are `PyMCModel` instances with the covariates bound, and its event dimensions are symbolic, since the covariates may set them. A `PyMCModel` claims sampling, which draws from the prior predictive, and a normalized density; an instance containing a potential or an improper prior claims the unnormalized density instead. Conditioning on observed values is Bayes' rule (VI.6).
-- `StanModel` and `PyMCModel` are exported from `probpipe` with the other families, and each imports its backend on first use, so neither backend is needed to import the package.
-- A user-supplied unnormalized log-density over a declared event is the law `distribution(label, unnormalized_log_prob=f, event_spec=...)` (IV.4), which `sample`, `convert`, and `condition_on` normalize through the inference-method registry (VI.3, VI.6, VI.10).
+- `StanModel` and `PyMCModel` are exported from `probpipe` with the other families, and each imports its backend on first use, so neither backend is needed to import the package. Each takes its program first and the label as the optional keyword `label=`, which defaults to the class name (II.4) and labels the kernel and the posterior or the law it returns.
+- A user-supplied unnormalized log-density over a declared event is the law `distribution(unnormalized_log_prob=f, event_spec=...)` (IV.4), which `sample`, `convert`, and `condition_on` normalize through the inference-method registry (VI.3, VI.6, VI.10).
 
 A program's variable names determine its output components: a model named `regression_model` may have the one-field event `OutputSpec(RecordSpec(beta=beta_spec))`, whose draws remain records, and composition matches `beta`, not the model label. Inference methods register against the backend interface they require (VI.6). A method records which data were bound, its target, its controls, and its local fidelity, and its result preserves the target event declaration (VII.7). An unconstrained parameterization is an explicit invertible map of that event (III.7, V.12), and the unconstrained form of a Stan target claims BridgeStan's log density with the Jacobian.
 
 ```python
 class StanModel(ConditionalDistribution):
-    def __init__(self, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> None: ...
+    def __init__(self, stan_file: str, *, data: Mapping[str, Any] | None = None,
+                 label: str | None = None) -> None: ...
     # given: the data-block variables that data leaves unbound; event: the parameter record
 
 class PyMCModel(Distribution):
-    def __init__(self, label: str, model_fn: Callable[..., Any]) -> None: ...
+    def __init__(self, model_fn: Callable[..., Any], *, label: str | None = None) -> None: ...
     # event: the free variables; the conditional form when model_fn takes an argument that no observed variable receives
 ```
 

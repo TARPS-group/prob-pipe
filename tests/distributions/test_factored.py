@@ -42,6 +42,7 @@ from probpipe import (
     SupportsVariance,
 )
 from probpipe.core._dispatch import Feasibility
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalNumericDistribution,
@@ -66,9 +67,11 @@ from probpipe.distributions import (
     SupportsMarginals,
 )
 from probpipe.distributions._capabilities import _capability_guard
+from probpipe.distributions._distribution import _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
-from probpipe.distributions._factored import _SoleField
+from probpipe.distributions._factored import _is_named, _SoleField
 from probpipe.linalg import DenseLinOp
+from probpipe.operations._marginal import marginal as marginal_operation
 
 SCALAR = NumericArraySpec(())
 SYMBOLIC = NumericArraySpec(("n",))
@@ -146,9 +149,7 @@ class NormalKernel(ConditionalDistribution):
                 self.label, rest, self.event_spec, loc=self._loc, scale=self._scale, bound=values
             )
         (component,) = self.event_spec.components
-        return Normal(
-            self.label, self._loc(values), self._scale, event_spec=OutputSpec(**{component: None})
-        )
+        return Normal(component, self._loc(values), self._scale, label=self.label)
 
 
 class SamplingKernel(NormalKernel, SupportsConditionalSampling):
@@ -204,7 +205,7 @@ class RenamingKernel(NormalKernel):
     """A kernel whose bound law declares a component other than the kernel's own."""
 
     def _condition_on(self, given, /, **kwargs):
-        return Normal(self.label, 0.0, 1.0, event_spec=OutputSpec(elsewhere=None))
+        return Normal("elsewhere", 0.0, 1.0, label=self.label)
 
 
 class MarginalKernel(NormalKernel, SupportsConditionalMarginals):
@@ -404,7 +405,7 @@ def _likelihood(kernel: type[NormalKernel] = NormalKernel, **options: Any) -> No
 
 def _prior(scale: float = 1.0) -> Normal:
     """A normal law labeled ``prior`` whose component is ``beta``."""
-    return Normal("prior", 0.0, scale, event_spec=OutputSpec(beta=None))
+    return Normal("beta", 0.0, scale, label="prior")
 
 
 def _law(label: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
@@ -744,8 +745,8 @@ class TestMomentCapabilities:
             "row",
             element_spec=RecordSpec(b=(2,), a=()),
         )
-        record = EmpiricalDistribution("post", atoms, jnp.array([0.5, 0.25, 0.25]))
-        theta = EmpiricalDistribution("theta", jnp.array([4.0, 5.0, 6.0]))
+        record = EmpiricalDistribution(atoms, jnp.array([0.5, 0.25, 0.25]), label="post")
+        theta = EmpiricalDistribution(jnp.array([4.0, 5.0, 6.0]), component="theta")
         levels = jnp.array([0.25, 0.75])
         quantiles = FactoredDistribution("j", [record, theta])._quantile(levels)
         assert list(quantiles) == ["b", "a", "theta"]
@@ -758,9 +759,9 @@ class TestMomentCapabilities:
     def test_the_law_of_the_one_field_of_an_empirical_record_has_its_quantiles(self):
         column = jnp.array([3.0, 1.0, 2.0, 4.0])
         atoms = NumericRecordBatch("rows", {"x": column}, "row", element_spec=RecordSpec(x=()))
-        field = _SoleField(EmpiricalDistribution("one", atoms))
+        field = _SoleField(EmpiricalDistribution(atoms, label="one"))
         levels = jnp.array([0.25, 0.5])
-        expected = EmpiricalDistribution("x", column)._quantile(levels)
+        expected = EmpiricalDistribution(column, component="x")._quantile(levels)
         assert jnp.allclose(field._quantile(levels), expected)
         assert jnp.shape(field._quantile(0.5)) == ()
 
@@ -958,25 +959,45 @@ class TestMarginalValues:
         assert pair.marginalized == ["a"]
         assert marginal.event_spec == OutputSpec(a=SCALAR)
 
-    def test_the_marginal_of_a_group_keeps_the_joint_label(self):
-        joint = _law("u", "a") * _law("v", "b") * _law("w", "c")
-        assert joint._marginal(("a", "c")).label == joint.label
+    def test_the_marginal_of_a_group_of_whole_factors_is_their_product_without_a_label(self):
+        joint = (_law("u", "a") * _law("v", "b") * _law("w", "c")).with_label("model")
+        marginal = joint._marginal(("a", "c"))
+        assert (marginal.label, _is_named(marginal)) == ("u·w", False)
+        assert marginal.notation == "u(a)·w(c)"
+
+    def test_whole_factors_selected_out_of_factor_order_form_a_product_in_that_order(self):
+        joint = (_law("u", "a") * _law("v", "b") * _law("w", "c")).with_label("model")
+        marginal = joint._marginal(("c", "a"))
+        assert isinstance(marginal, FactoredDistribution)
+        assert [factor.label for factor in marginal.factors] == ["w", "u"]
+        assert list(marginal.event_spec.components) == ["c", "a"]
+        assert marginal.notation == "w(c)·u(a)"
+
+    def test_a_dependent_pair_selected_producer_first_keeps_the_factor_order_and_reorders(self):
+        """No product lists ``beta`` before the kernel that conditions on it."""
+        joint = (_likelihood() * _prior()).with_label("model")
+        marginal = joint._marginal(("beta", "y"))
+        assert list(marginal.event_spec.components) == ["beta", "y"]
+        assert marginal.notation == "(lik·prior)(beta, y)"
 
     @pytest.mark.parametrize(
-        "path",
+        ("path", "label"),
         [
-            pytest.param("beta", id="kept-factor"),
-            pytest.param(("y", "beta"), id="sub-joint"),
-            pytest.param(("beta",), id="selection-of-one"),
-            pytest.param("record", id="field-of-a-record"),
-            pytest.param("params/u", id="reduced-factor"),
+            pytest.param("beta", "prior", id="kept-factor"),
+            pytest.param(("y", "beta"), "lik·prior", id="sub-joint"),
+            pytest.param(("beta",), "prior", id="selection-of-one"),
+            pytest.param("record", "one", id="field-of-a-record"),
+            pytest.param("params/u", "model", id="reduced-factor"),
         ],
     )
-    def test_a_marginal_keeps_the_joint_label_as_the_view_there_does(self, path):
+    def test_a_marginal_is_labeled_as_the_marginal_operation_labels_it(self, path, label):
+        """The view at the path takes the marginal's label as well."""
         record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
-        joint = _likelihood() * _prior() * record * params
-        assert joint._marginal(path).label == FieldView(joint, path).label == joint.label
+        joint = (_likelihood() * _prior() * record * params).with_label("model")
+        assert joint._marginal(path).label == label
+        assert marginal_operation._derived_label({"d": joint, "field": path}) == label
+        assert FieldView(joint, path).label == label
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()
@@ -989,7 +1010,7 @@ class TestMarginalValues:
         joint = pair * _law("other", "c")
         marginal = joint._marginal(("a", "b"))
         assert type(marginal) is type(pair) and marginal.spec == pair.spec
-        assert (marginal.label, pair.label) == (joint.label, "pair")
+        assert marginal.label == pair.label == "pair"
 
     @pytest.mark.parametrize(
         "path",
@@ -1167,7 +1188,7 @@ class TestNumericMarkers:
     def test_a_class_inheriting_the_marker_constructs_as_itself(self):
         joint = NumericJoint("model", [Normal("a", 0.0, 1.0)])
         assert isinstance(joint, NumericJoint)
-        assert joint.factors[0].label == "a"
+        assert tuple(joint.factors[0].event_spec.components) == ("a",)
 
     def test_a_class_inheriting_the_marker_has_its_claim_checked(self):
         with pytest.raises(TypeError, match="inherits FactoredNumericDistribution"):
@@ -1265,7 +1286,7 @@ class TestPathRenames:
 
     def test_gathering_components_of_two_factors_regroups_them(self, key):
         """The node ``g`` is one factor: the sub-joint of the two factors, packaged as ``g``."""
-        joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
+        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 2.0, 1.0, label="b")
         renamed = joint.with_path_names({"a": "g/a", "b": "g/b"})
         assert isinstance(renamed, SupportsFactors)
         assert list(renamed.event_spec.components) == ["g"]
@@ -1274,6 +1295,128 @@ class TestPathRenames:
         assert list(group.event_spec.components) == ["g"]
         assert not group.event_spec.exposes_record
         assert list(renamed._sample(key)["g"]) == ["a", "b"]
+
+
+# -- Notation -----------------------------------------------------------------------
+
+
+def _with_fixed_paths(term: Any, *paths: str) -> Any:
+    """*term* holding *paths* fixed, as conditioning on them records."""
+    term._store_expression(with_fixed(expression_of(term), paths))
+    return term
+
+
+class TestNotation:
+    """An unlabeled joint reads factor by factor, and a labeled one by its label."""
+
+    def test_a_composed_joint_reads_factor_by_factor(self):
+        joint = _likelihood() * _prior()
+        assert str(joint) == joint.notation == "lik(y | beta)·prior(beta)"
+        assert joint.label == "lik·prior"
+
+    def test_a_relabeled_joint_reads_by_its_label_and_its_components(self):
+        model = (_likelihood() * _prior()).with_label("model")
+        assert model.notation == "model(y, beta)"
+
+    def test_a_constructed_joint_reads_by_its_label(self):
+        model = FactoredDistribution("model", [_likelihood(), _prior()])
+        assert model.notation == "model(y, beta)"
+
+    def test_a_joint_relabeled_with_its_own_label_reads_by_it(self):
+        joint = _likelihood() * _prior()
+        assert joint.with_label(joint.label).notation == "(lik·prior)(y, beta)"
+
+    def test_a_conditional_joint_reads_as_an_unconditional_one_does(self):
+        _, _, joint = _sigma_model()
+        assert joint.notation == "lik(y | beta, sigma)·prior(beta)"
+        assert joint.with_label("model").notation == "model(y, beta | sigma)"
+
+    def test_a_chain_reads_one_factor_after_another_under_either_grouping(self):
+        a, b, c = _law("a", "x"), _law("b", "z"), _law("c", "w")
+        assert ((a * b) * c).notation == (a * (b * c)).notation == "a(x)·b(z)·c(w)"
+
+    def test_a_labeled_factor_reads_by_its_own_notation(self):
+        model = (_likelihood() * _prior()).with_label("model").with_path_names(y="obs")
+        joint = _law("d", "d") * model
+        assert joint.notation == "d(d)·model(obs, beta)"
+
+    def test_the_repr_keeps_the_label_first(self):
+        assert repr(_likelihood() * _prior()).startswith("FactoredDistribution(\n    'lik·prior',")
+
+    def test_an_unlabeled_joint_that_holds_paths_fixed_reads_by_its_label(self):
+        """Its factors' notations would leave out the fixed paths."""
+        joint = _with_fixed_paths(_law("a", "x") * _law("b", "z"), "y")
+        assert joint.notation == "(a·b)(x, z; y)"
+        model = _with_fixed_paths((_law("a", "x") * _law("b", "z")).with_label("model"), "y")
+        assert model.notation == "model(x, z; y)"
+
+
+class TestTheLabeledFlag:
+    """A law derived from a joint is labeled or unlabeled as the joint is."""
+
+    @staticmethod
+    def _joints() -> tuple[FactoredDistribution, FactoredDistribution]:
+        joint = _symbolic_joint()
+        return joint, joint.with_label("model")
+
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(lambda j: j.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda j: j.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda j: j.with_path_names(a="u"), id="rename-through-factors"),
+            pytest.param(lambda j: j.with_path_names({"a": "g/a", "b": "g/b"}), id="regroup"),
+            pytest.param(lambda j: copy.copy(j), id="copy"),
+            pytest.param(lambda j: pickle.loads(pickle.dumps(j)), id="pickle"),
+        ],
+    )
+    def test_a_derived_joint_keeps_the_flag(self, derive):
+        unlabeled, labeled = self._joints()
+        assert _is_named(derive(unlabeled)) is False
+        assert _is_named(derive(labeled)) is True
+
+    def test_a_marginal_over_several_whole_factors_is_unlabeled_whether_or_not_the_joint_is(
+        self,
+    ):
+        for joint in self._joints():
+            assert _is_named(joint._marginal(("a", "b"))) is False
+
+    def test_a_packaged_sub_joint_is_labeled_as_the_joint_is(self):
+        unlabeled, labeled = self._joints()
+        for joint, named in ((unlabeled, False), (labeled, True)):
+            regrouped = joint.with_path_names({"a": "g/a", "b": "g/b"})
+            group = next(
+                factor for factor in regrouped.factors if isinstance(factor, SupportsFactors)
+            )
+            assert _is_named(group) is named
+
+    def test_binding_a_conditional_joint_keeps_the_flag(self):
+        _, _, joint = _sigma_model()
+        for kernel, named in ((joint, False), (joint.with_label("model"), True)):
+            assert _is_named(kernel._condition_on({"sigma": 1.0})) is named
+
+    def test_a_relabeled_derived_joint_is_labeled(self):
+        derived = _symbolic_joint().with_dim_sizes(n=3)
+        assert derived.with_label("model").notation == "model(a, b, c)"
+
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(lambda j: j.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda j: j.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda j: j.with_label("model"), id="with_label"),
+            pytest.param(lambda j: j.with_path_names(a="u"), id="rename-through-factors"),
+            pytest.param(lambda j: j.with_path_names({"a": "g/a", "b": "g/b"}), id="regroup"),
+            pytest.param(lambda j: j._marginal(("a", "b")), id="marginal-over-two-factors"),
+        ],
+    )
+    def test_a_derived_joint_keeps_the_fixed_paths(self, derive):
+        joint = _with_fixed_paths(_symbolic_joint(), "y")
+        assert _fixed_paths(derive(joint)) == ("y",)
+
+    def test_a_bound_conditional_joint_keeps_the_fixed_paths(self):
+        _, _, joint = _sigma_model()
+        assert _fixed_paths(_with_fixed_paths(joint, "y")._condition_on({"sigma": 1.0})) == ("y",)
 
 
 # -- Round trips ----------------------------------------------------------------------
@@ -1290,7 +1433,11 @@ _JOINTS = [
 
 def _assert_same_joint(restored: Any, joint: Any) -> None:
     assert type(restored) is type(joint)
-    assert (restored.label, restored.spec) == (joint.label, joint.spec)
+    assert (restored.label, restored.spec, restored.notation) == (
+        joint.label,
+        joint.spec,
+        joint.notation,
+    )
     assert [(type(f), f.label, f.spec) for f in restored.factors] == [
         (type(f), f.label, f.spec) for f in joint.factors
     ]

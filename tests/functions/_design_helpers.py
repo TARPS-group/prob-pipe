@@ -33,7 +33,7 @@ def error_of(call: Callable[[], Any]) -> BaseException | None:
 
 def standard_normal(label: str = "z") -> Normal:
     """A scalar law that samples."""
-    return Normal(loc=0.0, scale=1.0, label=label)
+    return Normal(label, loc=0.0, scale=1.0)
 
 
 def record_law(label: str = "joint", *, n: int = 12) -> EmpiricalDistribution:
@@ -41,7 +41,7 @@ def record_law(label: str = "joint", *, n: int = 12) -> EmpiricalDistribution:
     a = jnp.arange(float(n))
     spec = NumericRecordSpec(a=NumericArraySpec((), a.dtype), b=NumericArraySpec((), a.dtype))
     atoms = NumericRecordBatch("atoms", {"a": a, "b": 2.0 * a}, "atom", element_spec=spec)
-    return EmpiricalDistribution(label, atoms)
+    return EmpiricalDistribution(atoms, label=label)
 
 
 def one_field_law(label: str = "posterior", *, n: int = 12) -> EmpiricalDistribution:
@@ -49,7 +49,7 @@ def one_field_law(label: str = "posterior", *, n: int = 12) -> EmpiricalDistribu
     beta = jnp.arange(2.0 * n).reshape(n, 2)
     spec = NumericRecordSpec(beta=NumericArraySpec((2,), beta.dtype))
     atoms = NumericRecordBatch("atoms", {"beta": beta}, "atom", element_spec=spec)
-    return EmpiricalDistribution(label, atoms)
+    return EmpiricalDistribution(atoms, label=label)
 
 
 def atom_leaves(law: Any) -> list[np.ndarray]:

@@ -61,7 +61,7 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 
 ### Contract
 
-Composition builds a factored distribution from parts, written as an *expression*: a single binary operator `*` combines `Distribution`s and `ConditionalDistribution`s into a single joint (conditional) distribution. The kind of the result is derived from the operands. The base objects expose `*` via `__mul__`, which delegates to the operator.
+Composition builds a factored distribution from parts, written with an operator: a single binary operator `*` combines `Distribution`s and `ConditionalDistribution`s into a single joint (conditional) distribution. The kind of the result is derived from the operands. The base objects expose `*` via `__mul__`, which delegates to the operator.
 
 **The `*` operator.** `A * B` composes two operands into a joint. It is **conditional-first**: the left operand may condition on the right, so `lik * prior` reads as the density p(y | β) · p(β), while the reverse, with the producer on the left of its consumer, is an error. Characterize each operand by its **produced slots** `F`, which are exactly the component names in its `event_spec.components` (II.2), and its **unmet given slots** `G`, which are empty for a `Distribution` and the given slots for a `ConditionalDistribution`. The dependency topology is fixed by the name sets; matched specs must also unify:
 
@@ -91,7 +91,9 @@ Two givens that are different quantities are renamed apart first, as fields and 
 
 **Packing the joint.** The joint's event is an exposed record of the components in canonical factor order, preserving each declaration's component order. Assembly extracts components from each factor's one draw; scoring reconstructs that factor's original event value before calling its density method. Extraction reads the declaration: a whole-term component is the draw itself, and an exposed record's components are its immediate children, so reconstructing all of a factor's components restores the draw's kind, structure, and coordinates. In particular, an array and a one-field record may both export `beta`, but their density implementations receive different declared event kinds. Multiple connections from one factor share the same draw. The joint retains the declarations needed for reconstruction and reads packaging from them alone.
 
-**Labeling the result.** The joint's label joins the operands' current labels with `·`, each grouped as an operator groups an operand's label (III.1), so that it reads as one unit: an expression is parenthesized and a label with a space bracketed. So `lik * prior` is labeled `lik·prior`, `(lik * prior).with_label("posterior") * d` is labeled `posterior·d`, and `lik * posterior` for a posterior labeled `model | y` is labeled `lik·(model | y)`. Exchanging independent operands may change the label while preserving the joint law.
+**Labeling the result.** The joint's label joins the operands' current labels with `·`, each grouped by the rules of II.4 so that it reads as one unit. So `lik * prior` is labeled `lik·prior`, `(lik * prior).with_label("posterior") * d` is labeled `posterior·d`, and `lik * d` for a law labeled `my model` is labeled `lik·[my model]`. Labels join associatively: an operand whose label is a product joins as it is, so `(lik * prior) * d` and `lik * (prior * d)` are both labeled `lik·prior·d`. Exchanging independent operands may change the label while preserving the joint law.
+
+**The notation of a product.** A product that `*` or `joint` builds is unlabeled: its expression (II.4) is the product of its operands' expressions, so its notation joins their notations with `·`, as `lik(y | mu)·prior(mu)`. A product given a label, by `with_label` or by the `FactoredDistribution` constructor, displays by that label, as `model(y, mu)`. A law built from a product, such as a copy or a packaged sub-joint, keeps its expression. A product without a label that holds fixed paths (VI.6) displays by its grouped label and its signature, as `(lik·prior)(mu; y)`, since its factors' notations do not show the fixed paths. A marginal over the whole events of several factors is a product without a label whether or not the joint is labeled, as `marginal(model, ("a", "b"))` displays as `a(a)·b(b)` (VI.8). A product that a function returns takes the function's `output_label` as its label, so it displays as `predict(y, mu)` (III.3). A product without a label enters a further composition as its factors, so `(lik * prior) * d` displays as `lik(y | mu)·prior(mu)·d(z)`, and a labeled product enters as one operand, so `model * d` displays as `model(y, mu)·d(z)` and is labeled `model·d`.
 
 Composition determines structure from the names of components and given slots alone. Every operand enters as its flattened factors, so the joint's factors, its produced components, and its connections are the same whatever the operands are called: `AB * C` and `AB.with_label(AB.label) * C` are one joint under one label, and `(lik * prior).with_label("posterior") * d` is the three-factor joint of `lik`, `prior`, and `d`. The only effect of `with_label` on a later composition is the text it contributes to the derived label.
 
@@ -101,7 +103,7 @@ def __mul__(self, other: Distribution | ConditionalDistribution) -> FactoredDist
 
 ### Rationale
 
-Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 – Generality first`, an independent product, where `bound = ∅`, is an edge-free joint, so *dependent?* is a runtime property of the derived graph and only *conditional?* names a class, giving two classes rather than four. Deriving the name deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`). The conditional-first order is a valid topological listing, so acyclicity is automatic and needs no separate graph inference. Associativity rests on the `G_B ∩ F_A = ∅` requirement, under which the validity of `(A * B) * C` and `A * (B * C)` coincide. Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and every result is a first-class joint that composes further (`D4 – Closed system of objects under operations`).
+Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 – Generality first`, an independent product, where `bound = ∅`, is an edge-free joint, so *dependent?* is a runtime property of the derived graph and only *conditional?* names a class, giving two classes rather than four. Deriving the label deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`). An unlabeled product displays factor by factor because a single joined label followed by the joint's signature, as `lik·prior(y, mu)`, would read as one law over `y` and `mu`. The conditional-first order is a valid topological listing, so acyclicity is automatic and needs no separate graph inference. Associativity rests on the `G_B ∩ F_A = ∅` requirement, under which the validity of `(A * B) * C` and `A * (B * C)` coincide. Composition is written with an operator so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and every result is a first-class joint that composes further (`D4 – Closed system of objects under operations`).
 
 ### Notes
 
@@ -149,7 +151,7 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-**A law from functions.** `distribution` builds a `Distribution` from a sampling function, a log-density, or both, as `function` builds a `Function` from a callable (V.1). It takes the law's label first and each function under the name of the operation it realizes: `sample(key)` returns one draw at a PRNG key, at the kind the event declaration names, and `log_prob` or `unnormalized_log_prob` scores one value and returns a real scalar. A density receives an array for an array event, a `Record` for a record event, and the value itself for any other event. A call gives at least one function, at most one density, and an `event_spec` of any kind a `Distribution` declares, and a missing or non-callable function raises `TypeError`, which names it. The law claims the capability that each function given realizes:
+**A law from functions.** `distribution` builds a `Distribution` from a sampling function, a log-density, or both, as `function` builds a `Function` from a callable (V.1). It takes each function under the name of the operation it realizes, the event declaration, and the optional keywords `component` and `label`: `sample(key)` returns one draw at a PRNG key, at the kind the event declaration names, and `log_prob` or `unnormalized_log_prob` scores one value and returns a real scalar. A density receives an array for an array event, a `Record` for a record event, and the value itself for any other event. A call gives at least one function, at most one density, and an `event_spec` of any kind a `Distribution` declares, and a missing or non-callable function raises `TypeError`, which names it. An `OutputSpec` names its components and a bare `RecordSpec` exposes its fields, while any other bare spec is a whole term under `component`, which such a spec requires and the other two refuse, both with `TypeError`. The label defaults to `p`. The law claims the capability that each function given realizes:
 
 - `sample`: `SupportsSampling`;
 - `log_prob`: `SupportsLogProb`, which provides the unnormalized density as a normalized family's does;
@@ -161,20 +163,20 @@ Construction draws nothing and scores no value. It evaluates each function that 
 
 ```python
 def distribution(
-    label: str,
-    /,
     *,
     sample: Callable[[Key], Any] | None = None,
     log_prob: Callable[[Any], Array] | None = None,
     unnormalized_log_prob: Callable[[Any], Array] | None = None,
     event_spec: OutputSpec | TermSpec,
+    component: str | None = None,
+    label: str | None = None,
 ) -> Distribution: ...
-    # at least one function and at most one density
+    # at least one function and at most one density; component for a bare whole-term spec
 ```
 
-**A kernel from a function.** `conditional_distribution` builds a `ConditionalDistribution` (III.9) from a function of its given values that returns a law. Its call form takes the kernel's label and then the function, as in `conditional_distribution("y", lambda mu, tau: Normal("y", mu, tau), given_spec=...)`, and its decorator form on a `def` labels the kernel after the function. Each parameter of the function is a given slot, and its spec is its entry in `given_spec` or else its annotation, which must then be a term spec. A parameter with a default is an optional slot (II.2), which holds a constant of the model, and its default's value declares it when neither does. A parameter with no default and no declaration raises `TypeError`, whose message gives the `given_spec` entry that declares it. Construction evaluates the function once, abstractly, at a stand-in of each required slot's type and at the default of each optional slot, and reads three things from the law it returns:
+**A kernel from a function.** `conditional_distribution` builds a `ConditionalDistribution` (III.9) from a function of its given values that returns a law. Its call form takes the function and an optional label, as in `conditional_distribution(lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec=...)`, and its decorator form on a `def` takes the same keywords. The kernel's label defaults to the function's `__name__`, and to `p` for a lambda, so the decorator form labels the kernel after the function. Each parameter of the function is a given slot, and its spec is its entry in `given_spec` or else its annotation, which must then be a term spec. A parameter with a default is an optional slot (II.2), which holds a constant of the model, and its default's value declares it when neither does. A parameter with no default and no declaration raises `TypeError`, whose message gives the `given_spec` entry that declares it. Construction evaluates the function once, abstractly, at a stand-in of each required slot's type and at the default of each optional slot, and reads three things from the law it returns:
 
-1. the event declaration: the kernel declares the law's, or an explicit `event_spec` that names the law's components and unifies with its type, and a support that a given value sets is left undeclared;
+1. the event declaration: the kernel declares the law's, or an explicit `event_spec` that names the law's components and unifies with its type, where a bare spec other than a record names the law's one component, and a support that a given value sets is left undeclared;
 2. the claims: the kernel claims `SupportsConditionalSampling`, `SupportsConditionalLogProb`, and `SupportsConditionalUnnormalizedLogProb` exactly when the law claims the capability each one twins;
 3. the guards: each twin's guard reports what the law's guard of the capability reported.
 
@@ -182,18 +184,18 @@ Binding every required slot calls the function with each given value as the argu
 
 ```python
 def conditional_distribution(
-    label: str | Callable[..., Distribution] | None = None,
     fn: Callable[..., Distribution] | None = None,
     /,
     *,
+    label: str | None = None,
     given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> ConditionalDistribution | Callable[[Callable[..., Distribution]], ConditionalDistribution]: ...
-    # conditional_distribution(label, fn) is the kernel of fn; without fn it is a decorator, and
+    # conditional_distribution(fn) is the kernel of fn; without fn it is a decorator, and
     # @conditional_distribution on a def labels the kernel after the function
 ```
 
-A kernel whose function returns `distribution(...)` reads the law's claims as for any law, so the kernel of a simulator, `conditional_distribution("y", lambda rate: distribution("y", sample=lambda key: jax.random.poisson(key, rate, (10,)), event_spec=counts), given_spec={"rate": positive_scalar})`, claims conditional sampling and no density.
+A kernel whose function returns `distribution(...)` reads the law's claims as for any law, so the kernel of a simulator, `conditional_distribution(lambda rate: distribution(sample=lambda key: jax.random.poisson(key, rate, (10,)), event_spec=counts, component="y"), given_spec={"rate": positive_scalar})`, claims conditional sampling and no density.
 
 ### Rationale
 

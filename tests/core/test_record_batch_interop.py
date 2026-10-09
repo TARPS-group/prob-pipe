@@ -153,9 +153,9 @@ class TestFieldExtraction:
     """A field view reads its column out of a batch."""
 
     def test_a_field_view_extracts_its_column_from_a_batch(self):
-        joint = (
-            Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
-        ).with_label("joint")
+        joint = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_label(
+            "joint"
+        )
         batch = NumericRecordBatch(
             "batch",
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
@@ -191,7 +191,7 @@ class TestDiagnosticsBridge:
         from probpipe import EmpiricalDistribution
         from probpipe.diagnostics._arviz_bridge import extract_draws
 
-        extracted = extract_draws(EmpiricalDistribution("post", _draws(4)))
+        extracted = extract_draws(EmpiricalDistribution(_draws(4), label="post"))
 
         assert sorted(extracted) == ["a", "b"]
         assert extracted["a"].shape == (4,)
@@ -799,7 +799,7 @@ class TestAnEmpiricalTakesABatch:
             element_spec=RecordSpec(X=(), y=()),
         )
 
-        empirical = EmpiricalDistribution("empirical", data)
+        empirical = EmpiricalDistribution(data, label="empirical")
 
         assert isinstance(empirical, EmpiricalDistribution)
         assert empirical.num_atoms == 4

@@ -21,7 +21,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +29,7 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
+from ..core._expression import Expression, Signature, expression_of, notation_of
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name, term_repr
@@ -759,9 +760,11 @@ class Function(Node, TrackedTerm, Annotated):
 
     ``spec`` contains only input/output declarations. ``with_label`` changes the
     function label and callable metadata; output_label and component names are
-    preserved. ``with_options`` returns a shallow copy with revised controls.
-    A Function stores only the controls set on it, so ``options`` reads every
-    other control's default when it is read.
+    preserved. ``str(f)`` returns :attr:`notation`, the label followed by the
+    parameters, as ``predict(x, y)``, and the repr keeps the label first.
+    ``with_options`` returns a shallow copy with revised controls. A Function
+    stores only the controls set on it, so ``options`` reads every other
+    control's default when it is read.
 
     The engine reads three declarations from the Function it runs (V.1): what
     each parameter accepts, the result declaration, and the realization. A
@@ -1047,12 +1050,14 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def _with_label(self, label: str) -> Self:
-        """Relabel the function and its Python names, preserving output_label and its declaration."""
-        renamed = cast(Self, TrackedTerm._with_label(self, label))
-        object.__setattr__(renamed, "__name__", label)
-        object.__setattr__(renamed, "__qualname__", label)
-        return renamed
+    def _store_expression(self, expression: Expression) -> None:
+        """Store *expression* and its label, which the function's Python names follow.
+
+        The output label and its declaration are kept.
+        """
+        super()._store_expression(expression)
+        object.__setattr__(self, "__name__", self._label)
+        object.__setattr__(self, "__qualname__", self._label)
 
     def raw(self) -> Callable[..., Any]:
         """Return the wrapped callable, or the raw evaluator of a private payload."""
@@ -1182,6 +1187,23 @@ class Function(Node, TrackedTerm, Annotated):
             If the result violates the completed declaration.
         """
         return _call_engine(self, *args, **kwargs)
+
+    @property
+    def notation(self) -> str:
+        """The function's label followed by its parameters, as ``predict(x, y)``, which ``str()`` returns.
+
+        The parameters are the names of :attr:`signature`, in order, joined by
+        ``", "``. No operation reads the notation.
+        """
+        return notation_of(expression_of(self), self._own_signature())
+
+    def _own_signature(self) -> Signature:
+        """The signature: the names of the parameters, in order."""
+        return Signature(tuple(self.signature.parameters))
+
+    def __str__(self) -> str:
+        """The function's :attr:`notation`, as ``predict(x, y)``."""
+        return self.notation
 
     def __repr__(self) -> str:
         """The public class, the label, the parameters, and the declarations set on the function.

@@ -44,7 +44,10 @@ class NumericArrayBatch(Batch[NumericArray]):
 
     Storage is a single array with the batch axes leading — the split
     :class:`~probpipe.RecordBatch` uses, with one column instead of many. This
-    is where a `draw` level lives for an array-valued law.
+    is where a `draw` level lives for an array-valued law. As a JAX pytree it
+    flattens to that array with its spec as the static data, so the label and
+    the expression do not cross a transform, and a batch rebuilt from its
+    leaves is labeled ``NumericArrayBatch`` until a result boundary labels it.
 
     Parameters
     ----------
@@ -294,9 +297,11 @@ def _numeric_array_batch_flatten(batch: NumericArrayBatch):
     The boundary presents a bare array, as a ``NumericArray``'s flatten does.
     Handing the native container to JAX instead fails abstractification before
     ``__jax_array__`` is ever consulted, so a pandas- or xarray-backed batch
-    could not enter a trace at all.
+    could not enter a trace at all. The label and the expression do not cross
+    a transform, so two batches that differ only in their labels have equal
+    treedefs (II.4).
     """
-    return [batch.as_jax()], (batch._spec, batch._label)
+    return [batch.as_jax()], batch._spec
 
 
 def _numeric_array_batch_unflatten(aux, children):
@@ -310,8 +315,13 @@ def _numeric_array_batch_unflatten(aux, children):
     - **Every batch axis preserved**, the ordinary round trip, reusing the spec.
     - **Every batch axis removed**: the value is one element, so a
       :class:`NumericArray` is returned.
+
+    The label does not cross a transform, so a rebuilt batch is labeled
+    ``NumericArrayBatch``, and an element ``NumericArray``, until a result
+    boundary labels it (II.4).
     """
-    spec, label = aux
+    spec = aux
+    label = "NumericArrayBatch"
     (values,) = children
     element_spec = spec.element_spec
     event_rank = len(element_spec.shape)
@@ -340,7 +350,7 @@ def _numeric_array_batch_unflatten(aux, children):
         view._init_batch(spec, label=label)
         return view
     if not surviving:
-        return NumericArray(label, values, spec=element_spec)
+        return NumericArray("NumericArray", values, spec=element_spec)
     raise ValueError(
         _changed_batch_shape(
             _cannot_rebuild("NumericArrayBatch"), tuple(spec.batch_shape), surviving
@@ -453,21 +463,22 @@ class _MappedBatchStore:
 
 
 def _mapped_batch_store_flatten(carried: _MappedBatchStore):
+    # The label does not cross a transform (II.4); the executor labels the
+    # batch it rebuilds.
     return [carried.store], (
         carried.element_spec,
         carried.level_names,
         carried.axis_groups,
-        carried.label,
     )
 
 
 def _mapped_batch_store_unflatten(aux, children) -> _MappedBatchStore:
-    element_spec, level_names, axis_groups, label = aux
+    element_spec, level_names, axis_groups = aux
     (store,) = children
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
     return _MappedBatchStore(
-        label,
+        "NumericArrayBatch",
         store,
         element_spec=element_spec,
         level_names=level_names,

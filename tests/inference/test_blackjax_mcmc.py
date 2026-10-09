@@ -66,7 +66,7 @@ def _gaussian_mean(prior, n=3):
 
 @pytest.fixture
 def small_model():
-    prior = Normal(loc=1.0, scale=0.5, label="a") * Normal(loc=-2.0, scale=0.7, label="b")
+    prior = Normal("a", loc=1.0, scale=0.5) * Normal("b", loc=-2.0, scale=0.7)
     return _identity(prior)
 
 
@@ -131,7 +131,7 @@ class TestBlackJAXNuts:
         is the precision-weighted average ``sum(y) / 4 = 1.5``.
         Tolerances below check mean to 6 σ_MC and variance to 15%.
         """
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
         model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -240,7 +240,7 @@ class TestBlackJAXHmc:
         are conservative MC-noise tolerances — far tighter than the
         ``O(0.5)`` error a mis-specified posterior would produce.
         """
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
         model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
@@ -270,7 +270,7 @@ class TestBlackJAXHmc:
         deterministic check that the Halton trajectory-length jitter is
         active.
         """
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
         model = _gaussian_mean(prior)
         with workflow_run(seed=0):
             posterior = condition_on.with_options(
@@ -301,7 +301,7 @@ class TestBlackJAXHmc:
         here at the default ``num_integration_steps`` rather than the
         hand-dodged value used above.
         """
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
         model = _gaussian_mean(prior)
         with workflow_run(seed=0):
             posterior = condition_on.with_options(
@@ -347,7 +347,7 @@ class TestBlackJAXHmc:
         the user-supplied ``step_size`` is used directly) against the
         randomized-``L`` production kernel.
         """
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
         model = _gaussian_mean(prior)
         with workflow_run(seed=0):
             posterior = condition_on.with_options(

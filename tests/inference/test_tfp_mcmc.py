@@ -23,7 +23,9 @@ Y = jnp.array([0.4, 0.9, -0.1])
 def _model():
     """``y_i ~ Normal(mu, 1)`` for three observations, with ``mu ~ Normal(0, 1)``."""
     likelihood = conditional_distribution(
-        "y", lambda mu: Normal("y", mu * jnp.ones(3), 1.0), given_spec={"mu": NumericArraySpec(())}
+        lambda mu: Normal("y", mu * jnp.ones(3), 1.0),
+        given_spec={"mu": NumericArraySpec(())},
+        label="y",
     )
     return likelihood * Normal("mu", 0.0, 1.0)
 

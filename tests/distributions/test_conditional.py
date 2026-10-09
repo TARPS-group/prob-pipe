@@ -26,6 +26,7 @@ from probpipe import (
     condition_on,
     mean,
 )
+from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalDistributionSpec,
@@ -36,6 +37,7 @@ from probpipe.distributions import (
     NumericConditionalDistribution,
     NumericDistribution,
 )
+from probpipe.distributions._distribution import _detached_term, _fixed_paths
 
 SCALAR = NumericArraySpec(())
 LABEL = OpaqueSpec()
@@ -87,7 +89,8 @@ class LocationKernel(ConditionalDistribution):
         super().__init__(label, {"mu": SCALAR}, OutputSpec(y=SCALAR))
 
     def _condition_on(self, given, /, **kwargs):
-        return Normal(self.label, given["mu"], 1.0, event_spec=self.event_spec)
+        (component,) = self.event_spec.components
+        return Normal(component, given["mu"], 1.0, label=self.label)
 
 
 def _kernel(given=None, event=None, label: str = "k") -> Kernel:
@@ -140,13 +143,8 @@ class TestConstruction:
         given = InputSpec(mu=SCALAR, theta=RecordSpec(a=SCALAR, b=_array(2)))
         assert _kernel(given=given).given_spec == given
 
-    def test_a_bare_term_spec_completes_to_a_whole_term_under_the_kernel_name(self):
-        kernel = _kernel(event=_array(3), label="lik")
-        assert kernel.event_spec == OutputSpec(lik=_array(3))
-        assert not kernel.event_spec.exposes_record
-
-    def test_the_default_component_is_captured_once(self):
-        kernel = _kernel(event=SCALAR, label="lik")
+    def test_the_declared_component_survives_a_relabel(self):
+        kernel = _kernel(event=OutputSpec(lik=SCALAR), label="lik")
         renamed = kernel.with_label("other")
         assert renamed.label == "other"
         assert kernel.label == "lik"
@@ -191,7 +189,6 @@ class TestConstructionErrors:
         [
             pytest.param({"y": SCALAR}, OutputSpec(y=SCALAR), "k", id="whole-term-component"),
             pytest.param({"a": SCALAR}, RecordSpec(a=SCALAR, b=SCALAR), "k", id="record-field"),
-            pytest.param({"lik": SCALAR}, SCALAR, "lik", id="default-component"),
         ],
     )
     def test_a_given_slot_named_like_a_produced_component_raises(self, given, event, name):
@@ -204,7 +201,7 @@ class TestConstructionErrors:
 
     @pytest.mark.parametrize("name", ["", None, 3])
     def test_a_name_that_is_not_a_non_empty_string_raises(self, name):
-        with pytest.raises(TypeError, match="non-empty label"):
+        with pytest.raises(TypeError, match="label must be a non-empty string"):
             _kernel(label=name)
 
     @pytest.mark.parametrize("event", [3.0, (3,), "y", None])
@@ -231,9 +228,10 @@ class TestConstructionErrors:
         with pytest.raises(TypeError, match="TermSpec"):
             _kernel(given={"mu": slot_spec})
 
-    def test_a_bare_event_needs_a_name_that_is_a_valid_component(self):
-        with pytest.raises(ValueError, match="component names"):
-            _kernel(event=SCALAR, label="a/b")
+    @pytest.mark.parametrize("event", [SCALAR, _array(3)])
+    def test_a_bare_term_spec_event_raises_asking_for_a_component(self, event):
+        with pytest.raises(TypeError, match="needs a component"):
+            _kernel(event=event, label="lik")
 
     def test_a_kernel_that_leaves_its_declaration_unset_raises(self):
         class Undeclared(ConditionalDistribution):
@@ -644,6 +642,56 @@ class TestWithPathNames:
     def test_a_rename_the_kernel_cannot_take_raises(self, rename, error):
         with pytest.raises(error):
             rename(_kernel())
+
+
+def _with_fixed_paths(term, *paths: str):
+    """*term* holding *paths* fixed, as applying a kernel at given values records."""
+    term._store_expression(with_fixed(expression_of(term), paths))
+    return term
+
+
+class TestNotation:
+    """A kernel reads as its label, its components, ``|``, and its given slots."""
+
+    def test_a_kernel_reads_by_its_components_and_its_given_slots(self):
+        glm = _kernel(given={"beta": SCALAR}, label="glm")
+        assert glm.notation == "glm(y | beta)"
+
+    def test_every_given_slot_is_listed_in_declaration_order(self):
+        glm = _kernel(given={"beta": SCALAR, "sigma": SCALAR}, label="glm")
+        assert glm.notation == "glm(y | beta, sigma)"
+
+    def test_every_component_is_listed_in_declaration_order(self):
+        kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())), label="k")
+        assert kernel.notation == "k(y, z | mu)"
+
+    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+        glm = _kernel(given={"beta": SCALAR}, label="glm")
+        assert str(glm) == "glm(y | beta)"
+        assert repr(glm).startswith("Kernel('glm', component='y', given=('beta',)")
+
+    def test_fixed_paths_follow_the_given_slots(self):
+        glm = _with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
+        assert glm.notation == "glm(y | sigma; beta)"
+
+    def test_a_kernel_holds_no_path_fixed_by_default(self):
+        assert _fixed_paths(_kernel()) == ()
+
+    @pytest.mark.parametrize(
+        "copy",
+        [
+            pytest.param(lambda k: k.raw(), id="raw"),
+            pytest.param(lambda k: _detached_term(k), id="detached"),
+            pytest.param(lambda k: k.with_label("glm2"), id="with_label"),
+            pytest.param(lambda k: k.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda k: k.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda k: k.with_path_names(sigma="s"), id="rename-a-slot"),
+            pytest.param(lambda k: k.with_path_names(y="obs"), id="rename-a-component"),
+        ],
+    )
+    def test_a_copy_keeps_the_fixed_paths(self, copy):
+        kernel = _kernel(given={"sigma": _array("n")}, event=OutputSpec(y=_array("n")))
+        assert _fixed_paths(copy(_with_fixed_paths(kernel, "beta"))) == ("beta",)
 
 
 class TestConditionOnOperation:

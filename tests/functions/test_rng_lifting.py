@@ -18,6 +18,7 @@ from probpipe import (
     NumericDistribution,
     NumericRecord,
     NumericRecordBatch,
+    OutputSpec,
     SupportsSampling,
     function,
     workflow_run,
@@ -29,7 +30,7 @@ from probpipe.functions import _context, _plan
 class _RecordingNormal(Normal):
     def __init__(self, sample_calls, *, label):
         self.sample_calls = sample_calls
-        super().__init__(loc=0.0, scale=1.0, label=label)
+        super().__init__(label, loc=0.0, scale=1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
@@ -40,7 +41,7 @@ class _RecordingNormal(Normal):
 class _GoldenBitsDistribution(NumericDistribution, SupportsSampling):
     def __init__(self, sample_calls):
         self.sample_calls = sample_calls
-        super().__init__("bits", NumericArraySpec((), "float32", real))
+        super().__init__("bits", OutputSpec(bits=NumericArraySpec((), "float32", real)))
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
@@ -82,7 +83,7 @@ class TestSequentialLiftingWorkflowRun:
             ) as build_plan,
             workflow_run(seed=7),
         ):
-            result = identity(Normal(loc=0.0, scale=1.0, label="x"))
+            result = identity(Normal("x", loc=0.0, scale=1.0))
 
         assert result.num_atoms == 8
         build_plan.assert_called_once()
@@ -101,7 +102,7 @@ class TestSequentialLiftingWorkflowRun:
             workflow_run(seed=7),
             pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"),
         ):
-            workflow.with_options(n_broadcast_samples=0)(Normal(loc=0.0, scale=1.0, label="x"))
+            workflow.with_options(n_broadcast_samples=0)(Normal("x", loc=0.0, scale=1.0))
 
         resolve_dispatch.assert_not_called()
         commit_invocation.assert_not_called()
@@ -176,7 +177,7 @@ class TestSequentialLiftingWorkflowRun:
         def identity(x):
             return x
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         def run():
             with workflow_run(seed=7):
@@ -194,7 +195,7 @@ class TestSequentialLiftingWorkflowRun:
         def identity(x):
             return x
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         with patch(
             "probpipe.functions._context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
@@ -214,8 +215,8 @@ class TestSequentialLiftingWorkflowRun:
         def deterministic(x):
             return x + 1
 
-        normal = Normal(loc=0.0, scale=1.0, label="x")
-        empirical = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
+        normal = Normal("x", loc=0.0, scale=1.0)
+        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
 
         def baseline():
             with workflow_run(seed=7):
@@ -243,7 +244,7 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
     def inner_identity(value):
         return value
 
-    nested_dist = Normal(loc=0.0, scale=1.0, label="nested")
+    nested_dist = Normal("nested", loc=0.0, scale=1.0)
 
     def call_nested_and_catch(value):
         with suppress(Exception):
@@ -267,7 +268,7 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
     def following_identity(value):
         return value
 
-    outer_dist = Normal(loc=0.0, scale=1.0, label="outer")
+    outer_dist = Normal("outer", loc=0.0, scale=1.0)
 
     def following_samples(workflow):
         with workflow_run(seed=7):

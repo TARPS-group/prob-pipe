@@ -32,6 +32,7 @@ from collections.abc import Mapping
 # exposes; the conflict-avoidance constraint itself doesn't change.
 from typing import Any, Self, _ProtocolMeta
 
+from ._expression import Expression, Named, Signature, expression_of, fixed_paths_of, label_of
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
@@ -140,6 +141,13 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     replaces it, returning a copy. ``with_path_names`` on the named-tree types
     renames the fields within an object and preserves the object's label.
 
+    The label is read from the term's **expression**, a private immutable tree
+    that states what the term is: a term constructed directly carries its label
+    alone, and an operation's result carries the expression the operation
+    builds from its operands', as ``E[(y, mu) ~ model]`` for the mean of a law
+    ``model``. :meth:`with_label` replaces the expression with the new label,
+    so the label hides the derivation, which provenance still records.
+
     Provenance is **write-once**: it is attached at most once via
     :meth:`with_provenance`, and a subsequent attempt raises. Transformations
     that build a new object attach fresh provenance to the result instead of
@@ -166,7 +174,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     Notes
     -----
     The mixin holds no per-instance storage of its own (``__slots__ = ()``);
-    the state lives in the ``_label`` / ``_provenance``
+    the state is stored in the ``_expression`` / ``_label`` / ``_provenance``
     attributes, which a host class declares in its ``__slots__`` (when it uses
     slots) and initializes via :meth:`_init_tracked`. All writes go through
     ``object.__setattr__`` so the mixin also works on immutable hosts that
@@ -179,6 +187,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     """
 
     _label: str
+    _expression: Expression
     _provenance: Provenance | None
     __slots__ = ()
 
@@ -190,13 +199,36 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     ) -> None:
         """Initialize the identity state (constructor helper for host classes).
 
-        Assigns ``_label`` and ``_provenance`` via
-        ``object.__setattr__`` so immutable hosts can call it from their
+        Assigns the expression of *label* alone, the label, and ``_provenance``
+        via ``object.__setattr__`` so immutable hosts can call it from their
         constructor. Performs no validation — the host constructor owns its
         own ``label`` policy (required vs. auto-derived default).
         """
+        object.__setattr__(self, "_expression", Named(label))
         object.__setattr__(self, "_label", label)
         object.__setattr__(self, "_provenance", provenance)
+
+    def _store_expression(self, expression: Expression) -> None:
+        """Store *expression* and the label it renders, on a term that no caller holds yet.
+
+        The label is stored as the expression renders it now, so it is read
+        once and the term keeps it. A kind whose state derives from its label
+        overrides this, so the state follows the expression.
+        """
+        object.__setattr__(self, "_expression", expression)
+        object.__setattr__(self, "_label", label_of(expression))
+
+    def _own_signature(self) -> Signature | None:
+        """The signature the term's declaration states; ``None`` for a value, which has none."""
+        return None
+
+    def _relabeled_expression(self, label: str) -> Expression:
+        """The expression of this term under *label*, which keeps the paths the term holds fixed."""
+        own = self._own_signature()
+        if own is None:
+            return Named(label)
+        fixed = fixed_paths_of(expression_of(self))
+        return Named(label, Signature(own.components, own.given, fixed))
 
     # -- identity ------------------------------------------------------------
 
@@ -271,8 +303,27 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
                 f"{type(self).__name__}.with_label() requires a non-empty string label, "
                 f"got {label!r}"
             )
+        return self._with_expression(self._relabeled_expression(label))
+
+    def _with_expression(self, expression: Expression) -> Self:
+        """A shallow copy that carries *expression*, with no provenance, for a boundary that records its own.
+
+        A kind whose state derives from its label overrides
+        :meth:`_store_expression`, so the state follows the expression here
+        and under :meth:`with_label` alike.
+
+        Parameters
+        ----------
+        expression : Expression
+            The copy's expression, whose label the copy takes.
+
+        Returns
+        -------
+        Self
+            The copy, which shares its data with this object.
+        """
         clone = self._shallow_copy()
-        object.__setattr__(clone, "_label", label)
+        clone._store_expression(expression)
         object.__setattr__(clone, "_provenance", None)
         return clone
 

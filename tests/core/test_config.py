@@ -1,10 +1,13 @@
-"""Tests for ProvenanceConfig env-var initialisation."""
+"""Tests for ProvenanceConfig env-var initialisation, and for NotationConfig."""
 
 import pytest
 
 from probpipe.core.config import (
+    _NOTATION_MAX_DEPTH_ENV_VAR,
     _PROVENANCE_MODE_ENV_VAR,
+    NotationConfig,
     ProvenanceMode,
+    _initial_max_depth,
     _initial_provenance_mode,
 )
 
@@ -38,3 +41,41 @@ class TestProvenanceModeEnvVar:
         monkeypatch.setenv(_PROVENANCE_MODE_ENV_VAR, "off")
         probpipe.provenance_config.reset()
         assert probpipe.provenance_config.mode is ProvenanceMode.OFF
+
+
+class TestNotationMaxDepth:
+    """``notation_config.max_depth`` sets how many nested levels a rendering shows."""
+
+    def test_the_default_shows_eight_levels(self, monkeypatch):
+        monkeypatch.delenv(_NOTATION_MAX_DEPTH_ENV_VAR, raising=False)
+        assert _initial_max_depth() == 8
+        assert NotationConfig().max_depth == 8
+
+    def test_the_environment_variable_sets_the_initial_depth(self, monkeypatch):
+        monkeypatch.setenv(_NOTATION_MAX_DEPTH_ENV_VAR, "3")
+        assert NotationConfig().max_depth == 3
+
+    @pytest.mark.parametrize("raw", ["0", "-2", "deep", "2.5"])
+    def test_an_invalid_environment_value_raises(self, monkeypatch, raw):
+        monkeypatch.setenv(_NOTATION_MAX_DEPTH_ENV_VAR, raw)
+        with pytest.raises(ValueError, match="PROBPIPE_NOTATION_MAX_DEPTH"):
+            _initial_max_depth()
+
+    def test_the_setting_is_settable_and_reset_restores_it(self, monkeypatch):
+        import probpipe
+
+        monkeypatch.delenv(_NOTATION_MAX_DEPTH_ENV_VAR, raising=False)
+        probpipe.notation_config.max_depth = 2
+        assert probpipe.notation_config.max_depth == 2
+        probpipe.notation_config.reset()
+        assert probpipe.notation_config.max_depth == 8
+
+    @pytest.mark.parametrize("value", [1.5, "3", True, None])
+    def test_a_depth_that_is_not_an_integer_raises_type_error(self, value):
+        with pytest.raises(TypeError, match="max_depth must be a positive integer"):
+            NotationConfig().max_depth = value
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_a_depth_below_one_raises_value_error(self, value):
+        with pytest.raises(ValueError, match="max_depth must be a positive integer"):
+            NotationConfig().max_depth = value

@@ -252,8 +252,10 @@ class TestAddEss:
     def test_a_posterior_without_chains_raises_naming_its_levels(self):
         from probpipe import EmpiricalDistribution
 
-        law = EmpiricalDistribution("theta", np.random.default_rng(0).standard_normal((50, 2)))
-        with pytest.raises(ValueError, match=r"'theta' has no chains: .* \['theta'\]"):
+        law = EmpiricalDistribution(
+            np.random.default_rng(0).standard_normal((50, 2)), component="theta"
+        )
+        with pytest.raises(ValueError, match=r"'p' has no chains: .* \['theta'\]"):
             add_ess(law)
 
     def test_ess_covers_all_params(self, posterior_3params):
@@ -413,7 +415,7 @@ class TestAddMcmcDiagnostics:
         diverging = np.zeros((2, 50), dtype=bool)
         diverging[0, [3, 7]] = True
         diverging[1, 11] = True
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
+        prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
         posterior = make_posterior(
             chains,
             parents=(prior,),

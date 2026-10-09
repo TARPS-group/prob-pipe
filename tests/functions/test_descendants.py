@@ -35,6 +35,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordBatch,
     NumericRecordSpec,
+    OutputSpec,
     Record,
     RecordSpec,
     SupportsSampling,
@@ -61,7 +62,7 @@ def _stochastic_plan(values, n_broadcast_samples=16):
 class _RecordingNormal(Normal):
     def __init__(self, calls, *, label="base"):
         self.calls = calls
-        super().__init__(label, 0.0, 1.0)
+        super().__init__(label, 0.0, 1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -71,7 +72,7 @@ class _RecordingNormal(Normal):
 class _RecordingMultivariateNormal(MultivariateNormal):
     def __init__(self, calls):
         self.calls = calls
-        super().__init__("base", jnp.zeros(2), cov=jnp.eye(2))
+        super().__init__("base", jnp.zeros(2), cov=jnp.eye(2), label="base")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -283,7 +284,7 @@ def _posterior():
     columns = {"mu": jnp.arange(12.0), "tau": jnp.arange(12.0) + 100.0}
     spec = NumericRecordSpec(mu=(), tau=())
     atoms = NumericRecordBatch("draws", columns, "draw", element_spec=spec)
-    return EmpiricalDistribution("posterior", atoms, jnp.arange(1.0, 13.0))
+    return EmpiricalDistribution(atoms, jnp.arange(1.0, 13.0), label="posterior")
 
 
 def _normal():
@@ -293,7 +294,7 @@ def _normal():
 def _kde():
     """A kernel density estimate over ``a`` and ``b``, which renames at its boundary."""
     columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
-    return KDEDistribution("kde", NumericRecordBatch("rows", columns, "row"))
+    return KDEDistribution(NumericRecordBatch("rows", columns, "row"), label="kde")
 
 
 #: A law, a rename that copies it or rebuilds it as a factored joint, the class of
@@ -461,7 +462,8 @@ class _FreeNormal(Distribution, SupportsSampling):
     """A standard normal law over arrays of the free length ``n``, which draws three coordinates."""
 
     def __init__(self, label="x", spec=_FREE):
-        super().__init__(label, spec)
+        event_spec = spec if isinstance(spec, RecordSpec) else OutputSpec(**{label: spec})
+        super().__init__(label, event_spec)
 
     def _sample(self, key, sample_shape=()):
         return jax.random.normal(key, (*sample_shape, 3))
@@ -806,7 +808,7 @@ class TestLifts:
 
     def test_an_exact_empirical_root_and_its_transform_enumerate_without_sampling(self):
         root = EmpiricalDistribution(
-            "base", jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8])
+            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), component="base"
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
@@ -823,7 +825,7 @@ class TestLifts:
 
     def test_a_transform_passed_before_its_empirical_root_enumerates(self):
         root = EmpiricalDistribution(
-            "base", jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8])
+            jnp.asarray([1.0, 4.0]), weights=jnp.asarray([0.2, 0.8]), component="base"
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
@@ -841,7 +843,6 @@ class TestLifts:
 
     def test_an_exact_record_projection_then_transform_stays_diagonal(self):
         root = EmpiricalDistribution(
-            "joint",
             NumericRecordBatch(
                 "draws",
                 {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
@@ -849,6 +850,7 @@ class TestLifts:
                 element_spec=NumericRecordSpec(x=(), y=()),
             ),
             weights=jnp.asarray([0.3, 0.7]),
+            label="joint",
         )
         x = root["x"]
         exponentiated_x = BijectorTransformedDistribution("exponentiated_x", x, tfb.Exp())
@@ -909,9 +911,9 @@ class TestEmpiricalRootWeights:
 
     def test_exact_empirical_root_and_descendant_keep_weights_once(self):
         root = EmpiricalDistribution(
-            "base",
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
+            component="base",
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
@@ -936,7 +938,6 @@ class TestEmpiricalRootWeights:
 
     def test_exact_record_projection_then_transform_keeps_the_root_weights(self):
         root = EmpiricalDistribution(
-            "joint",
             NumericRecordBatch(
                 "draws",
                 {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
@@ -944,6 +945,7 @@ class TestEmpiricalRootWeights:
                 element_spec=NumericRecordSpec(x=(), y=()),
             ),
             weights=jnp.asarray([0.3, 0.7]),
+            label="joint",
         )
         x = root["x"]
         exponentiated_x = BijectorTransformedDistribution("exponentiated_x", x, tfb.Exp())
@@ -965,9 +967,9 @@ class TestEmpiricalRootWeights:
 
     def test_mixed_empirical_descendant_multiplies_root_weight_once(self):
         exact_root = EmpiricalDistribution(
-            "exact",
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
+            component="exact",
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", exact_root, tfb.Exp())
         sampled_calls = []

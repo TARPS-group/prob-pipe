@@ -28,6 +28,7 @@ import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._expression import Applied, Expression, expression_of
 from ._repr import type_name
 from ._specs import TermSpec
 from .provenance import Provenance
@@ -193,6 +194,12 @@ class _ObjectBatch[E](Batch[E]):
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         return self._wrap_element(stored, label).with_provenance(provenance)
+
+    def _element_call(self, index: tuple[int, ...]) -> Expression | None:
+        """The call the stored law at *index* carries when a function lifted over laws gave it, else ``None``."""
+        stored = self._store[index]
+        expression = expression_of(stored) if isinstance(stored, TrackedTerm) else None
+        return expression if isinstance(expression, Applied) else None
 
     def _wrap_element(self, value: Any, label: str) -> Any:
         """The term of this batch's element kind holding the raw *value*, labeled *label*.

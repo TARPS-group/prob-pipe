@@ -71,7 +71,7 @@ class TestPyMCModel:
 
     @pytest.fixture
     def model(self):
-        return PyMCModel("test_pymc", simple_model_fn)
+        return PyMCModel(simple_model_fn, label="test_pymc")
 
     def test_construction(self, model):
         assert isinstance(model, PyMCModel)
@@ -272,7 +272,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel("model", model_fn).event_spec.spec
+        tpl = PyMCModel(model_fn, label="model").event_spec.spec
         assert tpl.fields == ("intercept", "slope", "y")
         assert tpl["intercept"] == NumericArraySpec((), _FLOAT, real)
         assert tpl["slope"] == NumericArraySpec((3,), _FLOAT, real)
@@ -290,7 +290,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         assert model.event_spec == OutputSpec(
             RecordSpec(
                 intercept=NumericArraySpec((), _FLOAT, real),
@@ -309,7 +309,7 @@ class TestRecordSpec:
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel("model", model_fn).event_spec.spec
+        tpl = PyMCModel(model_fn, label="model").event_spec.spec
         assert tpl.fields == ("mu", "y")
         assert tpl["y"] == NumericArraySpec((), _FLOAT, real)
 
@@ -325,7 +325,7 @@ class TestRecordSpec:
         per-call mutable state, so concurrent inference on one instance
         can't race.
         """
-        kernel = PyMCModel("model", per_observation_effect_model_fn)
+        kernel = PyMCModel(per_observation_effect_model_fn, label="model")
         # X is a covariate, a given slot, so the event's shapes are symbolic.
         tpl = kernel.event_spec.spec
         assert tpl.fields == ("intercept", "alpha", "y")
@@ -354,7 +354,7 @@ class TestRecordSpec:
         rng = np.random.default_rng(0)
         X = np.arange(N, dtype=np.float32)
         y = rng.normal(size=N).astype(np.float32)
-        model = PyMCModel("model", per_observation_effect_model_fn)
+        model = PyMCModel(per_observation_effect_model_fn, label="model")
         with workflow_run(seed=0):
             result = condition_on.with_options(
                 method="pymc_nuts",
@@ -388,7 +388,7 @@ class TestRecordSpec:
         with workflow_run(seed=0):
             result = condition_on.with_options(
                 method="pymc_advi", method_options={"num_iterations": 200}
-            )(PyMCModel("model", self._intercept_alpha_model), {"y": y})
+            )(PyMCModel(self._intercept_alpha_model, label="model"), {"y": y})
         assert isinstance(result, FactoredDistribution)
         assert method_of(result) == "pymc_advi"
         assert tuple(result.event_spec.components) == ("intercept", "alpha")
@@ -456,7 +456,7 @@ class TestRecordSpec:
             result = condition_on.with_options(
                 method="pymc_advi",
                 method_options={"num_iterations": 100, "num_results": 10},
-            )(PyMCModel("model", model_fn), {"y": np.zeros(3, dtype=np.float32)})
+            )(PyMCModel(model_fn, label="model"), {"y": np.zeros(3, dtype=np.float32)})
         assert isinstance(result, EmpiricalDistribution)
         assert method_of(result) == "pymc_advi"
         assert result.atoms.batch_shape == (1, 10)
@@ -479,7 +479,7 @@ class TestRecordSpec:
                     "num_results": 25,
                     "vi_method": "fullrank_advi",
                 },
-            )(PyMCModel("model", self._intercept_alpha_model), {"y": y})
+            )(PyMCModel(self._intercept_alpha_model, label="model"), {"y": y})
         assert method_of(result) == "pymc_fullrank_advi"
         draws = flat_draws(result)
         assert draws.event_template.fields == ("intercept", "alpha")
@@ -504,7 +504,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         assert "ghost" in model.event_spec.components
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="free random variables must not change with the data"):
@@ -528,7 +528,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         assert tuple(model.event_spec.components) == ("mu", "y")  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="free random variables must not change with the data"):
@@ -551,7 +551,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         # Both observed variables are fields of the joint law.
         assert tuple(model.event_spec.components) == ("mu", "X", "y")
 
@@ -574,7 +574,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu + X_rv, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         with workflow_run(seed=0):
             result = condition_on.with_options(
                 method="pymc_nuts",
@@ -601,7 +601,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu + X_rv, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         with workflow_run(seed=0):
             result = condition_on.with_options(
                 method="pymc_nuts",
@@ -638,7 +638,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=zeta + alpha + mu, sigma=1000.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         with workflow_run(seed=0):
             result = condition_on.with_options(
                 method="pymc_nuts",
@@ -672,7 +672,7 @@ class TestRecordSpec:
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         with pytest.raises(ValueError, match="free random variables must not change with the data"):
             condition_on.with_options(
                 method="pymc_nuts",
@@ -703,7 +703,7 @@ class TestRecordSpec:
             return m
 
         # The declaration holds a symbolic dimension.
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         assert model.event_spec.spec["z"].shape == ("z_0",)
 
 
@@ -741,7 +741,7 @@ class TestRecordDataUnpacking:
         # X is a covariate: binding it curries the kernel, and the law's
         # _pymc_model unpacks y from a Record. The build uses the *real* X
         # and y, not the sentinel of the build without data.
-        model = PyMCModel("model", self._xy_model)._condition_on(Record("r", X=data["X"]))
+        model = PyMCModel(self._xy_model, label="model")._condition_on(Record("r", X=data["X"]))
         built = model._pymc_model(data=Record("r", y=data["y"]))
         # The 'y' observed RV should have N observations.
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
@@ -753,7 +753,7 @@ class TestRecordDataUnpacking:
         N = 15
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        model = PyMCModel("model", self._xy_model)._condition_on({"X": X})
+        model = PyMCModel(self._xy_model, label="model")._condition_on({"X": X})
         built = model._pymc_model(data={"y": y})
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
@@ -769,7 +769,7 @@ class TestRecordDataUnpacking:
 
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
-        model = PyMCModel("model", self._xy_model)._condition_on(Record("r", X=X))
+        model = PyMCModel(self._xy_model, label="model")._condition_on(Record("r", X=X))
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.

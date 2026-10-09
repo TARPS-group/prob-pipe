@@ -47,7 +47,7 @@ def regression_data():
 
 @pytest.fixture
 def prior():
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
+    return MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
 
 
 @pytest.fixture

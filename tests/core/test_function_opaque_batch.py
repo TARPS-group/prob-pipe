@@ -385,7 +385,7 @@ class TestElements:
         """
 
         class _Named(TrackedTerm):
-            __slots__ = ("_label", "_provenance")
+            __slots__ = ("_expression", "_label", "_provenance")
 
             def __init__(self, label):
                 self._init_tracked(label)

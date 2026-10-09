@@ -21,6 +21,7 @@ from probpipe import (
     NumericRecord,
     NumericRecordSpec,
     OpaqueSpec,
+    OutputSpec,
     condition_on,
     conditional_distribution,
     inference_method_registry,
@@ -62,7 +63,7 @@ def _gaussian_mean(prior, n, scale=1.0):
 @pytest.fixture
 def small_model():
     """The unnormalized conditional of a joint with a 2-field factored prior."""
-    prior = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=2.0, scale=0.5, label="b")
+    prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=2.0, scale=0.5)
     likelihood = ObservationKernel(
         "y",
         dict(prior.event_spec.components),
@@ -134,7 +135,7 @@ class _FlatTarget(Distribution):
     """A law over a flat array that has no flat-vector view of its own."""
 
     def __init__(self):
-        super().__init__("target", NumericArraySpec((2,)))
+        super().__init__("target", OutputSpec(target=NumericArraySpec((2,))))
 
     def _log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -277,7 +278,7 @@ class TestModelFactors:
 
     @pytest.fixture
     def gaussian_target(self):
-        prior = FactoredDistribution("prior", [Normal(loc=0.0, scale=1.0, label="mu")])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
         return observed_target(
             _gaussian_mean(prior, 3, scale=2.0), {"y": jnp.array([1.0, -1.0, 0.5])}
         )
@@ -289,7 +290,7 @@ class TestModelFactors:
         np.testing.assert_allclose(factors.observed, [1.0, -1.0, 0.5])
 
     def test_a_target_that_is_no_conditioned_joint_has_no_factors(self):
-        assert model_factors(Normal(loc=0.0, scale=1.0, label="x")) is None
+        assert model_factors(Normal("x", loc=0.0, scale=1.0)) is None
 
     def test_returns_scalar_log_likelihood(self, gaussian_target):
         llf = likelihood_flat(model_factors(gaussian_target))
@@ -311,9 +312,9 @@ Y = jnp.array([1.0, 2.0, 0.5, 1.5, 2.5])
 def _shifted(**given_spec):
     """``y_i ~ N(mu + shift, 2^2)`` over five observations, with ``shift`` optional at 0."""
     return conditional_distribution(
-        "lik",
         lambda mu, shift=0.0: Normal("y", (mu + shift) * jnp.ones(5), 2.0),
         given_spec={"mu": NumericArraySpec(()), **given_spec},
+        label="lik",
     )
 
 
@@ -333,8 +334,18 @@ class TestModelFactorsWithOptionalSlots:
         given = parameter_given(factors, {"mu": jnp.asarray(1.0), "shift": jnp.asarray(0.5)})
         assert set(given) == {"mu", "shift"}
 
+    @pytest.mark.parametrize("labeled", [False, True], ids=["unlabeled", "labeled"])
+    def test_a_prior_of_several_factors_is_labeled_as_the_model_is(self, labeled):
+        from probpipe.distributions._factored import _is_named
+
+        model = _shifted() * Normal("mu", 0.0, 1.0) * Normal("shift", 0.0, 1.0)
+        model = model.with_label("model") if labeled else model
+        factors = model_factors(observed_target(model, {"y": Y}))
+        assert isinstance(factors.prior, FactoredDistribution)
+        assert _is_named(factors.prior) is labeled
+
     def test_a_prior_kernel_at_its_defaults_is_the_prior(self):
-        hyper = conditional_distribution("mu", lambda loc=0.0: Normal("mu", loc, 1.0))
+        hyper = conditional_distribution(lambda loc=0.0: Normal("mu", loc, 1.0), label="mu")
         factors = model_factors(observed_target(_shifted() * hyper, {"y": Y}))
         assert isinstance(factors.prior, Normal)
 
@@ -373,7 +384,7 @@ class _EventShapeOnlyDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__("event_shape_only", NumericArraySpec((3,)))
+        super().__init__("event_shape_only", OutputSpec(event_shape_only=NumericArraySpec((3,))))
 
     def _unnormalized_log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -385,7 +396,7 @@ class _NoInitHeuristicDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__("no_init_heuristic", OpaqueSpec())
+        super().__init__("no_init_heuristic", OutputSpec(no_init_heuristic=OpaqueSpec()))
 
     def _unnormalized_log_prob(self, value):
         return jnp.asarray(0.0)
@@ -409,7 +420,7 @@ class TestGetInitState:
 
     def test_explicit_init_passthrough(self):
         # Branch 1: explicit init returned verbatim (cast to prior dtype).
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         out = get_init_state(prior, init=jnp.array([3.0, 4.0]))
         np.testing.assert_array_equal(np.asarray(out), np.array([3.0, 4.0]))
         # Cast to the prior dtype: a default-float Normal yields a float
@@ -418,14 +429,14 @@ class TestGetInitState:
 
     def test_explicit_init_casts_dtype(self):
         # An integer-valued init is cast to the prior's float dtype.
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         out = get_init_state(prior, init=np.array([1, 2], dtype=np.int32))
         assert jnp.issubdtype(out.dtype, jnp.floating)
         np.testing.assert_allclose(np.asarray(out), np.array([1.0, 2.0]))
 
     def test_prior_sample_path(self):
         # Branch 2: prior implements SupportsSampling -> draw a sample.
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         assert isinstance(prior, SupportsSampling)
         out = get_init_state(prior, init=None, random_seed=0)
         assert out.shape == (1,)  # scalar Normal -> length-1 vector

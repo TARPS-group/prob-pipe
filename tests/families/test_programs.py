@@ -87,7 +87,7 @@ model { }
 @pytest.mark.usefixtures("_stanc")
 class TestStanModel:
     def test_the_given_slots_are_the_typed_data_block_entries(self, regression_file):
-        model = StanModel("regression", regression_file)
+        model = StanModel(regression_file, label="regression")
         assert isinstance(model, ConditionalDistribution)
         assert dict(model.given_spec) == {
             "N": NumericArraySpec((), _INT),
@@ -97,7 +97,7 @@ class TestStanModel:
         }
 
     def test_the_event_is_the_parameter_record_with_dtypes_and_supports(self, regression_file):
-        model = StanModel("regression", regression_file)
+        model = StanModel(regression_file, label="regression")
         assert model.event_spec == OutputSpec(
             RecordSpec(
                 beta=NumericArraySpec(("K",), _FLOAT, real),
@@ -108,7 +108,7 @@ class TestStanModel:
     def test_each_parameter_carries_its_declared_constraint(self, tmp_path):
         path = tmp_path / "constrained.stan"
         path.write_text(_CONSTRAINED)
-        assert dict(StanModel("constrained", str(path)).supports) == {
+        assert dict(StanModel(str(path), label="constrained").supports) == {
             "rho": interval(-1.0, 1.0),
             "above": greater_than(2.0),
             "below": None,
@@ -122,38 +122,38 @@ class TestStanModel:
         path = tmp_path / "broken.stan"
         path.write_text("parameters { real x } model { }")
         with pytest.raises(ValueError, match="stanc"):
-            StanModel("broken", str(path))
+            StanModel(str(path), label="broken")
 
     def test_it_claims_the_conditional_unnormalized_density_alone(self, regression_file):
-        model = StanModel("regression", regression_file)
+        model = StanModel(regression_file, label="regression")
         assert isinstance(model, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(model, SupportsConditionalLogProb)
         assert not _kernel_is_normalized(model)
 
     def test_data_given_at_construction_curry_the_program(self, regression_file):
-        model = StanModel("regression", regression_file, data={"N": 3, "K": 2})
+        model = StanModel(regression_file, data={"N": 3, "K": 2}, label="regression")
         assert list(model.given_spec) == ["X", "y"]
         assert model.event_spec.spec["beta"].shape == (2,)
 
     def test_binding_every_entry_returns_the_unnormalized_posterior(self, regression_file):
-        posterior = StanModel("regression", regression_file)._condition_on(_data())
+        posterior = StanModel(regression_file, label="regression")._condition_on(_data())
         assert isinstance(posterior, Distribution)
         assert isinstance(posterior, SupportsUnnormalizedLogProb)
         assert not _is_normalized(posterior)
         assert posterior.event_spec.spec["beta"] == NumericArraySpec((2,), _FLOAT, real)
 
     def test_a_construction_that_binds_every_entry_is_the_posterior(self, regression_file):
-        posterior = StanModel("regression", regression_file, data=_data())
+        posterior = StanModel(regression_file, data=_data(), label="regression")
         assert isinstance(posterior, Distribution)
         assert not isinstance(posterior, ConditionalDistribution)
 
     def test_the_posterior_carries_its_program_and_data(self, regression_file):
-        posterior = StanModel("regression", regression_file, data=_data())
+        posterior = StanModel(regression_file, data=_data(), label="regression")
         assert posterior.stan_file == regression_file
         assert set(posterior.data) == {"N", "K", "X", "y"}
 
     def test_the_posterior_pickles(self, regression_file):
-        posterior = StanModel("regression", regression_file, data=_data())
+        posterior = StanModel(regression_file, data=_data(), label="regression")
         restored = pickle.loads(pickle.dumps(posterior))
         assert (restored.label, restored.spec, restored.stan_file) == (
             posterior.label,
@@ -163,17 +163,17 @@ class TestStanModel:
 
     def test_an_entry_the_data_block_does_not_declare_raises(self, regression_file):
         with pytest.raises(KeyError, match="unknown data variable 'M'; available data variables"):
-            StanModel("regression", regression_file, data={"M": 3})
+            StanModel(regression_file, data={"M": 3}, label="regression")
 
     def test_a_program_without_a_data_block_is_its_posterior(self, tmp_path):
         path = tmp_path / "prior.stan"
         path.write_text("parameters { array[2] real<lower=-1, upper=1> z; } model { }")
-        law = StanModel("prior", str(path))
+        law = StanModel(str(path), label="prior")
         assert isinstance(law, Distribution)
         assert law.event_spec.spec["z"].shape == (2,)
 
     def test_the_stan_methods_read_the_posterior(self, regression_file):
-        posterior = StanModel("regression", regression_file, data=_data())
+        posterior = StanModel(regression_file, data=_data(), label="regression")
         registry = probpipe.inference_method_registry
         for name in ("cmdstan_nuts", "nutpie_nuts"):
             if name in registry.list_methods():
@@ -181,7 +181,7 @@ class TestStanModel:
 
     @pytest.mark.usefixtures("_stan_toolchain")
     def test_the_density_is_bridgestans_without_the_jacobian(self, regression_file):
-        posterior = StanModel("regression", regression_file, data=_data())
+        posterior = StanModel(regression_file, data=_data(), label="regression")
         value = probpipe.Record("value", {"beta": jnp.array([0.1, -0.2]), "sigma": 1.5})
         expected = (
             st.norm.logpdf([0.1, -0.2]).sum()
@@ -365,18 +365,18 @@ class TestPyMCModel:
         pytest.importorskip("pymc")
 
     def test_it_is_the_joint_law_of_its_free_variables(self):
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         assert isinstance(model, Distribution)
         assert tuple(model.event_spec.components) == ("mu", "sigma", "y")
 
     def test_it_claims_sampling_and_a_normalized_density(self):
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         assert isinstance(model, SupportsSampling)
         assert isinstance(model, SupportsLogProb)
         assert _is_normalized(model)
 
     def test_its_density_is_the_joint_density_of_the_free_variables(self):
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         value = probpipe.Record("value", {"mu": 0.3, "sigma": 1.2, "y": 0.5})
         expected = (
             st.norm.logpdf(0.3, 0, 10) + st.halfnorm.logpdf(1.2) + st.norm.logpdf(0.5, 0.3, 1.2)
@@ -394,7 +394,7 @@ class TestPyMCModel:
             return model
 
         with probpipe.workflow_run(seed=0):
-            draws = probpipe.sample(PyMCModel("prior", build), sample_shape=(4000,))
+            draws = probpipe.sample(PyMCModel(build, label="prior"), sample_shape=(4000,))
         quartiles = np.array([0.25, 0.5, 0.75])
         np.testing.assert_allclose(
             np.quantile(draws["tau"].raw(), quartiles),
@@ -408,7 +408,7 @@ class TestPyMCModel:
         )
 
     def test_the_event_carries_the_variables_dtypes_and_supports(self):
-        spec = PyMCModel("m", _constrained_model).event_spec.spec
+        spec = PyMCModel(_constrained_model, label="m").event_spec.spec
         assert spec["a"] == NumericArraySpec((), _FLOAT, real)
         assert spec["b"] == NumericArraySpec((), _FLOAT, positive)
         assert spec["c"].support == interval(-1.0, 2.0)
@@ -417,7 +417,7 @@ class TestPyMCModel:
         assert spec["y"] == NumericArraySpec((), _INT, None)
 
     def test_the_posterior_record_carries_the_dtypes_and_supports(self):
-        model = PyMCModel("m", _constrained_model)
+        model = PyMCModel(_constrained_model, label="m")
         conditioned = model._pymc_model(data={"y": np.array(2)})
         record = model._parameter_record_for(conditioned, ("a", "b", "e"))
         assert record == RecordSpec(
@@ -427,7 +427,7 @@ class TestPyMCModel:
         )
 
     def test_it_samples_the_prior_predictive_of_every_free_variable(self):
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         draws = model._sample(jax.random.PRNGKey(0), (4,))
         assert {name: np.shape(draws[name]) for name in ("mu", "sigma", "y")} == {
             "mu": (4,),
@@ -439,19 +439,19 @@ class TestPyMCModel:
 
     @pytest.mark.parametrize("model_fn", [_flat_prior, _with_potential])
     def test_a_potential_or_an_improper_prior_leaves_the_density_unnormalized(self, model_fn):
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         assert isinstance(model, SupportsUnnormalizedLogProb)
         assert not isinstance(model, SupportsLogProb)
 
     @pytest.mark.parametrize("model_fn", [_flat_prior, _half_flat_prior, _with_potential])
     def test_a_potential_or_an_improper_prior_claims_no_sampling(self, model_fn):
-        model = PyMCModel("model", model_fn)
+        model = PyMCModel(model_fn, label="model")
         assert not isinstance(model, SupportsSampling)
         assert not _is_normalized(model)
 
     @pytest.mark.parametrize("model_fn", [_flat_regression, _penalized_regression])
     def test_a_kernel_with_a_potential_or_an_improper_prior_claims_no_sampling(self, model_fn):
-        kernel = PyMCModel("regression", model_fn)
+        kernel = PyMCModel(model_fn, label="regression")
         assert isinstance(kernel, ConditionalDistribution)
         assert isinstance(kernel, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(kernel, SupportsConditionalSampling)
@@ -462,7 +462,7 @@ class TestPyMCModel:
         assert not _is_normalized(law)
 
     def test_a_model_with_a_covariate_is_a_kernel_over_it(self):
-        kernel = PyMCModel("regression", _regression)
+        kernel = PyMCModel(_regression, label="regression")
         assert isinstance(kernel, ConditionalDistribution)
         assert list(kernel.given_spec) == ["x"]
         assert tuple(kernel.event_spec.components) == ("beta", "sigma", "y")
@@ -470,12 +470,12 @@ class TestPyMCModel:
         assert _kernel_is_normalized(kernel)
 
     def test_binding_the_covariate_returns_the_joint_law_there(self):
-        kernel = PyMCModel("regression", _regression)
+        kernel = PyMCModel(_regression, label="regression")
         law = probpipe.operations._condition.condition_on(kernel, {"x": np.linspace(0, 1, 5)})
         assert isinstance(law, PyMCModel)
         assert law.event_spec.spec["y"].shape == (5,)
 
     def test_it_pickles(self):
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         restored = pickle.loads(pickle.dumps(model))
         assert (restored.label, restored.spec) == (model.label, model.spec)

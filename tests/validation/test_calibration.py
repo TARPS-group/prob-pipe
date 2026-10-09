@@ -100,9 +100,11 @@ class _GridPosterior(ConditionalDistribution, SupportsConditionalSampling):
         y = jnp.asarray(dict(given.children if isinstance(given, Record) else given)["y"])
         grid = jnp.linspace(-10.0, 10.0, 4001)
         if not self._weighted:
-            return EmpiricalDistribution("mu", grid)
+            return EmpiricalDistribution(grid, component="mu")
         log_density = -0.5 * _PRECISION * (grid - jnp.sum(y) / _PRECISION) ** 2
-        return EmpiricalDistribution("mu", grid, jnp.exp(log_density - jnp.max(log_density)))
+        return EmpiricalDistribution(
+            grid, jnp.exp(log_density - jnp.max(log_density)), component="mu"
+        )
 
     def _condition_on(self, given, /, **options):
         return self._law(given)
@@ -115,7 +117,7 @@ def _gaussian_glm(p: int = 2, n: int = 12, seed: int = 7):
     """A well-specified Gaussian linear model with an intercept: the joint of y and beta."""
     X = jax.random.normal(jax.random.PRNGKey(seed), (n, p - 1))
     design = jnp.concatenate([jnp.ones((n, 1)), X], axis=1)
-    prior = MultivariateNormal(loc=jnp.zeros(p), cov=jnp.eye(p), label="beta")
+    prior = MultivariateNormal("beta", loc=jnp.zeros(p), cov=jnp.eye(p))
     return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior
 
 
@@ -123,9 +125,9 @@ def _conjugate_model():
     """The joint of ``mu ~ N(0, 2²)`` and five observations ``y | mu ~ N(mu, 1)``."""
     prior = Normal("mu", 0.0, 2.0)
     likelihood = conditional_distribution(
-        "y_given_mu",
         lambda mu: Normal("y", mu * jnp.ones(_N), 1.0),
         given_spec=prior.event_spec.components,
+        label="y_given_mu",
     )
     return likelihood * prior
 
@@ -138,18 +140,18 @@ def _posterior_at(y, scale_factor: float = 1.0):
 def _exact_posterior(scale_factor: float = 1.0):
     """The kernel of :func:`_posterior_at`, whose one given slot is ``y``."""
     return conditional_distribution(
-        "posterior",
         lambda y: _posterior_at(y, scale_factor),
         given_spec={"y": NumericArraySpec((_N,))},
+        label="posterior",
     )
 
 
 def _observation_posterior():
     """The kernel of :func:`_posterior_at`, whose one given slot is ``observation``."""
     return conditional_distribution(
-        "posterior",
         lambda observation: _posterior_at(observation),
         given_spec={"observation": NumericArraySpec((_N,))},
+        label="posterior",
     )
 
 
@@ -186,7 +188,7 @@ class TestIntervalCoverage:
     def test_accepts_distribution_input(self):
         # An empirical law scores identically to its atoms' flat coordinates.
         draws = jax.random.normal(jax.random.PRNGKey(4), (2000, 2))
-        emp = EmpiricalDistribution("z", draws)
+        emp = EmpiricalDistribution(draws, component="z")
         from_dist = interval_coverage(emp, jnp.array([0.3, -0.4]), levels=(0.9,))
         from_array = interval_coverage(draws, jnp.array([0.3, -0.4]), levels=(0.9,))
         assert bool(jnp.all(from_dist[0.9] == from_array[0.9]))
@@ -303,11 +305,11 @@ class TestFlattening:
             "atom",
             element_spec=NumericRecordSpec(a=(2,), b=()),
         )
-        emp = EmpiricalDistribution("m", atoms)
+        emp = EmpiricalDistribution(atoms, label="m")
         assert _component_names(emp) == ("a[0]", "a[1]", "b")
 
     def test_a_whole_term_posterior_names_its_component(self):
-        emp = EmpiricalDistribution("m", jnp.zeros((10, 2)))
+        emp = EmpiricalDistribution(jnp.zeros((10, 2)), component="m")
         assert _component_names(emp) == ("m[0]", "m[1]")
 
 
@@ -464,9 +466,9 @@ class TestSBCPosteriorKernel:
 
         prior = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
         simulator = conditional_distribution(
-            "y_given_ab",
             lambda a, b: Normal("y", jnp.stack([a + b, a - b]), 0.1),
             given_spec=prior.event_spec.components,
+            label="y_given_ab",
         )
         amortized = learn_amortized_posterior(
             prior,
@@ -516,9 +518,9 @@ class TestSBCPosteriorKernel:
 
     def test_rejects_given_slots_that_do_not_take_the_observed_fields(self):
         two_slots = conditional_distribution(
-            "posterior",
             lambda y, z: Normal("mu", jnp.sum(y) + z, 1.0),
             given_spec={"y": NumericArraySpec((_N,)), "z": NumericArraySpec(())},
+            label="posterior",
         )
         with pytest.raises(ValueError, match=r"given slots \['y', 'z'\]"):
             simulation_based_calibration(
@@ -542,9 +544,9 @@ class TestSBCPosteriorKernel:
 
     def test_rejects_a_posterior_whose_draw_is_not_the_parameters(self):
         other_fields = conditional_distribution(
-            "posterior",
             lambda y: Normal("a", jnp.sum(y), 1.0) * Normal("b", 0.0, 1.0),
             given_spec={"y": NumericArraySpec((_N,))},
+            label="posterior",
         )
         with pytest.raises(ValueError, match="must be the model's parameters"):
             simulation_based_calibration(
@@ -594,7 +596,7 @@ class TestSBCFit:
         # SBC rejects because the shift is *systematic* across simulations and
         # accumulates. Measured ks_pvalue.max ≤ 8e-5 and mean rank ≤ 0.32 over
         # seeds 0–3 at S=48.
-        model = _BiasedMeanKernel(0.25) * Normal(loc=0.0, scale=2.0, label="mu")
+        model = _BiasedMeanKernel(0.25) * Normal("mu", loc=0.0, scale=2.0)
         with workflow_run(seed=0):
             res = simulation_based_calibration(
                 model,

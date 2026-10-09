@@ -437,14 +437,14 @@ def simulation_based_calibration(
     >>> from probpipe import Normal, NumericArraySpec, conditional_distribution, workflow_run
     >>> prior = Normal("mu", 0.0, 2.0)
     >>> likelihood = conditional_distribution(
-    ...     "y_given_mu",
     ...     lambda mu: Normal("y", mu * jnp.ones(5), 1.0),
+    ...     label="y_given_mu",
     ...     given_spec=prior.event_spec.components,
     ... )
     >>> precision = 1 / 4 + 5
     >>> exact = conditional_distribution(
-    ...     "posterior",
     ...     lambda y: Normal("mu", jnp.sum(y) / precision, precision**-0.5),
+    ...     label="posterior",
     ...     given_spec={"y": NumericArraySpec((5,))},
     ... )
     >>> with workflow_run(seed=0):

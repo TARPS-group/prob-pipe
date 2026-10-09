@@ -41,7 +41,7 @@ def _normal_mean(y=None):
 
 @pytest.fixture
 def normal_mean():
-    return PyMCModel("normal_mean", _normal_mean)
+    return PyMCModel(_normal_mean, label="normal_mean")
 
 
 @pytest.mark.parametrize("method", ["pymc_nuts", "pymc_advi"])

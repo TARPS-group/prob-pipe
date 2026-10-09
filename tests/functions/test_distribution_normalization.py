@@ -22,6 +22,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericDistribution,
     OpaqueSpec,
+    OutputSpec,
     ResolutionError,
     converter_registry,
     log_prob,
@@ -44,8 +45,8 @@ def normal_external():
 @pytest.fixture
 def empirical_dist():
     return EmpiricalDistribution(
-        "x",
         jnp.asarray([[0.0], [1.0], [2.0]]),
+        component="x",
     )
 
 
@@ -79,7 +80,7 @@ class TestNormalizeDistributionValues:
         class UnsupportedDistribution(Distribution):
             pass
 
-        source = Normal(loc=0.0, scale=1.0, label="source")
+        source = Normal("source", loc=0.0, scale=1.0)
 
         with pytest.raises(
             ResolutionError,
@@ -300,7 +301,7 @@ def _law_claiming(capability: type) -> Distribution:
         (Distribution, capability),
         exec_body=lambda namespace: namespace.update(_condition_on=_unreachable),
     )
-    return law_type("law", OpaqueSpec())
+    return law_type("law", OutputSpec(law=OpaqueSpec()))
 
 
 @pytest.mark.parametrize("capability", DISTRIBUTION_HINT_PROTOCOLS, ids=lambda c: c.__name__)

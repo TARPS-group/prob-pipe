@@ -7,7 +7,7 @@ Part II introduces the shared abstractions the rest of the library is built on.
 | II.1 | Typing | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. |
 | II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named input slots and the component interface of one produced term. |
 | II.3 | Numeric values | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
-| II.4 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation, with `raw()` as its access to that representation. |
+| II.4 | Identity | `TrackedTerm` / `Provenance` | The label, type (spec), lineage, and annotations an object carries beyond its raw representation, with `raw()` as its access to that representation. |
 | II.5 | Multiplicity | `Batch` | An indexed collection of *separate* objects, with its `BatchSpec`. |
 | II.6 | Structure | `NamedTree` | Abstract named, ordered tree addressed by path with leaf-keyed mapping contract and navigation. |
 | II.7 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved, and the catalog that makes every registry discoverable. |
@@ -108,9 +108,9 @@ The keyword form takes exactly one entry, and the positional form exactly one sp
 
 **Packaging.** The declaration stores either one named whole term or an exposed term. `spec`, `components`, and `exposes_record` are derived views of it, and extracting a component from a produced value, or reconstructing the value from its components, reads it. An exposed record's components are fields of the returned value, and so are those of a batch of records. An exposed law's components are its event's, so the returned term is the law itself, and its components name what its draws hold, which is how an operation that returns a law declares it (VI.0).
 
-**Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, which stores the unification of the declared type and the produced one under the declared names and packaging. The declared dtype and support are kept, dimensions are bound from the produced term, and the produced value is checked against the stored type. A declared type that does not unify with the produced one raises. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3, III.7).
+**Completion.** A producer knows the type of the term it returns and completes its declaration with `with_spec`, which stores the unification of the declared type and the produced one under the declared names and packaging. The declared dtype and support are kept, dimensions are bound from the produced term, and the produced value is checked against the stored type. A declared type that does not unify with the produced one raises. A producer given no declaration uses `OutputSpec.default` with the default component its kind defines (II.5, III.3), and a law's constructor requires the component of a whole-term event, which no default replaces (III.7).
 
-**Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution labeled `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is renamed separately, by `with_name` (II.4).
+**Names.** Component names are the only names a declaration carries, and matching reads only them: a distribution labeled `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. `OutputSpec(posterior=DistributionSpec(...))` exports the single component `posterior`, whose value is a law with its own event components. The object's label is set separately, by the constructor's `label=` keyword or by `with_label` (II.4).
 
 **Paths.** A declaration's paths start with a component:
 
@@ -180,18 +180,81 @@ One flat-vector interface over the numeric kinds is `D2 – Generality first`: e
 ### Contract
 
 Every tracked term carries four things through the one mixin `TrackedTerm`:
-1. a **name**: what the object is called;
+1. a **label**: what a reader calls the object;
 2. a **spec**: the declaration of its type (II.1);
 3. a **provenance**: how it was produced;
 4. **annotations**: free-form auxiliary information supplied by the user or an algorithm.
 
-A tracked term's label is supplied by the user at explicit construction, as the required first argument `label`, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is labeled by that function's `output_label` (III.3), and an operation's result takes the label of its primary operand, which is the first in its signature. That operand is the law for the functionals and `convert`, so `mean(schools)` is labeled `schools`. The primary operand of `evaluate` is the map, and its result takes the map's `output_label`, as the map's own result does (V.10). Composition (IV.2), `condition_on` (VI.6), and `marginal` and `factor` (VI.8) return a part or a conditional of a law, so their rules label the result by what it is: a product of factors joins the factors' labels, and a conditional formed by Bayes' rule is labeled by its expression, as `condition_on(schools, data)` is labeled `schools | y`. A label is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the label it had, and only `with_label` replaces it. No operation reads a label to decide anything, so the origin of a label is never recorded in object state, constructor parameters, temporary carriers, pytree auxiliary data, or serialized state. No lookup resolves an object by its label, two objects may share a label, and derived labels need no escaping scheme.
+A tracked term's label is supplied by the user at explicit construction or takes its kind's default label, and it is derived deterministically from the inputs when an operation produces the object. A value's constructor takes the label first, as `NumericArray("x", 1.0)` and `Record("x", ...)` do. A law's or a kernel's constructor takes its mathematical parts, such as the component of a whole-term event and the parameters, and the label as the optional keyword `label=` (III.7, III.9). The **default label** is:
+1. a catalog family's class name, as `Normal` for `Normal("mu", 0.0, 1.0)` (VII);
+2. for a function that `@function` decorates, and for the kernel that `conditional_distribution` builds from a function, the function's `__name__`, with `p` for the kernel of a lambda (III.3, IV.4);
+3. `p` for any other law or kernel, as `distribution(...)`, `EmpiricalDistribution(...)`, and `glm_likelihood(...)` build. The result of a user-defined function called on values is labeled by that function's `output_label` (III.3), as is a law its body returns. An operation's result carries the expression that the operation's rule builds from its operands' expressions, and an operation without a rule gives its result the expression of its primary operand, the first in its signature, so a converted law keeps its label. Composition (IV.2), `condition_on` (VI.6), and `marginal` and `factor` (VI.8) return a part or a conditional of a law, so their rules label the result by what it is: a product of factors joins the factors' labels, and a conditional keeps the label of the law it conditions and records the paths it fixes, as `condition_on(schools, data)` is labeled `schools` and displays as `schools(theta; y)`.
+
+A label is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the label it had, and only `with_label` replaces it. No lookup resolves an object by its label, and derived labels need no escaping scheme. A derived label may hold `~`, a space, `;`, or `/`, so no operation uses a label as a component name or a level name: a law an operation builds for its own computation takes a fixed name or its operand's components.
+
+**Label, signature, and notation.** A label names an object for a reader, and each other mechanism that names or identifies something has a responsibility of its own:
+
+| Mechanism | Responsibility | Section |
+|---|---|---|
+| label | names an object for a reader | II.4 |
+| signature | states what a law, a kernel, or a function is over, read from its declaration | II.4 |
+| component name | names a produced component, which composition and indexing match | II.2 |
+| input slot | names where an argument or a given value binds | II.2 |
+| source identity, random-event identity, fingerprints, replay, and caching | identify objects, content, and random events, and decide reuse | V.5, V.8, II.4 |
+
+The **signature** of a term is read from its declaration:
+1. a law: its event components in declaration order, as `mu, tau`;
+2. a kernel: its event components, then `|` and its given slots, as `y | beta`;
+3. a function: its parameters, as `x, y`.
+
+A law or a kernel that holds paths fixed at given values lists them after `;`, as `mu; y` for the posterior of `mu` given `y` and `y | sigma; beta` for a kernel applied at `beta`. A component rename changes the signature, and `with_label` changes the label. The **notation** is the label followed by the signature in parentheses, as `prior(mu)`, `glm(y | beta)`, or `predict(x, y)`, and the property `notation` returns it. `str()` shows the notation, and the repr keeps the label first, followed by the component of a whole-term event, as `Normal('Normal', component='mu', loc=0.0, scale=1.0)`. The signature has no public attribute of its own, since `Function.signature` is the Python call signature that binding reads (III.3). No operation reads a label or a signature to decide anything, and two objects may share either.
+
+**The expression.** Every tracked term carries one immutable **expression**, a tree that states what the term is, and its label, its notation, `str()`, and every label derived from it are renderings of that tree. A term constructed directly carries its label alone. The operation that makes a term builds the term's expression from its operands' expressions, so no operation builds a label of its own, and no operation reads an expression. A node of the tree is one of these:
+1. a label, with the signature of a law, a kernel, or a function;
+2. a product of factors without a label;
+3. a law or a kernel conditioned at given values of some paths;
+4. a law selected at some of its paths;
+5. a draw from a law;
+6. a function applied to draws of laws and to values;
+7. a summary of a law or a draw: an expectation, a variance, a covariance, a quantile, a score, or a density;
+8. an operator applied to values;
+9. a selection of a batch.
+
+A term's label is the name part of the rendering:
+1. a conditioned or a selected law keeps its base's label;
+2. a product without a label joins its factors' labels;
+3. an applied function takes the function's label;
+4. a value renders in full, as `mu ~ prior` or `E[mu ~ prior]`.
+
+The notation is the whole rendering, grouped by the rules below. A law's signature is read from its declaration, and the paths it holds fixed and whether a product was given a label are read from its expression (IV.2). `with_label` replaces the expression with the new label, so a user's label hides the derivation, which provenance still records. Provenance records how a term was computed, and the expression records what the term is, for a reader. Fingerprints and replay omit the expression, as they omit the label, and copies and pickles keep it.
+
+A rendering shows at most `notation_config.max_depth` nested levels, eight by default, and a term's label is rendered when the term is made. A part nested deeper renders as its label, the name of a law or a function, or as `…` for a value, and the rendering warns with a `UserWarning` that names the setting.
+
+**Values computed from a law.** A value computed from a law `d` is labeled by the value written in probability notation over `d`, and its components name each number as a call over `d`'s components (VI.0):
+1. **A draw** (VI.3) is labeled by its components, `~`, and `d`'s label, then `;` and the paths `d` holds fixed when it holds any, as `mu ~ prior`, `(y, mu) ~ model`, or `mu ~ model; y`, and it keeps `d`'s components.
+2. **A score** (VI.4) is labeled `log` followed by `d`'s notation, as `log prior(mu)` or `log model(mu; y)`, and a density is labeled by `d`'s notation, as `prior(mu)`, since that notation denotes the density.
+3. **A moment** (VI.5) is labeled `E[draw]`, `Var[draw]`, or `Cov[draw]`, and a quantile `Q[draw]`, as `E[(y, mu) ~ model]`.
+4. **An expectation** of `f` is labeled `E[f(draw)]`, as `E[f(mu ~ prior)]`, by `f`'s label, `f` for a lambda.
+
+A batch of draws or of scores has the label of one draw or one score and a level of its own, and its element is grouped before the selection, as `(mu ~ prior)[sample=0]`. A batch of laws reads as one law under its label, so a value computed from a batch `schools` of laws over `effect` is labeled `effect ~ schools`, `E[effect ~ schools]`, or `log schools(effect)`, and `str()` of the batch shows that notation, `over`, and its levels, as `schools(effect) over school`. The atoms of an empirical law that `condition_on` or an inference method produces are labeled by the law's components, as `beta` or `(K, r, phi)`, and the atoms of an empirical law a user constructs keep the label they were given. A field of a value takes its key, so `sample(model)["y"]` is labeled `y`, and an operator on values is labeled by its expression, as `2 * effect` or `2 * E[mu ~ prior]`.
+
+**Lifted functions.** A law that lifting a function over laws produces (V.5) is labeled by the function's `output_label`, and it displays as the function applied to draws of its inputs, as `challenger_damage_probability(beta ~ oring_model; damage)`, since it is the law of that random quantity. Arguments that the lift draws together from one law share one draw, as `f((a, b) ~ model)`. A law that is not lifted appears by its notation, as `log_prob(g(g), q ~ q)`, any other tracked argument by its label, and any other argument by its value when it is a scalar, as `f(beta ~ model; y, 2.0)`, and by its parameter's name otherwise, as `f(beta ~ model; y, X)`. A batch of such laws, which a lift over a law and a sweep over a batch give together, carries the same expression, so its mean is labeled `E[f(mu ~ prior, tau)]`. Its element keeps the label of its position, as `f[tau=3]`, and displays as its row's call, which shows a scalar of the swept batch by its value, as `f(mu ~ prior, 4.0)`; any other selection displays as the batch's call and the selected levels, as `f(mu ~ prior, tau)[tau=1:3]`. A value computed from such a law takes the law's notation in place of a draw, as `E[challenger_damage_probability(beta ~ oring_model; damage)]`.
+
+**Grouping.** A label is grouped where another label is built from it, so it reads as one operand:
+1. a **compound** label is parenthesized, and a label is compound when it has one of these forms:
+   - an operator at its top level, as `model | y` or the draw `mu ~ prior`;
+   - a product of labels, as `lik·prior`;
+   - a unary operator or `log` at its start, as `-x` or the score `log prior(mu)`;
+2. any other label of several words is bracketed, as `[other effect]`;
+3. a label of one word is used as it is, and a call such as `prior(mu)` is one word.
+
+So a selection of a batch labeled `x·y` is labeled `(x·y)[sample=0:2]`, and a law derived from an unlabeled product displays as `(lik·prior)(y)`. A draw and a score are grouped inside a selection, as in `(mu ~ prior)[sample=0]` and `(log prior(mu))[sample=0]`, and the notation of a product without a label is grouped after `log`, as in `log (lik(y | mu)·prior(mu))`. Two rules join labels without grouping them. The right side of `~` is not grouped, since `~` binds most loosely, as in `(y, mu) ~ lik·prior`. Labels join associatively, so a product joins a further factor's label as it is, and `(lik * prior) * d` is labeled `lik·prior·d` (IV.2).
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
-Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
+Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a factored joint, returns that object detached, and a field view of a law returns the raw form of its parent's marginal at its path (III.7).
 
-Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied. A batch whose label is an expression has it parenthesized before the selection, as in `(model | y)[dataset=0]`, so the selection reads as applying to the whole label.
+Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied. A batch's label is grouped before the selection, as in `(lik·prior)[dataset=0]`, so the selection reads as applying to the whole label.
 
 **The repr.** A term's repr reads as a call of its public class's constructor:
 1. the label: first and positionally, as in `RecordBatch('schools', ...)`;
@@ -206,7 +269,7 @@ A spec reads as its own constructor call, with the attributes it sets, and so do
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
-Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so label, provenance, and annotations never enter a trace and a label can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
+Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so label, provenance, and annotations never enter a trace and a label can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary. A value, a record, and a batch of either are pytrees whose static data is their spec alone, so two terms that differ only in their labels or their expressions have equal treedefs and share a compilation. A term rebuilt from its leaves carries no label of its own and is labeled by its class, as `NumericArray` or `RecordBatch`, until a result boundary gives it the call's expression, as the boundary of a `Function` gives its result the function's output label.
 
 ```python
 class TrackedTerm(ABC):
@@ -245,7 +308,7 @@ Fingerprints are best-effort and tiered, from a content hash, through the code h
 
 ### Rationale
 
-`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps names inert in computation, so a name never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone.
+`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived labels keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps labels inert in computation, so a label never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone. Reading the signature from the declaration is `D6 – Single source of truth`: the notation states what a term is over from the one place that fixes it, so a label chosen by the user cannot misstate it.
 
 ### Notes
 

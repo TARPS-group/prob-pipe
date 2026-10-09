@@ -28,9 +28,9 @@ N = 20  # observations per dataset
 def _location_kernel(prior, n=N, scale=1.0):
     """The kernel ``y ~ Normal(mu, scale)``, iid over *n* observations, given *prior*'s ``mu``."""
     return conditional_distribution(
-        "y_given_mu",
         lambda mu: Normal("y", mu * jnp.ones(n), scale),
         given_spec=prior.event_spec.components,
+        label="y_given_mu",
     )
 
 
@@ -328,7 +328,7 @@ class TestCalibration:
             law = Normal("mu", loc, scale)
             if source == "empirical posterior":
                 draws = np.random.default_rng(7).normal(loc, scale, size=20_000)
-                law = EmpiricalDistribution("mu", jnp.asarray(draws, jnp.float32))
+                law = EmpiricalDistribution(jnp.asarray(draws, jnp.float32), component="mu")
         with workflow_run(seed=11):
             result = predictive_check(
                 _location_kernel(law),
@@ -362,9 +362,9 @@ class TestCalibration:
         whatever ``mu``.
         """
         kernel = conditional_distribution(
-            "ab",
             lambda mu: Normal("a", mu, 1.0) * Normal("b", mu * jnp.ones(3), 2.0),
             given_spec=prior.event_spec.components,
+            label="ab",
         )
 
         def contrast(data):
@@ -430,7 +430,7 @@ class TestForms:
     def test_an_empirical_law_draws_its_atoms(self):
         """Each replication's parameter is an atom of the empirical law."""
         atoms = np.array([0.5, 1.0, 1.5, 2.0, 2.5], dtype=np.float32)
-        law = EmpiricalDistribution("mu", jnp.asarray(atoms))
+        law = EmpiricalDistribution(jnp.asarray(atoms), component="mu")
         with workflow_run(seed=3):
             result = predictive_check(
                 _location_kernel(law, n=10, scale=1e-4), law, sample_mean, num_replications=20
@@ -531,9 +531,9 @@ class TestOptionalSlots:
     @staticmethod
     def _scaled():
         return conditional_distribution(
-            "y_given_mu",
             lambda mu, scale=2.0: Normal("y", mu * jnp.ones(200), scale),
             given_spec={"mu": NumericArraySpec(())},
+            label="y_given_mu",
         )
 
     def test_the_replications_take_the_default(self):
@@ -551,9 +551,9 @@ class TestOptionalSlots:
 
     def test_the_error_names_only_the_required_slots(self, prior, observed_data):
         kernel = conditional_distribution(
-            "y_given_mu_sigma",
             lambda mu, sigma, scale=1.0: Normal("y", mu * jnp.ones(N), sigma * scale),
             given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
+            label="y_given_mu_sigma",
         )
         with pytest.raises(ValueError, match=r"does not produce \['sigma'\], which kernel"):
             predictive_check(kernel, prior, sample_mean, observed_data)
@@ -562,9 +562,9 @@ class TestOptionalSlots:
 class TestErrors:
     def test_a_law_that_misses_a_given_slot_raises_naming_it(self, prior, observed_data):
         kernel = conditional_distribution(
-            "y_given_mu_sigma",
             lambda mu, sigma: Normal("y", mu * jnp.ones(N), sigma),
             given_spec={"mu": prior.event_spec.components["mu"], "sigma": NumericArraySpec(())},
+            label="y_given_mu_sigma",
         )
         with pytest.raises(ValueError, match=r"does not produce \['sigma'\]"):
             predictive_check(kernel, prior, sample_mean, observed_data)

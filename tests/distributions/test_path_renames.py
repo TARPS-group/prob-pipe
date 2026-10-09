@@ -309,7 +309,7 @@ _XS, _YS = jnp.array([1.0, 2.0, 4.0]), jnp.array([10.0, 20.0, 40.0])
 
 def _grouped_law() -> EmpiricalDistribution:
     atoms = NumericRecordBatch("rows", {"a/x": _XS, "b/y": _YS}, "row", element_spec=_GROUPED)
-    return EmpiricalDistribution("grouped", atoms)
+    return EmpiricalDistribution(atoms, label="grouped")
 
 
 def _grouped_selection() -> Distribution:
@@ -325,7 +325,7 @@ def _whole_record_view() -> Distribution:
     spec = RecordSpec(parameters=RecordSpec(beta=_SCALAR, sigma=_SCALAR))
     columns = {"parameters/beta": _XS, "parameters/sigma": _YS}
     atoms = NumericRecordBatch("rows", columns, "row", element_spec=spec)
-    return EmpiricalDistribution("p", atoms)["parameters"]
+    return EmpiricalDistribution(atoms, label="p")["parameters"]
 
 
 # -- The renamed law ------------------------------------------------------------

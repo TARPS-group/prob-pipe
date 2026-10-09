@@ -451,7 +451,7 @@ class TestApplyContract:
         class _Undtyped(Distribution):
             # Declares its array's shape and nothing else.
             def __init__(self):
-                super().__init__("y", NumericArraySpec(()))
+                super().__init__("y", OutputSpec(y=NumericArraySpec(())))
 
         cases = [
             (

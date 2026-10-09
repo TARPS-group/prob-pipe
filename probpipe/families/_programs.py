@@ -62,7 +62,7 @@ from ..distributions._capabilities import (
     _capability_subclass,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _given_label
 
 __all__ = ["PyMCModel", "StanModel"]
 
@@ -850,7 +850,14 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 class _StanModelMeta(type(ConditionalDistribution)):
     """The metaclass of ``StanModel``: binding every data-block variable returns the posterior."""
 
-    def __call__(cls, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
+    def __call__(
+        cls,
+        stan_file: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        label: str | None = None,
+    ) -> Any:
+        label = _given_label(label, "StanModel")
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         unknown = sorted(set(bound) - set(program.data_entries))
@@ -861,7 +868,7 @@ class _StanModelMeta(type(ConditionalDistribution)):
             )
         if set(program.data_entries) <= set(bound):
             return _StanPosterior(label, program, bound)
-        return super().__call__(label, stan_file, data=data)
+        return super().__call__(stan_file, data=data, label=label)
 
 
 class StanModel(
@@ -885,14 +892,14 @@ class StanModel(
 
     Parameters
     ----------
-    label : str
-        The kernel's label.
     stan_file : str
         The location of the ``.stan`` file that holds the program.
     data : Mapping[str, Any], optional
         Values of some data-block variables, bound at construction. A
         construction that binds every data variable returns the posterior, a
         ``Distribution``.
+    label : str, optional
+        The label of the kernel or of the posterior, ``StanModel`` by default.
 
     Raises
     ------
@@ -911,12 +918,18 @@ class StanModel(
     _shapes_from_data: ClassVar[bool] = True
 
     def __init__(
-        self, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None
+        self,
+        stan_file: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        label: str | None = None,
     ) -> None:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            label, program.given_spec(bound), OutputSpec(program.parameter_record(bound))
+            _given_label(label, "StanModel"),
+            program.given_spec(bound),
+            OutputSpec(program.parameter_record(bound)),
         )
         object.__setattr__(self, "_program", program)
         object.__setattr__(self, "_data", bound)
@@ -955,7 +968,7 @@ class StanModel(
             If a name is not an unbound data-block variable.
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
-        return StanModel(self.label, self.stan_file, data={**self._data, **values})
+        return StanModel(self.stan_file, data={**self._data, **values}, label=self.label)
 
     def _conditional_unnormalized_log_prob(
         self, given: Record | Mapping[str, Any], value: Any
@@ -1193,11 +1206,12 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
 class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
-    def __call__(cls, label: str, model_fn: Callable[..., Any]) -> Any:
+    def __call__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
+        label = _given_label(label, "PyMCModel")
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         if program.given:
             return _PyMCKernel(label, program)
-        return super().__call__(label, program)
+        return super().__call__(program, label=label)
 
 
 class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
@@ -1216,11 +1230,11 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
 
     Parameters
     ----------
-    label : str
-        The law's label.
     model_fn : callable
         A function returning a ``pymc.Model``, whose observed variables take
         their ``observed`` values from arguments that default to ``None``.
+    label : str, optional
+        The label of the law or of the kernel, ``PyMCModel`` by default.
 
     Raises
     ------
@@ -1242,7 +1256,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: The compiled density, built on first use, is not state.
     _transient_state = ("_memo",)
 
-    def __new__(cls, label: str, model_fn: Callable[..., Any]) -> Any:
+    def __new__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         claimed = (
             (SupportsLogProb, SupportsSampling)
@@ -1251,7 +1265,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         )
         return object.__new__(_capability_subclass(PyMCModel, claimed))
 
-    def __init__(self, label: str, model_fn: Callable[..., Any]) -> None:
+    def __init__(self, model_fn: Callable[..., Any], *, label: str | None = None) -> None:
         try:
             import pymc  # noqa: F401
         except ImportError as e:
@@ -1259,7 +1273,9 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
                 "pymc is required for PyMCModel. Install it with: pip install pymc"
             ) from e
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
-        super().__init__(label, OutputSpec(program.event_record(symbolic=False)))
+        super().__init__(
+            _given_label(label, "PyMCModel"), OutputSpec(program.event_record(symbolic=False))
+        )
         self._program = program
 
     # -- the program ------------------------------------------------------------
@@ -1482,7 +1498,7 @@ class _PyMCKernel(ConditionalDistribution):
             If a name is not a given slot.
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
-        return PyMCModel(self.label, self._program.bind(values))
+        return PyMCModel(self._program.bind(values), label=self.label)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The model function, by its name, and its free variables."""

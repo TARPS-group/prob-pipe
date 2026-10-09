@@ -70,14 +70,16 @@ _LAWS: dict[str, Callable[[], object]] = {
         "y", F.Normal("x", 0.0, 1.0), tfb.Exp()
     ),
     "MixtureDistribution": lambda: MixtureDistribution(
-        "m", [F.Normal("a", 0.0, 1.0), F.Normal("a", 1.0, 1.0)], jnp.array([0.5, 0.5])
+        [F.Normal("a", 0.0, 1.0), F.Normal("a", 1.0, 1.0)], jnp.array([0.5, 0.5]), label="m"
     ),
     "BootstrapDistribution": lambda: BootstrapDistribution("B", F.Normal("x", 0.0, 1.0), 7),
     "BootstrapReplicateDistribution": lambda: BootstrapReplicateDistribution(
         "b", F.Normal("x", 0.0, 1.0), replicate_size=5
     ),
     "KDEDistribution": lambda: KDEDistribution(
-        "k", jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]), bandwidth=jnp.array([0.4, 0.6])
+        jnp.array([[0.0, 1.0], [1.0, 0.0], [2.0, 2.0]]),
+        bandwidth=jnp.array([0.4, 0.6]),
+        component="k",
     ),
     "FactoredMultivariateGaussian": lambda: FactoredMultivariateGaussian(
         "j", [F.Normal("a", 0.0, 1.0), F.Normal("g", 2.0, 1.0)]

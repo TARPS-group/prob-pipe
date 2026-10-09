@@ -734,6 +734,9 @@ def _update_distribution(
 
     The label names the law for display and records nothing about what it
     computes, so a relabeled law keeps its fingerprint, as a relabeled function does.
+    The law's expression, which holds the paths it holds fixed and whether a
+    product was labeled, also states only how the law displays, so it is not
+    hashed.
 
     For TFP-backed distributions (those with a ``_tfp_dist`` attribute) the
     TFP parameter dict is hashed directly — this covers every concrete
@@ -791,8 +794,10 @@ def _update_distribution(
         h.update(b"scales=")
         _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
-        # Generic fallback for other non-TFP distributions.
-        _SKIP = frozenset({"_label", "_provenance", "_annotations"})
+        # Generic fallback for other non-TFP distributions. The label and the
+        # expression state how the law displays, and record nothing about what
+        # it computes.
+        _SKIP = frozenset({"_label", "_expression", "_provenance", "_annotations"})
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue

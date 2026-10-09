@@ -16,7 +16,6 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from ..distributions._distribution import Distribution
     from ._spec_base import TermSpec
 
 
@@ -36,11 +35,9 @@ class _DistributionArrayBackend(Protocol):
     :meth:`SupportsArrayBackend._make_array_backend` and the code that stores
     the laws. Backends are private to the library.
 
-    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``,
-    ``cell``, and whichever of ``_sample``, ``_log_prob``, ``_mean``,
-    ``_variance``, and ``_cov`` the class's laws support. ``cell(index)`` builds
-    the law at ``index``, a ``Distribution`` of the class at that position's
-    parameters.
+    Every backend exposes ``batch_shape``, ``event_shape``, ``cell_spec``, and
+    whichever of ``_sample``, ``_log_prob``, ``_mean``, ``_variance``, and
+    ``_cov`` the class's laws support.
     """
 
     @property
@@ -52,10 +49,6 @@ class _DistributionArrayBackend(Protocol):
     @property
     def cell_spec(self) -> TermSpec:
         """The term every cell draws, which an empty batch reports too."""
-        ...
-
-    def cell(self, index: int | tuple[int, ...]) -> Distribution:
-        """Fabricate a scalar ``Distribution`` for the cell at ``index``."""
         ...
 
 

@@ -143,7 +143,7 @@ class TestDistributions:
         assert _element_source(element.raw()) is None
 
     def test_an_empirical_law_keeps_its_atoms(self):
-        law = EmpiricalDistribution("e", jnp.arange(4.0))
+        law = EmpiricalDistribution(jnp.arange(4.0), component="e")
         detached = law.raw()
         assert isinstance(detached, EmpiricalDistribution)
         np.testing.assert_array_equal(detached.atoms.values, law.atoms.values)
