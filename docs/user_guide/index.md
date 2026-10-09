@@ -9,7 +9,7 @@ The [tutorials](../tutorials/01_first_analysis.ipynb) instead follow one analysi
 
 | Chapter | What it covers |
 |---|---|
-| [Terms](01_terms.ipynb) | The label, spec, and stored data of every object, immutability, batches, and provenance. |
+| [Terms](01_terms.ipynb) | The label and notation, spec, and stored data of every object, immutability, batches, and provenance. |
 | [Values and records](02_values_and_records.ipynb) | Arrays, records of named fields, non-numeric values, and pandas and xarray data. |
 | [Distributions](03_distributions.ipynb) | The parametric families, the operations on a distribution, and distributions built from a sampler or a density. |
 | [Joint models and conditional distributions](04_joint_models.ipynb) | Conditional distributions, composing a model with `*`, and the fields and marginals of a joint model. |

@@ -1329,8 +1329,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page by its file, which the docs build rewrites to the page's URL and checks.
 - **A user guide of nine chapters.** Each chapter explains one feature area on
   small examples, and the guide's overview page lists them:
-  1. terms: the label, spec, and stored data of every object, immutability,
-     batches, and provenance;
+  1. terms: the label and notation, spec, and stored data of every object,
+     immutability, batches, and provenance;
   2. values and records;
   3. distributions, including `distribution` from a sampler or a density;
   4. joint models and conditional distributions;
