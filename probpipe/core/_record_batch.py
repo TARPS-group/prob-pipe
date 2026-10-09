@@ -56,7 +56,7 @@ from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from ._repr import format_levels, format_names, public_class_name, type_name
-from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
@@ -191,14 +191,14 @@ class RecordBatch(Batch[Record]):
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: RecordSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
-        names = _as_level_names(level_names, what=f"{kind} level_names")
+        names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
             if axes_per_level is None

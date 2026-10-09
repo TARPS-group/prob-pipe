@@ -890,7 +890,7 @@ takes a tuple only, since a field's value may also be a spec. `probpipe/core/_sh
 is the one place these arguments are read. A function that takes one calls the reader there
 rather than calling `tuple()` on the argument, passes its own name and the
 argument's for the error messages (§9.3 rule 7), and annotates the parameter
-with the alias there, such as `ShapeLike` or `LevelNamesLike`.
+with the alias there, such as `ShapeLike` or `NamesLike`.
 
 ---
 
