@@ -1271,7 +1271,7 @@ def _with_fixed_paths(term: Any, *paths: str) -> Any:
 
 
 class TestNotation:
-    """A view reads as its parent's label followed by the view's own components."""
+    """A view reads as the detached marginal at its path: its label followed by its components."""
 
     def test_a_view_reads_by_its_parents_label_and_its_component(self):
         model = _dependent_joint().with_label("model")
@@ -1312,11 +1312,83 @@ class TestNotation:
         assert _fixed_paths(detached) == ("obs",)
         assert detached.notation == "b(b; obs)"
 
-    def test_a_view_at_a_whole_factor_keeps_its_parents_label(self):
-        """The view keeps the parent's label, and the marginal there takes the factor's."""
+    def test_a_view_at_a_whole_factor_displays_as_the_factor(self):
         model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
-        assert model["mu"].notation == "model(mu)"
-        assert marginal(model, "mu").notation == "prior(mu)"
+        view, detached = model["mu"], marginal(model, "mu")
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert (view.label, view.notation) == ("prior", "prior(mu)")
+
+    @pytest.mark.parametrize(
+        ("paths", "label", "notation"),
+        [
+            pytest.param(("a", "b"), "a·b", "a(a)·b(b)", id="declaration-order"),
+            pytest.param(("b", "a"), "b·a", "b(b)·a(a)", id="selection-order"),
+        ],
+    )
+    def test_a_view_of_several_whole_factors_displays_factor_by_factor(
+        self, paths, label, notation
+    ):
+        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0) * Normal("c", 0.0, 1.0)).with_label(
+            "model"
+        )
+        view, detached = model[paths], marginal(model, paths)
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert (view.label, view.notation) == (label, notation)
+
+    def test_a_selection_no_product_can_order_displays_by_its_joined_label(self):
+        """``lik`` conditions on ``mu``, so no product lists ``prior`` first."""
+        model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
+        view, detached = model[("mu", "y")], marginal(model, ("mu", "y"))
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert view.notation == "(lik·prior)(mu, y)"
+
+    def test_a_view_at_part_of_a_factor_keeps_its_parents_label(self):
+        atoms = NumericRecordBatch(
+            "atoms",
+            {"u": jnp.array([0.0, 1.0]), "v": jnp.array([2.0, 3.0])},
+            "obs",
+            element_spec=NumericRecordSpec(u=(), v=()),
+        )
+        model = (EmpiricalDistribution("pair", atoms) * Normal("a", 0.0, 1.0)).with_label("model")
+        view, detached = model["u"], marginal(model, "u")
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert view.notation == "model(u)"
+
+    def test_a_view_of_a_view_displays_as_the_marginal_of_the_view(self):
+        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0) * Normal("c", 0.0, 1.0)).with_label(
+            "model"
+        )
+        selection = model[("b", "a")]
+        for key, notation in [("a", "a(a)"), (("a", "b"), "a(a)·b(b)")]:
+            view, detached = selection[key], marginal(selection, key)
+            assert (view.label, view.notation) == (detached.label, detached.notation)
+            assert view.notation == notation == model[key].notation
+
+    def test_a_sub_view_off_the_factors_keeps_the_label_of_the_view(self):
+        parent = _Law("parent", _EVENT)
+        view = parent["model"].with_label("theta")
+        assert view["model/theta/mu"].notation == "theta(mu)"
+
+    def test_a_relabeled_view_of_several_factors_displays_by_its_label(self):
+        model = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        view = model[("a", "b")].with_label("pair")
+        assert view.notation == "pair(a, b)"
+        assert marginal(view, ("a", "b")).notation == "pair(a, b)"
+
+    def test_a_view_of_several_factors_holding_fixed_paths_lists_them(self):
+        model = _with_fixed_paths((Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)), "obs")
+        view, detached = model[("a", "b")], marginal(model, ("a", "b"))
+        assert view.notation == detached.notation == "(a·b)(a, b; obs)"
+
+    def test_a_view_at_a_factor_holding_fixed_paths_holds_them_first(self):
+        factor = _with_fixed_paths(_prior(), "obs")
+        model = _with_fixed_paths(
+            (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * factor).with_label("model"),
+            "z",
+        )
+        view, detached = model["mu"], marginal(model, "mu")
+        assert _fixed_paths(view) == _fixed_paths(detached) == ("obs", "z")
+        assert view.notation == detached.notation == "prior(mu; obs, z)"
 
     def test_a_view_and_the_marginal_of_a_law_without_factors_share_a_notation(self):
         atoms = NumericRecordBatch(

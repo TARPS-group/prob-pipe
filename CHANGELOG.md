@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the view's label. A parameter annotated with a TFP class, such as
   `tfd.Distribution`, therefore receives the TFP marginal for each view of a
   swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
+- **A field view is labeled as the marginal at its path, and prints as it.** A
+  view at the whole event of one factor takes the factor's label, so
+  `model["mu"]` for `model = (lik * prior).with_label("model")` is labeled
+  `prior` and prints as `prior(mu)`, where it was labeled `model`. A view of the
+  whole events of several factors takes their joined label and prints factor by
+  factor, as `model[("b", "a")]` prints as `b(b)·a(a)`. Any other view keeps its
+  parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
+  view names `FieldView` and the path. Replace a comparison of such a view's
+  label with its parent's label by one with the factor's label.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,

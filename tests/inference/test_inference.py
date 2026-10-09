@@ -1022,10 +1022,10 @@ class TestPosteriorFieldView:
             assert posterior[field].label == posterior.label
             assert list(posterior[field].event_spec.components) == [field]
 
-    def test_a_view_of_a_factored_joint_keeps_the_joint_label(self):
-        """The views of a factored joint keep its label, and their events expose the fields."""
+    def test_a_view_of_a_factored_joint_at_a_factor_takes_the_factor_label(self):
+        """A view at a whole factor takes the factor's label, and its event exposes the field."""
         p = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=0.0, scale=1.0, label="y")
-        assert p["x"].label == p["y"].label == p.label
+        assert (p["x"].label, p["y"].label) == ("x", "y")
         assert list(p["x"].event_spec.components) == ["x"]
 
 

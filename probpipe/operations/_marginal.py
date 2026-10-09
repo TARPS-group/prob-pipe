@@ -22,8 +22,8 @@ from ..distributions._distribution import (
     _keeps_fixed_paths,
     _shared_final_names,
 )
-from ..distributions._factored import SupportsFactors, _closed_factors, _joined_label
-from ..distributions._views import _node_at
+from ..distributions._factored import SupportsFactors
+from ..distributions._views import _marginal_label_at, _node_at
 from ..functions._call import ApplicabilityError
 from ._operation import BoundCall, operation
 
@@ -108,13 +108,12 @@ def _marginal_label(d: Any, field: Any) -> str:
     so ``marginal(location * scale, "tau")`` is ``scale`` and takes its label.
     Several such factors form a product without a label, joined in the order
     the paths name them where a product in that order declares the fields in
-    the order of the paths, as ``marginal(model, ("b", "a"))`` is ``b·a``. Any
-    other marginal integrates a factor out, as the prior predictive does, and
-    keeps the joint's label.
+    the order of the paths, as ``marginal(model, ("b", "a"))`` is ``b·a``. The
+    factors of a field view are its parent's. Any other marginal integrates a
+    factor out, as the prior predictive does, and keeps the law's label. The
+    view ``d[field]`` takes the same label.
     """
-    paths = field if isinstance(field, tuple) else (field,)
-    parts = _closed_factors(d, paths)
-    return d.label if parts is None else _joined_label(part.label for part in parts)
+    return _marginal_label_at(d, field)
 
 
 @operation(result=_marginal_result, label=_marginal_label)
@@ -141,7 +140,7 @@ def marginal(d: Distribution, field: str):
         several form a product without a label, as
         ``marginal(model, ("a", "b"))`` displays as ``a(a)·b(b)``. Any other
         marginal keeps *d*'s label, as ``marginal(model, "y")`` displays as
-        ``model(y)``.
+        ``model(y)``. The view ``d[field]`` displays as the marginal does.
 
     Raises
     ------

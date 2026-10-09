@@ -130,7 +130,8 @@ class TestDistributions:
 
     def test_a_field_view_reads_as_a_field_view_at_its_path(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
-        assert repr(joint["a"]) == "FieldView('a·b', path='a')"
+        assert repr(joint["a"]) == "FieldView('a', path='a')"
+        assert repr(joint.with_label("model")[("b", "a")]) == "FieldView('b·a', path=('b', 'a'))"
 
     def test_a_regrouped_rename_reads_as_a_factored_joint(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)

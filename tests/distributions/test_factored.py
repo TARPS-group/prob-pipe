@@ -992,13 +992,13 @@ class TestMarginalValues:
         ],
     )
     def test_a_marginal_is_labeled_as_the_marginal_operation_labels_it(self, path, label):
-        """The view keeps the joint's label, and the marginal takes what it is."""
+        """The view at the path takes the marginal's label as well."""
         record = OneFieldNormal("one", OutputSpec(RecordSpec(record=SCALAR)))
         params = MarginalLaw("p", OutputSpec(params=RecordSpec(u=SCALAR)), exact=("params/u",))
         joint = (_likelihood() * _prior() * record * params).with_label("model")
         assert joint._marginal(path).label == label
         assert marginal_operation._derived_label({"d": joint, "field": path}) == label
-        assert FieldView(joint, path).label == "model"
+        assert FieldView(joint, path).label == label
 
     def test_a_selection_of_one_whole_term_is_an_exposed_record(self):
         prior = _prior()

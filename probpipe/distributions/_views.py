@@ -22,7 +22,7 @@ import jax.numpy as jnp
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import WIDTH, call_repr, mapping_repr, term_repr
+from ..core._repr import PRODUCT_SYMBOL, WIDTH, call_repr, mapping_repr, term_repr
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.named_tree import _unflatten_paths
@@ -79,6 +79,7 @@ from ._factored import (
     FactoredConditionalDistribution,
     FactoredDistribution,
     SupportsFactors,
+    _closed_factors,
     _derived_product,
     _factor_graph,
     _FactorGraph,
@@ -332,6 +333,43 @@ def _labeled(law: Distribution, label: str) -> Distribution:
     return law if law.label == label else law.with_label(label)
 
 
+def _as_paths(path: str | tuple[str, ...]) -> tuple[str, ...]:
+    """*path* as a tuple of paths: a selection as it is, and one path as a tuple of one."""
+    return (path,) if isinstance(path, str) else tuple(path)
+
+
+def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
+    """The label of the marginal of *law* at *path*, which the view of *law* at *path* takes too.
+
+    A marginal over the whole events of some factors, none of which conditions
+    on a component outside them, is those factors (VI.8): one factor gives its
+    own label, and several give their labels joined with ``·``. The factors of
+    a field view are its parent's, at the parent's paths. The marginal of a
+    view at its whole event is the view, and any other marginal keeps *law*'s
+    label.
+
+    Parameters
+    ----------
+    law : Distribution
+        The law, which may be a field view.
+    path : str or tuple of str
+        An event path of *law*, or a tuple of them.
+
+    Returns
+    -------
+    str
+        The label of the marginal.
+    """
+    owner, paths = law, _as_paths(path)
+    if isinstance(law, FieldView):
+        parent_paths = tuple(law._parent_path(each) for each in paths)
+        if None in parent_paths or parent_paths == _as_paths(law.path):
+            return law.label
+        owner, paths = law.parent, parent_paths
+    closed = _closed_factors(owner, paths)
+    return law.label if closed is None else _joined_label(part.label for part in closed)
+
+
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
     """*law* with its components renamed, in order, to *components*."""
     renames = {
@@ -517,8 +555,9 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     """Path composition: the parent's marginal at the parent's paths for *path*.
 
     *path* is an event path of the view, or a tuple of them, and the result's
-    components are named by the paths of the view. The result keeps the view's
-    label, as ``marginal`` labels a marginal of a law without factors.
+    components are named by the paths of the view. The result is labeled as
+    ``marginal`` labels it: by the parent's factors whose whole events the
+    paths select, and otherwise by the view's label.
 
     Parameters
     ----------
@@ -543,7 +582,8 @@ def _view_marginal(self: FieldView, path: str | tuple[str, ...]) -> Distribution
     marginal = self._parent._marginal(
         parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
-    return _labeled(_named_as(marginal, [_final_segment(each) for each in paths]), self.label)
+    named = _named_as(marginal, [_final_segment(each) for each in paths])
+    return _labeled(named, _marginal_label_at(self, path))
 
 
 def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasibility:
@@ -790,10 +830,17 @@ class FieldView(Distribution):
     rather than a detached law, so sibling views co-sample from one parent
     draw and the correlation between them is preserved. Its declaration is the
     parent's schema at the path, the leaf or subtree whole, under a component
-    named by the path's final segment, and it keeps its parent's label and the
-    paths its parent holds fixed, so ``model["y"]`` reads as ``model(y)``. A
-    tuple of paths selects several nodes: the view declares an exposed record
-    of them, in order, and keeps its parent's label as well.
+    named by the path's final segment. A tuple of paths selects several nodes:
+    the view declares an exposed record of them, in order.
+
+    The view displays as the detached marginal at its path does, and its repr
+    names the class and the path, which distinguishes it from that marginal.
+    It is labeled as ``marginal`` labels the marginal there (VI.8), so
+    ``model["y"]`` reads as ``model(y)``, and ``model["mu"]`` at the factor
+    ``prior`` reads as ``prior(mu)``. A view of the whole events of several
+    factors reads factor by factor, as ``a(a)·b(b)`` (:attr:`notation`). The
+    view holds the paths its parent holds fixed, after those of the one factor
+    it is when it is one.
 
     Its capabilities are derived from the parent's, one by one:
 
@@ -861,11 +908,14 @@ class FieldView(Distribution):
 
     def __init__(self, parent: Distribution, path: str | tuple[str, ...]) -> None:
         declaration = _view_declaration(parent.event_spec, path)
-        self._init_tracked(parent.label)
+        self._init_tracked(_marginal_label_at(parent, path))
         self._init_annotations(None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_path", path)
         self._init_declaration(declaration)
+        closed = _closed_factors(parent, _as_paths(path))
+        if closed is not None and len(closed) == 1:
+            _keeps_fixed_paths(self, closed[0])
         _keeps_fixed_paths(self, parent)
         self.with_provenance(
             Provenance.create("__getitem__", parents=[parent], metadata={"path": path})
@@ -880,6 +930,28 @@ class FieldView(Distribution):
     def path(self) -> str | tuple[str, ...]:
         """The event path of the parent that this view reads, or the tuple of them."""
         return self._path
+
+    @property
+    def notation(self) -> str:
+        """The view's notation, which ``str()`` returns and the detached marginal at its path shares.
+
+        A view of the whole events of several factors, under their joined
+        label, joins the factors' notations with ``·``, as ``a(a)·b(b)``, when
+        their product declares the view's components in order and the view
+        holds no path fixed. Any other view reads as its label followed by its
+        signature, as ``model(y)``, ``prior(mu)``, or ``(lik·prior)(mu, y)``.
+        """
+        parts = _closed_factors(self._parent, _as_paths(self._path))
+        if (
+            parts is None
+            or len(parts) < 2
+            or _fixed_paths(self)
+            or self.label != _joined_label(part.label for part in parts)
+            or [name for part in parts for name in part.event_spec.components]
+            != list(self.event_spec.components)
+        ):
+            return super().notation
+        return PRODUCT_SYMBOL.join(part.notation for part in parts)
 
     def _component_paths(self) -> dict[str, str]:
         """Each component of the view, with the parent's path of its node."""
@@ -974,9 +1046,12 @@ class FieldView(Distribution):
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
         """This view under its component, the parent's view at a path within it, or a selection.
 
-        A path of the view starts with its component, so ``d["a"]["a/b/c"]`` is
-        ``d["a/b/c"]``. A tuple of paths of the view selects several nodes, as
-        the parent's view at the tuple of their paths, named by the view's paths.
+        A path of the view starts with its component, so ``d["a"]["a/b/c"]``
+        reads the node that ``d["a/b/c"]`` reads. A tuple of paths of the view
+        selects several nodes, as the parent's view at the tuple of their
+        paths, named by the view's paths. The result is labeled as the marginal
+        of this view at *key* is labeled (:func:`marginal`), and it holds the
+        paths this view holds fixed.
 
         Parameters
         ----------
@@ -1002,7 +1077,7 @@ class FieldView(Distribution):
                 raise KeyError(_not_an_event_path(self, key))
             if parent_path == self._path:
                 return self
-            return FieldView(self._parent, parent_path)
+            return self._sub_view(key, parent_path)
         if not isinstance(key, tuple) or not all(isinstance(each, str) for each in key):
             raise KeyError(f"a field path must be a string or a tuple of strings; got {key!r}")
         if not key:
@@ -1010,8 +1085,16 @@ class FieldView(Distribution):
         for each in key:
             if self._parent_path(each) is None:
                 raise KeyError(_not_an_event_path(self, each))
-        selection = FieldView(self._parent, tuple(self._parent_paths(key)))
+        selection = self._sub_view(key, tuple(self._parent_paths(key)))
         return _named_as(selection, [_final_segment(each) for each in key])
+
+    def _sub_view(
+        self, key: str | tuple[str, ...], parent_path: str | tuple[str, ...]
+    ) -> FieldView:
+        """The parent's view at *parent_path*, for *key*, labeled as this view's marginal at *key*."""
+        view = FieldView(self._parent, parent_path)
+        object.__setattr__(view, "_label", _marginal_label_at(self, key))
+        return _keeps_fixed_paths(view, self)
 
     def raw(self) -> Any:
         """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw()``.
