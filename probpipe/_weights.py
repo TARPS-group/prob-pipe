@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from ._dtype import _as_float_array, _default_float_dtype
+from .core._shapes import SizesLike, _as_shape
 from .custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
@@ -55,32 +56,35 @@ def _validate_to_log_weights(
         ``True`` when neither *weights* nor *log_weights* was provided.
     """
     if weights is not None and log_weights is not None:
-        raise ValueError("Provide either weights or log_weights, not both.")
+        raise ValueError("pass either weights or log_weights, not both")
 
     if weights is not None:
         weights = _as_float_array(weights)
         if weights.shape != (n,):
-            raise ValueError(f"weights shape {weights.shape} does not match number of items {n}.")
+            raise ValueError(
+                f"weights must have shape ({n},), one weight per item, got shape {weights.shape}"
+            )
         if not jnp.all(jnp.isfinite(weights)):
-            raise ValueError("weights must be finite.")
+            raise ValueError("weights must be finite")
         if jnp.any(weights < 0):
-            raise ValueError("weights must be non-negative.")
+            raise ValueError("weights must be non-negative")
         total = jnp.sum(weights)
         if total <= 0:
-            raise ValueError("weights must sum to a positive value.")
+            raise ValueError("weights must sum to a positive value")
         return jnp.log(weights), False
 
     if log_weights is not None:
         log_weights = _as_float_array(log_weights)
         if log_weights.shape != (n,):
             raise ValueError(
-                f"log_weights shape {log_weights.shape} does not match number of items {n}."
+                f"log_weights must have shape ({n},), one weight per item, "
+                f"got shape {log_weights.shape}"
             )
         if jnp.any(jnp.isnan(log_weights)):
-            raise ValueError("log_weights must not contain NaN.")
+            raise ValueError("log_weights must not contain NaN")
         total_log_weight = jax.scipy.special.logsumexp(log_weights)
         if not jnp.isfinite(total_log_weight):
-            raise ValueError("log_weights must define a positive finite total weight.")
+            raise ValueError("log_weights must define a positive finite total weight")
         return log_weights, False
 
     return None, True
@@ -196,7 +200,7 @@ def weighted_choice(
     n: int,
     *,
     weights: Array | None = None,
-    shape: tuple[int, ...] = (),
+    shape: SizesLike = (),
 ) -> Array:
     """Draw random indices with optional weighting.
 
@@ -208,27 +212,42 @@ def weighted_choice(
         Number of items to choose from (indices ``0..n-1``).
     weights : Array or None
         Normalized weights of shape ``(n,)``.  ``None`` for uniform.
-    shape : tuple of int
-        Output shape of index array.
+    shape : int or sequence of int
+        Output shape of index array. A single int is one axis, so ``shape=10``
+        is ``shape=(10,)``.
 
     Returns
     -------
     Array
         Integer index array of the given *shape*.
+
+    Raises
+    ------
+    TypeError
+        If *shape* is not an int or a sequence of ints, or a size is a ``bool``.
+    ValueError
+        If a size is negative.
     """
-    if not shape:
-        shape = (1,)
+    return _weighted_choice(
+        key, n, weights, _as_shape(shape, what="weighted_choice shape", symbolic=False)
+    )
+
+
+def _weighted_choice(key: PRNGKey, n: int, weights: Array | None, sizes: tuple[int, ...]) -> Array:
+    """``weighted_choice`` over a shape already read as a tuple of sizes."""
+    if not sizes:
+        sizes = (1,)
         squeeze = True
     else:
         squeeze = False
 
     if weights is None:
-        indices = jax.random.randint(key, shape=shape, minval=0, maxval=n)
+        indices = jax.random.randint(key, shape=sizes, minval=0, maxval=n)
     else:
         indices = jax.random.choice(
             key,
             n,
-            shape=shape,
+            shape=sizes,
             p=weights,
             replace=True,
         )
@@ -353,16 +372,16 @@ class Weights:
         source = None
         if isinstance(weights, Weights):
             if log_weights is not None:
-                raise ValueError("Provide either weights or log_weights, not both.")
+                raise ValueError("pass either weights or log_weights, not both")
             source = weights
         elif isinstance(log_weights, Weights):
             if weights is not None:
-                raise ValueError("Provide either weights or log_weights, not both.")
+                raise ValueError("pass either weights or log_weights, not both")
             source = log_weights
 
         if source is not None:
             if n is not None and source._n != n:
-                raise ValueError(f"Weights length {source._n} does not match n={n}.")
+                raise ValueError(f"weights must hold {n} weights, one per item, got {source._n}")
             self._n = source._n
             self._log_weights = source._log_weights
             self._is_uniform = source._is_uniform
@@ -375,15 +394,15 @@ class Weights:
             if weights is not None:
                 weights = _as_float_array(weights)
                 if weights.ndim != 1 or weights.shape[0] == 0:
-                    raise ValueError("weights must be a non-empty 1-D array.")
+                    raise ValueError("weights must be a non-empty 1-D array")
                 n = weights.shape[0]
             elif log_weights is not None:
                 log_weights = _as_float_array(log_weights)
                 if log_weights.ndim != 1 or log_weights.shape[0] == 0:
-                    raise ValueError("log_weights must be a non-empty 1-D array.")
+                    raise ValueError("log_weights must be a non-empty 1-D array")
                 n = log_weights.shape[0]
             else:
-                raise ValueError("At least one of n, weights, or log_weights must be provided.")
+                raise ValueError("Weights needs n, weights or log_weights")
 
         self._log_weights, self._is_uniform = _validate_to_log_weights(
             n,
@@ -550,13 +569,34 @@ class Weights:
             mean=mean,
         )
 
-    def choice(self, key: PRNGKey, *, shape: tuple[int, ...] = ()) -> Array:
-        """Draw weighted random indices from ``0..n-1``."""
-        return weighted_choice(
+    def choice(self, key: PRNGKey, *, shape: SizesLike = ()) -> Array:
+        """Draw weighted random indices from ``0..n-1``, of shape *shape*.
+
+        Parameters
+        ----------
+        key : PRNGKey
+            JAX PRNG key.
+        shape : int or sequence of int
+            The shape of the index array. A single int is one axis, so
+            ``shape=10`` draws ten indices, and ``()`` draws one.
+
+        Returns
+        -------
+        Array
+            Integer index array of shape *shape*.
+
+        Raises
+        ------
+        TypeError
+            If *shape* is not an int or a sequence of ints, or a size is a ``bool``.
+        ValueError
+            If a size is negative.
+        """
+        return _weighted_choice(
             key,
             self._n,
-            weights=None if self._is_uniform else self.normalized,
-            shape=shape,
+            None if self._is_uniform else self.normalized,
+            _as_shape(shape, what="Weights.choice shape", symbolic=False),
         )
 
     def subsample(self, indices: Array) -> Weights:

@@ -283,8 +283,8 @@ def _sampler_declaration(
         return declaration.with_spec(spec), True
     except (TypeError, ValueError) as error:
         raise ValueError(
-            f"the declaration check of {label!r} failed: sample returns a draw of {spec!r}, "
-            f"which does not conform to the event declaration {declaration!r}: {error}"
+            f"sample of {label!r} returns draws that do not match event_spec: {error}; the "
+            f"draws are {spec!r}"
         ) from None
 
 
@@ -314,8 +314,8 @@ def _event_declaration(label: str, event_spec: Any) -> OutputSpec:
     if isinstance(event_spec, TermSpec):
         return OutputSpec.default(event_spec, component=label)
     raise TypeError(
-        f"distribution takes an OutputSpec or a TermSpec as the event_spec of {label!r}, "
-        f"got {type(event_spec).__name__}"
+        f"event_spec of {label!r} must be an OutputSpec or a TermSpec; got "
+        f"{type(event_spec).__name__}"
     )
 
 
@@ -380,8 +380,8 @@ def _density_traces(
     real = jnp.issubdtype(score.dtype, jnp.floating) or jnp.issubdtype(score.dtype, jnp.integer)
     if score.shape != () or not real:
         raise ValueError(
-            f"the declaration check of {label!r} failed: {name} returns {score!r} at a stand-in "
-            f"of one value of {spec!r}, where a real scalar is due"
+            f"{name} of {label!r} must return a real scalar for one value of the event; it "
+            f"returns an array of shape {score.shape} and dtype {score.dtype}"
         )
     return True
 
@@ -478,11 +478,10 @@ def distribution(
         that traces fills it.
     ValueError
         If the abstract draw of *sample* does not conform to *event_spec*, or a
-        density that traces returns anything but a real scalar, with a message
-        that names the declaration check.
+        density that traces returns anything but a real scalar.
     """
     if not isinstance(label, str) or not label:
-        raise TypeError(f"distribution takes a non-empty label first, got {label!r}")
+        raise TypeError(f"distribution: label must be a non-empty string; got {label!r}")
     functions = {
         "sample": sample,
         "log_prob": log_prob,
@@ -491,27 +490,25 @@ def distribution(
     given = {name: function for name, function in functions.items() if function is not None}
     if not given:
         raise TypeError(
-            f"distribution needs a function of {label!r}: sample, log_prob, or "
+            f"distribution {label!r} needs at least one of sample, log_prob, or "
             f"unnormalized_log_prob"
         )
     for name, function in given.items():
         if not callable(function):
             raise TypeError(
-                f"the {name} of {label!r} must be callable, got {type(function).__name__}"
+                f"the {name} of {label!r} must be callable; got {type(function).__name__}"
             )
     if log_prob is not None and unnormalized_log_prob is not None:
-        raise TypeError(
-            f"distribution takes one density of {label!r}, log_prob or unnormalized_log_prob, "
-            f"and got both"
-        )
+        raise TypeError(f"distribution {label!r}: pass log_prob or unnormalized_log_prob, not both")
     declaration = _event_declaration(label, event_spec)
     sampler_traces = False
     if sample is not None:
         declaration, sampler_traces = _sampler_declaration(label, sample, declaration)
     if declaration.spec is None:
         raise TypeError(
-            f"the event_spec of {label!r} has a pending type, which only the abstract draw of a "
-            f"sampler that traces in JAX fills; declare the type"
+            f"event_spec of {label!r} does not declare a type, and only a sample function that "
+            f"traces in JAX can infer it; give the type, such as NumericArraySpec(()) for a "
+            f"real scalar"
         )
     density_traces = False
     for name in ("log_prob", "unnormalized_log_prob"):

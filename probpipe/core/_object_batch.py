@@ -21,13 +21,15 @@ See design II.4, II.5, and III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Self
 
 import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._repr import type_name
+from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -48,17 +50,18 @@ class _ObjectBatch[E](Batch[E]):
         more than one axis, since what nesting means for an arbitrary Python
         object is the caller's to decide. A supplied array is copied and the
         store frozen, so the batch holds the elements it validated.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names a single
         level. There is no default, deliberately — see *Notes*.
     element_spec : TermSpec
         What every element satisfies, checked against each at construction.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -73,6 +76,13 @@ class _ObjectBatch[E](Batch[E]):
         axis to count along), if ``axes_per_level`` does not account for every
         stored axis or gives a count that is not one per level, or if it is omitted
         and the number of names does not match the number of axes.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -93,36 +103,46 @@ class _ObjectBatch[E](Batch[E]):
 
     __slots__ = ("_store",)
 
-    #: What the shared spec admits, phrased for the refusal a bad element earns.
-    _element_rule = "satisfy this batch's element specification"
+    #: What the shared spec admits, worded to follow "elements must" in the
+    #: refusal a bad element earns.
+    _element_rule = "match element_spec"
 
     def __init__(
         self,
         label: str,
         elements: np.ndarray | Iterable[E],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: TermSpec,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        groups = _axis_groups_for(store.shape, names, axes_per_level, kind=type(self).__name__)
+        kind = type(self).__name__
+        names = _as_level_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
+        groups = _axis_groups_for(store.shape, names, axes, kind=kind)
 
         object.__setattr__(self, "_store", store)
         _check_elements(
-            store, element_spec, describing=self._element_rule, kind=type(self).__name__
+            store,
+            element_spec,
+            refusal=lambda element: self._element_refusal(element, element_spec),
+            kind=type(self).__name__,
         )
         self._init_batch(
-            BatchSpec(element_spec, groups, names),
-            name=label,
+            BatchSpec._from_groups(element_spec, groups, names),
+            label=label,
             provenance=provenance,
         )
 
     @classmethod
-    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, name: str) -> Self:
+    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, label: str) -> Self:
         """This batch over *store* as given, without copying or re-checking it.
 
         The public constructor copies the elements, freezes the copy, and checks
@@ -141,7 +161,7 @@ class _ObjectBatch[E](Batch[E]):
         # own ``__new__`` may select a class from constructor arguments.
         batch = object.__new__(cls)
         object.__setattr__(batch, "_store", store)
-        batch._init_batch(spec, name=name)
+        batch._init_batch(spec, label=label)
         return batch
 
     def raw(self) -> np.ndarray:
@@ -150,10 +170,10 @@ class _ObjectBatch[E](Batch[E]):
 
     # -- the storage seam ---------------------------------------------------
 
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The stored object at *index*, as a view under the derived *name*.
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> E:
+        """The stored object at *index*, as a view under the derived *label*.
 
-        A stored tracked term is returned as a copy under *name* that shares its
+        A stored tracked term is returned as a copy under *label* that shares its
         representation, so a law keeps its parameters and a function its callable,
         and the stored object itself is left untouched. A stored value that is
         not a tracked term is wrapped as the term of the batch's element kind by
@@ -165,7 +185,7 @@ class _ObjectBatch[E](Batch[E]):
         ----------
         index : tuple of int
             One position per batch axis.
-        name : str
+        label : str
             The label of the view, derived from its position.
 
         Returns
@@ -183,14 +203,14 @@ class _ObjectBatch[E](Batch[E]):
         source = stored if isinstance(stored, TrackedTerm) else None
         provenance = Provenance.of_view(self, source, metadata={"position": list(index)})
         if isinstance(stored, TrackedTerm):
-            view = stored.with_label(name)
+            view = stored.with_label(label)
             # ``with_label`` records a relabeling; the view's lineage is its selection.
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
-        return self._wrap_element(stored, name).with_provenance(provenance)
+        return self._wrap_element(stored, label).with_provenance(provenance)
 
-    def _wrap_element(self, value: Any, name: str) -> Any:
-        """The term of this batch's element kind holding the raw *value*, labeled *name*.
+    def _wrap_element(self, value: Any, label: str) -> Any:
+        """The term of this batch's element kind holding the raw *value*, labeled *label*.
 
         A batch whose elements are always tracked terms, as a batch of laws is,
         keeps this default, which refuses a raw value.
@@ -199,7 +219,7 @@ class _ObjectBatch[E](Batch[E]):
         ----------
         value : Any
             The raw value stored at the element's position.
-        name : str
+        label : str
             The label of the element view, derived from its position.
 
         Returns
@@ -214,10 +234,18 @@ class _ObjectBatch[E](Batch[E]):
         """
         raise TypeError(
             f"a {type(self).__name__} element is a tracked term, and the value stored at "
-            f"{name!r} is a {type(value).__name__}"
+            f"{label!r} is a {type(value).__name__}"
         )
 
-    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
+    def _element_refusal(self, element: Any, element_spec: TermSpec) -> str:
+        """Why *element_spec* refuses *element*, worded to follow "but" in the message.
+
+        The default states :attr:`_element_rule`; a class whose spec refuses
+        elements for more than one reason words each one.
+        """
+        return f"elements must {self._element_rule}"
+
+    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same store, indexed as given.
 
         numpy basic indexing returns a view, so the selection shares its
@@ -231,20 +259,18 @@ class _ObjectBatch[E](Batch[E]):
         # must not run again where there are none.
         view = object.__new__(type(self))
         object.__setattr__(view, "_store", self._store[index])
-        view._init_batch(spec, name=name)
+        view._init_batch(spec, label=label)
         return view
 
 
 def _frozen_object_column(column: np.ndarray) -> np.ndarray:
     """*column* as an object array nobody can write through.
 
-    A batch holds the columns it validated. An object column is the one kind a
-    caller can still mutate after construction — a JAX array is already immutable
-    and a numpy numeric column follows the aliasing convention the single-record
-    types already set — so it is copied and frozen, for the reason
-    ``_ObjectBatch`` states: a caller keeping a handle on what they passed cannot
-    write a value into the batch that its spec does not admit. Only the pointer
-    array is copied, so the elements stay shared.
+    A batch holds the columns it validated, so an object column is copied and
+    frozen, for the reason ``_ObjectBatch`` states: a caller keeping a handle on
+    what they passed cannot write a value into the batch that its spec does not
+    admit. Only the pointer array is copied, so the elements stay shared. A
+    numeric NumPy column is marked read-only in place by ``_read_only``.
     """
     frozen = np.array(column, dtype=object, subok=False)
     frozen.setflags(write=False)
@@ -271,10 +297,7 @@ def _as_object_array(elements: np.ndarray | Iterable[Any], *, kind: str) -> np.n
     """
     if isinstance(elements, np.ndarray):
         if elements.dtype != object:
-            raise TypeError(
-                f"{kind} stores objects, so an ndarray of elements must have dtype=object; "
-                f"got dtype={elements.dtype}"
-            )
+            raise TypeError(_not_object_dtype(kind, elements))
         # A subclass — np.matrix, a masked array — indexes by its own rules and
         # would not hand back the objects that were stored.
         store = np.array(elements, dtype=object, subok=False)
@@ -298,15 +321,21 @@ def _refuse_container(elements: Any, *, kind: str) -> None:
     batch of one.
     """
     if isinstance(elements, str | bytes | Mapping):
+        parts = "keys" if isinstance(elements, Mapping) else "characters"
         raise TypeError(
-            f"{kind} takes a sequence of elements, and a {type(elements).__name__} iterates "
-            f"into its parts rather than into elements; wrap it in a list to batch it as one"
+            f"{kind}: elements must be a sequence of elements, got {type(elements).__name__}, "
+            f"which would be split into its {parts}; wrap it in a list to batch it as one element"
         )
     if isinstance(elements, np.ndarray | jax.Array):
-        raise TypeError(
-            f"{kind} stores objects, so an array of elements must have dtype=object; "
-            f"got a {type(elements).__name__} of {elements.dtype}"
-        )
+        raise TypeError(_not_object_dtype(kind, elements))
+
+
+def _not_object_dtype(kind: str, elements: Any) -> str:
+    """The message for an array of elements whose dtype is not ``object``."""
+    return (
+        f"{kind}: an array of elements must have dtype=object, got {type_name(elements)} "
+        f"with dtype {elements.dtype}; use NumericArrayBatch for numeric values"
+    )
 
 
 def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
@@ -315,7 +344,7 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
         iterator = iter(elements)
     except TypeError:
         raise TypeError(
-            f"{kind} takes an object ndarray or an iterable of elements; "
+            f"{kind}: elements must be an object array or an iterable, "
             f"got {type(elements).__name__}"
         ) from None
     flat = list(iterator)
@@ -326,20 +355,19 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
 
 
 def _check_elements(
-    store: np.ndarray, element_spec: TermSpec, *, describing: str, kind: str
+    store: np.ndarray, element_spec: TermSpec, *, refusal: Callable[[Any], str], kind: str
 ) -> None:
     """Fail on the first element the shared spec does not admit, naming its position.
 
     Checked at construction rather than left to ``is_valid`` because a batch
     asserts its ``element_spec`` of *every* element: one that does not satisfy it
     makes the batch's own spec a false statement, and where it sits is what a
-    caller needs to hear. *describing* states positively what an element must be,
-    so each class supplies only its own phrase.
+    caller needs to hear. *refusal* says why the spec refuses an element, so each
+    class supplies only its own wording.
     """
     for index, element in np.ndenumerate(store):
         if not element_spec.is_valid(element):
             position = index[0] if len(index) == 1 else index
             raise TypeError(
-                f"every element of a {kind} must {describing}; the element at {position} "
-                f"is a {type(element).__name__}"
+                f"{kind}: element {position} is {type_name(element)}, but {refusal(element)}"
             )

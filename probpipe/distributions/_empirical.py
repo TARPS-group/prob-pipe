@@ -46,7 +46,12 @@ from ._capabilities import (
     SupportsVariance,
     _capability_subclass,
 )
-from ._distribution import Distribution, _whole_term_component
+from ._distribution import (
+    _EMPTY_SELECTION,
+    Distribution,
+    _shared_final_names,
+    _whole_term_component,
+)
 from ._factored import _raw_record, _stacked
 from ._views import _node_at
 
@@ -103,25 +108,30 @@ def _atom_spec(atoms: Any) -> TermSpec:
     if isinstance(atoms, Batch):
         if not isinstance(atoms, (NumericArrayBatch, RecordBatch, _ObjectBatch)):
             raise TypeError(
-                f"an empirical law stores array, record, or object batches, got "
+                f"atoms must be a NumericArrayBatch, a RecordBatch, or a batch of objects; got "
                 f"{type(atoms).__name__}"
             )
         if atoms.batch_size == 0:
             raise ValueError(
-                f"an empirical law has at least one atom, and {atoms.label!r} is empty"
+                f"EmpiricalDistribution needs at least one atom, but {atoms.label!r} is empty"
             )
         return atoms.element_spec
     if _is_numeric_array(atoms):
         if atoms.ndim == 0:
             raise ValueError(
-                "the leading axis of an array of atoms indexes the atoms, and a 0-d array has none"
+                "atoms must have a leading axis that indexes the atoms; got a 0-d array. Use "
+                "jnp.atleast_1d(atoms) for a single atom"
             )
         if atoms.shape[0] == 0:
-            raise ValueError("an empirical law has at least one atom, and the array holds none")
+            raise ValueError(
+                f"EmpiricalDistribution needs at least one atom, but atoms has shape "
+                f"{tuple(atoms.shape)}"
+            )
         return NumericArraySpec(atoms.shape[1:], atoms.dtype)
+    hint = "; convert it with jnp.asarray(atoms)" if isinstance(atoms, (list, tuple)) else ""
     raise TypeError(
-        f"atoms are given in the event's batch form, or as an array whose leading axis "
-        f"indexes array atoms; got {type(atoms).__name__}"
+        f"atoms must be an array whose leading axis indexes the atoms, or a batch such as "
+        f"NumericRecordBatch; got {type(atoms).__name__}{hint}"
     )
 
 
@@ -211,7 +221,7 @@ def _ranks(atoms: Batch) -> tuple[int, ...]:
     return tuple(len(group) for group in atoms.axis_groups)
 
 
-def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
+def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
     """*raw*, values of *spec* in raw form along one leading axis, as their batch on *level*.
 
     The raw form is an array of array values, the nested mapping of columns, or
@@ -220,7 +230,7 @@ def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
 
     Parameters
     ----------
-    name : str
+    label : str
         The batch's label.
     raw : Any
         The values in raw form, along one leading axis.
@@ -241,11 +251,11 @@ def _batch_form(name: str, raw: Any, level: str, spec: TermSpec) -> Batch:
         If *spec* has no batch form.
     """
     if isinstance(spec, RecordSpec):
-        return _batch_class_for(spec)(name, _raw_record(raw), level, element_spec=spec)
+        return _batch_class_for(spec)(label, _raw_record(raw), level, element_spec=spec)
     batch_class = batch_class_for_spec(spec)
     if batch_class is None:
-        raise TypeError(f"a value declared as {type(spec).__name__} has no batch form")
-    return batch_class(name, raw, level, element_spec=spec)
+        raise TypeError(f"cannot store values declared as {type(spec).__name__} as atoms")
+    return batch_class(label, raw, level, element_spec=spec)
 
 
 # ---------------------------------------------------------------------------
@@ -491,18 +501,19 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ) -> None:
         atom_spec = _atom_spec(atoms)
         if level is not None and not isinstance(level, str):
-            raise TypeError(f"level is the name of a level, got {type(level).__name__}")
+            raise TypeError(f"level must be a string; got {type(level).__name__}")
         if level is not None and isinstance(atoms, Batch):
             raise TypeError(
-                f"level names the level of a plain array's atoms; the batch {atoms.label!r} keeps "
-                f"its own levels {list(atoms.level_names)}, which with_level_names renames"
+                f"level applies only to atoms given as an array, but the batch {atoms.label!r} "
+                f"already has the levels {list(atoms.level_names)}; rename them with "
+                f"with_level_names"
             )
         if event_spec is None:
             declared: OutputSpec | TermSpec = atom_spec
         elif isinstance(event_spec, OutputSpec):
             declared = event_spec.with_spec(atom_spec)
         else:
-            raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
+            raise TypeError(f"event_spec must be an OutputSpec; got {type(event_spec).__name__}")
         super().__init__(label, declared)
         if isinstance(atoms, Batch):
             stored = atoms
@@ -697,29 +708,25 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         """
         paths = (path,) if isinstance(path, str) else tuple(path)
         if not paths:
-            raise ValueError("a selection of event paths names at least one path")
+            raise ValueError(_EMPTY_SELECTION)
         component = _whole_term_component(self.event_spec)
         selected = []
         for requested in paths:
             if not isinstance(requested, str):
-                raise TypeError(f"an event path is a string, got {type(requested).__name__}")
+                raise TypeError(f"a field path must be a string; got {type(requested).__name__}")
             try:
                 node = _node_at(self.event_spec, requested)
             except KeyError:
                 raise KeyError(
-                    f"{requested!r} is not an event path of {self.label!r}, whose components "
-                    f"are {list(self.event_spec.components)}"
+                    f"{requested!r} is not an event path of {self.label!r}; its fields: "
+                    f"{list(self.event_spec.components)}"
                 ) from None
             segments = tuple(requested.split(_PATH_SEP))
             selected.append((requested, segments if component is None else segments[1:], node))
         if not isinstance(path, str):
             finals = [requested.rsplit(_PATH_SEP, 1)[-1] for requested in paths]
-            shared = sorted({final for final in finals if finals.count(final) > 1})
-            if shared:
-                raise ValueError(
-                    f"the selected paths {list(paths)} share the final segments {shared}, which "
-                    f"would name two fields of the selected record alike"
-                )
+            if len(set(finals)) < len(finals):
+                raise ValueError(_shared_final_names(paths))
         return tuple(selected)
 
     def _projection(self, segments: tuple[str, ...], node: TermSpec) -> Batch:

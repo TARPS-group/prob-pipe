@@ -175,14 +175,14 @@ class TestReplayScope:
         original = _draw()
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="exactly one"),
+            pytest.raises(ReplayCompatibilityError, match="without a Function call"),
             replay_run(original.provenance),
         ):
             pass
 
         with replay_run(original.provenance):
             sample(Normal(loc=0.0, scale=1.0, label="value"))
-            with pytest.raises(ReplayCompatibilityError, match="one top-level"):
+            with pytest.raises(ReplayCompatibilityError, match="second one"):
                 sample(Normal(loc=0.0, scale=1.0, label="value"))
 
         with replay_run(original.provenance):
@@ -229,7 +229,7 @@ class TestReplayScope:
         with (
             pytest.raises(ReplayCompatibilityError, match="did not complete"),
             replay_run(original.provenance),
-            pytest.raises(ReplayCompatibilityError, match="callable"),
+            pytest.raises(ReplayCompatibilityError, match="expected a call to sample"),
         ):
             changed(value=Normal(loc=0.0, scale=1.0, label="value"))
 
@@ -283,7 +283,10 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ),
-            pytest.raises(ReplayCompatibilityError, match=r"callable definition ABI.*expected.*v1"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"replay\.callable\.definition_abi '.*/v99'.*needs '.*/v1'",
+            ),
             replay_run(Provenance.from_dict(payload)),
         ):
             raise AssertionError("An unknown callable ABI was admitted")
@@ -293,14 +296,17 @@ class TestReplayAdmission:
         anchor = payload["controls"]["replay"]["callable"]
         anchor["signature_and_templates"] = anchor.pop("signature_and_declarations")
         with (
-            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"replay\.callable lacks fields \['signature_and_declarations'\]",
+            ),
             replay_run(Provenance.from_dict(payload)),
         ):
             raise AssertionError("A former anchor was admitted")
 
     def test_legacy_unknown_and_malformed_recipes_fail_at_entry(self):
         with (
-            pytest.raises(ReplayCompatibilityError, match="RNG recipe"),
+            pytest.raises(ReplayCompatibilityError, match="no recorded random draws"),
             replay_run(Provenance("legacy")),
         ):
             pass
@@ -308,10 +314,50 @@ class TestReplayAdmission:
         payload = _draw().provenance.to_dict()
         payload["controls"]["randomness"]["rng_abi"] = "unknown-rng/v99"
         with (
-            pytest.raises(ReplayCompatibilityError, match="RNG ABI"),
+            pytest.raises(ReplayCompatibilityError, match=r"randomness\.rng_abi 'unknown-rng/v99'"),
             replay_run(Provenance.from_dict(payload)),
         ):
             pass
+
+    def test_a_result_passed_in_place_of_its_provenance_is_named(self):
+        original = _draw()
+
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=rf"expects a Provenance, got {type(original).__name__}\. Pass "
+                r"result\.provenance",
+            ),
+            replay_run(original),
+        ):
+            pass
+
+    def test_a_python_version_drift_names_both_versions(self):
+        changed = _mutate_provenance(
+            _draw().provenance,
+            lambda controls: controls["replay"]["callable"].update(python_replay_abi="cpython-2.7"),
+        )
+
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"recorded under cpython-2\.7, but this interpreter is",
+            ),
+            replay_run(changed),
+        ):
+            sample(Normal(loc=0.0, scale=1.0, label="value"))
+
+    def test_a_sample_shape_drift_names_the_draw(self):
+        original = _draw()
+
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"\(sample with sample_shape=\(3,\)\) that matches no draw",
+            ),
+            replay_run(original.provenance),
+        ):
+            sample(Normal(loc=0.0, scale=1.0, label="value"), sample_shape=(3,))
 
     @pytest.mark.parametrize(
         "mapping_path",
@@ -379,7 +425,9 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            pytest.raises(
+                ReplayCompatibilityError, match=r"unexpected fields \['unknown_field_v2'\]"
+            ),
             replay_run(changed),
         ):
             raise AssertionError("replay admission accepted unknown structure")
@@ -392,13 +440,13 @@ class TestReplayAdmission:
             pytest.param(
                 "randomness",
                 "probpipe.rng_recipe/v2",
-                "unknown or missing workflow RNG recipe schema",
+                "has randomness.schema 'probpipe.rng_recipe/v2'",
                 id="randomness",
             ),
             pytest.param(
                 "replay",
                 "probpipe.replay_anchor/v2",
-                "recorded replay anchor schema is incompatible",
+                "has replay.schema 'probpipe.replay_anchor/v2'",
                 id="replay",
             ),
         ],
@@ -504,11 +552,11 @@ class TestReplayAdmission:
         del target[field_name]
         changed = Provenance.from_dict(payload)
         if mapping_path == () and field_name == "randomness":
-            expected_error = "randomness RNG recipe must be a mapping"
+            expected_error = "no recorded random draws"
         elif field_name == "schema":
-            expected_error = "schema"
+            expected_error = r"has no .*schema|lacks fields \['schema'\]"
         else:
-            expected_error = "version-1 schema"
+            expected_error = rf"lacks fields \['{field_name}'\]"
 
         with (
             patch(
@@ -546,7 +594,9 @@ class TestReplayAdmission:
         }
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="standalone replay restriction"),
+            pytest.raises(
+                ReplayCompatibilityError, match=r"restriction .* does not match eligibility"
+            ),
             replay_run(Provenance.from_dict(payload)),
         ):
             raise AssertionError("replay admission accepted a mismatched restriction")
@@ -557,13 +607,13 @@ class TestReplayAdmission:
             pytest.param(
                 ("randomness", "schema"),
                 "unknown-recipe/v99",
-                "RNG recipe schema",
+                "randomness.schema",
                 id="rng-recipe-schema",
             ),
             pytest.param(
                 ("replay", "schema"),
                 "unknown-replay/v99",
-                "replay anchor schema",
+                "replay.schema",
                 id="replay-schema",
             ),
             pytest.param(
@@ -575,19 +625,19 @@ class TestReplayAdmission:
             pytest.param(
                 ("replay", "callable", "definition_abi"),
                 "unknown-callable/v99",
-                "callable definition ABI",
+                "replay.callable.definition_abi",
                 id="callable-definition-abi",
             ),
             pytest.param(
                 ("replay", "callable", "probpipe_replay_abi"),
                 "unknown-probpipe/v99",
-                "ProbPipe replay ABI",
+                "replay.callable.probpipe_replay_abi",
                 id="probpipe-replay-abi",
             ),
             pytest.param(
                 ("replay", "callable", "module"),
                 None,
-                "invalid module",
+                "replay.callable.module must be a string",
                 id="callable-module",
             ),
             pytest.param(
@@ -599,49 +649,49 @@ class TestReplayAdmission:
             pytest.param(
                 ("replay", "plan", "schema"),
                 "unknown-plan/v99",
-                "stochastic plan ABI",
+                "replay.plan.schema",
                 id="plan-schema",
             ),
             pytest.param(
                 ("replay", "plan", "canonical_fields", "managed_child_policy"),
                 "unknown-managed-child/v99",
-                "managed-child",
+                "managed_child_policy",
                 id="managed-child-policy",
             ),
             pytest.param(
                 ("replay", "plan", "canonical_fields", "key_ownership"),
                 "caller",
-                "not workflow-key-owned",
+                "key_ownership must be 'automatic', got 'caller'",
                 id="plan-key-ownership",
             ),
             pytest.param(
                 ("randomness", "expected_event_count"),
                 True,
-                "event count",
+                "expected_event_count must be",
                 id="event-count-bool",
             ),
             pytest.param(
                 ("replay", "compatibility", "provider_abi"),
                 _DELETE,
-                "compatibility fields",
+                r"replay\.compatibility lacks fields \[.provider_abi.\]",
                 id="compatibility-fields",
             ),
             pytest.param(
                 ("replay", "compatibility", "execution_contract"),
                 "unknown-execution/v99",
-                "execution contract",
+                "replay.compatibility.execution_contract",
                 id="execution-contract",
             ),
             pytest.param(
                 ("replay", "compatibility", "descendant_adapter_abi"),
                 ["unknown-descendant/v99"],
-                "descendant-adapter ABI",
+                r"descendant_adapter_abi is \[.unknown-descendant/v99.\]",
                 id="descendant-adapter-abi",
             ),
             pytest.param(
                 ("replay", "compatibility", "sampling_abi"),
                 [""],
-                "sampling ABI",
+                "sampling_abi must contain only non-empty strings",
                 id="empty-sampling-abi",
             ),
             pytest.param(
@@ -653,67 +703,67 @@ class TestReplayAdmission:
             pytest.param(
                 ("randomness", "events", 0, "occurrence_path", 0, 1),
                 1,
-                "outside its anchored occurrence_path",
+                "occurrence_path does not start with randomness.occurrence_path",
                 id="event-outside-anchor",
             ),
             pytest.param(
                 ("randomness", "events", 0, "occurrence_kind"),
                 "child",
-                "occurrence kind",
+                r"occurrence_kind must be .* got .child.",
                 id="event-occurrence-kind",
             ),
             pytest.param(
                 ("randomness", "events", 0, "key_ownership"),
                 "caller",
-                "not workflow-key-owned",
+                "key_ownership must be 'automatic', got 'caller'",
                 id="event-key-ownership",
             ),
             pytest.param(
                 ("randomness", "events", 0, "source"),
                 {},
-                "must be a JSON sequence",
+                "source must be a list, got dict",
                 id="event-source-sequence",
             ),
             pytest.param(
                 ("randomness", "events", 0, "source"),
                 ["source-group", True],
-                "invalid structural value",
+                "contains invalid entry True",
                 id="event-source-value",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "provider_abi"),
                 _DELETE,
-                "incompatible fields",
+                r"expected_effects\[0\] lacks fields",
                 id="effect-fields",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "operation_kind"),
                 "",
-                "invalid operation_kind",
+                "operation_kind must be a non-empty string",
                 id="effect-operation-kind",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "sample_shape"),
                 [-1],
-                "invalid sample_shape",
+                r"sample_shape must be null or a list of nonnegative integers, got \[-1\]",
                 id="effect-sample-shape",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "record_path"),
                 [1],
-                "invalid record_path",
+                "record_path must be a list of strings",
                 id="effect-record-path",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "descendant_descriptor"),
                 {},
-                "invalid descendant_descriptor",
+                "descendant_descriptor must be null or a nested list",
                 id="effect-descriptor-sequence",
             ),
             pytest.param(
                 ("replay", "plan", "expected_effects", 0, "descendant_descriptor"),
                 [{}],
-                "invalid descendant_descriptor",
+                "descendant_descriptor must be null or a nested list",
                 id="effect-descriptor-value",
             ),
         ],
@@ -753,7 +803,10 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="invalid descendant_descriptor"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match="descendant_descriptor must be null or a nested list",
+            ),
             replay_run(changed),
         ):
             pass
@@ -769,7 +822,7 @@ class TestReplayAdmission:
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="finite JSON-native values"),
+            pytest.raises(ReplayCompatibilityError, match="finite JSON values"),
             replay_run(changed),
         ):
             pass
@@ -893,7 +946,7 @@ class TestReplayAdmission:
             nested_result = outer(value=1.0)
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="nested automatic"),
+            pytest.raises(ReplayCompatibilityError, match="nested Function call"),
             replay_run(nested_result.provenance),
         ):
             pass
@@ -921,12 +974,12 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
+            pytest.raises(ReplayCompatibilityError, match="set up differently"),
             replay_run(changed),
         ):
             workflow(value=candidate)
@@ -942,7 +995,10 @@ class TestReplayPreflight:
         changed = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="callable"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"expected a call to .*replayable_identity, but .*replayable_affine",
+            ),
             replay_run(original.provenance),
         ):
             changed(value=Normal(loc=0.0, scale=1.0, label="value"))
@@ -957,7 +1013,7 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(ReplayUnsupportedCallableError, match="lambda"),
             replay_run(original.provenance),
         ):
@@ -984,8 +1040,10 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="definition changed"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError, match="has changed since the call was recorded"
+            ),
             replay_run(original.provenance),
         ):
             changed(value=candidate)
@@ -1052,8 +1110,10 @@ class TestReplayPreflight:
             n_broadcast_samples=8,
         )
         with (
-            patch.object(law, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="callable"),
+            patch.object(type(law), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError, match="has changed since the call was recorded"
+            ),
             replay_run(original.provenance),
         ):
             changed(value=law)
@@ -1070,8 +1130,8 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, label="value")
 
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayCompatibilityError, match="n_broadcast_samples is 6, recorded 5"),
             replay_run(original.provenance),
         ):
             changed(value=candidate)
@@ -1090,12 +1150,15 @@ class TestReplayPreflight:
             loc=2.0, scale=1.0, label="y"
         )
         with (
-            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
+            patch.object(type(candidate_root), "_sample", side_effect=AssertionError("sampled")),
             patch(
                 "probpipe.functions._context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ),
-            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"draw \(sample of 'y' with sample_shape=\(\)\) that matches no draw",
+            ),
             replay_run(original.provenance),
         ):
             sample(candidate_root["y"])
@@ -1181,8 +1244,11 @@ class TestReplayPreflight:
         )
         candidate = Normal(loc=0.0, scale=1.0, label="value")
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayUnsupportedCallableError, match="module-level"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayUnsupportedCallableError,
+                match=r"signature, defaults, .* replay cannot record",
+            ),
             replay_run(original.provenance),
         ):
             workflow(value=candidate)
@@ -1196,8 +1262,10 @@ class TestReplayPreflight:
         changed = _mutate_provenance(original.provenance, mutate)
         candidate = Normal(loc=0.0, scale=1.0, label="value")
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="sampling ABI"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError, match=r"replay\.compatibility\.sampling_abi is"
+            ),
             replay_run(changed),
         ):
             sample(candidate)
@@ -1210,7 +1278,10 @@ class TestReplayPreflight:
 
         changed = _mutate_provenance(original.provenance, mutate)
         with (
-            pytest.raises(ReplayCompatibilityError, match="key-adapter ABI"),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"replay\.compatibility\.key_adapter_abi 'unknown-key-adapter/v99'",
+            ),
             replay_run(changed),
         ):
             pass
@@ -1257,8 +1328,11 @@ class TestReplayEventRegistry:
         changed = _mutate_provenance(original.provenance, mutate)
         candidate = Normal(loc=0.0, scale=1.0, label="value")
         with (
-            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match=r"unexpected|provider ABI"),
+            patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=r"matches no draw|recorded call did not make|provider_abi is",
+            ),
             replay_run(changed),
         ):
             sample(candidate)
@@ -1292,7 +1366,9 @@ class TestReplayEventRegistry:
 
         state.claim_effect(effect, attempt=first)
         state.claim_effect(effect, attempt=retry)
-        with pytest.raises(ReplayCompatibilityError, match="missing expected"):
+        with pytest.raises(
+            ReplayCompatibilityError, match="1 random draw that this call did not make"
+        ):
             state.assert_all_events_claimed()
         with pytest.raises(ReplayCompatibilityError, match="successful attempt"):
             state.mark_successful_effects((effect,), attempt=unclaimed)
@@ -1330,7 +1406,7 @@ class TestReplayEventRegistry:
         object.__setattr__(unexpected, "stochastic_source_id", ("source-group", 99))
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
 
-        with pytest.raises(ReplayCompatibilityError, match="unexpected replay event"):
+        with pytest.raises(ReplayCompatibilityError, match="that the recorded call did not make"):
             state._commit_effect_batch(
                 (effect, unexpected),
                 successful_effects=(),
@@ -1348,7 +1424,9 @@ class TestReplayEventRegistry:
         attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="missing expected"),
+            pytest.raises(
+                ReplayCompatibilityError, match="1 random draw that this call did not make"
+            ),
             _replay._remote_replay_claim_scope((effect,), attempt),
         ):
             pass
@@ -1454,7 +1532,7 @@ class TestReplayEventRegistry:
         )
 
         with (
-            pytest.raises(ReplayCompatibilityError, match="unexpected replay event"),
+            pytest.raises(ReplayCompatibilityError, match="matches no draw of the recorded call"),
             replay_run(original.provenance),
         ):
             workflow(value=Normal(loc=0.0, scale=1.0, label="value"))

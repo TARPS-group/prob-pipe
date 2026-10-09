@@ -59,6 +59,7 @@ from ._inference_utils import (
     build_mcmc_datatree,
     build_target_log_prob_flat,
     is_jax_traceable,
+    no_density_reason,
     observed_parts,
     parallel_chain_map,
     run_chain_scan,
@@ -305,7 +306,6 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         "num_integration_steps",
         "num_results",
         "num_warmup",
-        "random_seed",
         "step_size",
     )
 
@@ -329,17 +329,14 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         """Whether the target has an unnormalized density that JAX traces at its initial state."""
         model, observed = observed_parts(target)
         if not isinstance(model, SupportsUnnormalizedLogProb):
-            return Feasibility(
-                feasible=False,
-                description="Requires SupportsUnnormalizedLogProb",
-            )
+            return Feasibility(feasible=False, description=no_density_reason(model))
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(model, observed)
             density, init, _ = unconstrained_chain(target_flat, flat_init, model)
             if not is_jax_traceable(density, init):
                 return Feasibility(
                     feasible=False,
-                    description="Log-prob is not JAX-traceable",
+                    description="the log-density is not JAX-traceable",
                 )
         except Exception as e:
             return Feasibility(
@@ -351,7 +348,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Chains of the BlackJAX kernel on the flat form of the target's unnormalized density."""
         self._check_options(kwargs)
-        random_seed = run_seed(kwargs, self.name)
+        random_seed = run_seed(self.name)
         model, observed = observed_parts(target)
         target_flat, flat_init, event_spec = build_target_log_prob_flat(
             model,

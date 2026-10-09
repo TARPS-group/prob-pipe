@@ -9,6 +9,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
+  maps each level's name to the shape of its axes, outermost first, as in
+  `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
+  is one axis. A level name that no keyword spells goes in a mapping passed
+  positionally, as `BatchSpec(spec, {"my level": 2})`. Replace
+  `BatchSpec(spec, ((4,), (100,)), ("chain", "draw"))` with
+  `BatchSpec(spec, chain=4, draw=100)`, and
+  `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
+  `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
+  mapping, and the repr is the keyword call. `dataclasses.replace` no longer
+  rebuilds a `BatchSpec`; use `copy.replace` on Python 3.13 or later, or
+  construct a new one.
+- **A string shape is one dimension.** `NumericArraySpec("loc")` is
+  `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
+  and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
+  rank-0 shape. A dimension name must be a Python identifier, so
+  `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
+  `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
+  and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
+  a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
+  level names, or axis counts are taken, so pass a tuple or a list. A
+  `PyMCModel` names the symbolic dimensions of a variable whose name is not
+  an identifier by replacing each other character with `_`, so a nested
+  model's `sub::beta` has the dimension `sub__beta_0`, where it was
+  `sub::beta_0`.
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
+- **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
+  `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
+  every column is numeric and no explicit non-numeric `element_spec` vetoes it,
+  as `Record(...)` returns a `NumericRecord`. A view over numeric fields, such
+  as a field that `select` takes from a mixed batch or a `Design`, is a
+  `NumericRecordBatch` too. Such a batch has `to_vector`,
+  where it was a plain `RecordBatch` before. Replace a check of
+  `type(batch) is RecordBatch` with `isinstance(batch, RecordBatch)`.
+- **A term marks each NumPy array it stores read-only.** Constructing a term
+  from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
+  family, sets the array's `writeable` flag to `False` in place. A write into
+  that array afterwards, through the caller's handle or through `.raw()`,
+  raises `ValueError: assignment destination is read-only`, where it used to
+  change the term. To keep a writable array, pass a copy,
+  as in `NumericArray("x", values.copy())`. A pandas or xarray container is
+  stored by reference as before.
+- **A relabeled or dimension-bound copy of a law draws together with the law
+  it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
+  `with_dim_sizes` returns together with the law it is made from, as it draws a
+  law that `with_path_names` returns. Each method returns the same law under a
+  new label, new dimension names, or bound dimensions. So
+  `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
+  where it drew two independent values before, and
+  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  from a `Record` field draws with the law the record stores, so
+  `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
+  values, construct the law twice.
+- **A distribution is immutable, as every tracked term is.** Assigning to or
+  deleting an attribute of a constructed law raises `AttributeError`, naming
+  its class, and an operation that changes a law returns a new one. A
+  subclass's `__init__` assigns its attributes as before. Replace an
+  assignment after construction as follows:
+  - Pass the value to the constructor and build a new law with it.
+  - Write a diagnostic or a validation result into the `annotations` store,
+    which stays writable.
+  - In a test, patch a method on the law's class:
+    replace `patch.object(law, "_sample", ...)` with
+    `patch.object(type(law), "_sample", ...)`.
 - **`simulation_based_calibration` calibrates any posterior, takes its
   randomness from the enclosing workflow scope, and reads a fit's budgets from
   `method_options`.** Its signature is
@@ -62,6 +141,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or an unscoped run resamples afresh. Replace
   `iterate(with_resampling(step, seed=0), ...)` with
   `iterate(with_resampling(step), ...)` inside `workflow_run(seed=0)`.
+- **Every inference method takes its seed from the workflow scope.** Each run of
+  an inference method, and each training of an amortized learner, draws its
+  seed from a workflow-owned random event. `workflow_run(seed=...)` therefore
+  reproduces it, and another seed or an unscoped call runs afresh.
+  - The `random_seed` method option is removed from `blackjax_nuts`,
+    `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`,
+    `blackjax_sgld`, `blackjax_sghmc`, `tfp_nuts`, `nutpie_nuts`, `pymc_nuts`,
+    `pymc_advi`, `cmdstan_nuts`, and `pyabc_smcabc`, and setting it raises the
+    `TypeError` of an unknown option.
+  - The `random_seed` parameter is removed from `rwmh`, `elliptical_slice`,
+    `condition_on_nutpie`, `learn_amortized_posterior`,
+    `learn_amortized_likelihood`, and `learn_amortized_ratio`, so the learners
+    no longer train at the seed 0 by default. A `random_seed=` or `seed=`
+    keyword raises the `TypeError` of an unexpected keyword, including in the
+    keywords that `condition_on_nutpie` passes to `nutpie.sample` and the
+    learners pass to `approximator.fit`.
+  - `pymc_advi` seeds the draws of an empirical result from the run's key, so
+    `workflow_run(seed=...)` reproduces them.
+  - `pyabc_smcabc` with a sampler whose workers run in other processes gives
+    each worker its own JAX keys, folded from the worker's numpy generator, so
+    the workers no longer repeat one another's prior draws and simulations.
+
+  Replace
+  `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.with_options(method_options={"num_results": 500})(model, data)`
+  inside `workflow_run(seed=0)`, and
+  `learn_amortized_posterior(prior, simulator, random_seed=0)` with
+  `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
 - **A result names each component by what its value means.**
   - `mean`, `variance`, and `quantile` name each component of the law's event
     by their call. The mean of a law over `mu` and `tau` is a record whose
@@ -85,6 +192,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A repr writes names that are no Python identifiers, such as `mean(mu)`,
     in order inside one `**{...}` mapping, as in
     `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+- **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
+  from the workflow scope.** The three drop their `key` parameter, and a `key=`
+  keyword raises `TypeError`. A call claims one workflow-owned random event of
+  the enclosing workflow scope, as a call without a key did. A call inside
+  `workflow_run(seed=...)` therefore reproduces its result, and a call outside
+  every scope draws afresh. `score_posterior` claims the event only when it
+  scores `sliced_wasserstein`. Move a call that passed a key into a seeded scope,
+  so `predictive_check(likelihood, posterior, test_fn, y, key=jax.random.key(0))`
+  becomes
+
+  ```python
+  with workflow_run(seed=0):
+      check = predictive_check(likelihood, posterior, test_fn, y)
+  ```
+
+  The scope derives the call's key from the seed and the call's position in the
+  scope, so the result differs from the one the old key gave.
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
+  skipping sliced Wasserstein when the reference has no draws, remains
+  compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -474,15 +603,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anonymous, and nested `workflow_run` scopes derive keys from stable call,
   source, and logical-unit identities. All omitted-key sampling, conversion,
   validation, and diagnostics routes use the same broker. Explicit sampling
-  keys and inference `random_seed` arguments remain caller-owned, are passed
-  through unchanged, and do not advance the workflow stream. A wrapped user
-  callable's own `seed` parameter is still an ordinary input.
+  keys remain caller-owned, are passed through unchanged, and do not advance
+  the workflow stream. Each run of an inference method draws its seed from the
+  stream, as the entry "Every inference method takes its seed from the
+  workflow scope" states. A wrapped user callable's own `seed` parameter is
+  still an ordinary input.
 
-  `score_posterior(..., key=None)` no longer uses a fixed
-  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
-  the same ownership rule: a bare score receives a fresh ephemeral root, while
-  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
-  explicit `key=`) to remain reproducible.
+  `score_posterior` no longer uses a fixed `jax.random.PRNGKey(0)` for sliced
+  Wasserstein projections. It now follows the same ownership rule: a bare score
+  receives a fresh ephemeral root, while benchmark scoring must run inside
+  `workflow_run(seed=...)` to remain reproducible.
 
   PPC test functions must have unique `__name__` values because those names
   label the returned statistics; use distinct named functions instead of
@@ -1072,6 +1202,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A single int is a shape of one axis wherever a shape is taken.**
+  `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
+  `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
+  each read the int as a tuple of one, and these arguments take any sequence,
+  such as a list, a `range`, or a 1-D array. A `numpy` integer size is stored as
+  a Python `int`.
 - **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
   warmup's step-size adaptation targets is a method option, 0.75 unless set,
   so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
@@ -1988,6 +2124,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Error and warning messages say what went wrong in the caller's terms.**
+  Each message names the call that failed, the argument and value at fault,
+  and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
+  §9.3. Messages no longer use design vocabulary such as "packaging", "whole
+  term", or "claim", and no longer name private helpers. A lookup of a name
+  that does not exist lists the names that do, as in
+  `unknown level 'test'; available levels: ['quantile']`. Code that matches
+  on the old wording needs updating, since the exception types are unchanged.
+- **A "no route applies" error leads with the reason the caller can fix.** A
+  `Feasibility` report takes `actionable=True` when it fails on a detail of the
+  call, such as a field name the argument does not have, and the error opens
+  with the first such reason before it lists every route tried. So
+  `condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})` raises
+  `condition_on: unknown field 'x'; available fields: ['mu']. Routes tried: ...`.
+  A route's reason no longer repeats the route's name, and a missing capability
+  reads "does not implement SupportsSampling".
+- **Error messages and a repr call a term's label its label.** A `Record` built
+  without a label says it requires its label as the first positional argument,
+  and that every keyword argument, `name=` and `label=` included, is a field.
+  `conditional_distribution` given a callable without `__name__` asks for a
+  label, `with_level_names` on a view says a reused dropped level would make
+  the labels of later selections ambiguous, and the repr of the TFP batch
+  backend shows the cells' base label as `label=`.
 - **`condition_on`'s registry route is named `inference_methods`.** The route
   that forms the unnormalized conditional by Bayes' rule and normalizes it
   through the inference-method registry was named `bayes`, so a `check`
@@ -2891,6 +3050,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   schema raises `ResultSchemaError`. The distinction applies to lifted calls
   and operation routes. A call with `raw=True` validates its result before
   detachment. `apply` reports output declaration violations as `ValueError`.
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
+- **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
+  constructors document `label` as the first parameter, but a keyword call
+  `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
+  call took `name`.
 - **A real-valued support rejects a complex value with a nonzero imaginary
   part.** JAX orders complex values lexicographically, so `positive.check(1j)`
   and `real.check(1j)` were true, and a function that declared a positive

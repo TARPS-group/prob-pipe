@@ -43,10 +43,17 @@ from typing import TYPE_CHECKING, Any
 import jax
 import numpy as np
 
+from .._messages import count
 from ..custom_types import ArrayLike
-from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
+from ._array_backend import (
+    _metadata_of,
+    _numpy_dtype_of,
+    _read_only,
+    _to_numpy_array,
+    array_backend_for,
+)
 from ._record_spec import _unify_record_spec_with_value
-from ._repr import format_names, public_class_name, term_repr
+from ._repr import format_names, public_class_name, term_repr, type_name
 from ._spec_base import OpaqueSpec, _full_array_shape_or_none
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
@@ -376,9 +383,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             # ``NumericRecord`` the user never wrote.
             if not args:
                 raise TypeError(
-                    "Record requires its name as the first positional argument, "
-                    "e.g. Record('my_record', x=...); the name= keyword and "
-                    "name-less forms were removed."
+                    "Record requires its label as the first positional argument, "
+                    "e.g. Record('my_record', x=...); every keyword argument, "
+                    "name= and label= included, is a field."
                 )
             event_template = kwargs.get("event_template")
             if len(args) > 1 and args[1] is not None:
@@ -415,7 +422,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     ):
         if _fields is not None:
             if fields:
-                raise ValueError("Cannot pass both positional dict and keyword arguments")
+                raise ValueError(
+                    f"{public_class_name(type(self))} takes either a mapping of fields or "
+                    f"keyword fields, not both"
+                )
             field_inputs = _unflatten_paths(_fields)
         else:
             for field_name in fields:
@@ -473,7 +483,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             except ValueError as error:
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
-        object.__setattr__(self, "_tree", field_map)
+        object.__setattr__(
+            self, "_tree", {key: _read_only(value) for key, value in field_map.items()}
+        )
         self._init_tracked(label)
         if event_template is None:
             event_template = RecordSpec.infer_from(field_map)
@@ -553,8 +565,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                     # pytree-unflatten path, where a leaf's shape is
                     # transform-relative (e.g. vmap strips the mapped axis) and
                     # the record was already validated when first built.
+                    shape = _full_array_shape_or_none(value)
+                    got = type_name(value) + (f" of shape {shape}" if shape is not None else "")
                     raise ValueError(
-                        f"value at {path!r} does not conform to its field spec ({spec!r})"
+                        f"value at {path!r} does not match event_template: expected "
+                        f"{spec!r}, got {got}"
                     )
 
         _check(self, event_template, "")
@@ -649,7 +664,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         array field gives a ``NumericArray``, an opaque field an ``Opaque``, and
         a callable field a ``Function``. A stored term other than an array or an
         opaque value, such as a law or a function, gives a copy of itself under
-        the key. The view's provenance
+        the key, and a law's copy draws with the stored law in a lift (V.5). The
+        view's provenance
         records this record and the stored term. A term presents as its raw
         representation inside a JAX trace (II.4), so a traced field is its
         stored leaf. A leaf that is no value of the field's declared kind, as a
@@ -683,7 +699,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         source = leaf if isinstance(leaf, TrackedTerm) else None
         provenance = Provenance.of_view(self, source, metadata={"path": key})
         if isinstance(leaf, TrackedTerm) and not isinstance(leaf, NumericArray | Opaque):
-            view = leaf.with_label(key) if leaf.label != key else leaf._shallow_copy()
+            view = leaf.with_label(key)
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         value = _leaf_value(leaf)
@@ -834,7 +850,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             new_children[name] = edited
             specs[name] = edited.event_template
         if not new_children:
-            raise ValueError("Cannot remove all fields from a collection")
+            raise ValueError(
+                f"without() cannot remove every field of {public_class_name(type(self))} "
+                f"{self.label!r}"
+            )
         return self._rebuild_root(new_children, RecordSpec(specs))
 
     def merge(self, other: Record) -> Record:
@@ -859,7 +878,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 specs[name] = merged.event_template
             else:
                 # One side holds a leaf where the other holds a subtree.
-                raise ValueError(f"name {name!r} is used both as a field and as a path prefix")
+                raise ValueError(
+                    f"merge() cannot combine {name!r}: it is a single field in one record but "
+                    f"a group of fields in the other"
+                )
         for name, child in other._tree.items():
             if name in self._tree:
                 continue
@@ -892,10 +914,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 sub_updates.setdefault(head, {})[rest] = v
         overlap = sorted(set(full_updates) & set(sub_updates))
         if overlap:
+            inner = f"{overlap[0]}{_PATH_SEP}{next(iter(sub_updates[overlap[0]]))}"
             raise ValueError(
-                f"replace() update paths overlap: {overlap[0]!r} and a path "
-                f"beneath it address the same subtree; replace the enclosing "
-                f"path once instead"
+                f"replace() got both {overlap[0]!r} and the path {inner!r} inside it; "
+                f"update {overlap[0]!r} only once"
             )
 
         new_children: dict[str, Any] = {}
@@ -1105,8 +1127,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         values = list(values)
         if len(values) != len(template):
             raise ValueError(
-                f"Record.from_field_values: got {len(values)} values, "
-                f"expected {len(template)} (one per field)."
+                f"Record.from_field_values: got {count(len(values), 'value')}, "
+                f"expected {len(template)} (one per field)"
             )
         leaf_iter = iter(values)
 
@@ -1148,14 +1170,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if len(self._tree) != 1:
             raise TypeError(
-                f"{type(self).__name__} with {len(self._tree)} fields is not "
-                f"callable; access a specific field with record['field_name'] "
-                f"first."
+                f"{public_class_name(type(self))} with {len(self._tree)} fields is not "
+                f"callable; access a specific field with record['field_name'] first"
             )
         only = next(iter(self._tree.values()))
         if not callable(only):
             raise TypeError(
-                f"{type(self).__name__} single field is not callable (got {type(only).__name__})."
+                f"{public_class_name(type(self))} {self.label!r} is not callable: its only "
+                f"field {next(iter(self._tree))!r} is {type_name(only)}"
             )
         return only(*args, **kwargs)
 
@@ -1307,9 +1329,7 @@ def _pack_fields(
         if extra:
             parts.append(f"unexpected {extra}")
         prefix = f"{owner}: " if owner else ""
-        raise TypeError(
-            f"{prefix}expected exactly the fields {tuple(fields)} — {'; '.join(parts)}."
-        )
+        raise TypeError(f"{prefix}expected exactly the fields {tuple(fields)}, {', '.join(parts)}")
     field_map = {f: field_kwargs[f] for f in fields}
     return Record(_derived_record_name(field_map), field_map)
 

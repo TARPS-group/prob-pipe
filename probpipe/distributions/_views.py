@@ -61,11 +61,16 @@ from ._conditional import (
     _install_renamed_kernel,
 )
 from ._distribution import (
-    _RENAME_SOURCE,
+    _COPY_SOURCE,
+    _EMPTY_SELECTION,
     Distribution,
     _detached_term,
+    _fixes_every_field,
+    _install_copy_source,
     _install_field_view,
     _install_renamed_law,
+    _no_free_dims,
+    _shared_final_names,
     _whole_term_component,
 )
 from ._factored import (
@@ -167,18 +172,15 @@ def _view_declaration(declaration: OutputSpec, path: str | tuple[str, ...]) -> O
     if isinstance(path, str):
         return OutputSpec(**{_final_segment(path): _node_at(declaration, path)})
     if not isinstance(path, tuple) or not all(isinstance(each, str) for each in path):
-        raise TypeError(f"a view's path is a string or a tuple of strings, got {path!r}")
+        raise TypeError(f"a field path must be a string or a tuple of strings; got {path!r}")
     if not path:
-        raise ValueError("a selection of event paths names at least one path")
+        raise ValueError(_EMPTY_SELECTION)
     nodes: dict[str, TermSpec] = {}
     for each in path:
         node = _node_at(declaration, each)
         component = _final_segment(each)
         if component in nodes:
-            raise ValueError(
-                f"the selected paths {list(path)} share the final segment {component!r}, "
-                f"so their components would collide"
-            )
+            raise ValueError(_shared_final_names(path))
         nodes[component] = node
     return OutputSpec(RecordSpec(nodes))
 
@@ -320,16 +322,16 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
     return project
 
 
-def _detached(law: Distribution, name: str) -> Distribution:
-    """*law* detached from the workflow under *name*, as :meth:`Distribution.raw` detaches a law."""
+def _detached(law: Distribution, label: str) -> Distribution:
+    """*law* detached from the workflow under *label*, as :meth:`Distribution.raw` detaches a law."""
     clone = _detached_term(law)
-    object.__setattr__(clone, "_label", name)
+    object.__setattr__(clone, "_label", label)
     return clone
 
 
-def _labeled(law: Distribution, name: str) -> Distribution:
-    """*law* under the label *name*, which a marginal takes from the law it is a marginal of."""
-    return law if law.label == name else law.with_label(name)
+def _labeled(law: Distribution, label: str) -> Distribution:
+    """*law* under *label*, which a marginal takes from the law it is a marginal of."""
+    return law if law.label == label else law.with_label(label)
 
 
 def _named_as(law: Distribution, components: Sequence[str]) -> Distribution:
@@ -554,7 +556,7 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if not paths:
-        return Feasibility(False, "no path was requested")
+        return Feasibility(False, _EMPTY_SELECTION)
     parent_paths = []
     for each in paths:
         parent_path = self._parent_path(each)
@@ -563,7 +565,7 @@ def _view_marginal_guard(self: FieldView, path: str | tuple[str, ...]) -> Feasib
         parent_paths.append(parent_path)
     components = [_final_segment(each) for each in paths]
     if len(set(components)) < len(components):
-        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+        return Feasibility(False, _shared_final_names(paths))
     return _capability_guard(
         self._parent, "_marginal", parent_paths[0] if isinstance(path, str) else tuple(parent_paths)
     )
@@ -630,7 +632,7 @@ def _view_condition_on(self: FieldView, given: Any, /, **options: Any) -> Distri
     parent_paths = self._parent_paths([path for path, _ in items])
     kept = self._kept_components([path for path, _ in items])
     if not kept:
-        raise ValueError(f"the given covers every field of {self.label!r}, so no law remains")
+        raise ValueError(_fixes_every_field(self.label))
     conditioned = self._parent._condition_on(
         {parent_path: value for parent_path, (_, value) in zip(parent_paths, items)}, **options
     )
@@ -652,7 +654,7 @@ def _view_condition_on_guard(self: FieldView, paths: tuple[str, ...]) -> Feasibi
             return Feasibility(False, f"{path!r} is not an event path of the view")
         parent_paths.append(parent_path)
     if not self._kept_components(paths):
-        return Feasibility(False, f"the paths {list(paths)} cover every field of the view")
+        return Feasibility(False, _fixes_every_field(self.label))
     return _capability_guard(self._parent, "_condition_on", tuple(parent_paths))
 
 
@@ -687,7 +689,7 @@ def _moment_guard(protocol: type) -> Callable[..., Feasibility]:
         if not isinstance(marginal, protocol):
             return Feasibility(
                 False,
-                f"the marginal of {self._parent.label!r} at {self._path!r} claims no "
+                f"the marginal of {self._parent.label!r} at {self._path!r} does not support "
                 f"{protocol.__name__}",
             )
         return _capability_guard(marginal, method, *arguments)
@@ -848,7 +850,9 @@ class FieldView(Distribution):
 
     def __new__(cls, parent: Distribution, path: str | tuple[str, ...]) -> FieldView:
         if not isinstance(parent, Distribution):
-            raise TypeError(f"a field view reads a Distribution, got {type(parent).__name__}")
+            raise TypeError(
+                f"FieldView: parent must be a Distribution; got {type(parent).__name__}"
+            )
         declaration = _view_declaration(parent.event_spec, path)
         return object.__new__(
             _capability_subclass(FieldView, _derived_protocols(parent, declaration.spec, path))
@@ -993,14 +997,17 @@ class FieldView(Distribution):
         if isinstance(key, str):
             parent_path = self._parent_path(key)
             if parent_path is None:
-                raise KeyError(key)
+                raise KeyError(_not_an_event_path(self, key))
             if parent_path == self._path:
                 return self
             return FieldView(self._parent, parent_path)
         if not isinstance(key, tuple) or not all(isinstance(each, str) for each in key):
-            raise KeyError(key)
+            raise KeyError(f"a field path must be a string or a tuple of strings; got {key!r}")
         if not key:
-            raise ValueError("a selection of event paths names at least one path")
+            raise ValueError(_EMPTY_SELECTION)
+        for each in key:
+            if self._parent_path(each) is None:
+                raise KeyError(_not_an_event_path(self, each))
         selection = FieldView(self._parent, tuple(self._parent_paths(key)))
         return _named_as(selection, [_final_segment(each) for each in key])
 
@@ -1055,9 +1062,7 @@ class FieldView(Distribution):
         """
         unbound = set(sizes) - self.event_spec.spec.free_dims
         if unbound:
-            raise ValueError(
-                f"the view {self.label!r} has no free dimensions {sorted(unbound)} to bind"
-            )
+            raise ValueError(_no_free_dims(self, unbound, self.event_spec.spec.free_dims))
         return self._viewed(self._parent.with_dim_sizes(**sizes))
 
     def with_dim_names(self, **names: str) -> FieldView:
@@ -1326,6 +1331,15 @@ class _EventRenames:
         ]
         return None if order == list(range(len(order))) else order
 
+    @property
+    def keeps_paths(self) -> bool:
+        """Whether every leaf keeps its path and every field of a draw its position.
+
+        The renames of a relabeling or a dimension transform keep the paths, and
+        their ``draw`` returns its value.
+        """
+        return self._draw_moves is None and all(old == new for old, new in self.leaves.items())
+
     def draw(self, value: Any) -> Any:
         """*value*, a raw value of the original declaration or a batch of them, under the new paths.
 
@@ -1451,12 +1465,25 @@ def _original_nodes(
             raise KeyError(path)
         original = event.original(path)
         if original is None:
-            raise ValueError(
-                f"{path!r} holds no single node of {parent!r}, since a move gathered or "
-                f"regrouped its fields"
-            )
+            raise ValueError(_regrouped_path(path, parent))
         originals.append(original)
     return originals
+
+
+def _regrouped_path(path: str, owner: str) -> str:
+    """The message that *path* gathers fields that ``with_path_names`` moved from several places."""
+    return (
+        f"{path!r} does not correspond to a single field of {owner!r} because "
+        f"with_path_names() regrouped fields into it; select its fields individually"
+    )
+
+
+def _not_an_event_path(law: Any, path: str) -> str:
+    """The message that *path* is not an event path of *law*, with the fields it has."""
+    return (
+        f"{path!r} is not an event path of {law.label!r}; its fields: "
+        f"{list(law.event_spec.components)}"
+    )
 
 
 def _unreached(
@@ -1467,9 +1494,7 @@ def _unreached(
         if not _has_path(declaration, path):
             return Feasibility(False, f"{path!r} is not an event path of {owner!r}")
         if event.original(path) is None:
-            return Feasibility(
-                False, f"{path!r} holds no single node of the parent, since a move regrouped it"
-            )
+            return Feasibility(False, _regrouped_path(path, owner))
     return None
 
 
@@ -1567,10 +1592,7 @@ def _renamed_marginal(self: _RenamedDistribution, path: str | tuple[str, ...]) -
     paths = (path,) if isinstance(path, str) else tuple(path)
     originals = self._originals(paths)
     if _shared_final_segment(paths):
-        raise ValueError(
-            f"the selected paths {list(paths)} share a final segment, so their components "
-            f"would collide"
-        )
+        raise ValueError(_shared_final_names(paths))
     marginal = self._parent._marginal(originals[0] if isinstance(path, str) else tuple(originals))
     return _labeled(self._event.marginal(marginal, paths, originals), self.label)
 
@@ -1586,7 +1608,7 @@ def _renamed_marginal_guard(self: _RenamedDistribution, path: str | tuple[str, .
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):
-        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+        return Feasibility(False, _shared_final_names(paths))
     originals = self._originals(paths)
     return _capability_guard(
         self._parent, "_marginal", originals[0] if isinstance(path, str) else tuple(originals)
@@ -1883,29 +1905,31 @@ def _renamed(law: Distribution, event: _EventRenames, arguments: Mapping[str, st
     return renamed
 
 
-def _rename_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None:
-    """The law *law* renames, with the renames from its declaration to *law*'s, or None.
+def _copy_source(law: Distribution) -> tuple[Distribution, _EventRenames] | None:
+    """The law *law* is made from, with the renames from its declaration to *law*'s, or None.
 
-    A law that translates its parent's values at its boundary holds its parent,
-    and every other law that ``with_path_names`` returns records the law it
-    renames. Each one reads that law's draws in a lift (V.5).
+    A law that translates its parent's values at its boundary holds its parent.
+    Every other law that ``with_path_names``, ``with_label``, ``with_dim_names``,
+    or ``with_dim_sizes`` returns records the law it is made from, and the
+    renames of a relabeling or a dimension transform are the identity. Each one
+    reads that law's draws in a lift (V.5).
     """
     if isinstance(law, _RenamedDistribution):
         return law._parent, law._event
-    return getattr(law, _RENAME_SOURCE, None)
+    return getattr(law, _COPY_SOURCE, None)
 
 
-def _with_rename_source(
+def _with_copy_source(
     law: Distribution, parent: Distribution, renames: Mapping[str, str]
 ) -> Distribution:
-    """*law*, which ``with_path_names`` returns for *parent*, recording *parent* as its source.
+    """*law*, a copy or a rename of *parent*, recording *parent* as its source.
 
     The record is *parent* with the renames from its declaration to *law*'s,
-    which :func:`_rename_source` reads. A factored joint orders its components
+    which :func:`_copy_source` reads. A factored joint orders its components
     by its factors, so the renames end at *law*'s own declaration.
     """
     event = _EventRenames.of(parent.event_spec, law.event_spec, renames)
-    object.__setattr__(law, _RENAME_SOURCE, (parent, event))
+    object.__setattr__(law, _COPY_SOURCE, (parent, event))
     return law
 
 
@@ -1926,18 +1950,18 @@ def _renamed_law(
     """
     if event_spec.spec == parent.event_spec.spec:
         copy = parent._with_declaration(event_spec, "with_path_names", renames)
-        return _with_rename_source(copy, parent, renames)
+        return _with_copy_source(copy, parent, renames)
     if isinstance(parent, SupportsFactors):
         joint = _renamed_through_factors(parent, renames, event_spec)
         if joint is None:
             joint = _regrouped(parent, renames, event_spec)
         if joint is not None:
-            return _with_rename_source(joint, parent, renames)
+            return _with_copy_source(joint, parent, renames)
     event = _EventRenames.of(parent.event_spec, event_spec, renames)
     member = parent._renamed_in_family(event)
     if member is None:
         return _renamed(parent, event, renames)
-    return _with_rename_source(member, parent, renames).with_provenance(
+    return _with_copy_source(member, parent, renames).with_provenance(
         Provenance.create("with_path_names", parents=[parent], metadata=dict(renames))
     )
 
@@ -2320,8 +2344,8 @@ def _leaf_values(given_spec: InputSpec, given: Any) -> dict[str, Any]:
             return
         if not isinstance(value, (Record, Mapping)):
             raise TypeError(
-                f"the value of the structured node {path!r} is a record or a mapping of its "
-                f"fields, got {type(value).__name__}"
+                f"the value for {path!r} must be a Record or a mapping of its fields; got "
+                f"{type(value).__name__}"
             )
         for key, entry in value.items():
             visit(f"{path}{_PATH_SEP}{key}", entry)
@@ -2429,10 +2453,7 @@ def _renamed_conditional_marginal(
     paths = (path,) if isinstance(path, str) else tuple(path)
     originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
     if _shared_final_segment(paths):
-        raise ValueError(
-            f"the selected paths {list(paths)} share a final segment, so their components "
-            f"would collide"
-        )
+        raise ValueError(_shared_final_names(paths))
     marginal = self._parent._conditional_marginal(
         self._parent_given(given), originals[0] if isinstance(path, str) else tuple(originals)
     )
@@ -2452,7 +2473,7 @@ def _renamed_conditional_marginal_guard(
     if unreached is not None:
         return unreached
     if _shared_final_segment(paths):
-        return Feasibility(False, f"the paths {list(paths)} share a final segment")
+        return Feasibility(False, _shared_final_names(paths))
     originals = _original_nodes(self._event, self.event_spec, paths, self._parent.label)
     return _capability_guard(
         self._parent,
@@ -2607,7 +2628,10 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
             if path.partition(_PATH_SEP)[0] in slots and path not in values
         ]
         if missing:
-            raise ValueError(f"the given binds part of a slot of {self.label!r}, without {missing}")
+            raise ValueError(
+                f"cannot bind part of a given slot of {self.label!r}: missing {missing}; bind "
+                f"every field of a structured given slot together"
+            )
         bound = {
             **self._pending,
             **{
@@ -2653,7 +2677,10 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         """
         complete, pending, _ = self._translated(given)
         if pending or len(complete) != len(self._parent.given_spec):
-            raise ValueError(f"{self.label!r} needs a value for every slot {list(self.given_spec)}")
+            raise ValueError(
+                f"cannot bind {self.label!r}: it needs a value for every given slot "
+                f"{list(self.given_spec)}"
+            )
         return complete
 
     def _condition_on(
@@ -2729,6 +2756,7 @@ def _renamed_kernel(
     return kernel
 
 
+_install_copy_source(_with_copy_source)
 _install_field_view(FieldView)
 _install_renamed_law(_renamed_law)
 _install_renamed_kernel(_renamed_kernel)

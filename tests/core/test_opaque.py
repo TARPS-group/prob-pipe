@@ -38,7 +38,9 @@ class TestOpaqueHoldsOneValue:
         assert Opaque("s", "north").spec == OpaqueSpec(type=str)
 
     def test_a_declared_type_the_value_lacks_is_refused(self):
-        with pytest.raises(TypeError, match="does not admit a _Payload"):
+        with pytest.raises(
+            TypeError, match=r"value of type _Payload does not match OpaqueSpec\(type=str\)"
+        ):
             Opaque("p", _Payload(), spec=OpaqueSpec(type=str))
 
     def test_a_declared_spec_carries_its_meta(self):
@@ -51,8 +53,7 @@ class TestOpaqueHoldsOneValue:
             Opaque("p", _Payload(), spec="not a spec")
 
     def test_a_mapping_is_refused(self):
-        """The value layer reads a mapping as a subtree."""
-        with pytest.raises(TypeError, match="reads a mapping as a subtree"):
+        with pytest.raises(TypeError, match="Opaque cannot hold a mapping, got dict"):
             Opaque("p", {"a": 1})
 
     @pytest.mark.parametrize("value", [1, "text", None, [1, 2], (1, 2), _Payload()])
@@ -94,7 +95,7 @@ class TestOpaqueCarriesIdentity:
         assert wrapped.label == "model"
 
     def test_a_name_is_required(self):
-        """The name is what says which opaque value this is."""
+        """The label is what says which opaque value this is."""
         with pytest.raises(TypeError):
             Opaque(_Payload())
 

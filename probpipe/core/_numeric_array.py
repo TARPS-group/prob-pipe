@@ -16,7 +16,9 @@ import numpy as np
 from ._array_backend import (
     _event_shape_of,
     _is_numeric_leaf,
+    _not_numeric,
     _numpy_dtype_of,
+    _read_only,
     _to_jax_array,
     _to_numpy_array,
 )
@@ -50,7 +52,9 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
-        their native form and dtype.
+        their native form and dtype. A NumPy array is marked read-only in place,
+        so a write through the caller's handle or through :meth:`raw` raises
+        ``ValueError``.
     spec : NumericArraySpec, optional
         What this value satisfies. Derived from the array's shape and dtype when
         omitted, with an unconstrained support.
@@ -124,23 +128,23 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
             )
         if not _is_numeric_leaf(value):
             raise TypeError(
-                f"NumericArray holds one numeric array; {type(value).__name__} is not a numeric leaf"
+                _not_numeric("NumericArray", "value", value, what="a numeric array or scalar")
             )
         stored = _stored(value)
         if spec is None:
             spec = _inferred_spec(stored)
         elif not spec.is_valid(stored):
             raise ValueError(
-                f"the array does not satisfy its declaration: shape {_event_shape_of(stored)} "
-                f"and dtype {_numpy_dtype_of(stored)} against {spec}"
+                f"NumericArray {label!r}: value of shape {_event_shape_of(stored)} and dtype "
+                f"{_numpy_dtype_of(stored)} does not match spec {spec}"
             )
-        object.__setattr__(self, "_value", stored)
+        object.__setattr__(self, "_value", _read_only(stored))
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(label, provenance=provenance)
 
     @classmethod
     def _view(
-        cls, name: str, value: Any, spec: NumericArraySpec, provenance: Provenance | None
+        cls, label: str, value: Any, spec: NumericArraySpec, provenance: Provenance | None
     ) -> NumericArray:
         """The array *value* under *spec*, as a container's view of it, without validation.
 
@@ -152,7 +156,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         view = object.__new__(cls)
         object.__setattr__(view, "_value", _stored(value))
         object.__setattr__(view, "_spec", spec)
-        view._init_tracked(name, provenance=provenance)
+        view._init_tracked(label, provenance=provenance)
         return view
 
     # -- what it holds ------------------------------------------------------
@@ -371,8 +375,8 @@ def _operand_label(operand: Any) -> str:
     return format_value(operand)
 
 
-def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
-    """The operator's *value* as a ``NumericArray`` labeled *name*.
+def _tracked_result(value: Any, label: str, operator_name: str, operands: tuple[Any, ...]) -> Any:
+    """The operator's *value* as a ``NumericArray`` labeled *label*.
 
     Its tracked *operands* are its parents. The result declares its value's
     shape, and its value's dtype when every tracked operand declares a dtype, so
@@ -389,7 +393,7 @@ def _tracked_result(value: Any, name: str, operator_name: str, operands: tuple[A
     )
     dtype = _numpy_dtype_of(value) if declared else None
     return NumericArray(
-        name,
+        label,
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),

@@ -214,8 +214,8 @@ class _NamedDensityLaw(_Law, SupportsLogProb):
 class _RecordingKernel(ConditionalDistribution):
     """A kernel that records each given it binds and curries over the slots left.
 
-    Binding every slot returns a law over the kernel's event whose name is the
-    bound values, in slot order; binding some returns the kernel over the rest,
+    Binding every slot returns a law over the kernel's event under the kernel's
+    label and records the bound values in slot order; binding some returns the kernel over the rest,
     which keeps the values bound so far.
     """
 
@@ -479,8 +479,8 @@ class TestRenamedLawPaths:
         renamed = _grouped_selection().with_path_names({"b/y": "b/x"})
         report = _capability_guard(renamed, "_marginal", ("a/x", "b/x"))
         assert report.feasible is False
-        assert "final segment" in report.description
-        with pytest.raises(ValueError, match="final segment"):
+        assert "more than one path ends in 'x'" in report.description
+        with pytest.raises(ValueError, match="more than one path ends in 'x'"):
             renamed._marginal(("a/x", "b/x"))
 
 
@@ -561,7 +561,7 @@ class TestRenamedLawMoves:
     def test_the_marginal_at_a_group_that_gathers_several_nodes_is_rejected(self):
         renamed = _grouped_selection().with_path_names({"a/x": "g/x", "b/y": "g/y"})
         assert _capability_guard(renamed, "_marginal", "g").feasible is False
-        with pytest.raises(ValueError, match="no single node"):
+        with pytest.raises(ValueError, match="does not correspond to a single field"):
             renamed._marginal("g")
         assert _capability_guard(renamed, "_marginal", "g/x") == Feasibility(True)
 
@@ -676,7 +676,7 @@ class TestRenamedKernelBinding:
     def test_binding_part_of_a_structured_slot_raises_value_error(self):
         kernel = _RecordingKernel("k", {"a": _SCALAR, "b": _SCALAR}, OutputSpec(y=_SCALAR))
         grouped = kernel.with_path_names({"a": "theta/a", "b": "theta/b"})
-        with pytest.raises(ValueError, match="part of a slot"):
+        with pytest.raises(ValueError, match="cannot bind part of a given slot"):
             grouped._condition_on({"theta": {"a": 1.0}})
 
     def test_a_key_that_is_not_a_slot_raises_key_error(self):
@@ -802,7 +802,7 @@ class TestRenamedKernelCapabilities:
     def test_a_conditional_capability_needs_every_slot(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc")
-        with pytest.raises(ValueError, match="every slot"):
+        with pytest.raises(ValueError, match="every given slot"):
             renamed._parent_given({"loc": 1.0})
 
     def test_a_conditional_capability_carries_the_parent_guard(self):

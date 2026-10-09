@@ -18,6 +18,7 @@ from probpipe import (
     Record,
     RecordSpec,
     conditional_distribution,
+    workflow_run,
 )
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
 from probpipe.core._specs import InputSpec, OutputSpec
@@ -359,12 +360,12 @@ class TestSlice:
         joint = Kernel("w", ("a",)) * Pair("p")
         declined = _by_name(condition_on.check(joint, {"a": 0.3}).routes)["slice (exact methods)"]
         assert declined.feasible is False
-        assert "not assumed independent" in declined.description
+        assert "cannot condition on part of its fields exactly" in declined.description
 
     def test_fixing_every_field_leaves_no_law(self):
         joint = Gaussian("a") * Gaussian("b")
         declined = _by_name(condition_on.check(joint, {"a": 0.0, "b": 0.0}).routes)
-        assert "leaving no law" in declined["slice (exact methods)"].description
+        assert "leaves no field to infer" in declined["slice (exact methods)"].description
 
     def test_currying_an_approximate_kernel_makes_the_slice_approximate(self):
         joint = _AmortizedKernel() * Gaussian("y")
@@ -498,9 +499,9 @@ class TestConditioningCapabilities:
 
     def test_the_approximate_capability_receives_the_method_options(self):
         model = _RecordingAmortized("model")
-        view = condition_on.with_options(method_options={"num_results": 500, "random_seed": 3})
+        view = condition_on.with_options(method_options={"num_results": 500, "num_chains": 3})
         assert view(model, {"y": 0.3}).loc == 2.0
-        assert model.options == [{"num_results": 500, "random_seed": 3}]
+        assert model.options == [{"num_results": 500, "num_chains": 3}]
 
     def test_the_exact_capability_reads_no_budget(self):
         model = _RecordingPosterior("model")
@@ -524,12 +525,14 @@ class TestMethodOptions:
 
     def test_a_misspelled_option_is_refused_before_the_method_runs(self):
         target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
-        with pytest.raises(TypeError, match=r"\['num_resluts'\].*'tfp_nuts'.*num_results"):
+        with pytest.raises(TypeError, match=r"'tfp_nuts'.*'num_resluts'.*num_results"):
             inference_method_registry.execute(target, method="tfp_nuts", num_resluts=500)
 
     def test_the_selected_method_refuses_an_option_it_does_not_read(self):
         target = condition_on.with_options(method="unnormalized")(_Conjugate("model"), {"y": 0.3})
-        with pytest.raises(TypeError, match="'blackjax_rwmh', which reads"):
+        with pytest.raises(
+            TypeError, match="inference method 'blackjax_rwmh': unknown method option"
+        ):
             inference_method_registry.execute(
                 target, method="blackjax_rwmh", num_integration_steps=5
             )
@@ -835,7 +838,9 @@ class TestAKernelThatDeclaresNothingAboutItsLaws:
         report = condition_on.check(Kernel(), {"mu": 1.0})
         assert report.feasible is None
         assert (report.route, report.method) == (None, None)
-        assert any("declares no conditional capability" in entry for entry in report.pending)
+        assert any(
+            "does not declare whether its laws are normalized" in entry for entry in report.pending
+        )
         assert suite_methods[0].targets == suite_methods[1].targets == []
 
     def test_the_call_returns_a_normalized_law_without_inference(self, suite_methods):
@@ -881,9 +886,9 @@ class TestApproximateKernels:
 
     def test_an_approximate_kernel_receives_the_method_options(self):
         kernel = _AmortizedKernel()
-        view = condition_on.with_options(method_options={"num_results": 7, "random_seed": 3})
+        view = condition_on.with_options(method_options={"num_results": 7, "num_chains": 3})
         view(kernel, {"y": 0.3})
-        assert kernel.options == {"num_results": 7, "random_seed": 3}
+        assert kernel.options == {"num_results": 7, "num_chains": 3}
 
 
 class TestTheOperation:
@@ -908,6 +913,47 @@ class TestTheOperation:
         joint = Kernel("y", ("beta",)) * Gaussian("beta")
         conditional = condition_on(joint, {"beta": 0.5})
         assert conditional.event_spec.components.keys() == {"y"}
+
+
+class TestNoRouteMessages:
+    """A call no route applies to leads with the reason that concerns a detail of the call."""
+
+    def test_an_unknown_field_of_a_law_leads(self):
+        with pytest.raises(
+            ResolutionError,
+            match=r"^condition_on: unknown field 'x'; available fields: \['mu'\]\. Routes tried",
+        ):
+            condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})
+
+    def test_an_unknown_key_of_a_kernel_names_its_slots_and_fields(self):
+        with pytest.raises(
+            ResolutionError,
+            match=r"^condition_on: unknown given slot or field 'zz'; given slots: \['mu'\]",
+        ):
+            condition_on(_NormalKernel(), {"zz": 1.0})
+
+    def test_a_nested_path_that_does_not_exist_is_unknown(self):
+        joint = Normal("b", 0.0, 1.0) * Normal("a", 0.0, 1.0)
+        with pytest.raises(ResolutionError, match=r"^condition_on: unknown field 'a/q'"):
+            condition_on(joint, {"a/q": 1.0})
+
+    def test_fixing_every_field_leads(self):
+        with pytest.raises(
+            ResolutionError, match=r"^condition_on: given fixes every field of 'mu'"
+        ):
+            condition_on(Normal("mu", 0.0, 1.0), {"mu": 1.0})
+
+    def test_the_unnormalized_method_leads_with_the_same_reason(self):
+        view = condition_on.with_options(method="unnormalized")
+        with pytest.raises(ResolutionError, match=r"^condition_on: unknown field 'x'") as info:
+            view(Normal("mu", 0.0, 1.0), {"x": 1.0})
+        assert "declined" not in str(info.value)
+
+    def test_a_reason_does_not_repeat_its_route(self):
+        with pytest.raises(ResolutionError) as info:
+            condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})
+        assert "route '" not in str(info.value)
+        assert "declined" not in str(info.value)
 
 
 def _givens(field: str, values: list[float]) -> NumericRecordBatch:
@@ -954,7 +1000,7 @@ class TestABatchOfGivens:
 # End to end: condition_on returns a normalized law for each kind of model
 # ---------------------------------------------------------------------------
 
-_MCMC = {"num_results": 60, "num_warmup": 60, "random_seed": 0}
+_MCMC = {"num_results": 60, "num_warmup": 60}
 
 
 def _logistic_joint():
@@ -1030,9 +1076,10 @@ class TestEndToEnd:
 
     def test_the_posterior_is_labeled_by_the_model_and_the_data_and_names_its_method(self):
         model = _logistic_joint().with_label("logistic")
-        posterior = condition_on.with_options(method_options=_MCMC)(
-            model, {"y": jnp.array([1, 0, 1, 0])}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=_MCMC)(
+                model, {"y": jnp.array([1, 0, 1, 0])}
+            )
         assert posterior.label == "logistic | y"
         assert method_of(posterior) == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
@@ -1046,7 +1093,8 @@ class TestEndToEnd:
             "dataset",
             element_spec=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
         )
-        posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
+        with workflow_run(seed=0):
+            posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
         element = posteriors[1]
         assert method_of(element) == "blackjax_nuts"
         operations = {
@@ -1066,13 +1114,15 @@ class TestEndToEnd:
             "blackjax_nuts",
             False,
         )
-        posterior = view(joint, y)
+        with workflow_run(seed=0):
+            posterior = view(joint, y)
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("beta",)
 
     def test_an_unnormalized_distribution_conditioned_on_a_field_is_normalized(self):
         view = condition_on.with_options(method_options=_MCMC)
-        posterior = view(_unnormalized_pair(), {"b": 1.0})
+        with workflow_run(seed=0):
+            posterior = view(_unnormalized_pair(), {"b": 1.0})
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("a",)
         assert view.check(_unnormalized_pair(), {"b": 1.0}).method == "blackjax_nuts"
@@ -1082,7 +1132,8 @@ class TestEndToEnd:
         view = condition_on.with_options(method_options=_MCMC)
         given = dict.fromkeys(kernel.given_spec, 1.0)
         assert view.check(kernel, given).method == "blackjax_nuts"
-        posterior = view(kernel, given)
+        with workflow_run(seed=0):
+            posterior = view(kernel, given)
         assert _is_normalized(posterior)
         assert not posterior.event_spec.exposes_record
         assert tuple(posterior.event_spec.components) == ("theta",)
@@ -1092,8 +1143,11 @@ class TestEndToEnd:
         view = sample.with_options(method_options=_MCMC)
         report = view.check(_unnormalized_vector())
         assert (report.route, report.method, report.exact) == ("normalize", "blackjax_nuts", False)
-        assert jnp.shape(jnp.asarray(view(_unnormalized_vector()).value)) == (2,)
-        assert view(_unnormalized_vector(), sample_shape=(5,)).batch_shape == (5,)
+        with workflow_run(seed=0):
+            draw = view(_unnormalized_vector())
+            draws = view(_unnormalized_vector(), sample_shape=(5,))
+        assert jnp.shape(jnp.asarray(draw.value)) == (2,)
+        assert draws.batch_shape == (5,)
 
     def test_a_law_that_samples_does_not_normalize(self):
         assert sample.check(Gaussian("g")).route == "exact"
@@ -1104,10 +1158,12 @@ class TestEndToEnd:
         view = convert.with_options(method_options=_MCMC)
         law = _unnormalized_vector()
         assert view.check(law, EmpiricalDistribution).route == "normalize"
-        empirical = view(law, EmpiricalDistribution)
+        with workflow_run(seed=0):
+            empirical = view(law, EmpiricalDistribution)
+            sampling = view(law, SupportsSampling)
         assert isinstance(empirical, EmpiricalDistribution)
         assert tuple(empirical.event_spec.components) == ("x",)
-        assert isinstance(view(law, SupportsSampling), SupportsSampling)
+        assert isinstance(sampling, SupportsSampling)
 
     def test_a_pymc_model_with_a_covariate_bound_and_its_observation_conditioned(self):
         pm = pytest.importorskip("pymc")
@@ -1216,9 +1272,10 @@ class TestEndToEnd:
     def test_provenance_names_both_stages(self, full_provenance_mode):
         from probpipe import provenance_ancestors
 
-        posterior = condition_on.with_options(method_options=_MCMC)(
-            _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(method_options=_MCMC)(
+                _logistic_joint(), {"y": jnp.array([1, 0, 1, 0])}
+            )
         operations = {
             ancestor.parent.provenance.operation
             for ancestor in provenance_ancestors(posterior)

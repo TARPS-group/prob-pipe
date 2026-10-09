@@ -33,6 +33,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import count, unknown_names
 from ..core._immutable import transient_memo
 from ..core._record_spec import NumericRecordSpec, RecordSpec
 from ..core._repr import format_names, format_value
@@ -97,7 +98,7 @@ def _given_values(owner: str, given: Any, kwargs: Mapping[str, Any], slots: Any)
     values = {**dict(given.children if isinstance(given, Record) else given), **kwargs}
     unknown = sorted(set(values) - set(slots))
     if unknown:
-        raise KeyError(f"{unknown} are not given slots of {owner!r}")
+        raise KeyError(f"cannot condition {owner!r}: {unknown_names('given slot', unknown, slots)}")
     return values
 
 
@@ -155,7 +156,7 @@ def _pack_block_params(
     Parameters
     ----------
     owner : str
-        The name of the calling class, which the error messages name.
+        The label of the calling law, which the error messages name.
     blocks : tuple of _StanBlock
         The parameter blocks, in BridgeStan's order.
     values : Mapping[str, Any]
@@ -179,15 +180,16 @@ def _pack_block_params(
     if missing or extra:
         detail = [f"missing {missing}"] * bool(missing) + [f"unexpected {extra}"] * bool(extra)
         raise TypeError(
-            f"{owner}: the keyword form expects the Stan parameter blocks "
-            f"{tuple(expected)}: {'; '.join(detail)}."
+            f"{owner!r} expects values for the Stan parameters {tuple(expected)} "
+            f"({', '.join(detail)})"
         )
     out: list[Array] = []
     for b in blocks:
         arr = jnp.asarray(values[b.name])
         if tuple(arr.shape) != b.shape:
             raise TypeError(
-                f"{owner}: parameter {b.name!r} expects shape {b.shape}, got {tuple(arr.shape)}."
+                f"parameter {b.name!r} of {owner!r} must have shape {b.shape}, got "
+                f"{tuple(arr.shape)}"
             )
         out.append(jnp.reshape(arr, (1,)) if b.shape == () else arr[b.gather])
     return jnp.concatenate(out) if out else jnp.zeros((0,))
@@ -426,7 +428,9 @@ def _declared_variables(block: str) -> list[_StanVariable]:
         elif kind in _MATRIX_TYPES:
             shape = sizes * 2 if len(sizes) == 1 else sizes
         else:
-            raise ValueError(f"the Stan type {kind!r} of {match['name']!r} is not read")
+            raise ValueError(
+                f"StanModel does not support the Stan type {kind!r} (variable {match['name']!r})"
+            )
         axes = (*_sizes(match["array"]), *_sizes(match["old"]), *shape)
         variables.append(_StanVariable(match["name"], axes, kind, bounds))
     return variables
@@ -582,15 +586,17 @@ def _checked_against_stanc(
     names = [variable.name for variable in variables]
     if names != list(reported):
         raise ValueError(
-            f"the {block} block of {stan_file} reads as {names}, and stanc reports {list(reported)}"
+            f"StanModel read the {block} block of {stan_file} as declaring {names}, but stanc "
+            f"reports {list(reported)}; StanModel does not support this declaration syntax"
         )
     checked = []
     for variable in variables:
         entry = reported[variable.name]
         if len(variable.sizes) != entry["dimensions"]:
             raise ValueError(
-                f"{variable.name!r} in {stan_file} reads as {len(variable.sizes)} axes, and "
-                f"stanc reports {entry['dimensions']}"
+                f"StanModel read {variable.name!r} in {stan_file} as having "
+                f"{count(len(variable.sizes), 'axis', 'axes')}, but stanc reports "
+                f"{entry['dimensions']}; StanModel does not support this declaration syntax"
             )
         checked.append((variable, _STAN_DTYPES[entry["type"]]()))
     return tuple(checked)
@@ -781,13 +787,13 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """The keyword form: one array per parameter block, as BridgeStan's flat vector."""
-        return _pack_block_params(type(self).__name__, self._blocks(), field_kwargs)
+        return _pack_block_params(self.label, self._blocks(), field_kwargs)
 
     def _flat(self, value: Any) -> np.ndarray:
         """*value*, a record of the parameter blocks or BridgeStan's flat vector, as the vector."""
         if isinstance(value, (Record, Mapping)):
             fields = value.children if isinstance(value, Record) else value
-            value = _pack_block_params(type(self).__name__, self._blocks(), dict(fields))
+            value = _pack_block_params(self.label, self._blocks(), dict(fields))
         return _to_f64(value)
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
@@ -827,13 +833,13 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """The keyword form: one array per unconstrained block, as BridgeStan's flat vector."""
-        return _pack_block_params(type(self).__name__, self._blocks, field_kwargs)
+        return _pack_block_params(self.label, self._blocks, field_kwargs)
 
     def _unnormalized_log_prob(self, value: Any) -> Array:
         """BridgeStan's log density at the unconstrained *value*, with the Jacobian."""
         if isinstance(value, (Record, Mapping)):
             fields = value.children if isinstance(value, Record) else value
-            value = _pack_block_params(type(self).__name__, self._blocks, dict(fields))
+            value = _pack_block_params(self.label, self._blocks, dict(fields))
         return jnp.asarray(self._posterior._bridgestan_model().log_density(_to_f64(value)))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -844,15 +850,18 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
 class _StanModelMeta(type(ConditionalDistribution)):
     """The metaclass of ``StanModel``: binding every data-block variable returns the posterior."""
 
-    def __call__(cls, name: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
+    def __call__(cls, label: str, stan_file: str, *, data: Mapping[str, Any] | None = None) -> Any:
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         unknown = sorted(set(bound) - set(program.data_entries))
         if unknown:
-            raise KeyError(f"{unknown} are not data-block variables of {stan_file}")
+            raise KeyError(
+                f"cannot bind data for {stan_file}: "
+                f"{unknown_names('data variable', unknown, program.data_entries)}"
+            )
         if set(program.data_entries) <= set(bound):
-            return _StanPosterior(name, program, bound)
-        return super().__call__(name, stan_file, data=data)
+            return _StanPosterior(label, program, bound)
+        return super().__call__(label, stan_file, data=data)
 
 
 class StanModel(
@@ -973,7 +982,9 @@ class StanModel(
         """
         law = self._condition_on(given)
         if isinstance(law, ConditionalDistribution):
-            raise KeyError(f"{self.label!r} needs a value for every data-block variable")
+            raise KeyError(
+                f"{self.label!r} is missing values for the data variables {list(law.given_spec)}"
+            )
         return law._unnormalized_log_prob(value)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
@@ -1044,6 +1055,48 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     return None
 
 
+def _pymc_dimension_names(shapes: Mapping[str, tuple[Any, ...]]) -> dict[str, tuple[str, ...]]:
+    """A dimension name for each axis of each free variable, every one a distinct identifier.
+
+    Axis *i* of variable *name* is named ``f"{name}_{i}"``, with each character
+    that cannot appear in a Python identifier replaced by ``_`` and a leading
+    ``_`` added when the name would start with a digit, so a nested model's
+    ``"sub::beta"`` gives ``sub__beta_0``. A name that an earlier axis already
+    has takes the first of the suffixes ``_2``, ``_3``, ... that is free, so two
+    variables whose names differ only in such characters keep separate
+    dimensions. The variables are taken in model order, so every build of one
+    model names its axes alike, and a name that is already an identifier is
+    unchanged.
+
+    Parameters
+    ----------
+    shapes : Mapping of str to tuple
+        Each free variable's static shape, in model order.
+
+    Returns
+    -------
+    dict of str to tuple of str
+        One dimension name per axis of each variable.
+    """
+    taken: set[str] = set()
+    names: dict[str, tuple[str, ...]] = {}
+    for name, shape in shapes.items():
+        axes = []
+        for axis in range(len(shape)):
+            base = re.sub(r"\W", "_", f"{name}_{axis}")
+            if not base.isidentifier():
+                base = f"_{base}"
+            if not base.isidentifier():
+                base = "_" + re.sub(r"[^0-9A-Za-z_]", "_", base)
+            candidate, suffix = base, 2
+            while candidate in taken:
+                candidate, suffix = f"{base}_{suffix}", suffix + 1
+            taken.add(candidate)
+            axes.append(candidate)
+        names[name] = tuple(axes)
+    return names
+
+
 class _PyMCProgram:
     """A PyMC model-building function with some arguments bound, and the variables its build has.
 
@@ -1077,15 +1130,16 @@ class _PyMCProgram:
             model = self.build()
         except TypeError as error:
             raise TypeError(
-                f"PyMCModel builds {getattr(model_fn, '__name__', model_fn)!r} with its "
-                f"arguments' defaults to read its variables; give each argument a default: "
-                f"{error}"
+                f"PyMCModel could not build {getattr(model_fn, '__name__', model_fn)!r} from its "
+                f"default arguments ({error}); give every argument a default, such as None for "
+                f"observed data"
             ) from error
         free = {rv.name: rv for rv in model.free_RVs}
         self.observed = tuple(p.name for p in arguments if p.default is None and p.name in free)
         self.given = tuple(p.name for p in arguments if p.name not in self.observed)
         self.parameters = tuple(name for name in free if name not in self.observed)
         self.shapes = {name: tuple(rv.type.shape) for name, rv in free.items()}
+        self.dimension_names = _pymc_dimension_names(self.shapes)
         self.dtypes = {name: np.dtype(rv.dtype) for name, rv in free.items()}
         self.supports = {name: _pymc_support(model, rv) for name, rv in free.items()}
         self.normalized = not model.potentials and not any(
@@ -1106,13 +1160,15 @@ class _PyMCProgram:
 
         Each variable carries its dtype and the support its transform states.
         Under *symbolic* every dimension is symbolic, for a kernel whose shapes
-        its given values may set.
+        its given values may set. A symbolic dimension takes its name from
+        ``dimension_names``, so it is a Python identifier whatever the
+        variable's name.
         """
         return RecordSpec(
             {
                 name: NumericArraySpec(
                     tuple(
-                        f"{name}_{axis}" if symbolic or size is None else int(size)
+                        self.dimension_names[name][axis] if symbolic or size is None else int(size)
                         for axis, size in enumerate(shape)
                     ),
                     _backend_dtype(self.dtypes[name]),
@@ -1182,11 +1238,11 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
 class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
-    def __call__(cls, name: str, model_fn: Callable[..., Any]) -> Any:
+    def __call__(cls, label: str, model_fn: Callable[..., Any]) -> Any:
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         if program.given:
-            return _PyMCKernel(name, program)
-        return super().__call__(name, program)
+            return _PyMCKernel(label, program)
+        return super().__call__(label, program)
 
 
 class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
@@ -1332,11 +1388,11 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         missing = [n for n in self._param_names if n not in free and n not in fixed]
         extra = free - set(self._param_names) - set(self._observed_names)
         if missing or extra:
+            names, change = (sorted(missing), "disappear") if missing else (sorted(extra), "appear")
             raise ValueError(
-                f"PyMC random variable(s) {sorted(missing) or sorted(extra)} differ between "
-                f"the build without data and this build. ProbPipe does not support models "
-                f"whose set of free random variables changes with the data (dynamic random "
-                f"variables); only per-variable shapes may depend on data size."
+                f"PyMC random variables {names} {change} when the model is built with this "
+                f"data, but the free random variables must not change with the data (only "
+                f"their shapes may)"
             )
         return tuple(n for n in self._param_names if n in free) + tuple(
             n for n in self._observed_names if n in free

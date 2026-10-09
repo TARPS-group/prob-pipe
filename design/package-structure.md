@@ -25,6 +25,7 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
+│   ├── _shapes.py             #   the reading of shape, level-name, and axis-count arguments (II.1, II.5)
 │   ├── _spec_base.py          #   TermSpec and dimension unification (II.1), NumericSpec (II.3), NumericArraySpec, OpaqueSpec (III.1–III.2)
 │   ├── _specs.py              #   InputSpec, OutputSpec and component projection contracts (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
@@ -163,5 +164,5 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
 | `inference/_minibatch.py` | `inference/`, in place: `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
-| `_weights.py`, `_array_utils.py`, `_dtype.py`, `custom_types.py` | private helpers, unchanged |
+| `_weights.py`, `_array_utils.py`, `_dtype.py`, `_messages.py`, `custom_types.py` | private helpers, unchanged |
 | `diagnostics/`, `validation/` | in place; a predictive check takes the kernel of the observations and a law over its given slots, and reads its replications from their composition, as `mixture` does (VI.9) |

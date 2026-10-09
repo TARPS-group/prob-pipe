@@ -30,6 +30,7 @@ from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _ObjectBatch
 from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
+from ..core._repr import type_name
 from ..core._specs import OutputSpec, RecordSpec
 from ..core.config import WorkflowKind, prefect_config
 from ..core.provenance import Provenance
@@ -86,9 +87,8 @@ def execute_sweep(
 
     if include_inputs:
         raise NotImplementedError(
-            "include_inputs=True is not supported with batched-record "
-            "broadcasting. The inputs are already available via "
-            "provenance on the stacked output."
+            "include_inputs=True is not supported when calling over a Batch; the inputs "
+            "are recorded in the result's provenance"
         )
 
     if not dist_args:
@@ -116,7 +116,7 @@ def execute_sweep(
             # by name with the batch it swept.
             level_names=plan.sweep_level_names,
             axis_groups=plan.sweep_axis_groups,
-            name=output_label,
+            label=output_label,
             field_name=output_label,
             output_spec=output_spec,
             output_template=output_template,
@@ -165,7 +165,7 @@ def execute_sweep(
         batch_shape=plan.sweep_batch_shape,
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
-        name=output_label,
+        label=output_label,
         field_name=output_label,
     )
     provenance = make_sweep_provenance(
@@ -260,8 +260,8 @@ def execute_sweep_rows(
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' supports a sweep over one batch of records or arrays; "
-            "use dispatch='auto', 'sequential', or 'thread' for this path."
+            "dispatch='jax' can only sweep over a single Batch of records or arrays; use "
+            "dispatch='auto', 'sequential', or 'thread' for this call"
         )
 
     dispatch = resolve_dispatch(
@@ -408,9 +408,8 @@ def mapped_row_body(
                 return _MappedBatchColumns.of_record(out)
             if isinstance(out, Opaque):
                 raise TypeError(
-                    f"{field_name}: a row returned a {type(out.value).__name__}, which is "
-                    f"an Opaque, and the mapped dispatch stacks arrays, records, and "
-                    f"batches; an opaque row runs row-wise"
+                    f"{field_name}: dispatch='jax' cannot stack a row that returned "
+                    f"{type_name(out.value)}; it stacks only arrays, records, and batches"
                 )
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)

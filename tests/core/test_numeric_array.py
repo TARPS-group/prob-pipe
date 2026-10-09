@@ -11,11 +11,11 @@ from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec
 from probpipe.core.provenance import Provenance
 
 
-def _batch(values=None, level_names="draw", name="draws", **kwargs) -> NumericArrayBatch:
+def _batch(values=None, level_names="draw", label="draws", **kwargs) -> NumericArrayBatch:
     if values is None:
         values = jnp.arange(12.0).reshape(4, 3)
     kwargs.setdefault("element_spec", NumericArraySpec(shape=(3,), dtype=jnp.float32))
-    return NumericArrayBatch(name, values, level_names, **kwargs)
+    return NumericArrayBatch(label, values, level_names, **kwargs)
 
 
 class TestNumericArrayHoldsOneValue:
@@ -39,7 +39,7 @@ class TestNumericArrayHoldsOneValue:
         assert value.spec == NumericArraySpec(shape=(3,), dtype=jnp.float32)
 
     def test_a_supplied_spec_is_checked(self):
-        with pytest.raises(ValueError, match="does not satisfy its declaration"):
+        with pytest.raises(ValueError, match="does not match spec NumericArraySpec"):
             NumericArray(
                 "v",
                 jnp.arange(3.0),
@@ -47,7 +47,7 @@ class TestNumericArrayHoldsOneValue:
             )
 
     def test_a_value_that_is_not_an_array_is_refused(self):
-        with pytest.raises(TypeError, match="holds one numeric array"):
+        with pytest.raises(TypeError, match="value must be a numeric array or scalar"):
             NumericArray(
                 "v",
                 object(),
@@ -65,7 +65,7 @@ class TestNumericArrayHoldsOneValue:
 class TestNumericArrayStoresNativeForm:
     """Construction validates without converting, as `NumericRecord` does.
 
-    A lazy or disk-backed value is not materialised merely to be named, and a
+    A lazy or disk-backed value is not materialised merely to be labeled, and a
     container's own metadata is not discarded.
     """
 
@@ -221,7 +221,7 @@ class TestNumericArrayStoresNativeForm:
         assert value.spec.dtype == jnp.float64
 
     def test_a_non_numeric_value_is_refused(self):
-        with pytest.raises(TypeError, match="is not a numeric leaf"):
+        with pytest.raises(TypeError, match="value must be a numeric array or scalar"):
             NumericArray(
                 "v",
                 "not numeric",
@@ -229,7 +229,7 @@ class TestNumericArrayStoresNativeForm:
 
 
 class TestNumericArrayCarriesIdentity:
-    def test_a_name_is_kept(self):
+    def test_a_label_is_kept(self):
         value = NumericArray(
             "draw",
             jnp.arange(3.0),
@@ -237,13 +237,13 @@ class TestNumericArrayCarriesIdentity:
 
         assert value.label == "draw"
 
-    def test_a_name_is_required(self):
-        """A value carries no fields to describe it, so the name is what says
-        which one it is; a class-name default would name every array alike."""
+    def test_a_label_is_required(self):
+        """A value carries no fields to describe it, so the label is what says
+        which one it is; a class-name default would label every array alike."""
         with pytest.raises(TypeError, match="label"):
             NumericArray()
 
-    def test_a_derived_name_is_kept(self):
+    def test_a_derived_label_is_kept(self):
         """Set by an operation that derives one, as the output boundary does."""
         value = NumericArray("outer", jnp.arange(3.0))
 
@@ -292,7 +292,7 @@ class TestNumericArrayComputesAsAnArray:
     """The full array surface, because with no fields `arr + 1` has one meaning."""
 
     @pytest.mark.parametrize(
-        ("compute", "name"),
+        ("compute", "label"),
         [
             (lambda v: v + 1, "v + 1"),
             (lambda v: 1 + v, "1 + v"),
@@ -304,16 +304,16 @@ class TestNumericArrayComputesAsAnArray:
             (lambda v: v**2, "v ** 2"),
         ],
     )
-    def test_arithmetic_returns_a_term_named_in_evaluation_order(self, compute, name):
-        """III.1: arithmetic returns a tracked term under an evaluation-order name."""
+    def test_arithmetic_returns_a_term_labeled_in_evaluation_order(self, compute, label):
+        """III.1: arithmetic returns a tracked term under an evaluation-order label."""
         result = compute(NumericArray("v", jnp.arange(3.0)))
 
         assert isinstance(result, NumericArray)
-        assert result.label == name
+        assert result.label == label
         assert isinstance(result.raw(), jax.Array)
 
     @pytest.mark.parametrize(
-        ("compute", "name"),
+        ("compute", "label"),
         [
             (lambda v, w: v + w, "v + [other value]"),
             (lambda v, w: -w, "-[other value]"),
@@ -323,12 +323,12 @@ class TestNumericArrayComputesAsAnArray:
             (lambda v, w: abs(w) + 1, "abs(other value) + 1"),
         ],
     )
-    def test_each_operand_reads_as_one_unit_in_the_name(self, compute, name):
+    def test_each_operand_reads_as_one_unit_in_the_label(self, compute, label):
         """An expression operand is parenthesized, and a user's label with a space is bracketed."""
         v = NumericArray("v", jnp.arange(3.0))
         w = NumericArray("other value", jnp.ones(3))
 
-        assert compute(v, w).label == name
+        assert compute(v, w).label == label
 
     def test_an_element_of_a_batch_labeled_by_an_expression_groups_it(self):
         batch = NumericArrayBatch("model | y", jnp.zeros(3), "dataset")
@@ -558,7 +558,7 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
         assert batch.dtype == jnp.float32
 
     def test_the_repr_states_the_levels_and_the_element_spec(self):
-        assert repr(_batch(name="x")) == (
+        assert repr(_batch(label="x")) == (
             "NumericArrayBatch('x', levels={'draw': 4}, "
             "element_spec=NumericArraySpec(shape=(3,), dtype=float32))"
         )
@@ -586,14 +586,20 @@ class TestNumericArrayBatchInfersItsElementSpec:
         assert batch.batch_shape == (2, 4)
         assert batch.element_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
 
-    def test_a_level_of_several_axes_counts_them_all(self):
-        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
+    @pytest.mark.parametrize("axes", [2, [2], (2,)])
+    def test_a_level_of_several_axes_counts_them_all(self, axes):
+        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=axes)
 
         assert batch.axis_groups == ((2, 4),)
         assert batch.element_spec.shape == (3,)
 
+    def test_a_one_shot_iterator_of_counts_is_refused(self):
+        """The counts are read more than once, so an iterator would arrive empty."""
+        with pytest.raises(TypeError, match="axes_per_level must be an int or a sequence of ints"):
+            NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
+
     def test_an_array_with_fewer_axes_than_the_levels_is_refused(self):
-        with pytest.raises(ValueError, match="fewer axes than the 2 batch axes"):
+        with pytest.raises(ValueError, match="must have at least 2 batch axes"):
             NumericArrayBatch("draws", jnp.arange(4.0), ("chain", "draw"))
 
 
@@ -606,8 +612,8 @@ class TestNumericArrayBatchSelection:
         assert isinstance(element, NumericArray)
         np.testing.assert_array_equal(np.asarray(element), np.array([3.0, 4.0, 5.0]))
 
-    def test_an_element_takes_the_derived_name(self):
-        element = _batch(name="posterior")[1]
+    def test_an_element_takes_the_derived_label(self):
+        element = _batch(label="posterior")[1]
 
         assert element.label == "posterior[draw=1]"
         pass
@@ -641,7 +647,7 @@ class TestNumericArrayBatchSelection:
         assert type(derived[1:3]) is NumericArrayBatch
 
     def test_a_slice_is_a_sub_batch(self):
-        sub = _batch(name="posterior")[1:3]
+        sub = _batch(label="posterior")[1:3]
 
         assert isinstance(sub, NumericArrayBatch)
         assert sub.batch_shape == (2,)
@@ -704,7 +710,7 @@ class TestNumericArrayBatchOverNativeContainers:
 class TestNumericArrayBatchRefusals:
     def test_a_stored_array_with_no_batch_axis_is_refused(self):
         """A batch has at least one batch axis; one value is a NumericArray."""
-        with pytest.raises(ValueError, match="at least one batch axis"):
+        with pytest.raises(ValueError, match="no batch axis before the event shape"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros(3),
@@ -713,7 +719,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_trailing_axes_that_are_not_the_event_shape_are_refused(self):
-        with pytest.raises(ValueError, match="where its elements declare the event shape"):
+        with pytest.raises(ValueError, match="but element_spec declares event shape"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros((4, 5)),
@@ -732,7 +738,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_values_that_are_not_an_array_are_refused(self):
-        with pytest.raises(TypeError, match="stores one array"):
+        with pytest.raises(TypeError, match="values must be a numeric array"):
             NumericArrayBatch(
                 "draws",
                 object(),
@@ -742,7 +748,7 @@ class TestNumericArrayBatchRefusals:
 
     def test_a_dtype_the_declaration_does_not_admit_is_refused(self):
         """The batch asserts the spec of every element, so it checks at build."""
-        with pytest.raises(TypeError, match="does not admit"):
+        with pytest.raises(TypeError, match="cannot be cast to the declared"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros((2, 3), dtype=jnp.float32),
@@ -770,7 +776,7 @@ class TestNumericArrayBatchRefusals:
         )
         store = _NoSingleDtype(np.zeros((4, 3)))
 
-        with pytest.raises(TypeError, match="reports no single dtype"):
+        with pytest.raises(TypeError, match="values have no single dtype"):
             NumericArrayBatch(
                 "draws",
                 store,
@@ -810,11 +816,11 @@ class TestNumericArrayBatchRefusals:
         """A partition that covers fewer axes than the elements have is refused —
         the one thing a caller can get wrong now that the sizes are read off the
         data rather than restated."""
-        with pytest.raises(ValueError, match="must account for every batch axis"):
+        with pytest.raises(ValueError, match=r"axes_per_level \(1,\) covers 1 axis"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), "cell", axes_per_level=(1,))
 
     def test_a_level_holds_at_least_one_axis(self):
-        with pytest.raises(ValueError, match="every level holds at least one axis"):
+        with pytest.raises(ValueError, match="axes_per_level entry must be at least 1"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), ("a", "b"), axes_per_level=(2, 0))
 
 
@@ -933,20 +939,20 @@ class TestNumericArrayIsAPyTree:
         assert rebuilt.provenance is None
 
 
-class TestABatchIsNamed:
-    """A batch's name is required, as a `Record`'s and an `Opaque`'s are.
+class TestABatchIsLabeled:
+    """A batch's label is required, as a `Record`'s and an `Opaque`'s are.
 
-    The signature itself — the name first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
+    The signature itself — the label first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
     """
 
-    def test_a_given_name_is_marked_user_given(self):
-        batch = _batch(name="posterior")
+    def test_a_given_label_is_marked_user_given(self):
+        batch = _batch(label="posterior")
 
         assert batch.label == "posterior"
 
-    def test_a_derived_name_says_so(self):
-        """A view derives its name, and marks it, rather than defaulting."""
-        sub = _batch(name="posterior")[1:3]
+    def test_a_derived_label_says_so(self):
+        """A view derives its label, and marks it, rather than defaulting."""
+        sub = _batch(label="posterior")[1:3]
 
         assert sub.label == "posterior[draw=1:3]"
 
@@ -958,7 +964,7 @@ class TestNumericArrayBatchIsAPyTree:
     """
 
     def test_it_round_trips_unchanged(self):
-        batch = _batch(name="posterior")
+        batch = _batch(label="posterior")
 
         rebuilt = jax.tree_util.tree_map(lambda x: x, batch)
 
@@ -992,7 +998,7 @@ class TestNumericArrayBatchIsAPyTree:
 
     def test_a_partial_or_resized_rank_is_refused(self):
         """A shape is not a provenance: no reading says which level survived."""
-        with pytest.raises(ValueError, match="belongs to no level"):
+        with pytest.raises(ValueError, match="the batch shape changed from"):
             jax.tree_util.tree_map(lambda x: jnp.stack([x, x]), _batch())
 
     def test_a_skeleton_rebuilds_rather_than_raising(self):
@@ -1102,7 +1108,7 @@ class TestUnflattenChecksTheElementItRebuilds:
         would otherwise build and fail at the first selection instead."""
         _, treedef = jax.tree_util.tree_flatten(self._batch())
 
-        with pytest.raises(ValueError, match="not the event shape"):
+        with pytest.raises(ValueError, match="does not end with the event shape"):
             jax.tree_util.tree_unflatten(treedef, [jnp.zeros((4, 5))])
 
     def test_an_unchanged_store_round_trips(self):

@@ -101,8 +101,22 @@ class TestConverterRegistry:
         assert not converter_registry.is_distribution_type(42)
         assert not converter_registry.is_distribution_type("hello")
 
+    def test_event_spec_for_a_probpipe_law_raises_type_error(self):
+        with pytest.raises(
+            TypeError, match=r"'a' is a ProbPipe distribution .* remove the event_spec"
+        ):
+            converter_registry.convert(
+                Normal("a", 0.0, 1.0), EmpiricalDistribution, event_spec=OutputSpec(a=None)
+            )
+
+    def test_a_backend_law_of_another_family_names_its_family(self):
+        with pytest.raises(ResolutionError, match="the ProbPipe family for TFP's Normal is Normal"):
+            converter_registry.convert(tfd.Normal(1.0, 1.0), Gamma)
+
     def test_an_option_no_converter_reads_raises_type_error(self):
-        with pytest.raises(TypeError, match=r"'moment_match' reads the options"):
+        with pytest.raises(
+            TypeError, match=r"unknown option 'bandwidth'.*\(converter 'moment_match'\)"
+        ):
             converter_registry.convert(Laplace("g", 9.0, 1.0), Normal, bandwidth=0.5)
 
 
@@ -179,11 +193,11 @@ class TestMomentMatching:
         assert result is n
 
     def test_a_target_that_names_no_family_is_not_moment_matched(self):
-        """Moment matching fits the family the target names, and a protocol names none."""
+        """Moment matching fits a parametric family, which a protocol is not."""
         emp = EmpiricalDistribution("x", jnp.array([0.5, 1.0, 2.0]))
         info = converter_registry.check(emp, SupportsLogProb, method="moment_match")
         assert info.feasible is False
-        assert "SupportsLogProb names none" in info.description
+        assert "SupportsLogProb is not a parametric family" in info.description
 
 
 class TestAnEmpiricalSourceAgainstTheTargetSupport:
@@ -219,7 +233,10 @@ class TestARecordSource:
 
     def test_a_record_law_does_not_convert_to_a_family(self):
         """The conversion would change the packaging, which a conversion preserves."""
-        with pytest.raises(ResolutionError, match=r"exposed record; convert a field's law"):
+        with pytest.raises(
+            ResolutionError,
+            match=r"draws a record with fields \['lam'\]; convert one field instead",
+        ):
             converter_registry.convert(self._posterior(), Normal)
 
     def test_its_field_law_matches_a_scalar_family(self):
@@ -812,7 +829,7 @@ class TestEdgeCases:
             converter_registry.convert(None, Normal)
 
     def test_convert_non_type_target_raises(self):
-        with pytest.raises(ResolutionError, match="No method registered"):
+        with pytest.raises(ResolutionError, match="no method is registered"):
             converter_registry.convert(Normal("x", 0, 1), str)
 
     def test_check_non_type_target_raises(self):

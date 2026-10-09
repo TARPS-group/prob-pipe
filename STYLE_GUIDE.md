@@ -776,18 +776,9 @@ modules (`_*.py`) whose symbols are re-exported through the package
 ### 9.2 Immutability
 
 Design II.4 owns the immutability rule and its one writable store, the
-append-only `annotations`. Every tracked term other than a distribution
+append-only `annotations`. Every tracked term, a distribution included,
 enforces the rule: assignment and deletion raise `AttributeError`, naming the
-class.
-
-**Distributions do not enforce it yet.** `Distribution` overrides both
-`__setattr__` and `__delattr__` to permit them, because the documented way to
-build an emulator is to subclass a random function and train it in place, and
-fitting has no contract yet that returns a new fitted term instead. Write new
-code as though the guard were on — an operation returns a new distribution — and
-do not add assignment to a distribution outside its constructor. The exemption
-lifts by removing both overrides, once fitting has that contract; removing one
-would leave a trainer that clears what it fitted still raising.
+class, and an operation that changes a term returns a new one.
 
 **A memo** holds what a term computes lazily. It is a `_memo` dictionary that
 `transient_memo` in `probpipe/core/_immutable.py` creates on first use, and the
@@ -798,25 +789,116 @@ declares `_memo` in `_transient_state` so no copy inherits it, and whatever
 reads it must tolerate its absence, since a copy or an unpickle arrives
 without one.
 
-### 9.3 Error messages
+### 9.3 Error and warning messages
 
-When a protocol check fails, raise `TypeError` with a message that names
-the missing capability:
+A message is read by someone who has just made a mistake and does not know the
+design. It says what went wrong in the caller's terms and how to fix it. These
+rules govern every exception and warning message, which includes a
+`Feasibility` description and the default message of an error class. The
+writing rules of §10 govern docstrings and design prose, and they do not
+govern messages, because a message built from §10 rules 1 and 2 and from the
+glossary vocabulary explains the design to a reader who needs a fix.
+
+1. **Lead with what failed.** Give the action that could not happen, then the
+   reason with the offending value, then the fix. Write one or two short
+   sentences, with no em-dash and no chain of semicolons.
+2. **State the problem, not the design.** Leave out why the rule exists. State
+   a rule only when the fix needs it, and state it as a requirement with
+   *must* or *cannot*. A rule stated as a fact, such as "weights are
+   nonnegative", reads as if it contradicts the input. Use *but* for a
+   contrast, never *and*.
+3. **Use the caller's words.** Name the function, the argument, and the value
+   the caller passed. A term is fine when the public API or the user
+   guide uses it, such as `ConditionalDistribution` or `sample_shape`. Describe
+   any other term in plain words, which includes design terms of
+   `design/glossary.md` such as packaging, whole term, and kernel.
+4. **Show no private names.** A message names nothing with a leading
+   underscore and no type the caller never sees, such as the class of a JAX
+   array. A `NotImplementedError` says what is unsupported in public
+   terms, such as "log_det_jacobian is not implemented yet", and never gives
+   an internal method path.
+5. **Show the offending value.** Print the value, shape, or type that failed
+   whenever it is at hand. A lookup of a name that does not exist also
+   lists the names that do, with `unknown_names` from `probpipe/_messages.py`.
+   Keep `KeyError` where a `Mapping` or a docstring promises it.
+6. **Give a fix only when it is certain.** Give the fix when it is short and
+   holds for every way the check can fail. A check whose branches need
+   different fixes raises a separate message from each branch.
+7. **Word each check once.** A check raised from several places builds its
+   message in one helper, so that one mistake reads the same everywhere.
+8. **Follow the mechanics.** Start in lowercase unless the message starts with
+   an identifier. End a message of one clause without a period. Write
+   "got int" rather than putting an article before a type name, and pluralize
+   a count with `count` from `probpipe/_messages.py`.
+9. **Give each route's reason once.** A message that lists the routes or
+   methods it tried already names each one, so a `Feasibility` description
+   gives only the reason. A description of a failure the caller can fix, such
+   as a field name the argument does not have, sets `actionable=True`, and the
+   listing leads with it.
+
+Each pair below shows a message that breaks these rules and its rewrite.
+
+```text
+# Explains the design (rules 1-3)
+with_path_names() keeps the packaging, so the whole term's component 'mu' is renamed in place, not moved to 'population/mu'
+cannot rename 'mu' to 'population/mu': with_path_names() can rename a single-component output but cannot move it into a group. Choose a name without '/'.
+
+# Inverted lookup with no fix (rules 1 and 5)
+not levels of this batch: ['test']; have ['quantile']
+unknown level 'test'; available levels: ['quantile']
+
+# Internal vocabulary (rule 3)
+standalone replay does not support a parent with nested automatic workflow randomness
+cannot replay this call: model draws random values through a nested Function call, which replay_run does not support. Replay the provenance of the inner call's result instead.
+
+# Rule stated as a fact (rule 2)
+X stacks the input points along its leading axis, so it has an axis
+X must have a leading axis of input points, got a 0-d array; pass shape (n, ...)
+
+# Private names and no value (rules 4 and 5)
+_ensure_matrix: Required 3 columns. Got 2.
+A must have 3 columns, got shape (3, 2)
+
+# Repeated route name (rule 9)
+curry (exact methods): route 'curry' declined: the conditioned object is not a kernel
+curry (exact methods): Normal is not a ConditionalDistribution
+```
+
+A protocol check that fails raises `TypeError` and names the missing
+capability:
 
 ```python
 if not isinstance(dist, SupportsMean):
-    raise TypeError(
-        f"{type(dist).__name__} does not support mean; "
-        f"it must implement the SupportsMean protocol"
-    )
+    raise TypeError(f"{type(dist).__name__} does not support mean; it must implement SupportsMean")
 ```
+
+### 9.4 A scalar where a sequence is expected
+
+An argument that takes a shape, level names, or one axis count per level also
+takes a single item as a sequence of one:
+
+- a shape takes a single int or str as one dimension, so `3` is `(3,)` and
+  `"n"` is `("n",)`, by the rule of design II.1;
+- level names take a single str as one name, so `"draw"` is `("draw",)`;
+- axis counts take a single int as the count of one level.
+
+Any other sequence, such as a tuple, a list, a `range`, or a 1-D array, is read
+as one item per entry and stored as a tuple. An iterator such as a generator, a
+set, `bytes`, a `memoryview`, and a mapping are refused, so an argument is never
+used up or read in an arbitrary order. A `RecordSpec` field given as a shape
+takes a tuple only, since a field's value may also be a spec. `probpipe/core/_shapes.py`
+is the one place these arguments are read. A function that takes one calls the reader there
+rather than calling `tuple()` on the argument, passes its own name and the
+argument's for the error messages (§9.3 rule 7), and annotates the parameter
+with the alias there, such as `ShapeLike` or `LevelNamesLike`.
 
 ---
 
 ## 10. Writing
 
 These rules govern the prose of the repository: docstrings and comments, the
-documentation and `design/`, and PR and issue text. `scripts/design/prose.py`
+documentation and `design/`, and PR and issue text. Error and warning messages
+follow §9.3 instead. `scripts/design/prose.py`
 lists the places that may break the rules a script can detect, for a reader to
 judge.
 

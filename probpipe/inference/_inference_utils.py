@@ -63,6 +63,7 @@ __all__ = [
     "build_mcmc_datatree",
     "build_target_log_prob",
     "build_target_log_prob_flat",
+    "described",
     "extract_chain_columns",
     "extract_event_spec",
     "flat_density",
@@ -75,15 +76,18 @@ __all__ = [
     "joint_and_given",
     "likelihood_flat",
     "model_factors",
+    "no_density_reason",
     "observed_parts",
     "observed_target",
     "parallel_chain_map",
     "parameter_given",
     "posterior_var_order",
+    "refuse_seed_keywords",
     "run_chain_scan",
     "run_seed",
     "unconstrained_chain",
     "unconstrained_coordinates",
+    "unfactored_model_reason",
 ]
 
 
@@ -170,9 +174,8 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
     missing = [name for name in keep if name not in available]
     if missing:
         raise ValueError(
-            f"trace posterior is missing expected variable name(s) "
-            f"{missing}; available posterior variables are {available}. "
-            f"Every parameter being assembled must be present in the trace."
+            f"the sampler's trace is missing the parameters {missing}; its posterior "
+            f"variables are {available}"
         )
     keep_set = set(keep)
     return [name for name in available if name in keep_set]
@@ -213,18 +216,25 @@ def as_prng_key(seed: int | Array) -> Array:
 _RUN_SEED_ABI = "probpipe.inference.run_seed/v1"
 
 
-def run_seed(options: Mapping[str, Any], method: str) -> int | Array:
-    """The seed of one run of the inference method *method*: its ``random_seed``, or a workflow key.
+def run_seed(method: str) -> Array:
+    """The workflow-owned key that seeds one run of the inference method *method*.
 
-    A ``random_seed`` the call's options set is returned as it is. Otherwise
-    the run's randomness is a workflow-owned random event (V.8), whose key the
-    enclosing scope derives from its root seed and the call's structure, so
-    ``workflow_run(seed=...)`` reproduces the run, and scopes with different
-    seeds, or two unscoped calls, run different chains.
+    The enclosing scope derives the key from its root seed and the call's
+    structure (V.8), so ``workflow_run(seed=...)`` reproduces the run, and
+    scopes with different seeds, or two unscoped calls, run different chains.
+    A run calls it once, and each of the run's helpers that draws receives the
+    key, or a seed derived from it, as an argument.
+
+    Parameters
+    ----------
+    method : str
+        The name of the method, which the event records as its provider.
+
+    Returns
+    -------
+    Array
+        A JAX PRNG key.
     """
-    seed = options.get("random_seed")
-    if seed is not None:
-        return seed
     from ..functions import _broker
 
     return _broker._resolve_automatic_key(
@@ -237,6 +247,38 @@ def run_seed(options: Mapping[str, Any], method: str) -> int | Array:
             provider_abi=f"probpipe.inference.{method}/v1",
         ),
     )
+
+
+#: The keywords that would seed a backend, which a run takes from :func:`run_seed`.
+_SEED_KEYWORDS = ("random_seed", "seed")
+
+
+def refuse_seed_keywords(caller: str, keywords: Mapping[str, Any]) -> None:
+    """Refuse a seed among the keywords that the function *caller* passes to its backend.
+
+    A run's seed is drawn from a workflow-owned random event, so a
+    ``random_seed`` or ``seed`` keyword raises the ``TypeError`` of an
+    unexpected keyword of *caller*. A backend that received such a keyword
+    would drop it or seed itself from it.
+
+    Parameters
+    ----------
+    caller : str
+        The name of the public function, which the error names.
+    keywords : Mapping[str, Any]
+        The keywords the function passes on.
+
+    Raises
+    ------
+    TypeError
+        If *keywords* holds ``random_seed`` or ``seed``.
+    """
+    for name in _SEED_KEYWORDS:
+        if name in keywords:
+            raise TypeError(
+                f"{caller}() got an unexpected keyword argument {name!r}; its seed is drawn "
+                "from a workflow-owned random event, which workflow_run(seed=...) fixes"
+            )
 
 
 def integer_seed(seed: int | Array) -> int:
@@ -361,6 +403,14 @@ def flat_record(prior: Any) -> NumericRecordSpec | None:
     return spec if isinstance(spec, NumericRecordSpec) else None
 
 
+def _not_vectorizable(law: Any) -> str:
+    """The message for a law whose draws a flat parameter vector cannot hold."""
+    return (
+        f"cannot pack the draws of {described(law)} into a parameter vector: they must be "
+        f"a numeric array or a record of numeric arrays"
+    )
+
+
 def flat_unflatten(law: Any) -> Callable[[Array], Any]:
     """The map from a flat vector to a draw of the numeric *law*, the inverse of :func:`flat_vector`.
 
@@ -391,7 +441,7 @@ def flat_unflatten(law: Any) -> Callable[[Array], Any]:
         return _reshape_to(array.shape)
     record = flat_record(law)
     if record is None:
-        raise TypeError(f"{type(law).__name__} {law.label!r} draws no value a flat vector lays out")
+        raise TypeError(_not_vectorizable(law))
 
     def unflatten(theta_flat: Array) -> Any:
         return _reconstruct_from_vector(law.label, record, theta_flat)
@@ -447,13 +497,52 @@ class ModelFactors(NamedTuple):
     observed: Any
 
 
-def _joint_of(name: str, factors: list[Any]) -> Any:
+def described(value: Any) -> str:
+    """*value*'s type name and label for a message, such as ``"Normal 'theta'"``.
+
+    An unnormalized conditional, which the caller never builds, is described
+    by the joint it conditions.
+    """
+    if isinstance(value, _UnnormalizedConditional):
+        value = value.joint
+    label = getattr(value, "label", None)
+    name = type(value).__name__
+    return f"{name} {label!r}" if isinstance(label, str) else name
+
+
+def no_density_reason(model: Any) -> str:
+    """Why *model*, which claims no unnormalized log-density, has no chain to run on."""
+    return (
+        "the model must have an unnormalized log-density (SupportsUnnormalizedLogProb); "
+        f"got {described(model)}"
+    )
+
+
+def unfactored_model_reason(target: Any) -> str:
+    """Why *target*, for which :func:`model_factors` gives None, has no prior and likelihood.
+
+    The one wording of that check, which every method that reads a model's
+    factors raises or reports.
+    """
+    if not isinstance(target, _UnnormalizedConditional):
+        got = f"{described(target)} with no observed fields"
+    elif target.keyed:
+        got = f"{described(target.joint)} conditioned on {list(target.given.fields)}"
+    else:
+        got = f"{described(target.joint)} conditioned on data not keyed by its fields"
+    return (
+        "the model must be a product such as likelihood * prior, conditioned on every field "
+        f"the likelihood produces and on no field of the prior; got {got}"
+    )
+
+
+def _joint_of(label: str, factors: list[Any]) -> Any:
     """The joint of *factors*, the one factor itself when there is one."""
     if len(factors) == 1:
         return factors[0]
     if _factor_graph(tuple(factors)).unmet is None:
-        return FactoredDistribution(name, factors)
-    return FactoredConditionalDistribution(name, factors)
+        return FactoredDistribution(label, factors)
+    return FactoredConditionalDistribution(label, factors)
 
 
 def model_factors(target: Any) -> ModelFactors | None:
@@ -677,10 +766,12 @@ def get_init_state(
             dtype=target_dtype,
         )
 
+    failure = (
+        "drawing from it failed" if isinstance(prior, SupportsSampling) else "it cannot be sampled"
+    )
     raise ValueError(
-        "Cannot determine initial state: pass init= explicitly, or "
-        "provide a distribution whose prior implements "
-        "SupportsSampling or exposes event_shape."
+        f"cannot choose an initial state for {described(prior)}: {failure} and it has no "
+        f"event_shape. Pass init= explicitly."
     )
 
 
@@ -949,7 +1040,7 @@ def unconstrained_coordinates(law: Any) -> UnconstrainedCoordinates:
     """
     maps = _leaf_maps(law)
     if maps is None:
-        raise TypeError(f"{type(law).__name__} {law.label!r} draws no value a flat vector lays out")
+        raise TypeError(_not_vectorizable(law))
     return _coordinates(maps)
 
 

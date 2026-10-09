@@ -393,14 +393,17 @@ def _output_atoms(
                 n=count,
                 level_names=(DRAW_LEVEL,),
                 field_name=output_label,
-                name=output_label,
+                label=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),
             )
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(str(error)) from error
     if len(atoms.level_names) > 1:
-        raise NotImplementedError("_SamplingLift.execute: a lifted function that returns a batch")
+        raise NotImplementedError(
+            f"{output_label!r} returned a Batch while broadcasting over a distribution "
+            f"argument, which is not supported yet"
+        )
     if output_spec is None:
         return atoms, OutputSpec.default(atoms.element_spec, component=output_label)
     try:
@@ -474,10 +477,13 @@ def _joint_atoms(
         columns.update(_draw_columns(ref.label, draws.inputs[ref]))
     clash = sorted(set(fields) & set(declaration.components))
     if clash:
+        if len(clash) == 1:
+            named, held = f"parameter {clash[0]!r}", "a component with that name"
+        else:
+            named, held = f"parameters {clash}", "components with those names"
         raise ApplicabilityError(
-            f"include_inputs gives each lifted parameter a field of the joint law, and the "
-            f"parameters {clash} share their names with components of the output of "
-            f"{output_label!r}; rename the parameters, or declare output components of other names"
+            f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
+            f"already has {held}. Rename the parameters or the output components."
         )
     stored = _batch_columns(atoms)
     if declaration.exposes_record:
@@ -601,7 +607,7 @@ def _sample_planned_source_groups(
     return sampled
 
 
-def _record_columns(draws: Any, name: str) -> Any:
+def _record_columns(draws: Any, label: str) -> Any:
     """*draws*, raw draws along a leading axis, with record draws held in a ``Record`` of columns.
 
     A record-valued law's raw draws are the nested mapping of its columns, and
@@ -609,7 +615,7 @@ def _record_columns(draws: Any, name: str) -> Any:
     draws are returned as they are.
     """
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
-        return Record(name, _raw_record(draws))
+        return Record(label, _raw_record(draws))
     return draws
 
 

@@ -25,13 +25,13 @@ __all__ = ["RandomFunction", "RandomMeasure"]
 
 
 def _event_of_kind(
-    name: str, event_spec: OutputSpec | TermSpec | None, kind: type[TermSpec], default: TermSpec
+    label: str, event_spec: OutputSpec | TermSpec | None, kind: type[TermSpec], default: TermSpec
 ) -> OutputSpec | TermSpec:
     """The event declaration of a law whose draws are of *kind*, with a hole filled by *default*.
 
     Parameters
     ----------
-    name : str
+    label : str
         The law's label, which the error message names.
     event_spec : OutputSpec or TermSpec or None
         The declaration the constructor received, or None for the default.
@@ -58,7 +58,7 @@ def _event_of_kind(
         return event_spec._with_spec(default)
     if not isinstance(declared, kind):
         raise TypeError(
-            f"the event of {name!r} declares a {kind.__name__}, got {type(declared).__name__}"
+            f"event_spec of {label!r} must declare a {kind.__name__}, got {type(declared).__name__}"
         )
     return event_spec
 

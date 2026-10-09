@@ -8,7 +8,6 @@ workflow-owned random event, so the operation takes no key.
 
 from __future__ import annotations
 
-import operator
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -18,6 +17,7 @@ import numpy as np
 from ..core._batch import BatchSpec, _ranks_of
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
+from ..core._shapes import SizesLike, _as_shape
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution, DistributionSpec
@@ -62,7 +62,7 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
 
     Parameters
     ----------
-    sample_shape : int or tuple of int
+    sample_shape : int or sequence of int
         The sample shape as the caller gave it.
 
     Returns
@@ -73,18 +73,13 @@ def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
     Raises
     ------
     ApplicabilityError
-        If a size is not a non-negative integer, a bool included.
+        If *sample_shape* is not an int or an iterable of ints, or a size is a
+        ``bool`` or negative.
     """
-    axes = sample_shape if isinstance(sample_shape, tuple) else (sample_shape,)
-    if any(isinstance(axis, bool) for axis in axes):
-        raise ApplicabilityError("sample_shape must be an integer or a tuple of integers, not bool")
     try:
-        shape = tuple(operator.index(axis) for axis in axes)
-    except TypeError:
-        raise ApplicabilityError("sample_shape must be an integer or a tuple of integers") from None
-    if any(axis < 0 for axis in shape):
-        raise ApplicabilityError(f"sample_shape sizes must be non-negative; got {shape!r}")
-    return shape
+        return _as_shape(sample_shape, what="sample_shape", symbolic=False)
+    except (TypeError, ValueError) as error:
+        raise ApplicabilityError(str(error)) from None
 
 
 def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
@@ -97,7 +92,7 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     ----------
     d : DistributionSpec
         The law's spec, whose event declaration one draw takes.
-    sample_shape : int or tuple of int
+    sample_shape : int or sequence of int
         The sample shape as the caller gave it.
 
     Returns
@@ -115,25 +110,27 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     shape = _sample_shape(sample_shape)
     free = d.free_dims
     if free:
+        example = ", ".join(f"{name}=..." for name in sorted(free))
         raise ApplicabilityError(
-            f"sample requires a concrete declaration; the free dimensions are {sorted(free)}"
+            f"sample: the event has unbound dimensions {sorted(free)}; bind them first with "
+            f"with_dim_sizes({example})"
         )
     if not shape:
         return d.event_spec
-    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, (shape,), (SAMPLE_LEVEL,)))
+    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
 
 
 @operation(result=_sample_result)
-def sample(d: Distribution, sample_shape: tuple[int, ...] = ()):
+def sample(d: Distribution, sample_shape: SizesLike = ()):
     """Draw from a distribution.
 
     Parameters
     ----------
     d : Distribution
         The law to draw from.
-    sample_shape : int or tuple of int
-        The batch axes to prepend; ``()`` draws once, and a bare integer is one
-        axis.
+    sample_shape : int or sequence of int
+        The batch axes to prepend; ``()`` draws once, and a single int is one
+        axis, so ``sample_shape=100`` is ``sample_shape=(100,)``.
 
     Returns
     -------

@@ -17,6 +17,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.distributions._capabilities import SupportsVariance
 from probpipe.families import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
@@ -150,10 +151,10 @@ class TestMultinomial:
 
     def test_probs_logits_validation(self):
         # Must provide exactly one of probs or logits.
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             Multinomial(total_count=10, label="m")
 
-        with pytest.raises(ValueError, match="Exactly one"):
+        with pytest.raises(ValueError, match="exactly one of probs or logits"):
             Multinomial(
                 total_count=10,
                 probs=[0.2, 0.3, 0.5],
@@ -179,7 +180,7 @@ class TestWishart:
         assert s.shape == (3, 3)
 
     def test_error_if_both_given(self):
-        with pytest.raises(ValueError, match="exactly one"):
+        with pytest.raises(ValueError, match="cannot both be given"):
             Wishart(df=5.0, scale_tril=jnp.eye(3), scale=jnp.eye(3), label="w")
 
     def test_samples_positive_semi_definite(self, key):
@@ -421,20 +422,22 @@ class TestMultivariateMoments:
         d = Dirichlet(concentration=alpha, label="d")
         np.testing.assert_allclose(cov(d), scipy.stats.dirichlet(alpha).cov(), rtol=1e-5)
 
-    def test_dirichlet_sample_mean_and_cov(self, key):
+    def test_dirichlet_sample_mean_and_cov(self):
         """50k-sample mean and cov must match analytical values."""
         alpha = np.array([1.0, 2.0, 3.0])
         d = Dirichlet(concentration=alpha, label="d")
-        draws = np.asarray(sample(d, sample_shape=(50_000,)))
+        with workflow_run(seed=0):
+            draws = np.asarray(sample(d, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(mean(d)), atol=0.005)
         np.testing.assert_allclose(np.cov(draws, rowvar=False), np.asarray(cov(d)), atol=0.002)
 
-    def test_dirichlet_marginal_ks(self, key):
+    def test_dirichlet_marginal_ks(self):
         """Each Dirichlet marginal X_i ~ Beta(α_i, α_0 - α_i)."""
         alpha = np.array([1.0, 2.0, 3.0])
         alpha_0 = alpha.sum()
         d = Dirichlet(concentration=alpha, label="d")
-        draws = np.asarray(sample(d, sample_shape=(50_000,)))
+        with workflow_run(seed=1):
+            draws = np.asarray(sample(d, sample_shape=(50_000,)))
         for i in range(3):
             scipy_marginal = scipy.stats.beta(alpha[i], alpha_0 - alpha[i])
             _, p = scipy.stats.kstest(draws[:, i], scipy_marginal.cdf)
@@ -461,11 +464,12 @@ class TestMultivariateMoments:
         expected = 10 * (np.diag(probs) - np.outer(probs, probs))
         np.testing.assert_allclose(cov(d), expected, rtol=1e-6)
 
-    def test_multinomial_sample_mean_and_cov(self, key):
+    def test_multinomial_sample_mean_and_cov(self):
         """50k-sample mean and cov must match analytical values."""
         probs = np.array([0.2, 0.3, 0.5])
         d = Multinomial(total_count=10, probs=probs, label="m")
-        draws = np.asarray(sample(d, sample_shape=(50_000,)))
+        with workflow_run(seed=2):
+            draws = np.asarray(sample(d, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(mean(d)), atol=0.05)
         expected_cov = 10 * (np.diag(probs) - np.outer(probs, probs))
         np.testing.assert_allclose(np.cov(draws, rowvar=False), expected_cov, atol=0.1)

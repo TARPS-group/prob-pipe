@@ -236,9 +236,7 @@ class TestResultErrors:
         returned = NumericArrayBatch(
             "rows", jnp.arange(3, dtype=jnp.int32), "row", element_spec=NumericArraySpec(())
         )
-        declared = BatchSpec(
-            NumericArraySpec((), jnp.float32), returned.axis_groups, returned.level_names
-        )
+        declared = BatchSpec(NumericArraySpec((), jnp.float32), returned.spec.levels)
 
         with pytest.raises(ResultSchemaError, match="dtype int32"):
             Function("f", lambda: returned, output_spec=declared)()

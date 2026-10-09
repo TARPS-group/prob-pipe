@@ -49,15 +49,17 @@ class TestMarginal:
         assert result == OutputSpec(DistributionSpec(OutputSpec(RecordSpec(a=REAL, b=REAL))))
 
     def test_two_paths_ending_in_the_same_segment_raise(self):
-        with pytest.raises(ApplicabilityError, match="same segment"):
+        with pytest.raises(ApplicabilityError, match="more than one path ends in 'a'"):
             marginal.check(_Nested("n"), ("x/a", "y/a"))
 
     def test_a_path_the_law_lacks_raises_applicability_error(self):
-        with pytest.raises(ApplicabilityError, match="not an event path"):
+        with pytest.raises(
+            ApplicabilityError, match="'c' is not an event path of the law; its fields"
+        ):
             marginal(Marginalizing("law"), "c")
 
     def test_a_rejecting_guard_and_no_sampling_raise_resolution_error(self):
-        with pytest.raises(ResolutionError, match="The marginal is exact at the field a"):
+        with pytest.raises(ResolutionError, match="the marginal is exact at the field a"):
             marginal(Marginalizing("law"), "b")
 
     def test_check_and_the_call_agree_while_the_fallback_is_not_implemented(self):
@@ -208,5 +210,5 @@ class TestFactor:
             factor(joint, "gamma")
 
     def test_a_law_without_factors_raises_resolution_error(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsFactors"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsFactors"):
             factor(Gaussian("g"), "g")

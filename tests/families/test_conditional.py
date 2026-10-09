@@ -77,8 +77,8 @@ class _UnitScaleGaussian(GLMFamily):
     canonical_link = GaussianFamily.canonical_link
     has_dispersion = False
 
-    def build(self, name, mean, dispersion=None, *, event_spec=None):
-        return MultivariateNormal(name, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
+    def build(self, label, mean, dispersion=None, *, event_spec=None):
+        return MultivariateNormal(label, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
 
 
 # ---------------------------------------------------------------------------
@@ -115,10 +115,13 @@ class TestTheResponseFamilies:
             canonical_link = Function("square", lambda mean: mean**2)
             has_dispersion = False
 
-            def build(self, name, mean, dispersion=None, *, event_spec=None):
+            def build(self, label, mean, dispersion=None, *, event_spec=None):
                 raise AssertionError("unreachable")
 
-        with pytest.raises(ResolutionError, match="not invertible"):
+        with pytest.raises(
+            ResolutionError,
+            match="Opaque needs an invertible link, but 'square' does not implement SupportsInverse",
+        ):
             Opaque()
 
     @pytest.mark.parametrize("family", _FAMILIES)
@@ -162,9 +165,9 @@ class TestTheResponseFamilies:
     @pytest.mark.parametrize(
         ("family", "scalar"),
         [
-            (GaussianFamily, lambda name, m: Normal(name, m, 0.5)),
-            (BernoulliFamily, lambda name, m: Bernoulli(name, probs=m)),
-            (PoissonFamily, lambda name, m: Poisson(name, m)),
+            (GaussianFamily, lambda label, m: Normal(label, m, 0.5)),
+            (BernoulliFamily, lambda label, m: Bernoulli(label, probs=m)),
+            (PoissonFamily, lambda label, m: Poisson(label, m)),
         ],
     )
     def test_the_observations_are_conditionally_independent(self, family, scalar):
@@ -309,7 +312,7 @@ class TestTheConstructionErrors:
             glm_likelihood("y", PoissonFamily(), jnp.exp)
 
     def test_a_link_that_is_not_invertible_raises(self):
-        with pytest.raises(ResolutionError, match="not invertible"):
+        with pytest.raises(ResolutionError, match="glm_likelihood needs an invertible link"):
             glm_likelihood("y", PoissonFamily(), Function("square", lambda mean: mean**2))
 
     def test_a_dispersion_for_a_family_without_one_raises(self):
@@ -401,7 +404,7 @@ class TestTheLaw:
         assert list(likelihood.given_spec) == ["X", "beta"]
 
     def test_an_unknown_slot_raises(self, X, beta):
-        with pytest.raises(KeyError, match="not given slots"):
+        with pytest.raises(KeyError, match="unknown given slot 'gamma'; available given slots"):
             glm_likelihood("y", PoissonFamily(), X=X)._condition_on({"beta": beta, "gamma": 1.0})
 
     def test_a_value_of_the_wrong_shape_raises(self, X):
@@ -490,7 +493,9 @@ class TestTheConditionalCapabilities:
         )
 
     def test_a_capability_needs_every_given_slot(self, likelihood, beta):
-        with pytest.raises(KeyError, match="every given slot"):
+        with pytest.raises(
+            KeyError, match=r"'y' is missing values for the given slots \['dispersion'\]"
+        ):
             likelihood._conditional_mean({"beta": beta})
 
 

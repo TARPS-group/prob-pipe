@@ -27,12 +27,13 @@ from __future__ import annotations
 import math
 import operator
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from .._weights import Weights, weighted_choice, weighted_covariance, weighted_mean
 from ..core._batch import BatchSpec
 from ..core._numeric_record import NumericRecord
@@ -72,6 +73,28 @@ __all__ = [
 _PATH_SEP = "/"
 
 
+class _BankNames(NamedTuple):
+    """How a kernel bank's messages name its arguments: the scales, the centers, and one center."""
+
+    scales: str
+    centers: str
+    center: str
+
+
+#: The names a ``SmoothingKernel`` caller passes the bank by.
+_KERNEL_NAMES = _BankNames("scales", "centers", "center")
+
+#: The names a ``KDEDistribution`` caller passes the bank by.
+_KDE_NAMES = _BankNames("bandwidth", "atoms", "atom")
+
+
+def _type_name(value: Any) -> str:
+    """The type of *value* as a message names it, with any array reported by its shape."""
+    if hasattr(value, "shape") and hasattr(value, "dtype"):
+        return f"an array of shape {tuple(value.shape)}"
+    return type(value).__name__
+
+
 # ---------------------------------------------------------------------------
 # The bootstrap
 # ---------------------------------------------------------------------------
@@ -97,7 +120,7 @@ def _sampling_source(source: Any) -> Distribution:
     """
     if not isinstance(source, Distribution) or not isinstance(source, SupportsSampling):
         raise TypeError(
-            f"a bootstrap source is a distribution that samples, got {type(source).__name__}"
+            f"source must be a Distribution that supports sampling, got {_type_name(source)}"
         )
     return source
 
@@ -132,16 +155,16 @@ def _replicate_size(source: Distribution, replicate_size: Any) -> int:
         if isinstance(source, EmpiricalDistribution):
             return source.num_atoms
         raise ValueError(
-            f"replicate_size is required for a source without atoms; {source.label!r} is a "
-            f"{type(source).__name__}"
+            f"replicate_size is required unless the source is an EmpiricalDistribution, got "
+            f"{type(source).__name__} {source.label!r}"
         )
     if isinstance(replicate_size, bool):
-        raise TypeError("replicate_size is an integer, not a bool")
+        raise TypeError("replicate_size must be an integer, got bool")
     try:
         size = operator.index(replicate_size)
     except TypeError:
         raise TypeError(
-            f"replicate_size is an integer, got {type(replicate_size).__name__}"
+            f"replicate_size must be an integer, got {_type_name(replicate_size)}"
         ) from None
     if size < 1:
         raise ValueError(f"replicate_size must be positive, got {size}")
@@ -177,7 +200,7 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     """
     if level is not None:
         if not isinstance(level, str):
-            raise TypeError(f"level is the name of a level, got {type(level).__name__}")
+            raise TypeError(f"level must be a string, got {_type_name(level)}")
         _check_component_name(level, context="level names")
         return level
     if isinstance(source, EmpiricalDistribution) and len(source.atoms.level_names) == 1:
@@ -186,8 +209,8 @@ def _replicate_level(source: Distribution, level: str | None) -> str:
     if len(components) == 1:
         return components[0]
     raise ValueError(
-        f"level is required for a source exposing several components, and {source.label!r} "
-        f"exposes {components}"
+        f"level is required because the source {source.label!r} has several components "
+        f"{components}; pass level='<name>' to name the level of each replicate's draws"
     )
 
 
@@ -317,7 +340,7 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
 
 def _replicate_spec(source: Distribution, size: int, level: str) -> TermSpec:
     """The term spec of one replicate: *size* of the source's draws on *level*."""
-    return BatchSpec(source.event_spec.spec, ((size,),), (level,))
+    return BatchSpec(source.event_spec.spec, {level: size})
 
 
 def _completed(term: TermSpec, event_spec: OutputSpec | None) -> OutputSpec | TermSpec:
@@ -473,7 +496,9 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 # ---------------------------------------------------------------------------
 
 
-def _flat_centers(centers: ArrayLike | NumericRecordBatch) -> Array:
+def _flat_centers(
+    centers: ArrayLike | NumericRecordBatch, names: _BankNames = _KERNEL_NAMES
+) -> Array:
     """The centers as an array ``(n, *event)``, with a record batch flattened to ``(n, d)``.
 
     Parameters
@@ -481,6 +506,8 @@ def _flat_centers(centers: ArrayLike | NumericRecordBatch) -> Array:
     centers : ArrayLike or NumericRecordBatch
         One center per atom along the leading axis, or a batch of numeric records on one
         batch axis.
+    names : _BankNames
+        The names the caller passed the bank by, which the error messages use.
 
     Returns
     -------
@@ -496,22 +523,29 @@ def _flat_centers(centers: ArrayLike | NumericRecordBatch) -> Array:
     if isinstance(centers, NumericRecordBatch):
         if len(centers.batch_shape) != 1:
             raise ValueError(
-                f"the centers of a kernel bank form one batch axis of atoms, got a batch of "
-                f"shape {centers.batch_shape}"
+                f"{names.centers} must have a single batch axis, got batch shape "
+                f"{centers.batch_shape}"
             )
         array = jnp.asarray(centers.to_vector())
     else:
         array = jnp.asarray(centers)
     if array.ndim == 0:
-        raise ValueError("the centers of a kernel bank need a leading axis of atoms")
+        raise ValueError(
+            f"{names.centers} must have a leading axis indexing the {names.centers}, got a 0-d "
+            f"array"
+        )
     if array.shape[0] == 0:
-        raise ValueError("a kernel bank has at least one center")
+        raise ValueError(
+            f"{names.centers} must hold at least one {names.center}, got shape {array.shape}"
+        )
     if not jnp.issubdtype(array.dtype, jnp.floating):
         array = array.astype(jnp.result_type(float))
     return array
 
 
-def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> Array:
+def _record_scales(
+    scales: NumericRecord, fields: NumericRecordSpec | None, names: _BankNames = _KERNEL_NAMES
+) -> Array:
     """A record of scales as one scale per coordinate, in the order of the centers' fields.
 
     Each field of *scales* is matched to the centers' field at the same leaf
@@ -523,6 +557,8 @@ def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> A
         One scale per field of the centers, each broadcastable over that field's shape.
     fields : NumericRecordSpec or None
         The element spec of record centers, or None for array centers.
+    names : _BankNames
+        The names the caller passed the bank by, which the error messages use.
 
     Returns
     -------
@@ -538,15 +574,19 @@ def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> A
     """
     if fields is None:
         raise ValueError(
-            "a record of scales matches the fields of record centers, but the centers are an "
-            "array; pass the scales as an array"
+            f"{names.scales} is a record but {names.centers} is an array; pass {names.scales} "
+            f"as an array"
         )
     expected, given = list(fields), list(scales)
     if set(given) != set(expected):
+        missing = sorted(set(expected) - set(given))
+        unexpected = sorted(set(given) - set(expected))
+        differences = [f"missing {missing}"] * bool(missing) + [f"unexpected {unexpected}"] * bool(
+            unexpected
+        )
         raise ValueError(
-            f"the scales' fields {given} are not the centers' fields {expected}: "
-            f"missing {sorted(set(expected) - set(given))}, "
-            f"unexpected {sorted(set(given) - set(expected))}"
+            f"{names.scales} has fields {given} but {names.centers} has fields {expected} "
+            f"({', '.join(differences)})"
         )
     shapes = fields.leaf_shapes
     blocks = []
@@ -556,15 +596,18 @@ def _record_scales(scales: NumericRecord, fields: NumericRecordSpec | None) -> A
             block = jnp.broadcast_to(scale, shapes[path])
         except ValueError:
             raise ValueError(
-                f"the scale of field {path!r}, of shape {scale.shape}, does not broadcast over "
-                f"the field's shape {shapes[path]}"
+                f"{names.scales} for field {path!r} has shape {scale.shape}, which does not "
+                f"broadcast to the field's shape {shapes[path]}"
             ) from None
         blocks.append(jnp.reshape(block, -1))
     return jnp.concatenate(blocks)
 
 
 def _flat_scales(
-    scales: ArrayLike | NumericRecord, centers: Array, fields: NumericRecordSpec | None
+    scales: ArrayLike | NumericRecord,
+    centers: Array,
+    fields: NumericRecordSpec | None,
+    names: _BankNames = _KERNEL_NAMES,
 ) -> Array:
     """The scales broadcast to the centers' shape ``(n, *event)``.
 
@@ -577,6 +620,8 @@ def _flat_scales(
         The centers as :func:`_flat_centers` returns them.
     fields : NumericRecordSpec or None
         The element spec of record centers, or None for array centers.
+    names : _BankNames
+        The names the caller passed the bank by, which the error messages use.
 
     Returns
     -------
@@ -590,19 +635,21 @@ def _flat_scales(
         not broadcast against the centers, or a concrete scale is not positive.
     """
     if isinstance(scales, NumericRecord):
-        array = _record_scales(scales, fields)
+        array = _record_scales(scales, fields, names)
     else:
         array = jnp.asarray(scales)
     try:
         array = jnp.broadcast_to(array, centers.shape).astype(centers.dtype)
     except ValueError:
         raise ValueError(
-            f"scales of shape {array.shape} do not broadcast against centers of shape "
-            f"{centers.shape}; pass one scale, one per coordinate, or one per center and "
-            f"coordinate"
+            f"{names.scales} has shape {array.shape}, which does not broadcast against "
+            f"{names.centers} of shape {centers.shape}; pass a scalar, one value per coordinate, or one per "
+            f"{names.center} and coordinate"
         ) from None
     if not isinstance(array, jax.core.Tracer) and not bool(np.all(np.asarray(array) > 0)):
-        raise ValueError("every scale of a kernel bank must be positive")
+        raise ValueError(
+            f"{names.scales} must be positive, got a minimum of {float(np.min(np.asarray(array)))}"
+        )
     return array
 
 
@@ -852,18 +899,16 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
         return atoms, spec
     if isinstance(atoms, NumericRecord) or not hasattr(atoms, "shape"):
         raise TypeError(
-            f"the atoms of a KDE are an array whose leading axis indexes them, or a "
-            f"NumericRecordBatch; got {type(atoms).__name__}"
+            f"atoms must be an array (one atom per row) or a NumericRecordBatch, got "
+            f"{type(atoms).__name__}"
         )
     values = jnp.asarray(atoms)
     if not jnp.issubdtype(values.dtype, jnp.number):
-        raise TypeError(f"the atoms of a KDE are numeric, got dtype {values.dtype}")
+        raise TypeError(f"atoms must be numeric, got dtype {values.dtype}")
     if values.ndim == 0:
-        raise ValueError(
-            "the leading axis of an array of atoms indexes the atoms, and a 0-d array has none"
-        )
+        raise ValueError("atoms must have a leading axis indexing the atoms, got a 0-d array")
     if values.shape[0] == 0:
-        raise ValueError("a KDE has at least one atom, and the array holds none")
+        raise ValueError(f"atoms must hold at least one atom, got shape {values.shape}")
     values = values.astype(_floating(values.dtype))
     return values, NumericArraySpec(tuple(values.shape[1:]), values.dtype, real)
 
@@ -913,7 +958,7 @@ def _selected_bandwidth(rule: str, centers: Array, weights: Weights) -> Array:
         rule selects a zero bandwidth.
     """
     if rule not in _BANDWIDTH_RULES:
-        raise ValueError(f"bandwidth names a rule in {list(_BANDWIDTH_RULES)}, got {rule!r}")
+        raise ValueError(unknown_names("bandwidth rule", [rule], _BANDWIDTH_RULES))
     probabilities = None if weights.is_uniform else weights.normalized
     mean = weighted_mean(probabilities, centers)
     spread = jnp.sqrt(weighted_mean(probabilities, (centers - mean) ** 2))
@@ -924,8 +969,8 @@ def _selected_bandwidth(rule: str, centers: Array, weights: Weights) -> Array:
     bandwidth = factor * spread
     if not isinstance(bandwidth, jax.core.Tracer) and not bool(np.all(np.asarray(spread) > 0)):
         raise ValueError(
-            f"the {rule} rule selects a zero bandwidth for a coordinate whose atoms have no "
-            f"spread; pass a bandwidth"
+            f"bandwidth rule {rule!r} gives a zero bandwidth because the atoms do not vary in "
+            f"some coordinate; pass bandwidth values instead"
         )
     return bandwidth
 
@@ -1027,7 +1072,9 @@ class KDEDistribution(
         event_spec: OutputSpec | None = None,
     ) -> None:
         if not (isinstance(kernel, type) and issubclass(kernel, SmoothingKernel)):
-            raise TypeError(f"kernel is a SmoothingKernel class, got {kernel!r}")
+            raise TypeError(
+                f"kernel must be a SmoothingKernel subclass such as GaussianKernel, got {kernel!r}"
+            )
         stored, atom_spec = _kde_atoms(atoms)
         if event_spec is None:
             declared: OutputSpec | TermSpec = atom_spec
@@ -1036,12 +1083,15 @@ class KDEDistribution(
         else:
             raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
         super().__init__(label, declared)
-        centers = _flat_centers(stored)
+        centers = _flat_centers(stored, _KDE_NAMES)
         atom_weights = _kde_weights(weights, centers.shape[0])
         if bandwidth is None or isinstance(bandwidth, str):
             scales = _selected_bandwidth(bandwidth or "scott", centers, atom_weights)
         else:
             scales = bandwidth
+            # Checked here first, so that a bad bandwidth is reported in the KDE's terms.
+            fields = stored.event_template if isinstance(stored, NumericRecordBatch) else None
+            _flat_scales(scales, centers, fields, _KDE_NAMES)
         bank = kernel.build_kernels(stored, scales)
         object.__setattr__(self, "_atoms", stored)
         object.__setattr__(self, "_kernel", kernel)
@@ -1107,8 +1157,8 @@ class KDEDistribution(
         raw = _raw_record(value)
         if not isinstance(raw, dict):
             raise TypeError(
-                f"a value of {self.label!r} is a record, as a mapping of its fields or a batch "
-                f"of records; got {type(value).__name__}"
+                f"{self.label!r} draws records, so a value must be a Record, a RecordBatch, or a "
+                f"mapping of its fields, got {_type_name(value)}"
             )
         blocks = []
         for path, shape in record.leaf_shapes.items():

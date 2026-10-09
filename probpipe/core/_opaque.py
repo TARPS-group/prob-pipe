@@ -8,7 +8,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ._repr import term_repr
+from ._array_backend import _read_only
+from ._repr import term_repr, type_name
 from ._spec_base import OpaqueSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -34,7 +35,8 @@ class Opaque(TrackedTerm, Annotated):
         takes it: the label is what says which opaque value this is.
     value : Any
         The value this term holds, stored as given. Any non-mapping value; the value
-        layer reads a mapping as a subtree.
+        layer reads a mapping as a subtree. A NumPy array is marked read-only in
+        place.
     spec : OpaqueSpec, optional
         What this value satisfies, carrying any opaque ``meta``. Defaults to the
         :class:`~probpipe.OpaqueSpec` of the value's type.
@@ -75,20 +77,22 @@ class Opaque(TrackedTerm, Annotated):
             raise TypeError(f"Opaque spec must be an OpaqueSpec, got {type(spec).__name__}")
         if isinstance(value, Mapping):
             raise TypeError(
-                "Opaque holds one unstructured value, and the value layer reads a mapping as a "
-                "subtree rather than a leaf; wrap it as a Record, or as a non-mapping value"
+                f"Opaque cannot hold a mapping, got {type_name(value)}; use a Record for "
+                f"structured values"
             )
         if spec is None:
             spec = OpaqueSpec(type=type(value))
         elif not spec.is_valid(value):
-            raise TypeError(f"{spec!r} does not admit a {type(value).__name__}")
-        object.__setattr__(self, "_value", value)
+            raise TypeError(
+                f"Opaque {label!r}: value of type {type_name(value)} does not match {spec!r}"
+            )
+        object.__setattr__(self, "_value", _read_only(value))
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(label, provenance=provenance)
 
     @classmethod
     def _view(
-        cls, name: str, value: Any, spec: OpaqueSpec, provenance: Provenance | None
+        cls, label: str, value: Any, spec: OpaqueSpec, provenance: Provenance | None
     ) -> Opaque:
         """The opaque *value* under *spec*, as a container's view of it, without validation.
 
@@ -97,7 +101,7 @@ class Opaque(TrackedTerm, Annotated):
         view = object.__new__(cls)
         object.__setattr__(view, "_value", value)
         object.__setattr__(view, "_spec", spec)
-        view._init_tracked(name, provenance=provenance)
+        view._init_tracked(label, provenance=provenance)
         return view
 
     @property

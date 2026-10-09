@@ -53,7 +53,7 @@ class TestDistributionBase:
             pass
 
         d = StubDist("stub", NumericArraySpec(()))
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(d, jnp.array(0.0))
 
     def test_unnormalized_log_prob_delegates_to_log_prob(self, scalar_normal):
@@ -66,7 +66,7 @@ class TestDistributionBase:
         )
 
     def test_repr_with_name(self):
-        """Distribution.__repr__ includes the name when set."""
+        """Distribution.__repr__ includes the label when set."""
         n = Normal(loc=0.0, scale=1.0, label="my_normal")
         r = repr(n)
         assert "my_normal" in r

@@ -108,12 +108,12 @@ class TestTheLinearPushforward:
 
 class TestTheBijectorTransform:
     def test_a_map_without_an_inverse_raises(self, standard):
-        with pytest.raises(ResolutionError, match="SupportsInverse"):
+        with pytest.raises(ResolutionError, match="'exp' does not implement SupportsInverse"):
             BijectorTransformedDistribution("y", standard, Function("exp", jnp.exp))
 
     def test_a_base_drawing_records_raises(self, standard):
         joint = standard * Normal("z", 0.0, 1.0)
-        with pytest.raises(TypeError, match="draws are arrays"):
+        with pytest.raises(TypeError, match="needs a base that draws numeric arrays, but"):
             BijectorTransformedDistribution("y", joint, tfb.Exp())
 
     def test_the_change_of_variables_bijector_claims_its_inverse_and_log_jacobian(self):

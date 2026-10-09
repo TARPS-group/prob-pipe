@@ -5,7 +5,7 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, cast
 
 import numpy as np
@@ -13,7 +13,9 @@ import numpy as np
 from ._kinds import register_kind
 from ._object_batch import _as_object_array, _ObjectBatch
 from ._opaque import Opaque, OpaqueSpec
+from ._shapes import AxisCountsLike, LevelNamesLike
 from ._spec_base import _opaque_spec_of
+from ._specs import TermSpec
 from .provenance import Provenance
 
 __all__ = ["OpaqueBatch"]
@@ -30,18 +32,19 @@ class OpaqueBatch(_ObjectBatch[Any]):
         holds.
     elements : numpy.ndarray or iterable
         The objects, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
     element_spec : OpaqueSpec, optional
         What every element satisfies. Defaults to the :class:`OpaqueSpec` of
         the type the elements share exactly, which admits any value when they
         differ.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -58,6 +61,13 @@ class OpaqueBatch(_ObjectBatch[Any]):
         the elements are stored in, or gives a count that is not one per level; or
         if it is omitted and the number of level names does not match the number
         of axes.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -89,17 +99,21 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     __slots__ = ()
 
-    _element_rule = "be any value but a mapping, which denotes a subtree"
+    def _element_refusal(self, element: Any, element_spec: TermSpec) -> str:
+        """Why *element_spec* refuses *element*: it is a mapping, or not of the spec's type."""
+        if isinstance(element, Mapping):
+            return "elements cannot be mappings; use RecordBatch for structured values"
+        return f"elements must match element_spec {element_spec!r}"
 
     def __init__(
         self,
         label: str,
         elements: np.ndarray | Iterable[Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: OpaqueSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:
@@ -123,9 +137,9 @@ class OpaqueBatch(_ObjectBatch[Any]):
         """The :class:`OpaqueSpec` every element satisfies — a view on ``spec``."""
         return cast(OpaqueSpec, self._spec.element_spec)
 
-    def _wrap_element(self, value: Any, name: str) -> Opaque:
-        """The stored *value* as an :class:`~probpipe.Opaque` labeled *name*."""
-        return Opaque(name, value, spec=self.element_spec)
+    def _wrap_element(self, value: Any, label: str) -> Opaque:
+        """The stored *value* as an :class:`~probpipe.Opaque` labeled *label*."""
+        return Opaque(label, value, spec=self.element_spec)
 
 
 register_kind(OpaqueSpec, term_class=Opaque, batch_class=OpaqueBatch)

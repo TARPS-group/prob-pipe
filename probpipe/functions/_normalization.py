@@ -28,6 +28,7 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin
 
 from ..core._dispatch import ResolutionError
+from ..core._repr import type_name
 from ..distributions._capabilities import (
     SupportsApproximateConditioning,
     SupportsCovariance,
@@ -186,9 +187,7 @@ def plan_distribution_values(
             value, target, method=method, exact_only=exact_only, **options
         )
         if info.feasible is False:
-            raise ResolutionError(
-                f"parameter {ref.label!r} converts to {_name(target)}: {info.description}"
-            )
+            raise _conversion_failure(ref.label, target, info.description)
         if info.feasible is True and info.method_name is None:
             continue
         reports[ref.label] = info
@@ -201,6 +200,11 @@ def plan_distribution_values(
 
 def _name(target: type) -> str:
     return getattr(target, "__name__", repr(target))
+
+
+def _conversion_failure(label: str, target: type, detail: Any) -> ResolutionError:
+    """The error for an argument at *label* that no converter takes to *target*."""
+    return ResolutionError(f"cannot convert parameter {label!r} to {_name(target)}: {detail}")
 
 
 def _entry(
@@ -234,13 +238,10 @@ def _entry(
     method = options.pop("method", None)
     exact_only = options.pop("exact_only", False)
     if method is not None and not isinstance(method, str):
-        raise TypeError(
-            f"the conversions entry of {parameter!r} names its converter by a string; got "
-            f"method={method!r}"
-        )
+        raise TypeError(f"conversions[{parameter!r}]['method'] must be a string; got {method!r}")
     if type(exact_only) is not bool:
         raise TypeError(
-            f"the conversions entry of {parameter!r} sets exact_only to a bool; got {exact_only!r}"
+            f"conversions[{parameter!r}]['exact_only'] must be a bool; got {exact_only!r}"
         )
     return method, exact_only, options
 
@@ -299,9 +300,7 @@ def _convert_hinted_distribution(
             value, target, method=method, exact_only=exact_only, **options
         )
     except ResolutionError as error:
-        raise ResolutionError(
-            f"parameter {label!r} converts to {_name(target)}: {error}"
-        ) from error
+        raise _conversion_failure(label, target, error) from error
 
 
 def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
@@ -352,10 +351,9 @@ def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
 
         accepted = " | ".join(getattr(_hint_class(arm), "__name__", repr(arm)) for arm in arms)
         raise ApplicabilityError(
-            f"parameter {label!r} accepts {accepted}, and got a {type(value).__name__}, which is "
-            f"none of them. A union of several distribution classes names no single conversion "
-            f"target: pass a law of one of those classes, or annotate the parameter with the "
-            f"class to convert to"
+            f"parameter {label!r} accepts {accepted}, but got {type_name(value)}. A distribution "
+            f"converts only to a single annotated class; pass one of {accepted}, or annotate "
+            f"{label!r} with one class"
         )
     (arm,) = arms
     if not _is_concrete_distribution_hint(arm):

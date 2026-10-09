@@ -31,6 +31,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from .._messages import unknown_names
 from ..core._dispatch import Feasibility
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
@@ -129,8 +130,8 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
             )
             raise TypeError(
-                f"the factors of {label!r} are jointly Gaussian only when each is a Normal, a "
-                f"MultivariateNormal, or a packaged joint of them, got {kinds}"
+                f"FactoredMultivariateGaussian {label!r} accepts only Normal or "
+                f"MultivariateNormal factors, or Gaussian joints of them, got {kinds}"
             )
 
     def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution:
@@ -159,16 +160,14 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         conditioned = set(dict(top.items()))
         unknown = sorted(conditioned - set(self.event_spec.components))
         if unknown:
-            raise KeyError(f"{unknown} are not components of {self.label!r}")
+            raise KeyError(self._unknown_components(unknown))
         kept = [
             factor
             for factor in self.factors
             if not set(factor.event_spec.components) <= conditioned
         ]
         if not kept:
-            raise ValueError(
-                f"the given covers every component of {self.label!r}, so no law remains"
-            )
+            raise ValueError(self._every_component())
         law = FactoredDistribution(self.label, kept)
         return law.with_provenance(
             Provenance.create(
@@ -181,10 +180,22 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         components = set(self.event_spec.components)
         outside = sorted(set(paths) - components)
         if outside:
-            return Feasibility(False, f"{outside} are not components of {self.label!r}")
+            return Feasibility(False, self._unknown_components(outside), actionable=True)
         if components <= set(paths):
-            return Feasibility(False, f"the paths cover every component of {self.label!r}")
+            return Feasibility(False, self._every_component(), actionable=True)
         return Feasibility(True)
+
+    def _unknown_components(self, unknown: Sequence[str]) -> str:
+        """The message for conditioning on the names *unknown*, which are not components."""
+        components = list(self.event_spec.components)
+        return f"cannot condition {self.label!r}: {unknown_names('component', unknown, components)}"
+
+    def _every_component(self) -> str:
+        """The message for conditioning on every component, which leaves no distribution."""
+        return (
+            f"cannot condition {self.label!r} on all of its components "
+            f"{list(self.event_spec.components)}; leave at least one unconditioned"
+        )
 
 
 _register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
@@ -196,9 +207,9 @@ _register_refinement(FactoredMultivariateGaussian, _jointly_gaussian)
 
 
 def _declarations(
-    name: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
+    label: str, output_spec: OutputSpec | None, event_spec: OutputSpec | None
 ) -> tuple[OutputSpec, OutputSpec]:
-    """The drawn function's output declaration and the event's, each defaulting to *name*.
+    """The drawn function's output declaration and the event's, each defaulting to *label*.
 
     The event is a function, so a declared event type is a ``FunctionSpec`` whose
     output side names the drawn function's output component. A type hole in the
@@ -206,15 +217,15 @@ def _declarations(
 
     Parameters
     ----------
-    name : str
+    label : str
         The random function's label, which both declarations take as their default
         component.
     output_spec : OutputSpec or None
         The declaration of the drawn function's output, or None for a type hole under
-        *name*.
+        *label*.
     event_spec : OutputSpec or None
         The declaration of the function-valued event, or None for a ``FunctionSpec`` under
-        *name*.
+        *label*.
 
     Returns
     -------
@@ -233,23 +244,22 @@ def _declarations(
     ValueError
         If the event's ``FunctionSpec`` names another output component.
     """
-    output = OutputSpec(**{name: None}) if output_spec is None else output_spec
+    output = OutputSpec(**{label: None}) if output_spec is None else output_spec
     if not isinstance(output, OutputSpec) or output._component_name is None:
         raise TypeError(
-            f"output_spec of {name!r} must be an OutputSpec naming one component, got "
+            f"output_spec of {label!r} must be an OutputSpec naming one component, got "
             f"{output_spec!r}"
         )
     if event_spec is None:
-        return output, OutputSpec(**{name: FunctionSpec(output_spec=output)})
+        return output, OutputSpec(**{label: FunctionSpec(output_spec=output)})
     if not isinstance(event_spec, OutputSpec):
-        raise TypeError(f"event_spec of {name!r} must be an OutputSpec, got {event_spec!r}")
+        raise TypeError(f"event_spec of {label!r} must be an OutputSpec, got {event_spec!r}")
     declared = event_spec.spec
     if declared is None:
         return output, event_spec._with_spec(FunctionSpec(output_spec=output))
     if not isinstance(declared, FunctionSpec):
         raise TypeError(
-            f"the event of the random function {name!r} is a function, so event_spec declares "
-            f"a FunctionSpec; got {type(declared).__name__}"
+            f"event_spec of {label!r} must declare a FunctionSpec, got {type(declared).__name__}"
         )
     if declared.output_spec is None:
         filled = FunctionSpec(input_spec=declared.input_spec, output_spec=output)
@@ -257,8 +267,9 @@ def _declarations(
     named = declared.output_spec._component_name
     if named != output._component_name:
         raise ValueError(
-            f"the event of {name!r} declares a function whose output is {named!r}, but the "
-            f"drawn function names the output component {output._component_name!r}"
+            f"event_spec of {label!r} names the function output {named!r}, but output_spec "
+            f"names it {output._component_name!r} (the label when output_spec is omitted); "
+            f"make them match"
         )
     return output, event_spec
 
@@ -267,7 +278,10 @@ def _stacked(X: ArrayLike) -> Array:
     """*X* as an array whose leading axis stacks the input points."""
     X = jnp.asarray(X)
     if X.ndim == 0:
-        raise ValueError("X stacks the input points along its leading axis, so it has an axis")
+        raise ValueError(
+            "X must have a leading axis of input points, got a 0-d array; pass shape (n, ...), "
+            "such as X[None] for one point"
+        )
     return X
 
 
@@ -484,7 +498,10 @@ class GaussianProcess(GaussianRandomFunction):
         event_spec: OutputSpec | None = None,
     ) -> None:
         if not callable(mean_fn) or not callable(cov_kernel):
-            raise TypeError(f"the mean function and covariance kernel of {label!r} are callables")
+            raise TypeError(
+                f"mean_fn and cov_kernel of {label!r} must be callable, got "
+                f"{type(mean_fn).__name__} and {type(cov_kernel).__name__}"
+            )
         self._mean_fn = mean_fn
         self._cov_kernel = cov_kernel
         super().__init__(label, output_spec=output_spec, event_spec=event_spec)
@@ -565,7 +582,7 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         if not isinstance(weights, MultivariateNormal):
             raise TypeError(f"weights must be a MultivariateNormal, got {type(weights).__name__}")
         if not callable(basis):
-            raise TypeError(f"the basis of {label!r} is a callable")
+            raise TypeError(f"basis of {label!r} must be callable, got {type(basis).__name__}")
         self._basis = basis
         self._weights = weights
         self._w_mean = weights.loc
@@ -581,8 +598,8 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
         phi = jnp.asarray(self._basis(_stacked(X)))
         if phi.ndim < 2 or phi.shape[-1] != self._w_mean.shape[0]:
             raise ValueError(
-                f"the basis of {self.label!r} returns features of shape {phi.shape}, whose last "
-                f"axis must be the weights' dimension {self._w_mean.shape[0]}"
+                f"basis of {self.label!r} must return features whose last axis has the weights' "
+                f"size {self._w_mean.shape[0]}, got shape {phi.shape}"
             )
         return phi
 
@@ -654,8 +671,9 @@ class _LinearMapGRF(GaussianRandomFunction):
         shape = jax.eval_shape(self._base.predict_mean, X).shape
         if len(shape) != 2 or shape[1] != self._A.shape[1]:
             raise ValueError(
-                f"A @ f maps an output vector of size {self._A.shape[1]}, but the value of "
-                f"{self._base.label!r} at each point has shape {tuple(shape[1:])}"
+                f"A @ f needs the value of f at each point to be a vector of size "
+                f"{self._A.shape[1]} to match A's columns, but {self._base.label!r} has shape "
+                f"{tuple(shape[1:])}"
             )
 
     def predict_mean(self, X: Array) -> Array:
@@ -724,7 +742,8 @@ class _ScaledGRF(GaussianRandomFunction):
     def __init__(self, base: GaussianRandomFunction, alpha: Array) -> None:
         if alpha.ndim != 0:
             raise ValueError(
-                f"alpha * f scales by a scalar, got shape {alpha.shape}; A @ f maps the outputs"
+                f"alpha * f needs a scalar alpha, got shape {alpha.shape}; to apply a matrix to "
+                f"the outputs, use A @ f"
             )
         self._base = base
         self._alpha = alpha
@@ -774,7 +793,8 @@ def _summed(left: Array, right: Array) -> Array:
     left, right = jnp.asarray(left), jnp.asarray(right)
     if left.shape != right.shape:
         raise ValueError(
-            f"f + g adds values of one shape, got {left.shape[1:]} and {right.shape[1:]}"
+            f"f + g needs both functions to have the same output shape, got {left.shape[1:]} "
+            f"and {right.shape[1:]}"
         )
     return left + right
 
@@ -789,8 +809,8 @@ class _IndependentSumGRF(GaussianRandomFunction):
     def __init__(self, left: GaussianRandomFunction, right: GaussianRandomFunction) -> None:
         if left is right:
             raise ValueError(
-                "Cannot add a GaussianRandomFunction to itself, which is not independent of "
-                "itself; use 2 * f instead."
+                f"cannot add {left.label!r} to itself, since f + g needs independent functions; "
+                f"use 2 * f instead"
             )
         self._left = left
         self._right = right

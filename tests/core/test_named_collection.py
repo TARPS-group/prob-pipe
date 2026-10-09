@@ -293,7 +293,7 @@ class TestEditTemplateThreading:
 
     def test_edits_reuse_untouched_children_verbatim(self):
         # An untouched nested child already named by its field key survives
-        # an edit as the SAME object — class, name, and metadata preserved
+        # an edit as the SAME object — class, label, and metadata preserved
         # (never demoted to the outer record's class).
         child = NumericRecord("phys", x=1.0, y=2.0)
         r = Record("r", phys=child, obs="tag")
@@ -313,7 +313,7 @@ class TestEditTemplateThreading:
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
         ):
-            with pytest.raises(ValueError, match="overlap"):
+            with pytest.raises(ValueError, match="got both 'physics' and the path 'physics/mass'"):
                 r.replace(updates)
         with pytest.raises(ValueError, match="overlap"):
             r.event_template.replace(

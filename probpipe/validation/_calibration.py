@@ -29,6 +29,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import unknown_names
 from ..core._record_spec import RecordSpec
 from ..core._specs import OutputSpec
 from ..custom_types import Array, ArrayLike
@@ -153,13 +154,13 @@ def _credible_levels(levels: Iterable[float]) -> tuple[float, ...]:
     checked = []
     for level in levels:
         if isinstance(level, bool):
-            raise TypeError(f"a credible level is a number in (0, 1); got {level!r}")
+            raise TypeError(f"levels must be numbers in (0, 1); got {level!r}")
         try:
             value = float(level)
         except (TypeError, ValueError):
-            raise TypeError(f"a credible level is a number in (0, 1); got {level!r}") from None
+            raise TypeError(f"levels must be numbers in (0, 1); got {level!r}") from None
         if not 0.0 < value < 1.0:
-            raise ValueError(f"a credible level lies in (0, 1); got {level!r}")
+            raise ValueError(f"levels must be numbers in (0, 1); got {level!r}")
         checked.append(value)
     return tuple(checked)
 
@@ -195,9 +196,9 @@ def _slot_binding(kernel: ConditionalDistribution, observed: tuple[str, ...]) ->
     if len(slots) == 1 and len(observed) == 1:
         return {slots[0]: observed[0]}
     raise ValueError(
-        f"the given slots {list(slots)} of the posterior {kernel.label!r} do not take the "
-        f"observed fields {list(observed)}: the slots take the observed fields of their "
-        "names, and a kernel with one given slot takes the one observed field"
+        f"the given slots {list(slots)} of posterior {kernel.label!r} do not match the "
+        f"observed fields {list(observed)}. Name the slots after the observed fields, or "
+        f"use a posterior with one given slot for one observed field."
     )
 
 
@@ -225,13 +226,13 @@ def _check_parameters(event_spec: OutputSpec, parameters: tuple[str, ...], label
     if event_spec.exposes_record:
         if set(event_spec.components) != set(parameters):
             raise ValueError(
-                f"the posterior {label!r} draws the fields {list(event_spec.components)}, "
-                f"which are not the parameters {list(parameters)}"
+                f"posterior {label!r} draws the fields {list(event_spec.components)}, but "
+                f"they must be the model's parameters {list(parameters)}"
             )
     elif len(parameters) != 1:
         raise ValueError(
-            f"the posterior {label!r} draws one whole term, so it cannot hold the "
-            f"parameters {list(parameters)}"
+            f"posterior {label!r} draws a single unnamed value, but the model has the "
+            f"parameters {list(parameters)}. It must draw a record with one field per parameter."
         )
 
 
@@ -468,9 +469,8 @@ def simulation_based_calibration(
     if posterior is not None:
         if method is not None or method_options is not None:
             raise ValueError(
-                "simulation_based_calibration evaluates the posterior kernel at each "
-                "replication's observed values and fits nothing, so it takes no method "
-                "or method_options beside posterior"
+                "simulation_based_calibration takes either posterior or method and "
+                "method_options, not both"
             )
         if not isinstance(posterior, ConditionalDistribution):
             raise TypeError(
@@ -480,17 +480,21 @@ def simulation_based_calibration(
     # Configured before any draw, so a malformed method or option fails first.
     fit = condition_on.with_options(method=method, method_options=method_options)
     if not callable(getattr(model, "_sample", None)):
-        raise TypeError(f"{type(model).__name__} does not support SBC joint sampling")
+        raise TypeError(
+            f"simulation_based_calibration: model must be a distribution that can be sampled; "
+            f"got {type(model).__name__}"
+        )
     observed = (observed,) if isinstance(observed, str) else tuple(observed)
     components = tuple(model.event_spec.components)
     unknown = [name for name in observed if name not in components]
     if unknown:
-        raise ValueError(
-            f"{unknown} are not fields of {model.label!r}; its fields are {components}"
-        )
+        raise ValueError(unknown_names("observed field", unknown, components, "fields"))
     parameters = tuple(name for name in components if name not in observed)
     if not parameters:
-        raise ValueError(f"observing {list(observed)} leaves no parameter of {model.label!r}")
+        raise ValueError(
+            f"observed={list(observed)} includes every field of {model.label!r}, so no "
+            f"parameters are left to calibrate"
+        )
     binding: dict[str, str] = {}
     if posterior is not None:
         binding = _slot_binding(posterior, observed)
@@ -557,7 +561,10 @@ def interval_coverage(
         draws = draws[:, None]
     truth = jnp.atleast_1d(jnp.asarray(truth))
     if truth.shape[0] != draws.shape[1]:
-        raise ValueError(f"truth dimension {truth.shape[0]} != draws dimension {draws.shape[1]}")
+        raise ValueError(
+            f"truth has {truth.shape[0]} values, but the draws have dimension {draws.shape[1]}; "
+            f"they must match"
+        )
     out: dict[float, Array] = {}
     for level in levels:
         lo, hi = (1.0 - level) / 2.0, (1.0 + level) / 2.0

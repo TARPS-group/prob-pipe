@@ -111,8 +111,8 @@ _NO_BATCH_SHAPE_DISTS = [
 ]
 
 
-class TestWithNameBasics:
-    """Distribution.with_label() returns a new object with a new name."""
+class TestWithLabelBasics:
+    """Distribution.with_label() returns a new object with a new label."""
 
     def test_returns_new_object(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
@@ -133,7 +133,7 @@ class TestWithNameBasics:
         assert n2._scale is n._scale
 
 
-class TestWithNameProvenance:
+class TestWithLabelProvenance:
     """with_label() attaches a 'with_label' Provenance pointing to the original."""
 
     def test_provenance_operation(self):
@@ -154,7 +154,7 @@ class TestWithNameProvenance:
         assert n2.provenance.metadata["old_label"] == "x"
         assert n2.provenance.metadata["new_label"] == "y"
 
-    def test_rename_chain_preserves_ancestry(self, full_provenance_mode):
+    def test_relabel_chain_preserves_ancestry(self, full_provenance_mode):
         """a.with_label("b").with_label("c") keeps a in the ancestor DAG."""
         a = Normal(loc=0.0, scale=1.0, label="a")
         b = a.with_label("b")
@@ -164,15 +164,15 @@ class TestWithNameProvenance:
         assert any(anc.parent is b for anc in ancestors)
 
     def test_original_provenance_not_mutated(self):
-        """Renaming does not alter the original's source."""
+        """Relabeling does not alter the original's source."""
         n = Normal(loc=0.0, scale=1.0, label="x")
         n.with_provenance(Provenance("construction", parents=()))
         n.with_label("y")
         assert n.provenance.operation == "construction"
 
 
-class TestWithNameSampling:
-    """Renamed copies behave identically under sampling/log_prob."""
+class TestWithLabelSampling:
+    """Relabeled copies behave identically under sampling/log_prob."""
 
     def test_sample_statistics_match(self):
         n = Normal(loc=2.0, scale=0.5, label="x")
@@ -199,8 +199,8 @@ class TestWithNameSampling:
         assert renamed.event_shape == mvn.event_shape
 
 
-class TestWithNameRecordSpec:
-    """with_label() changes the name and keeps the event component (III.7)."""
+class TestWithLabelRecordSpec:
+    """with_label() changes the label and keeps the event component (III.7)."""
 
     def test_template_field_stays_the_component(self):
         n = Normal(loc=0.0, scale=1.0, label="x")
@@ -250,13 +250,13 @@ class TestAnnotationsDiagnosticsAccessor:
         import xarray as xr
 
         dist = Normal(loc=0.0, scale=1.0, label="x")
-        dist._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
+        object.__setattr__(dist, "_annotations", xr.DataTree.from_dict({"arviz": xr.Dataset()}))
         assert dist.annotations is dist._annotations
         assert dist.diagnostics is None
 
     def test_diagnostics_none_when_annotations_has_no_children_attr(self):
         dist = Normal(loc=0.0, scale=1.0, label="x")
-        dist._annotations = object()
+        object.__setattr__(dist, "_annotations", object())
 
         assert dist.diagnostics is None
 
@@ -266,8 +266,10 @@ class TestAnnotationsDiagnosticsAccessor:
         from probpipe.diagnostics.views import DiagnosticsView
 
         dist = Normal(loc=0.0, scale=1.0, label="x")
-        dist._annotations = xr.DataTree.from_dict(
-            {"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}
+        object.__setattr__(
+            dist,
+            "_annotations",
+            xr.DataTree.from_dict({"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}),
         )
         view = dist.diagnostics
         assert view is not None
@@ -298,11 +300,11 @@ class TestDistributionRepr:
         )
 
 
-class TestConstructorNameCheck:
-    """``Distribution.__init__`` rejects a name that is not a non-empty string."""
+class TestConstructorLabelCheck:
+    """``Distribution.__init__`` rejects a label that is not a non-empty string."""
 
-    @pytest.mark.parametrize("name", ["", 123, None])
-    def test_invalid_name_raises(self, name):
+    @pytest.mark.parametrize("label", ["", 123, None])
+    def test_invalid_label_raises(self, label):
         from probpipe import Distribution
 
         class _Dist(Distribution):
@@ -310,66 +312,66 @@ class TestConstructorNameCheck:
                 super().__init__(label, OpaqueSpec())
 
         with pytest.raises(TypeError, match="requires a non-empty label"):
-            _Dist(name)
+            _Dist(label)
 
 
 class TestMetaclassEnforcement:
-    """The ``_TrackedTermMeta`` metaclass enforces a non-empty ``name``
+    """The ``_TrackedTermMeta`` metaclass enforces a non-empty ``label``
     on every Distribution subclass instance, even when the subclass
     bypasses ``super().__init__``.
     """
 
-    def test_subclass_without_name_raises_at_construction(self):
+    def test_subclass_without_label_raises_at_construction(self):
         """A subclass whose ``__init__`` doesn't set ``_name`` cannot be
         constructed — the metaclass post-init check fires before the
         instance escapes."""
         from probpipe import Distribution
 
-        class _NoNameDist(Distribution):
+        class _NoLabelDist(Distribution):
             def __init__(self):
                 # Deliberately omit calling super().__init__ and
                 # setting self._name.
                 pass
 
         with pytest.raises(TypeError, match="non-empty label"):
-            _NoNameDist()
+            _NoLabelDist()
 
-    def test_subclass_with_empty_string_name_raises(self):
+    def test_subclass_with_empty_string_label_raises(self):
         """An empty-string ``_name`` is also rejected — the check
         insists on a truthy string."""
         from probpipe import Distribution
 
-        class _EmptyNameDist(Distribution):
+        class _EmptyLabelDist(Distribution):
             def __init__(self):
                 self._name = ""
 
         with pytest.raises(TypeError, match="non-empty label"):
-            _EmptyNameDist()
+            _EmptyLabelDist()
 
-    def test_subclass_with_non_string_name_raises(self):
+    def test_subclass_with_non_string_label_raises(self):
         """The metaclass requires the final ``_name`` to be a string."""
         from probpipe import Distribution
 
-        class _NonStringNameDist(Distribution):
+        class _NonStringLabelDist(Distribution):
             def __init__(self):
                 self._name = 123
 
         with pytest.raises(TypeError, match="non-empty label"):
-            _NonStringNameDist()
+            _NonStringLabelDist()
 
-    def test_subclass_setting_name_directly_succeeds(self):
+    def test_subclass_setting_label_directly_succeeds(self):
         """Bypassing ``super().__init__`` is fine as long as
         ``self._label`` ends up set to a non-empty string and the event is
         declared."""
         from probpipe import Distribution
 
-        class _DirectNameDist(Distribution):
+        class _DirectLabelDist(Distribution):
             def __init__(self):
                 # Skip super().__init__ deliberately.
                 self._label = "direct"
                 self._init_declaration(OpaqueSpec())
 
-        dist = _DirectNameDist()
+        dist = _DirectLabelDist()
         assert dist.label == "direct"
         assert dist.event_spec == OutputSpec(direct=OpaqueSpec())
 
@@ -386,12 +388,12 @@ class TestMetaclassEnforcement:
             _NoDeclaration()
 
 
-class TestWithNameTemplateRoundtrip:
+class TestWithLabelTemplateRoundtrip:
     """``with_label`` keeps a declared law's event component; explicit and
     multi-field templates are preserved.
     """
 
-    def test_with_name_keeps_the_declared_component(self):
+    def test_with_label_keeps_the_declared_component(self):
         """A single-array law captures its component at construction, so
         the clone draws under the original component and the original is
         untouched."""
@@ -404,9 +406,9 @@ class TestWithNameTemplateRoundtrip:
         assert original.label == "x"
         assert tuple(original.event_spec.components) == ("x",)
 
-    def test_with_name_preserves_multi_field_template(self):
+    def test_with_label_preserves_multi_field_template(self):
         """A multi-field joint's components are independent of the
-        distribution's name, so renaming leaves them."""
+        distribution's label, so relabeling leaves them."""
         import jax.numpy as jnp
 
         jg = MultivariateNormal("x", jnp.zeros(1), cov=jnp.eye(1)) * MultivariateNormal(
@@ -416,9 +418,9 @@ class TestWithNameTemplateRoundtrip:
         clone = jg.with_label("renamed_jg")
         assert tuple(clone.event_spec.components) == original_fields == ("x", "y")
 
-    def test_with_name_preserves_a_non_numeric_declaration(self):
+    def test_with_label_preserves_a_non_numeric_declaration(self):
         """An empirical law over records with an opaque field declares its atoms'
-        record, not the distribution's name, so renaming leaves the declaration
+        record, not the distribution's label, so relabeling leaves the declaration
         intact."""
         import numpy as np
 
@@ -506,11 +508,11 @@ def _public_distribution_classes() -> list[type]:
 
 _PUBLIC_CLASSES = _public_distribution_classes()
 
-# Laws that indexing constructs from a parent, so no caller names them.
+# Laws that indexing constructs from a parent, so no caller labels them.
 _CONSTRUCTED_BY_INDEXING = {"FieldView"}
 
 
-class TestNameFirstSignature:
+class TestLabelFirstSignature:
     """Every public distribution constructor takes ``label`` first, required."""
 
     @pytest.mark.parametrize(
@@ -527,14 +529,14 @@ class TestNameFirstSignature:
         assert first.default is inspect.Parameter.empty
 
 
-class TestNameBinding:
-    def test_positional_name_binds(self):
+class TestLabelBinding:
+    def test_positional_label_binds(self):
         assert Normal("x", 0.0, 1.0).label == "x"
 
-    def test_keyword_name_binds(self):
+    def test_keyword_label_binds(self):
         assert Normal(loc=0.0, scale=1.0, label="x").label == "x"
 
-    def test_name_given_both_ways_raises(self):
+    def test_label_given_both_ways_raises(self):
         with pytest.raises(TypeError, match="multiple values for argument 'label'"):
             Normal("x", 0.0, 1.0, label="y")
 
@@ -559,7 +561,7 @@ class TestNameBinding:
         assert law.label == "b"
 
 
-class TestDerivedNames:
+class TestDerivedLabels:
     """An expectation's result takes the label of its law."""
 
     @pytest.mark.parametrize(
@@ -624,7 +626,7 @@ class _DeclaredLaw(Distribution):
 class TestEventDeclaration:
     """A law stores one declaration, completed from what its constructor supplies."""
 
-    def test_a_bare_array_spec_is_a_whole_term_under_the_name(self):
+    def test_a_bare_array_spec_is_a_whole_term_under_the_label(self):
         law = _DeclaredLaw("x", NumericArraySpec((3,)))
         assert law.event_spec == OutputSpec(x=NumericArraySpec((3,)))
         assert law.event_spec is law.spec.event_spec
@@ -640,14 +642,14 @@ class TestEventDeclaration:
         assert _DeclaredLaw("law", declaration).event_spec is declaration
 
     def test_a_type_hole_raises(self):
-        with pytest.raises(ValueError, match="type hole"):
+        with pytest.raises(ValueError, match="does not declare a type"):
             _DeclaredLaw("x", OutputSpec(x=None))
 
     def test_a_value_that_is_not_a_spec_raises(self):
         with pytest.raises(TypeError, match="must be an OutputSpec or a TermSpec"):
             _DeclaredLaw("x", (3,))
 
-    def test_with_name_keeps_the_component(self):
+    def test_with_label_keeps_the_component(self):
         law = _DeclaredLaw("x", NumericArraySpec(()))
         renamed = law.with_label("y")
         assert renamed.label == "y"
@@ -687,7 +689,7 @@ class TestComponentAccess:
         assert selection.parent is law
         assert selection.event_spec == OutputSpec(RecordSpec(x=NumericArraySpec(())))
 
-    def test_the_component_addresses_a_renamed_law(self):
+    def test_the_component_addresses_a_relabeled_law(self):
         renamed = _DeclaredLaw("x", NumericArraySpec(())).with_label("y")
         assert renamed["x"] is renamed
         with pytest.raises(KeyError):
@@ -813,7 +815,10 @@ class TestSchemaViews:
         assert not hasattr(Distribution, view)
         assert hasattr(NumericDistribution, view)
         assert hasattr(numeric, view)
-        with pytest.raises(AttributeError, match=f"non-numeric event, and {view} belongs"):
+        with pytest.raises(
+            AttributeError,
+            match=f"{view} is only available for a distribution with a numeric event",
+        ):
             getattr(opaque, view)
 
     def test_an_attribute_error_of_a_property_is_kept(self):
@@ -954,7 +959,7 @@ _FAMILY_SCHEMAS = [
 
 
 class TestFamilyDeclarations:
-    """A TFP family declares one draw as a whole-term array whose component defaults to its name."""
+    """A TFP family declares one draw as a whole-term array whose component defaults to its label."""
 
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_the_schema_views_read_the_declaration(self, make, shape, dtype, support):
@@ -993,7 +998,7 @@ class TestFamilyDeclarations:
                 cov=jnp.eye(3),
                 event_spec=OutputSpec(theta=NumericArraySpec((2,))),
             )
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="cannot be cast to the declared int32"):
             Normal("x", 0.0, 1.0, event_spec=OutputSpec(theta=NumericArraySpec((), "int32")))
 
     def test_event_spec_declares_a_whole_array(self):
@@ -1112,7 +1117,7 @@ class TestEmpiricalDeclarations:
     def test_a_replicate_of_an_array_law_is_a_batch_of_its_term(self):
         law = BootstrapReplicateDistribution("reps", Normal("x", 0.0, 1.0), replicate_size=4)
         assert law.event_spec == OutputSpec(
-            reps=BatchSpec(NumericArraySpec((), jnp.asarray(0.0).dtype, real), ((4,),), ("x",))
+            reps=BatchSpec(NumericArraySpec((), jnp.asarray(0.0).dtype, real), x=4)
         )
 
     def test_a_replicate_needs_a_law_that_samples(self):
@@ -1122,7 +1127,7 @@ class TestEmpiricalDeclarations:
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, (*sample_shape, 2))
 
-        with pytest.raises(TypeError, match="samples"):
+        with pytest.raises(TypeError, match="supports sampling"):
             BootstrapReplicateDistribution("reps", _Sampler(), replicate_size=5)
 
     def test_a_bootstrap_measure_draws_laws_of_its_sources_event(self):
@@ -1289,7 +1294,7 @@ class TestDimensionTransforms:
         law = _DeclaredLaw("x", NumericArraySpec(("n",)))
         with pytest.raises(ValueError, match="must be non-negative"):
             law.with_dim_sizes(n=-1)
-        with pytest.raises(TypeError, match="must be an integer"):
+        with pytest.raises(TypeError, match="must be a non-negative int"):
             law.with_dim_sizes(n=2.5)
 
     def test_a_library_law_transforms_its_declaration(self):
@@ -1304,7 +1309,7 @@ class TestDimensionTransforms:
 class TestDistributionSpecMatching:
     def test_a_packaging_mismatch_is_named(self):
         spec = DistributionSpec(RecordSpec(x=()))
-        with pytest.raises(ValueError, match="declares an exposed record, but the law declares"):
+        with pytest.raises(ValueError, match="declares a record of fields, but the law declares"):
             spec.bind_dims_from_value(_DeclaredLaw("x", NumericArraySpec(())))
 
     def test_a_whole_term_under_another_component_is_named(self):

@@ -37,7 +37,7 @@ class TestPublicSubstrate:
     def test_substrate_is_not_directly_instantiable(self):
         # ``NamedTree`` is the abstract substrate; only concrete families
         # (Record / RecordSpec / batch types) own a ``_tree`` store.
-        with pytest.raises(TypeError, match="abstract substrate"):
+        with pytest.raises(TypeError, match="abstract base class"):
             NamedTree()
 
 
@@ -60,7 +60,7 @@ class TestErrorPaths:
         # Renaming a leaf onto a name already used as a path prefix (here the
         # subtree ``n``) is the field-versus-prefix collision.
         r = Record("r", m=jnp.array(1.0), n=Record("n", b=jnp.array(2.0)))
-        with pytest.raises(ValueError, match="field and as a path prefix"):
+        with pytest.raises(ValueError, match="cannot move 'm' to 'n': that path is already taken"):
             r.with_path_names(m="n")
 
 
@@ -151,7 +151,7 @@ class TestWithPathNames:
             tree(record).with_path_names(mu="loc")
 
     def test_sibling_collision_raises(self, record):
-        with pytest.raises(ValueError, match="collide"):
+        with pytest.raises(ValueError, match="already taken"):
             record.with_path_names({"g/mu": "g/sigma"})
 
     def test_malformed_new_name_raises(self, record):
@@ -280,11 +280,11 @@ class TestPathMoves:
     @pytest.mark.parametrize(
         ("renames", "match"),
         [
-            pytest.param({"g/mu": "g/sigma"}, "collides", id="onto-a-sibling"),
-            pytest.param({"x": "g/mu"}, "collides", id="onto-a-node-that-stays"),
-            pytest.param({"g/mu": "x/mu"}, "field and as a path prefix", id="through-a-field"),
-            pytest.param({"g": "g/h"}, "own subtree", id="into-its-own-subtree"),
-            pytest.param({"x": "h", "g/mu": "h"}, "collide", id="two-onto-one-path"),
+            pytest.param({"g/mu": "g/sigma"}, "already taken", id="onto-a-sibling"),
+            pytest.param({"x": "g/mu"}, "already taken", id="onto-a-node-that-stays"),
+            pytest.param({"g/mu": "x/mu"}, "'x' is a field, not a group", id="through-a-field"),
+            pytest.param({"g": "g/h"}, "which is inside it", id="into-its-own-subtree"),
+            pytest.param({"x": "h", "g/mu": "h"}, "both move to 'h'", id="two-onto-one-path"),
             pytest.param({"x": "h", "g/mu": "h/mu"}, "overlap", id="one-target-inside-another"),
             pytest.param({"x": "a//b"}, "empty segment", id="empty-segment"),
         ],
@@ -478,7 +478,7 @@ class TestRecordAutoPromotion:
         assert type(back) is NumericRecord
         assert jax.tree_util.tree_structure(back) == treedef
 
-    def test_batch_subclasses_unaffected(self):
+    def test_batch_construction_promotes_as_record_construction_does(self):
         from probpipe import NumericRecordBatch, RecordBatch
 
         ra = RecordBatch(
@@ -488,7 +488,7 @@ class TestRecordAutoPromotion:
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
         )
-        assert type(ra) is RecordBatch
+        assert type(ra) is NumericRecordBatch
         nrb = NumericRecordBatch(
             "batch",
             {"a": jnp.zeros((3,))},
@@ -507,7 +507,7 @@ class TestRecordAutoPromotion:
 class TestValueLevelEntryPoints:
     def test_from_field_values_round_trip_with_name(self):
         r = Record("mine", a=jnp.array(1.0), b="tag")
-        assert list(r.keys()) == ["a", "b"]  # name is positional-only, not a field
+        assert list(r.keys()) == ["a", "b"]  # the label is positional-only, not a field
         rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
         assert rebuilt == r
         assert rebuilt.label == "mine"
@@ -532,3 +532,8 @@ class TestValueLevelEntryPoints:
         nr = NumericRecord("nr", x=jnp.arange(3.0))
         with pytest.raises(TypeError, match="1-D"):
             NumericRecord.from_vector("v", nr.event_template, jnp.ones((4, 3)))
+
+
+def test_a_merge_names_the_fields_both_sides_have():
+    with pytest.raises(ValueError, match="cannot merge: both have the field 'obs'"):
+        Record("r", obs=1.0).merge(Record("s", obs=2.0))

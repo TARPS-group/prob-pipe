@@ -90,9 +90,9 @@ class LocationKernel(ConditionalDistribution):
         return Normal(self.label, given["mu"], 1.0, event_spec=self.event_spec)
 
 
-def _kernel(given=None, event=None, name: str = "k") -> Kernel:
+def _kernel(given=None, event=None, label: str = "k") -> Kernel:
     return Kernel(
-        name,
+        label,
         {"mu": SCALAR} if given is None else given,
         OutputSpec(y=SCALAR) if event is None else event,
     )
@@ -141,12 +141,12 @@ class TestConstruction:
         assert _kernel(given=given).given_spec == given
 
     def test_a_bare_term_spec_completes_to_a_whole_term_under_the_kernel_name(self):
-        kernel = _kernel(event=_array(3), name="lik")
+        kernel = _kernel(event=_array(3), label="lik")
         assert kernel.event_spec == OutputSpec(lik=_array(3))
         assert not kernel.event_spec.exposes_record
 
     def test_the_default_component_is_captured_once(self):
-        kernel = _kernel(event=SCALAR, name="lik")
+        kernel = _kernel(event=SCALAR, label="lik")
         renamed = kernel.with_label("other")
         assert renamed.label == "other"
         assert kernel.label == "lik"
@@ -195,8 +195,8 @@ class TestConstructionErrors:
         ],
     )
     def test_a_given_slot_named_like_a_produced_component_raises(self, given, event, name):
-        with pytest.raises(ValueError, match="both as a given slot and as a produced"):
-            _kernel(given=given, event=event, name=name)
+        with pytest.raises(ValueError, match="both as a given slot and as an output field"):
+            _kernel(given=given, event=event, label=name)
 
     def test_a_missing_label_raises(self):
         with pytest.raises(TypeError, match="label"):
@@ -205,7 +205,7 @@ class TestConstructionErrors:
     @pytest.mark.parametrize("name", ["", None, 3])
     def test_a_name_that_is_not_a_non_empty_string_raises(self, name):
         with pytest.raises(TypeError, match="non-empty label"):
-            _kernel(name=name)
+            _kernel(label=name)
 
     @pytest.mark.parametrize("event", [3.0, (3,), "y", None])
     def test_an_event_that_is_not_a_spec_raises(self, event):
@@ -213,7 +213,7 @@ class TestConstructionErrors:
             Kernel("k", {"mu": SCALAR}, event)
 
     def test_an_event_with_a_type_hole_raises(self):
-        with pytest.raises(ValueError, match="type hole"):
+        with pytest.raises(ValueError, match="does not declare a type"):
             _kernel(event=OutputSpec(y=None))
 
     @pytest.mark.parametrize("given", [["mu"], SCALAR, 3])
@@ -233,7 +233,7 @@ class TestConstructionErrors:
 
     def test_a_bare_event_needs_a_name_that_is_a_valid_component(self):
         with pytest.raises(ValueError, match="component names"):
-            _kernel(event=SCALAR, name="a/b")
+            _kernel(event=SCALAR, label="a/b")
 
     def test_a_kernel_that_leaves_its_declaration_unset_raises(self):
         class Undeclared(ConditionalDistribution):
@@ -280,7 +280,11 @@ class TestConditionalDistributionSpec:
         [
             pytest.param({}, OutputSpec(y=SCALAR), ValueError, "at least one", id="empty-given"),
             pytest.param(
-                {"mu": SCALAR}, OutputSpec(y=None), ValueError, "type hole", id="type-hole"
+                {"mu": SCALAR},
+                OutputSpec(y=None),
+                ValueError,
+                "does not declare a type",
+                id="type-hole",
             ),
             pytest.param(
                 {"y": SCALAR}, OutputSpec(y=SCALAR), ValueError, "both as a given", id="shared"
@@ -425,7 +429,7 @@ class TestDimensionTransforms:
             self._polymorphic().with_dim_sizes(n=-1)
 
     def test_with_dim_sizes_refuses_a_size_that_is_not_an_integer(self):
-        with pytest.raises(TypeError, match="integer"):
+        with pytest.raises(TypeError, match=r"must be a non-negative int, got float 2\.5"):
             self._polymorphic().with_dim_sizes(n=2.5)
 
     def test_with_dim_names_renames_on_both_sides_simultaneously(self):

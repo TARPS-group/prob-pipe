@@ -227,7 +227,7 @@ class TestDeclarations:
             )
 
     def test_an_event_function_naming_another_output_raises(self):
-        with pytest.raises(ValueError, match="names the output"):
+        with pytest.raises(ValueError, match="names the function output"):
             GaussianProcess(
                 "f",
                 lambda X: jnp.zeros(X.shape[0]),
@@ -316,7 +316,7 @@ class TestTheGaussianProcess:
         assert not isinstance(process, SupportsSampling)
 
     def test_its_parts_are_callables(self):
-        with pytest.raises(TypeError, match="callables"):
+        with pytest.raises(TypeError, match="must be callable, got"):
             GaussianProcess("f", jnp.zeros(3), _rbf)
 
     def test_a_sum_of_processes_adds_the_kernels(self):
@@ -403,7 +403,7 @@ class TestLinearBasisFunction:
     def test_a_basis_of_the_wrong_width_raises(self):
         weights = MultivariateNormal("weights", jnp.zeros(2), cov=jnp.eye(2))
         lbf = LinearBasisFunction("f", _polynomial_basis, weights)
-        with pytest.raises(ValueError, match="weights' dimension 2"):
+        with pytest.raises(ValueError, match="the weights' size 2"):
             lbf.predict_mean(jnp.ones((3, 1)))
 
     # -- Drawing functions -------------------------------------------------
@@ -517,7 +517,7 @@ class TestLinearMap:
 
     def test_a_scalar_output_raises(self, scalar_lbf):
         h = jnp.eye(2) @ scalar_lbf
-        with pytest.raises(ValueError, match="output vector of size 2"):
+        with pytest.raises(ValueError, match="a vector of size 2"):
             h.predict_mean(jnp.ones((3, 1)))
 
     def test_a_size_mismatch_raises(self, weight_grf):
@@ -680,16 +680,16 @@ class TestIndependentSum:
 
     def test_a_shape_mismatch_raises(self):
         h = _ScalarGP() + _MultiOutputGRF()
-        with pytest.raises(ValueError, match="one shape"):
+        with pytest.raises(ValueError, match="the same output shape"):
             h.predict_mean(jnp.ones((3, 2)))
 
     def test_a_shape_mismatch_raises_for_the_variance_as_for_the_mean(self):
         # At two points the scalar member's variance, (2,), broadcasts against (2, 2).
         h = _ScalarGP() + _MultiOutputGRF()
         X = jnp.ones((2, 2))
-        with pytest.raises(ValueError, match="one shape"):
+        with pytest.raises(ValueError, match="the same output shape"):
             h.predict_mean(X)
-        with pytest.raises(ValueError, match="one shape"):
+        with pytest.raises(ValueError, match="the same output shape"):
             h.predict_variance(X)
 
     def test_sub_grfs(self):
@@ -731,13 +731,13 @@ class TestAlgebraComposition:
         )
 
 
-def _named_weight_grf(name):
+def _named_weight_grf(label):
     weights = MultivariateNormal("weights", jnp.array([1.0, 0.5]), cov=0.01 * jnp.eye(2))
-    return LinearBasisFunction(name, _weight_basis, weights)
+    return LinearBasisFunction(label, _weight_basis, weights)
 
 
 class TestAlgebraNames:
-    """A result of the algebra is named from its operands."""
+    """A result of the algebra is labeled from its operands."""
 
     @pytest.mark.parametrize(
         ("build", "expected"),
@@ -1212,7 +1212,9 @@ class TestTheFactoredGaussian:
     def test_direct_construction_refuses_a_factor_that_is_not_gaussian(self):
         from probpipe import Gamma
 
-        with pytest.raises(TypeError, match="jointly Gaussian"):
+        with pytest.raises(
+            TypeError, match=r"accepts only Normal or MultivariateNormal .* \['Gamma'\]"
+        ):
             FactoredMultivariateGaussian("j", [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
 
     def test_its_moments_are_the_factors_in_closed_form(self):
@@ -1248,11 +1250,11 @@ class TestTheFactoredGaussian:
         assert _capability_guard(joint, "_condition_on", ("c",)).feasible is False
 
     def test_conditioning_on_every_component_raises(self):
-        with pytest.raises(ValueError, match="covers every component"):
+        with pytest.raises(ValueError, match="on all of its components"):
             _gaussian_joint()._condition_on({"a": 0.0, "b": jnp.zeros(2)})
 
     def test_conditioning_on_a_name_that_is_not_a_component_raises(self):
-        with pytest.raises(KeyError, match="not components"):
+        with pytest.raises(KeyError, match="unknown component 'c'; available components"):
             _gaussian_joint()._condition_on({"c": 0.0})
 
     def test_the_marginal_at_a_component_is_its_factor(self):

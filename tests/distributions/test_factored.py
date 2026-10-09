@@ -407,14 +407,14 @@ def _prior(scale: float = 1.0) -> Normal:
     return Normal("prior", 0.0, scale, event_spec=OutputSpec(beta=None))
 
 
-def _law(name: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
-    """A law labeled *name* whose whole-term component is *component*."""
-    return law(name, OutputSpec(**{component: spec}))
+def _law(label: str, component: str, spec: Any = SCALAR, law: type[Law] = Law) -> Law:
+    """A law labeled *label* whose whole-term component is *component*."""
+    return law(label, OutputSpec(**{component: spec}))
 
 
-def _pair(name: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
+def _pair(label: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
     """A law over an exposed record of the fields ``a`` and ``b``."""
-    return law(name, OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)), **options)
+    return law(label, OutputSpec(RecordSpec(a=SCALAR, b=SCALAR)), **options)
 
 
 def _exponential_location_model() -> FactoredDistribution:
@@ -493,7 +493,9 @@ class TestConstruction:
             FactoredConditionalDistribution("model", [_likelihood(), _prior()])
 
     def test_the_constructor_applies_the_composition_rules(self):
-        with pytest.raises(ValueError, match=_mentions("'lik'", "'beta'", "producer on the right")):
+        with pytest.raises(
+            ValueError, match=_mentions("'lik'", "'beta'", "to its left in the product")
+        ):
             FactoredDistribution("model", [_prior(), _likelihood()])
         with pytest.raises(ValueError, match=_mentions("'beta'", "'prior'")):
             FactoredDistribution("model", [_prior(), _prior()])
@@ -892,8 +894,8 @@ class TestFactorGuards:
         assert _capability_guard(joint, "_sample") == Feasibility(
             None,
             pending=(
-                "UndecidedSamplingKernel._conditional_sample_guard() needs values not yet "
-                "known: Draws once its scale is known.",
+                "whether conditional_sample() is available for UndecidedSamplingKernel depends "
+                "on values not yet known; it requires: draws once its scale is known",
             ),
         )
 
@@ -901,7 +903,9 @@ class TestFactorGuards:
         point = RejectingPointLaw("point", OutputSpec(beta=SCALAR), jnp.zeros(()))
         joint = _likelihood(UndecidedSamplingKernel) * point
         assert _capability_guard(joint, "_sample") == Feasibility(
-            False, "RejectingPointLaw._sample_guard() rejected: Draws only from a finite point."
+            False,
+            "sample() is not available for RejectingPointLaw; it requires: draws only from a "
+            "finite point",
         )
 
     def test_a_conditional_joint_takes_its_factors_guards(self):

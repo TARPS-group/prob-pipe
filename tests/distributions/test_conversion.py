@@ -252,7 +252,7 @@ class TestConversionInfo:
         """A source that already satisfies the target needs no converter, and is exact."""
         info = ConversionInfo(feasible=True, exact=True, target_spec=Source().spec)
         assert info.method_name is None and info.exact is True
-        with pytest.raises(ValueError, match="names its method"):
+        with pytest.raises(ValueError, match="must set method_name and exact"):
             ConversionInfo(feasible=True, exact=False, target_spec=Source().spec)
 
     def test_promises_nothing_by_default(self):
@@ -304,9 +304,9 @@ class TestConversionInfo:
     def test_a_feasible_or_unresolved_report_names_its_converter(self):
         """A converter fills in its own name and exactness; an infeasible report may omit both."""
         ConversionInfo(feasible=False)
-        with pytest.raises(ValueError, match="names its method"):
+        with pytest.raises(ValueError, match="must set method_name and exact"):
             ConversionInfo(feasible=True, target_spec=Source().spec)
-        with pytest.raises(ValueError, match="names its method"):
+        with pytest.raises(ValueError, match="must set method_name and exact"):
             ConversionInfo(feasible=None, pending=("the event declaration",))
 
     def test_a_feasible_report_promises_its_target_spec(self):
@@ -360,7 +360,7 @@ class TestConverter:
         converter = type("Complete", (Converter,), dict(_CONVERTER_MEMBERS))()
         assert converter.priority is None
         registry = _registry(converter)
-        with pytest.raises(ResolutionError, match="No method registered"):
+        with pytest.raises(ResolutionError, match="no method is registered"):
             registry.convert(Source(), Target)
         assert isinstance(registry.convert(Source(), Target, method="complete"), Target)
 
@@ -386,7 +386,7 @@ class TestRegistration:
     def test_the_numeric_marker_is_refused_on_either_side(self, side: str):
         """Membership follows an instance's declaration, so selection by class would miss laws."""
         registry = ConverterRegistry()
-        with pytest.raises(TypeError, match="not a dispatch type"):
+        with pytest.raises(TypeError, match="cannot dispatch on NumericDistribution"):
             registry.register(ToyConverter("m", **{side: (NumericDistribution,)}))
         assert registry.list_methods() == []
 
@@ -511,7 +511,7 @@ class TestTargetAdmission:
         registry = _registry(
             ToyConverter("to_elsewhere", targets=(Elsewhere,), target_class=Elsewhere)
         )
-        with pytest.raises(ResolutionError, match="No method registered"):
+        with pytest.raises(ResolutionError, match="no method is registered"):
             registry.convert(Source(), Target)
 
     def test_a_declared_protocol_admits_a_request_for_it(self):
@@ -592,7 +592,7 @@ class TestTargetAdmission:
         assert info.unresolved and info.method_name == "to_guarded"
         assert info.pending == ("GuardedScored._log_prob_guard of the converted law",)
         assert type(registry.convert(Source("holds"), SupportsLogProb)) is GuardedScored
-        with pytest.raises(ResolutionError, match="_log_prob"):
+        with pytest.raises(ResolutionError, match="cannot provide SupportsLogProb: log_prob"):
             registry.convert(Source("rejects"), SupportsLogProb)
 
     def test_a_sampling_target_admits_the_converter_declaring_it(self):
@@ -792,7 +792,9 @@ class TestNamedConverter:
     def test_an_unregistered_name_raises_resolution_error(self):
         registry = _registry(ToyConverter("m"))
         for call in (registry.check, registry.convert):
-            with pytest.raises(ResolutionError, match=r"No method named 'nope'\. Available: m"):
+            with pytest.raises(
+                ResolutionError, match=r"unknown method 'nope'; available methods: \['m'\]"
+            ):
                 call(Source(), Target, method="nope")
 
     def test_a_named_infeasible_converter_raises_resolution_error(self):
@@ -845,7 +847,7 @@ class TestConvert:
 
     def test_no_registered_converter_raises_resolution_error_naming_the_key(self):
         with pytest.raises(
-            ResolutionError, match=r"No method registered for \(Source, SupportsLogProb\)"
+            ResolutionError, match=r"no method is registered for \(Source, SupportsLogProb\)"
         ):
             ConverterRegistry().convert(Source(), SupportsLogProb)
 
@@ -912,8 +914,8 @@ class TestConvert:
         )
         info = registry.check(source, SupportsLogProb)
         assert info.unresolved and info.method_name is None
-        assert "_log_prob_guard" in info.pending[0]
-        with pytest.raises(ResolutionError, match="unresolved"):
+        assert "log_prob() is available" in info.pending[0]
+        with pytest.raises(ResolutionError, match="cannot yet tell whether"):
             registry.convert(source, SupportsLogProb)
 
     def test_the_converted_law_records_the_source_and_the_converter(self):

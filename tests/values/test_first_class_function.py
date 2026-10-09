@@ -95,7 +95,7 @@ class TestFunctionValueContract:
         wrapped = Function(label="function", fn=lambda x: x)
         wrapped.with_provenance(Provenance("trained"))
 
-        with pytest.raises(RuntimeError, match="write-once"):
+        with pytest.raises(RuntimeError, match="set only once"):
             wrapped.with_provenance(Provenance("retrained"))
 
     def test_signature_is_captured_independently_once(self):
@@ -211,7 +211,7 @@ class TestApplyContract:
         wrapped = Function(
             label="function",
             fn=lambda: returned,
-            output_spec=BatchSpec(declared, returned.axis_groups, returned.level_names),
+            output_spec=BatchSpec(declared, returned.spec.levels),
         )
 
         assert wrapped.apply() is returned
@@ -241,7 +241,7 @@ class TestApplyContract:
         wrapped = Function(
             label="function",
             fn=lambda: returned,
-            output_spec=BatchSpec(template, returned.axis_groups, returned.level_names),
+            output_spec=BatchSpec(template, returned.spec.levels),
         )
 
         assert wrapped.apply() is returned
@@ -262,7 +262,7 @@ class TestApplyContract:
         wrapped = Function(
             label="function",
             fn=lambda: returned,
-            output_spec=BatchSpec(RecordSpec(y=()), returned.axis_groups, returned.level_names),
+            output_spec=BatchSpec(RecordSpec(y=()), returned.spec.levels),
         )
 
         with pytest.raises(ValueError, match=r"shape"):
@@ -282,9 +282,7 @@ class TestApplyContract:
             Function(
                 label="function",
                 fn=lambda: float_array,
-                output_spec=BatchSpec(
-                    dtype_template, float_array.axis_groups, float_array.level_names
-                ),
+                output_spec=BatchSpec(dtype_template, float_array.spec.levels),
             ).apply()
 
         support_template = RecordSpec(y=NumericArraySpec((), support=positive))
@@ -300,9 +298,7 @@ class TestApplyContract:
             Function(
                 label="function",
                 fn=lambda: invalid_array,
-                output_spec=BatchSpec(
-                    support_template, invalid_array.axis_groups, invalid_array.level_names
-                ),
+                output_spec=BatchSpec(support_template, invalid_array.spec.levels),
             ).apply()
 
     @pytest.mark.parametrize(
@@ -477,7 +473,9 @@ class TestApplyContract:
             assert wrapped.apply() is returned
             assert wrapped().spec is returned.spec
 
-        with pytest.raises(ValueError, match=r"dtype .* does not conform to int32"):
+        with pytest.raises(
+            ValueError, match=r"has dtype .*, which cannot be cast to the declared int32"
+        ):
             Function(
                 "law",
                 lambda: Normal("y", 0, 1),
@@ -754,7 +752,9 @@ class TestApplyContract:
         result = wrapped(np.ones((3,)))
 
         assert result.event_template == RecordSpec(stats=RecordSpec(copy=(3,), total=()))
-        with pytest.raises(ValueError, match="do not match template fields"):
+        with pytest.raises(
+            ValueError, match=r"fields do not match the declared fields: missing \['total'\]"
+        ):
             Function(
                 label="function",
                 fn=lambda x: {"stats": {"copy": x}},
@@ -779,7 +779,7 @@ class TestApplyContract:
             output_spec=RecordSpec(expected=()),
         )
 
-        with pytest.raises(ValueError, match=r"fields .* do not match template fields"):
+        with pytest.raises(ValueError, match=r"missing \['expected'\], unexpected \['wrong'\]"):
             wrapped.apply(1)
 
     def test_existing_distribution_requires_matching_authoritative_template(self):
@@ -925,7 +925,10 @@ class TestTemplateDeclarationContract:
             )
 
     def test_unknown_construction_binding_is_rejected(self):
-        with pytest.raises(ValueError, match="invalid construction bindings"):
+        with pytest.raises(
+            ValueError,
+            match=r"bind= names \['missing'\], which are not parameters of Function 'function'",
+        ):
             Function(label="function", fn=lambda x: x, bind={"missing": 1})
 
     def test_output_symbols_can_bind_independently_of_inputs(self):
@@ -1253,7 +1256,7 @@ class TestSymbolicCalls:
 
         with pytest.raises(
             ValueError,
-            match="does not conform",
+            match="which cannot be cast to the declared",
         ):
             wrapped(Normal("x", 0, 1))
 
@@ -1328,7 +1331,7 @@ class TestDynamicImplementation:
         wrapped = Function._from_implementation(
             _AddImplementation(2),
             signature=signature,
-            name="dynamic_add",
+            label="dynamic_add",
             input_spec=InputSpec(RecordSpec(x=()).children),
             output_spec=OutputSpec(**RecordSpec(y=()).children),
             dispatch="sequential",
@@ -1348,13 +1351,13 @@ class TestDynamicImplementation:
             Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,
-                name="",
+                label="",
             )
         with pytest.raises(TypeError, match="must provide an invoke"):
             Function._from_implementation(
                 object(),  # type: ignore[arg-type]
                 signature=signature,
-                name="invalid",
+                label="invalid",
             )
 
     def test_dynamic_fingerprint_is_declaration_level_not_artifact_identity(self):
@@ -1368,7 +1371,7 @@ class TestDynamicImplementation:
             return Function._from_implementation(
                 implementation,
                 signature=signature,
-                name="dynamic",
+                label="dynamic",
                 input_spec=InputSpec(RecordSpec(x=()).children),
                 output_spec=OutputSpec(**RecordSpec(y=()).children),
             )
@@ -1400,7 +1403,7 @@ class TestDynamicImplementation:
                 )
             ])
             function = Function._from_implementation(
-                Implementation(), signature=signature, name="dynamic"
+                Implementation(), signature=signature, label="dynamic"
             )
             print(fingerprint(function))
             """
@@ -1421,7 +1424,7 @@ class TestDynamicImplementation:
             return Function._from_implementation(
                 _AddImplementation(1),
                 signature=signature,
-                name="dynamic",
+                label="dynamic",
                 input_spec=None if input_spec is None else InputSpec(input_spec.children),
                 output_spec=output_spec,
             )
@@ -1565,7 +1568,7 @@ class TestReentrancyAndProvenance:
         wrapped = Function._from_implementation(
             _AddImplementation(1),
             signature=signature,
-            name="fitted",
+            label="fitted",
         ).with_provenance(Provenance.create("fit", parents=[training_data]))
 
         result = wrapped(2)
@@ -1779,7 +1782,7 @@ class TestDeclaredSupportOnABatchedOutput:
         result = Function(
             label="function",
             fn=lambda: valid,
-            output_spec=BatchSpec(template, valid.axis_groups, valid.level_names),
+            output_spec=BatchSpec(template, valid.spec.levels),
         ).apply()
 
         assert result is valid
@@ -1801,5 +1804,5 @@ class TestDeclaredSupportOnABatchedOutput:
             Function(
                 label="function",
                 fn=lambda: invalid,
-                output_spec=BatchSpec(template, invalid.axis_groups, invalid.level_names),
+                output_spec=BatchSpec(template, invalid.spec.levels),
             ).apply()

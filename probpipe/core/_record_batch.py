@@ -31,32 +31,49 @@ See design III.3.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Self, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import count, unknown_names
 from ..values._function_base import FunctionSpec
-from ._array_backend import _is_numeric_dtype, _to_jax_array
-from ._batch import Batch, BatchSpec, _axis_groups_for, _batch_axis_count, _ranks_of
+from ._array_backend import _is_numeric_dtype, _read_only, _to_jax_array
+from ._batch import (
+    Batch,
+    BatchSpec,
+    _axis_groups_for,
+    _batch_axis_count,
+    _cannot_rebuild,
+    _changed_batch_shape,
+    _ranks_of,
+    _uncastable_dtype,
+)
 from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
-from ._repr import format_names
+from ._repr import format_levels, format_names, public_class_name, type_name
+from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
-from .record import Record
+from .record import Record, _is_numeric_field_value
 
 __all__ = ["RecordBatch"]
 
 
 class RecordBatch(Batch[Record]):
     """A batch of records sharing one ``RecordSpec``, stored as columns.
+
+    ``RecordBatch(...)`` returns a :class:`~probpipe.NumericRecordBatch` when every
+    column is a numeric array and *element_spec* is omitted or a
+    ``NumericRecordSpec``, as ``Record(...)`` returns a
+    :class:`~probpipe.NumericRecord` when every field is numeric. A subclass
+    constructs its own class.
 
     Parameters
     ----------
@@ -71,7 +88,7 @@ class RecordBatch(Batch[Record]):
         where the event shape is the field spec's for a ``NumericArraySpec`` and empty
         otherwise — so a field that is not an array takes an object array, one
         entry per element. The keys must be exactly the fields of *element_spec*.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names a single
         level. There is no default, for the reason
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
@@ -82,12 +99,13 @@ class RecordBatch(Batch[Record]):
         its values: an array column's axes past those the levels hold are its
         field's event shape, and an object column's entries decide its field's
         spec.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -114,6 +132,13 @@ class RecordBatch(Batch[Record]):
         declares a symbolic dimension, which gives its event shape no size to
         split by; if a column leaves no batch axis; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -126,8 +151,8 @@ class RecordBatch(Batch[Record]):
     An **object** column is copied and frozen, so a caller keeping a handle on
     what they passed cannot afterwards write a value the batch's spec refuses.
     Only the pointer array is copied, so the elements stay shared. An array
-    column is stored as given: a JAX array is already immutable, and a numpy one
-    follows the aliasing convention the single-record types set.
+    column is stored as given: a JAX array is already immutable, and a NumPy
+    array is marked read-only in place, as a record marks its leaves.
 
     Reading one element materializes it from the columns, which costs one gather
     per field, so iterating a batch is proportional to elements × fields. Reading
@@ -151,24 +176,34 @@ class RecordBatch(Batch[Record]):
 
     __slots__ = ("_columns",)
 
-    #: Completes "every entry of the column at ... must ..." in the refusal a bad
-    #: entry earns. A subclass that narrows what a column may hold supplies its own.
-    _entry_rule = "satisfy its field's specification"
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # Only a call on the base class selects the class, as ``Record.__new__``
+        # does. A view allocates with ``object.__new__`` and so does not call this.
+        if cls is RecordBatch and _columns_promote(args, kwargs):
+            # Lazy: the numeric module builds on this one.
+            from ._numeric_record_batch import NumericRecordBatch
+
+            return cast(Self, object.__new__(NumericRecordBatch))
+        return object.__new__(cls)
 
     def __init__(
         self,
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: LevelNamesLike,
         *,
         element_spec: RecordSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        axes = None if axes_per_level is None else tuple(axes_per_level)
+        names = _as_level_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
         if element_spec is None:
             element_spec = _inferred_element_spec(fields, _batch_axis_count(names, axes), kind=kind)
         spec = _record_element_spec(element_spec, kind=kind)
@@ -178,14 +213,14 @@ class RecordBatch(Batch[Record]):
         groups = _axis_groups_for(batch_shape, names, axes, kind=kind)
         type(self)._check_columns(store, spec, kind=kind)
         store = {
-            path: _frozen_object_column(column) if _is_object_array(column) else column
+            path: _frozen_object_column(column) if _is_object_array(column) else _read_only(column)
             for path, column in store.items()
         }
 
         object.__setattr__(self, "_columns", store)
         self._init_batch(
-            BatchSpec(spec, groups, names),
-            name=label,
+            BatchSpec._from_groups(spec, groups, names),
+            label=label,
             provenance=provenance,
         )
 
@@ -254,36 +289,23 @@ class RecordBatch(Batch[Record]):
                 # a batch nobody can take a field from. The registry answers that,
                 # as it does at the reading end, so a newly registered kind is
                 # admitted here without this guard being widened to match.
-                raise TypeError(
-                    f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
-                    f"batch form, so a batch cannot present its column; a kind registers its "
-                    f"batch form beside its classes (see core/_kinds.py)"
-                )
+                raise TypeError(f"{kind}: {_unbatchable_field(path, spec)}")
             if not _is_object_array(column):
-                raise TypeError(
-                    f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
-                    f"stacked form, so its column holds one entry per element as an object "
-                    f"array; got a {type(column).__name__}"
-                    + (f" of {column.dtype}" if hasattr(column, "dtype") else "")
-                )
+                raise TypeError(f"{kind}: {_not_an_object_column(path, spec, column)}")
             for index, entry in np.ndenumerate(column):
                 if not spec.is_valid(entry):
                     position = index[0] if len(index) == 1 else index
-                    raise TypeError(
-                        f"{kind}: every entry of the column at {path!r} must "
-                        f"{cls._entry_rule}; the entry at {position} is a "
-                        f"{type(entry).__name__}"
-                    )
+                    raise TypeError(f"{kind}: {_mismatched_entry(path, spec, position, entry)}")
 
     # -- the storage seam ---------------------------------------------------
 
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> Record:
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> Record:
         """The record at a fully-integer positional *index*, built from the columns.
 
         A row of columnar storage does not exist until it is built, so this is
         the *materializing* side of both rules
         :meth:`~probpipe.core._batch.Batch._element_at` states: the element takes
-        the derived *name*, and inherits this batch's provenance.
+        the derived *label*, and inherits this batch's provenance.
 
         The element is constructed against :attr:`element_spec` itself, so it
         stores the very object this batch stores rather than an equal copy: a
@@ -294,7 +316,7 @@ class RecordBatch(Batch[Record]):
         row = {path: column[index] for path, column in self._columns.items()}
         return self._inherit_provenance(
             Record(
-                name,
+                label,
                 row,
                 event_template=self.element_spec,
                 # The columns were checked against the element spec at
@@ -304,7 +326,23 @@ class RecordBatch(Batch[Record]):
             )
         )
 
-    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
+    def _view_class(self, element_spec: RecordSpec) -> type[RecordBatch]:
+        """The class of a view over this batch's columns whose elements satisfy *element_spec*.
+
+        A view whose :attr:`_view_type` is a plain batch takes the class that
+        *element_spec* calls for, so a view of numeric fields is a
+        ``NumericRecordBatch``, as construction gives. A subclass's own view type
+        is kept.
+        """
+        # Lazy: the numeric module builds on this one.
+        from ._numeric_record_batch import NumericRecordBatch
+
+        view_type = self._view_type
+        if view_type in (RecordBatch, NumericRecordBatch):
+            return _batch_class_for(element_spec)
+        return view_type
+
+    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the same columns, indexed on the batch axes as given.
 
         *index* addresses the leading (batch) axes only, so each column keeps its
@@ -316,11 +354,11 @@ class RecordBatch(Batch[Record]):
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a
         # host's own ``__new__`` may select a class from constructor arguments and
         # must not run again where there are none.
-        view = object.__new__(self._view_type)
+        view = object.__new__(self._view_class(spec.element_spec))
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
-        view._init_batch(spec, name=name)
+        view._init_batch(spec, label=label)
         return view
 
     def _at_fields(self, path: tuple[str, ...]) -> Any:
@@ -357,10 +395,7 @@ class RecordBatch(Batch[Record]):
         prefix = joined + _PATH_SEP
         if any(key.startswith(prefix) for key in self._columns):
             return self._field_view(joined, template.at_path(joined))
-        raise KeyError(
-            f"{joined!r} is neither a field nor an interior node of this "
-            f"{type(self).__name__}; its fields are {list(template.keys())}"
-        )
+        raise KeyError(unknown_names("field", [joined], template.keys()))
 
     # -- field access -------------------------------------------------------
 
@@ -398,9 +433,7 @@ class RecordBatch(Batch[Record]):
             p[len(prefix) :]: column for p, column in self._columns.items() if p.startswith(prefix)
         }
         if not beneath:
-            raise KeyError(
-                f"{key!r} is no path of {self.label!r}; its fields are {sorted(self._columns)}"
-            )
+            raise KeyError(unknown_names("field", [key], self._columns))
         return _unflatten_paths(beneath)
 
     def _raw_column(self, path: str) -> Any:
@@ -443,15 +476,12 @@ class RecordBatch(Batch[Record]):
         # switch this module would otherwise have to know about.
         column_cls = batch_class_for_spec(spec)
         if column_cls is None:
-            raise TypeError(
-                f"the field {key!r} is declared {type(spec).__name__}, which has no batch form; "
-                f"a kind registers its batch form beside its classes (see core/_kinds.py)"
-            )
+            raise TypeError(_unbatchable_field(key, spec))
         return self._inherit_provenance(
             column_cls._over_store(
                 column,
-                spec=BatchSpec(spec, self.axis_groups, self.level_names),
-                name=key,
+                spec=self.spec._replace(element_spec=spec),
+                label=key,
             )
         )
 
@@ -469,11 +499,11 @@ class RecordBatch(Batch[Record]):
             for key, column in self._columns.items()
             if key.startswith(prefix)
         }
-        view = object.__new__(self._view_type)
+        view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
-            BatchSpec(template, self.axis_groups, self.level_names),
-            name=path,
+            self.spec._replace(element_spec=template),
+            label=path,
         )
         return self._inherit_provenance(view)
 
@@ -485,15 +515,12 @@ class RecordBatch(Batch[Record]):
         an operation aligning operands by level name lines it up with its
         siblings and with the batch it came from.
         """
-        view = object.__new__(self._view_type)
+        element_spec = RecordSpec({key: self.event_template[key]})
+        view = object.__new__(self._view_class(element_spec))
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
-            BatchSpec(
-                RecordSpec({key: self.event_template[key]}),
-                self.axis_groups,
-                self.level_names,
-            ),
-            name=key,
+            self.spec._replace(element_spec=element_spec),
+            label=key,
         )
         return self._inherit_provenance(view)
 
@@ -553,10 +580,7 @@ class RecordBatch(Batch[Record]):
         if any(key.startswith(prefix) for key in self._columns):
             node = cast(RecordSpec, template.at_path(path))
             return self._field_view(path, node)
-        raise KeyError(
-            f"{path!r} is neither a field nor an interior node of this "
-            f"{type(self).__name__}; its fields are {list(template.keys())}"
-        )
+        raise KeyError(unknown_names("field", [path], template.keys()))
 
     # -- structural transforms ----------------------------------------------
     #
@@ -663,10 +687,7 @@ class RecordBatch(Batch[Record]):
             axes.
         """
         if _updates is not None and updates:
-            raise ValueError(
-                "replace() takes a path-keyed mapping or keyword updates, not both: a path "
-                "given in each would have no unambiguous value"
-            )
+            raise ValueError("replace() takes either a mapping or keyword updates, not both")
         edits: dict[str, Any] = {}
         declared: dict[str, TermSpec] = {}
         for path, value in (_updates or updates).items():
@@ -678,8 +699,8 @@ class RecordBatch(Batch[Record]):
         unknown = [path for path in edits if path not in self._columns]
         if unknown:
             raise KeyError(
-                f"not fields of this {type(self).__name__}: {sorted(unknown)}; "
-                f"replace edits, it does not add"
+                f"replace() can only change existing fields: "
+                f"{unknown_names('field', unknown, self._columns)}"
             )
         columns = {**self._columns, **edits}
         return self._rebuilt(
@@ -717,13 +738,13 @@ class RecordBatch(Batch[Record]):
             )
         if (self.axis_groups, self.level_names) != (other.axis_groups, other.level_names):
             raise ValueError(
-                f"merge() pairs elements one for one, so both batches span the same axes under "
-                f"the same names: {self.level_names}={self.axis_groups} vs "
-                f"{other.level_names}={other.axis_groups}"
+                f"merge() needs both batches to have the same levels, got "
+                f"{format_levels(self.level_names, self.axis_groups)} and "
+                f"{format_levels(other.level_names, other.axis_groups)}"
             )
-        overlap = sorted(set(self._columns) & set(other._columns))
+        overlap = [path for path in self._columns if path in other._columns]
         if overlap:
-            raise ValueError(f"merge() overlapping field keys: {overlap}")
+            raise ValueError(f"merge() needs batches with distinct fields, got {overlap} in both")
         merged = self.event_template.merge(other.event_template)
         return self._rebuilt({**self._columns, **other._columns}, merged)
 
@@ -815,7 +836,9 @@ class RecordBatch(Batch[Record]):
         Returns
         -------
         RecordBatch
-            The batch, with ``batch_shape == (len(records),)``.
+            The batch, with ``batch_shape == (len(records),)``. Called on
+            ``RecordBatch``, it is a ``NumericRecordBatch`` when the stacked
+            columns are all numeric, by the rule :class:`RecordBatch` states.
 
         Raises
         ------
@@ -842,18 +865,9 @@ class RecordBatch(Batch[Record]):
             # record with *extra* fields raises nothing at all there, and the
             # batch's spec would silently become a false statement about it.
             if tuple(record.keys()) != tuple(fields):
-                missing = [key for key in fields if key not in record]
-                extra = [key for key in record if key not in fields]
-                parts = []
-                if missing:
-                    parts.append(f"missing {missing}")
-                if extra:
-                    parts.append(f"unexpected {extra}")
-                if not parts:
-                    parts.append(f"ordered {list(record.keys())}")
                 raise ValueError(
-                    f"{kind}: the record at {position} must have exactly the fields "
-                    f"{list(fields)} — {'; '.join(parts)}"
+                    f"{kind}: record {position} has fields {list(record.keys())}, "
+                    f"expected {list(fields)}"
                 )
         leaves = [dict(record._walk_leaves()) for record in records]
         columns = {
@@ -923,6 +937,80 @@ def _batch_class_for(element_spec: RecordSpec) -> type[RecordBatch]:
     return NumericRecordBatch if isinstance(element_spec, NumericRecordSpec) else RecordBatch
 
 
+def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
+    """Whether a ``RecordBatch(...)`` call builds a ``NumericRecordBatch``.
+
+    It does when the call gives no ``element_spec`` or a ``NumericRecordSpec`` and
+    every column is numeric by the probe ``Record(...)`` promotes with. A tracked
+    column, such as the ``NumericArrayBatch`` that reading a field gives, is probed
+    by its raw values, because the probe counts a batch-valued field as
+    non-numeric. For an array column the probe agrees with
+    :func:`_inferred_field_spec`, so the class agrees with the element spec the
+    batch infers. A call that omits the fields or the level names, or gives no
+    field, keeps ``RecordBatch``, so the error it raises names the class the
+    caller wrote.
+
+    Parameters
+    ----------
+    args : tuple of Any
+        The call's positional arguments.
+    kwargs : Mapping of str to Any
+        The call's keyword arguments.
+
+    Returns
+    -------
+    bool
+        Whether the call's columns are all numeric and its element spec, if
+        given, is a ``NumericRecordSpec``.
+    """
+    if len(args) < 2 or (len(args) < 3 and "level_names" not in kwargs):
+        return False
+    fields = args[1]
+    if not isinstance(fields, Mapping) or not fields:
+        return False
+    element_spec = kwargs.get("element_spec")
+    if element_spec is not None and not isinstance(element_spec, NumericRecordSpec):
+        return False
+    return all(
+        _is_numeric_field_value(column.raw() if isinstance(column, Batch) else column)
+        for column in fields.values()
+    )
+
+
+def _unbatchable_field(path: str, spec: TermSpec) -> str:
+    """The reason a field whose spec kind has no batch class cannot be stored."""
+    return (
+        f"field {path!r} has spec type {type(spec).__name__}, which cannot be stored in a "
+        f"batch because no batch class is registered for it"
+    )
+
+
+def _not_an_object_column(path: str, spec: TermSpec, column: Any) -> str:
+    """The reason a field that is not an array was given values that are not an object array."""
+    dtype = getattr(column, "dtype", None)
+    return (
+        f"field {path!r} is declared {type(spec).__name__}, so its values must be an object "
+        f"array with one entry per element, got {type_name(column)}"
+        + (f" with dtype {dtype}" if dtype is not None else "")
+    )
+
+
+def _mismatched_entry(path: str, spec: TermSpec, position: Any, entry: Any) -> str:
+    """The reason one entry of a field's object array does not satisfy the field's spec."""
+    return (
+        f"entry {position} of field {path!r} is {type_name(entry)}, which does not match its "
+        f"spec {spec!r}"
+    )
+
+
+def _shapeless_field(path: str, column: Any) -> str:
+    """The reason a field's values report no shape to read the batch axes from."""
+    return (
+        f"field {path!r} must be an array whose leading axes are the batch axes, "
+        f"got {type_name(column)}"
+    )
+
+
 def _record_element_spec(decl: RecordSpec, *, kind: str) -> RecordSpec:
     """*decl* as the ``RecordSpec`` a batch of records is specified over."""
     if not isinstance(decl, RecordSpec):
@@ -951,8 +1039,7 @@ def _leaf_keyed_columns(
         if unknown:
             parts.append(f"unexpected {unknown}")
         raise ValueError(
-            f"{kind}: the given fields must be exactly those of element_spec "
-            f"{list(names)} — {'; '.join(parts)}"
+            f"{kind}: fields do not match element_spec, {', '.join(parts)} (expected {list(names)})"
         )
     return {key: flat[key] for key in names}
 
@@ -981,8 +1068,8 @@ def _flat_columns(fields: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
     """
     if not isinstance(fields, Mapping):
         raise TypeError(
-            f"{kind} stores one array per field, keyed by leaf path, so fields must be a "
-            f"mapping; got {type(fields).__name__}"
+            f"{kind}: fields must be a mapping from field name to array, "
+            f"got {type(fields).__name__}"
         )
     if not fields:
         raise ValueError(f"{kind} requires at least one field")
@@ -1032,16 +1119,11 @@ def _inferred_element_spec(fields: Mapping[str, Any], n_batch: int, *, kind: str
     for path, column in _flat_columns(fields, kind=kind).items():
         shape = _column_shape(column)
         if shape is None:
-            raise TypeError(
-                f"{kind}: the column at {path!r} is a {type(column).__name__}, which reports no "
-                f"shape, so its batch axes cannot be read; a column is an array, or an object "
-                f"array for a field that is not an array"
-            )
+            raise TypeError(f"{kind}: {_shapeless_field(path, column)}")
         if len(shape) < n_batch:
-            axes = "axis" if n_batch == 1 else "axes"
             raise ValueError(
-                f"{kind}: the column at {path!r} has shape {shape}, which has fewer axes than "
-                f"the {n_batch} batch {axes} its levels hold"
+                f"{kind}: field {path!r} has shape {shape}, but it must have at least "
+                f"{count(n_batch, 'batch axis', 'batch axes')}"
             )
         specs[path] = _inferred_field_spec(column, shape[n_batch:])
     return RecordSpec(specs)
@@ -1065,7 +1147,7 @@ def _element_template_for(
     the batch axes discounted first.
     """
     rank = len(batch.batch_shape)
-    kind = f"{type(batch).__name__} transform"
+    kind = public_class_name(type(batch))
     specs: dict[str, Any] = {}
     for path, column in columns.items():
         if path not in edited:
@@ -1077,9 +1159,8 @@ def _element_template_for(
             continue
         if len(shape) < rank or tuple(shape[:rank]) != batch.batch_shape:
             raise ValueError(
-                f"{kind}: the values given for {path!r} have shape {tuple(shape)}, which does "
-                f"not carry this batch's axes {batch.batch_shape}; a field's values span the "
-                f"batch, so a replacement does too"
+                f"{kind}: new values for {path!r} have shape {tuple(shape)}, but they must "
+                f"start with the batch shape {batch.batch_shape}"
             )
         if declared is not None and path in declared:
             specs[path] = declared[path]
@@ -1176,9 +1257,8 @@ def _event_shape(spec: TermSpec, *, path: str, kind: str) -> tuple[int, ...]:
     symbolic = [entry for entry in shape if not isinstance(entry, int)]
     if symbolic:
         raise ValueError(
-            f"{kind}: the field {path!r} declares the symbolic dimension "
-            f"{symbolic[0]!r}, so its event shape has no size to split a column by; bind the "
-            f"template's dimensions before batching against it"
+            f"{kind}: field {path!r} of element_spec has the unbound symbolic dimension "
+            f"{symbolic[0]!r}; bind it first with element_spec.with_dim_sizes({symbolic[0]}=...)"
         )
     return shape
 
@@ -1229,37 +1309,27 @@ def _batch_shape_of(store: dict[str, Any], template: RecordSpec, *, kind: str) -
     for path, column in store.items():
         shape = _column_shape(column)
         if shape is None:
-            raise TypeError(
-                f"{kind}: the column at {path!r} is a {type(column).__name__}, which reports no "
-                f"shape, so its batch axes cannot be read; a column is an array, or an object "
-                f"array for a field that is not an array"
-            )
+            raise TypeError(f"{kind}: {_shapeless_field(path, column)}")
         event_shape = _event_shape(template[path], path=path, kind=kind)
-        if len(event_shape) > len(shape):
-            raise ValueError(
-                f"{kind}: the column at {path!r} has shape {shape}, which is too short to carry "
-                f"its event shape {event_shape} after any batch axis"
-            )
         split = len(shape) - len(event_shape)
-        if tuple(shape[split:]) != tuple(event_shape):
+        if split < 0 or tuple(shape[split:]) != tuple(event_shape):
+            expected = ", ".join(["*batch_shape", *map(str, event_shape)])
             raise ValueError(
-                f"{kind}: the column at {path!r} has shape {shape}, whose trailing axes "
-                f"{tuple(shape[split:])} are not the event shape {event_shape} its field "
-                f"declares; a column is (*batch_shape, *event_shape)"
+                f"{kind}: field {path!r} has shape {shape}, expected ({expected}) for its "
+                f"declared event shape {event_shape}"
             )
         candidate = shape[:split] if event_shape else shape
         if not candidate:
             raise ValueError(
-                f"{kind}: a batch has at least one batch axis, but the column at {path!r} has "
-                f"shape {shape}, which its event shape {event_shape} accounts for entirely"
+                f"{kind}: field {path!r} has shape {shape}, which has no batch axis before its "
+                f"event shape {event_shape}; add a leading batch axis"
             )
         if batch_shape is None:
             batch_shape, first = candidate, path
         elif candidate != batch_shape:
             raise ValueError(
-                f"{kind}: the columns disagree on the batch axes — {first!r} carries "
-                f"{batch_shape} and {path!r} carries {candidate}. Every column holds one value "
-                f"per element, so all of them span the same batch axes"
+                f"{kind}: fields have different batch shapes, {first!r} has {batch_shape} "
+                f"but {path!r} has {candidate}"
             )
     if batch_shape is None:
         raise AssertionError("unreachable: an empty store is refused before this")
@@ -1334,15 +1404,11 @@ def _check_array_column(column: Any, spec: NumericArraySpec, *, path: str, kind:
     dtype = getattr(column, "dtype", None)
     if dtype is None or not _is_numeric_dtype(dtype):
         raise TypeError(
-            f"{kind}: the field {path!r} is declared an array, so its column is a numeric "
-            f"array; got a {type(column).__name__}" + (f" of {dtype}" if dtype is not None else "")
+            f"{kind}: field {path!r} must be a numeric array, got {type_name(column)}"
+            + (f" with dtype {dtype}" if dtype is not None else "")
         )
     if spec.dtype is not None and not np.can_cast(dtype, spec.dtype, casting="same_kind"):
-        raise TypeError(
-            f"{kind}: the column at {path!r} has dtype {dtype}, which its declared "
-            f"{np.dtype(spec.dtype)} does not admit; a widening or a within-kind narrowing "
-            f"passes, a cross-kind conversion does not"
-        )
+        raise TypeError(_uncastable_dtype(f"{kind}: field {path!r}", dtype, np.dtype(spec.dtype)))
 
 
 # ---------------------------------------------------------------------------
@@ -1404,33 +1470,34 @@ def _unflatten_with(cls: type[RecordBatch]):
     """
 
     def _unflatten(aux: tuple[BatchSpec, str], children: list) -> RecordBatch | Record:
-        spec, name = aux
+        spec, label = aux
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
         # otherwise truncate the columns silently, leaving a value whose own spec
         # is a false statement about it.
         columns = dict(zip(element_spec.keys(), children, strict=True))
 
-        rank = _surviving_batch_rank(columns, element_spec, spec)
+        refused = _cannot_rebuild(public_class_name(cls))
+        rank = _surviving_batch_rank(columns, element_spec, spec, refused=refused)
         if rank is None:
             # A stored column is an array and reports a shape, so one that reports
             # none was put there by the transform. Taking the spec as given would
             # rebuild the batch at its old multiplicity over columns that cannot
             # hold it — a batch whose every positional read then fails.
-            raise ValueError(
-                f"a transform left this {cls.__name__} a column reporting no shape, so the "
-                f"multiplicity it holds cannot be read and no spec describes it. A column is "
-                f"an array of one value per element; map a batch's columns to arrays, or build "
-                f"the result explicitly from what the transform produced"
+            path, column = next(
+                (path, column) for path, column in columns.items() if _column_shape(column) is None
             )
-        _refuse_a_retyped_element(columns, element_spec, rank, kind=cls.__name__)
+            raise ValueError(
+                f"{refused}: field {path!r} became {type_name(column)}, which is not an "
+                f"array; return arrays from the transform"
+            )
+        _refuse_a_retyped_element(columns, element_spec, rank, kind=refused)
         if rank > len(spec.batch_shape):
             raise ValueError(
-                f"a transform left this {cls.__name__}'s fields with {rank} batch axes where "
-                f"its levels account for {len(spec.batch_shape)}. An added axis belongs to no "
-                f"level, and unflattening has no name to give one — the operation that adds an "
-                f"axis is what names its level. Build the batch where the axis is added, or map "
-                f"over its columns rather than over the batch"
+                f"{refused}: the fields now have {count(rank, 'batch axis', 'batch axes')}, "
+                f"but levels {spec.level_names} have "
+                f"{count(len(spec.batch_shape), 'axis', 'axes')}. To add a level, build a new "
+                f"{public_class_name(cls)} from the transformed field arrays"
             )
         if rank == 0:
             # No batch axis left means the columns *are* one element's values. A
@@ -1445,12 +1512,12 @@ def _unflatten_with(cls: type[RecordBatch]):
                 for path, column in columns.items()
             }
             return Record(
-                name,
+                label,
                 element,
                 event_template=element_spec,
                 _validate_leaves=False,
             )
-        surviving = _surviving_batch_shape(columns, rank)
+        surviving = _surviving_batch_shape(columns, rank, refused=refused)
         if surviving != spec.batch_shape:
             # Every batch axis is still there or none of them are; a partial
             # reduction and a resize both leave a multiplicity no reading of these
@@ -1458,17 +1525,10 @@ def _unflatten_with(cls: type[RecordBatch]):
             # its own knowledge, not something its output shape records: with two
             # levels of equal size either could be the survivor, and a drop
             # combined with a resize imitates a drop somewhere else entirely.
-            raise ValueError(
-                f"a transform left this {cls.__name__}'s columns spanning batch axes "
-                f"{surviving} where its levels {spec.level_names} hold {spec.batch_shape}. A "
-                f"batch rebuilds under a transform that keeps every batch axis or removes all "
-                f"of them; anything between leaves the surviving levels unnamed, and a shape "
-                f"cannot say which axis went. Map over the batch's columns and build the "
-                f"result naming its levels, or index the batch, which is told what it drops"
-            )
+            raise ValueError(_changed_batch_shape(refused, spec.batch_shape, surviving))
         batch = object.__new__(cls)
         object.__setattr__(batch, "_columns", columns)
-        batch._init_batch(spec, name=name)
+        batch._init_batch(spec, label=label)
         return batch
 
     return _unflatten
@@ -1504,36 +1564,24 @@ def _refuse_a_retyped_element(
             # the rank untouched, so without this the rebuilt batch keeps
             # declaring ``FunctionSpec`` over values that are not callable.
             if not _is_object_array(column):
-                raise TypeError(
-                    f"a transform left the column {path!r} as a "
-                    f"{type(column).__name__} where its field declares "
-                    f"{type(field).__name__}, whose column holds one entry per element as an "
-                    f"object array"
-                )
+                raise TypeError(f"{kind}: {_not_an_object_column(path, field, column)}")
             for index, entry in np.ndenumerate(column):
                 if not field.is_valid(entry):
                     position = index[0] if len(index) == 1 else index
-                    raise TypeError(
-                        f"a transform left the entry at {position} of the column {path!r} a "
-                        f"{type(entry).__name__}, which its field's {type(field).__name__} does "
-                        f"not admit; a transform may keep or remove batch axes, never retype the "
-                        f"element"
-                    )
+                    raise TypeError(f"{kind}: {_mismatched_entry(path, field, position, entry)}")
             continue
         _check_array_column(column, field, path=path, kind=kind)
         if shape is None or not all(isinstance(s, int) for s in field.shape):
             continue
         if tuple(shape[rank:]) != tuple(field.shape):
             raise ValueError(
-                f"a transform left the column {path!r} with event axes {tuple(shape[rank:])} "
-                f"where its field declares {tuple(field.shape)}; a transform may keep or "
-                f"remove batch axes, never the element's own. Build a new batch under the "
-                f"element type it now holds"
+                f"{kind}: the event shape of field {path!r} changed from {tuple(field.shape)} "
+                f"to {tuple(shape[rank:])}, but only batch axes may change"
             )
 
 
 def _surviving_batch_rank(
-    columns: dict[str, Any], template: RecordSpec, spec: BatchSpec
+    columns: dict[str, Any], template: RecordSpec, spec: BatchSpec, *, refused: str
 ) -> int | None:
     """How many batch axes the *columns* still carry, or ``None`` when unreadable.
 
@@ -1550,9 +1598,8 @@ def _surviving_batch_rank(
         event_rank = len(field.shape) if isinstance(field, NumericArraySpec) else 0
         if len(shape) < event_rank:
             raise ValueError(
-                f"a transform left the column {path!r} with shape {tuple(shape)}, fewer axes "
-                f"than the {event_rank} its field's event shape declares; a transform may "
-                f"drop or resize batch axes, never the element's own"
+                f"{refused}: field {path!r} has shape {tuple(shape)}, fewer axes than its "
+                f"event shape {tuple(field.shape)}, but only batch axes may change"
             )
         ranks.add(len(shape) - event_rank)
     if len(ranks) != 1:
@@ -1561,9 +1608,7 @@ def _surviving_batch_rank(
         # to rebuild under. Distinct from the unreadable case above, where the
         # spec is taken as given because nothing contradicts it.
         raise ValueError(
-            f"a transform left this batch's fields with disagreeing batch axes "
-            f"({sorted(ranks)} axes beyond their event shapes); a batch states one "
-            f"multiplicity for all its fields, so there is none to rebuild under"
+            f"{refused}: the fields now have different numbers of batch axes, {sorted(ranks)}"
         )
     rank = ranks.pop()
     # A rank *above* the spec's is returned rather than reported unreadable: the
@@ -1572,7 +1617,7 @@ def _surviving_batch_rank(
     return rank
 
 
-def _surviving_batch_shape(columns: dict[str, Any], rank: int) -> tuple[int, ...]:
+def _surviving_batch_shape(columns: dict[str, Any], rank: int, *, refused: str) -> tuple[int, ...]:
     """The batch axes the *columns* now carry, checked for agreement.
 
     Rank agreement alone is not enough: a leaf-dependent transform can leave two
@@ -1583,11 +1628,7 @@ def _surviving_batch_shape(columns: dict[str, Any], rank: int) -> tuple[int, ...
         tuple(shape[:rank]) for shape in map(_column_shape, columns.values()) if shape is not None
     }
     if len(shapes) > 1:
-        raise ValueError(
-            f"a transform left this batch's fields with disagreeing batch axes "
-            f"{sorted(shapes)}; a batch states one multiplicity for all its fields, "
-            f"so there is none to rebuild under"
-        )
+        raise ValueError(f"{refused}: the fields now have different batch shapes {sorted(shapes)}")
     return next(iter(shapes), ())
 
 
@@ -1619,11 +1660,11 @@ class _MappedBatchColumns:
     return and unwraps it in the same call, so this never reaches a caller.
     """
 
-    __slots__ = ("axis_groups", "columns", "element_spec", "level_names", "name")
+    __slots__ = ("axis_groups", "columns", "element_spec", "label", "level_names")
 
     def __init__(
         self,
-        name: str,
+        label: str,
         columns: dict[str, Any],
         /,
         *,
@@ -1635,7 +1676,7 @@ class _MappedBatchColumns:
         self.element_spec = element_spec
         self.level_names = level_names
         self.axis_groups = axis_groups
-        self.name = name
+        self.label = label
 
     @classmethod
     def of(cls, batch: RecordBatch) -> _MappedBatchColumns:
@@ -1671,16 +1712,16 @@ def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
         carried.element_spec,
         carried.level_names,
         carried.axis_groups,
-        carried.name,
+        carried.label,
     )
 
 
 def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
-    paths, element_spec, level_names, axis_groups, name = aux
+    paths, element_spec, level_names, axis_groups, label = aux
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
     return _MappedBatchColumns(
-        name,
+        label,
         dict(zip(paths, children, strict=True)),
         element_spec=element_spec,
         level_names=level_names,

@@ -142,7 +142,9 @@ class TestWorkflowRecipeRecording:
         ],
     )
     def test_structural_identity_json_rejects_malformed_byte_markers(self, marker):
-        with pytest.raises(ReplayCompatibilityError, match="structural value"):
+        with pytest.raises(
+            ReplayCompatibilityError, match=r"test\.identity contains invalid entry"
+        ):
             _replay._structural_tuple(
                 ["source", marker],
                 field_name="test.identity",
@@ -946,7 +948,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function._from_implementation(
             _PrivateImplementation(),
             signature=inspect.Signature(),
-            name="private",
+            label="private",
         )
 
         anchor = _callable.capture_function_anchor(workflow)

@@ -304,3 +304,23 @@ class TestRaw:
         a, b = DenseLinOp(jnp.eye(2)), DiagonalLinOp(jnp.array([1.0, 2.0]))
         product = a @ b
         assert approx(ProductLinOp(*product.raw()).to_dense(), product.to_dense())
+
+
+class TestConstructionMessages:
+    def test_a_product_of_mismatched_shapes_names_both_shapes(self):
+        with pytest.raises(
+            ValueError, match=r"shapes \(3, 3\) and \(4, 2\): inner dimensions 3 and 4"
+        ):
+            ProductLinOp(DenseLinOp(jnp.eye(3)), DenseLinOp(jnp.ones((4, 2))))
+
+    def test_a_sum_names_the_operand_that_is_not_a_linop(self):
+        with pytest.raises(ValueError, match=r"got an array of shape \(3, 3\) at index 1"):
+            SumLinOp([DenseLinOp(jnp.eye(3)), jnp.eye(3)])
+
+    def test_a_sum_names_the_mismatched_shape(self):
+        with pytest.raises(ValueError, match=r"must all have shape \(3, 3\), got \(2, 2\)"):
+            SumLinOp([DenseLinOp(jnp.eye(3)), DenseLinOp(jnp.eye(2))])
+
+    def test_a_cholesky_root_names_the_class_it_got(self):
+        with pytest.raises(ValueError, match=r"TriangularLinOp, got DenseLinOp$"):
+            CholeskyLinOp(DenseLinOp(jnp.eye(3)))

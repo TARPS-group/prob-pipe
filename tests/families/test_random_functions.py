@@ -85,15 +85,15 @@ class TestRandomFunction:
             _MinimalRandomFunction("rf", event_spec)
 
     def test_sample_raises(self, key):
-        with pytest.raises(ResolutionError, match="does not claim SupportsSampling"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsSampling"):
             sample(_MinimalRandomFunction("rf"))
 
     def test_sample_with_shape_raises(self, key):
-        with pytest.raises(ResolutionError, match="does not claim SupportsSampling"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsSampling"):
             sample(_MinimalRandomFunction("rf"), sample_shape=(5,))
 
     def test_log_prob_raises(self):
-        with pytest.raises(ResolutionError, match="does not claim SupportsLogProb"):
+        with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(_MinimalRandomFunction("rf"), lambda x: x)
 
 

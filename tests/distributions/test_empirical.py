@@ -4,7 +4,7 @@ An ``EmpiricalDistribution`` takes its atoms in the event's batch form, or as an
 array whose leading axis indexes array atoms, with weights that default to
 uniform and are normalized. Without a declaration, record atoms expose their
 fields and any other atoms form a whole-term event whose component defaults to
-the law's name; an ``event_spec`` names the components, and a type hole is
+the law's label; an ``event_spec`` names the components, and a type hole is
 filled from the atoms. The law samples by weighted resampling, integrates any
 function exactly over its atoms, and has exact marginals, which are the
 empirical laws of the projected atoms under the same weights. A numeric event
@@ -272,7 +272,7 @@ class TestConstructionErrors:
         ],
     )
     def test_atoms_are_a_batch_or_a_numeric_array(self, atoms):
-        with pytest.raises(TypeError, match="batch form"):
+        with pytest.raises(TypeError, match="atoms must be an array whose leading axis"):
             EmpiricalDistribution("x", atoms)
 
     def test_an_array_of_atoms_has_a_leading_axis(self):
@@ -328,7 +328,7 @@ class TestWeights:
         ("weights", "match"),
         [
             pytest.param(jnp.array([1.0, -1.0, 1.0, 1.0]), "non-negative", id="negative"),
-            pytest.param(jnp.array([1.0, 1.0]), "does not match", id="count"),
+            pytest.param(jnp.array([1.0, 1.0]), "one weight per item", id="count"),
             pytest.param(jnp.zeros(4), "positive", id="zero-sum"),
         ],
     )
@@ -645,7 +645,7 @@ class TestMarginals:
         spec = RecordSpec(p=RecordSpec(x=()), q=RecordSpec(x=()))
         atoms = NumericRecordBatch("rows", {"p/x": _A, "q/x": _U}, "row", element_spec=spec)
         law = EmpiricalDistribution("m", atoms)
-        with pytest.raises(ValueError, match="final segments"):
+        with pytest.raises(ValueError, match="more than one path ends in 'x'"):
             law._marginal(("p/x", "q/x"))
         assert _capability_guard(law, "_marginal", ("p/x", "q/x")).feasible is False
 

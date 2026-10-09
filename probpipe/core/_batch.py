@@ -67,12 +67,22 @@ from __future__ import annotations
 import operator
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from math import prod
+from types import MappingProxyType
 from typing import Any, Self, cast
 
+from .._messages import count, unknown_names
 from ._record_spec import RecordSpec, _check_kind_of
-from ._repr import format_levels, is_expression, public_class_name, term_repr
+from ._repr import (
+    call_repr,
+    format_levels,
+    is_expression,
+    public_class_name,
+    term_repr,
+    type_name,
+)
+from ._shapes import LevelsLike, ShapeLike, _as_dim, _as_levels
 from ._spec_base import OpaqueSpec, _agree, _unify_array_shape, _unify_specs
 from ._specs import TermSpec, _check_component_name
 from .provenance import Provenance
@@ -90,10 +100,27 @@ type LevelIndexer = int | slice | tuple[int | slice | None, ...] | None
 class BatchSpec(TermSpec):
     """A term spec for a :class:`Batch`: an element spec plus a named multiplicity.
 
-    ``element_spec`` is what every element satisfies; ``axis_groups`` and
-    ``level_names`` are the multiplicity, the batch axes tiled into named levels
-    as :class:`Batch` describes them. Level names are unique within a batch, and
-    ``batch_shape`` / ``batch_size`` read off the tiling.
+    ``BatchSpec(element_spec, **levels)`` declares a batch whose elements satisfy
+    *element_spec*, with one keyword per level mapping the level's name to the
+    shape of its axes, outermost level first::
+
+        BatchSpec(NumericArraySpec(()), chain=4, draw=1000)
+        BatchSpec(NumericArraySpec(()), grid=(3, 4))       # one level of two axes
+        BatchSpec(NumericArraySpec(("n",)), draw="S")      # S draws, S unbound
+        BatchSpec(OpaqueSpec(), {"my level": 2})           # a name no keyword spells
+
+    Each level's shape is read as :class:`NumericArraySpec` reads ``shape``, so a
+    single int or str is one axis: ``draw=4`` is ``draw=(4,)``. A level name that
+    cannot be written as a keyword argument, such as ``"my level"`` or
+    ``"class"``, is given in a mapping passed positionally instead, and the two
+    forms are not combined. :attr:`levels`
+    returns the mapping, so ``BatchSpec(other_spec, batch.spec.levels)`` declares
+    another element type over the same levels.
+
+    The stored form is :attr:`axis_groups` and :attr:`level_names`: the batch
+    axes tiled into named levels as :class:`Batch` describes them. Level names
+    are unique within a batch, and ``batch_shape`` / ``batch_size`` read off the
+    tiling.
 
     This is the single stored source of a batch's type, so it specifies the
     *collection* rather than one element, and :class:`Batch` keeps no second copy
@@ -103,20 +130,24 @@ class BatchSpec(TermSpec):
     ----------
     element_spec : TermSpec
         What every element of the batch satisfies, including numeric-array
-        and opaque kinds.
-    axis_groups : iterable of iterable of int
-        The axis *sizes* each level holds, in order, outermost level first. Every
-        level holds at least one axis, and there is at least one axis in all.
-        Stored as a tuple of tuples, which is what makes the spec hashable.
-    level_names : iterable of str
-        One name per level, aligned with *axis_groups*. The names are unique
-        within the batch. A level name follows the rule for component names, so
-        it is any non-empty string without ``/``. Stored as a tuple, which keeps
-        the spec hashable.
+        and opaque kinds. Positional-only.
+    levels : Mapping of str to shape, optional
+        The levels as a mapping from level name to shape, outermost first.
+        Positional-only, and given only when no level is given as a keyword.
+    **level_shapes : int, str, or sequence of int or str
+        The levels as keywords, outermost first, each mapping a level name to the
+        shape of its axes. A level name follows the rule for component names, so
+        it is any non-empty string without ``/``. Every level holds at least one
+        axis, and each axis size is a non-negative integer or a symbolic
+        dimension name, which is a Python identifier.
 
     Attributes
     ----------
-    batch_shape : tuple of int
+    axis_groups : tuple of tuple of int or str
+        The axis sizes each level holds, in order, outermost level first.
+    level_names : tuple of str
+        One name per level, aligned with ``axis_groups``.
+    batch_shape : tuple of int or str
         The batch axes, flat: the concatenation of ``axis_groups``.
     batch_size : int
         The total element count, ``prod(batch_shape)``.
@@ -124,12 +155,14 @@ class BatchSpec(TermSpec):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`TermSpec`, an axis size is not an
-        integer, or a level name is not a string.
+        If ``element_spec`` is not a :class:`TermSpec`; both a mapping and
+        keywords are given; ``levels`` is not a mapping, or is given as a keyword
+        holding a mapping; a key of the mapping is not a str; or a level's shape is
+        not an int, a str, or a sequence of them.
     ValueError
-        If there are no batch axes, a level holds no axes, an axis size is
-        negative, the number of names does not match the number of levels, or a
-        level name is empty, contains ``/``, or is duplicated.
+        If no level is given, a level holds no axes, an axis size is negative or
+        is a name that is not a Python identifier, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -147,74 +180,139 @@ class BatchSpec(TermSpec):
     stay polymorphic, since how many elements there are is a different question
     from what one of them looks like.
 
-    A duplicate level name is an error rather than something this class resolves.
-    An operation that mints a level takes the name to give it, so a name already
-    in use means the caller must supply another, and
-    :meth:`Batch.with_level_names` raises on a collision for the same reason.
+    A duplicate level name cannot be written in either form, and
+    :meth:`Batch.with_level_names` raises on a collision, since an operation that
+    mints a level takes the name to give it.
     """
 
-    element_spec: TermSpec
-    axis_groups: tuple[tuple[int | str, ...], ...]
-    level_names: tuple[str, ...]
+    # ``init=False``: the constructor takes levels by name rather than these
+    # fields, so ``dataclasses.replace`` refuses them; ``copy.replace`` and
+    # ``_replace`` rebuild a spec from them instead.
+    element_spec: TermSpec = field(init=False)
+    axis_groups: tuple[tuple[int | str, ...], ...] = field(init=False)
+    level_names: tuple[str, ...] = field(init=False)
 
     def __init__(
         self,
         element_spec: TermSpec,
+        levels: LevelsLike | None = None,
+        /,
+        **level_shapes: ShapeLike,
+    ) -> None:
+        if isinstance(level_shapes.get("levels"), Mapping) and levels is None:
+            raise TypeError(
+                "BatchSpec takes its levels mapping as the second positional argument, "
+                "got levels= as a keyword"
+            )
+        names, groups = _as_levels(levels, level_shapes, what="BatchSpec")
+        self._init_fields(element_spec, groups, names)
+
+    @classmethod
+    def _from_groups(
+        cls,
+        element_spec: TermSpec,
         axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
+    ) -> BatchSpec:
+        """The spec over aligned axis groups and level names, as the library holds them.
+
+        The constructor takes levels by name; an operation that already holds a
+        tiling, such as a batch's own ``axis_groups`` and ``level_names``, builds
+        its spec here instead.
+        """
+        spec = object.__new__(cls)
+        spec._init_fields(
+            element_spec, tuple(tuple(group) for group in axis_groups), tuple(level_names)
+        )
+        return spec
+
+    def _replace(
+        self,
+        *,
+        element_spec: TermSpec | None = None,
+        axis_groups: Iterable[Iterable[int | str]] | None = None,
+        level_names: Iterable[str] | None = None,
+    ) -> BatchSpec:
+        """This spec with the given parts replaced and the rest kept."""
+        return BatchSpec._from_groups(
+            self.element_spec if element_spec is None else element_spec,
+            self.axis_groups if axis_groups is None else axis_groups,
+            self.level_names if level_names is None else level_names,
+        )
+
+    def __replace__(self, **changes: Any) -> BatchSpec:
+        """This spec with the given fields replaced, for ``copy.replace``.
+
+        Parameters
+        ----------
+        **changes : Any
+            New values of ``element_spec``, ``axis_groups``, or ``level_names``.
+
+        Returns
+        -------
+        BatchSpec
+            The rebuilt spec, checked as a constructed one is.
+
+        Raises
+        ------
+        TypeError
+            If a change names any other field.
+        """
+        unknown = sorted(set(changes) - {"element_spec", "axis_groups", "level_names"})
+        if unknown:
+            raise TypeError(
+                f"copy.replace() can change element_spec, axis_groups, and level_names of a "
+                f"BatchSpec, got {', '.join(unknown)}"
+            )
+        return self._replace(**changes)
+
+    def _init_fields(
+        self,
+        element_spec: TermSpec,
+        axis_groups: tuple[tuple[Any, ...], ...],
+        level_names: tuple[str, ...],
     ) -> None:
+        """Check the parts and store them; the one place a spec's fields are set."""
         if not isinstance(element_spec, TermSpec):
             raise TypeError(
-                f"BatchSpec.element_spec must be a TermSpec, got {type(element_spec).__name__}"
+                f"BatchSpec element_spec must be a TermSpec, got {type_name(element_spec)}"
             )
-        if isinstance(level_names, str):
-            raise TypeError(
-                f"level_names holds one name per level, so the string {level_names!r} would be "
-                f"read as one name per character; write a tuple, as ({level_names!r},) for a "
-                f"single level"
-            )
-        groups: list[tuple[int | str, ...]] = []
-        for group in axis_groups:
-            if not isinstance(group, Iterable):
-                # A flat batch_shape is the natural thing to reach for here, and
-                # descending into it would fail without saying what was wrong.
-                raise TypeError(
-                    f"axis_groups holds one group of axis sizes per level, so {group!r} is not "
-                    f"a group; a flat shape such as (4,) is one level of one axis, written "
-                    f"((4,),)"
-                )
-            groups.append(tuple(_axis_size(size) for size in group))
-        tiled: tuple[tuple[int | str, ...], ...] = tuple(groups)
-        names = tuple(level_names)
-
-        if not tiled:
-            raise ValueError("a Batch has at least one batch axis; axis_groups was empty")
-        for group in tiled:
-            if not group:
-                raise ValueError(f"every level holds at least one axis; got axis_groups={tiled}")
-            for size in group:
-                if isinstance(size, int) and size < 0:
-                    raise ValueError(f"axis sizes are non-negative; got axis_groups={tiled}")
-        if len(names) != len(tiled):
+        if not axis_groups:
+            raise ValueError("BatchSpec must have at least one level, such as draw=4")
+        if len(level_names) != len(axis_groups):
             raise ValueError(
-                f"level_names must name every level: {len(names)} names for {len(tiled)} levels"
+                f"BatchSpec has {count(len(level_names), 'level name')} but "
+                f"{count(len(axis_groups), 'axis group')}"
             )
-        for level_name in names:
+        for level_name, group in zip(level_names, axis_groups, strict=True):
             if not isinstance(level_name, str):
                 raise TypeError(
-                    f"level names are strings, got {type(level_name).__name__}: {level_name!r}"
+                    f"BatchSpec level names must be str, got {type_name(level_name)} {level_name!r}"
                 )
-            _check_component_name(level_name, context="level names")
-        if len(set(names)) != len(names):
-            raise ValueError(
-                f"level names must be unique within a batch; got {names}. An operation "
-                f"minting a level takes the name to use, so give the new level a name of "
-                f"its own rather than reusing one already present"
-            )
+            _check_component_name(level_name, context="BatchSpec level names")
+            if not group:
+                raise ValueError(
+                    f"BatchSpec level {level_name!r} must have at least one axis, got ()"
+                )
+        tiled = tuple(
+            tuple(_as_dim(size, what=f"BatchSpec level {name!r} entry") for size in group)
+            for name, group in zip(level_names, axis_groups, strict=True)
+        )
+        if len(set(level_names)) != len(level_names):
+            raise ValueError(f"BatchSpec level names must be unique, got {level_names}")
 
         object.__setattr__(self, "element_spec", element_spec)
         object.__setattr__(self, "axis_groups", tiled)
-        object.__setattr__(self, "level_names", names)
+        object.__setattr__(self, "level_names", level_names)
+
+    @property
+    def levels(self) -> Mapping[str, tuple[int | str, ...]]:
+        """The levels as a read-only mapping from level name to its axis sizes, outermost first.
+
+        ``BatchSpec(element_spec, spec.levels)`` rebuilds a spec with the same
+        levels, so another element type is declared over them.
+        """
+        return MappingProxyType(dict(zip(self.level_names, self.axis_groups, strict=True)))
 
     @property
     def batch_shape(self) -> tuple[int | str, ...]:
@@ -233,11 +331,7 @@ class BatchSpec(TermSpec):
             reason a polymorphic ``NumericRecordSpec`` has no flat layout.
         """
         if self.free_axis_dims:
-            dimensions = ", ".join(sorted(self.free_axis_dims))
-            raise ValueError(
-                f"batch_size counts elements, so it is undefined while an axis size is "
-                f"symbolic; unbound: {dimensions}"
-            )
+            raise ValueError(_unbound_axis_sizes("batch_size is undefined", self.free_axis_dims))
         return prod(cast(tuple[int, ...], self.batch_shape))
 
     @property
@@ -262,7 +356,7 @@ class BatchSpec(TermSpec):
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> BatchSpec:
         """This spec with both its element schema and its axis sizes substituted."""
-        return BatchSpec(
+        return BatchSpec._from_groups(
             self.element_spec._substitute_dims(bindings),
             tuple(
                 tuple(bindings.get(size, size) if isinstance(size, str) else size for size in group)
@@ -279,10 +373,7 @@ class BatchSpec(TermSpec):
         """
         actual = getattr(value, "spec", None)
         if not isinstance(actual, BatchSpec):
-            raise ValueError(
-                f"{path} declares the polymorphic schema {self!r}, but "
-                f"{type(value).__name__} exposes no schema to bind it against"
-            )
+            raise ValueError(f"{path} must be a batch matching {self!r}, got {type_name(value)}")
         _check_kind_of(actual, value, self, path)
         self._bind_dims_from_spec(actual, bindings, path)
 
@@ -310,7 +401,7 @@ class BatchSpec(TermSpec):
         actual_arity = [len(group) for group in actual.axis_groups]
         if declared_arity != actual_arity:
             raise ValueError(
-                f"{path} tiles its axes as {actual_arity}, expected {declared_arity} "
+                f"{path} has {actual_arity} axes per level, expected {declared_arity} "
                 f"from axis_groups={self.axis_groups!r}"
             )
         _unify_array_shape(self.batch_shape, actual.batch_shape, bindings, path)
@@ -318,13 +409,17 @@ class BatchSpec(TermSpec):
         return True
 
     def __repr__(self) -> str:
-        """The element spec, then the levels as a mapping of level name to size."""
-        return term_repr(
+        """The constructor call: the element spec, then one keyword per level.
+
+        A level of one axis shows its size alone, as ``draw=4``, and a level name
+        that no keyword spells puts the levels in one ``**{...}`` argument.
+        """
+        return call_repr(
             "BatchSpec",
-            None,
+            [repr(self.element_spec)],
             [
-                ("element_spec", repr(self.element_spec)),
-                ("levels", format_levels(self.level_names, self.axis_groups)),
+                (name, repr(group[0] if len(group) == 1 else group))
+                for name, group in zip(self.level_names, self.axis_groups, strict=True)
             ],
         )
 
@@ -409,7 +504,7 @@ class Batch[E](TrackedTerm, ABC):
     __slots__ = (
         "_label",
         "_provenance",
-        "_root_name",
+        "_root_label",
         "_root_selection",
         "_root_spec",
         "_spec",
@@ -437,7 +532,7 @@ class Batch[E](TrackedTerm, ABC):
         self,
         spec: BatchSpec,
         *,
-        name: str,
+        label: str,
         provenance: Provenance | None = None,
     ) -> None:
         """Store the batch's *spec* and identity (constructor helper).
@@ -458,7 +553,7 @@ class Batch[E](TrackedTerm, ABC):
         ----------
         spec : BatchSpec
             The batch's type, whose axis sizes must all be integers.
-        name : str
+        label : str
             The batch's label, from which its views derive theirs.
         provenance : Provenance, optional
             How this batch was produced.
@@ -471,20 +566,14 @@ class Batch[E](TrackedTerm, ABC):
             If an axis size of *spec* is an unbound symbolic dimension.
         """
         if not isinstance(spec, BatchSpec):
-            raise TypeError(f"a Batch is specified by a BatchSpec, got {type(spec).__name__}")
+            raise TypeError(f"spec must be a BatchSpec, got {type(spec).__name__}")
         if spec.free_axis_dims:
-            dimensions = ", ".join(sorted(spec.free_axis_dims))
-            raise ValueError(
-                f"a Batch holds elements at positions, so its multiplicity is concrete; "
-                f"this spec leaves the axis size {dimensions} unbound. A polymorphic "
-                f"BatchSpec is a declaration — bind it before building the batch it "
-                f"describes. An element's own schema may stay polymorphic"
-            )
+            raise ValueError(_unbound_axis_sizes("cannot build a batch", spec.free_axis_dims))
         object.__setattr__(self, "_spec", spec)
-        object.__setattr__(self, "_root_name", name)
+        object.__setattr__(self, "_root_label", label)
         object.__setattr__(self, "_root_spec", spec)
         object.__setattr__(self, "_root_selection", _whole_of(spec))
-        self._init_tracked(name, provenance=provenance)
+        self._init_tracked(label, provenance=provenance)
 
     # -- the specification --------------------------------------------------
 
@@ -582,16 +671,14 @@ class Batch[E](TrackedTerm, ABC):
                 f"by a keyword; give it one new name"
             )
         renames: dict[str, str] = {**positional, **kwargs}
-        unknown = set(renames) - set(self.level_names)
+        unknown = [old for old in renames if old not in self.level_names]
         if unknown:
-            raise KeyError(
-                f"not levels of this batch: {sorted(unknown)}; have {list(self.level_names)}"
-            )
+            raise KeyError(unknown_names("level", unknown, self.level_names))
         for new in renames.values():
             # Type before emptiness: None, 0 and [] are all falsy, and reporting
             # them as empty names would describe the wrong problem.
             if not isinstance(new, str):
-                raise TypeError(f"level names are strings, got {type(new).__name__}: {new!r}")
+                raise TypeError(f"level names must be strings, got {type(new).__name__}: {new!r}")
             _check_component_name(new, context="level names")
 
         renamed = tuple(renames.get(old, old) for old in self.level_names)
@@ -627,7 +714,7 @@ class Batch[E](TrackedTerm, ABC):
             If *label* is not a non-empty string.
         """
         renamed = super()._with_label(label)
-        object.__setattr__(renamed, "_root_name", label)
+        object.__setattr__(renamed, "_root_label", label)
         object.__setattr__(renamed, "_root_spec", renamed._spec)
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
         return renamed
@@ -734,9 +821,8 @@ class Batch[E](TrackedTerm, ABC):
         if len(named) == len(key):
             return self._at_fields(key)
         raise TypeError(
-            f"{key!r} mixes field names with axis indexers: a tuple key addresses either a "
-            f"path of fields within an element or the batch axes in order, not both. Index "
-            f"the axes and the fields in separate steps"
+            f"cannot mix field names and axis indices in one key, got {key!r}; index the "
+            f"axes and the fields in separate steps"
         )
 
     def at_levels(self, /, **levels: LevelIndexer) -> E | Self:
@@ -789,11 +875,9 @@ class Batch[E](TrackedTerm, ABC):
         alone, a keyword being unable to take a ``:`` literal; positional ``[]``
         writes ``:`` and refuses ``None``.
         """
-        unknown = set(levels) - set(self.level_names)
+        unknown = [name for name in levels if name not in self.level_names]
         if unknown:
-            raise KeyError(
-                f"not levels of this batch: {sorted(unknown)}; have {list(self.level_names)}"
-            )
+            raise KeyError(unknown_names("level", unknown, self.level_names))
 
         axis_index: list[int | slice] = [slice(None)] * len(self.batch_shape)
         # Where each addressed axis came from, so a complaint about an indexer
@@ -807,8 +891,8 @@ class Batch[E](TrackedTerm, ABC):
                 indexers = given if isinstance(given, tuple) else (given,)
                 if len(indexers) > len(group):
                     raise ValueError(
-                        f"level {level_name!r} has {len(group)} axes but got "
-                        f"{len(indexers)} indexers"
+                        f"level {level_name!r} has {count(len(group), 'axis', 'axes')} but "
+                        f"got {count(len(indexers), 'indexer')}"
                     )
                 for offset, indexer in enumerate(indexers):
                     axis_index[start + offset] = slice(None) if indexer is None else indexer
@@ -823,14 +907,14 @@ class Batch[E](TrackedTerm, ABC):
     # -- the concrete-storage seam ------------------------------------------
 
     @abstractmethod
-    def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The single element at a fully-integer positional *index*, as a view labeled *name*.
+    def _element_at(self, index: tuple[int, ...], *, label: str) -> E:
+        """The single element at a fully-integer positional *index*, as a view labeled *label*.
 
-        *name* is the identity this class derived for the element view. A batch
+        *label* is the identity this class derived for the element view. A batch
         that *materializes* an element, as columnar storage builds a row, builds
-        a term of the element kind under *name* and gives it this batch's
+        a term of the element kind under *label* and gives it this batch's
         provenance through :meth:`_inherit_provenance`. A batch that *stores*
-        its elements returns a view of the stored object under *name*: a copy of
+        its elements returns a view of the stored object under *label*: a copy of
         a stored tracked term that shares its representation, or the stored
         value wrapped as a term of the element kind. That view's provenance
         records this batch and the stored term, and the stored object keeps its
@@ -841,7 +925,7 @@ class Batch[E](TrackedTerm, ABC):
         """
 
     @abstractmethod
-    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
+    def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, label: str) -> Self:
         """A view over the sub-batch at a partial positional *index*.
 
         *index* is one entry per axis of this batch: a resolved position for an
@@ -852,7 +936,7 @@ class Batch[E](TrackedTerm, ABC):
 
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
-        *name* is the derived identity. A subclass
+        *label* is the derived identity. A subclass
         stores both as given rather than recomputing either; the root slots a
         further view derives its label from are re-pointed at this view's own
         root afterwards.
@@ -908,9 +992,9 @@ class Batch[E](TrackedTerm, ABC):
         """
         addressed = path[0] if len(path) == 1 else path
         raise TypeError(
-            f"the elements of this {type(self).__name__} have no fields to address by name, "
-            f"so {addressed!r} indexes nothing. [] addresses the batch axes by position, and "
-            f"at_levels addresses them by level name"
+            f"cannot index {public_class_name(type(self))} by {addressed!r}: its elements have "
+            f"no named fields. Use integers or slices for the batch axes, or at_levels() to "
+            f"index by level name"
         )
 
     # -- internals ----------------------------------------------------------
@@ -938,25 +1022,25 @@ class Batch[E](TrackedTerm, ABC):
             )
 
         selection = self._compose_selection(normalized)
-        label = _render_index(self._root_spec, selection)
+        rendered = _render_index(self._root_spec, selection)
         if selection == self._root_selection:
-            name = self.label
-        elif label:
-            root = f"({self._root_name})" if is_expression(self._root_name) else self._root_name
-            name = f"{root}[{label}]"
+            label = self.label
+        elif rendered:
+            root = f"({self._root_label})" if is_expression(self._root_label) else self._root_label
+            label = f"{root}[{rendered}]"
         else:
-            name = self._root_name
+            label = self._root_label
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
-            return self._element_at(dropped, name=name)
+            return self._element_at(dropped, label=label)
 
         groups, names = self._surviving_levels(normalized)
-        spec = replace(self._spec, axis_groups=groups, level_names=names)
+        spec = self._spec._replace(axis_groups=groups, level_names=names)
         view = self._sub_batch_at(
-            tuple(_as_storage_slice(i) for i in normalized), spec=spec, name=name
+            tuple(_as_storage_slice(i) for i in normalized), spec=spec, label=label
         )
-        object.__setattr__(view, "_root_name", self._root_name)
+        object.__setattr__(view, "_root_label", self._root_label)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
         return self._inherit_provenance(view)
@@ -1040,48 +1124,69 @@ class Batch[E](TrackedTerm, ABC):
         repinned = dict(zip(self.level_names, level_names, strict=True))
         root_names = tuple(repinned.get(name, name) for name in self._root_spec.level_names)
         if len(set(root_names)) != len(root_names):
-            taken = sorted({name for name in root_names if root_names.count(name) > 1})
+            taken = sorted({name for name in root_names if root_names.count(name) > 1})[0]
+            old = next((o for o, n in repinned.items() if n == taken and o != n), taken)
             raise ValueError(
-                f"level name {taken[0]!r} is already used by a dropped level in this view's "
-                f"root selection; reusing it would make names of subsequent selections "
-                f"ambiguous. Rename the level on the original batch, or give it another name"
+                f"cannot rename level {old!r} to {taken!r}: this view {self.label} was indexed "
+                f"from a level named {taken!r}. Choose another name, or relabel the view with "
+                f"with_label() first"
             )
 
         renamed = self._shallow_copy()
-        object.__setattr__(renamed, "_spec", replace(self._spec, level_names=level_names))
-        object.__setattr__(renamed, "_root_spec", replace(self._root_spec, level_names=root_names))
+        object.__setattr__(renamed, "_spec", self._spec._replace(level_names=level_names))
+        object.__setattr__(renamed, "_root_spec", self._root_spec._replace(level_names=root_names))
         object.__setattr__(renamed, "_provenance", None)
         renamed.with_provenance(Provenance.create("with_level_names", parents=[self]))
         return renamed
 
 
-def _axis_size(size: Any) -> int | str:
-    """An axis size as an ``int``, or a symbolic dimension name as a ``str``.
+def _cannot_rebuild(kind: str) -> str:
+    """The opening of the message for a batch a pytree transform left unrebuildable.
 
-    The two spellings ``NumericArraySpec.shape`` accepts, for the same reason: a
-    declaration may defer a size while fixing the rank. A name must be an
-    identifier.
+    Each refusal appends its reason after a colon, so every one of them reads
+    alike: ``"cannot rebuild RecordBatch after a pytree transform: ..."``.
     """
-    if isinstance(size, str):
-        if not size.isidentifier():
-            raise ValueError(
-                f"a symbolic axis size must be an identifier, so that with_dim_sizes can "
-                f"bind it by keyword; got {size!r}"
-            )
-        return size
-    try:
-        return operator.index(size)
-    except TypeError:
-        raise TypeError(
-            f"axis sizes are integers or symbolic dimension names, "
-            f"got {type(size).__name__}: {size!r}"
-        ) from None
+    return f"cannot rebuild {kind} after a pytree transform"
+
+
+def _changed_batch_shape(refused: str, before: tuple[int, ...], after: tuple[int, ...]) -> str:
+    """The message for a pytree transform that changed some batch axes but not all.
+
+    *refused* is the opening :func:`_cannot_rebuild` gives.
+    """
+    return (
+        f"{refused}: the batch shape changed from {before} to {after}. A transform must keep "
+        f"every batch axis or remove all of them; to select elements, index the batch instead"
+    )
+
+
+def _uncastable_dtype(subject: str, dtype: Any, declared: Any) -> str:
+    """The message for stored values whose dtype the declared dtype does not admit.
+
+    *subject* names the values, such as ``"RecordBatch: field 'x'"``.
+    """
+    return (
+        f"{subject} has dtype {dtype}, which cannot be cast to the declared {declared} "
+        f"(only same-kind casts are allowed)"
+    )
+
+
+def _unbound_axis_sizes(failed: str, dims: Iterable[str]) -> str:
+    """The message for a batch whose axis sizes include unbound symbolic dimensions.
+
+    *failed* names what could not happen, such as ``"cannot build a batch"``.
+    """
+    names = sorted(dims)
+    which = f"axis size {names[0]} is" if len(names) == 1 else f"axis sizes {', '.join(names)} are"
+    sizes = ", ".join(f"{name}=..." for name in names)
+    it = "it" if len(names) == 1 else "them"
+    return f"{failed}: {which} symbolic; bind {it} first with with_dim_sizes({sizes})"
 
 
 def _axis_groups_for(
     shape: tuple[int, ...],
     names: tuple[str, ...],
-    axes_per_level: Iterable[int] | None,
+    axes_per_level: tuple[int, ...] | None,
     *,
     kind: str,
 ) -> tuple[tuple[int, ...], ...]:
@@ -1099,35 +1204,32 @@ def _axis_groups_for(
     """
     if axes_per_level is None:
         if len(names) != len(shape):
-            axes = "axis" if len(shape) == 1 else "axes"
             raise ValueError(
-                f"{kind} places one axis per level unless axes_per_level says otherwise, so "
-                f"{len(shape)} {axes} need {len(shape)} level names; "
-                f"got {len(names)}: {list(names)}"
+                f"{kind} got batch shape {shape} but {count(len(names), 'level name')} "
+                f"{list(names)}; give one name per axis, or pass axes_per_level to group "
+                f"axes into levels"
             )
         return tuple((size,) for size in shape)
 
-    counts = tuple(_axis_count(count) for count in axes_per_level)
+    counts = axes_per_level
     if len(counts) != len(names):
         raise ValueError(
-            f"axes_per_level gives one count per level: {len(counts)} counts {counts} "
-            f"against {len(names)} level names {list(names)}"
+            f"axes_per_level must give one count per level, got {counts} for level names "
+            f"{list(names)}"
         )
     if sum(counts) != len(shape):
-        axes = "axis" if len(shape) == 1 else "axes"
         raise ValueError(
-            f"axes_per_level must account for every batch axis: {counts} covers "
-            f"{sum(counts)}, but {kind} was given elements of shape {shape} — "
-            f"{len(shape)} {axes}"
+            f"axes_per_level {counts} covers {count(sum(counts), 'axis', 'axes')}, but "
+            f"{kind} got batch shape {shape} with {count(len(shape), 'axis', 'axes')}"
         )
     groups, at = [], 0
-    for count in counts:
-        groups.append(shape[at : at + count])
-        at += count
+    for size in counts:
+        groups.append(shape[at : at + size])
+        at += size
     return tuple(groups)
 
 
-def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | None) -> int:
+def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[int, ...] | None) -> int:
     """How many batch axes the levels hold: the sum of *axes_per_level*, or one per name.
 
     A constructor that infers its element spec reads the event axes as the axes
@@ -1137,52 +1239,18 @@ def _batch_axis_count(names: tuple[str, ...], axes_per_level: tuple[Any, ...] | 
     ----------
     names : tuple of str
         The level names, of which only the count is read.
-    axes_per_level : tuple or None
-        The axis count of each level, outermost first; ``None`` gives each level one
-        axis.
+    axes_per_level : tuple of int or None
+        The axis count of each level, outermost first, as ``_as_axis_counts``
+        returns it; ``None`` gives each level one axis.
 
     Returns
     -------
     int
         The number of batch axes, which lead each stored array.
-
-    Raises
-    ------
-    TypeError
-        If a count is not an integer.
-    ValueError
-        If a count is not positive.
     """
     if axes_per_level is None:
         return len(names)
-    return sum(_axis_count(count) for count in axes_per_level)
-
-
-def _axis_count(count: Any) -> int:
-    """One entry of *axes_per_level*: how many axes a level holds.
-
-    Read through ``operator.index``, as :func:`_axis_size` reads a size, so a
-    ``numpy`` or other integer-like count is accepted — a caller who computed one
-    from an array's rank should not have to convert it back. A ``bool`` is refused
-    first: it satisfies ``operator.index`` as 0 or 1, and a level count is not a
-    thing anyone means to write as ``True``.
-
-    A level holds at least one axis, so zero is refused here rather than left to
-    produce a level that indexes nothing.
-    """
-    if isinstance(count, bool):
-        raise TypeError(
-            f"axes_per_level entries are integer axis counts, and a bool is not one; got {count!r}"
-        )
-    try:
-        count = operator.index(count)
-    except TypeError:
-        raise TypeError(
-            f"axes_per_level entries are integer axis counts; got {type(count).__name__}: {count!r}"
-        ) from None
-    if count < 1:
-        raise ValueError(f"every level holds at least one axis; got axes_per_level entry {count}")
-    return count
+    return sum(axes_per_level)
 
 
 def _ranks_of(groups: Iterable[Iterable[Any]]) -> tuple[int, ...]:
@@ -1219,11 +1287,7 @@ def _normalize_indexer(
         if indexer.step == 0:
             # ``slice.indices`` would raise this itself, but naming neither the
             # batch nor the axis the step was given for.
-            raise ValueError(
-                f"a batch axis is not selected with a step of zero "
-                f"({_location(axis, shape, where)}); a step is how far apart the selected "
-                f"positions are, so zero selects nothing and no position twice"
-            )
+            raise ValueError(f"slice step cannot be zero ({_location(axis, shape, where)})")
         try:
             return range(*indexer.indices(size))
         except TypeError:
@@ -1231,25 +1295,23 @@ def _normalize_indexer(
             # nor the axis -- and a bound computed with ``/`` is a float, which is
             # the ordinary way to arrive here.
             raise TypeError(
-                f"a batch axis is sliced by integers, and {indexer!r} is not "
-                f"({_location(axis, shape, where)})"
+                f"slice bounds must be integers, got {indexer!r} ({_location(axis, shape, where)})"
             ) from None
     if indexer is None:
         raise TypeError(
-            f"a batch axis is not indexed by None ({_location(axis, shape, where)}); write "
-            f"':' for the whole axis. None spells it in at_levels alone, where a keyword "
-            f"cannot take a ':' literal"
+            f"cannot index a batch axis with None ({_location(axis, shape, where)}); "
+            f"use ':' for the whole axis"
         )
     if isinstance(indexer, bool):
         raise TypeError(
-            f"a batch axis is not indexed by a bool ({_location(axis, shape, where)}); use "
+            f"cannot index a batch axis with a bool ({_location(axis, shape, where)}); use "
             f"an integer or a slice"
         )
     try:
         position = operator.index(indexer)
     except TypeError:
         raise TypeError(
-            f"a batch axis is indexed by an integer or a slice, not "
+            f"batch axes must be indexed by integers or slices, got "
             f"{type(indexer).__name__} ({_location(axis, shape, where)})"
         ) from None
     resolved = position + size if position < 0 else position

@@ -16,10 +16,12 @@ from ..functions import function
 from ..operations._condition import InferenceMethod, _UnnormalizedConditional
 from ._approximate_distribution import make_posterior
 from ._inference_utils import (
+    described,
     extract_chain_columns,
     integer_seed,
     joint_and_given,
     posterior_var_order,
+    refuse_seed_keywords,
     run_seed,
 )
 
@@ -41,16 +43,49 @@ def condition_on_nutpie(
     num_results: int = 1000,
     num_warmup: int = 500,
     num_chains: int = 4,
-    random_seed: int | None = None,
     **kwargs: Any,
 ) -> EmpiricalDistribution:
     """MCMC sampling via nutpie (Rust-based NUTS).
 
     Accepts a :class:`~probpipe.families.StanModel` or its posterior, bound
     to *data* when it is a kernel, or a :class:`~probpipe.families.PyMCModel`
-    at the observed values *data*. Without ``random_seed`` the run is seeded
-    by a workflow-owned random event, so ``workflow_run(seed=...)`` fixes it.
+    at the observed values *data*. The run's seed is drawn from a
+    workflow-owned random event, so ``workflow_run(seed=...)`` reproduces the
+    chains, and an unscoped call runs fresh ones.
+
+    Parameters
+    ----------
+    model : StanModel or PyMCModel
+        The program to sample: a Stan program, its posterior at its data, or
+        a PyMC model.
+    data : Mapping or None
+        The data that bind a Stan program, or the observed values of a PyMC
+        model.
+    num_results : int
+        The number of draws per chain.
+    num_warmup : int
+        The number of tuning steps per chain.
+    num_chains : int
+        The number of chains.
+    **kwargs : Any
+        Further keyword arguments of ``nutpie.sample``, such as
+        ``progress_bar``; its ``seed`` is the run's.
+
+    Returns
+    -------
+    EmpiricalDistribution
+        The chains of the program's parameters, with nutpie's trace as the
+        annotations.
+
+    Raises
+    ------
+    ImportError
+        If nutpie is not installed.
+    TypeError
+        If *model* is neither a Stan program nor a PyMC model, or *kwargs*
+        holds ``random_seed`` or ``seed``.
     """
+    refuse_seed_keywords("condition_on_nutpie", kwargs)
     return _nutpie_posterior(
         model,
         data,
@@ -58,7 +93,7 @@ def condition_on_nutpie(
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
-        random_seed=integer_seed(run_seed({"random_seed": random_seed}, "nutpie_nuts")),
+        random_seed=integer_seed(run_seed("nutpie_nuts")),
         **kwargs,
     )
 
@@ -197,8 +232,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
         return nutpie.compile_pymc_model(pymc_build), pymc_build
 
     raise TypeError(
-        f"condition_on_nutpie does not support {type(model).__name__}. "
-        f"Expected a StanModel or PyMCModel."
+        f"condition_on_nutpie: model must be a StanModel or PyMCModel; got {type(model).__name__}"
     )
 
 
@@ -230,7 +264,10 @@ def _extract_chains(
         order.
     """
     if not hasattr(trace, "posterior"):
-        raise TypeError(f"Cannot extract chains from nutpie trace of type {type(trace).__name__}")
+        raise TypeError(
+            f"cannot extract chains from the nutpie trace: it has no posterior group; "
+            f"got {type(trace).__name__}"
+        )
     if keep_names is not None:
         param_names = list(keep_names)
     else:
@@ -249,8 +286,8 @@ class NutpieNutsMethod(InferenceMethod):
     Applies to a Stan program's posterior at its data, and to a ``PyMCModel``
     target at its observed values; infeasible while nutpie is not installed.
 
-    Its ``method_options`` are the draw, warmup, and chain counts, the seed,
-    and ``progress_bar``, which passes to nutpie's sampler; an unset
+    Its ``method_options`` are the draw, warmup, and chain counts, and
+    ``progress_bar``, which passes to nutpie's sampler; an unset
     ``progress_bar`` leaves nutpie's default.
 
     Notes
@@ -260,7 +297,7 @@ class NutpieNutsMethod(InferenceMethod):
     class, so it ranks above all of them.
     """
 
-    _method_options = ("num_chains", "num_results", "num_warmup", "progress_bar", "random_seed")
+    _method_options = ("num_chains", "num_results", "num_warmup", "progress_bar")
 
     def __init__(self) -> None:
         from ..families._programs import PyMCModel, _StanPosterior
@@ -283,16 +320,25 @@ class NutpieNutsMethod(InferenceMethod):
         """Whether the target is a Stan or PyMC program, or a PyMC one at its observed values."""
         dist, given = joint_and_given(target)
         if not isinstance(dist, self._supported):
-            return Feasibility(feasible=False, description="Requires StanModel or PyMCModel")
+            return Feasibility(
+                feasible=False,
+                description=f"the model must be a StanModel or PyMCModel; got {described(dist)}",
+            )
         if given is not None and not isinstance(dist, self._pymc_model_type):
             return Feasibility(
                 feasible=False,
-                description="nutpie samples a Stan program at its data, which fixes no parameter",
+                description=(
+                    "nutpie cannot condition a StanModel on more values: it samples every "
+                    "parameter at the data the StanModel was built with. Pass data to "
+                    "StanModel(...) instead"
+                ),
             )
         try:
             import nutpie  # noqa: F401
         except ImportError:
-            return Feasibility(feasible=False, description="nutpie not installed")
+            return Feasibility(
+                feasible=False, description="nutpie is not installed; pip install nutpie"
+            )
         return Feasibility(feasible=True)
 
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
@@ -302,5 +348,5 @@ class NutpieNutsMethod(InferenceMethod):
         """
         self._check_options(kwargs)
         dist, observed = joint_and_given(target)
-        seed = integer_seed(run_seed(kwargs, self.name))
-        return _nutpie_posterior(dist, observed, target, **{**kwargs, "random_seed": seed})
+        seed = integer_seed(run_seed(self.name))
+        return _nutpie_posterior(dist, observed, target, random_seed=seed, **kwargs)

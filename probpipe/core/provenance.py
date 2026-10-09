@@ -335,7 +335,9 @@ def _copy_json_mapping(
 ) -> dict[str, Any]:
     """Validate and detach one exact JSON-native provenance mapping."""
     if not isinstance(value, Mapping):
-        raise TypeError(f"Provenance.{field_name} must be a JSON-native mapping")
+        raise TypeError(
+            f"Provenance.{field_name} must be a JSON-native mapping, got {type(value).__name__}"
+        )
     detached = copy.deepcopy(dict(value))
     _validate_json_native(detached, path=f"Provenance.{field_name}")
     return detached
@@ -346,7 +348,7 @@ def _validate_json_native(value: Any, *, path: str) -> None:
         return
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise ValueError(f"{path} numbers must be finite JSON values")
+            raise ValueError(f"{path} must be a finite number, got {value}")
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
@@ -355,10 +357,15 @@ def _validate_json_native(value: Any, *, path: str) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             if not isinstance(key, str):
-                raise TypeError(f"{path} must use string keys in JSON-native mappings")
+                raise TypeError(f"{path} keys must be strings, got {key!r}")
             _validate_json_native(item, path=f"{path}.{key}")
         return
-    raise TypeError(f"{path} contains non-JSON-native value {type(value).__name__}")
+    shape = getattr(value, "shape", None)
+    got = type(value).__name__ if shape is None else f"an array of shape {tuple(shape)}"
+    raise TypeError(
+        f"{path} must be a JSON-native value (None, str, bool, int, float, list, or dict), "
+        f"got {got}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -444,8 +451,8 @@ def provenance_dag(node: ProvenanceNode):
 
     visited: set = set()
 
-    def _label(type_name: str, name: str) -> str:
-        return f"{type_name}\n'{name}'" if name else type_name
+    def _label(type_name: str, label: str) -> str:
+        return f"{type_name}\n'{label}'" if label else type_name
 
     def _stable_nid(p: Any) -> str:
         """Graphviz node ID that is the same for all ParentInfo of the same ancestor."""

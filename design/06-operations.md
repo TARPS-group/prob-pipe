@@ -171,7 +171,7 @@ Reparameterization moves in both directions between a constrained and an unconst
 
 ### Contract
 
-`sample(d, sample_shape=())` draws from a distribution.
+`sample(d, sample_shape=())` draws from a distribution. `sample_shape` is a shape argument of integers (II.1), so `sample_shape=100` is `sample_shape=(100,)`.
 
 - With `sample_shape=()` it returns a single draw, tracked, at the kind the declaration names (III.7); a non-empty `sample_shape` prepends batch axes and returns the tracked batch form of that kind, the leading dimensions on a level named `sample`. A draw and a batch of draws are declared under the event's components (VI.0), so a batch of draws of a law over `mu` and `tau` exposes the batch of records whose fields are `mu` and `tau`. `sample.with_options(raw=True)(...)` is the draw detached: the kind's raw value for a single draw, which for a `Distribution`-valued draw is the law itself, and the storage view (II.5) for a batch:
 

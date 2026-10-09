@@ -546,7 +546,7 @@ class TestSBCPosteriorKernel:
             lambda y: Normal("a", jnp.sum(y), 1.0) * Normal("b", 0.0, 1.0),
             given_spec={"y": NumericArraySpec((_N,))},
         )
-        with pytest.raises(ValueError, match="not the parameters"):
+        with pytest.raises(ValueError, match="must be the model's parameters"):
             simulation_based_calibration(
                 _conjugate_model(),
                 observed="y",
@@ -650,7 +650,7 @@ class TestSBCFit:
             )
 
     def test_rejects_an_observed_name_that_is_no_field(self):
-        with pytest.raises(ValueError, match="are not fields"):
+        with pytest.raises(ValueError, match="unknown observed field 'z'; available fields"):
             simulation_based_calibration(
                 _gaussian_glm(), observed="z", num_simulations=2, num_posterior_draws=50
             )
