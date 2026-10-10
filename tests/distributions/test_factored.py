@@ -1446,10 +1446,16 @@ class TestNotation:
         joint = _law("d", "d") * model
         assert joint.notation == "d(d)·model(obs, beta)"
 
-    def test_the_repr_reads_as_the_constructor_call_with_the_label_as_a_keyword(self):
+    def test_the_repr_reads_as_the_constructor_call_without_the_derived_label(self):
+        """The constructor derives the label from the factors again, so the repr leaves it out."""
         text = repr(_likelihood() * _prior())
         assert text.startswith("FactoredDistribution(\n    factors=(")
-        assert text.endswith("    label='lik·prior',\n)")
+        assert "label='lik·prior'" not in text
+        assert text.endswith("),\n)")
+
+    def test_the_repr_shows_an_alias_as_a_keyword(self):
+        text = repr((_likelihood() * _prior()).with_label("model"))
+        assert text.endswith("    label='model',\n)")
 
     def test_an_unlabeled_joint_that_holds_paths_fixed_reads_by_its_label(self):
         """Its factors' notations would leave out the fixed paths."""

@@ -494,7 +494,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     ``str(K)`` returns the kernel's :attr:`notation`, its label followed by its
     signature, as ``glm(y | beta)``, and the repr reads as a call of the
-    constructor, with ``label=`` where the label differs from the default.
+    constructor, with ``label=`` where a caller gave a label other than the
+    default.
 
     Parameters
     ----------

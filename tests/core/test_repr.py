@@ -286,7 +286,7 @@ class TestDistributions:
         joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
         renamed = repr(joint.with_path_names({"a": "g/a"}))
         assert renamed.startswith("FactoredMultivariateGaussian(\n    factors=(")
-        assert "label='a·b'" in renamed
+        assert "label='a·b'" not in renamed
         assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):
@@ -321,7 +321,7 @@ class TestDistributions:
         joint = likelihood * Normal("a", 0.0, 1.0, label="a")
         reordered = repr(joint._marginal(("a", "y")))
         assert reordered.startswith("FactoredDistribution(\n    factors=(")
-        assert "label='y·a'" in reordered
+        assert "label='y·a'" not in reordered
         assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
 
     def test_a_marginal_in_another_product_order_reads_as_that_product(self):
@@ -329,7 +329,6 @@ class TestDistributions:
         assert repr(joint._marginal(("b", "a"))) == (
             "FactoredDistribution(\n"
             "    factors=(Gamma('b', concentration=2.0, rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n"
-            "    label='Gamma·Normal',\n"
             ")"
         )
 
@@ -372,12 +371,17 @@ _EVALUABLE = {
 }
 
 
+def _namespace() -> dict:
+    """The public names of ``probpipe`` and its distribution packages, in which a repr evaluates."""
+    modules = (probpipe, probpipe.distributions, probpipe.families)
+    return {name: getattr(module, name) for module in modules for name in module.__all__}
+
+
 @pytest.mark.parametrize("make", list(_EVALUABLE.values()), ids=list(_EVALUABLE))
 def test_the_repr_of_a_law_that_holds_nothing_fixed_rebuilds_it(make):
     """``eval(repr(d))`` builds a law of the same class, label, and parameters (II.4)."""
     law = make()
-    namespace = {name: getattr(probpipe, name) for name in probpipe.__all__}
-    rebuilt = eval(repr(law), {**namespace, "MixtureDistribution": MixtureDistribution})
+    rebuilt = eval(repr(law), _namespace())
     assert type(rebuilt) is type(law)
     assert (rebuilt.label, rebuilt.event_spec) == (law.label, law.event_spec)
     assert repr(rebuilt) == repr(law)
@@ -391,6 +395,40 @@ def test_the_repr_of_a_law_that_holds_paths_fixed_follows_the_call_with_them():
     call = "Normal('y', loc=0.5, scale=1.0, label='lik')"
     assert repr(law) == call[:-1] + ", fixed=('mu',))"
     assert repr(eval(call, {"Normal": Normal})) == call
+
+
+def _product() -> probpipe.Distribution:
+    return Normal("y", 0.0, 1.0, label="lik") * Gamma("mu", 2.0, 1.0, label="prior")
+
+
+def _mixture() -> MixtureDistribution:
+    return MixtureDistribution(
+        [Normal("x", 0.0, 1.0, label="a"), Normal("x", 1.0, 2.0, label="b")],
+        jnp.array([0.25, 0.75]),
+    )
+
+
+class TestADerivedLabel:
+    """A label the constructor derives is left out, so the rebuilt law derives it again."""
+
+    @pytest.mark.parametrize(
+        ("make", "notation"),
+        [(_product, "lik(y)·prior(mu)"), (_mixture, "mixture([a(x), b(x)])")],
+        ids=["product", "mixture"],
+    )
+    def test_the_rebuilt_law_has_the_same_notation(self, make, notation):
+        law = make()
+        assert f"label={law.label!r}" not in repr(law)
+        rebuilt = eval(repr(law), _namespace())
+        assert (rebuilt.notation, law.notation) == (notation, notation)
+        assert rebuilt.label == law.label
+
+    @pytest.mark.parametrize("make", [_product, _mixture], ids=["product", "mixture"])
+    def test_an_alias_of_a_derived_law_is_shown(self, make):
+        law = make().with_label("model")
+        assert repr(law).endswith("    label='model',\n)")
+        rebuilt = eval(repr(law), _namespace())
+        assert (rebuilt.label, rebuilt.notation) == ("model", law.notation)
 
 
 class TestFunctionsAndOperators:

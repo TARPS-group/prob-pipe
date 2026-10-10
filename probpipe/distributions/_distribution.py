@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
-from ..core._expression import Signature
+from ..core._expression import Named, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -301,6 +301,23 @@ def _labeled_by_default(term: Any) -> bool:
     return default is not None and term._expression is getattr(term, "_default_expression", None)
 
 
+def _shows_label(term: Any, constructor: Any) -> bool:
+    """Whether the repr of *term*, as a call of *constructor*'s class, shows the label.
+
+    It shows an alias: a label that a caller gave, which the term's expression
+    holds alone around any paths held fixed, and which differs from the
+    constructor's default. A label that the constructor derives from its
+    arguments, as a product or a mixture does, is left out, since the call
+    derives it again. A term that presents *constructor* under the same label
+    shows it only where *constructor* holds it as an alias too.
+    """
+    if not isinstance(term._expression.core(), Named) or term.label == constructor._default_label:
+        return False
+    if term is constructor or term.label != constructor.label:
+        return True
+    return isinstance(constructor._expression.core(), Named)
+
+
 def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = None) -> str:
     """The repr of the law or kernel *term*: a call of its public constructor, then its fixed paths.
 
@@ -311,8 +328,10 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
     2. *arguments*, the constructor's other arguments in its order;
     3. the component as ``component=`` where the constructor takes it as a
        keyword, as an atoms-based law does;
-    4. the label as ``label=`` where it differs from the constructor's default,
-       which repeats what the class states;
+    4. the label as ``label=`` where a caller gave it and it differs from the
+       constructor's default, which repeats what the class states; a label
+       the constructor derives from its arguments is left out
+       (:func:`_shows_label`);
     5. the event declaration as ``event_spec=`` where it differs from the default
        for the component.
 
@@ -344,7 +363,7 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
         positional.append(repr(component))
     elif component is not None and constructor._repr_component == "keyword":
         keywords.append(("component", repr(component)))
-    if term.label != constructor._default_label:
+    if _shows_label(term, constructor):
         keywords.append(("label", repr(term._displayed_label())))
     if declaration is not None:
         keywords.append(("event_spec", declaration))
@@ -608,7 +627,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
-    ``label=`` where the label differs from the default, as
+    ``label=`` where a caller gave a label other than the default, as
     ``Normal('mu', loc=0.0, scale=1.0, label='prior')``.
 
     Sampling and expectation capabilities are provided by the
