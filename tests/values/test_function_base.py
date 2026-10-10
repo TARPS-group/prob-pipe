@@ -1373,8 +1373,9 @@ class TestModuleReturnInference:
         result = method()
         expected = ordinary()
         assert method.output_spec is None
-        assert method.label == "Example.numbers"
-        assert result.label == method.output_label == "numbers"
+        assert method.label == method.output_label == "Example.numbers"
+        assert method._output_component == "numbers"
+        assert result.label == "Example.numbers()"
         assert type(result) is type(expected)
         assert result.spec == expected.spec
         assert result.value == expected.value == sequence
