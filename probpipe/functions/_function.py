@@ -344,14 +344,28 @@ def _value_arguments(
     function: Function, values: Mapping[str, Any], passed: frozenset[str]
 ) -> tuple[Expression, ...]:
     """Arguments in parameter order, using declared slot names for unnamed arrays."""
-    arguments = []
-    for ref in _binding.iter_input_refs(function._signature_info, values):
-        value = _binding.input_ref_value(values, ref)
-        if isinstance(value, TrackedTerm):
-            arguments.append(value._embedded_expression())
-        elif ref.subscript is not None or ref.parameter_name in passed:
-            arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
-    return tuple(arguments)
+    arguments = (
+        _argument_expression(_binding.input_ref_value(values, ref), ref, passed)
+        for ref in _binding.iter_input_refs(function._signature_info, values)
+    )
+    return tuple(argument for argument in arguments if argument is not None)
+
+
+def _argument_expression(
+    value: Any, ref: _binding.FunctionInputRef, passed: frozenset[str]
+) -> Expression | None:
+    """How a call's expression shows the argument *value* at *ref*, or ``None`` to omit it.
+
+    A tracked argument shows its expression. Any other value the caller
+    passed shows its value when it is a scalar, as ``2.0``, and its
+    parameter's name otherwise, as ``X``. A value the caller did not pass, such
+    as a parameter's default, is omitted.
+    """
+    if isinstance(value, TrackedTerm):
+        return value._embedded_expression()
+    if ref.subscript is not None or ref.parameter_name in passed:
+        return constant(value) if _is_scalar(value) else Named(ref.label)
+    return None
 
 
 def _result_identity(
@@ -433,10 +447,8 @@ def _lifted_expression(
             )
         elif _is_swept_scalar(value, ref, call_values):
             arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
-        elif isinstance(value, TrackedTerm):
-            arguments.append(value._embedded_expression())
-        elif ref.subscript is not None or ref.parameter_name in passed:
-            arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
+        elif (argument := _argument_expression(value, ref, passed)) is not None:
+            arguments.append(argument)
     return Applied(function.output_label, tuple(arguments))
 
 
