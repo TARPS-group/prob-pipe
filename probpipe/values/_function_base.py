@@ -788,8 +788,10 @@ class Function(Node, TrackedTerm, Annotated):
         type is inferred with the same component rule. Display aliases never
         change this default component. A named type hole is inferred independently for each call.
     output_label : str or None
-        Optional result alias. Without one, managed calls derive an application
-        expression. Aliases never affect mathematical declarations.
+        Optional result alias. Without one, a call on values labels a value
+        result by the application, as ``f(2.0)``, and a returned law or kernel
+        by the function's label, as ``f(y, mu)``. Aliases never affect
+        mathematical declarations.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -1302,9 +1304,10 @@ class Function(Node, TrackedTerm, Annotated):
         Returns
         -------
         TrackedTerm or Any
-            The result at the kind its declaration names, described by the
-            application or an explicit ``output_label``, with the call's
-            provenance. A broadcast
+            The result at the kind its declaration names, with the call's
+            provenance. It is labeled by an explicit ``output_label``, or else
+            by the application for a value and by the function's label for a
+            returned law or kernel. A broadcast
             returns the law of the results, and a sweep the batch of them on
             the swept levels. Under the ``raw`` control the result is its raw
             form, as its ``raw()`` gives it.
