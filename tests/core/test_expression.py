@@ -27,7 +27,9 @@ from probpipe import (
 from probpipe.core._expression import (
     _STORED_DEPTH,
     Applied,
+    AppliedValue,
     Collapse,
+    Collection,
     Conditioned,
     Draw,
     Expression,
@@ -223,6 +225,28 @@ class TestRendering:
     )
     def test_a_value_renders_in_full_as_its_label(self, expression, label):
         assert expression.render_label() == expression.render_notation() == label
+
+    @pytest.mark.parametrize("omitted", [False, True], ids=["every-member", "omitted-members"])
+    def test_a_collection_lists_its_members_notations(self, omitted):
+        collection = Collection(
+            (_named("prior", "mu"), Named("lik", Signature(("y",), ("mu",)))), omitted=omitted
+        )
+        label = "[prior(mu), lik(y | mu), …]" if omitted else "[prior(mu), lik(y | mu)]"
+        assert collection.render_label() == collection.render_notation() == label
+
+    def test_an_applied_value_reads_as_the_call(self):
+        value = AppliedValue("f", (Named("beta"), constant(2.0)))
+        assert value.render_label() == value.render_notation() == "f(beta, 2.0)"
+        assert Applied("f", value.arguments).render_label() == "f"
+
+    def test_a_collection_and_an_applied_value_collapse(self):
+        collection = Collection((_named("prior", "mu"),))
+        value = AppliedValue("f", (Named("beta"),))
+        probpipe.notation_config.max_depth = 1
+        with pytest.warns(UserWarning, match="max_depth=1"):
+            assert Indexed(collection, "row=0").render_notation(warn=True) == "[…][row=0]"
+        with pytest.warns(UserWarning, match="max_depth=1"):
+            assert Operator("+", (value, constant(1))).render_notation(warn=True) == "f + 1"
 
     def test_a_terms_own_signature_replaces_the_recorded_one(self):
         expression = Conditioned(_named("model", "y", "mu"), ("y",))

@@ -19,10 +19,15 @@ child nodes. No node holds a reference to a term. The node classes are these:
 5. :class:`Draw`: a draw from a law, as ``(y, mu) ~ model``;
 6. :class:`Applied`: a function applied to draws and values, as
    ``f(beta ~ model; y)``;
-7. :class:`Summary`: a summary of a law or a draw, as ``E[mu ~ prior]`` or
+7. :class:`AppliedValue`: the value a function's call returns, as
+   ``f(beta, 2.0)``;
+8. :class:`Summary`: a summary of a law or a draw, as ``E[mu ~ prior]`` or
    ``log prior(mu)``;
-8. :class:`Operator`: an operator applied to values, as ``2 * effect``;
-9. :class:`Indexed`: a selection of a batch, as ``(mu ~ prior)[sample=0]``.
+9. :class:`Operator`: an operator applied to values, as ``2 * effect``;
+10. :class:`Indexed`: a selection of a batch, as ``(mu ~ prior)[sample=0]``;
+11. :class:`Collection`: the members of a batch of laws or functions, as
+    ``[prior(mu), lik(y | mu)]``;
+12. :class:`Truncated`: a part that storage truncated, described below.
 
 Each node renders itself: it gives its label, its notation, and the text it
 collapses to, and it states the paths it holds fixed. A term reads the
@@ -65,7 +70,9 @@ __all__ = [
     "ELLIPSIS",
     "SCORE",
     "Applied",
+    "AppliedValue",
     "Collapse",
+    "Collection",
     "Conditioned",
     "Draw",
     "Expression",
@@ -633,7 +640,19 @@ class Product(Expression):
 
 @dataclass(frozen=True, slots=True)
 class Collection(Expression):
-    """A bounded presentation of an ordered collection of described terms."""
+    """The members of a batch of laws or functions, which displays as a bracketed list.
+
+    Its label lists each element's notation in brackets, separated by commas,
+    as ``[prior(mu), lik(y | mu)]``, and ends the list with ``…`` when the batch
+    has more members than the node holds. It collapses to ``[…]``.
+
+    Attributes
+    ----------
+    elements : tuple of Expression
+        The expressions of the members the node shows, in the batch's order.
+    omitted : bool
+        Whether the batch has members after those of :attr:`elements`.
+    """
 
     elements: tuple[Expression, ...]
     omitted: bool = False
@@ -647,14 +666,14 @@ class Collection(Expression):
         return self.elements
 
     def _collapsed(self) -> str:
-        return "[…]"
+        return f"[{ELLIPSIS}]"
 
     def _label(self, rendering: _Rendering, level: int) -> str:
         if rendering.beyond(level):
             return rendering.collapse(self)
         parts = [child._notation(rendering, level + 1, None) for child in self.elements]
         if self.omitted:
-            parts.append("…")
+            parts.append(ELLIPSIS)
         return "[" + ", ".join(parts) + "]"
 
 
@@ -858,7 +877,20 @@ class Applied(Expression):
 
 @dataclass(frozen=True, slots=True)
 class AppliedValue(Applied):
-    """A deterministic value described by a full function application."""
+    """The value a function's call returns, labeled by the call.
+
+    Its label and its notation are both the call, as ``f(beta, 2.0)``, where an
+    :class:`Applied` node's label is the function's label alone. It collapses
+    to the function's label.
+
+    Attributes
+    ----------
+    function : str
+        The function's label.
+    arguments : tuple of Expression
+        The arguments' expressions, in parameter order. A law or a function
+        shows its notation in the call, and a value shows its label.
+    """
 
     def _label(self, rendering: _Rendering, level: int) -> str:
         return self._notation(rendering, level, None)
