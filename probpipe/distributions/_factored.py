@@ -398,8 +398,9 @@ def _factor_graph(
                 raise ValueError(
                     f"the field {component!r} is produced by both factor "
                     f"{producers[component]} ({factors[producers[component]].label!r}) and "
-                    f"factor {index} ({factor.label!r}); rename one with with_path_names() or "
-                    f"declare its output with OutputSpec"
+                    f"factor {index} ({factor.label!r}); rename it in one of them with "
+                    f"with_path_names({{{component!r}: ...}}), or build one of them with "
+                    f"another component, as Normal('{component}_2', ...)"
                 )
             producers[component] = index
             component_specs[component] = spec
