@@ -412,7 +412,8 @@ def _lifted_expression(
         The arguments of the sweep *values* is a row of. An argument whose row
         value is not the call's is a row of a swept batch.
     passed : frozenset of str
-        The parameters the caller's arguments bind.
+        The parameters the caller's arguments bind, together with those the
+        Function's construction ``bind`` values bind.
 
     Returns
     -------
@@ -463,7 +464,8 @@ def _swept_expression(
 
     A sweep without a law keeps the call's *expression*, and ``None`` keeps
     the expression of the aggregate. *passed* names the parameters the
-    caller's arguments bind, which the lifted call shows.
+    caller's arguments and the construction ``bind`` values bind, which the
+    lifted call shows.
     """
     if plan is not None:
         return _lifted_expression(function, values, plan, passed=passed)
@@ -558,6 +560,7 @@ def _realized_point(
     controls: Mapping[str, Any],
     candidates: tuple[Any, ...],
     *,
+    passed: frozenset[str] | None = None,
     kind_error: type[Exception] = _result.ResultKindError,
 ) -> Any:
     """One point of a call realized by the route selected among *candidates*, as a term.
@@ -577,6 +580,10 @@ def _realized_point(
         The call's resolved controls, which planning and selection read.
     candidates : tuple
         The Function's routes, in selection order.
+    passed : frozenset of str or None
+        The parameters the call's arguments and the Function's construction
+        ``bind`` values bind, which the result's expression shows; ``None``
+        shows every argument in *values*.
     kind_error : type of Exception
         The error for a wrong overall return kind, passed to ``declared_term``.
 
@@ -598,7 +605,7 @@ def _realized_point(
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
-    label, expression = _result_identity(function, values)
+    label, expression = _result_identity(function, values, passed)
     term = _result.declared_term(value, result, label, kind_error=kind_error)
     return _expressed(_keeping_route_record(term, value), expression)
 
@@ -742,7 +749,7 @@ def _run_call(
                 route_records.append(_recorded_route_result(term, value))
             return term
         if candidates is not None:
-            return _realized_point(function, point_values, controls, candidates)
+            return _realized_point(function, point_values, controls, candidates, passed=passed)
         try:
             _, point_bindings = _bind_function_inputs(
                 function_name=function._label,
