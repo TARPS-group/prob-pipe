@@ -41,7 +41,7 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution, _constructor_label
+from ..distributions._distribution import Distribution, _class_label, _constructor_label
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -127,8 +127,8 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     data_dim : int
         Flattened per-row observation width the network was trained on (fixed
         by the simulator's per-draw output at training time).
-    label : str
-        The kernel's label.
+    label : str, optional
+        The kernel's label, the name of its public class by default.
     """
 
     #: The constructors take no component, so the repr shows none.
@@ -141,13 +141,12 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
-        label: str,
+        label: str | None = None,
     ):
-        # A subclass passes its own fixed label, which is its constructor's default.
         super().__init__(
             dict(prior.event_spec.components),
             OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
-            label=_constructor_label(self, None, label),
+            label=_constructor_label(self, label, _class_label(self)),
         )
         attributes = {
             "_approximator": approximator,
@@ -308,6 +307,30 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
     ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
     (Theis et al., 2016, arXiv:1511.01844). Pass raw integer-valued
     observations; the kernel owns the cell convention.
+
+    Parameters
+    ----------
+    approximator : ContinuousApproximator
+        The trained BayesFlow approximator whose standardizer and inference
+        network score the rows.
+    prior : Distribution
+        The prior the estimator was trained against, whose components are the
+        given slots.
+    simulator : ConditionalDistribution
+        The training simulator.
+    data_dim : int
+        The flattened width of one observation row the network was trained on.
+    label : str, optional
+        The kernel's label, ``BayesFlowLikelihood`` by default.
+    dequantized : bool, optional
+        Whether the flow was trained on jittered integer-valued observations,
+        so that scoring shifts the data to the unit-cell midpoint; ``False``
+        by default.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
     """
 
     def __init__(
@@ -325,7 +348,7 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
             prior,
             simulator,
             data_dim=data_dim,
-            label="BayesFlowLikelihood" if label is None else label,
+            label=label,
         )
         object.__setattr__(self, "_dequantized", dequantized)
 
@@ -381,6 +404,26 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
     discrete/continuous rows are fine) and has no minimum observation
     dimension -- the two cases where :class:`BayesFlowLikelihood`'s coupling
     flow needs, respectively, dequantization or a custom network.
+
+    Parameters
+    ----------
+    approximator : RatioApproximator
+        The trained BayesFlow ratio approximator whose classifier scores the
+        rows.
+    prior : Distribution
+        The prior the estimator was trained against, whose components are the
+        given slots.
+    simulator : ConditionalDistribution
+        The training simulator.
+    data_dim : int
+        The flattened width of one observation row the network was trained on.
+    label : str, optional
+        The kernel's label, ``BayesFlowRatio`` by default.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
     """
 
     def __init__(
@@ -397,7 +440,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
             prior,
             simulator,
             data_dim=data_dim,
-            label="BayesFlowRatio" if label is None else label,
+            label=label,
         )
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedRatioLaw:

@@ -242,7 +242,7 @@ class TestSurrogateContract:
     def test_repr(self, nle, nre):
         for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
             text = repr(kernel)
-            # The kernel's fixed label is its constructor's default, so the repr leaves it out.
+            # The kernel's label is its constructor's default, so the repr leaves it out.
             assert text == f"{cls}(theta_dim=2, data_dim=2, given=('a', 'b'))"
 
     def test_data_width_guard(self, nle):
@@ -278,6 +278,23 @@ class TestSurrogateContract:
         np.testing.assert_allclose(total, per, rtol=1e-5)
         # A (n, 1) column is the same dataset.
         np.testing.assert_allclose(total, float(_score(lik, theta, y3[:, None])), rtol=1e-6)
+
+
+@pytest.mark.parametrize("cls", [BayesFlowLikelihood, BayesFlowRatio])
+class TestTheLabel:
+    """The constructors need no trained network to set the label, so a stand-in serves."""
+
+    def test_the_label_defaults_to_the_class_name(self, cls):
+        kernel = cls(object(), _prior(), _SIM, data_dim=2)
+        assert kernel.label == cls.__name__
+        assert "label=" not in repr(kernel)
+
+    def test_a_given_label_is_shown(self, cls):
+        kernel = cls(object(), _prior(), _SIM, data_dim=2, label="mylik")
+        assert (kernel.label, kernel.notation) == ("mylik", "mylik(observation | a, b)")
+        assert repr(kernel) == (
+            f"{cls.__name__}(theta_dim=2, data_dim=2, given=('a', 'b'), label='mylik')"
+        )
 
 
 class TestConditioning:
