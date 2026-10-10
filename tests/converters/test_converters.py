@@ -1145,8 +1145,8 @@ class TestKDEDistribution:
         kde = KDEDistribution(samples, component="test_kde")
         assert repr(kde) == (
             "KDEDistribution(\n"
-            "    component='test_kde',\n"
             "    atoms=array(shape=(50,), dtype=float32),\n"
             "    kernel=GaussianKernel,\n"
+            "    component='test_kde',\n"
             ")"
         )

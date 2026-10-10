@@ -288,7 +288,7 @@ class TestDistributionRepr:
             def __init__(self):
                 super().__init__("x", OutputSpec(x=OpaqueSpec()))
 
-        assert repr(_NamedDist()) == "Distribution('x', component='x')"
+        assert repr(_NamedDist()) == "Distribution('x', label='x')"
 
     def test_a_whole_term_event_shows_its_component(self):
         from probpipe import Distribution
@@ -297,8 +297,8 @@ class TestDistributionRepr:
             def __init__(self):
                 super().__init__("x", OutputSpec(beta=OpaqueSpec()))
 
-        assert repr(Named()) == "Named('x', component='beta')"
-        assert repr(Named().with_label("y")) == "Named('y', component='beta')"
+        assert repr(Named()) == "Named('beta', label='x')"
+        assert repr(Named().with_label("y")) == "Named('beta', label='y')"
 
 
 class TestNotation:
@@ -317,10 +317,10 @@ class TestNotation:
         law = _DeclaredLaw("model", OutputSpec(theta=RecordSpec(y=(), mu=())))
         assert law.notation == "model(theta)"
 
-    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+    def test_str_returns_the_notation_and_the_repr_reads_as_the_constructor_call(self):
         prior = Normal("mu", 0.0, 1.0, label="prior")
         assert str(prior) == f"{prior}" == "prior(mu)"
-        assert repr(prior).startswith("Normal('prior', component='mu',")
+        assert repr(prior) == "Normal('mu', loc=0.0, scale=1.0, label='prior')"
 
     def test_a_label_of_several_words_is_grouped(self):
         law = Normal("x", 0.0, 1.0).with_label("my prior")

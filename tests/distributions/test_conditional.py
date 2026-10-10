@@ -659,10 +659,10 @@ class TestNotation:
         kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())), label="k")
         assert kernel.notation == "k(y, z | mu)"
 
-    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+    def test_str_returns_the_notation_and_the_repr_reads_as_the_constructor_call(self):
         glm = _kernel(given={"beta": SCALAR}, label="glm")
         assert str(glm) == "glm(y | beta)"
-        assert repr(glm).startswith("Kernel('glm', component='y', given=('beta',)")
+        assert repr(glm).startswith("Kernel('y', given=('beta',), label='glm'")
 
     def test_fixed_paths_follow_the_given_slots(self):
         glm = with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")

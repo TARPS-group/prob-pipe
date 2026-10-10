@@ -21,11 +21,9 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
-from ..core._expression import (
-    Signature,
-)
+from ..core._expression import Signature
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr, type_name
+from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -206,8 +204,9 @@ def _given_label(label: Any, default: str | None = None, *, owner: str | None = 
 def _constructor_label(term: Any, label: Any, default: str) -> str:
     """*label*, or *default* when it is ``None``, recording *default* as *term*'s default label.
 
-    The repr leaves out a label equal to the recorded default, as
-    :func:`_repr_label` states.
+    The repr leaves out a label equal to the recorded default, since that
+    label repeats what the class already states, as ``Normal('mu', ...)``
+    does (:func:`_law_repr`).
 
     Parameters
     ----------
@@ -231,16 +230,6 @@ def _constructor_label(term: Any, label: Any, default: str) -> str:
     given = _given_label(label, default, owner=public_class_name(type(term)))
     object.__setattr__(term, "_default_label", default)
     return given
-
-
-def _repr_label(term: Any) -> str | None:
-    """The label the repr of the law or kernel *term* shows: ``None`` for its default label.
-
-    A default label repeats what the class and the arguments already state, as
-    ``Normal('Normal', ...)`` would, so the repr shows a label only where a
-    caller or an operation gave one.
-    """
-    return None if term.label == term._default_label else term._displayed_label()
 
 
 #: The message for a selection of field paths that names none.
@@ -286,36 +275,73 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
     return component
 
 
-def _ordered_fields(
-    arguments: list[tuple[str, str]], event: list[tuple[str, str]], term: Any
-) -> list[tuple[str, str]]:
-    """The repr's fields: the component, the fixed paths, the *arguments*, then a declaration.
+def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = None) -> str:
+    """The repr of the law or kernel *term*: a call of its public constructor, then its fixed paths.
 
-    The paths the law or kernel *term* holds fixed show as ``fixed=('y',)``
-    after the component, or first when there is none, and only where it holds
-    any, so a conditioned law reads apart from an unconditioned one.
+    The call holds, in order:
+
+    1. the component of a whole-term event, first where the constructor takes it
+       first, as ``Normal('mu', ...)``;
+    2. *arguments*, the constructor's other arguments in its order;
+    3. the component as ``component=`` where the constructor takes it as a
+       keyword, as an atoms-based law does;
+    4. the label as ``label=`` where it differs from the constructor's default,
+       which repeats what the class states;
+    5. the event declaration as ``event_spec=`` where it differs from the default
+       for the component.
+
+    The paths *term* holds fixed follow as ``fixed=('y',)``, so a conditioned
+    law reads apart from an unconditioned one.
+
+    Parameters
+    ----------
+    term : Any
+        The law or kernel.
+    arguments : list of (str, str)
+        Each other argument's name and its formatted value.
+    constructor : Any, optional
+        The law or kernel whose class the call names and whose constructor's
+        default label and placement of the component the call follows, as a
+        law that presents another one names that one's class. It defaults to
+        *term*.
+
+    Returns
+    -------
+    str
+        The repr, which an enclosing repr lays out again where its line starts.
     """
+    constructor = term if constructor is None else constructor
+    component, declaration = term._event_repr_parts()
+    positional = []
+    keywords = list(arguments)
+    if component is not None and constructor._repr_component == "first":
+        positional.append(repr(component))
+    elif component is not None and constructor._repr_component == "keyword":
+        keywords.append(("component", repr(component)))
+    if term.label != constructor._default_label:
+        keywords.append(("label", repr(term._displayed_label())))
+    if declaration is not None:
+        keywords.append(("event_spec", declaration))
     paths = _fixed_paths(term)
-    fixed = [("fixed", format_names(paths))] if paths else []
-    if event and event[0][0] == "component":
-        return [*event, *fixed, *arguments]
-    return [*fixed, *arguments, *event]
+    if paths:
+        keywords.append(("fixed", format_names(paths)))
+    return call_repr(constructor._repr_class_name(), positional, keywords)
 
 
-def _event_repr_fields(declaration: OutputSpec) -> list[tuple[str, str]]:
-    """The repr's fields for the event *declaration*: its component, or the declaration.
+def _event_repr_parts(declaration: OutputSpec) -> tuple[str | None, str | None]:
+    """The component of the event *declaration*, and its repr where it is not the default.
 
-    A whole term under one component shows as ``component='mu'``, an exposed
-    record shows nothing, since the record's fields are the components, and any
-    other packaging shows the declaration as ``event_spec=``.
+    A whole term has its component, and an exposed term has none, since its
+    components are the fields of what it exposes. The declaration is the default
+    when it is ``OutputSpec.default`` of its type under its component, or the
+    exposed form of its type, and the repr then leaves it out.
     """
+    component = declaration._component_name
     spec = declaration.spec
-    if isinstance(spec, RecordSpec) and declaration == OutputSpec(spec):
-        return []
-    components = tuple(declaration.components)
-    if len(components) == 1 and declaration == OutputSpec.default(spec, component=components[0]):
-        return [("component", repr(components[0]))]
-    return [("event_spec", repr(declaration))]
+    default = (
+        OutputSpec(spec) if component is None else OutputSpec.default(spec, component=component)
+    )
+    return component, (None if declaration == default else repr(declaration))
 
 
 def _declares_numeric_event(value: Any) -> bool:
@@ -555,8 +581,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ``p``, and a joint that ``*`` composes is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
-    ``prior(mu)``, and the repr shows the label first, leaving out a label equal
-    to the constructor's default, as ``Normal(component='mu', loc=0.0, scale=1.0)``.
+    ``prior(mu)``, and the repr reads as a call of the constructor, with
+    ``label=`` where the label differs from the default, as
+    ``Normal('mu', loc=0.0, scale=1.0, label='prior')``.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.SupportsSampling` protocol.
@@ -594,6 +621,12 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     #: The label the constructor gives when it is given none, which the repr leaves out;
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
+
+    #: Where the constructor takes the component of a whole-term event, which the
+    #: repr follows: ``"first"`` as its first argument, ``"keyword"`` as
+    #: ``component=`` after its other arguments, or ``None`` for a constructor that
+    #: takes no component.
+    _repr_component: ClassVar[str | None] = "first"
 
     def __init__(
         self,
@@ -1182,30 +1215,32 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        """The public class, the label, the component, the fixed paths, and the family parameters.
+        """A call of the law's public constructor, followed by the paths the law holds fixed.
 
-        A whole-term event shows its component, as ``component='mu'``, an
-        exposed record its fields in no field of its own, and any other
-        packaging its declaration, as ``event_spec=...``. The paths the law
-        holds fixed follow the component, as ``fixed=('y',)``.
+        The component of a whole-term event and the family parameters come
+        first, as the constructor takes them, then ``label=`` where the label
+        differs from the constructor's default, as
+        ``Normal('mu', loc=0.0, scale=1.0, label='prior')``, and
+        ``event_spec=`` where the declaration differs from the default. The
+        paths the law holds fixed follow as ``fixed=('y',)``.
         """
-        return term_repr(
-            self._repr_class_name(),
-            _repr_label(self),
-            _ordered_fields(self._repr_arguments(), self._event_repr_arguments(), self),
-        )
+        return _law_repr(self, self._repr_arguments())
 
     def _repr_class_name(self) -> str:
         """The first public class in this law's method-resolution order, which the repr names."""
         return public_class_name(type(self))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The family parameters the repr shows, each by name and formatted value; none here."""
+        """The constructor's arguments the repr shows other than the component, the label, and the declaration.
+
+        Each is a name and a formatted value, in the constructor's order. The
+        base class shows none.
+        """
         return []
 
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The component of the event, or its declaration, as :func:`_event_repr_fields` gives it."""
-        return _event_repr_fields(self.event_spec)
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """The component of the event and the declaration's repr, as :func:`_event_repr_parts` gives them."""
+        return _event_repr_parts(self.event_spec)
 
 
 class NumericDistribution(Distribution):

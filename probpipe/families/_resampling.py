@@ -1054,6 +1054,9 @@ class KDEDistribution(
     1.8056
     """
 
+    #: The constructor takes the atoms first and the component as a keyword.
+    _repr_component: ClassVar[str | None] = "keyword"
+
     def __init__(
         self,
         atoms: Array | NumericRecordBatch,

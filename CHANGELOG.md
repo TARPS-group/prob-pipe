@@ -43,12 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__name__`, and `p` for a lambda. A subclass of `Distribution` or
   `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
   as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
-  a `RecordSpec` no longer takes the label as its component. The repr shows
-  the label and then the component, as
-  `Normal('prior', component='mu', loc=0.0, scale=1.0)`, and leaves out a
-  label equal to the constructor's default, the class name or `p`, as
-  `Normal(component='mu', loc=0.0, scale=1.0)`; a family
-  pickled before this change loads to the same law. Lightweight provenance
+  a `RecordSpec` no longer takes the label as its component. The repr of a law
+  or a kernel reads as a call of its constructor, as
+  `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
+  equal to the constructor's default, the class name or `p`, as
+  `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
+  nothing fixed evaluates to an equal law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default
   label stay two ancestors.
 - **A value computed from a law is labeled by that value in probability
@@ -105,9 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
   inference method's included, and a marginal, a view, and `raw()` keep them.
-  The repr shows them after the component, as
-  `Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)` or
-  `EmpiricalDistribution('model', fixed=('y',), atoms=...)`.
+  The repr shows them after the constructor call, as
+  `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
+  `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
   The posterior an inference method returns, which the result's provenance
   keeps as a parent with the method's own record, is recorded under the
   result's label, as `model`, where it was recorded as `posterior`.

@@ -484,6 +484,9 @@ class MixtureDistribution(Distribution):
 
     _capability_table: ClassVar = _MIXTURE_CAPABILITIES
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _components: tuple[Distribution, ...]
     _weights: Array
 

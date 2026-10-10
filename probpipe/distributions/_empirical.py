@@ -8,7 +8,7 @@ Provides:
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -539,6 +539,9 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     """
 
     _capability_table = _MOMENT_CAPABILITIES
+
+    #: The constructor takes the atoms first and the component as a keyword.
+    _repr_component: ClassVar[str | None] = "keyword"
 
     #: Derived from the stored atoms rather than transported.
     _transient_state = ("_rows_cache",)
