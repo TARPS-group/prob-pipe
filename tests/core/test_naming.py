@@ -153,54 +153,75 @@ class TestLabelsAreKept:
 class TestWhichKindsRequireALabel:
     """A label is required where nothing else identifies the value.
 
-    A record has fields and a batch has levels, but neither says *which* record
-    or batch this is. Where the class can derive something meaningful — a
-    callable's own ``__name__`` — it does at construction.
+    A record derives ``record(field,...)`` from its fields, a batch of records
+    from its element spec's fields, and a batch of functions or laws from its
+    members, so each of those requires a label only when it has nothing to
+    derive one from. An array and an opaque value carry nothing to describe
+    them, so they always require one.
     """
 
     @pytest.mark.parametrize(
-        "build",
+        ("build", "match"),
         [
-            pytest.param(lambda: Record(), id="Record"),
-            pytest.param(lambda: NumericRecord(), id="NumericRecord"),
-            pytest.param(lambda: Opaque(label=object()), id="Opaque"),
             pytest.param(
-                lambda: NumericArrayBatch(
-                    "lvl",
-                    element_spec=NumericArraySpec(shape=()),
-                    label=jnp.arange(4.0),
-                ),
+                lambda: Record({}),
+                r"^cannot derive a default label for a Record with no fields",
+                id="Record",
+            ),
+            pytest.param(
+                lambda: NumericRecord({}),
+                r"^cannot derive a default label for a Record with no fields",
+                id="NumericRecord",
+            ),
+            pytest.param(
+                lambda: NumericArray(jnp.ones(3)),
+                r"missing 1 required keyword-only argument: 'label'",
+                id="NumericArray",
+            ),
+            pytest.param(
+                lambda: Opaque(object()),
+                r"missing 1 required keyword-only argument: 'label'",
+                id="Opaque",
+            ),
+            pytest.param(
+                lambda: NumericArrayBatch(jnp.arange(4.0), "lvl"),
+                r"missing 1 required keyword-only argument: 'label'",
                 id="NumericArrayBatch",
+            ),
+            pytest.param(
+                lambda: OpaqueBatch(["north"], "site"),
+                r"missing 1 required keyword-only argument: 'label'",
+                id="OpaqueBatch",
+            ),
+            pytest.param(
+                lambda: FunctionBatch([], "variant"),
+                r"^cannot derive a default label for an empty FunctionBatch",
+                id="FunctionBatch",
             ),
         ],
     )
-    def test_a_label_is_required(self, build):
-        with pytest.raises(TypeError):
+    def test_a_label_is_required(self, build, match):
+        with pytest.raises(TypeError, match=match):
             build()
 
-    def test_a_numeric_array_requires_a_label(self):
-        """It carries no fields to describe it, so a class-name default would
-        label every array in a pipeline alike."""
-        with pytest.raises(TypeError, match="label"):
-            NumericArray(1.0)
-
-    def test_a_lone_value_is_not_enough_for_a_numeric_array(self):
-        """The label comes first, so a single argument is the label and the value
-        is what the refusal asks for."""
-        with pytest.raises(TypeError, match="value"):
-            NumericArray(label=jnp.arange(3.0))
+    @pytest.mark.parametrize(
+        ("build", "label"),
+        [
+            pytest.param(lambda: Record({"a": 1.0, "b": 2.0}), "record(a,b)", id="Record"),
+            pytest.param(
+                lambda: RecordBatch({"a": jnp.zeros(3)}, "draw"), "record(a)", id="RecordBatch"
+            ),
+            pytest.param(lambda: FunctionBatch([abs], "variant"), "[abs(x)]", id="FunctionBatch"),
+        ],
+    )
+    def test_a_structured_value_derives_its_label(self, build, label):
+        assert build().label == label
 
     def test_a_function_takes_its_callables_name(self):
         def predict():
             return 1.0
 
-        assert (
-            Function(
-                predict,
-                label="predict",
-            ).label
-            == "predict"
-        )
+        assert Function(predict).label == "predict"
 
 
 class TestADerivedLabelSaysSo:
