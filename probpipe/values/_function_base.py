@@ -1125,7 +1125,7 @@ class Function(Node, TrackedTerm, Annotated):
     def _store_expression(self, expression: Expression) -> None:
         """Store *expression* and its label, which the function's Python names follow.
 
-        The output label and its declaration are kept.
+        Explicit output aliases and the output declaration are kept.
         """
         super()._store_expression(expression)
         object.__setattr__(self, "__name__", self._label)
@@ -1241,8 +1241,9 @@ class Function(Node, TrackedTerm, Annotated):
         Returns
         -------
         TrackedTerm or Any
-            The result at the kind its declaration names, labeled by
-            ``output_label`` and carrying the call's provenance. A broadcast
+            The result at the kind its declaration names, described by the
+            application or an explicit ``output_label``, with the call's
+            provenance. A broadcast
             returns the law of the results, and a sweep the batch of them on
             the swept levels. Under the ``raw`` control the result is its raw
             form, as its ``raw()`` gives it.
@@ -1287,7 +1288,7 @@ class Function(Node, TrackedTerm, Annotated):
     def __repr__(self) -> str:
         """The public class, the label, the parameters, and the declarations set on the function.
 
-        The result label is shown where it differs from the function's own.
+        An explicit result alias is shown when one was supplied.
         """
         return term_repr(
             public_class_name(type(self)), self._displayed_label(), self._repr_arguments()
