@@ -266,7 +266,7 @@ class TestConstruction:
         vec = nr.to_vector()
         assert vec.shape == (4,)
         assert vec.dtype == jnp.bfloat16
-        assert NumericRecord.from_vector("nr", tpl, vec) == nr
+        assert NumericRecord.from_vector(tpl, vec, label="nr") == nr
 
     def test_dtype_pinned_vector_round_trip(self):
         # A dtype-pinned (int32) field must round-trip: to_vector promotes to a
@@ -284,7 +284,7 @@ class TestConstruction:
             event_template=tpl,
             label="nr",
         )
-        back = NumericRecord.from_vector("nr", nr.event_template, nr.to_vector())
+        back = NumericRecord.from_vector(nr.event_template, nr.to_vector(), label="nr")
         assert back["k"].dtype == jnp.int32
         assert list(np.asarray(back["k"])) == [1, 2, 3]
         assert back == nr
@@ -328,7 +328,7 @@ class TestToVectorFromVector:
     def test_unflatten_with_event_template(self):
         tpl = RecordSpec(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
-        nr = NumericRecord.from_vector("nr", tpl, flat)
+        nr = NumericRecord.from_vector(tpl, flat, label="nr")
         assert isinstance(nr, NumericRecord)
         np.testing.assert_allclose(nr["a"], 1.0)
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
@@ -340,7 +340,7 @@ class TestToVectorFromVector:
             label="nr",
         )
         flat = nr.to_vector()
-        nr2 = NumericRecord.from_vector("nr2", tpl, flat)
+        nr2 = NumericRecord.from_vector(tpl, flat, label="nr2")
         np.testing.assert_allclose(float(nr2["r"]), 1.8)
         np.testing.assert_allclose(float(nr2["K"]), 70.0)
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
@@ -351,7 +351,7 @@ class TestToVectorFromVector:
         inner_tpl = NumericRecordSpec(x=(), y=(2,))
         outer_tpl = NumericRecordSpec(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
-        nr = NumericRecord.from_vector("nr", outer_tpl, flat)
+        nr = NumericRecord.from_vector(outer_tpl, flat, label="nr")
         assert isinstance(nr.at_path("params"), NumericRecord)
         np.testing.assert_allclose(nr["params/x"], 0.0)
         np.testing.assert_allclose(nr["params/y"], [1.0, 2.0])
@@ -363,6 +363,15 @@ class TestToVectorFromVector:
             label="nr",
         )
         assert nr.vector_size == 11
+
+    def test_from_vector_derives_the_label_from_the_top_level_fields(self):
+        tpl = RecordSpec(a=(), b=RecordSpec(x=(), y=()))
+        nr = NumericRecord.from_vector(tpl, jnp.arange(3.0))
+        assert nr.label == "record(a,b)"
+
+    def test_from_vector_takes_the_label_as_a_keyword(self):
+        nr = NumericRecord.from_vector(spec=RecordSpec(a=()), vec=jnp.ones(1), label="theta")
+        assert nr.label == "theta"
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +606,21 @@ class TestConstructionMessages:
             match=r"^NumericRecord takes the fields first .* write NumericRecord\(fields, label='nr'\)$",
         ):
             NumericRecord("nr", {"a": 1.0})
+
+    def test_from_vector_in_the_label_first_form_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericRecord\.from_vector takes the spec first and the label as the keyword "
+                r"label, but got the string 'nr' as the spec; write "
+                r"NumericRecord\.from_vector\(spec, vec, label='nr'\)$"
+            ),
+        ):
+            NumericRecord.from_vector("nr", RecordSpec(a=()), jnp.ones(1))
+
+    def test_from_vector_without_fields_or_label_is_refused(self):
+        with pytest.raises(TypeError, match=r"^cannot derive a default label .* pass label="):
+            NumericRecord.from_vector(RecordSpec(), jnp.zeros(0))
 
     def test_fields_that_are_not_a_mapping_are_refused_with_their_type(self):
         with pytest.raises(

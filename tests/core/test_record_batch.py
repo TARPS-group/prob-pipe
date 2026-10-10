@@ -319,7 +319,7 @@ class TestLeafKeyedFieldColumns:
     def test_a_nested_template_round_trips_through_a_flat_matrix(self):
         template = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
         batch = NumericRecordBatch.from_vector(
-            "post", template, jnp.arange(15.0).reshape(5, 3), level_names="draw"
+            template, jnp.arange(15.0).reshape(5, 3), level_names="draw", label="post"
         )
         assert tuple(batch.event_template.keys()) == ("outer/a", "outer/b", "m")
         assert batch["outer/a"].shape == (5,)
@@ -1367,20 +1367,44 @@ class TestFlatLayout:
     def test_round_trip_through_a_vector(self):
         batch = nested_batch()
         rebuilt = NumericRecordBatch.from_vector(
-            batch.label, batch.event_template, batch.to_vector(), level_names="draw"
+            batch.event_template, batch.to_vector(), level_names="draw", label=batch.label
         )
         assert rebuilt == batch
 
     def test_from_vector_refuses_an_unbatched_vector(self):
         with pytest.raises(TypeError, match=r"NumericRecord\.from_vector"):
             NumericRecordBatch.from_vector(
-                "v", RecordSpec(x=(2,)), jnp.zeros(2), level_names="draw"
+                RecordSpec(x=(2,)), jnp.zeros(2), level_names="draw", label="v"
             )
 
     def test_from_vector_checks_the_trailing_axis(self):
         with pytest.raises(ValueError, match="the trailing axis is 3, expected 2"):
             NumericRecordBatch.from_vector(
-                "v", RecordSpec(x=(2,)), jnp.zeros((5, 3)), level_names="draw"
+                RecordSpec(x=(2,)), jnp.zeros((5, 3)), level_names="draw", label="v"
+            )
+
+    def test_from_vector_derives_the_label_from_the_top_level_fields(self):
+        template = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
+        batch = NumericRecordBatch.from_vector(template, jnp.zeros((5, 3)), level_names="draw")
+        assert batch.label == "record(outer,m)"
+
+    def test_from_vector_takes_the_label_as_a_keyword(self):
+        batch = NumericRecordBatch.from_vector(
+            spec=RecordSpec(x=()), vec=jnp.zeros((5, 1)), level_names="draw", label="post"
+        )
+        assert batch.label == "post"
+
+    def test_from_vector_in_the_label_first_form_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericRecordBatch\.from_vector takes the spec first and the label as the "
+                r"keyword label, but got the string 'post' as the spec; write "
+                r"NumericRecordBatch\.from_vector\(spec, vec, label='post'\)$"
+            ),
+        ):
+            NumericRecordBatch.from_vector(
+                "post", RecordSpec(x=()), jnp.zeros((5, 1)), level_names="draw"
             )
 
     def test_a_multi_level_batch_keeps_its_levels_as_leading_axes(self):
@@ -1405,7 +1429,7 @@ class TestFlatLayout:
             label="post",
         )
         rebuilt = NumericRecordBatch.from_vector(
-            "post", batch.event_template, batch.to_vector(), level_names=("chain", "draw")
+            batch.event_template, batch.to_vector(), level_names=("chain", "draw"), label="post"
         )
         assert rebuilt == batch
 
@@ -1427,7 +1451,7 @@ class TestFlatLayout:
         )
         assert batch.to_vector().dtype == jnp.float32  # the promotion
         rebuilt = NumericRecordBatch.from_vector(
-            "b", batch.event_template, batch.to_vector(), level_names="draw"
+            batch.event_template, batch.to_vector(), level_names="draw", label="b"
         )
         assert rebuilt["i"].dtype == jnp.int32
         assert rebuilt["f"].dtype == jnp.float32
@@ -1439,7 +1463,7 @@ class TestFlatLayout:
         template = RecordSpec(x=(2,))
 
         batch = NumericRecordBatch.from_vector(
-            "v", template, jnp.zeros((4, 5, 2)), level_names="draw"
+            template, jnp.zeros((4, 5, 2)), level_names="draw", label="v"
         )
 
         assert batch.level_names == ("draw",)
@@ -1450,7 +1474,7 @@ class TestFlatLayout:
         template = RecordSpec(x=(2,))
 
         batch = NumericRecordBatch.from_vector(
-            "v", template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw")
+            template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw"), label="v"
         )
 
         assert batch.axis_groups == ((4,), (5,))
@@ -1459,7 +1483,7 @@ class TestFlatLayout:
         template = RecordSpec(x=(2,))
         with pytest.raises(ValueError, match=r"got batch shape \(4, 5\) but 3 level names"):
             NumericRecordBatch.from_vector(
-                "v", template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw", "extra")
+                template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw", "extra"), label="v"
             )
 
     def test_to_vector_on_an_empty_selection(self):

@@ -28,7 +28,7 @@ from ._numeric import Numeric
 from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
-from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm
+from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm, refuses_label_first
 
 __all__ = ["NumericArray"]
 
@@ -251,7 +251,8 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return jnp.reshape(self.as_jax(), -1)
 
     @classmethod
-    def from_vector(cls, label: str, spec: NumericArraySpec, vec: Any) -> NumericArray:
+    @refuses_label_first("spec", then=("vec",))
+    def from_vector(cls, spec: NumericArraySpec, vec: Any, *, label: str) -> NumericArray:
         """Reconstruct a single array from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: reshapes *vec* to the shape
@@ -262,13 +263,14 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
         Parameters
         ----------
-        label : str
-            The reconstructed array's label.
         spec : NumericArraySpec
             The declaration supplying the shape and dtype, with every dimension
             bound.
         vec : Array
             A vector of shape ``(spec.vector_size,)``, one unbatched value.
+        label : str
+            Keyword-only and required, with no default, since a raw array's data
+            cannot identify the value.
 
         Returns
         -------
@@ -278,8 +280,10 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         Raises
         ------
         TypeError
-            If *vec* is not one-dimensional; a batch of vectors belongs to
-            :class:`~probpipe.NumericArrayBatch`.
+            If *vec* is not one-dimensional, since a batch of vectors belongs to
+            :class:`~probpipe.NumericArrayBatch`; if *label* is omitted; or if
+            *spec* is a string, which is a label passed first in the earlier
+            form.
         ValueError
             If *spec* has unbound dimensions, or the vector's length is not
             ``spec.vector_size``.

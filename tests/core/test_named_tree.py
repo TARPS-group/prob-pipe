@@ -762,19 +762,19 @@ class TestValueLevelEntryPoints:
             label="mine",
         )
         assert list(r.keys()) == ["a", "b"]  # the label is positional-only, not a field
-        rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
+        rebuilt = Record.from_field_values(r.event_template, r.values(), label=r.label)
         assert rebuilt == r
         assert rebuilt.label == "mine"
 
     def test_from_field_values_numeric_template_promotes(self):
         tpl = RecordSpec(a=(), b=(2,))
-        rebuilt = Record.from_field_values("v", tpl, [jnp.array(1.0), jnp.zeros(2)])
+        rebuilt = Record.from_field_values(tpl, [jnp.array(1.0), jnp.zeros(2)], label="v")
         assert type(rebuilt) is NumericRecord
         assert rebuilt.event_template is tpl
 
     def test_from_field_values_count_mismatch(self):
         with pytest.raises(ValueError, match="expected"):
-            Record.from_field_values("v", RecordSpec(a=(), b=()), [1.0])
+            Record.from_field_values(RecordSpec(a=(), b=()), [1.0], label="v")
 
     def test_numeric_record_from_vector_round_trip(self):
         nr = NumericRecord(
@@ -787,7 +787,7 @@ class TestValueLevelEntryPoints:
             },
             label="nr",
         )
-        back = NumericRecord.from_vector("mine", nr.event_template, nr.to_vector())
+        back = NumericRecord.from_vector(nr.event_template, nr.to_vector(), label="mine")
         assert back == nr
         assert back.label == "mine"
 
@@ -797,7 +797,7 @@ class TestValueLevelEntryPoints:
             label="nr",
         )
         with pytest.raises(TypeError, match="1-D"):
-            NumericRecord.from_vector("v", nr.event_template, jnp.ones((4, 3)))
+            NumericRecord.from_vector(nr.event_template, jnp.ones((4, 3)), label="v")
 
 
 def test_a_merge_names_the_fields_both_sides_have():

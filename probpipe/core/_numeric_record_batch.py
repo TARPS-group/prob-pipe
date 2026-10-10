@@ -43,6 +43,7 @@ from ._record_batch import (
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
+from .tracked import refuses_label_first
 
 __all__ = ["NumericRecordBatch"]
 
@@ -229,21 +230,20 @@ class NumericRecordBatch(RecordBatch):
         )
 
     @classmethod
+    @refuses_label_first("spec", then=("vec",))
     def from_vector(
         cls,
-        label: str,
         spec: NumericRecordSpec,
         vec: Array,
         *,
         level_names: NamesLike,
         axes_per_level: AxisCountsLike | None = None,
+        label: str | None = None,
     ) -> Self:
         """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
 
         Parameters
         ----------
-        label : str
-            The reconstructed batch's label.
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
             Every leaf must be a NumericArraySpec.
@@ -261,6 +261,10 @@ class NumericRecordBatch(RecordBatch):
             names take one axis each. The first is why a draw of several axes
             reconstructs without naming each: a ``sample_shape`` is one multiplicity
             however many axes it spans.
+        label : str or None
+            Keyword-only. The reconstructed batch's label; ``None``, the default,
+            derives ``record(field,...)`` from the spec's top-level fields, as the
+            constructor does.
 
         Returns
         -------
@@ -270,8 +274,11 @@ class NumericRecordBatch(RecordBatch):
         Raises
         ------
         TypeError
-            If the spec contains a non-array leaf, or *vec* has no batch
-            axis — reconstruct a single value with ``NumericRecord.from_vector``.
+            If the spec contains a non-array leaf; if *vec* has no batch
+            axis — reconstruct a single value with ``NumericRecord.from_vector``;
+            if *label* is omitted and the spec has no fields to derive it from;
+            or if *spec* is a string, which is a label passed first in the
+            earlier form.
         ValueError
             If the trailing axis is not ``spec.vector_size``, or if the level
             names do not account for *vec*'s leading axes.
@@ -290,7 +297,7 @@ class NumericRecordBatch(RecordBatch):
         ...     label="post",
         ... )
         >>> rebuilt = NumericRecordBatch.from_vector(
-        ...     "post", spec, batch.to_vector(), level_names=("chain", "draw"))
+        ...     spec, batch.to_vector(), level_names=("chain", "draw"), label="post")
         >>> rebuilt.batch_shape
         (4, 5)
         """

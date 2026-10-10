@@ -1290,27 +1290,36 @@ class TestTheFlatVector:
             spec=spec,
             label="x",
         )
-        rebuilt = NumericArray.from_vector("y", spec, x.to_vector())
+        rebuilt = NumericArray.from_vector(spec, x.to_vector(), label="y")
         assert rebuilt.label == "y"
         assert rebuilt.spec is spec
         np.testing.assert_array_equal(rebuilt.value, x.value)
 
     def test_from_vector_casts_to_the_declared_dtype(self):
         spec = NumericArraySpec((3,), jnp.int32)
-        rebuilt = NumericArray.from_vector("n", spec, jnp.array([1.0, 2.0, 3.0]))
+        rebuilt = NumericArray.from_vector(spec, jnp.array([1.0, 2.0, 3.0]), label="n")
         assert rebuilt.dtype == np.dtype("int32")
 
     def test_from_vector_refuses_a_batch_of_vectors(self):
         with pytest.raises(TypeError, match="1-D vector"):
-            NumericArray.from_vector("x", NumericArraySpec((2,)), jnp.zeros((4, 2)))
+            NumericArray.from_vector(NumericArraySpec((2,)), jnp.zeros((4, 2)), label="x")
 
     def test_from_vector_refuses_the_wrong_length(self):
         with pytest.raises(ValueError, match="expected vector_size=6"):
-            NumericArray.from_vector("x", NumericArraySpec((2, 3)), jnp.zeros(5))
+            NumericArray.from_vector(NumericArraySpec((2, 3)), jnp.zeros(5), label="x")
 
     def test_from_vector_needs_bound_dimensions(self):
         with pytest.raises(ValueError):
-            NumericArray.from_vector("x", NumericArraySpec(("n",)), jnp.zeros(3))
+            NumericArray.from_vector(NumericArraySpec(("n",)), jnp.zeros(3), label="x")
+
+    def test_from_vector_takes_the_label_as_a_keyword(self):
+        rebuilt = NumericArray.from_vector(spec=NumericArraySpec((2,)), vec=jnp.ones(2), label="w")
+        assert rebuilt.label == "w"
+
+    def test_from_vector_requires_the_label(self):
+        """A raw array's data cannot identify the value, so there is no default."""
+        with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'label'"):
+            NumericArray.from_vector(NumericArraySpec((2,)), jnp.ones(2))  # type: ignore[call-arg]
 
 
 class TestTheLabelFirstFormIsRefusedWithAHint:
@@ -1339,6 +1348,17 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
             match=r"write NumericArrayBatch\(values, level_names, label='x'\)$",
         ):
             NumericArrayBatch("x", jnp.ones(3), "draw")
+
+    def test_from_vector(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericArray\.from_vector takes the spec first and the label as the keyword "
+                r"label, but got the string 'x' as the spec; write "
+                r"NumericArray\.from_vector\(spec, vec, label='x'\)$"
+            ),
+        ):
+            NumericArray.from_vector("x", NumericArraySpec((2,)), jnp.ones(2))
 
 
 class TestARebuiltValueComputes:

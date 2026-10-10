@@ -226,8 +226,14 @@ class TestConstruction:
         assert outer["params/x"] == 1.0
 
     def test_from_dict(self):
-        v = Record.from_dict("r", {"a": 1.0, "b": 2.0})
+        v = Record.from_dict({"a": 1.0, "b": 2.0}, label="r")
         assert v.fields == ("a", "b")
+        assert v.label == "r"
+
+    def test_from_dict_derives_the_label_from_the_top_level_fields(self):
+        v = Record.from_dict({"a": 1.0, "b": {"c": 2.0}})
+        assert v.label == "record(a,b)"
+        assert v == Record({"a": 1.0, "b": {"c": 2.0}})
 
     def test_list_input(self):
         v = Record(
@@ -665,7 +671,7 @@ class TestNumericAPIOnRecord:
             {"a": 1.0, "label": "x"},
             label="r",
         )
-        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.event_template, v.values(), label=v.label) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
@@ -708,7 +714,7 @@ class TestGeneralDecomposition:
             {"x": jnp.array([1.0, 2.0]), "label": "horseshoe", "count": 3},
             label="r",
         )
-        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.event_template, v.values(), label=v.label) == v
 
     def test_roundtrip_with_backend_leaf(self):
         # A native backend leaf (xarray) round-trips through
@@ -725,7 +731,7 @@ class TestGeneralDecomposition:
         )
         assert isinstance(v, NumericRecord)
         assert isinstance(v.event_template, NumericRecordSpec)
-        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.event_template, v.values(), label=v.label)
         assert type(rebuilt) is type(v)
         assert rebuilt.raw("x") is da
         assert rebuilt == v
@@ -739,7 +745,7 @@ class TestGeneralDecomposition:
             event_template=RecordSpec(a=(), b=()),
             label="r",
         )
-        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.event_template, v.values(), label=v.label)
         assert rebuilt == v
         assert float(rebuilt["a"]) == 1.0
         assert float(rebuilt["b"]) == 2.0
@@ -757,7 +763,7 @@ class TestGeneralDecomposition:
             },
             label="mine",
         )
-        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.event_template, v.values(), label=v.label)
         assert rebuilt.label == "mine"
 
     def test_numeric_record_roundtrip(self):
@@ -773,7 +779,7 @@ class TestGeneralDecomposition:
             },
             label="nr",
         )
-        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.event_template, v.values(), label=v.label)
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
         assert isinstance(rebuilt.at_path("b"), NumericRecord)
@@ -790,7 +796,17 @@ class TestGeneralDecomposition:
             },
             label="r",
         )
-        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.event_template, v.values(), label=v.label) == v
+
+    def test_from_field_values_derives_the_label_from_the_top_level_fields(self):
+        template = RecordSpec(a=(), b=RecordSpec(c=(), d=()))
+        rebuilt = Record.from_field_values(template, [1.0, 2.0, 3.0])
+        assert rebuilt.label == "record(a,b)"
+        assert rebuilt.at_path("b").label == "b"
+
+    def test_from_field_values_takes_the_label_as_a_keyword(self):
+        rebuilt = Record.from_field_values(template=RecordSpec(a=()), values=[1.0], label="r")
+        assert rebuilt.label == "r"
 
     def test_wrong_leaf_count_raises(self):
         v = Record(
@@ -798,7 +814,7 @@ class TestGeneralDecomposition:
             label="r",
         )
         with pytest.raises(ValueError, match="expected 2"):
-            Record.from_field_values("v", v.event_template, [1.0])
+            Record.from_field_values(v.event_template, [1.0], label="v")
 
     def test_jax_pytree_roundtrip_still_works(self):
         # Record stays a registered pytree; the JAX path round-trips via
@@ -2158,6 +2174,32 @@ class TestConstructionMessages:
             ),
         ):
             build()
+
+    def test_from_dict_in_the_label_first_form_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^Record\.from_dict takes the fields first and the label as the keyword label, "
+                r"but got the string 'r' as the fields; write Record\.from_dict\(fields, "
+                r"label='r'\)$"
+            ),
+        ):
+            Record.from_dict("r", {"a": 1.0})
+
+    def test_from_field_values_in_the_label_first_form_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^Record\.from_field_values takes the template first and the label as the "
+                r"keyword label, but got the string 'r' as the template; write "
+                r"Record\.from_field_values\(template, values, label='r'\)$"
+            ),
+        ):
+            Record.from_field_values("r", RecordSpec(a=()), [1.0])
+
+    def test_from_field_values_without_fields_or_label_is_refused(self):
+        with pytest.raises(TypeError, match=r"^cannot derive a default label .* pass label="):
+            Record.from_field_values(RecordSpec(), [])
 
     def test_fields_that_are_not_a_mapping_are_refused_with_their_type(self):
         with pytest.raises(

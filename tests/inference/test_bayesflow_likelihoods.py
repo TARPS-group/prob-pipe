@@ -94,7 +94,7 @@ def _score(lik, theta, rows):
     declaration = lik.prior.event_spec
     theta = jnp.asarray(theta)
     if declaration.exposes_record:
-        given = NumericRecord.from_vector("theta", declaration.spec, theta)
+        given = NumericRecord.from_vector(declaration.spec, theta, label="theta")
     else:
         (component,) = declaration.components
         given = {component: jnp.reshape(theta, declaration.spec.shape)}
@@ -222,7 +222,9 @@ class TestSurrogateContract:
 
     def test_a_record_and_a_mapping_given_score_alike(self, nle):
         """A record of the parameters and a mapping of them give identical scores."""
-        record = NumericRecord.from_vector("nr", _prior().event_spec.spec, jnp.array([0.4, -0.3]))
+        record = NumericRecord.from_vector(
+            _prior().event_spec.spec, jnp.array([0.4, -0.3]), label="nr"
+        )
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
             float(nle._conditional_log_prob(record, y_row)),

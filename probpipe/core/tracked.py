@@ -20,8 +20,9 @@ their constructor via :meth:`TrackedTerm._init_tracked`.
 
 from __future__ import annotations
 
+import functools
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
@@ -30,8 +31,9 @@ from collections.abc import Mapping
 # ecosystem (Pydantic, attrs, etc.). If a future Python release renames
 # it, the metaclass would need to switch to whatever new base ``typing``
 # exposes; the conflict-avoidance constraint itself doesn't change.
-from typing import Any, Self, _ProtocolMeta
+from typing import Any, Self, _ProtocolMeta, cast
 
+from .._messages import label_given_first
 from ._expression import Collapse, Expression, Named, Signature, warn_collapsed
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
@@ -55,6 +57,45 @@ def auto_label(label: str | None, default: str) -> str:
         The supplied label or its default.
     """
     return default if label is None else label
+
+
+def refuses_label_first[**P, R](
+    first: str, *, then: tuple[str, ...] = ()
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Make a classmethod constructor refuse a label passed where *first* goes.
+
+    The constructor once took its label first and takes *first* there now, with
+    the label as the keyword ``label``. The decorated method raises when its
+    first argument after the class is a string, which *first* never is, so a call
+    in the earlier form gets the call to write rather than an error about the
+    number of arguments. Apply it beneath ``@classmethod``.
+
+    Parameters
+    ----------
+    first : str
+        The name of the method's first parameter after the class, such as
+        ``"spec"``.
+    then : tuple of str
+        The names of the positional parameters after *first*, which the
+        rewritten call shows, such as ``("vec",)``.
+
+    Returns
+    -------
+    Callable
+        The decorator, which keeps the method's signature and docstring.
+    """
+
+    def decorate(method: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(method)
+        def checked(*args: P.args, **kwargs: P.kwargs) -> R:
+            if len(args) > 1 and isinstance(args[1], str):
+                owner = f"{cast(type, args[0]).__name__}.{method.__name__}"
+                raise TypeError(label_given_first(owner, first, args[1], then=then))
+            return method(*args, **kwargs)
+
+        return checked
+
+    return decorate
 
 
 def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:

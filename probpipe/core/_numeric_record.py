@@ -43,8 +43,8 @@ from ._specs import (
     RecordSpec,
 )
 from .named_tree import _PATH_SEP, _unflatten_paths
-from .record import Record, _not_a_field_mapping
-from .tracked import _NO_DESCRIPTION
+from .record import Record, _derived_record_name, _not_a_field_mapping
+from .tracked import _NO_DESCRIPTION, refuses_label_first
 
 # ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
 # resolvers) and re-exported here, its historical home.
@@ -351,26 +351,31 @@ class NumericRecord(Record, Numeric):
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
+    @refuses_label_first("spec", then=("vec",))
+    def from_vector(
+        cls, spec: NumericRecordSpec, vec: Array, *, label: str | None = None
+    ) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
         spec's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
         in canonical leaf order, and returns a ``NumericRecord`` carrying
-        *spec* as its authoritative schema under the user-given *label*.
+        *spec* as its authoritative schema under *label*.
         The reconstructed leaves are bare ``jax.Array``\\ s — a flat vector
         carries no native container to restore.
 
         Parameters
         ----------
-        label : str
-            The reconstructed record's label.
         spec : NumericRecordSpec
             The flat layout supplying field names, shapes, and order. Every
             leaf must be a NumericArraySpec.
         vec : Array
             A vector of shape ``(spec.vector_size,)`` — one single
             (unbatched) value.
+        label : str or None
+            Keyword-only. The reconstructed record's label; ``None``, the
+            default, derives ``record(field,...)`` from the spec's top-level
+            fields, as the constructor does.
 
         Returns
         -------
@@ -381,10 +386,12 @@ class NumericRecord(Record, Numeric):
         Raises
         ------
         TypeError
-            If *spec* contains a non-array leaf, or *vec* carries
+            If *spec* contains a non-array leaf; if *vec* carries
             leading batch axes — batched reconstruction is
             the batch type's concern; use :meth:`NumericRecordBatch.from_vector`
-            for a batched matrix.
+            for a batched matrix; if *label* is omitted and *spec* has no
+            fields to derive it from; or if *spec* is a string, which is a
+            label passed first in the earlier form.
         ValueError
             If the vector length does not equal ``spec.vector_size``.
         """
@@ -395,6 +402,7 @@ class NumericRecord(Record, Numeric):
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
                 f"NumericRecordBatch.from_vector."
             )
+        label = _derived_record_name(spec.children) if label is None else label
         return _reconstruct_from_vector(label, spec, vec)
 
     def to_numeric(self) -> NumericRecord:

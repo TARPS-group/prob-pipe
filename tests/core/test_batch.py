@@ -2065,7 +2065,7 @@ class TestFromVectorTakesThePartitionToo:
 
     def test_one_name_takes_every_batch_axis(self):
         rebuilt = NumericRecordBatch.from_vector(
-            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names="sample"
+            RecordSpec(x=(2,)), self._vec((4, 5)), level_names="sample", label="post"
         )
 
         assert (rebuilt.batch_shape, rebuilt.level_names) == ((4, 5), ("sample",))
@@ -2073,7 +2073,7 @@ class TestFromVectorTakesThePartitionToo:
 
     def test_several_names_take_one_axis_each(self):
         rebuilt = NumericRecordBatch.from_vector(
-            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw")
+            RecordSpec(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw"), label="post"
         )
 
         assert rebuilt.axis_groups == ((4,), (5,))
@@ -2083,21 +2083,21 @@ class TestFromVectorTakesThePartitionToo:
         to lose the same keyword the constructors did."""
         with pytest.raises(TypeError, match="unexpected keyword argument 'axis_groups'"):
             NumericRecordBatch.from_vector(
-                "post",
                 RecordSpec(x=(2,)),
                 self._vec((4, 5)),
                 level_names=("chain", "draw"),
                 axis_groups=((4,), (5,)),
+                label="post",
             )
 
     def test_an_explicit_partition_groups_the_axes_it_names(self):
         """Three axes, two levels: the first level holds two of them."""
         rebuilt = NumericRecordBatch.from_vector(
-            "post",
             RecordSpec(x=(2,)),
             self._vec((2, 3, 4)),
             level_names=("grid", "draw"),
             axes_per_level=(2, 1),
+            label="post",
         )
 
         assert (rebuilt.batch_shape, rebuilt.level_names) == ((2, 3, 4), ("grid", "draw"))

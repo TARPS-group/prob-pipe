@@ -370,13 +370,13 @@ class TestConvenienceConstructors:
                 label="r",
             ),
         ]:
-            rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
+            rebuilt = Record.from_field_values(r.event_template, r.values(), label=r.label)
             assert rebuilt == r
 
     def test_from_field_values_count_mismatch_raises(self):
         tpl = RecordSpec(a=(), b=())
         with pytest.raises(ValueError):
-            Record.from_field_values("r", tpl, [1.0])
+            Record.from_field_values(tpl, [1.0], label="r")
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +696,7 @@ class TestBatchFieldNav:
     def _nested_batch(self):
         tpl = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
         return NumericRecordBatch.from_vector(
-            "nrb", tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw"
+            tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw", label="nrb"
         )
 
     def test_an_interior_node_indexes_to_a_sub_batch_view(self):
@@ -726,7 +726,7 @@ class TestBatchFieldNav:
         batch = self._nested_batch()
 
         rebuilt = NumericRecordBatch.from_vector(
-            "nrb", batch.event_template, batch.to_vector(), level_names="draw"
+            batch.event_template, batch.to_vector(), level_names="draw", label="nrb"
         )
 
         assert rebuilt == batch

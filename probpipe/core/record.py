@@ -59,7 +59,7 @@ from ._spec_base import OpaqueSpec, _full_array_shape_or_none
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .provenance import Provenance
-from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm
+from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm, refuses_label_first
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -1179,15 +1179,44 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, label: str, d: dict[str, ArrayLike | Record]) -> Record:
-        """Construct a Record labeled *label* from a dict of arrays."""
-        return cls(
-            d,
-            label=label,
-        )
+    @refuses_label_first("fields")
+    def from_dict(
+        cls, fields: dict[str, ArrayLike | Record], *, label: str | None = None
+    ) -> Record:
+        """Construct a record from a dict of field values.
+
+        It is the same as ``Record(fields, label=label)``, and remains as the
+        dict-named spelling of that call.
+
+        Parameters
+        ----------
+        fields : dict
+            The field values, keyed by field name.
+        label : str or None
+            Keyword-only. The record's label; ``None``, the default, derives
+            ``record(field,...)`` from the top-level field names.
+
+        Returns
+        -------
+        Record
+            The record, promoted to ``NumericRecord`` when every field is
+            numeric.
+
+        Raises
+        ------
+        TypeError
+            If *label* is omitted and *fields* is empty, or *fields* is a
+            string, which is a label passed first in the earlier form.
+        ValueError
+            If a field name or value is invalid, as the constructor states.
+        """
+        return cls(fields, label=label)
 
     @classmethod
-    def from_field_values(cls, label: str, template: RecordSpec, values: Iterable[Any]) -> Record:
+    @refuses_label_first("template", then=("values",))
+    def from_field_values(
+        cls, template: RecordSpec, values: Iterable[Any], *, label: str | None = None
+    ) -> Record:
         """Reconstruct a value from an ordered sequence of field values.
 
         *values* supplies one object per field, in canonical order (the order
@@ -1195,19 +1224,21 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         come from *template*, which the result carries as its
         **authoritative** :attr:`event_template` (nothing is inferred), so
         the round-trip is faithful:
-        ``Record.from_field_values(r.label, r.event_template, r.values()) == r``.
+        ``Record.from_field_values(r.event_template, r.values(), label=r.label) == r``.
         The export side is just ``list(record.values())``. The result's class
         follows the template's numericness — a :class:`NumericRecordSpec`
         builds a :class:`NumericRecord` via the auto-promotion.
 
         Parameters
         ----------
-        label : str
-            The reconstructed record's label.
         template : RecordSpec
             The authoritative schema supplying names, nesting, and order.
         values : iterable
             One field value per template key, in canonical order.
+        label : str or None
+            Keyword-only. The reconstructed record's label; ``None``, the
+            default, derives ``record(field,...)`` from the template's
+            top-level fields.
 
         Returns
         -------
@@ -1217,6 +1248,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Raises
         ------
+        TypeError
+            If *label* is omitted and *template* has no fields, or *template*
+            is a string, which is a label passed first in the earlier form.
         ValueError
             If the number of *values* is not the number of fields
             (``len(template)``), or a value fails its field spec's structural
@@ -1224,6 +1258,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             dtype (a ``NumericArraySpec``'s ``support`` is descriptive and not
             checked).
         """
+        label = _derived_record_name(template.children) if label is None else label
         values = list(values)
         if len(values) != len(template):
             raise ValueError(
@@ -1255,7 +1290,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # the result's per-leaf specs). See ``NamedTree.map``.
 
     # A record's leaves in canonical order are ``list(record.values())``;
-    # reconstruct via ``Record.from_field_values(label, template, values)``.
+    # reconstruct via ``Record.from_field_values(template, values, label=...)``.
 
     # -- Repr ---------------------------------------------------------------
 
