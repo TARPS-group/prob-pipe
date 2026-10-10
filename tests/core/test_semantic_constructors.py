@@ -7,9 +7,7 @@ import pytest
 
 from probpipe import (
     Distribution,
-    DistributionBatch,
     Function,
-    FunctionBatch,
     Normal,
     NumericArray,
     NumericArrayBatch,
@@ -89,18 +87,6 @@ def test_generic_law_default_uses_a_declared_component():
     law = Distribution(OutputSpec(tau=NumericArraySpec(())))
     assert law.notation == "p(tau)"
     assert law.with_label("prior").event_spec == law.event_spec
-
-
-def test_collection_defaults_are_bounded_and_describe_members():
-    laws = [Normal("tau", 0, 1, label=f"prior{i}") for i in range(20)]
-    batch = DistributionBatch(laws, "model")
-    assert "prior0(tau)" in batch.label
-    assert "prior7(tau)" in batch.label
-    assert "prior8" not in batch.label
-    assert "…" in batch.label
-    assert FunctionBatch([lambda x: x], "model").label == "[f(x)]"
-    with pytest.raises(TypeError, match="empty collection requires label"):
-        DistributionBatch([], "model", element_spec=laws[0].spec)
 
 
 @pytest.mark.parametrize("transform", [jax.jit, jax.vmap])

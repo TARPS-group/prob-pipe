@@ -36,6 +36,16 @@ from probpipe import (
 from probpipe.core.provenance import Provenance
 
 
+def _named(name):
+    """A one-parameter callable whose ``__name__`` is *name*."""
+
+    def member(x):
+        return x
+
+    member.__name__ = name
+    return member
+
+
 @pytest.fixture
 def functions():
     """Three callables under one `variant` level."""
@@ -597,6 +607,32 @@ class TestTheDefaultLabel:
         """``max`` has no signature to inspect, so construction must not need one."""
         batch = FunctionBatch([max, len], "model")
         assert batch.label == "[max, len(obj)]"
+
+    def test_a_multi_axis_batch_lists_its_members_in_row_major_order(self):
+        """A 3x3 batch reads as one flat list of its first eight members, then ``…``."""
+        store = np.empty((3, 3), dtype=object)
+        for row in range(3):
+            for column in range(3):
+                store[row, column] = _named(f"g{row}{column}")
+        batch = FunctionBatch(store, ["row", "column"])
+        members = ", ".join(f"g{row}{column}(x)" for row in range(3) for column in range(3))
+        assert batch.label == "[" + members.rsplit(", ", 1)[0] + ", …]"
+
+    def test_eight_members_are_listed_in_full(self):
+        batch = FunctionBatch([_named(f"g{i}") for i in range(8)], "model")
+        assert batch.label == "[" + ", ".join(f"g{i}(x)" for i in range(8)) + "]"
+
+    def test_a_ninth_member_is_left_out_as_an_ellipsis(self):
+        batch = FunctionBatch([_named(f"g{i}") for i in range(9)], "model")
+        assert batch.label == "[" + ", ".join(f"g{i}(x)" for i in range(8)) + ", …]"
+
+    def test_an_empty_batch_without_a_label_is_refused(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^cannot derive a default label for an empty FunctionBatch; pass label=\.\.\.$",
+        ):
+            FunctionBatch([], "model")
+        assert FunctionBatch([], "model", label="none").batch_shape == (0,)
 
 
 class TestFieldKeys:

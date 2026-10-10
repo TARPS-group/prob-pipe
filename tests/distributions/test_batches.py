@@ -264,6 +264,33 @@ class TestDistributionBatchConstruction:
             )
 
 
+class TestTheDefaultLabel:
+    """An unlabeled batch of laws is labeled by a bounded list of the laws' notations."""
+
+    def test_the_label_lists_the_first_eight_laws_and_an_ellipsis(self):
+        laws = [Normal("tau", 0, 1, label=f"prior{i}") for i in range(20)]
+        batch = DistributionBatch(laws, "model")
+        assert batch.label == "[" + ", ".join(f"prior{i}(tau)" for i in range(8)) + ", …]"
+
+    def test_eight_laws_are_listed_in_full(self):
+        laws = [Normal("tau", 0, 1, label=f"prior{i}") for i in range(8)]
+        batch = DistributionBatch(laws, "model")
+        assert batch.label == "[" + ", ".join(f"prior{i}(tau)" for i in range(8)) + "]"
+
+    def test_an_empty_batch_without_a_label_is_refused(self):
+        spec = Normal("tau", 0, 1).spec
+        with pytest.raises(
+            TypeError,
+            match=r"^cannot derive a default label for an empty DistributionBatch; pass label=",
+        ):
+            DistributionBatch([], "model", element_spec=spec)
+        assert DistributionBatch([], "model", element_spec=spec, label="none").batch_shape == (0,)
+
+    def test_a_kernel_batch_lists_its_kernels(self):
+        batch = ConditionalDistributionBatch(_kernels(2), "dataset")
+        assert batch.label == "[lik(y | mu), lik(y | mu)]"
+
+
 class TestDistributionBatchDeclarations:
     def test_event_spec_is_the_shared_declaration_read_from_spec(self):
         laws = _laws(2)
