@@ -44,6 +44,8 @@ from typing import Any, ClassVar
 import jax
 import jax.numpy as jnp
 
+from ..core._expression import Applied, Named
+from ..core._repr import type_name
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
 from ..core.tracked import TrackedTerm
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -185,8 +187,10 @@ class MinibatchedDistribution(
     batch_size : int
         Minibatch size :math:`b`. Must be ``1 <= b <= len(data)``.
     label : str, optional
-        Display alias. Defaults to the minibatch construction over the prior and
-        likelihood; an undescribed prior requires an explicit alias.
+        The measure's label. By default the label is ``minibatch``, and the
+        notation shows the construction over the prior and the likelihood, as
+        ``minibatch(prior(beta), lik(y | beta), batch_size=40)``. A prior that
+        is not a ``Distribution`` has no label to show, so it requires one.
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
@@ -196,7 +200,8 @@ class MinibatchedDistribution(
     TypeError
         If ``prior`` is not :class:`~probpipe.SupportsLogProb`, or
         ``likelihood`` is not a kernel that scores a subset of its
-        observations, or an undescribed prior has no explicit label.
+        observations, or ``label`` is ``None`` for a prior that is not a
+        ``Distribution``.
     ValueError
         If ``data`` has no leading axis, or ``batch_size`` is not in
         ``[1, len(data)]``.
@@ -227,10 +232,21 @@ class MinibatchedDistribution(
         if batch_size < 1 or batch_size > n:
             raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}")
 
+        expression = None
         if label is None:
             if not isinstance(prior, TrackedTerm):
-                raise TypeError("an undescribed prior requires label=... for a minibatched law")
-            label = f"minibatch({prior.notation}, {likelihood.notation}; batch_size={batch_size})"
+                raise TypeError(
+                    f"MinibatchedDistribution cannot take its label from a prior of type "
+                    f"{type_name(prior)}, which has no label; pass label="
+                )
+            expression = Applied(
+                "minibatch",
+                (
+                    prior._embedded_expression(),
+                    likelihood._embedded_expression(),
+                    Named(f"batch_size={int(batch_size)}"),
+                ),
+            )
 
         self._prior = prior
         self._likelihood = likelihood
@@ -245,6 +261,8 @@ class MinibatchedDistribution(
 
         # A draw is one fixed-minibatch target, the measure's one component.
         super().__init__("target", DistributionSpec(self._draw_event_spec), label=label)
+        if expression is not None:
+            self._store_expression(expression)
 
     # -- read-only metadata --------------------------------------------------
 
