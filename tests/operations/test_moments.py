@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import functools
 import inspect
 import math
+import operator
 from typing import Any
 
 import jax
@@ -23,6 +25,7 @@ from probpipe import (
     replay_run,
     workflow_run,
 )
+from probpipe.core import _fingerprint
 from probpipe.core._dispatch import (
     BinaryDispatchMethod,
     Feasibility,
@@ -48,7 +51,14 @@ from probpipe.functions import _rules
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._evaluate import evaluate
-from probpipe.operations._moments import cov, expectation, mean, quantile, variance
+from probpipe.operations._moments import (
+    _ByComponent,
+    cov,
+    expectation,
+    mean,
+    quantile,
+    variance,
+)
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import (
@@ -568,7 +578,9 @@ class TestByComponent:
         assert _value(result[f"{name}(mu)"]) == closed_form
         # Observed across seeds 7, 8, 10, and 11: errors of the estimated
         # component up to 0.027 for the mean and 0.026 for the variance.
-        assert abs(_value(result[f"{name}(y)"]) - (3.0 if moment is mean else 1.0)) < 0.08
+        np.testing.assert_allclose(
+            _value(result[f"{name}(y)"]), 3.0 if moment is mean else 1.0, atol=0.08, rtol=0
+        )
 
     def test_several_quantile_levels_give_a_batch_of_records(self):
         levels = jnp.array([0.25, 0.5])
@@ -611,17 +623,51 @@ class TestByComponent:
         # Shared draws differ by 2 at every draw, so their means do too.
         assert _value(result["mean(y)"]) - _value(result["mean(z)"]) == pytest.approx(2.0)
 
+    @staticmethod
+    def _nested() -> Any:
+        """``g`` groups ``mu ~ Normal(2, 1)`` and ``y = mu + 1``, beside ``c ~ Normal(5, 1)``."""
+        joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
+        return joint.with_path_names({"mu": "g/mu", "y": "g/y"})
+
     def test_a_record_valued_component_is_one_block(self):
         """A group of fields is summarized whole, by the route its view selects."""
-        joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
-        nested = joint.with_path_names({"mu": "g/mu", "y": "g/y"})
         with workflow_run(seed=7):
-            result = mean(nested)
+            result = mean(self._nested())
         assert self._blocks(result) == [
             (("g",), "monte_carlo", False),
             (("c",), "closed_form", True),
         ]
+        assert result.fields == ("mean(g)", "mean(c)")
+        group = result.at_path("mean(g)")
+        assert isinstance(group, Record) and group.fields == ("y", "mu")
+        assert (np.shape(group["y"]), np.shape(group["mu"])) == ((), ())
+        # One set of draws gives both fields, which differ by 1 at every draw.
+        np.testing.assert_allclose(_value(group["y"]) - _value(group["mu"]), 1.0, atol=1e-5)
         assert _value(result["mean(c)"]) == 5.0
+
+    def test_a_record_valued_component_keeps_its_fields_in_the_variance(self):
+        with workflow_run(seed=8):
+            result = variance(self._nested())
+        group = result.at_path("variance(g)")
+        assert group.fields == ("y", "mu")
+        # Shared draws give ``y`` and ``mu`` one variance.
+        np.testing.assert_allclose(_value(group["y"]), _value(group["mu"]), rtol=1e-5)
+        assert _value(result["variance(c)"]) == 1.0
+
+    def test_a_record_valued_component_keeps_its_fields_in_several_quantiles(self):
+        levels = jnp.array([0.25, 0.75])
+        with workflow_run(seed=10):
+            result = quantile(self._nested(), levels)
+        assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
+        group = result["quantile(g)"]
+        assert np.shape(group["y"]) == np.shape(group["mu"]) == (2,)
+        np.testing.assert_allclose(
+            np.asarray(group["y"]) - np.asarray(group["mu"]), [1.0, 1.0], atol=1e-5
+        )
+        np.testing.assert_array_equal(
+            np.asarray(result["quantile(c)"]),
+            np.asarray((5.0 + jax.scipy.special.ndtri(levels)).astype(jnp.float32)),
+        )
 
     def test_a_law_whose_components_are_all_exact_takes_the_exact_candidate(self):
         law = _Coupled()
@@ -645,8 +691,12 @@ class TestByComponent:
             moment.with_options(exact_only=True)(_dependent_joint())
 
     def test_exact_only_says_how_to_compute_the_exact_quantiles(self):
-        with pytest.raises(ResolutionError, match=r"as quantile\(d\['mu'\]\)"):
-            quantile.with_options(exact_only=True)(_dependent_joint(), 0.5)
+        joint = _dependent_joint()
+        with pytest.raises(ResolutionError, match=r"as quantile\(d\['mu'\], q\)$"):
+            quantile.with_options(exact_only=True)(joint, 0.5)
+        # The suggested call, with the original level, computes the quantile exactly.
+        exact = quantile.with_options(exact_only=True)(joint["mu"], 0.5)
+        assert _value(exact) == 2.0
 
     def test_naming_the_route_under_exact_only_requires_every_component_exact(self):
         view = mean.with_options(method="by_component", exact_only=True)
@@ -713,6 +763,75 @@ class TestByComponent:
             result = mean.with_options(raw=True)(_dependent_joint())
         assert set(result) == {"mean(y)", "mean(mu)"}
         assert float(result["mean(mu)"]) == 2.0
+
+
+def _samplers(n: int) -> Any:
+    """The product of *n* sampling-only laws, which claims no summary and has no exact component."""
+    return functools.reduce(operator.mul, [Sampler(f"s{i}") for i in range(n)])
+
+
+class TestByComponentPlanning:
+    """``by_component`` resolves each component once per call, and hashes the law once."""
+
+    @pytest.fixture
+    def resolutions(self, monkeypatch):
+        """The restriction of each resolution the route makes, in order."""
+        calls: list[bool] = []
+        original = _ByComponent._resolve
+
+        def spy(self: Any, call: Any, view: Any, exact_only: bool) -> Any:
+            calls.append(exact_only)
+            return original(self, call, view, exact_only)
+
+        monkeypatch.setattr(_ByComponent, "_resolve", spy)
+        return calls
+
+    @pytest.mark.parametrize(
+        ("law", "on_check", "on_run"),
+        [
+            # Each component once, restricted to exact routes; no exact one, so
+            # neither candidate resolves the rest, and the fallback runs.
+            pytest.param(lambda: _samplers(6), [True] * 6, [], id="sampling-only"),
+            # Each component once, then the rest once per candidate. Resolving
+            # the rest, a selection of two components, considers this route on
+            # it too, which resolves those two components once and declines; the
+            # run selects the rest's route again before running it.
+            pytest.param(
+                lambda: _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0),
+                [True, True, True, True, True, True, False, True, True],
+                [True, True],
+                id="mixed",
+            ),
+            # Each component once, and no rest.
+            pytest.param(_Coupled, [True, True], [], id="all-exact"),
+        ],
+    )
+    def test_a_check_and_a_call_resolve_each_component_once(
+        self, law, on_check, on_run, resolutions
+    ):
+        """The run reuses the split its candidate's probe made within the call."""
+        law = law()
+        mean.check(law)
+        assert resolutions == on_check
+        resolutions.clear()
+        with workflow_run(seed=7):
+            mean(law)
+        assert resolutions == [*on_check, *on_run]
+
+    def test_the_laws_fingerprint_is_computed_once_for_all_its_views(self, monkeypatch):
+        law = _samplers(8)
+        hashed: list[Any] = []
+        original = _fingerprint._update_distribution
+
+        def spy(h: Any, dist: Any, *args: Any, **kwargs: Any) -> Any:
+            if dist is law:
+                hashed.append(dist)
+            return original(h, dist, *args, **kwargs)
+
+        monkeypatch.setattr(_fingerprint, "_update_distribution", spy)
+        mean.check(law)
+        mean.check(law)
+        assert len(hashed) == 1
 
 
 class TestExpectation:

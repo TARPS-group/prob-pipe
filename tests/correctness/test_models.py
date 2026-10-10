@@ -523,6 +523,9 @@ class TestFactoredJoints:
         assert float(means["mean(x)"]) == pytest.approx(1.0, abs=1e-6)
         assert float(variances["variance(x)"]) == pytest.approx(4.0, abs=1e-5)
         _within_mcse(means["mean(y)"], 3.0, np.sqrt(16.25))
+        # Observed across seeds 17 to 20: errors of the estimated variance up to
+        # 0.48, against a standard error of about 0.36.
+        np.testing.assert_allclose(float(variances["variance(y)"]), 16.25, atol=1.45, rtol=0)
 
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")

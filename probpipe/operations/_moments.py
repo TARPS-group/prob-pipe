@@ -659,15 +659,46 @@ class _ByComponent(_DelegatingRoute):
         except ApplicabilityError as error:
             return Feasibility(False, str(error))
 
+    def _memo(self, call: BoundCall) -> dict[Any, Any]:
+        """This route's entries in the call's memo, which last as long as the call."""
+        return call._memo.setdefault(self.name, {})
+
+    def _view_at(self, call: BoundCall, components: tuple[str, ...]) -> Distribution:
+        """The law's view at *components*, built once per call."""
+        views = self._memo(call).setdefault("views", {})
+        if components not in views:
+            views[components] = _view(call.operands["d"], components)
+        return views[components]
+
+    def _classified(self, call: BoundCall) -> dict[str, Feasibility]:
+        """Each component's report restricted to exact routes, resolved once per call.
+
+        A component is exact exactly when this report is feasible. Both of the
+        route's candidates read it: the operation selects an exact route on a
+        view whenever one applies, so restricting the component's resolution to
+        exact routes finds the components that are exact under either.
+        """
+        memo = self._memo(call)
+        if "components" not in memo:
+            memo["components"] = {
+                c: self._resolve(call, self._view_at(call, (c,)), True)
+                for c in call.operands["d"].event_spec.components
+            }
+        return memo["components"]
+
     def _partition(self, call: BoundCall, exact_only: bool) -> _Partition:
         """The blocks of the call, in event order, with the report of the split.
+
+        The split under each restriction is computed once per call, so the run
+        reuses the split its candidate's probe made.
 
         Parameters
         ----------
         call : BoundCall
             The call, whose law is ``call.operands["d"]``.
         exact_only : bool
-            Whether each block is restricted to exact routes.
+            Whether the block of the components without an exact route is
+            restricted to exact routes.
 
         Returns
         -------
@@ -678,6 +709,13 @@ class _ByComponent(_DelegatingRoute):
             together; unresolved when a component's resolution is; and
             otherwise feasible, exact exactly when every block's route is.
         """
+        memo = self._memo(call)
+        if ("partition", exact_only) not in memo:
+            memo["partition", exact_only] = self._split(call, exact_only)
+        return memo["partition", exact_only]
+
+    def _split(self, call: BoundCall, exact_only: bool) -> _Partition:
+        """The partition :meth:`_partition` returns, computed from the components' reports."""
         d = call.operands["d"]
         if (
             not isinstance(d, Distribution)
@@ -687,19 +725,18 @@ class _ByComponent(_DelegatingRoute):
             reason = "the event is not a record of several components"
             return _Partition((), Feasibility(False, reason))
         components = tuple(d.event_spec.components)
-        views = {c: _view(d, (c,)) for c in components}
-        reports = {c: self._resolve(call, views[c], exact_only) for c in components}
+        reports = self._classified(call)
         unresolved = [report for report in reports.values() if report.feasible is None]
         if unresolved:
             pending = tuple(dict.fromkeys(item for report in unresolved for item in report.pending))
             return _Partition((), Feasibility(None, pending=pending))
-        exact = tuple(c for c in components if reports[c].feasible is True and reports[c].exact)
+        exact = tuple(c for c in components if reports[c].feasible is True)
         if not exact:
             return _Partition((), Feasibility(False, f"no component has an exact {self.summary}"))
-        blocks = [_Block((c,), views[c], reports[c]) for c in exact]
+        blocks = [_Block((c,), self._view_at(call, (c,)), reports[c]) for c in exact]
         rest = tuple(c for c in components if c not in exact)
         if rest:
-            view = _view(d, rest)
+            view = self._view_at(call, rest)
             remaining = self._resolve(call, view, exact_only)
             if remaining.feasible is None:
                 return _Partition((), Feasibility(None, pending=remaining.pending))
@@ -728,10 +765,15 @@ class _ByComponent(_DelegatingRoute):
         )
         if not call.controls["exact_only"]:
             return Feasibility(False, reason)
+        # The suggested call passes the call's other arguments by their names,
+        # as ``quantile(d['mu'], q)``.
+        arguments = ", ".join(
+            [f"d[{exact[0]!r}]", *(name for name in call.operands if name != "d")]
+        )
         return Feasibility(
             False,
             f"{reason}; call {self.summary} on the view of each component that does, as "
-            f"{self.summary}(d[{exact[0]!r}])",
+            f"{self.summary}({arguments})",
             actionable=True,
         )
 
@@ -809,7 +851,7 @@ class _ByComponent(_DelegatingRoute):
             value,
             call,
             result,
-            parents=[block.view for block in partition.blocks],
+            parents=[d],
             metadata={"route": self.name, "blocks": records},
         )
 

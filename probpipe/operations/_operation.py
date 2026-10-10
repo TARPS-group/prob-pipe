@@ -40,7 +40,7 @@ import inspect
 import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
@@ -118,11 +118,20 @@ class BoundCall:
     controls : Mapping[str, Any]
         The resolved controls, ``method``, ``exact_only``, ``raw``, and
         ``method_options`` among them.
+
+    Notes
+    -----
+    The engine probes a point's candidates and runs the selected one on the
+    same bound call, so a route that repeats work across the probes of its two
+    candidates and its run keeps it in the call's private memo, under a key of
+    its own. The memo lives only as long as the call, so nothing it holds, such
+    as a guard's outcome, outlives the call.
     """
 
     operation: Function
     operands: Mapping[str, Any]
     controls: Mapping[str, Any]
+    _memo: dict[Any, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @property
     def specs(self) -> Mapping[str, TermSpec]:
