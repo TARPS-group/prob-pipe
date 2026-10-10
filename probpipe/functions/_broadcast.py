@@ -417,7 +417,6 @@ def _output_atoms(
                 rows,
                 n=count,
                 level_names=(DRAW_LEVEL,),
-                field_name=output_component,
                 label=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),

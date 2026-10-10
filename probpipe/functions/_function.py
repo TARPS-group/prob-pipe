@@ -959,7 +959,7 @@ def _run_call(
         result,
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
-        field_name=label,
+        label=label,
         expression=_result.KEEP_EXPRESSION if expression is None else expression,
     )
 
@@ -1020,7 +1020,7 @@ def _jax_traceability_error(
                     func=func,
                     values=dummy_kw,
                     array_args=refs,
-                    field_name=function.output_label,
+                    label=function.output_label,
                     output_is_declared=(
                         function.output_spec is not None and function.output_spec.spec is not None
                     ),
@@ -1539,7 +1539,7 @@ def _run_registered_rule(
         _labeled_product(result),
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
-        field_name=label,
+        label=label,
         expression=expression,
     )
 

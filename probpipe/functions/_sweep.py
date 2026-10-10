@@ -121,7 +121,6 @@ def execute_sweep(
             level_names=plan.sweep_level_names,
             axis_groups=plan.sweep_axis_groups,
             label=output_label,
-            field_name=output_label,
             output_spec=output_spec,
             output_template=output_template,
         )
@@ -147,7 +146,7 @@ def execute_sweep(
             aggregate,
             broadcast_mode=_result.BROADCAST_STACK,
             provenance=provenance,
-            field_name=output_label,
+            label=output_label,
             expression=output_expression,
         )
 
@@ -171,7 +170,6 @@ def execute_sweep(
         level_names=plan.sweep_level_names,
         axis_groups=plan.sweep_axis_groups,
         label=output_label,
-        field_name=output_label,
     )
     provenance = make_sweep_provenance(
         values=values,
@@ -189,7 +187,7 @@ def execute_sweep(
         stacked,
         broadcast_mode=_result.BROADCAST_NESTED,
         provenance=provenance,
-        field_name=output_label,
+        label=output_label,
         expression=output_expression,
     )
 
@@ -384,7 +382,7 @@ def mapped_row_body(
     func: Callable[..., Any],
     values: dict[str, Any],
     array_args: Sequence[_binding.FunctionInputRef],
-    field_name: str,
+    label: str,
     output_is_declared: bool = False,
 ) -> Callable[[Any], Any]:
     """The body ``jax.vmap`` runs for one sweep row, and the probe traces.
@@ -414,14 +412,14 @@ def mapped_row_body(
         }
         out = func(**_binding.replace_input_refs(values, replacements))
         if not output_is_declared:
-            out = _row_at_its_kind(out, field_name)
+            out = _row_at_its_kind(out, label)
             if isinstance(out, Record):
                 # As a batch row is carried, but with no level of its own: the
                 # axis the map adds is the only one the aggregate will have.
                 return _MappedBatchColumns.of_record(out)
             if isinstance(out, Opaque):
                 raise TypeError(
-                    f"{field_name}: dispatch='jax' cannot stack a row that returned "
+                    f"{label}: dispatch='jax' cannot stack a row that returned "
                     f"{type_name(out.value)}; it stacks only arrays, records, and batches"
                 )
         if isinstance(out, RecordBatch):
@@ -449,7 +447,7 @@ def execute_sweep_rows_jax(
         func=func,
         values=values,
         array_args=array_args,
-        field_name=output_label,
+        label=output_label,
         output_is_declared=output_is_declared,
     )
 
