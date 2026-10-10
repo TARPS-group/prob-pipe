@@ -218,7 +218,7 @@ class TestTheDefaultLabel:
         with pytest.raises(
             TypeError,
             match="MinibatchedDistribution cannot take its label from a prior of type "
-            "_LogDensity, which has no label; pass label=",
+            r"_LogDensity, which has no label; pass label=\.\.\.$",
         ):
             MinibatchedDistribution(_LogDensity(), likelihood, response, batch_size=40)
 

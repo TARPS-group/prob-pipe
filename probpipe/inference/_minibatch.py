@@ -237,7 +237,7 @@ class MinibatchedDistribution(
             if not isinstance(prior, TrackedTerm):
                 raise TypeError(
                     f"MinibatchedDistribution cannot take its label from a prior of type "
-                    f"{type_name(prior)}, which has no label; pass label="
+                    f"{type_name(prior)}, which has no label; pass label=..."
                 )
             expression = Applied(
                 "minibatch",
