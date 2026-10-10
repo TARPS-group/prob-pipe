@@ -119,6 +119,9 @@ class NumericArrayBatch(Batch[NumericArray]):
     #: Derived from the store rather than transported, as for ``NumericArray``.
     _transient_state = ("_jax_cache",)
 
+    #: The element hook builds a new array per selection.
+    _fresh_elements = True
+
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         refuse_label_first(cls.__name__, args, kwargs, ("values", "level_names"))
         return object.__new__(cls)

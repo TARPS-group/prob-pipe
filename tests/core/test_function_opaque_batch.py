@@ -449,6 +449,28 @@ class TestElements:
         assert [function._expression for function in stored] == expressions
         assert all(function.provenance is None for function in stored)
 
+    def test_selecting_copies_a_stored_term_once_and_leaves_it_unchanged(self, monkeypatch):
+        """The element hook returns a relabeled copy, so the selection writes to that copy."""
+        stored = [Opaque(object(), label="north"), Opaque(object(), label="east")]
+        expressions = [term._expression for term in stored]
+        batch = OpaqueBatch(stored, "site", label="s")
+        copies = []
+        original = Opaque._shallow_copy
+
+        def counted(term):
+            copies.append(term)
+            return original(term)
+
+        monkeypatch.setattr(Opaque, "_shallow_copy", counted)
+        element = batch[1]
+        assert copies == [stored[1]]
+        assert element is not stored[1]
+        assert element.value is stored[1].value
+        assert element.label == "s[site=1]"
+        assert [term.label for term in stored] == ["north", "east"]
+        assert [term._expression for term in stored] == expressions
+        assert all(term.provenance is None for term in stored)
+
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
 

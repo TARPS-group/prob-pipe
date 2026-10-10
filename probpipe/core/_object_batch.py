@@ -183,6 +183,10 @@ class _ObjectBatch[E](Batch[E]):
 
     __slots__ = ("_store",)
 
+    #: The element hook returns a relabeled copy of a stored term, or a new term
+    #: wrapping a stored value, so the selection need not copy it again.
+    _fresh_elements = True
+
     #: What the shared spec admits, worded to follow "elements must" in the
     #: refusal a bad element earns.
     _element_rule = "match element_spec"

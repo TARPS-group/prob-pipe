@@ -187,6 +187,9 @@ class RecordBatch(Batch[Record]):
 
     __slots__ = ("_columns",)
 
+    #: The element hook builds a new record per selection.
+    _fresh_elements = True
+
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         refuse_label_first(cls.__name__, args, kwargs, ("fields", "level_names"))
         # Only a call on the base class selects the class, as ``Record.__new__``
