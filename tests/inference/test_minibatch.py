@@ -193,7 +193,7 @@ class TestTheDefaultLabel:
             warnings.simplefilter("error")
             m = MinibatchedDistribution(prior, likelihood, response, batch_size=40)
         assert m.label == "minibatch"
-        assert m.notation == "minibatch(MultivariateNormal(beta), p(y | beta), batch_size=40)"
+        assert m.notation == "minibatch(MultivariateNormal(beta), ℙ(y | beta), batch_size=40)"
 
     def test_the_repr_leaves_the_derived_label_out(self, prior, likelihood, response):
         m = MinibatchedDistribution(prior, likelihood, response, batch_size=40)
