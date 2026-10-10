@@ -664,6 +664,15 @@ class TestByComponent:
             "the components ('b',) have no mean route"
         )
 
+    def test_a_component_the_operation_does_not_apply_to_declines_the_route(self):
+        """A measure-valued component has no event-typed variance, so the fallback reports."""
+        report = variance.check(Measure("m") * Gaussian("g", 1.0))
+        routes = {info.method_name: info for info in report.routes}
+        assert report.feasible is False
+        assert routes["by_component (approximate)"].description == (
+            "the components ('m',) have no variance route"
+        )
+
     def test_an_edge_free_joint_keeps_its_closed_form(self):
         report = mean.check(Gaussian("a", 1.0) * Gaussian("b", 2.0))
         assert (report.route, report.exact) == ("closed_form", True)

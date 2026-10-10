@@ -642,15 +642,22 @@ class _ByComponent(_DelegatingRoute):
         return {**call.operands, "d": view}
 
     def _resolve(self, call: BoundCall, view: Distribution, exact_only: bool) -> Feasibility:
-        """The operation's report on *view*: the route it selects and that route's exactness."""
+        """The operation's report on *view*: the route it selects and that route's exactness.
+
+        A view the operation does not apply to, as a measure-valued component
+        has no event-typed variance, is infeasible.
+        """
         operation = call.operation
         controls = self._controls(call, exact_only)
-        return check_point(
-            operation,
-            self._values(call, view),
-            controls,
-            operation._route_candidates(controls),
-        )
+        try:
+            return check_point(
+                operation,
+                self._values(call, view),
+                controls,
+                operation._route_candidates(controls),
+            )
+        except ApplicabilityError as error:
+            return Feasibility(False, str(error))
 
     def _partition(self, call: BoundCall, exact_only: bool) -> _Partition:
         """The blocks of the call, in event order, with the report of the split.
