@@ -153,12 +153,7 @@ def function(
         def differences(c: pd.Series) -> jax.Array:
             return jnp.asarray(c.diff().dropna().to_numpy())
 
-        differences(
-            Record(
-                {"c": pd.Series([1.0, 2.0, 4.0])},
-                label="r",
-            )["c"]
-        )
+        differences(Record({"c": pd.Series([1.0, 2.0, 4.0])}, label="r")["c"])
 
     Parameters
     ----------

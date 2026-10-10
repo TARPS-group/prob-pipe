@@ -432,10 +432,7 @@ def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
 def _joint_value(value: Any, given: Record) -> Record:
     """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
     fields = value.children if isinstance(value, Record) else value
-    return Record(
-        {**dict(fields), **dict(given.children)},
-        label="value",
-    )
+    return Record({**dict(fields), **dict(given.children)}, label="value")
 
 
 def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
@@ -618,10 +615,7 @@ def _unnormalized_conditional(law: Any, given: Record) -> Any:
 
 def _joined(first: Record, second: Record) -> Record:
     """The given values of *first* and *second* in one record."""
-    return Record(
-        {**dict(first.children), **dict(second.children)},
-        label="given",
-    )
+    return Record({**dict(first.children), **dict(second.children)}, label="given")
 
 
 # ---------------------------------------------------------------------------
@@ -1036,10 +1030,7 @@ def _bayes(call: BoundCall) -> Any:
     produced = {key: value for key, value in values.items() if key not in bound}
     return _unnormalized_conditional(
         law,
-        Record(
-            produced,
-            label="given",
-        ),
+        Record(produced, label="given"),
     )
 
 

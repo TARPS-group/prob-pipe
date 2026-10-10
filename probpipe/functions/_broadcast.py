@@ -409,12 +409,7 @@ def _output_atoms(
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(
-                outputs.value,
-                DRAW_LEVEL,
-                element_spec=element,
-                label=output_label,
-            )
+            NumericArrayBatch(outputs.value, DRAW_LEVEL, element_spec=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -453,10 +448,7 @@ def _rows_of(outputs: Any, output_label: str) -> Any:
     stacked array, record, or mapping, which is read as a record of columns.
     """
     if isinstance(outputs, Mapping) and not isinstance(outputs, TrackedTerm):
-        return Record(
-            dict(outputs),
-            label=output_label,
-        )
+        return Record(dict(outputs), label=output_label)
     return outputs
 
 
@@ -528,12 +520,7 @@ def _joint_atoms(
         fields[component] = declaration.spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
-    return _batch_class_for(element)(
-        columns,
-        DRAW_LEVEL,
-        element_spec=element,
-        label=output_label,
-    )
+    return _batch_class_for(element)(columns, DRAW_LEVEL, element_spec=element, label=output_label)
 
 
 def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
@@ -658,10 +645,7 @@ def _record_columns(draws: Any, label: str) -> Any:
     if isinstance(draws, NumericArray):
         return draws.raw()
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
-        return Record(
-            _raw_record(draws),
-            label=label,
-        )
+        return Record(_raw_record(draws), label=label)
     return draws
 
 
@@ -1049,17 +1033,11 @@ def _index_sample(s: Any, i: int) -> Any:
     if isinstance(s, RecordBatch):
         # The raw columns, so a field that is not an array reaches the body as
         # the value it holds rather than as a view of its column.
-        return Record(
-            {p: s._raw_column(p)[i] for p in s.event_template},
-            label=s.label,
-        )
+        return Record({p: s._raw_column(p)[i] for p in s.event_template}, label=s.label)
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
-        return Record(
-            {p: s.raw(p)[i] for p in s.event_template},
-            label=s.label,
-        )
+        return Record({p: s.raw(p)[i] for p in s.event_template}, label=s.label)
     return s[i]
 
 

@@ -81,25 +81,13 @@ def _wrap_declared_function_output(
     if isinstance(result, TrackedTerm):
         return _copy_result_term(result, output_spec=output_spec)
     if isinstance(spec, RecordSpec):
-        return Record(
-            result,
-            event_template=spec,
-            label=function_name,
-        )
+        return Record(result, event_template=spec, label=function_name)
     if isinstance(spec, NumericArraySpec):
         from ..core._numeric_array import NumericArray
 
-        return NumericArray(
-            result,
-            spec=spec,
-            label=function_name,
-        )
+        return NumericArray(result, spec=spec, label=function_name)
     if isinstance(spec, OpaqueSpec):
-        return Opaque(
-            result,
-            spec=spec,
-            label=function_name,
-        )
+        return Opaque(result, spec=spec, label=function_name)
     from ..values import Function, FunctionSpec
 
     if isinstance(spec, FunctionSpec):
@@ -189,17 +177,11 @@ def _wrap_as_term(value: Any, result_name: str) -> Any:
         case TrackedTerm():
             return value
         case Mapping():
-            return Record(
-                dict(value),
-                label=result_name,
-            )
+            return Record(dict(value), label=result_name)
         case _ if _is_numeric_leaf(value):
             from ..core._numeric_array import NumericArray
 
-            return NumericArray(
-                value,
-                label=result_name,
-            )
+            return NumericArray(value, label=result_name)
         case _ if callable(value):
             from ..values import Function
 
@@ -210,10 +192,7 @@ def _wrap_as_term(value: Any, result_name: str) -> Any:
         case _:
             from ..core._opaque import Opaque
 
-            return Opaque(
-                value,
-                label=result_name,
-            )
+            return Opaque(value, label=result_name)
 
 
 #: The expression :func:`_coerce_output` takes to keep a tracked return's own expression.
@@ -1084,12 +1063,7 @@ def _stack_rows(
             # ``outs`` first: every row of none is vacuously callable, and no row
             # is a reason to claim the function kind over the fallback.
             if outs and all(callable(o) for o in outs):
-                return FunctionBatch(
-                    object_array,
-                    level_names,
-                    **shared,
-                    label=label,
-                )
+                return FunctionBatch(object_array, level_names, **shared, label=label)
             raw_objects = [o.raw() if isinstance(o, Opaque) else o for o in outs]
             return OpaqueBatch(
                 _from_iterable(raw_objects, kind="_make_stack").reshape(batch_shape),
@@ -1122,10 +1096,7 @@ def _stack_rows(
                     "authoritative Function outputs must be wrapped before aggregation"
                 )
             output_field = next(iter(output_template.keys()))
-            batched_record = Record(
-                {output_field: inner_outputs},
-                label=label,
-            )
+            batched_record = Record({output_field: inner_outputs}, label=label)
             return _stack_declared_columns(
                 label,
                 batched_record,
@@ -1172,19 +1143,9 @@ def _stack_rows(
                 "axes_per_level": _ranks_of(sweep_groups),
             }
             try:
-                return NumericRecordBatch(
-                    columns,
-                    level_names,
-                    **shared,
-                    label=label,
-                )
+                return NumericRecordBatch(columns, level_names, **shared, label=label)
             except (TypeError, ValueError):
-                return RecordBatch(
-                    columns,
-                    level_names,
-                    **shared,
-                    label=label,
-                )
+                return RecordBatch(columns, level_names, **shared, label=label)
 
     # Fallback — shouldn't reach here with well-formed vmap output; if
     # we do, raise with the type info.
@@ -1307,10 +1268,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         return value
     if isinstance(value, Mapping) and not isinstance(value, Record):
         # A record-valued route returns the nested mapping of its stacked columns.
-        value = Record(
-            {**value},
-            label=label,
-        )
+        value = Record({**value}, label=label)
     if isinstance(value, Record):
         template = value.event_template
         columns = {path: value.raw(path) for path in template}
