@@ -15,23 +15,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Record.from_fields(a=1.0)` replaces `Record("r", a=1.0)`, and
   `Function(fn, label="g")` replaces `Function("g", fn)`. `from_vector`,
   `from_field_values`, and `from_dict` take the label as the keyword `label=`
-  after their data, as `NumericArray.from_vector(spec, vec, label="x")`. A raw
-  array, an opaque value, and a batch of either require the label. A record and
-  a record batch derive it from their top-level fields, as `record(a,b)`. A
-  function derives it from its callable's name, with `f` for a lambda, and a
-  batch of functions or laws from its members, at most eight in row-major order
-  and then `…`. A call in the label-first form raises a `TypeError` that shows the new
-  call.
+  after their data, as `NumericArray.from_vector(spec, vec, label="x")`, and
+  the first parameter of `Record.from_dict` is named `fields`. A raw array, an
+  opaque value, a batch of either, and a function whose callable has no name
+  require the label. A record and a record batch derive it from their validated
+  top-level fields, so path-keyed and nested fields read alike, as
+  `record(a,b)`, and a batch stacked from records takes the first record's
+  label. A function derives it from its callable's name, with `f` for a lambda,
+  and a batch of functions or laws from its members, at most eight in row-major
+  order and then `…`. A call in the label-first form raises a `TypeError` that
+  shows the call to write, and a refusal of fields that are not a mapping, of an
+  empty record or object batch without a label, or of `Record.from_fields()`
+  without fields names the constructor and the fix.
 - **A function's output component comes from its callable, and `output_label`
   is a display alias.** A result's component defaults to the callable's name,
   with `f` for a lambda and `result` for a callable without a name or whose
-  name is not a Python identifier, and a record result exposes its fields. An
-  `OutputSpec` overrides that default. `output_label` and `with_label` change
-  only how a result displays, never its components, its fingerprint, or its
-  draws. A result without an alias displays the call, as `predict(ambient)`,
-  with only the arguments the caller passed. A `Module` method's results display
-  the call, as `Example.numbers()`, where they displayed the method's name, and
-  a backend bijector's output component is the backend's name, as `exp`.
+  name is not a Python identifier or is a keyword, and a record result exposes
+  its fields. An `OutputSpec` overrides that default. `output_label` and
+  `with_label` change only how a result displays, never its components, its
+  fingerprint, or its draws. A value result without an alias displays the call,
+  as `predict(ambient)`, with only the arguments the caller passed, and a law
+  the function returns keeps the function's label and displays its own
+  signature, as `predict(y, mu)`. A `Module` method's results display the call,
+  as `Example.numbers()`, where they displayed the method's name.
 - **A term that JAX rebuilds from its leaves displays `<no description>`** until
   a managed result boundary describes it, and it stays usable inside `jax.jit`
   and `jax.vmap`.
@@ -275,7 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that array afterwards, through the caller's handle or through `.raw()`,
   raises `ValueError: assignment destination is read-only`, where it used to
   change the term. To keep a writable array, pass a copy,
-  as in `NumericArray("x", values.copy())`. A pandas or xarray container is
+  as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
   stored by reference as before.
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
@@ -734,16 +740,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the resolved string. Existing pickles carrying the removed state are
   unsupported.
 
-- **A batch's label is its first argument, and construction takes the axis
-  partition rather than the sizes (#398).** Two changes to the same signatures.
-
-  `Record(label, fields)` and `Opaque(label, value)` put the label first;
-  `NumericArray` and all five batch forms took it as a keyword. They now match —
-  `RecordBatch("draws", columns, "draw", element_spec=...)`,
-  `NumericArray("x", values)` — with the label and the data positional-only, as
-  `Record`'s are, and the level names still acceptable either way.
-
-  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+- **A batch's construction takes the axis partition rather than the sizes
+  (#398).** `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
   level holds rather than restating their sizes: `axes_per_level=(2,)` for one
   level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
   sizes were never information a constructor lacked — the elements fix them and
@@ -3272,24 +3270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows less than the part.** A law selected many times from a posterior
   displays without a warning, and a warning that meets both a collapsed level
   and a truncated part names both limits.
-- **Two functions without an output declaration that differ only in their
-  callable's name share a fingerprint.**
-- **A record batch derives its label from its validated top-level fields**, so
-  path-keyed and nested fields read alike, as `record(y)`, and fields that are
-  not a mapping, or no fields, raise one error that says so. `Record.ensure`
-  and a record built from component values derive their labels the same way.
-- **A `FunctionBatch` of builtins, such as `max`, constructs**, and selecting a
-  batch element never relabels the term the batch stores.
-- **A lift of a function declared to return a law holds each law under the
-  function's output component**, with `include_inputs=True` too, where it
-  exposed the inner law's components, and a lift of a function realized by
-  routes shows only the arguments the call passed.
 - **A product names the positions and labels of two factors that produce one
-  field**, and offers an output declaration besides a rename.
-- **A constructor's refusal names the constructor, the value, and the fix** for
-  fields that are not a mapping, an empty record or object batch without a
-  label, `Record.from_fields()` without fields, and a callable without a name,
-  whose type it names.
+  field.**
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
