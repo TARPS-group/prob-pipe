@@ -16,7 +16,7 @@ is an instance of the class.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 import jax
 import jax.numpy as jnp
@@ -45,6 +45,8 @@ from probpipe.distributions._capabilities import SupportsLogProb
 from ._design_helpers import atom_leaves, error_of, one_field_law, record_law, standard_normal
 
 SCALAR = NumericArraySpec(())
+type _ArrayAlias[Scalar: np.generic] = np.ndarray[Any, np.dtype[Scalar]]
+type _DistributionAlias[Event] = Distribution
 
 
 def _batch(values, level: str = "row") -> NumericArrayBatch:
@@ -107,8 +109,8 @@ class TestTheTrigger:
 
     @pytest.mark.parametrize(
         "annotation",
-        [Distribution, Normal, SupportsLogProb, Distribution | None],
-        ids=["Distribution", "subclass", "capability", "optional"],
+        [Distribution, Normal, SupportsLogProb, Distribution | None, _DistributionAlias[float]],
+        ids=["Distribution", "subclass", "capability", "optional", "aliased-origin"],
     )
     def test_a_parameter_that_names_a_distribution_consumes_it(self, annotation):
         seen = []
@@ -364,8 +366,15 @@ class TestARawClassAnnotation:
 
     @pytest.mark.parametrize(
         ("annotation", "value"),
-        [(jax.Array | None, jnp.arange(3.0)), (npt.NDArray[np.float64], np.arange(3.0))],
-        ids=["optional", "parametrized"],
+        [
+            (jax.Array | None, jnp.arange(3.0)),
+            (npt.NDArray[np.float64], np.arange(3.0)),
+            (np.ndarray[Any, np.dtype[np.float64]], np.arange(3.0)),
+            (_ArrayAlias[np.float64], np.arange(3.0)),
+            (_ArrayAlias[np.float64] | None, np.arange(3.0)),
+            (Annotated[_ArrayAlias[np.float64], "array"], np.arange(3.0)),
+        ],
+        ids=["optional", "numpy", "legacy", "alias", "optional-alias", "annotated-alias"],
     )
     def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
         wrapped, seen = _receiving({"x": annotation})

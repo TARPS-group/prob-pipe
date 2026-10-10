@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, TypeAliasType, Union, get_args, get_origin
 
 from ..core._dispatch import ResolutionError
 from ..core._repr import type_name
@@ -73,8 +73,7 @@ def is_distribution_hint(expected: Any) -> bool:
     """
     if get_origin(expected) in (Union, UnionType):
         return any(is_distribution_hint(arm) for arm in get_args(expected))
-    origin = getattr(expected, "__origin__", None)
-    expected_type = origin if isinstance(origin, type) else expected
+    expected_type = _hint_class(expected)
     try:
         if (
             expected_type is not None
@@ -254,8 +253,15 @@ def _arms(expected: Any) -> tuple[Any, ...]:
 
 
 def _hint_class(arm: Any) -> Any:
-    """The class a parametrized annotation names, or the annotation itself."""
-    origin = getattr(arm, "__origin__", None)
+    """The class a parametrized annotation names, resolving an aliased origin.
+
+    A generic type alias names the class of its value, so an array alias
+    parametrized by a dtype names the array class. Other annotations retain
+    their existing class or value.
+    """
+    origin = get_origin(arm)
+    if isinstance(origin, TypeAliasType):
+        return _hint_class(origin.__value__)
     return origin if isinstance(origin, type) else arm
 
 
