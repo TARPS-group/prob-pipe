@@ -559,11 +559,10 @@ class TestConstruction:
                 [_prior(), _likelihood()],
                 label="model",
             )
-        with pytest.raises(ValueError, match=_mentions("'beta'", "'prior'")):
-            FactoredDistribution(
-                [_prior(), _prior()],
-                label="model",
-            )
+        with pytest.raises(
+            ValueError, match=_mentions("'beta'", "'prior'", "factor 0", "factor 1", "OutputSpec")
+        ):
+            FactoredDistribution([_prior(), _prior()], label="model")
 
 
 # -- The event declaration --------------------------------------------------------

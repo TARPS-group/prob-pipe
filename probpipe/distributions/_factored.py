@@ -396,9 +396,10 @@ def _factor_graph(
         for component, spec in factor.event_spec.components.items():
             if component in producers:
                 raise ValueError(
-                    f"the field {component!r} is produced by both "
-                    f"{factors[producers[component]].label!r} and {factor.label!r}; rename one "
-                    f"with with_path_names()"
+                    f"the field {component!r} is produced by both factor "
+                    f"{producers[component]} ({factors[producers[component]].label!r}) and "
+                    f"factor {index} ({factor.label!r}); rename one with with_path_names() or "
+                    f"declare its output with OutputSpec"
                 )
             producers[component] = index
             component_specs[component] = spec
