@@ -1173,7 +1173,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         if label is None:
             if not isinstance(x, TrackedTerm):
                 raise TypeError(
-                    f"Record.ensure() needs a label for a {type_name(x)}, which has none of its "
+                    f"{cls.__name__}.ensure() needs a label for a {type_name(x)}, which has none of its "
                     f"own; pass label=..."
                 )
             label = x.label

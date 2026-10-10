@@ -146,23 +146,26 @@ class _ObjectBatch[E](Batch[E]):
     Raises
     ------
     TypeError
-        If ``elements`` is a string, a mapping, or a non-object array — each of
-        which iterates into something other than its elements — if it is not
-        iterable at all, or if an ndarray of elements is not ``dtype=object``.
+        If any of these holds:
+
+        - *elements* is a string, a mapping, or an array whose dtype is not
+          ``object``, each of which iterates into something other than its
+          elements, or it is not iterable at all;
+        - *label* is omitted and there are no elements to describe, or a
+          callable element has no name to describe it by;
+        - *level_names* is not a str or a sequence of str, or *axes_per_level*
+          is not an int or a sequence of ints. A generator, a set, ``bytes``,
+          and a mapping are refused for both.
     ValueError
-        If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along), if ``axes_per_level`` does not account for every
-        stored axis or gives a count that is not one per level, or if it is omitted
-        and the number of names does not match the number of axes.
-    TypeError
-        If *label* is omitted and there are no elements to describe.
-    TypeError
-        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
-        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
-        mapping are refused for both.
-    ValueError
-        If an *axes_per_level* count is less than 1, or a level name is empty or
-        contains ``/``.
+        If any of these holds:
+
+        - *elements* is a zero-dimensional array, which is one object with no
+          batch axis to count along;
+        - *axes_per_level* does not account for every stored axis, gives a
+          count that is not one per level, or gives a count less than 1;
+        - *axes_per_level* is omitted and the number of names does not match
+          the number of axes;
+        - a level name is empty or contains ``/``.
 
     Notes
     -----

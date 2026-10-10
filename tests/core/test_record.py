@@ -1174,6 +1174,12 @@ class TestEnsure:
         ):
             Record.ensure(jnp.ones(3))
 
+    def test_the_refusal_names_the_class_it_was_called_on(self):
+        from probpipe import NumericRecord
+
+        with pytest.raises(TypeError, match=r"^NumericRecord\.ensure\(\) needs a label"):
+            NumericRecord.ensure(jnp.ones(3))
+
     def test_an_empty_mapping_without_a_label_is_refused(self):
         with pytest.raises(TypeError, match="label"):
             Record.ensure({})
