@@ -145,6 +145,20 @@ class TestTheEventDeclaration:
                 _location, given_spec=SLOTS, event_spec=OutputSpec(obs=None), label="y"
             )
 
+    def test_a_bare_spec_for_a_law_of_several_components_raises(self):
+        """A bare array spec declares one component, so a joint of two needs an OutputSpec."""
+        with pytest.raises(
+            ValueError,
+            match=r"event_spec of 'yz' needs an explicit OutputSpec for the law's components "
+            r"\['y', 'z'\]",
+        ):
+            conditional_distribution(
+                lambda mu: Normal("y", mu, 1.0) * Normal("z", mu, 1.0),
+                given_spec={"mu": REAL},
+                event_spec=NumericArraySpec(()),
+                label="yz",
+            )
+
     def test_a_support_that_depends_on_the_given_values_is_left_undeclared(self):
         kernel = conditional_distribution(
             lambda low: Uniform("u", low, low + 1.0), given_spec={"low": REAL}, label="u"

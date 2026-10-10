@@ -644,9 +644,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ----------
     event_spec : OutputSpec or RecordSpec
         The declaration of one draw, completed as above.
-    label : str
-        The law's label, which must be a non-empty string. A subclass's
-        constructor passes the label its caller gave, or its default.
+    label : str, optional
+        The law's label, a non-empty string, ``p`` by default. A subclass's
+        constructor passes the label its caller gave, or its own default.
     _provenance : Provenance, optional
         The provenance of the law that a reconstruction rebuilds. By default the
         provenance stays unset until ``with_provenance`` attaches one.

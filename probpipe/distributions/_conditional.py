@@ -504,8 +504,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         Python identifiers.
     event_spec : OutputSpec or RecordSpec
         The declaration of one produced draw, completed as above.
-    label : str
-        The kernel's label, which must be a non-empty string.
+    label : str, optional
+        The kernel's label, a non-empty string, ``p`` by default. A subclass's
+        constructor passes the label its caller gave, or its own default.
     _provenance : Provenance, optional
         The provenance of the kernel that a reconstruction rebuilds. By default the
         provenance stays unset until ``with_provenance`` attaches one.
@@ -1581,7 +1582,10 @@ def conditional_distribution(
         neither an array nor a record of arrays, or declares free dimensions;
         or if the function returns something other than a law.
     ValueError
-        If *event_spec* departs from the declaration of the returned law.
+        If *event_spec* is a bare term spec other than a ``RecordSpec`` while the
+        returned law exposes a record or has more than one component, if
+        *event_spec* names other components or another packaging than the
+        returned law, or if its type does not unify with the law's.
     """
     if isinstance(fn, str):
         raise TypeError(_label_given_first("conditional_distribution", "function", fn))
