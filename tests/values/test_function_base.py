@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 from contextlib import contextmanager, nullcontext
 from functools import partial
@@ -39,6 +40,10 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core.constraints import positive, real
+
+
+def _module_level_add(x, y=1.0):
+    return x + y
 
 
 def _unnamed_callables():
@@ -375,6 +380,26 @@ class TestFunctionDeclarations:
         assert wrapped.apply(3) == 5
         assert inspect.signature(wrapped) == inspect.signature(add)
         assert Function(add).label == "add"
+
+    def test_a_label_before_the_callable_names_the_new_form(self):
+        def g(x):
+            return x
+
+        with pytest.raises(
+            TypeError, match=r"got the label 'g' first; write Function\(fn, label='g'\)"
+        ):
+            Function("g", g)
+
+    def test_a_callable_given_as_fn_names_the_positional_form(self):
+        def g(x):
+            return x
+
+        with pytest.raises(TypeError, match=r"not as fn=; write Function\(fn, label=...\)"):
+            Function(fn=g)
+
+    def test_a_function_copies_after_the_argument_check(self):
+        wrapped = Function(_module_level_add, label="add")
+        assert copy.copy(wrapped).label == "add"
 
     def test_names_are_independent(self, full_provenance_mode):
         @function(label="predict", output_label="prediction", output_spec=OutputSpec(mean=None))

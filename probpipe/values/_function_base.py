@@ -831,7 +831,8 @@ class Function(Node, TrackedTerm, Annotated):
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
         worker-count type, a control of the wrong type, or a keyword that is
-        no control, which the message names.
+        no control, which the message names; for a label given before the
+        callable, as ``Function("g", g)``, or a callable given as ``fn=``.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker or sample counts, conversions for a
@@ -890,6 +891,25 @@ class Function(Node, TrackedTerm, Annotated):
     _options: Mapping[str, Any]
 
     DEFAULT_N_BROADCAST_SAMPLES = 256
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # The constructor's arguments are checked here, before ``__init__`` binds
+        # them, so the two call forms it no longer takes get a message naming the
+        # form it takes rather than Python's count of positional arguments. A
+        # subclass with a constructor of its own takes its own arguments.
+        if cls.__init__ is not Function.__init__:
+            return super().__new__(cls)
+        if len(args) >= 2 and isinstance(args[0], str) and callable(args[1]):
+            raise TypeError(
+                f"Function takes the callable first and the label as a keyword, got the label "
+                f"{args[0]!r} first; write Function(fn, label={args[0]!r})"
+            )
+        if not args and "fn" in kwargs:
+            raise TypeError(
+                "Function takes the callable as its first positional argument, not as fn=; "
+                "write Function(fn, label=...)"
+            )
+        return super().__new__(cls)
 
     def __init__(
         self,
