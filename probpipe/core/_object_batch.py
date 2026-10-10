@@ -53,7 +53,7 @@ def _collection_expression(store: np.ndarray, *, kind: str | None = None) -> Exp
     store : numpy.ndarray
         The batch's elements, as an object array of any shape.
     kind : str, optional
-        The class name the error message names, such as ``"FunctionBatch"``.
+        The class name the error messages name, such as ``"FunctionBatch"``.
 
     Returns
     -------
@@ -63,31 +63,52 @@ def _collection_expression(store: np.ndarray, *, kind: str | None = None) -> Exp
     Raises
     ------
     TypeError
-        If *store* holds no element, which leaves nothing to describe.
+        If *store* holds no element, which leaves nothing to describe, or if a
+        member is a callable without a name.
     """
     if not store.size:
         raise TypeError(
             f"cannot derive a default label for an empty {kind or 'batch'}; pass label=..."
         )
     members = tuple(store.flat[i] for i in range(min(store.size, _DESCRIBED_MEMBERS)))
-    expressions = tuple(_member_expression(member) for member in members)
+    expressions = tuple(_member_expression(member, kind=kind) for member in members)
     return Collection(expressions, omitted=store.size > len(members))
 
 
-def _member_expression(member: Any) -> Expression:
+def _member_expression(member: Any, *, kind: str | None = None) -> Expression:
     """The description of one stored *member* in its batch's default label.
 
     A tracked term reads as it reads inside any expression, and a callable as
     its name and parameters, as ``predict(x)``. A callable whose signature
     cannot be inspected, as for some builtins, reads as its name alone.
+
+    Parameters
+    ----------
+    member : Any
+        The stored member.
+    kind : str, optional
+        The batch's class name, which the refusal of a callable without a name
+        names, such as ``"FunctionBatch"``.
+
+    Returns
+    -------
+    Expression
+        The member's description.
+
+    Raises
+    ------
+    TypeError
+        If *member* is a callable without a name, such as a
+        ``functools.partial``.
     """
     if isinstance(member, TrackedTerm):
         return member._embedded_expression()
+    name = _callable_label(member, subject=kind)
     try:
         parameters = tuple(inspect.signature(member).parameters)
     except (TypeError, ValueError):
-        return Named(_callable_label(member, subject="FunctionBatch"))
-    return Named(_callable_label(member, subject="FunctionBatch"), Signature(parameters))
+        return Named(name)
+    return Named(name, Signature(parameters))
 
 
 class _ObjectBatch[E](Batch[E]):

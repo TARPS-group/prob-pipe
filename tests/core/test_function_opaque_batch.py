@@ -10,6 +10,7 @@ check.
 from __future__ import annotations
 
 import copy
+import functools
 import pickle
 
 import jax.numpy as jnp
@@ -635,6 +636,27 @@ class TestTheDefaultLabel:
         ):
             FunctionBatch([], "model")
         assert FunctionBatch([], "model", label="none").batch_shape == (0,)
+
+    def test_a_member_without_a_name_says_the_batch_needs_a_label(self):
+        """A partial has no name to describe it, so the batch needs a label."""
+
+        def scale(a, x):
+            return a * x
+
+        with pytest.raises(TypeError, match=r"^FunctionBatch .*label"):
+            FunctionBatch([functools.partial(scale, 1)], "m")
+        labeled = FunctionBatch([functools.partial(scale, 1)], "m", label="scales")
+        assert labeled.label == "scales"
+
+    def test_the_refusal_names_the_batch_class(self):
+        class Scales(FunctionBatch):
+            pass
+
+        def scale(a, x):
+            return a * x
+
+        with pytest.raises(TypeError, match=r"^Scales .*label"):
+            Scales([functools.partial(scale, 1)], "m")
 
 
 class TestTheLabelFirstFormIsRefusedWithAHint:
