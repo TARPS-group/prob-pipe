@@ -1512,3 +1512,10 @@ class TestDistributionSpecFingerprint:
         assert fingerprint(whole) == fingerprint(
             DistributionSpec(OutputSpec(x=NumericArraySpec(())))
         )
+
+
+class TestLawLabels:
+    def test_generic_law_default_uses_a_declared_component(self):
+        law = Distribution(OutputSpec(tau=NumericArraySpec(())))
+        assert law.notation == "p(tau)"
+        assert law.with_label("prior").event_spec == law.event_spec
