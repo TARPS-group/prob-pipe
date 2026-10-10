@@ -78,6 +78,8 @@ class TestPredictiveCheck:
         with workflow_run(seed=0):
             result = predictive_check(likelihood, prior, sample_mean, num_replications=50)
         assert result["replicated_statistics"].num_atoms == 50
+        # The law is labeled by the statistic, and the record's field view by its key.
+        assert str(result.raw()["replicated_statistics"]) == "sample_mean(replicated_statistics)"
         assert result["test_fn_name"].value == "sample_mean"
         assert "observed_statistic" not in result
         assert "p_value" not in result
@@ -377,7 +379,14 @@ class TestCalibration:
         assert float(result["p_value"]) == pytest.approx(exact, abs=0.03)
         with workflow_run(seed=5):
             as_record = predictive_check(
-                kernel, prior, contrast, Record("observed", **observed), num_replications=4000
+                kernel,
+                prior,
+                contrast,
+                Record(
+                    {**observed},
+                    label="observed",
+                ),
+                num_replications=4000,
             )
         assert float(as_record["p_value"]) == float(result["p_value"])
 
@@ -418,7 +427,10 @@ class TestForms:
         draws = jnp.asarray(np.random.default_rng(0).normal(size=200), jnp.float32)
         record, _ = _posteriors_of(draws, NumericArraySpec((), jnp.float32))
         kernel = _location_kernel(record)
-        rows = NumericRecord("posterior", mu=np.asarray(draws))
+        rows = NumericRecord(
+            {"mu": np.asarray(draws)},
+            label="posterior",
+        )
         with workflow_run(seed=0):
             result = predictive_check(kernel, rows, sample_mean, observed_data, num_replications=40)
         with workflow_run(seed=0):

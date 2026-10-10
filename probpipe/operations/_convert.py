@@ -17,12 +17,14 @@ from dataclasses import replace
 from typing import Any, cast
 
 from ..core._dispatch import Feasibility
+from ..core._expression import Expression
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
+from ..core.tracked import TrackedTerm
 from ..distributions._conversion import _satisfaction, converter_registry
-from ..distributions._distribution import Distribution, DistributionSpec
-from ._operation import BoundCall, Operation, operation_registry
+from ..distributions._distribution import Distribution, DistributionSpec, _labeled_by_default
+from ._operation import BoundCall, Operation, _install_expression_rule, operation_registry
 
 __all__ = ["convert"]
 
@@ -150,6 +152,22 @@ def _unchanged(call: BoundCall, result: OutputSpec | None) -> Any:
     return call.operands["d"]
 
 
+def _converted_expression(d: Any) -> Expression | None:
+    """The expression of a converted law: the source's, or the converter's for a source under its default label.
+
+    A converted law keeps the label and the fixed paths of the law it converts.
+    A label equal to the source constructor's default names only the source's
+    class, so the converted law keeps the label its converter gives it, which
+    names the target, as a ``Normal`` fit to a ``Laplace`` reads ``Normal(g)``.
+    A source that is not a tracked term, such as a backend distribution, has no
+    label to keep.
+    """
+    if not isinstance(d, TrackedTerm) or _labeled_by_default(d):
+        return None
+    return d._embedded_expression()
+
+
 operation_registry.register(convert)
 convert.structural_route("identity", check=_satisfies_target, execute=_unchanged, exact=True)
 convert.registry_route("converters", registry=converter_registry)
+_install_expression_rule(convert, _converted_expression)

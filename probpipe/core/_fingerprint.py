@@ -795,10 +795,20 @@ def _update_distribution(
         _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
         # Generic fallback for other non-TFP distributions. The label, the
-        # default label, and the expression state how the law displays, and
-        # record nothing about what it computes.
+        # default label, the expression, and what the label's rendering left
+        # out state how the law displays, and record nothing about what it
+        # computes.
         _SKIP = frozenset(
-            {"_label", "_default_label", "_expression", "_provenance", "_annotations"}
+            {
+                "_label",
+                "_label_collapse",
+                "_default_label",
+                "_uses_default_label",
+                "_default_expression",
+                "_expression",
+                "_provenance",
+                "_annotations",
+            }
         )
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):

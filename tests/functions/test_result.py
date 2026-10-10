@@ -22,9 +22,9 @@ class TestMakeStack:
         from probpipe.functions._result import _make_stack
 
         with pytest.raises(TypeError, match="requires either batch_shape or n"):
-            _make_stack([1.0], field_name="demo", level_names=("sweep",))
+            _make_stack([1.0], label="demo", level_names=("sweep",))
         with pytest.raises(TypeError, match="batch_shape OR n, not both"):
-            _make_stack([1.0], batch_shape=(1,), n=1, field_name="demo", level_names=("sweep",))
+            _make_stack([1.0], batch_shape=(1,), n=1, label="demo", level_names=("sweep",))
 
     def test_one_level_name_per_group_of_axes(self):
         """A level name that names no group would name nothing."""
@@ -35,7 +35,7 @@ class TestMakeStack:
                 [1.0, 2.0, 3.0, 4.0],
                 batch_shape=(2, 2),
                 axis_groups=((2,), (2,)),
-                field_name="demo",
+                label="demo",
                 level_names=("only_one",),
             )
 
@@ -44,7 +44,7 @@ class TestMakeStack:
         from probpipe import NumericArrayBatch
         from probpipe.functions._result import _make_stack
 
-        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo", level_names=("sweep",))
+        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericArrayBatch)
         assert (out.batch_shape, out.level_names) == ((4,), ("sweep",))
         assert tuple(out.element_spec.shape) == ()
@@ -56,7 +56,7 @@ class TestMakeStack:
         from probpipe.functions._result import _make_stack
 
         values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
-        out = _make_stack(values, n=4, field_name="demo", level_names=("sweep",))
+        out = _make_stack(values, n=4, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
         assert tuple(out.element_spec.shape) == (3,)
@@ -66,8 +66,14 @@ class TestMakeStack:
         from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.functions._result import _make_stack
 
-        records = [NumericRecord("nr", a=float(i), b=float(i) * 2) for i in range(5)]
-        out = _make_stack(records, n=5, field_name="demo", level_names=("sweep",))
+        records = [
+            NumericRecord(
+                {"a": float(i), "b": float(i) * 2},
+                label="nr",
+            )
+            for i in range(5)
+        ]
+        out = _make_stack(records, n=5, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (5,)
         np.testing.assert_allclose(out["a"], [0, 1, 2, 3, 4])
@@ -81,8 +87,14 @@ class TestMakeStack:
         from probpipe import NumericRecordBatch, Record, RecordBatch
         from probpipe.functions._result import _make_stack
 
-        records = [Record("r", a=float(i), label=f"row{i}") for i in range(3)]
-        out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
+        records = [
+            Record(
+                {"a": float(i), "label": f"row{i}"},
+                label="r",
+            )
+            for i in range(3)
+        ]
+        out = _make_stack(records, n=3, label="demo", level_names=("sweep",))
         assert isinstance(out, RecordBatch)
         assert not isinstance(out, NumericRecordBatch)
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
@@ -97,8 +109,14 @@ class TestMakeStack:
         from probpipe.core._specs import NumericArraySpec
         from probpipe.functions._result import _make_stack
 
-        records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
-        out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
+        records = [
+            Record(
+                {"x": jnp.ones(2, dtype=jnp.bfloat16), "label": f"r{i}"},
+                label="r",
+            )
+            for i in range(3)
+        ]
+        out = _make_stack(records, n=3, label="demo", level_names=("sweep",))
         assert isinstance(out, RecordBatch)
         assert out["x"].dtype == jnp.bfloat16
         assert out.event_template["x"] == NumericArraySpec((2,))  # numeric, not None/opaque
@@ -109,7 +127,7 @@ class TestMakeStack:
         from probpipe.functions._result import _make_stack
 
         comps = [Normal("d", loc=float(i), scale=1.0) for i in range(3)]
-        out = _make_stack(comps, n=3, field_name="demo", level_names=("sweep",))
+        out = _make_stack(comps, n=3, label="demo", level_names=("sweep",))
         assert isinstance(out, DistributionBatch)
         assert (out.batch_shape, out.level_names) == ((3,), ("sweep",))
         assert out[0].label == "demo[sweep=0]"
@@ -121,7 +139,7 @@ class TestMakeStack:
 
         comps = [Normal("a", loc=0.0, scale=1.0), Normal("b", loc=0.0, scale=1.0)]
         with pytest.raises(TypeError, match="element 1 of the DistributionBatch"):
-            _make_stack(comps, n=2, field_name="demo", level_names=("sweep",))
+            _make_stack(comps, n=2, label="demo", level_names=("sweep",))
 
     def test_list_of_record_batches_nests_batch_shape(self):
         """Each inner RecordBatch has its own batch_shape (m,). Stacking
@@ -131,11 +149,18 @@ class TestMakeStack:
 
         inner = [
             NumericRecordBatch.stack(
-                [NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)], level_name="draw"
+                [
+                    NumericRecord(
+                        {"x": float(i * 10 + j)},
+                        label="nr",
+                    )
+                    for j in range(4)
+                ],
+                level_name="draw",
             )
             for i in range(3)
         ]
-        out = _make_stack(inner, n=3, field_name="demo", level_names=("sweep",))
+        out = _make_stack(inner, n=3, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (3, 4)
         np.testing.assert_allclose(out["x"][0], [0, 1, 2, 3])
@@ -152,7 +177,7 @@ class TestMakeStack:
         from probpipe.functions._result import _make_stack
 
         arr = jnp.arange(12.0).reshape(4, 3)
-        out = _make_stack(arr, n=4, field_name="demo", level_names=("sweep",))
+        out = _make_stack(arr, n=4, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
         assert tuple(out.element_spec.shape) == (3,)
@@ -166,7 +191,7 @@ class TestMakeStack:
             _make_stack(
                 jnp.ones((4, 2)),
                 n=4,
-                field_name="demo",
+                label="demo",
                 output_template=RecordSpec(left=(2,), right=(2,)),
                 level_names=("sweep",),
             )
@@ -181,7 +206,7 @@ class TestMakeStack:
         out = _make_stack(
             values,
             n=4,
-            field_name="demo",
+            label="demo",
             output_template=template,
             level_names=("sweep",),
         )
@@ -199,7 +224,7 @@ class TestMakeStack:
         out = _make_stack(
             values,
             batch_shape=(2, 3),
-            field_name="demo",
+            label="demo",
             output_template=template,
             level_names=("sweep",),
         )
@@ -215,8 +240,11 @@ class TestMakeStack:
         from probpipe import NumericRecordBatch, Record
         from probpipe.functions._result import _make_stack
 
-        rec = Record("r", x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
-        out = _make_stack(rec, n=5, field_name="demo", level_names=("sweep",))
+        rec = Record(
+            {"x": jnp.arange(5.0), "y": jnp.arange(5.0) + 10},
+            label="r",
+        )
+        out = _make_stack(rec, n=5, label="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (5,)
 
@@ -224,13 +252,13 @@ class TestMakeStack:
         from probpipe.functions._result import _make_stack
 
         with pytest.raises(ValueError, match=r"expected prod\(batch_shape\)=5"):
-            _make_stack([1.0, 2.0, 3.0], n=5, field_name="demo", level_names=("sweep",))
+            _make_stack([1.0, 2.0, 3.0], n=5, label="demo", level_names=("sweep",))
 
     def test_ndarray_leading_axis_mismatch_raises(self):
         from probpipe.functions._result import _make_stack
 
         with pytest.raises(ValueError, match="expected leading axis"):
-            _make_stack(jnp.arange(6.0), n=4, field_name="demo", level_names=("sweep",))
+            _make_stack(jnp.arange(6.0), n=4, label="demo", level_names=("sweep",))
 
 
 # ===========================================================================
@@ -251,7 +279,7 @@ class TestCoerceOutput:
             3.14,
             broadcast_mode=_result.BROADCAST_WRAP,
             provenance=None,
-            field_name="f",
+            label="f",
         )
 
         np.testing.assert_allclose(float(out), 3.14)
@@ -267,7 +295,7 @@ class TestCoerceOutput:
             {"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0},
             broadcast_mode="wrap",
             provenance=None,
-            field_name="f",
+            label="f",
         )
         assert isinstance(out, Record)
         assert list(out.keys()) == ["summary/mean", "summary/count", "x"]
@@ -277,11 +305,18 @@ class TestCoerceOutput:
         from probpipe.functions._result import _coerce_output
 
         ra = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i)) for i in range(3)], level_name="draw"
+            [
+                NumericRecord(
+                    {"x": float(i)},
+                    label="nr",
+                )
+                for i in range(3)
+            ],
+            level_name="draw",
         )
         assert ra.provenance is None
         prov = Provenance("sweep", parents=())
-        out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
+        out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, label="f")
         assert out is not ra
         assert out.label == "f"
         assert out.provenance.operation == "sweep"
@@ -294,13 +329,13 @@ class TestCoerceOutput:
         da = _make_stack(
             [Normal("d", loc=0.0, scale=1.0) for _ in range(3)],
             n=3,
-            field_name="demo",
+            label="demo",
             level_names=("sweep",),
         )
         assert isinstance(da, DistributionBatch)
         assert da.provenance is None
         prov = Provenance("nested", parents=())
-        out = _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
+        out = _coerce_output(da, broadcast_mode="nested", provenance=prov, label="f")
         assert out.label == "f"
         assert out.provenance.operation == "nested"
         assert da.provenance is None
@@ -313,13 +348,16 @@ class TestCoerceOutput:
         from probpipe import NumericRecord
         from probpipe.functions._result import _coerce_output
 
-        nr = NumericRecord("nr", x=1.0).with_provenance(Provenance("inner", parents=()))
+        nr = NumericRecord(
+            {"x": 1.0},
+            label="nr",
+        ).with_provenance(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.
         _coerce_output(
             nr,
             broadcast_mode="stack",
             provenance=Provenance("outer", parents=()),
-            field_name="f",
+            label="f",
         )
         assert nr.provenance.operation == "inner"

@@ -26,7 +26,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import Array, ArrayLike
+from ..custom_types import Array
 from ._array_backend import (
     _NUMERIC_SCALARS,
     _event_shape_of,
@@ -42,8 +42,9 @@ from ._specs import (
     NumericRecordSpec,
     RecordSpec,
 )
-from .named_tree import _PATH_SEP, _check_no_path_sep, _unflatten_paths
-from .record import Record
+from .named_tree import _PATH_SEP, _unflatten_paths
+from .record import Record, _derived_record_name, _not_a_field_mapping
+from .tracked import _NO_DESCRIPTION, refuses_label_first
 
 # ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
 # resolvers) and re-exported here, its historical home.
@@ -128,40 +129,35 @@ class NumericRecord(Record, Numeric):
 
     Parameters
     ----------
-    label : str
-        The record's label, which is the required first positional argument as
-        on :class:`Record`.
-    _fields : Mapping, optional
-        Fields as a positional mapping — an alternative to keyword ``**fields``
-        (passing both raises). As on :class:`Record`, use it when a field name
-        would collide with the ``event_template`` keyword.
+    fields : Mapping
+        Field values in canonical first-appearance order. A mapping value becomes
+        a nested record. Slash-delimited keys declare nested paths. Fields named
+        ``label``, ``name``, and ``event_template`` remain ordinary mapping keys.
+    label : str, optional
+        The root's display alias. Defaults to ``record(field,...)`` from the
+        declared top-level fields. An empty record requires an explicit label.
     event_template : NumericRecordSpec, optional
-        The value's authoritative numeric schema. When omitted it is inferred from
-        the field data at construction; when supplied it is validated against
-        the fields. Either way it is fixed for the life of the record, readable
-        as :attr:`spec` or, for its structure, :attr:`event_template`.
+        The authoritative schema. Defaults to the schema inferred from the fields.
+        A supplied schema is validated and its shared dimensions are bound jointly.
     _validate_leaves : bool
-        As on :class:`Record`: whether to check each leaf against a supplied
-        *event_template*. Each leaf is checked to be numeric either way.
-    **fields : array-like or NumericRecord
-        Named numeric values: a numeric array or container (``jax`` /
-        ``numpy`` / ``xarray`` / ``pandas`` / registered backends), a numeric
-        Python scalar, or a nested ``NumericRecord``. At least one field is
-        required.
+        Whether to validate leaves against a supplied template. Internal numerical
+        reconstruction skips this check. Numeric records still require numeric leaves.
 
     Raises
     ------
     TypeError
-        If any leaf is not a numeric array/container, a numeric scalar, or a
-        nested ``NumericRecord``.
+        If any leaf is not a numeric array or container, a numeric scalar, or a
+        nested ``NumericRecord``; or for any reason :class:`Record` states: a
+        *fields* that is not a mapping, a string given where the fields go
+        with *label* omitted, or no fields with *label* omitted.
     ValueError
-        If no fields are given, a field name contains ``/``, or both ``_fields``
-        and keyword fields are passed (inherited from :class:`Record`).
+        If the field paths conflict or a supplied ``event_template`` disagrees
+        with the fields or their values, as for :class:`Record`.
 
     Notes
     -----
-    Constructing ``NumericRecord(label, **fields)``, constructing
-    ``Record(label, **fields)`` from all-numeric fields (which auto-promotes),
+    Constructing ``NumericRecord(fields, label=label)``, constructing
+    ``Record(fields, label=label)`` from all-numeric fields (which auto-promotes),
     and calling ``to_numeric()`` follow the same validation path and produce
     identical results; ``to_numeric()`` on an existing ``NumericRecord`` is
     the identity.
@@ -184,29 +180,16 @@ class NumericRecord(Record, Numeric):
 
     def __init__(
         self,
-        label: str,
-        _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
+        fields: Mapping[str, Any],
         /,
         *,
+        label: str | None = None,
         event_template: RecordSpec | None = None,
         _validate_leaves: bool = True,
-        **fields: ArrayLike | NumericRecord,
     ):
-        # Build the validated field dict *before* Record's __init__ runs, so
-        # ``_fields`` is populated exactly once and the "constructed once,
-        # never touched" invariant implied by ``__slots__`` + the
-        # ``__setattr__`` guard holds.
-        if _fields is not None:
-            if fields:
-                raise ValueError(
-                    f"{type(self).__name__} takes either a mapping of fields or keyword fields, "
-                    f"not both"
-                )
-            raw_inputs = _unflatten_paths(_fields)
-        else:
-            for field_name in fields:
-                _check_no_path_sep(field_name)
-            raw_inputs = dict(fields)
+        if not isinstance(fields, Mapping):
+            raise TypeError(_not_a_field_mapping(type(self).__name__, fields))
+        raw_inputs = _unflatten_paths(fields)
         # Materialise structural nesting (path-keyed construction) into nested
         # NumericRecords *before* leaf validation, so the numeric check happens
         # on the nested record that owns each leaf.
@@ -219,15 +202,19 @@ class NumericRecord(Record, Numeric):
                     child = event_template.children.get(field_name)
                     if isinstance(child, RecordSpec):
                         sub_template = child
-                raw_fields[field_name] = type(self)(field_name, value, event_template=sub_template)
+                raw_fields[field_name] = type(self)(
+                    value,
+                    event_template=sub_template,
+                    label=field_name,
+                )
             else:
                 raw_fields[field_name] = value
         validated = self._validate(raw_fields)
         super().__init__(
-            label,
             validated,
             event_template=event_template,
             _validate_leaves=_validate_leaves,
+            label=label,
         )
         # Cache vector_size, reading only container metadata (shapes) — a
         # lazy / disk-backed leaf is not materialised here.
@@ -364,26 +351,31 @@ class NumericRecord(Record, Numeric):
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord:
+    @refuses_label_first("spec", then=("vec",))
+    def from_vector(
+        cls, spec: NumericRecordSpec, vec: Array, *, label: str | None = None
+    ) -> NumericRecord:
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
         spec's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
         in canonical leaf order, and returns a ``NumericRecord`` carrying
-        *spec* as its authoritative schema under the user-given *label*.
+        *spec* as its authoritative schema under *label*.
         The reconstructed leaves are bare ``jax.Array``\\ s — a flat vector
         carries no native container to restore.
 
         Parameters
         ----------
-        label : str
-            The reconstructed record's label.
         spec : NumericRecordSpec
             The flat layout supplying field names, shapes, and order. Every
             leaf must be a NumericArraySpec.
         vec : Array
             A vector of shape ``(spec.vector_size,)`` — one single
             (unbatched) value.
+        label : str or None
+            Keyword-only. The reconstructed record's label; ``None``, the
+            default, derives ``record(field,...)`` from the spec's top-level
+            fields, as the constructor does.
 
         Returns
         -------
@@ -394,10 +386,12 @@ class NumericRecord(Record, Numeric):
         Raises
         ------
         TypeError
-            If *spec* contains a non-array leaf, or *vec* carries
+            If *spec* contains a non-array leaf; if *vec* carries
             leading batch axes — batched reconstruction is
             the batch type's concern; use :meth:`NumericRecordBatch.from_vector`
-            for a batched matrix.
+            for a batched matrix; if *label* is omitted and *spec* has no
+            fields to derive it from; or if *spec* is a string, which is a
+            label passed first in the earlier form.
         ValueError
             If the vector length does not equal ``spec.vector_size``.
         """
@@ -408,6 +402,7 @@ class NumericRecord(Record, Numeric):
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
                 f"NumericRecordBatch.from_vector."
             )
+        label = _derived_record_name(spec.children) if label is None else label
         return _reconstruct_from_vector(label, spec, vec)
 
     def to_numeric(self) -> NumericRecord:
@@ -507,7 +502,12 @@ def _value_treedef(template: NumericRecordSpec) -> jax.tree_util.PyTreeDef:
         # template may pin another dtype (int32 / bool) — this skeleton exists
         # only to capture the treedef structure, and the real leaves are cast
         # to the field dtype in ``_reconstruct_from_vector``.
-        return NumericRecord("value", fields, event_template=tpl, _validate_leaves=False)
+        return NumericRecord(
+            fields,
+            event_template=tpl,
+            _validate_leaves=False,
+            label="value",
+        )
 
     return jax.tree_util.tree_structure(_build(template))
 
@@ -599,11 +599,11 @@ def _reconstruct_from_vector(
         # ``level_names`` parameter a lie for every caller who named two.
         names = _as_names(level_names, what="from_vector level_names")
         return NumericRecordBatch(
-            label,
             dict(zip(template.keys(), leaves, strict=True)),
             names,
             element_spec=template,
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
+            label=label,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
     value._store_expression(Named(label))
@@ -640,16 +640,16 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, RecordSpec]:
 
 
 def _numeric_record_unflatten(spec: RecordSpec, children: list) -> NumericRecord:
-    """Unflatten NumericRecord from JAX pytree traversal, labeled ``NumericRecord``.
+    """Unflatten NumericRecord from JAX pytree traversal, labeled ``<no description>``.
 
-    The label does not cross a transform, so the rebuilt record is labeled by
-    its class until a result boundary labels it.
+    The label does not cross a transform, so the rebuilt record is marked
+    ``<no description>`` until a result boundary labels it.
     """
     return NumericRecord(
-        "NumericRecord",
         dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,
+        label=_NO_DESCRIPTION,
     )
 
 

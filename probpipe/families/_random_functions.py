@@ -21,6 +21,7 @@ from ..core._specs import OpaqueSpec, OutputSpec
 from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
+    _check_component,
     _class_label,
     _constructor_label,
     _whole_term_event,
@@ -110,8 +111,8 @@ class RandomFunction(Distribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* declares a type that is
-        not a ``FunctionSpec``.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* declares a type that is not a ``FunctionSpec``.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component.
@@ -126,7 +127,10 @@ class RandomFunction(Distribution):
     ) -> None:
         owner = _class_label(self)
         declaration = _event_of_kind(component, event_spec, FunctionSpec, FunctionSpec(), owner)
-        super().__init__(_constructor_label(self, label, owner), declaration)
+        super().__init__(
+            declaration,
+            label=_constructor_label(self, label, owner),
+        )
 
     @abstractmethod
     def __call__(self, x: Any) -> Distribution:
@@ -159,8 +163,8 @@ class RandomMeasure(Distribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* declares a type that is
-        not a ``DistributionSpec``.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* declares a type that is not a ``DistributionSpec``.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component.
@@ -174,11 +178,10 @@ class RandomMeasure(Distribution):
         label: str | None = None,
     ) -> None:
         owner = _class_label(self)
-        if not isinstance(component, str):
-            raise TypeError(
-                f"{owner} takes the component of its event as its first argument, a string; got "
-                f"{type(component).__name__}"
-            )
+        _check_component(component, owner)
         opaque_law = DistributionSpec(OutputSpec(**{component: OpaqueSpec()}))
         declaration = _event_of_kind(component, event_spec, DistributionSpec, opaque_law, owner)
-        super().__init__(_constructor_label(self, label, owner), declaration)
+        super().__init__(
+            declaration,
+            label=_constructor_label(self, label, owner),
+        )

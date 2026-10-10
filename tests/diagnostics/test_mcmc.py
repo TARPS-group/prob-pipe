@@ -255,7 +255,7 @@ class TestAddEss:
         law = EmpiricalDistribution(
             np.random.default_rng(0).standard_normal((50, 2)), component="theta"
         )
-        with pytest.raises(ValueError, match=r"'p' has no chains: .* \['theta'\]"):
+        with pytest.raises(ValueError, match=r"p\(theta\) has no chains: .* \['theta'\]"):
             add_ess(law)
 
     def test_ess_covers_all_params(self, posterior_3params):

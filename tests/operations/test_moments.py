@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import math
+from functools import partial
 from typing import Any
 
 import jax
@@ -61,7 +62,11 @@ class _Shift(ConditionalDistribution, SupportsConditionalSampling):
     """The kernel ``y | mu``, a point mass one above its given, which only samples."""
 
     def __init__(self) -> None:
-        super().__init__("y", {"mu": REAL}, OutputSpec(y=REAL))
+        super().__init__(
+            {"mu": REAL},
+            OutputSpec(y=REAL),
+            label="y",
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         raise NotImplementedError("the moment tests bind no given of the kernel")
@@ -85,7 +90,10 @@ class _Ramp(Distribution, SupportsSampling):
     def __init__(self, label: str, *, record: bool = False) -> None:
         pair = RecordSpec(x=REAL, y=REAL)
         array = OutputSpec(**{label: NumericArraySpec((2,), jnp.float32, real)})
-        super().__init__(label, pair if record else array)
+        super().__init__(
+            pair if record else array,
+            label=label,
+        )
         self.record = record
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -98,10 +106,10 @@ class _Ramp(Distribution, SupportsSampling):
 def _record_empirical() -> EmpiricalDistribution:
     """Three equally weighted record atoms, whose leaves ``b`` and ``a`` each rank the atoms alike."""
     atoms = NumericRecordBatch(
-        "rows",
         {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
         "row",
         element_spec=RecordSpec(b=(2,), a=()),
+        label="rows",
     )
     return EmpiricalDistribution(atoms, label="post")
 
@@ -385,16 +393,23 @@ class _RandomLine(Distribution, SupportsSampling):
 
     def __init__(self, label: str) -> None:
         super().__init__(
-            label, OutputSpec(**{label: FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL))})
+            OutputSpec(**{label: FunctionSpec(InputSpec(x=REAL), OutputSpec(y=REAL))}),
+            label=label,
         )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         slopes = np.asarray(jax.random.normal(key, tuple(sample_shape)))
         if not sample_shape:
-            return Function("line", lambda x: slopes * x)
+            return Function(
+                lambda x: slopes * x,
+                label="line",
+            )
         lines = np.empty(slopes.shape, dtype=object)
         for index, slope in np.ndenumerate(slopes):
-            lines[index] = Function("line", lambda x, slope=slope: slope * x)
+            lines[index] = Function(
+                lambda x, slope=slope: slope * x,
+                label="line",
+            )
         return lines
 
 
@@ -514,9 +529,9 @@ class TestExpectation:
 
     def test_the_result_takes_the_kind_the_integrand_declares(self):
         f = Function(
-            "f",
             lambda x: {"sq": x**2},
             output_spec=OutputSpec(RecordSpec(sq=NumericArraySpec(()))),
+            label="f",
         )
         result = expectation(Coin("c", 0.5), f)
         assert isinstance(result, Record) and result.fields == ("mean(sq)",)
@@ -527,6 +542,29 @@ class TestExpectation:
 
     def test_an_undeclared_integrand_leaves_the_declaration_to_the_value(self):
         assert expectation.check(Coin("c", 0.5), lambda x: x**2).result is None
+
+    def test_an_undeclared_integrand_gives_one_result_whatever_its_names(self):
+        def square(x):
+            return x**2
+
+        results = [
+            expectation(Coin("c", 0.5), integrand)
+            for integrand in (square, lambda x: x**2, Function(square, label="g"))
+        ]
+        assert [result.label for result in results] == [
+            "E[square(c ~ c)]",
+            "E[f(c ~ c)]",
+            "E[g(c ~ c)]",
+        ]
+        assert len({result.spec for result in results}) == 1
+        assert all(_value(result) == pytest.approx(0.5) for result in results)
+
+    def test_a_nameless_integrand_needs_a_labeled_function(self):
+        integrand = partial(lambda x, k: x**k, k=2)
+        with pytest.raises(TypeError, match="explicit label for a partial"):
+            expectation(Coin("c", 0.5), integrand)
+        labeled = expectation(Coin("c", 0.5), Function(integrand, label="g"))
+        assert labeled.label == "E[g(c ~ c)]"
 
     def test_the_integrand_is_a_callable(self):
         with pytest.raises(ApplicabilityError, match="FunctionSpec"):

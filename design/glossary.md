@@ -2,6 +2,7 @@
 
 The terms of art of the reference, in alphabetical order. Each entry defines its term and names the section that owns its rules, where those rules are stated.
 
+- **alias**: a label the caller gives explicitly, through a constructor's `label=`, a function's `output_label=`, or `with_label`, which replaces a term's description for display and supplies no component, field, level, or identity (II.4).
 - **argument normalization**: step 3 of a call, which wraps each argument into its kind, plans any conversion it needs, and admits the result against its parameter (V.4).
 - **atom**: one point of an empirical law's finite support, held with its weight in the event type's batch form (VII.2).
 - **batch**: an indexed collection of separate objects of one element type, with its axes grouped into named levels (II.5). A kind's batch form is its batch class, such as `RecordBatch` for records (II.1).
@@ -11,6 +12,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event declaration; a converter is the registered method that carries one out (IV.3).
 - **declaration**: static information an object states before any computation, such as a spec, a claimed capability, or a method's exactness (II.7). In particular, an `InputSpec` declares a map-like kind's input slots, an `OutputSpec` declares the components of one produced term, and a law's event declaration is the `OutputSpec` of a draw (II.2, III.7).
 - **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` or `expectation(d, f) = mean(evaluate(f, d))` (VI.0, VI.4, VI.5).
+- **description**: the expression a term derives at construction, from its declared fields, its callable's name, or its operands, which its label renders when the caller gives no alias. A term that JAX rebuilds from its leaves has none and displays `<no description>` (II.4).
 - **element**: one object of a batch, at one position of its batch axes (II.5). The scalar values of an array are its entries.
 - **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule, an integration rule, or the sampling lift (V.7).
 - **event**: one value of a distribution's space, such as a draw or a stored datum, typed by the law's event declaration (III.5, III.7). A workflow-owned random event is one draw's occurrence in a workflow scope (V.8).
@@ -23,7 +25,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **guard**: a predicate on a capability's instance and a call's arguments that decides whether the capability supports the call, as a `LinOp`'s inverse guard rejects a non-square operator (III.8).
 - **key**: a path that addresses a field, so the keys of a named tree are its field paths (II.6). A PRNG key is the random-number key that a workflow scope derives for each draw (V.8).
 - **kind**: a sort of tracked term, such as `NumericArray`, `Record`, or `Distribution`, identified by the class of its term spec; the kind table records each kind's tracked class and batch form (II.1).
-- **label**: the string that names a tracked term for a reader, its `label` attribute, which has no mathematical meaning and which no operation reads (C5). It is the name part of the rendering of the term's expression. A value's constructor takes it first, and a law's or a kernel's constructor takes it as the optional keyword `label=`, with a default label such as a family's class name. II.4 owns how a label is set, defaulted, derived, and grouped, and III.7 and III.8 own the labels of a field view and of a marginal. A law, a kernel, or a function displays its label in its notation.
+- **label**: the string that names a tracked term for a reader, its `label` attribute, which has no mathematical meaning and on which no computation depends (C5): an operation reads its operands' labels only to label its result. It is the name part of the rendering of the term's expression. Constructors take it as keyword `label=`, requiring it for raw values without semantic structure and otherwise deriving it from fields, callable names, or described operands. II.4 owns how a label is set, defaulted, derived, and grouped, and III.7 and VI.8 own the labels of a field view and of a marginal. A law, a kernel, or a function displays its label in its notation.
 - **level**: a named group of contiguous batch axes; a batch's `axis_groups` tiles its batch shape into levels, outermost first (II.5).
 - **lift**: the application of a function to a distribution or a batch where it expects a value, which is a broadcast for a distribution and a sweep for a batch (C4, V.5). The sampling lift is the generic evaluation rule that realizes a broadcast from draws (V.7).
 - **marginal**: the law of the field or field group at a path of a distribution, detached from that distribution; `marginal(d, path)` returns it, and `_marginal` is its capability (VI.8, III.8).
@@ -68,7 +70,7 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | a distribution's event declaration, an `OutputSpec` | `event_spec` |
 | a PRNG key | `key` |
 | a function from which `distribution` builds a law | the operation it realizes: `sample`, `log_prob`, or `unnormalized_log_prob` |
-| a tracked term's identity for a reader: the first argument of a value's constructor, as of `Record`, and the optional keyword of a law's or a kernel's | `label` |
+| a tracked term's identity for a reader: the `label=` keyword of a constructor | `label` |
 | the component of a law's whole-term event, the first argument of a family's constructor and a keyword of `EmpiricalDistribution` and `distribution` | `component` |
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |

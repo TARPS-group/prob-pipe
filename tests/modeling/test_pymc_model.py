@@ -729,20 +729,33 @@ class TestRecordDataUnpacking:
         return m
 
     def test_record_input_unpacked_by_field_name(self):
-        """A ``Record("data", X=..., y=...)`` populates both observed slots."""
+        """A ``Record({"X": ..., "y": ...}, label=...)`` populates both observed slots."""
         from probpipe import Record
 
         rng = np.random.RandomState(0)
         N = 20
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        data = Record("r", X=jnp.asarray(X), y=jnp.asarray(y))
+        data = Record(
+            {"X": jnp.asarray(X), "y": jnp.asarray(y)},
+            label="r",
+        )
 
         # X is a covariate: binding it curries the kernel, and the law's
         # _pymc_model unpacks y from a Record. The build uses the *real* X
         # and y, not the sentinel of the build without data.
-        model = PyMCModel(self._xy_model, label="model")._condition_on(Record("r", X=data["X"]))
-        built = model._pymc_model(data=Record("r", y=data["y"]))
+        model = PyMCModel(self._xy_model, label="model")._condition_on(
+            Record(
+                {"X": data["X"]},
+                label="r",
+            )
+        )
+        built = model._pymc_model(
+            data=Record(
+                {"y": data["y"]},
+                label="r",
+            )
+        )
         # The 'y' observed RV should have N observations.
         y_rv = next(rv for rv in built.observed_RVs if rv.name == "y")
         assert y_rv.eval().shape == (N,)
@@ -769,9 +782,19 @@ class TestRecordDataUnpacking:
 
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
-        model = PyMCModel(self._xy_model, label="model")._condition_on(Record("r", X=X))
+        model = PyMCModel(self._xy_model, label="model")._condition_on(
+            Record(
+                {"X": X},
+                label="r",
+            )
+        )
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
-        built = model._pymc_model(data=Record("r", y=y))
+        built = model._pymc_model(
+            data=Record(
+                {"y": y},
+                label="r",
+            )
+        )
         assert "y" in {rv.name for rv in built.observed_RVs}

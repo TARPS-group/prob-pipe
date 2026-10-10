@@ -251,10 +251,10 @@ def _population_atoms() -> EmpiricalDistribution:
     mu = (1.0 + jax.random.normal(k_mu, (200,))).astype(jnp.float32)
     tau = jnp.exp(0.3 * jax.random.normal(k_tau, (200,))).astype(jnp.float32)
     atoms = NumericRecordBatch(
-        "atoms",
         {"population": {"mu": mu, "tau": tau}},
         "atom",
         element_spec=RecordSpec(population=_POPULATION),
+        label="atoms",
     )
     return EmpiricalDistribution(atoms, label="hyper")
 
@@ -405,7 +405,7 @@ class TestNestedViews:
         """
         law = _correlated()
 
-        @function
+        @function(output_spec=OutputSpec(product=None))
         def product(a: float, b: float) -> float:
             return a * b
 

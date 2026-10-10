@@ -9,7 +9,15 @@ import pytest
 
 import probpipe
 import probpipe.functions as node
-from probpipe import EmpiricalDistribution, Function, Normal, WorkflowKind, function, workflow_run
+from probpipe import (
+    EmpiricalDistribution,
+    Function,
+    Normal,
+    OutputSpec,
+    WorkflowKind,
+    function,
+    workflow_run,
+)
 
 
 def test_function_is_the_only_public_wrapper_api():
@@ -28,10 +36,7 @@ def test_function_is_the_only_public_wrapper_api():
 
 
 def test_function_decorator_sets_construction_defaults():
-    @function(
-        n_broadcast_samples=7,
-        dispatch="sequential",
-    )
+    @function(n_broadcast_samples=7, dispatch="sequential", output_spec=OutputSpec(identity=None))
     def identity(x):
         return x
 
@@ -49,12 +54,12 @@ def test_function_rng_seed_controls_are_removed():
     def identity(x):
         return x
 
-    wf = Function(label="identity", fn=identity, dispatch="sequential")
+    wf = Function(identity, label="identity", dispatch="sequential")
 
     assert "seed" not in inspect.signature(Function.__init__).parameters
     assert "seed" not in inspect.signature(wf.with_options).parameters
     with pytest.warns(FutureWarning, match="seed.*ignored"):
-        deprecated = Function(label="identity", fn=identity, dispatch="sequential", seed=42)
+        deprecated = Function(identity, label="identity", dispatch="sequential", seed=42)
     assert float(deprecated(3)) == 3
     with pytest.warns(FutureWarning, match="seed.*ignored"):
 
@@ -72,7 +77,7 @@ def test_function_construction_seed_warns_without_binding_user_parameter():
         return x + seed
 
     with pytest.warns(FutureWarning, match="seed.*ignored"):
-        wrapped = Function(label="add_seed", fn=add_seed, dispatch="sequential", seed=42)
+        wrapped = Function(add_seed, label="add_seed", dispatch="sequential", seed=42)
     with pytest.raises(TypeError, match="seed"):
         wrapped(1)
     assert float(wrapped(1, seed=2)) == 3
@@ -92,25 +97,43 @@ def test_decorator_construction_seed_warns_without_binding_variadic_user_kwargs(
 @pytest.mark.parametrize("option", ["input_template", "output_template"])
 def test_removed_templates_warn_without_installing_declarations(option):
     with pytest.warns(FutureWarning, match=option):
-        wrapped = Function("identity", lambda x: x, **{option: object()})
+        wrapped = Function(
+            lambda x: x,
+            **{option: object()},
+            label="identity",
+        )
     assert wrapped.input_spec is None
     assert wrapped.output_spec is None
     assert float(wrapped(3)) == 3
 
 
 def test_legacy_func_alias_warns_and_uses_the_replacement_signature():
-    with pytest.warns(FutureWarning, match=r"Function\(func=\.\.\.\) is deprecated; use fn="):
-        wrapped = Function("replace", lambda x: x, func=lambda y: y + 1)
+    with pytest.warns(
+        FutureWarning,
+        match=r"Function\(func=\.\.\.\) is deprecated; pass the callable positionally",
+    ):
+        wrapped = Function(
+            lambda x: x,
+            func=lambda y: y + 1,
+            label="replace",
+        )
     assert tuple(wrapped.signature.parameters) == ("y",)
     assert float(wrapped(y=2)) == 3
 
 
 def test_legacy_func_alias_validates_the_effective_callable():
     with (
-        pytest.warns(FutureWarning, match=r"Function\(func=\.\.\.\) is deprecated; use fn="),
+        pytest.warns(
+            FutureWarning,
+            match=r"Function\(func=\.\.\.\) is deprecated; pass the callable positionally",
+        ),
         pytest.raises(TypeError, match="fn must be callable"),
     ):
-        Function("invalid", lambda: 1, func=3)
+        Function(
+            lambda: 1,
+            func=3,
+            label="invalid",
+        )
 
 
 @pytest.mark.parametrize("entrypoint", ["constructor", "decorator"])
@@ -129,7 +152,11 @@ def test_legacy_option_warning_points_to_the_user_call(option, entrypoint):
             wrapped = decorate(identity)
         else:
             line = frame.f_lineno + 1
-            wrapped = Function("identity", identity, **{option: value})
+            wrapped = Function(
+                identity,
+                **{option: value},
+                label="identity",
+            )
     assert len(caught) == 1
     assert str(caught[0].message).startswith(f"Function({option}=...)")
     assert caught[0].filename == __file__
@@ -140,12 +167,12 @@ def test_legacy_option_warning_points_to_the_user_call(option, entrypoint):
 def test_each_legacy_option_warns_on_its_own():
     with pytest.warns(FutureWarning) as caught:
         Function(
-            "identity",
             lambda x: x,
             func=lambda x: x,
             seed=1,
             input_template=object(),
             output_template=object(),
+            label="identity",
         )
     assert sorted(str(warning.message).split("=")[0] for warning in caught) == [
         "Function(func",
@@ -164,7 +191,7 @@ def test_function_bind_can_still_supply_user_seed_parameter():
     def add_seed(x, seed):
         return x + seed
 
-    wf = Function(label="add_seed", fn=add_seed, dispatch="sequential", bind={"seed": 42})
+    wf = Function(add_seed, label="add_seed", dispatch="sequential", bind={"seed": 42})
 
     assert float(wf(1.0)) == 43.0
 
@@ -189,10 +216,11 @@ def test_with_options_controls_sample_count_and_include_inputs():
         return x
 
     wf = Function(
+        identity,
         label="identity",
-        fn=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
+        output_spec=OutputSpec(identity=None),
     )
 
     with workflow_run(seed=0):
@@ -211,10 +239,11 @@ def test_workflow_run_reproduces_one_lifted_call():
         return x
 
     wf = Function(
+        identity,
         label="identity",
-        fn=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
+        output_spec=OutputSpec(identity=None),
     )
     normal = Normal("x", loc=0.0, scale=1.0)
 
@@ -235,16 +264,18 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
 
     normal = Normal("x", loc=0.0, scale=1.0)
     base = Function(
+        identity,
         label="identity",
-        fn=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
+        output_spec=OutputSpec(identity=None),
     )
     wf = Function(
+        add_user_seed,
         label="add_user_seed",
-        fn=add_user_seed,
         n_broadcast_samples=8,
         dispatch="sequential",
+        output_spec=OutputSpec(add_user_seed=None),
     )
 
     with workflow_run(seed=42):
@@ -282,10 +313,11 @@ def test_var_keyword_receives_workflow_control_names():
         return x
 
     wf = Function(
+        identity,
         label="identity",
-        fn=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
+        output_spec=OutputSpec(identity=None),
     )
     normal = Normal("x", loc=0.0, scale=1.0)
 
@@ -312,8 +344,8 @@ def test_unbindable_call_time_control_name_is_rejected():
         return x
 
     wf = Function(
+        identity,
         label="identity",
-        fn=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
     )
@@ -327,10 +359,11 @@ def test_bindable_workflow_control_name_does_not_override():
         return x + n_broadcast_samples
 
     wf = Function(
+        identity,
         label="identity",
-        fn=identity,
         n_broadcast_samples=5,
         dispatch="sequential",
+        output_spec=OutputSpec(identity=None),
     )
     normal = Normal("x", loc=0.0, scale=1.0)
 
@@ -342,14 +375,24 @@ def test_bindable_workflow_control_name_does_not_override():
 
 def test_with_options_clears_workers_and_resets_sample_count():
     wrapped = Function(
-        "identity", lambda x: x, dispatch="thread", max_workers=2, n_broadcast_samples=7
+        lambda x: x,
+        dispatch="thread",
+        max_workers=2,
+        n_broadcast_samples=7,
+        label="identity",
+        output_spec=OutputSpec(identity=None),
     )
     unchanged = wrapped.with_options(include_inputs=True)
     assert unchanged.options["max_workers"] == 2
     assert unchanged.options["n_broadcast_samples"] == 7
 
     reset = wrapped.with_options(max_workers=None, n_broadcast_samples=None)
-    defaults = Function("defaults", lambda x: x, dispatch="thread")
+    defaults = Function(
+        lambda x: x,
+        dispatch="thread",
+        label="defaults",
+        output_spec=OutputSpec(defaults=None),
+    )
     assert reset.options == defaults.options
     assert wrapped.options["max_workers"] == 2
     assert wrapped.options["n_broadcast_samples"] == 7
@@ -369,11 +412,19 @@ def test_a_view_resets_a_control_that_construction_refuses_as_none(
     control, default, error, message
 ):
     """A view's None resets a control to its default (V.2); construction refuses it."""
-    wrapped = Function("identity", lambda x: x, dispatch="sequential")
+    wrapped = Function(
+        lambda x: x,
+        dispatch="sequential",
+        label="identity",
+    )
     configured = wrapped.with_options(workflow_kind=WorkflowKind.OFF)
     assert configured.with_options(**{control: None}).options[control] == default
     with pytest.raises(error, match=message):
-        Function("identity", lambda x: x, **{control: None})
+        Function(
+            lambda x: x,
+            **{control: None},
+            label="identity",
+        )
 
 
 @pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "with_options"])
@@ -381,13 +432,20 @@ def test_max_workers_warning_points_to_the_user_call(entrypoint):
     def identity(x):
         return x
 
-    wrapped = Function("identity", identity)
+    wrapped = Function(
+        identity,
+        label="identity",
+    )
     frame = inspect.currentframe()
     assert frame is not None
     with pytest.warns(UserWarning, match="max_workers configures only") as caught:
         if entrypoint == "constructor":
             line = frame.f_lineno + 1
-            Function("identity", identity, max_workers=2)
+            Function(
+                identity,
+                max_workers=2,
+                label="identity",
+            )
         elif entrypoint == "decorator":
             decorate = function(max_workers=2)
             line = frame.f_lineno + 1
@@ -402,10 +460,15 @@ def test_max_workers_warning_points_to_the_user_call(entrypoint):
 
 def test_each_removed_keyword_warns_on_its_own():
     with pytest.warns(FutureWarning) as caught:
-        wrapped = Function("identity", lambda y: y, func=lambda x: x, seed=3)
+        wrapped = Function(
+            lambda y: y,
+            func=lambda x: x,
+            seed=3,
+            label="identity",
+        )
     messages = sorted(str(warning.message) for warning in caught)
     assert messages == [
-        "Function(func=...) is deprecated; use fn=...",
+        "Function(func=...) is deprecated; pass the callable positionally",
         "Function(seed=...) is no longer supported and is ignored; use workflow_run(seed=...), "
         "or bind={'seed': ...} to pass a seed to the wrapped function",
     ]

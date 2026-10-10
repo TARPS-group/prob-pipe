@@ -242,7 +242,10 @@ def _make_unnormalized_distribution():
 
     class UnnormalizedDist(_UnnormalizedTarget, Distribution):
         def __init__(self):
-            super().__init__("unnorm", OutputSpec(unnorm=NumericArraySpec((2,))))
+            super().__init__(
+                OutputSpec(unnorm=NumericArraySpec((2,))),
+                label="unnorm",
+            )
 
     return UnnormalizedDist()
 
@@ -255,7 +258,10 @@ def _make_normalized_distribution():
         # Inheriting SupportsLogProb gives the default
         # _unnormalized_log_prob (delegating to _log_prob) for free.
         def __init__(self):
-            super().__init__("norm", OutputSpec(norm=NumericArraySpec((2,))))
+            super().__init__(
+                OutputSpec(norm=NumericArraySpec((2,))),
+                label="norm",
+            )
 
     return NormalizedDist()
 
@@ -361,7 +367,10 @@ class TestUnnormalizedLogProbInference:
 
         class NoDensityDist(Distribution):
             def __init__(self):
-                super().__init__("no_density", OutputSpec(no_density=NumericArraySpec((2,))))
+                super().__init__(
+                    OutputSpec(no_density=NumericArraySpec((2,))),
+                    label="no_density",
+                )
 
         dist = NoDensityDist()
         for method in ("tfp_nuts", "blackjax_rwmh"):
@@ -463,7 +472,13 @@ def _logistic_target():
     joint = glm_likelihood("y", BernoulliFamily(), X=X) * MultivariateNormal(
         "beta", jnp.zeros(2), jnp.eye(2)
     )
-    return _unnormalized_conditional(joint, Record("given", {"y": jnp.array([1, 0, 1, 0])}))
+    return _unnormalized_conditional(
+        joint,
+        Record(
+            {"y": jnp.array([1, 0, 1, 0])},
+            label="given",
+        ),
+    )
 
 
 class TestTargets:
@@ -539,7 +554,10 @@ class _WithoutDensity(Distribution, SupportsSampling):
     """A record law that only samples, as a simulator does."""
 
     def __init__(self, law) -> None:
-        super().__init__("simulator", law.event_spec)
+        super().__init__(
+            law.event_spec,
+            label="simulator",
+        )
         self._law = law
 
     def _sample(self, key, sample_shape=()):

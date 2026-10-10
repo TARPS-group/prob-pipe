@@ -441,7 +441,16 @@ class TestProb:
         else:
             xs = jnp.array([-1.0, 0.0, 1.0])
         our_dist = cls("x", **kwargs)
-        ours = np.asarray(prob(our_dist, NumericArrayBatch("x", xs, "point")))
+        ours = np.asarray(
+            prob(
+                our_dist,
+                NumericArrayBatch(
+                    xs,
+                    "point",
+                    label="x",
+                ),
+            )
+        )
         expected = scipy_dist.pdf(np.asarray(xs))
         np.testing.assert_allclose(ours, expected, rtol=1e-4)
 
@@ -450,7 +459,11 @@ class TestProb:
         from probpipe import log_prob as log_prob_op
 
         d = Normal("x", loc=0.0, scale=1.0)
-        xs = NumericArrayBatch("x", jnp.array([-1.0, 0.5, 1.2]), "point")
+        xs = NumericArrayBatch(
+            jnp.array([-1.0, 0.5, 1.2]),
+            "point",
+            label="x",
+        )
         np.testing.assert_allclose(
             np.asarray(prob(d, xs)),
             np.asarray(jnp.exp(jnp.asarray(log_prob_op(d, xs)))),

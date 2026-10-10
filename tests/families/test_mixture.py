@@ -204,11 +204,21 @@ def test_it_claims_what_every_component_claims():
 def test_a_record_event_combines_leaf_by_leaf():
     spec = NumericRecordSpec(a=(), b=())
     first = EmpiricalDistribution(
-        NumericRecordBatch("p", {"a": jnp.zeros(3), "b": jnp.ones(3)}, "atom", element_spec=spec),
+        NumericRecordBatch(
+            {"a": jnp.zeros(3), "b": jnp.ones(3)},
+            "atom",
+            element_spec=spec,
+            label="p",
+        ),
         label="p",
     )
     second = EmpiricalDistribution(
-        NumericRecordBatch("q", {"a": jnp.ones(3), "b": jnp.ones(3)}, "atom", element_spec=spec),
+        NumericRecordBatch(
+            {"a": jnp.ones(3), "b": jnp.ones(3)},
+            "atom",
+            element_spec=spec,
+            label="q",
+        ),
         label="q",
     )
     mixture = MixtureDistribution([first, second], jnp.array([0.5, 0.5]), label="m")
@@ -240,7 +250,14 @@ def test_the_monte_carlo_mean_of_a_law_over_laws_is_the_mixture_of_its_draws():
         atoms[index] = Normal("x", location, 1.0)
     from probpipe import DistributionBatch
 
-    laws = EmpiricalDistribution(DistributionBatch("laws", atoms, "law"), component="laws")
+    laws = EmpiricalDistribution(
+        DistributionBatch(
+            atoms,
+            "law",
+            label="laws",
+        ),
+        component="laws",
+    )
     with workflow_run(seed=0):
         estimate = mean.with_options(n_broadcast_samples=60)(laws)
     assert isinstance(estimate, SupportsMean)

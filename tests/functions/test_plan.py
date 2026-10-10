@@ -42,7 +42,13 @@ def _numeric_record_batch(
     field: str, values: range, *, level_name: str = "draw"
 ) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        [
+            NumericRecord(
+                {**{field: float(value)}},
+                label="nr",
+            )
+            for value in values
+        ],
         level_name=level_name,
     )
 
@@ -135,7 +141,11 @@ class TestHintClassification:
 
     def test_array_hints_skip_array_sweep(self):
         ra = _numeric_record_batch("x", range(4))
-        laws = DistributionBatch("d", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "law")
+        laws = DistributionBatch(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)],
+            "law",
+            label="d",
+        )
 
         record_plan = _plan({"p": ra}, {"p": NumericRecordBatch})
         dist_plan = _plan({"d": laws}, {"d": DistributionBatch})
@@ -149,7 +159,14 @@ class TestHintClassification:
 class TestArrayGrouping:
     def test_sibling_views_zip_into_one_group(self):
         ra = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)], level_name="draw"
+            [
+                NumericRecord(
+                    {"x": float(i), "y": float(2 * i)},
+                    label="nr",
+                )
+                for i in range(4)
+            ],
+            level_name="draw",
         )
 
         views = ra.select_all()
@@ -210,7 +227,11 @@ class TestArrayGrouping:
         store = np.empty(6, dtype=object)
         for position in range(6):
             store[position] = Normal("x", float(position), 1.0)
-        laws = DistributionBatch("d", store.reshape(2, 3), ("row", "col"))
+        laws = DistributionBatch(
+            store.reshape(2, 3),
+            ("row", "col"),
+            label="d",
+        )
 
         plan = _plan({"d": laws})
 
@@ -349,7 +370,13 @@ class TestStochasticPlanStructure:
 class TestStochasticSourceGrouping:
     def test_batch_alignment_does_not_merge_stochastic_source_identity(self):
         batch = NumericRecordBatch.stack(
-            [NumericRecord("row", x=float(i), y=float(2 * i)) for i in range(3)],
+            [
+                NumericRecord(
+                    {"x": float(i), "y": float(2 * i)},
+                    label="row",
+                )
+                for i in range(3)
+            ],
             level_name="draw",
         )
         views = batch.select_all()
@@ -607,10 +634,10 @@ def _batch(level: str = "draw", n: int = 3, **fields) -> Any:
 
     fields = fields or {"x": jnp.arange(float(n))}
     return NumericRecordBatch(
-        "batch",
         dict(fields),
         (level,),
         element_spec=RecordSpec({name: value.shape[1:] for name, value in fields.items()}),
+        label="batch",
     )
 
 
@@ -682,11 +709,11 @@ class TestPartialLevelOverlap:
         from probpipe.core._specs import RecordSpec
 
         two = NumericRecordBatch(
-            "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
             axes_per_level=(1, 1),
+            label="batch",
         )
         one = _batch("draw", 3)
 
@@ -701,18 +728,18 @@ class TestPartialLevelOverlap:
         from probpipe.core._specs import RecordSpec
 
         ga = NumericRecordBatch(
-            "batch",
             {"x": jnp.zeros((2, 3, 4))},
             ("a", "b"),
             element_spec=RecordSpec(x=()),
             axes_per_level=(1, 2),
+            label="batch",
         )
         gb = NumericRecordBatch(
-            "batch",
             {"y": jnp.zeros((2, 3, 4))},
             ("a", "b"),
             element_spec=RecordSpec(y=()),
             axes_per_level=(2, 1),
+            label="batch",
         )
 
         with pytest.raises(

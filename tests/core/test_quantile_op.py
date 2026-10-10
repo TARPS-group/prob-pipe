@@ -86,7 +86,10 @@ class TestQuantileOp:
         a = jax.random.normal(key, (1000,))
         b = jax.random.normal(jax.random.PRNGKey(3), (1000,)) + 5.0
         atoms = NumericRecordBatch(
-            "rows", {"a": a, "b": b}, "row", element_spec=RecordSpec(a=(), b=())
+            {"a": a, "b": b},
+            "row",
+            element_spec=RecordSpec(a=(), b=()),
+            label="rows",
         )
         emp = EmpiricalDistribution(atoms, label="emp")
         res = quantile(emp, 0.5)
@@ -113,7 +116,13 @@ class TestQuantileOp:
             pass
 
         with pytest.raises(ResolutionError, match="does not implement SupportsQuantile"):
-            quantile(Bare("x", OutputSpec(x=NumericArraySpec(()))), 0.5)
+            quantile(
+                Bare(
+                    OutputSpec(x=NumericArraySpec(())),
+                    label="x",
+                ),
+                0.5,
+            )
 
     def test_a_law_without_quantiles_that_samples_converts_to_its_empirical_law(self):
         """The Poisson family has no closed-form quantile, so its draws' quantile is returned."""
@@ -147,10 +156,10 @@ class TestRawQuantilesAtTheirLevels:
     @staticmethod
     def _record_law():
         atoms = NumericRecordBatch(
-            "rows",
             {"b": jnp.array([[1.0, 2.0], [0.0, 1.0], [2.0, 3.0]]), "a": jnp.array([2.0, 1.0, 3.0])},
             "row",
             element_spec=RecordSpec(b=(2,), a=()),
+            label="rows",
         )
         return EmpiricalDistribution(atoms, label="post")
 

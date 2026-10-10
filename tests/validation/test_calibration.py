@@ -62,7 +62,11 @@ class _BiasedMeanKernel(
     """
 
     def __init__(self, bias: float, n: int = 10):
-        super().__init__("y", {"mu": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec((n,))))
+        super().__init__(
+            {"mu": NumericArraySpec(())},
+            OutputSpec(y=NumericArraySpec((n,))),
+            label="y",
+        )
         object.__setattr__(self, "_bias", float(bias))
         object.__setattr__(self, "_n", n)
 
@@ -92,7 +96,9 @@ class _GridPosterior(ConditionalDistribution, SupportsConditionalSampling):
 
     def __init__(self, *, weighted: bool = True):
         super().__init__(
-            "posterior", {"y": NumericArraySpec((_N,))}, OutputSpec(mu=NumericArraySpec(()))
+            {"y": NumericArraySpec((_N,))},
+            OutputSpec(mu=NumericArraySpec(())),
+            label="posterior",
         )
         object.__setattr__(self, "_weighted", weighted)
 
@@ -270,7 +276,10 @@ class TestFlattening:
     """The multi-field θ★ flattening + component-naming that ranks rely on."""
 
     def test_flatten_honors_field_order(self):
-        point = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array([3.0]))
+        point = Record(
+            {"a": jnp.array([1.0, 2.0]), "b": jnp.array([3.0])},
+            label="r",
+        )
         np.testing.assert_array_equal(
             np.asarray(_flatten(point, OutputSpec(RecordSpec(a=(2,), b=(1,))))),
             [1.0, 2.0, 3.0],
@@ -300,10 +309,10 @@ class TestFlattening:
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
         # in posterior field order, matching the flat coordinates of its atoms.
         atoms = NumericRecordBatch(
-            "r",
             {"a": jnp.zeros((10, 2)), "b": jnp.zeros((10,))},
             "atom",
             element_spec=NumericRecordSpec(a=(2,), b=()),
+            label="r",
         )
         emp = EmpiricalDistribution(atoms, label="m")
         assert _component_names(emp) == ("a[0]", "a[1]", "b")

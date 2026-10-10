@@ -22,8 +22,20 @@ from probpipe.core._specs import NumericArraySpec, NumericRecordSpec
 
 class TestPathKeyedConstruction:
     def test_path_keys_equal_nested_keyword(self):
-        a = Record("r", {"physics/force": 1.0, "physics/mass": 2.0, "observation": 3.0})
-        b = Record("r", physics=Record("r", force=1.0, mass=2.0), observation=3.0)
+        a = Record(
+            {"physics/force": 1.0, "physics/mass": 2.0, "observation": 3.0},
+            label="r",
+        )
+        b = Record(
+            {
+                "physics": Record(
+                    {"force": 1.0, "mass": 2.0},
+                    label="r",
+                ),
+                "observation": 3.0,
+            },
+            label="r",
+        )
         assert a == b
         # RecordSpec mirrors the same path convention.
         ta = RecordSpec({"physics/force": (), "physics/mass": (), "observation": ()})
@@ -33,7 +45,10 @@ class TestPathKeyedConstruction:
     def test_canonical_first_appearance_order(self):
         # 'observation' follows the whole 'physics' subtree because the prefix
         # 'physics' first appears before 'observation'.
-        r = Record("r", {"physics/force": 1.0, "observation": 2.0, "physics/mass": 3.0})
+        r = Record(
+            {"physics/force": 1.0, "observation": 2.0, "physics/mass": 3.0},
+            label="r",
+        )
         assert tuple(r.keys()) == ("physics/force", "physics/mass", "observation")
 
     @pytest.mark.parametrize(
@@ -41,30 +56,54 @@ class TestPathKeyedConstruction:
         [
             {"a/b": 1.0, "a": 5.0},  # complete-then-prefix, leaf value
             {"a/b": 1.0, "a": {"b": 2.0}},  # complete-then-prefix, dict value
-            {"a/b": 1.0, "a": Record("r", b=2.0)},  # complete-then-prefix, Record value
+            {
+                "a/b": 1.0,
+                "a": Record(
+                    {"b": 2.0},
+                    label="r",
+                ),
+            },  # complete-then-prefix, Record value
             # prefix-then-complete takes a different _unflatten_paths branch
             {"a": 5.0, "a/b": 1.0},
-            {"a": Record("r", b=2.0), "a/b": 1.0},
+            {
+                "a": Record(
+                    {"b": 2.0},
+                    label="r",
+                ),
+                "a/b": 1.0,
+            },
         ],
     )
     def test_field_versus_prefix_collision(self, bad):
         with pytest.raises(ValueError, match="both as a field and as a path prefix"):
-            Record("r", bad)
+            Record(
+                bad,
+                label="r",
+            )
 
     @pytest.mark.parametrize("bad_key", ["", "a/", "/a", "a//b"])
     def test_malformed_keys_raise_valueerror(self, bad_key):
         with pytest.raises(ValueError):
-            Record("r", {bad_key: 1.0})
+            Record(
+                {bad_key: 1.0},
+                label="r",
+            )
 
     def test_non_string_key_raises_typeerror(self):
         with pytest.raises(TypeError):
-            Record("r", {42: 1.0})
+            Record(
+                {42: 1.0},
+                label="r",
+            )
 
     def test_mapping_value_materializes_as_subtree(self):
         # Mappings are never leaves: a mapping value denotes tree structure,
         # so the constructor materialises it into a nested subtree rather than
         # storing an opaque leaf.
-        r = Record("r", meta={"seed": 0}, x=1.0)
+        r = Record(
+            {"meta": {"seed": 0}, "x": 1.0},
+            label="r",
+        )
         assert tuple(r.keys()) == ("meta/seed", "x")
 
 
@@ -76,29 +115,79 @@ class TestPathKeyedConstruction:
 class TestConditionalRoundTrip:
     def test_faithful_with_schema_and_class(self):
         for r in [
-            Record("r", a=1.0, b="tag"),  # flat mixed
-            Record("r", physics=Record("r", force=jnp.zeros(3), mass=2.0), obs="y"),  # nested mixed
-            NumericRecord("nr", a=jnp.zeros(2), b=NumericRecord("nr", c=1.0)),  # nested numeric
+            Record(
+                {"a": 1.0, "b": "tag"},
+                label="r",
+            ),  # flat mixed
+            Record(
+                {
+                    "physics": Record(
+                        {"force": jnp.zeros(3), "mass": 2.0},
+                        label="r",
+                    ),
+                    "obs": "y",
+                },
+                label="r",
+            ),  # nested mixed
+            NumericRecord(
+                {
+                    "a": jnp.zeros(2),
+                    "b": NumericRecord(
+                        {"c": 1.0},
+                        label="nr",
+                    ),
+                },
+                label="nr",
+            ),  # nested numeric
         ]:
-            assert type(r)(r.label, dict(r), event_template=r.event_template) == r
+            assert type(r)(dict(r), event_template=r.event_template, label=r.label) == r
 
     def test_value_only_dict_is_lossy_for_dtype(self):
         # A template carrying dtype is not recoverable from a value-only dict.
         tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
-        r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
-        assert Record("r", r.raw()) != r  # re-inferred template drops the dtype
+        r = Record(
+            {"x": jnp.float32(1.0)},
+            event_template=tpl,
+            label="r",
+        )
+        assert (
+            Record(
+                r.raw(),
+                label="r",
+            )
+            != r
+        )  # re-inferred template drops the dtype
 
     def test_a_dict_of_views_keeps_the_dtype(self):
         # Each view carries its field's declaration, so inference recovers it.
         tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
-        r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
-        assert Record("r", dict(r)) == r
+        r = Record(
+            {"x": jnp.float32(1.0)},
+            event_template=tpl,
+            label="r",
+        )
+        assert (
+            Record(
+                dict(r),
+                label="r",
+            )
+            == r
+        )
 
     def test_numeric_record_value_only_round_trips(self):
-        nr = NumericRecord("nr", a=1.0, b=2.0)
+        nr = NumericRecord(
+            {"a": 1.0, "b": 2.0},
+            label="nr",
+        )
         # Auto-promotion re-derives the numeric class from the values, so
         # the value-only rebuild is no longer lossy.
-        assert Record("r", dict(nr)) == nr
+        assert (
+            Record(
+                dict(nr),
+                label="r",
+            )
+            == nr
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +201,18 @@ class TestSubtreeTemplateInvariant:
             assert r.at_path(p).event_template == r.event_template.at_path(p)
 
     def test_inferred_template(self):
-        self._check(Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0))
+        self._check(
+            Record(
+                {
+                    "physics": Record(
+                        {"force": 1.0, "mass": 2.0},
+                        label="r",
+                    ),
+                    "obs": 3.0,
+                },
+                label="r",
+            )
+        )
 
     def test_supplied_template_via_path_keys(self):
         tpl = RecordSpec(
@@ -120,9 +220,9 @@ class TestSubtreeTemplateInvariant:
             obs=(),
         )
         r = Record(
-            "r",
             {"physics/force": jnp.float32(1.0), "physics/mass": 2.0, "obs": 3.0},
             event_template=tpl,
+            label="r",
         )
         self._check(r)
         assert r.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
@@ -134,8 +234,15 @@ class TestSubtreeTemplateInvariant:
             physics=RecordSpec(force=NumericArraySpec((), dtype=jnp.dtype("float64")), mass=()),
             obs=(),
         )
-        child = Record("r", {"force": 1.0, "mass": 2.0})  # bare-shape inferred template
-        r = Record("r", physics=child, obs=3.0, event_template=tpl)
+        child = Record(
+            {"force": 1.0, "mass": 2.0},
+            label="r",
+        )  # bare-shape inferred template
+        r = Record(
+            {"physics": child, "obs": 3.0},
+            event_template=tpl,
+            label="r",
+        )
         self._check(r)
         # The authoritative dtype must be carried onto the pre-built child. Compare
         # via str(): `dtype == jnp.dtype("float64")` is True even for a None dtype
@@ -148,9 +255,16 @@ class TestSubtreeTemplateInvariant:
         # child is already named by its field key, the child is stored
         # verbatim — preserving its identity and metadata (backend aux)
         # instead of being rebuilt.
-        child = NumericRecord("physics", force=1.0, mass=2.0)
+        child = NumericRecord(
+            {"force": 1.0, "mass": 2.0},
+            label="physics",
+        )
         tpl = RecordSpec(physics=child.event_template, obs=())
-        r = Record("r", physics=child, obs=3.0, event_template=tpl)
+        r = Record(
+            {"physics": child, "obs": 3.0},
+            event_template=tpl,
+            label="r",
+        )
         assert r.at_path("physics") is child
         assert r.at_path("physics").label == "physics"
 
@@ -164,11 +278,29 @@ class TestConvenienceConstructors:
     def test_constructor_round_trips_nested_dict(self):
         # ``to_nested_dict`` -> constructor round-trips: a mapping is never a
         # leaf, so the constructor rebuilds the tree the export produced.
-        r = Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0)
-        assert Record("r", r.to_nested_dict()) == r
+        r = Record(
+            {
+                "physics": Record(
+                    {"force": 1.0, "mass": 2.0},
+                    label="r",
+                ),
+                "obs": 3.0,
+            },
+            label="r",
+        )
+        assert (
+            Record(
+                r.to_nested_dict(),
+                label="r",
+            )
+            == r
+        )
 
     def test_constructor_reads_every_dict_as_structure(self):
-        r = Record("r", {"physics": {"force": 1.0}, "obs": 2.0})
+        r = Record(
+            {"physics": {"force": 1.0}, "obs": 2.0},
+            label="r",
+        )
         assert tuple(r.keys()) == ("physics/force", "obs")
 
     def test_constructor_reads_every_mapping_as_structure(self):
@@ -176,18 +308,37 @@ class TestConvenienceConstructors:
         # even where a template proposes a leaf there — the mismatch raises.
         tpl = RecordSpec(meta=OpaqueSpec(), x=())
         with pytest.raises(ValueError):
-            Record("r", {"meta": {"seed": 0}, "x": 1.0}, event_template=tpl)
-        r = Record("r", {"meta": {"seed": 0}, "x": 1.0})
+            Record(
+                {"meta": {"seed": 0}, "x": 1.0},
+                event_template=tpl,
+                label="r",
+            )
+        r = Record(
+            {"meta": {"seed": 0}, "x": 1.0},
+            label="r",
+        )
         assert tuple(r.keys()) == ("meta/seed", "x")
 
     def test_constructor_rejects_path_prefix_collision(self):
         # A ``/``-path key and a nested-dict value under the same prefix name
         # the same node two ways; that contradiction raises at construction.
         with pytest.raises(ValueError, match="both as a field and as a path prefix"):
-            Record("r", {"y/a": 1.0, "y": {"b": 2.0}})
+            Record(
+                {"y/a": 1.0, "y": {"b": 2.0}},
+                label="r",
+            )
 
     def test_to_nested_dict_distinct_from_flat_dict(self):
-        r = Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0)
+        r = Record(
+            {
+                "physics": Record(
+                    {"force": 1.0, "mass": 2.0},
+                    label="r",
+                ),
+                "obs": 3.0,
+            },
+            label="r",
+        )
         assert r.to_nested_dict() == {"physics": {"force": 1.0, "mass": 2.0}, "obs": 3.0}
         assert dict(r) == {"physics/force": 1.0, "physics/mass": 2.0, "obs": 3.0}
 
@@ -196,18 +347,36 @@ class TestConvenienceConstructors:
         # trip holds when the source class matches: NumericRecord for a numeric
         # template, base Record for a mixed one.
         for r in [
-            NumericRecord("nr", physics=NumericRecord("nr", force=jnp.zeros(2), mass=1.0), obs=3.0),
+            NumericRecord(
+                {
+                    "physics": NumericRecord(
+                        {"force": jnp.zeros(2), "mass": 1.0},
+                        label="nr",
+                    ),
+                    "obs": 3.0,
+                },
+                label="nr",
+            ),
             # mixed top, but the numeric subtree is a NumericRecord (canonical class
             # layout, which from_field_values reconstructs).
-            Record("r", physics=NumericRecord("nr", force=jnp.zeros(2), mass=1.0), obs="tag"),
+            Record(
+                {
+                    "physics": NumericRecord(
+                        {"force": jnp.zeros(2), "mass": 1.0},
+                        label="nr",
+                    ),
+                    "obs": "tag",
+                },
+                label="r",
+            ),
         ]:
-            rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
+            rebuilt = Record.from_field_values(r.event_template, r.values(), label=r.label)
             assert rebuilt == r
 
     def test_from_field_values_count_mismatch_raises(self):
         tpl = RecordSpec(a=(), b=())
         with pytest.raises(ValueError):
-            Record.from_field_values("r", tpl, [1.0])
+            Record.from_field_values(tpl, [1.0], label="r")
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +391,9 @@ class TestEditTemplateThreading:
             obs=NumericArraySpec((), dtype=jnp.dtype("float32")),
         )
         return Record(
-            "r",
             {"physics/force": jnp.float32(1.0), "physics/mass": 2.0, "obs": jnp.float32(3.0)},
             event_template=tpl,
+            label="r",
         )
 
     def test_without_threads_specs_no_reinference(self):
@@ -237,9 +406,9 @@ class TestEditTemplateThreading:
     def test_merge_threads_both_specs(self):
         left = self._rich().without("obs")  # physics/force(f32), physics/mass
         right = Record(
-            "r",
             {"obs": jnp.float32(9.0)},
             event_template=RecordSpec(obs=NumericArraySpec((), dtype=jnp.dtype("float32"))),
+            label="r",
         )
         m = left.merge(right)
         assert m.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
@@ -256,34 +425,84 @@ class TestEditTemplateThreading:
         # end — canonical order is part of the template's identity.
         t = RecordSpec(p=RecordSpec(x=(), y=()), q=())
         assert tuple(t.replace({"p": RecordSpec(z=())}).keys()) == ("p/z", "q")
-        r = Record("r", p=Record("r", x=1.0, y=2.0), q=3.0)
-        assert tuple(r.replace({"p": Record("r", z=9.0)}).keys()) == ("p/z", "q")
+        r = Record(
+            {
+                "p": Record(
+                    {"x": 1.0, "y": 2.0},
+                    label="r",
+                ),
+                "q": 3.0,
+            },
+            label="r",
+        )
+        assert tuple(
+            r.replace(
+                {
+                    "p": Record(
+                        {"z": 9.0},
+                        label="r",
+                    )
+                }
+            ).keys()
+        ) == ("p/z", "q")
         assert tuple(r.replace({"q": 7.0}).keys()) == ("p/x", "p/y", "q")
 
     def test_merge_field_versus_prefix_clash_raises(self):
         with pytest.raises(ValueError):
-            Record("r", {"a/b": 1.0}).merge(Record("r", a=2.0))
+            Record(
+                {"a/b": 1.0},
+                label="r",
+            ).merge(
+                Record(
+                    {"a": 2.0},
+                    label="r",
+                )
+            )
 
     def test_deep_merge_combines_subtree(self):
-        m = Record("r", {"g/x": 1.0}).merge(Record("r", {"g/y": 2.0}))
+        m = Record(
+            {"g/x": 1.0},
+            label="r",
+        ).merge(
+            Record(
+                {"g/y": 2.0},
+                label="r",
+            )
+        )
         assert tuple(m.keys()) == ("g/x", "g/y")
 
     def test_deep_merge_regroups_into_earlier_subtree(self):
         # A later key sharing an earlier subtree's name regroups INTO that
         # subtree (first-appearance order), ahead of later top-level names.
-        m = Record("r", {"g/x": 1.0, "h/y": 2.0}).merge(Record("r", {"g/z": 3.0}))
+        m = Record(
+            {"g/x": 1.0, "h/y": 2.0},
+            label="r",
+        ).merge(
+            Record(
+                {"g/z": 3.0},
+                label="r",
+            )
+        )
         assert tuple(m.keys()) == ("g/x", "g/z", "h/y")
 
     def test_replace_to_opaque_demotes_numeric_template(self):
         # An all-numeric Record's template auto-promotes; replacing a field
         # with a non-numeric value must re-decide the promotion, not raise.
-        r = Record("r", x=1.0, y=2.0)
+        r = Record(
+            {"x": 1.0, "y": 2.0},
+            label="r",
+        )
         assert isinstance(r.event_template, NumericRecordSpec)
         r2 = r.replace(x="hello")
         assert r2.raw("x") == "hello"
         assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
-        m = r.merge(Record("r", label="fox"))
+        m = r.merge(
+            Record(
+                {"label": "fox"},
+                label="r",
+            )
+        )
         assert not isinstance(m.event_template, NumericRecordSpec)
         # The template's own edits re-decide in both directions.
         t = RecordSpec(x=(), y=(3,))
@@ -295,9 +514,24 @@ class TestEditTemplateThreading:
         # An untouched nested child already named by its field key survives
         # an edit as the SAME object — class, label, and metadata preserved
         # (never demoted to the outer record's class).
-        child = NumericRecord("phys", x=1.0, y=2.0)
-        r = Record("r", phys=child, obs="tag")
-        for edited in (r.without("obs"), r.replace(obs="new"), r.merge(Record("r", extra=5.0))):
+        child = NumericRecord(
+            {"x": 1.0, "y": 2.0},
+            label="phys",
+        )
+        r = Record(
+            {"phys": child, "obs": "tag"},
+            label="r",
+        )
+        for edited in (
+            r.without("obs"),
+            r.replace(obs="new"),
+            r.merge(
+                Record(
+                    {"extra": 5.0},
+                    label="r",
+                )
+            ),
+        ):
             assert edited.at_path("phys") is child
             assert isinstance(edited.at_path("phys"), NumericRecord)
         # A nested edit rebuilds only the touched child, recursively — and the
@@ -308,7 +542,10 @@ class TestEditTemplateThreading:
         assert r2.at_path("phys").event_template == r2.event_template.at_path("phys")
 
     def test_replace_overlapping_paths_raise(self):
-        r = Record("r", {"physics/force": 1.0, "physics/mass": 2.0, "obs": 3.0})
+        r = Record(
+            {"physics/force": 1.0, "physics/mass": 2.0, "obs": 3.0},
+            label="r",
+        )
         for updates in (
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
@@ -356,7 +593,16 @@ class TestRecordSpecOps:
 class TestBoundaryRules:
     @pytest.fixture
     def r(self):
-        return Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0)
+        return Record(
+            {
+                "physics": Record(
+                    {"force": 1.0, "mass": 2.0},
+                    label="r",
+                ),
+                "obs": 3.0,
+            },
+            label="r",
+        )
 
     def test_len_iter_keys_over_leaves(self, r):
         assert len(r) == 3
@@ -382,7 +628,16 @@ class TestBoundaryRules:
     def test_map_preserves_class_and_reinfers_template(self):
         # map on a NumericRecord returns a NumericRecord, nested children
         # included; the result's template reflects the mapped leaf shapes.
-        nr = NumericRecord("nr", physics=NumericRecord("nr", force=jnp.ones(3), mass=1.0), obs=2.0)
+        nr = NumericRecord(
+            {
+                "physics": NumericRecord(
+                    {"force": jnp.ones(3), "mass": 1.0},
+                    label="nr",
+                ),
+                "obs": 2.0,
+            },
+            label="nr",
+        )
         doubled = nr.map(lambda x: 2 * x)
         assert isinstance(doubled, NumericRecord)
         assert isinstance(doubled.at_path("physics"), NumericRecord)
@@ -397,7 +652,16 @@ class TestBoundaryRules:
     def test_nested_pickle_round_trip(self, r):
         import pickle
 
-        nr = NumericRecord("nr", physics=NumericRecord("nr", force=jnp.zeros(2), mass=1.0), obs=3.0)
+        nr = NumericRecord(
+            {
+                "physics": NumericRecord(
+                    {"force": jnp.zeros(2), "mass": 1.0},
+                    label="nr",
+                ),
+                "obs": 3.0,
+            },
+            label="nr",
+        )
         assert pickle.loads(pickle.dumps(nr)) == nr
         assert pickle.loads(pickle.dumps(r)) == r
 
@@ -407,7 +671,10 @@ class TestBoundaryRules:
         # its /-path with no restore step.
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(jnp.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
-        nr = NumericRecord("nr", {"a/b": da, "c": 3.0})
+        nr = NumericRecord(
+            {"a/b": da, "c": 3.0},
+            label="nr",
+        )
         restored = nr.raw("a/b")
         assert isinstance(restored, xr.DataArray)
         assert restored.dims == ("t",)
@@ -429,7 +696,7 @@ class TestBatchFieldNav:
     def _nested_batch(self):
         tpl = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
         return NumericRecordBatch.from_vector(
-            "nrb", tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw"
+            tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw", label="nrb"
         )
 
     def test_an_interior_node_indexes_to_a_sub_batch_view(self):
@@ -459,7 +726,7 @@ class TestBatchFieldNav:
         batch = self._nested_batch()
 
         rebuilt = NumericRecordBatch.from_vector(
-            "nrb", batch.event_template, batch.to_vector(), level_names="draw"
+            batch.event_template, batch.to_vector(), level_names="draw", label="nrb"
         )
 
         assert rebuilt == batch

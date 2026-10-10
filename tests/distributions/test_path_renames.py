@@ -72,7 +72,10 @@ class _Law(Distribution):
     """A law over a declared event that claims no capability."""
 
     def __init__(self, label: str, event_spec: OutputSpec) -> None:
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
 
 
 class _NestedLaw(
@@ -98,13 +101,17 @@ class _NestedLaw(
         }
         if sample_shape:
             return RecordBatch(
-                self.label,
                 fields,
                 "sample",
                 element_spec=self.event_spec.spec,
                 axes_per_level=(len(sample_shape),),
+                label=self.label,
             )
-        return Record(self.label, fields, event_template=self.event_spec.spec)
+        return Record(
+            fields,
+            event_template=self.event_spec.spec,
+            label=self.label,
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return self._record(jax.random.normal(key, (*sample_shape, 6)), sample_shape)
@@ -141,7 +148,14 @@ class _FiniteLaw(_Law, SupportsExpectation):
     def _expectation(self, f: Any) -> Any:
         atoms = ((0.0, 1.0, 0.25), (1.0, 3.0, 0.75))
         return sum(
-            weight * f(Record("atom", a=jnp.asarray(a), b=jnp.asarray(b))) for a, b, weight in atoms
+            weight
+            * f(
+                Record(
+                    {"a": jnp.asarray(a), "b": jnp.asarray(b)},
+                    label="atom",
+                )
+            )
+            for a, b, weight in atoms
         )
 
 
@@ -228,7 +242,11 @@ class _RecordingKernel(ConditionalDistribution):
         calls: list[dict[str, Any]] | None = None,
         bound: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(label, given_spec, event_spec)
+        super().__init__(
+            given_spec,
+            event_spec,
+            label=label,
+        )
         self.calls = [] if calls is None else calls
         self.bound = dict(bound or {})
 
@@ -248,27 +266,41 @@ class _MeanKernel(ConditionalDistribution, SupportsConditionalSampling, Supports
     """``y | mu``: a record ``(y, z)`` whose mean is ``(mu, 0)``, and a draw ``(mu + e, e)``."""
 
     def __init__(self, label: str = "k") -> None:
-        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return _Law(self.label, self.event_spec)
 
     def _conditional_mean(self, given: Any) -> Any:
-        return Record("mean", y=jnp.asarray(given["mu"]), z=jnp.asarray(0.0))
+        return Record(
+            {"y": jnp.asarray(given["mu"]), "z": jnp.asarray(0.0)},
+            label="mean",
+        )
 
     def _conditional_mean_guard(self) -> Feasibility:
         return Feasibility(True)
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         noise = jax.random.normal(key, sample_shape)
-        return Record("draw", y=given["mu"] + noise, z=noise)
+        return Record(
+            {"y": given["mu"] + noise, "z": noise},
+            label="draw",
+        )
 
 
 class _ScoreKernel(ConditionalDistribution, SupportsConditionalLogProb):
     """``(y, z) | mu`` whose density reads the given and each field by name."""
 
     def __init__(self, label: str = "k") -> None:
-        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return _Law(self.label, self.event_spec)
@@ -285,7 +317,11 @@ class _MarginalKernel(ConditionalDistribution, SupportsConditionalMarginals):
     """
 
     def __init__(self, label: str = "k") -> None:
-        super().__init__(label, {"mu": _SCALAR}, OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)))
+        super().__init__(
+            {"mu": _SCALAR},
+            OutputSpec(RecordSpec(y=_SCALAR, z=_SCALAR)),
+            label=label,
+        )
         self.marginal_calls: list[tuple[dict[str, Any], Any]] = []
         self.marginals: list[Distribution] = []
 
@@ -308,7 +344,12 @@ _XS, _YS = jnp.array([1.0, 2.0, 4.0]), jnp.array([10.0, 20.0, 40.0])
 
 
 def _grouped_law() -> EmpiricalDistribution:
-    atoms = NumericRecordBatch("rows", {"a/x": _XS, "b/y": _YS}, "row", element_spec=_GROUPED)
+    atoms = NumericRecordBatch(
+        {"a/x": _XS, "b/y": _YS},
+        "row",
+        element_spec=_GROUPED,
+        label="rows",
+    )
     return EmpiricalDistribution(atoms, label="grouped")
 
 
@@ -324,7 +365,12 @@ def _whole_record_view() -> Distribution:
     """The group ``parameters`` of the atoms of ``beta`` and ``sigma``, viewed as a whole record."""
     spec = RecordSpec(parameters=RecordSpec(beta=_SCALAR, sigma=_SCALAR))
     columns = {"parameters/beta": _XS, "parameters/sigma": _YS}
-    atoms = NumericRecordBatch("rows", columns, "row", element_spec=spec)
+    atoms = NumericRecordBatch(
+        columns,
+        "row",
+        element_spec=spec,
+        label="rows",
+    )
     return EmpiricalDistribution(atoms, label="p")["parameters"]
 
 
@@ -406,7 +452,13 @@ class TestRenamedLawValues:
         "value",
         [
             pytest.param({"x": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])}, id="mapping"),
-            pytest.param(Record("v", x=jnp.array([0.5]), y=jnp.array([1.0, 2.0])), id="record"),
+            pytest.param(
+                Record(
+                    {"x": jnp.array([0.5]), "y": jnp.array([1.0, 2.0])},
+                    label="v",
+                ),
+                id="record",
+            ),
         ],
     )
     def test_the_density_scores_the_value_under_the_original_names(self, value):

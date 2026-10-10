@@ -55,7 +55,11 @@ class TestJoint:
             joint(Kernel(), jnp.zeros(2))
 
     def test_a_batch_of_laws_is_consumed_as_an_object_rather_than_swept(self):
-        laws = DistributionBatch("laws", [Gaussian("mu"), Gaussian("mu", 1.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("mu"), Gaussian("mu", 1.0)],
+            "laws",
+            label="laws",
+        )
         with pytest.raises(ApplicabilityError, match=r"'B' accepts.*DistributionBatch"):
             joint(Kernel(), laws)
 

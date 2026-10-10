@@ -99,8 +99,7 @@ class Module(Node):
                 continue
 
             function_instance = Function(
-                fn=func,
-                output_label=func.__name__,
+                func,
                 workflow_kind=self._workflow_kind,
                 label=f"{self.__class__.__name__}.{func.__name__}",
                 module=self,

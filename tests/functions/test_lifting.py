@@ -48,7 +48,12 @@ SCALAR = NumericArraySpec(())
 
 
 def _batch(values, level: str = "row") -> NumericArrayBatch:
-    return NumericArrayBatch("rows", jnp.asarray(values), level, element_spec=SCALAR)
+    return NumericArrayBatch(
+        jnp.asarray(values),
+        level,
+        element_spec=SCALAR,
+        label="rows",
+    )
 
 
 def _kind_of(body_annotation: Any, argument: Any) -> Any:
@@ -58,14 +63,20 @@ def _kind_of(body_annotation: Any, argument: Any) -> Any:
         return 0.0
 
     body.__annotations__ = {"x": body_annotation}
-    wrapped = Function("body", body, n_broadcast_samples=6, dispatch="sequential")
+    wrapped = Function(
+        body,
+        n_broadcast_samples=6,
+        dispatch="sequential",
+        label="body",
+        output_spec=OutputSpec(body=None),
+    )
     with workflow_run(seed=0):
         return wrapped(argument)
 
 
 class TestTheTrigger:
     def test_a_distribution_at_an_unannotated_parameter_is_lifted(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -87,7 +98,10 @@ class TestTheTrigger:
             return 0.0
 
         law = standard_normal()
-        Function("accept", accept)(law)
+        Function(
+            accept,
+            label="accept",
+        )(law)
 
         assert seen == [law]
 
@@ -105,7 +119,10 @@ class TestTheTrigger:
 
         consume.__annotations__ = {"x": annotation}
         law = standard_normal()
-        Function("consume", consume)(law)
+        Function(
+            consume,
+            label="consume",
+        )(law)
 
         assert seen == [law]
 
@@ -134,12 +151,15 @@ class TestTheTrigger:
             return 0.0
 
         rows = _batch([1.0, 2.0])
-        Function("consume", consume)(rows)
+        Function(
+            consume,
+            label="consume",
+        )(rows)
 
         assert seen == [rows]
 
     def test_a_batch_and_a_distribution_give_a_sweep_of_broadcasts(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(shift=None))
         def shift(a, z):
             return a + z
 
@@ -150,7 +170,7 @@ class TestTheTrigger:
         assert float(np.mean(atom_leaves(result[1])[0])) > 5.0
 
     def test_a_nested_sweep_returns_a_batch_of_laws(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(shift=None))
         def shift(a, z):
             return a + z
 
@@ -173,7 +193,7 @@ class TestTheDraw:
     def test_a_record_draw_arrives_as_a_record(self):
         seen = []
 
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(record=None))
         def record(theta):
             seen.append(theta)
             return 0.0
@@ -186,7 +206,7 @@ class TestTheDraw:
     def test_a_one_field_record_draw_arrives_as_a_record(self):
         seen = []
 
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(record=None))
         def record(theta):
             seen.append(theta)
             return 0.0
@@ -199,7 +219,7 @@ class TestTheDraw:
     def test_explicit_binding_reads_the_receiving_parameter_not_the_component(self):
         seen = []
 
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(weigh=None))
         def weigh(theta):
             seen.append(theta)
             return theta["a"] + theta["b"]
@@ -222,7 +242,12 @@ def _receiving(annotations: dict[str, Any], **controls: Any) -> tuple[Function, 
         return 0.0
 
     body.__annotations__ = annotations
-    return Function("body", body, **controls), seen
+    return Function(
+        body,
+        **controls,
+        label="body",
+        output_spec=OutputSpec(body=None),
+    ), seen
 
 
 class TestARawClassAnnotation:
@@ -233,9 +258,15 @@ class TestARawClassAnnotation:
             return jnp.asarray(c.diff().dropna().to_numpy())
 
         differences.__annotations__ = {"c": pd.Series, "return": jax.Array}
-        record = Record("r", c=pd.Series([1.0, 2.0, 4.0]))
+        record = Record(
+            {"c": pd.Series([1.0, 2.0, 4.0])},
+            label="r",
+        )
 
-        result = Function("differences", differences)(record["c"])
+        result = Function(
+            differences,
+            label="differences",
+        )(record["c"])
 
         np.testing.assert_allclose(np.asarray(result), [1.0, 2.0])
 
@@ -244,7 +275,12 @@ class TestARawClassAnnotation:
         series = pd.Series([1.0, 2.0, 4.0])
         wrapped, seen = _receiving({"x": pd.Series})
 
-        wrapped(Record("r", c=series)["c"])
+        wrapped(
+            Record(
+                {"c": series},
+                label="r",
+            )["c"]
+        )
 
         assert len(seen) == 1 and seen[0] is series
 
@@ -253,7 +289,12 @@ class TestARawClassAnnotation:
         data = xr.DataArray(np.arange(3.0), dims=("t",))
         wrapped, seen = _receiving({"x": xr.DataArray})
 
-        wrapped(Record("r", d=data)["d"])
+        wrapped(
+            Record(
+                {"d": data},
+                label="r",
+            )["d"]
+        )
 
         assert len(seen) == 1 and seen[0] is data
 
@@ -261,7 +302,12 @@ class TestARawClassAnnotation:
         value = jnp.arange(3.0)
         wrapped, seen = _receiving({"x": jax.Array})
 
-        wrapped(NumericArray("x", value))
+        wrapped(
+            NumericArray(
+                value,
+                label="x",
+            )
+        )
 
         assert len(seen) == 1 and seen[0] is value
 
@@ -269,7 +315,12 @@ class TestARawClassAnnotation:
         value = jnp.arange(3.0)
         wrapped, seen = _receiving({"x": jax.Array})
 
-        wrapped.apply(NumericArray("x", value))
+        wrapped.apply(
+            NumericArray(
+                value,
+                label="x",
+            )
+        )
 
         assert len(seen) == 1 and seen[0] is value
 
@@ -283,7 +334,13 @@ class TestARawClassAnnotation:
         views = [(Normal("a", loc, 1.0) * Normal("b", 0.0, 1.0))["a"] for loc in (0.0, 2.0)]
         wrapped, seen = _receiving({"x": tfd.Distribution})
 
-        wrapped(DistributionBatch("views", views, "row"))
+        wrapped(
+            DistributionBatch(
+                views,
+                "row",
+                label="views",
+            )
+        )
 
         assert [type(law) for law in seen] == [tfd.Normal, tfd.Normal]
         assert [float(law.loc) for law in seen] == [0.0, 2.0]
@@ -313,7 +370,12 @@ class TestARawClassAnnotation:
     def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
         wrapped, seen = _receiving({"x": annotation})
 
-        wrapped(NumericArray("x", value))
+        wrapped(
+            NumericArray(
+                value,
+                label="x",
+            )
+        )
 
         assert len(seen) == 1 and seen[0] is value
 
@@ -326,7 +388,18 @@ class TestARawClassAnnotation:
             return 0.0
 
         body.__annotations__ = {"xs": jax.Array}
-        Function("body", body)(*(NumericArray(f"x{i}", value) for i, value in enumerate(values)))
+        Function(
+            body,
+            label="body",
+        )(
+            *(
+                NumericArray(
+                    value,
+                    label=f"x{i}",
+                )
+                for i, value in enumerate(values)
+            )
+        )
 
         assert len(seen) == 2 and all(got is value for got, value in zip(seen, values))
 
@@ -336,7 +409,10 @@ class TestARawClassAnnotation:
         ids=["unannotated", "Any", "NumericArray", "object", "ndarray"],
     )
     def test_any_other_argument_arrives_as_it_is(self, annotations):
-        argument = NumericArray("x", jnp.arange(3.0))
+        argument = NumericArray(
+            jnp.arange(3.0),
+            label="x",
+        )
         wrapped, seen = _receiving(annotations)
 
         wrapped(argument)
@@ -346,7 +422,11 @@ class TestARawClassAnnotation:
 
 class TestGrouping:
     def test_one_distribution_passed_twice_is_one_group(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(difference=None),
+        )
         def difference(x, y):
             return x - y
 
@@ -358,7 +438,11 @@ class TestGrouping:
             np.testing.assert_array_equal(leaf, 0.0)
 
     def test_sibling_views_of_one_parent_co_sample(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(residual=None),
+        )
         def residual(a, b):
             return b - 2.0 * a
 
@@ -370,7 +454,11 @@ class TestGrouping:
             np.testing.assert_array_equal(leaf, 0.0)
 
     def test_a_parent_and_its_own_view_co_sample(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(residual=None),
+        )
         def residual(record, a):
             return record["a"] - a
 
@@ -382,7 +470,11 @@ class TestGrouping:
             np.testing.assert_array_equal(leaf, 0.0)
 
     def test_laws_with_no_common_ancestor_sample_independently(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(difference=None),
+        )
         def difference(x, y):
             return x - y
 
@@ -399,7 +491,10 @@ class TestGrouping:
         def identity(x):
             return x
 
-        law = Unsampled("bare", OutputSpec(bare=SCALAR))
+        law = Unsampled(
+            OutputSpec(bare=SCALAR),
+            label="bare",
+        )
 
         assert isinstance(error_of(lambda: identity(law)), ResolutionError)
 

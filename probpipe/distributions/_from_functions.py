@@ -32,7 +32,7 @@ from ._capabilities import (
     _capability_subclass,
 )
 from ._conditional import _argument
-from ._distribution import DEFAULT_LABEL, Distribution
+from ._distribution import DEFAULT_LABEL, Distribution, _given_label
 from ._factored import _each_value, _flatten_draws, _leading_axes, _raw_record
 
 __all__ = ["distribution"]
@@ -210,7 +210,10 @@ class _FunctionLaw(Distribution):
         sampler_traces: bool,
         density_traces: bool,
     ) -> None:
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
         self._sampler = sample
         self._log_density = log_prob
         self._unnormalized_log_density = unnormalized_log_prob
@@ -502,10 +505,7 @@ def distribution(
         If the abstract draw of *sample* does not conform to *event_spec*, or a
         density that traces returns anything but a real scalar.
     """
-    if label is None:
-        label = DEFAULT_LABEL
-    elif not isinstance(label, str) or not label:
-        raise TypeError(f"distribution: label must be a non-empty string; got {label!r}")
+    label = _given_label(label, DEFAULT_LABEL, owner="distribution")
     functions = {
         "sample": sample,
         "log_prob": log_prob,

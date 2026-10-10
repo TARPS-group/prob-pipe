@@ -114,7 +114,10 @@ class TestTheResponseFamilies:
 
     def test_a_family_whose_canonical_link_is_not_invertible_raises_at_construction(self):
         class Opaque(GLMFamily):
-            canonical_link = Function("square", lambda mean: mean**2)
+            canonical_link = Function(
+                lambda mean: mean**2,
+                label="square",
+            )
             has_dispersion = False
 
             def build(self, label, mean, dispersion=None, *, event_spec=None):
@@ -326,7 +329,14 @@ class TestTheConstructionErrors:
 
     def test_a_link_that_is_not_invertible_raises(self):
         with pytest.raises(ResolutionError, match="glm_likelihood needs an invertible link"):
-            glm_likelihood("y", PoissonFamily(), Function("square", lambda mean: mean**2))
+            glm_likelihood(
+                "y",
+                PoissonFamily(),
+                Function(
+                    lambda mean: mean**2,
+                    label="square",
+                ),
+            )
 
     def test_a_dispersion_for_a_family_without_one_raises(self):
         with pytest.raises(TypeError, match="takes no dispersion"):

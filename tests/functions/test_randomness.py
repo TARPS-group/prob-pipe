@@ -19,6 +19,7 @@ import pytest
 from probpipe import (
     EmpiricalDistribution,
     Function,
+    OutputSpec,
     ReplayCompatibilityError,
     UnmanagedConcurrentWorkflowEntryError,
     converter_registry,
@@ -35,7 +36,13 @@ def _shift(z, offset=0.0):
 
 def _lift() -> Function:
     """A lifted call of a module-level def, which replay can anchor."""
-    return Function("shift", _shift, n_broadcast_samples=8, dispatch="sequential")
+    return Function(
+        _shift,
+        n_broadcast_samples=8,
+        dispatch="sequential",
+        label="shift",
+        output_spec=OutputSpec(shift=None),
+    )
 
 
 def _draws(result) -> np.ndarray:
@@ -53,7 +60,10 @@ def _two_empirical_draws(offset):
 
 def _drawing() -> Function:
     """A Function whose body draws twice, each draw a workflow-owned event."""
-    return Function("two_draws", _two_empirical_draws)
+    return Function(
+        _two_empirical_draws,
+        label="two_draws",
+    )
 
 
 class TestScopes:
@@ -194,7 +204,7 @@ class TestApply:
         with workflow_run(seed=42):
             baseline = _lift()(law)
         with workflow_run(seed=42):
-            Function("shift", _shift).apply(1.0)
+            Function(_shift, label="shift", output_spec=OutputSpec(shift=None)).apply(1.0)
             after = _lift()(law)
 
         np.testing.assert_array_equal(_draws(baseline), _draws(after))

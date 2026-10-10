@@ -38,7 +38,11 @@ class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
 
     def __init__(self):
         spec = NumericArraySpec(())
-        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+        super().__init__(
+            {"z": spec},
+            OutputSpec(x=spec),
+            label="x",
+        )
 
     def _condition_on(self, given, /, **options):
         return Normal("x", given["z"], 0.5, label="x")
@@ -147,7 +151,10 @@ class TestProvenanceBasics:
         """with_provenance(None) leaves a Record unchanged."""
         from probpipe import Record
 
-        r = Record("r", {"x": jnp.array(1.0)})
+        r = Record(
+            {"x": jnp.array(1.0)},
+            label="r",
+        )
         result = r.with_provenance(None)
         assert result is r
         assert r.provenance is None
@@ -340,7 +347,13 @@ class TestBroadcastingProvenance:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=20,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         assert hasattr(result, "atoms")
@@ -361,7 +374,13 @@ class TestBroadcastingProvenance:
         def double(x: float) -> float:
             return 2.0 * x
 
-        wf = Function(label="double", fn=double, dispatch="jax", n_broadcast_samples=20)
+        wf = Function(
+            double,
+            label="double",
+            dispatch="jax",
+            n_broadcast_samples=20,
+            output_spec=OutputSpec(double=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         assert hasattr(result, "atoms")
@@ -376,7 +395,13 @@ class TestBroadcastingProvenance:
         def shift(x: float, offset: float = 2.0) -> float:
             return x + offset
 
-        wf = Function(label="shift", fn=shift, dispatch=dispatch, n_broadcast_samples=5)
+        wf = Function(
+            shift,
+            label="shift",
+            dispatch=dispatch,
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(shift=None),
+        )
 
         with workflow_run(seed=42):
             result = wf(n)
@@ -392,7 +417,13 @@ class TestBroadcastingProvenance:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(
+            add,
+            label="add",
+            dispatch="sequential",
+            n_broadcast_samples=20,
+            output_spec=OutputSpec(add=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=a, y=b)
         assert result.provenance is not None
@@ -407,7 +438,13 @@ class TestBroadcastingProvenance:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(
+            add,
+            label="add",
+            dispatch="sequential",
+            n_broadcast_samples=20,
+            output_spec=OutputSpec(add=None),
+        )
         with workflow_run(seed=42):
             result = wf(a=ed, b=n)
         assert hasattr(result, "atoms")
@@ -416,13 +453,23 @@ class TestBroadcastingProvenance:
 
     def test_sweep_records_static_plain_inputs(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=float(value)) for value in range(3)], level_name="draw"
+            [
+                NumericRecord(
+                    {"value": float(value)},
+                    label="row",
+                )
+                for value in range(3)
+            ],
+            level_name="draw",
         )
 
         def shift(row, offset: float = 2.0) -> float:
             return row["value"] + offset
 
-        result = Function(label="shift", fn=shift)(rows)
+        result = Function(
+            shift,
+            label="shift",
+        )(rows)
 
         assert result.provenance is not None
         assert tuple(result.provenance.inputs) == ("offset",)
@@ -430,14 +477,27 @@ class TestBroadcastingProvenance:
 
     def test_nested_broadcast_records_static_plain_inputs(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=float(value)) for value in range(2)], level_name="draw"
+            [
+                NumericRecord(
+                    {"value": float(value)},
+                    label="row",
+                )
+                for value in range(2)
+            ],
+            level_name="draw",
         )
         noise = Normal("noise", loc=0.0, scale=1.0)
 
         def add_noise(row, random_value: float, offset: float = 2.0) -> float:
             return row["value"] + random_value + offset
 
-        wf = Function(label="add_noise", fn=add_noise, dispatch="sequential", n_broadcast_samples=5)
+        wf = Function(
+            add_noise,
+            label="add_noise",
+            dispatch="sequential",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(add_noise=None),
+        )
 
         with workflow_run(seed=42):
             result = wf(rows, noise)
@@ -482,7 +542,13 @@ class TestProvenanceChains:
         def log_val(x: float) -> float:
             return jnp.log(x)
 
-        wf = Function(label="log_val", fn=log_val, dispatch="sequential", n_broadcast_samples=20)
+        wf = Function(
+            log_val,
+            label="log_val",
+            dispatch="sequential",
+            n_broadcast_samples=20,
+            output_spec=OutputSpec(log_val=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=td)
         # result → broadcast → td → transform → base
@@ -696,7 +762,13 @@ class TestProvenanceAncestors:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=td)
         ancestors = provenance_ancestors(result)
@@ -716,7 +788,13 @@ class TestProvenanceAncestors:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            add,
+            label="add",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(add=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
@@ -802,7 +880,13 @@ class TestProvenanceDag:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=td)
         dag = provenance_dag(result)
@@ -817,7 +901,10 @@ class TestProvenanceDag:
         assert any(a.parent is base for a in ancestors)
 
     def test_plain_inputs_are_not_dag_ancestors(self):
-        wf = Function(label="function", fn=lambda x: x + 1)
+        wf = Function(
+            lambda x: x + 1,
+            label="function",
+        )
 
         result = wf(jnp.asarray(2.0))
 
@@ -869,7 +956,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         assert result.provenance is not None
@@ -888,7 +981,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         parent = result.provenance.parents[1]
@@ -916,7 +1015,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         ancestors = provenance_ancestors(result)
@@ -935,7 +1040,13 @@ class TestProvenanceModes:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(label="add", fn=add, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            add,
+            label="add",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(add=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=first, y=second)
         ancestors = provenance_ancestors(result)
@@ -954,7 +1065,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         dag = provenance_dag(result)
@@ -970,7 +1087,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         assert result.provenance is None
@@ -1030,7 +1153,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         assert provenance_ancestors(result) == []
@@ -1044,7 +1173,13 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(label="identity", fn=identity, dispatch="sequential", n_broadcast_samples=10)
+        wf = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            n_broadcast_samples=10,
+            output_spec=OutputSpec(identity=None),
+        )
         with workflow_run(seed=42):
             result = wf(x=n)
         dag = provenance_dag(result)

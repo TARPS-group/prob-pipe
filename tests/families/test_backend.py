@@ -315,7 +315,11 @@ class TestVectorParameters:
         assert not hasattr(law, "batch_shape")
 
     def test_a_batch_of_separate_laws_is_a_distribution_batch(self):
-        batch = DistributionBatch("x", [F.Normal("x", float(i), 1.0) for i in range(5)], "x")
+        batch = DistributionBatch(
+            [F.Normal("x", float(i), 1.0) for i in range(5)],
+            "x",
+            label="x",
+        )
         assert batch.batch_shape == (5,)
         assert batch[0].label == "x[x=0]"
         assert batch[0].event_shape == ()
@@ -426,31 +430,3 @@ class TestPickling:
         copied = _COPIES[how](law)
         assert copied.event_shape == ()
         assert tuple(copied.raw().batch_shape) == (3,)
-
-    def test_a_pickle_with_the_label_first_loads_to_the_same_law(self):
-        """A family pickled when the label came first rebuilds with its component first."""
-        law = F.Normal("mu", 0.0, 1.0, label="prior")
-        old_arguments = (("prior", 0.0, 1.0), {"event_spec": OutputSpec(mu=None)}, False)
-        loaded = pickle.loads(pickle.dumps(_LabelFirstPickle(law, old_arguments)))
-        assert type(loaded) is F.Normal
-        assert (loaded.label, loaded.notation) == ("prior", "prior(mu)")
-        assert loaded.event_spec == law.event_spec
-        np.testing.assert_allclose(loaded._log_prob(0.3), law._log_prob(0.3), rtol=1e-6)
-        # The loaded law records its arguments in the current form, so it pickles again.
-        again = pickle.loads(pickle.dumps(loaded))
-        assert (again.label, again.notation) == ("prior", "prior(mu)")
-
-
-class _LabelFirstPickle:
-    """A pickle payload of *law* as a family wrote it when the label was its first argument."""
-
-    def __init__(self, law, arguments):
-        from probpipe.families._backend import _rebuilt_family
-
-        instance_dict, slots = law.__getstate__()
-        state = {key: value for key, value in instance_dict.items() if key != "_tfp_dist"}
-        state["_constructor_arguments"] = arguments
-        self._reduce = (_rebuilt_family, (type(law), *arguments), (state, slots))
-
-    def __reduce__(self):
-        return self._reduce

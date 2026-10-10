@@ -129,7 +129,11 @@ def iterate[S](
             if cont is False:
                 break
 
-    return DistributionBatch(_ITERATE_LEVEL, laws, _ITERATE_LEVEL)
+    return DistributionBatch(
+        laws,
+        _ITERATE_LEVEL,
+        label=_ITERATE_LEVEL,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +191,7 @@ def with_conversion(
         return converter_registry.convert(result, target_type, **convert_kwargs)
 
     return Function(
-        fn=_with_conversion_impl,
+        _with_conversion_impl,
         label=f"with_conversion({inner_name}, {target_type.__name__})",
     )
 
@@ -283,6 +287,6 @@ def with_resampling(
         return out_dist
 
     return Function(
-        fn=_with_resampling_impl,
+        _with_resampling_impl,
         label=f"with_resampling({inner_name})",
     )

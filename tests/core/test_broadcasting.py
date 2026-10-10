@@ -14,6 +14,7 @@ from probpipe import (
     Function,
     MultivariateNormal,
     Normal,
+    OutputSpec,
     workflow_run,
 )
 
@@ -33,7 +34,13 @@ class TestBroadcastingBasic:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=50, dispatch="sequential")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=50,
+            dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w(x=g)
@@ -45,7 +52,13 @@ class TestBroadcastingBasic:
         def add_one(x: jnp.ndarray) -> jnp.ndarray:
             return x + 1.0
 
-        w = Function(label="add_one", fn=add_one, n_broadcast_samples=200, dispatch="sequential")
+        w = Function(
+            add_one,
+            label="add_one",
+            n_broadcast_samples=200,
+            dispatch="sequential",
+            output_spec=OutputSpec(add_one=None),
+        )
         g = Normal("x", loc=0.0, scale=0.1)
         with workflow_run(seed=1):
             result = w(x=g)
@@ -57,7 +70,11 @@ class TestBroadcastingBasic:
             return float(jnp.linalg.norm(x))
 
         w = Function(
-            label="compute_norm", fn=compute_norm, n_broadcast_samples=20, dispatch="sequential"
+            compute_norm,
+            label="compute_norm",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(compute_norm=None),
         )
         mvn = MultivariateNormal("x", loc=jnp.zeros(3), cov=jnp.eye(3))
         with workflow_run(seed=2):
@@ -69,10 +86,7 @@ class TestBroadcastingBasic:
         """Function accepts positional arguments."""
         from probpipe.functions import function
 
-        @function(
-            n_broadcast_samples=30,
-            dispatch="sequential",
-        )
+        @function(n_broadcast_samples=30, dispatch="sequential", output_spec=OutputSpec(add=None))
         def add(x, y):
             return x + y
 
@@ -95,7 +109,13 @@ class TestBroadcastingBasic:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w(x=g)
@@ -107,7 +127,13 @@ class TestBroadcastingMultipleArgs:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = Function(label="add_them", fn=add_them, n_broadcast_samples=100, dispatch="sequential")
+        w = Function(
+            add_them,
+            label="add_them",
+            n_broadcast_samples=100,
+            dispatch="sequential",
+            output_spec=OutputSpec(add_them=None),
+        )
         g1 = Normal("a", loc=1.0, scale=0.1)
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=3):
@@ -121,7 +147,13 @@ class TestBroadcastingMixedArgs:
         def scale(x: jnp.ndarray, factor: float) -> jnp.ndarray:
             return x * factor
 
-        w = Function(label="scale", fn=scale, n_broadcast_samples=50, dispatch="sequential")
+        w = Function(
+            scale,
+            label="scale",
+            n_broadcast_samples=50,
+            dispatch="sequential",
+            output_spec=OutputSpec(scale=None),
+        )
         g = Normal("x", loc=5.0, scale=0.1)
         with workflow_run(seed=4):
             result = w(x=g, factor=3.0)
@@ -134,7 +166,12 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Function(label="identity", fn=identity, dispatch="sequential")
+        w = Function(
+            identity,
+            label="identity",
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         g = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=5):
             result = w(x=g)
@@ -144,7 +181,13 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Function(label="identity", fn=identity, n_broadcast_samples=100, dispatch="sequential")
+        w = Function(
+            identity,
+            label="identity",
+            n_broadcast_samples=100,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         g = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=6):
             result = w.with_options(n_broadcast_samples=10)(x=g)
@@ -154,7 +197,7 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Function(label="identity", fn=identity, dispatch="sequential")
+        w = Function(identity, label="identity", dispatch="sequential")
         g = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(TypeError, match="n_broadcast_samples must be an integer"):
@@ -165,7 +208,7 @@ class TestBroadcastingNSamples:
         def identity(x: jnp.ndarray) -> jnp.ndarray:
             return x
 
-        w = Function(label="identity", fn=identity, dispatch="sequential")
+        w = Function(identity, label="identity", dispatch="sequential")
         g = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"):
@@ -177,7 +220,7 @@ class TestWorkflowControlParameterNames:
         def func(x: jnp.ndarray, n_broadcast_samples: int = 10) -> float:
             return float(n_broadcast_samples)
 
-        wf = Function(label="func", fn=func, dispatch="sequential")
+        wf = Function(func, label="func", dispatch="sequential")
 
         assert float(wf(x=jnp.asarray(1.0), n_broadcast_samples=3)) == 3.0
 
@@ -185,7 +228,7 @@ class TestWorkflowControlParameterNames:
         def func(x: jnp.ndarray, seed: int = 0) -> float:
             return float(seed)
 
-        wf = Function(label="func", fn=func, dispatch="sequential")
+        wf = Function(func, label="func", dispatch="sequential")
 
         assert float(wf(x=jnp.asarray(1.0), seed=5)) == 5.0
 
@@ -193,7 +236,7 @@ class TestWorkflowControlParameterNames:
         def func(x: jnp.ndarray, include_inputs: bool = False) -> float:
             return 1.0 if include_inputs else 0.0
 
-        wf = Function(label="func", fn=func, dispatch="sequential")
+        wf = Function(func, label="func", dispatch="sequential")
 
         assert float(wf(x=jnp.asarray(1.0), include_inputs=True)) == 1.0
 
@@ -203,7 +246,7 @@ class TestFunctionCallResolution:
         def identity(x):
             return x
 
-        w = Function(label="identity", fn=identity, dispatch="sequential")
+        w = Function(identity, label="identity", dispatch="sequential")
 
         with pytest.raises(TypeError, match="unexpected keyword argument 'typo'"):
             w(x=1.0, typo=2.0)
@@ -215,7 +258,7 @@ class TestFunctionCallResolution:
             seen.append(kwargs)
             return x
 
-        w = Function(label="identity", fn=identity, dispatch="sequential")
+        w = Function(identity, label="identity", dispatch="sequential")
         out = w(x=1.0, kwargs={"scale": 2.0})
 
         assert float(out) == 1.0
@@ -228,7 +271,7 @@ class TestFunctionCallResolution:
             seen.append(kwargs)
             return x
 
-        w = Function(label="identity", fn=identity, dispatch="sequential")
+        w = Function(identity, label="identity", dispatch="sequential")
         out = w(x=1.0, scale=2.0)
 
         assert float(out) == 1.0
@@ -242,7 +285,7 @@ class TestNoBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        w = Function(label="add", fn=add, dispatch="sequential")
+        w = Function(add, label="add", dispatch="sequential")
         result = w(a=1.0, b=2.0)
         # Concrete args return the Function's auto-wrapped scalar:
         # ``NumericRecord({"add": 3.0})``. The ``__float__`` shim unwraps it.
@@ -263,7 +306,13 @@ class TestBroadcastingEnumeration:
         weights = jnp.array([0.2, 0.3, 0.5])
         ed = EmpiricalDistribution(samples, weights, component="x")
 
-        w = Function(label="identity", fn=identity, n_broadcast_samples=100, dispatch="sequential")
+        w = Function(
+            identity,
+            label="identity",
+            n_broadcast_samples=100,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         result = w(x=ed)
         assert result.num_atoms == 3
         np.testing.assert_allclose(result.weights, weights, atol=1e-5)
@@ -275,7 +324,13 @@ class TestBroadcastingEnumeration:
         ed1 = EmpiricalDistribution(jnp.array([[1.0], [2.0]]), component="x")
         ed2 = EmpiricalDistribution(jnp.array([[10.0], [20.0], [30.0]]), component="x")
 
-        w = Function(label="add_them", fn=add_them, n_broadcast_samples=100, dispatch="sequential")
+        w = Function(
+            add_them,
+            label="add_them",
+            n_broadcast_samples=100,
+            dispatch="sequential",
+            output_spec=OutputSpec(add_them=None),
+        )
         result = w(a=ed1, b=ed2)
         assert result.num_atoms == 6  # 2 x 3
 
@@ -293,7 +348,13 @@ class TestBroadcastingEnumeration:
             jnp.arange(20).reshape(-1, 1).astype(jnp.float32), component="x"
         )  # n=20
 
-        w = Function(label="sum_three", fn=sum_three, n_broadcast_samples=50, dispatch="sequential")
+        w = Function(
+            sum_three,
+            label="sum_three",
+            n_broadcast_samples=50,
+            dispatch="sequential",
+            output_spec=OutputSpec(sum_three=None),
+        )
         with workflow_run(seed=9):
             result = w(a=ed_small, b=ed_medium, c=ed_large)
         # 2*5=10 enumerated, 50//10=5 reps from ed_large per combo → 50 total
@@ -306,7 +367,13 @@ class TestBroadcastingEnumeration:
         ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), component="x")
         g = Normal("b", loc=0.0, scale=1.0)
 
-        w = Function(label="add_them", fn=add_them, n_broadcast_samples=30, dispatch="sequential")
+        w = Function(
+            add_them,
+            label="add_them",
+            n_broadcast_samples=30,
+            dispatch="sequential",
+            output_spec=OutputSpec(add_them=None),
+        )
         with workflow_run(seed=10):
             result = w(a=ed, b=g)
         # 3 empirical combos, 30//3=10 reps each → 30 total
@@ -321,7 +388,13 @@ class TestBroadcastingEnumeration:
         samples = jnp.array([[1.0], [2.0], [3.0]])
         ed = EmpiricalDistribution(samples, component="x")
 
-        w = Function(label="identity", fn=identity, n_broadcast_samples=100, dispatch="sequential")
+        w = Function(
+            identity,
+            label="identity",
+            n_broadcast_samples=100,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         result = w.with_options(include_inputs=True)(x=ed)
         assert isinstance(result, EmpiricalDistribution)
         assert "x" in result.event_spec.components
@@ -341,7 +414,13 @@ class TestBroadcastingNonNumeric:
         def describe(x: jnp.ndarray) -> str:
             return f"val={float(x):.2f}"
 
-        w = Function(label="describe", fn=describe, n_broadcast_samples=5, dispatch="sequential")
+        w = Function(
+            describe,
+            label="describe",
+            n_broadcast_samples=5,
+            dispatch="sequential",
+            output_spec=OutputSpec(describe=None),
+        )
         g = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=11):
             result = w(x=g)
@@ -361,7 +440,13 @@ class TestBroadcastingJAX:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=50, dispatch="jax")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=50,
+            dispatch="jax",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=20):
             result = w(x=g)
@@ -372,7 +457,13 @@ class TestBroadcastingJAX:
         def add_one(x: jnp.ndarray) -> jnp.ndarray:
             return x + 1.0
 
-        w = Function(label="add_one", fn=add_one, n_broadcast_samples=200, dispatch="jax")
+        w = Function(
+            add_one,
+            label="add_one",
+            n_broadcast_samples=200,
+            dispatch="jax",
+            output_spec=OutputSpec(add_one=None),
+        )
         g = Normal("x", loc=0.0, scale=0.1)
         with workflow_run(seed=21):
             result = w(x=g)
@@ -382,7 +473,13 @@ class TestBroadcastingJAX:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = Function(label="add_them", fn=add_them, n_broadcast_samples=100, dispatch="jax")
+        w = Function(
+            add_them,
+            label="add_them",
+            n_broadcast_samples=100,
+            dispatch="jax",
+            output_spec=OutputSpec(add_them=None),
+        )
         g1 = Normal("a", loc=1.0, scale=0.1)
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=22):
@@ -394,7 +491,13 @@ class TestBroadcastingJAX:
         def scale(x: jnp.ndarray, factor: float) -> jnp.ndarray:
             return x * factor
 
-        w = Function(label="scale", fn=scale, n_broadcast_samples=50, dispatch="jax")
+        w = Function(
+            scale,
+            label="scale",
+            n_broadcast_samples=50,
+            dispatch="jax",
+            output_spec=OutputSpec(scale=None),
+        )
         g = Normal("x", loc=5.0, scale=0.1)
         with workflow_run(seed=23):
             result = w(x=g, factor=3.0)
@@ -405,7 +508,13 @@ class TestBroadcastingJAX:
         def halve(x: jnp.ndarray) -> jnp.ndarray:
             return x / 2.0
 
-        w = Function(label="halve", fn=halve, n_broadcast_samples=30, dispatch="jax")
+        w = Function(
+            halve,
+            label="halve",
+            n_broadcast_samples=30,
+            dispatch="jax",
+            output_spec=OutputSpec(halve=None),
+        )
         mvn = MultivariateNormal("x", loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2))
         with workflow_run(seed=24):
             result = w(x=mvn)
@@ -420,7 +529,13 @@ class TestBroadcastingJAX:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=30, dispatch="jax")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=30,
+            dispatch="jax",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=20):
             result = w.with_options(include_inputs=True)(x=g)
@@ -441,7 +556,13 @@ class TestAutoDispatch:
         def pure_jax(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.sin(x)
 
-        w = Function(label="pure_jax", fn=pure_jax, n_broadcast_samples=20, dispatch="auto")
+        w = Function(
+            pure_jax,
+            label="pure_jax",
+            n_broadcast_samples=20,
+            dispatch="auto",
+            output_spec=OutputSpec(pure_jax=None),
+        )
         g = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=30):
             result = w(x=g)
@@ -454,7 +575,13 @@ class TestAutoDispatch:
         def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.asarray(scipy.special.gamma(np.asarray(x)))
 
-        w = Function(label="scipy_fn", fn=scipy_fn, n_broadcast_samples=20, dispatch="auto")
+        w = Function(
+            scipy_fn,
+            label="scipy_fn",
+            n_broadcast_samples=20,
+            dispatch="auto",
+            output_spec=OutputSpec(scipy_fn=None),
+        )
         g = Normal("x", loc=2.0, scale=0.1)
         with workflow_run(seed=31):
             result = w(x=g)
@@ -467,7 +594,7 @@ class TestAutoDispatch:
         def scipy_fn(x: jnp.ndarray) -> jnp.ndarray:
             return jnp.asarray(scipy.special.gamma(np.asarray(x)))
 
-        w = Function(label="scipy_fn", fn=scipy_fn, n_broadcast_samples=20, dispatch="jax")
+        w = Function(scipy_fn, label="scipy_fn", n_broadcast_samples=20, dispatch="jax")
         g = Normal("x", loc=2.0, scale=0.1)
 
         with pytest.raises(ValueError, match="failed while tracing"):
@@ -487,8 +614,8 @@ class TestAutoDispatch:
             return jnp.asarray(joint["x"] + joint["y"])
 
         w = Function(
+            consume,
             label="consume",
-            fn=consume,
             n_broadcast_samples=10,
             dispatch="auto",
         )
@@ -512,10 +639,22 @@ class TestWorkflowRngManagement:
 
         g = Normal("x", loc=0.0, scale=1.0)
 
-        w1 = Function(label="identity", fn=identity, n_broadcast_samples=20, dispatch="sequential")
+        w1 = Function(
+            identity,
+            label="identity",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         r1 = w1(x=g)
 
-        w2 = Function(label="identity", fn=identity, n_broadcast_samples=20, dispatch="sequential")
+        w2 = Function(
+            identity,
+            label="identity",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         r2 = w2(x=g)
 
         assert not jnp.allclose(np.asarray(r1.atoms), np.asarray(r2.atoms))
@@ -525,7 +664,13 @@ class TestWorkflowRngManagement:
             return x
 
         g = Normal("x", loc=0.0, scale=1.0)
-        w = Function(label="identity", fn=identity, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            identity,
+            label="identity",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
 
         with workflow_run(seed=42):
             r1 = w(x=g)
@@ -545,11 +690,12 @@ class TestIncludeInputsArgument:
             return x * 2
 
         w = Function(
+            double_it,
             label="double_it",
-            fn=double_it,
             n_broadcast_samples=20,
             dispatch="sequential",
             include_inputs=True,
+            output_spec=OutputSpec(double_it=None),
         )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
@@ -562,7 +708,13 @@ class TestIncludeInputsArgument:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(x=g)
@@ -573,7 +725,13 @@ class TestIncludeInputsArgument:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w(x=g)
@@ -584,7 +742,13 @@ class TestIncludeInputsArgument:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = Function(label="add_them", fn=add_them, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            add_them,
+            label="add_them",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(add_them=None),
+        )
         g1 = Normal("a", loc=1.0, scale=0.1)
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=0):
@@ -603,7 +767,13 @@ class TestNamedComponents:
         def add_them(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
             return a + b
 
-        w = Function(label="add_them", fn=add_them, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            add_them,
+            label="add_them",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(add_them=None),
+        )
         g1 = Normal("a", loc=1.0, scale=0.1)
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=0):
@@ -614,7 +784,13 @@ class TestNamedComponents:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(x=g)
@@ -626,7 +802,13 @@ class TestNamedComponents:
         def double_it(x: jnp.ndarray) -> jnp.ndarray:
             return x * 2
 
-        w = Function(label="double_it", fn=double_it, n_broadcast_samples=20, dispatch="sequential")
+        w = Function(
+            double_it,
+            label="double_it",
+            n_broadcast_samples=20,
+            dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
+        )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
             result = w.with_options(include_inputs=True)(x=g)
@@ -654,8 +836,9 @@ class TestDispatchConsistency:
 
     def _run(self, mode, func, **kwargs):
         w = Function(
+            func,
             label="func",
-            fn=func,
+            output_spec=OutputSpec(result=None),
             n_broadcast_samples=kwargs.pop("n_broadcast_samples", 100),
             dispatch=mode,
         )

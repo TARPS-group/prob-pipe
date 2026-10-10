@@ -359,4 +359,7 @@ def _mean_field_family(approx: Any, model: Any, param_names: list[str]) -> Distr
         else:
             base = Normal(f"{name}_unconstrained", loc, scale)
             factors.append(BijectorTransformedDistribution(name, base, bijector))
-    return FactoredDistribution("posterior", factors)
+    return FactoredDistribution(
+        factors,
+        label="posterior",
+    )

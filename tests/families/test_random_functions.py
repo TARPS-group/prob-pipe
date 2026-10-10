@@ -106,7 +106,10 @@ class _Mixture(Distribution, SupportsMean):
     """The finite mixture ``Σᵢ wᵢ pᵢ`` of laws that share one declaration, by its mean."""
 
     def __init__(self, components, weights, *, label="mixture"):
-        super().__init__(label, components[0].event_spec)
+        super().__init__(
+            components[0].event_spec,
+            label=label,
+        )
         self._components = list(components)
         self._w = weights
 
@@ -348,7 +351,11 @@ class TestBatchOfRandomMeasures:
     def test_a_distribution_batch_of_random_measures(self):
         rm1 = _DiracRandomMeasure([Normal("x", loc=0.0, scale=1.0)], label="rm")
         rm2 = _DiracRandomMeasure([Normal("x", loc=5.0, scale=1.0)], label="rm")
-        batch = DistributionBatch("measures", [rm1, rm2], "measure")
+        batch = DistributionBatch(
+            [rm1, rm2],
+            "measure",
+            label="measures",
+        )
         assert len(batch) == 2
         assert batch[0].components is rm1.components
         assert batch[1].components is rm2.components

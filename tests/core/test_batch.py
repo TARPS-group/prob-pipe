@@ -29,6 +29,7 @@ from probpipe import (
     sample,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._expression import Named
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.provenance import Provenance
 from probpipe.core.tracked import TrackedTerm
@@ -47,7 +48,7 @@ def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
 class _Leaf(TrackedTerm):
     """A minimal tracked element."""
 
-    __slots__ = ("_expression", "_label", "_provenance", "value")
+    __slots__ = ("_expression", "_label", "_label_collapse", "_provenance", "value")
 
     def __init__(self, value, label="leaf"):
         object.__setattr__(self, "value", value)
@@ -196,13 +197,12 @@ class _ViewBatch(Batch[_Leaf]):
 
 
 class _StoringBatch(Batch[_Leaf]):
-    """A batch that hands back the very element the caller put in.
+    """A batch whose element hook returns the very object the caller put in.
 
-    The elements are stored, not built, so ``batch[i]`` is the caller's own
-    object: it keeps the label and the provenance it arrived with, and nothing is
-    copied. This is the storing side of the identity rule, which the doubles above
-    cannot exercise — each of them builds a fresh element per index, so they would
-    keep passing if the ABC ever relabeled or re-attributed a borrowed object.
+    The elements are stored, not built, and the hook returns the stored object
+    itself rather than a view of it. The doubles above build a fresh element per
+    index, so they would keep passing if the ABC ever wrote the selection's label
+    or expression onto the object the hook returned; this one exposes that.
     """
 
     __slots__ = ("_store",)
@@ -1694,11 +1694,10 @@ class TestAViewOverSharedStorageBehavesLikeAnyBatch:
 
 
 class TestAStoredElementKeepsItsOwnIdentity:
-    """A batch that stores its elements hands one back exactly as it arrived.
+    """Selecting an element never writes to the object the element hook returned.
 
-    The other doubles build an element per index, so they say nothing about this:
-    the ABC could start relabeling or re-attributing a borrowed object and every one
-    of them would still pass.
+    The hook here returns the stored object itself, so any label or expression the
+    ABC wrote onto it would show on the caller's own object.
     """
 
     @pytest.fixture
@@ -1711,29 +1710,35 @@ class TestAStoredElementKeepsItsOwnIdentity:
         ]
         return _StoringBatch(self.leaves, _spec([(3,)], ["draw"]), label="b")
 
-    def test_the_element_is_the_object_that_was_stored(self, stored):
-        assert stored[1] is self.leaves[1]
+    def test_the_element_is_a_copy_of_the_stored_object(self, stored):
+        element = stored[1]
+        assert element is not self.leaves[1]
+        assert element.value == self.leaves[1].value
 
-    def test_the_element_keeps_the_label_it_arrived_with(self, stored):
-        """Not ``b[draw=1]``: relabeling it would mean returning a copy."""
-        assert stored[1].label == "given1"
-        assert stored.at_levels(draw=2).label == "given2"
+    def test_the_element_takes_the_derived_label(self, stored):
+        assert stored[1].label == "b[draw=1]"
+        assert stored.at_levels(draw=2).label == "b[draw=2]"
 
-    def test_the_element_keeps_the_provenance_it_arrived_with(self, stored):
-        assert stored[1].provenance.operation == "author"
+    def test_the_stored_object_keeps_its_label(self, stored):
+        stored[1]
+        stored.at_levels(draw=2)
+        assert [leaf.label for leaf in self.leaves] == ["given0", "given1", "given2"]
+        assert self.leaves[1]._expression == Named("given1")
+
+    def test_the_element_keeps_the_provenance_the_hook_gave_it(self, stored):
         assert stored[1].provenance is self.leaves[1].provenance
 
-    def test_selecting_twice_does_not_accumulate_anything(self, stored):
-        """The borrowed object is not written to, so reading it again is the same."""
+    def test_selecting_twice_gives_equal_labels_and_leaves_the_stored_object_alone(self, stored):
         once, twice = stored[1], stored[1]
-        assert once is twice
-        assert once.label == twice.label == "given1"
-        assert once.provenance is twice.provenance
+        assert once is not twice
+        assert once.label == twice.label == "b[draw=1]"
+        assert self.leaves[1].label == "given1"
 
-    def test_a_sub_batch_still_takes_a_derived_label(self, stored):
+    def test_a_sub_batch_takes_a_derived_label(self, stored):
         """The view is the batch's own, so it is labeled by what it selects."""
         assert stored[0:2].label == "b[draw=0:2]"
-        assert stored[0:2][0] is self.leaves[0]
+        assert stored[0:2][0].label == "b[draw=0]"
+        assert self.leaves[0].label == "given0"
 
 
 class TestSymbolicMultiplicity:
@@ -1902,7 +1907,7 @@ class TestSymbolicMultiplicity:
 #: The six classes whose constructors take the label first. Five are batches;
 #: ``NumericArray`` is the single value that shares the rule, since it too has no
 #: fields to describe it and so nothing to derive a label from.
-LABEL_FIRST = [
+NAMED_CONSTRUCTORS = [
     "NumericArray",
     "NumericArrayBatch",
     "RecordBatch",
@@ -1934,7 +1939,7 @@ class TestTheConstructorSignatureContract:
     exercising the rule. A signature cannot pass for that reason.
     """
 
-    @pytest.fixture(params=LABEL_FIRST)
+    @pytest.fixture(params=NAMED_CONSTRUCTORS)
     def kind(self, request):
         return request.param
 
@@ -1948,26 +1953,24 @@ class TestTheConstructorSignatureContract:
     def _own_params(cls):
         return list(inspect.signature(cls.__init__).parameters.values())[1:]
 
-    def test_the_label_is_first_positional_only_and_has_no_default(self, cls):
-        """A default is what the whole change removes, so its absence is asserted
-        rather than inferred from a refusal."""
-        first = self._own_params(cls)[0]
+    def test_the_label_is_keyword_only_and_required_only_for_raw_values(self, cls, kind):
+        parameters = inspect.signature(cls.__init__).parameters
+        label = parameters["label"]
+        assert label.kind is inspect.Parameter.KEYWORD_ONLY
+        if kind in {"NumericArray", "NumericArrayBatch", "OpaqueBatch"}:
+            assert label.default is inspect.Parameter.empty
+        else:
+            assert label.default is None
 
-        assert first.name == "label"
+    def test_the_data_is_first_positional_only_and_has_no_default(self, cls):
+        first = self._own_params(cls)[0]
+        assert first.name in {"value", "values", "fields", "elements"}
         assert first.kind is inspect.Parameter.POSITIONAL_ONLY
         assert first.default is inspect.Parameter.empty
 
-    def test_the_data_is_second_positional_only_and_has_no_default(self, cls):
-        second = self._own_params(cls)[1]
-
-        assert second.kind is inspect.Parameter.POSITIONAL_ONLY
-        assert second.default is inspect.Parameter.empty
-
-    def test_the_label_cannot_be_passed_by_keyword(self, cls, kind):
+    def test_the_label_is_passed_by_keyword(self, cls, kind):
         args, kwargs = _args_for(kind, shape=(2,), levels="draw")
-
-        with pytest.raises(TypeError, match="positional-only"):
-            cls(*args, label="b", **kwargs)
+        assert cls(*args, label="b", **kwargs).label == "b"
 
     def test_the_removed_axis_groups_keyword_is_refused(self, cls, kind):
         if kind == "NumericArray":
@@ -1975,7 +1978,7 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2,), levels="draw")
 
         with pytest.raises(TypeError, match="axis_groups"):
-            cls("b", *args, axis_groups=((2,),), **kwargs)
+            cls(*args, label="b", axis_groups=((2,),), **kwargs)
 
     def test_a_level_may_hold_several_axes(self, cls, kind):
         """The partition is the argument; the sizes come back off the data."""
@@ -1983,7 +1986,7 @@ class TestTheConstructorSignatureContract:
             pytest.skip("carries no levels")
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
-        batch = cls("b", *args, axes_per_level=(2,), **kwargs)
+        batch = cls(*args, label="b", axes_per_level=(2,), **kwargs)
 
         assert (batch.level_names, batch.axis_groups) == (("draw",), ((2, 3),))
 
@@ -2004,17 +2007,17 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
         with pytest.raises(exc, match=match):
-            cls("b", *args, axes_per_level=(count,), **kwargs)
+            cls(*args, label="b", axes_per_level=(count,), **kwargs)
 
     def test_a_single_axis_count_is_one_level(self, cls, kind):
         if kind == "NumericArray":
             pytest.skip("carries no levels")
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
-        batch = cls("b", *args, axes_per_level=2, **kwargs)
+        batch = cls(*args, label="b", axes_per_level=2, **kwargs)
 
         assert batch.axis_groups == ((2, 3),)
-        assert batch.spec == cls("b", *args, axes_per_level=(2,), **kwargs).spec
+        assert batch.spec == cls(*args, label="b", axes_per_level=(2,), **kwargs).spec
 
     def test_a_single_level_name_is_one_level(self, cls, kind):
         if kind == "NumericArray":
@@ -2022,7 +2025,7 @@ class TestTheConstructorSignatureContract:
         bare, _ = _args_for(kind, shape=(2,), levels="draw")
         tupled, kwargs = _args_for(kind, shape=(2,), levels=("draw",))
 
-        assert cls("b", *bare, **kwargs).spec == cls("b", *tupled, **kwargs).spec
+        assert cls(*bare, label="b", **kwargs).spec == cls(*tupled, label="b", **kwargs).spec
 
     @pytest.mark.parametrize(
         ("levels", "match"),
@@ -2038,7 +2041,7 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2,), levels=levels)
 
         with pytest.raises(TypeError, match=match):
-            cls("b", *args, **kwargs)
+            cls(*args, label="b", **kwargs)
 
     @pytest.mark.parametrize("count", [np.int64(2), np.uint8(2)], ids=["int64", "uint8"])
     def test_an_integer_like_count_is_accepted(self, cls, kind, count):
@@ -2048,7 +2051,7 @@ class TestTheConstructorSignatureContract:
             pytest.skip("carries no levels")
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
-        batch = cls("b", *args, axes_per_level=(count,), **kwargs)
+        batch = cls(*args, label="b", axes_per_level=(count,), **kwargs)
 
         assert batch.axis_groups == ((2, 3),)
 
@@ -2062,7 +2065,7 @@ class TestFromVectorTakesThePartitionToo:
 
     def test_one_name_takes_every_batch_axis(self):
         rebuilt = NumericRecordBatch.from_vector(
-            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names="sample"
+            RecordSpec(x=(2,)), self._vec((4, 5)), level_names="sample", label="post"
         )
 
         assert (rebuilt.batch_shape, rebuilt.level_names) == ((4, 5), ("sample",))
@@ -2070,7 +2073,7 @@ class TestFromVectorTakesThePartitionToo:
 
     def test_several_names_take_one_axis_each(self):
         rebuilt = NumericRecordBatch.from_vector(
-            "post", RecordSpec(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw")
+            RecordSpec(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw"), label="post"
         )
 
         assert rebuilt.axis_groups == ((4,), (5,))
@@ -2080,21 +2083,21 @@ class TestFromVectorTakesThePartitionToo:
         to lose the same keyword the constructors did."""
         with pytest.raises(TypeError, match="unexpected keyword argument 'axis_groups'"):
             NumericRecordBatch.from_vector(
-                "post",
                 RecordSpec(x=(2,)),
                 self._vec((4, 5)),
                 level_names=("chain", "draw"),
                 axis_groups=((4,), (5,)),
+                label="post",
             )
 
     def test_an_explicit_partition_groups_the_axes_it_names(self):
         """Three axes, two levels: the first level holds two of them."""
         rebuilt = NumericRecordBatch.from_vector(
-            "post",
             RecordSpec(x=(2,)),
             self._vec((2, 3, 4)),
             level_names=("grid", "draw"),
             axes_per_level=(2, 1),
+            label="post",
         )
 
         assert (rebuilt.batch_shape, rebuilt.level_names) == ((2, 3, 4), ("grid", "draw"))

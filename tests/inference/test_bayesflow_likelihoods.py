@@ -10,7 +10,6 @@ likelihood on the same model.
 from __future__ import annotations
 
 import os
-import re
 
 import pytest
 
@@ -95,7 +94,7 @@ def _score(lik, theta, rows):
     declaration = lik.prior.event_spec
     theta = jnp.asarray(theta)
     if declaration.exposes_record:
-        given = NumericRecord.from_vector("theta", declaration.spec, theta)
+        given = NumericRecord.from_vector(declaration.spec, theta, label="theta")
     else:
         (component,) = declaration.components
         given = {component: jnp.reshape(theta, declaration.spec.shape)}
@@ -223,7 +222,9 @@ class TestSurrogateContract:
 
     def test_a_record_and_a_mapping_given_score_alike(self, nle):
         """A record of the parameters and a mapping of them give identical scores."""
-        record = NumericRecord.from_vector("nr", _prior().event_spec.spec, jnp.array([0.4, -0.3]))
+        record = NumericRecord.from_vector(
+            _prior().event_spec.spec, jnp.array([0.4, -0.3]), label="nr"
+        )
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
             float(nle._conditional_log_prob(record, y_row)),
@@ -243,9 +244,8 @@ class TestSurrogateContract:
     def test_repr(self, nle, nre):
         for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
             text = repr(kernel)
-            # The label is the first argument, on one line or on its own line.
-            assert re.match(rf"{cls}\(\s*'{kernel.label}',", text)
-            assert "theta_dim=2," in text and "data_dim=2," in text
+            # The kernel's label is its constructor's default, so the repr leaves it out.
+            assert text == f"{cls}(theta_dim=2, data_dim=2, given=('a', 'b'))"
 
     def test_data_width_guard(self, nle):
         """Wrong-width data fails fast with an actionable message."""
@@ -280,6 +280,23 @@ class TestSurrogateContract:
         np.testing.assert_allclose(total, per, rtol=1e-5)
         # A (n, 1) column is the same dataset.
         np.testing.assert_allclose(total, float(_score(lik, theta, y3[:, None])), rtol=1e-6)
+
+
+@pytest.mark.parametrize("cls", [BayesFlowLikelihood, BayesFlowRatio])
+class TestTheLabel:
+    """The constructors need no trained network to set the label, so a stand-in serves."""
+
+    def test_the_label_defaults_to_the_class_name(self, cls):
+        kernel = cls(object(), _prior(), _SIM, data_dim=2)
+        assert kernel.label == cls.__name__
+        assert "label=" not in repr(kernel)
+
+    def test_a_given_label_is_shown(self, cls):
+        kernel = cls(object(), _prior(), _SIM, data_dim=2, label="mylik")
+        assert (kernel.label, kernel.notation) == ("mylik", "mylik(observation | a, b)")
+        assert repr(kernel) == (
+            f"{cls.__name__}(theta_dim=2, data_dim=2, given=('a', 'b'), label='mylik')"
+        )
 
 
 class TestConditioning:

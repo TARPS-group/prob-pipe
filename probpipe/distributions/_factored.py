@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -78,6 +78,7 @@ from ._distribution import (
     _declares_numeric_event,
     _fixed_paths,
     _keeps_fixed_paths,
+    _law_repr,
     _no_free_dims,
     _recorded_copy,
     _shared_final_names,
@@ -395,9 +396,10 @@ def _factor_graph(
         for component, spec in factor.event_spec.components.items():
             if component in producers:
                 raise ValueError(
-                    f"the field {component!r} is produced by both "
-                    f"{factors[producers[component]].label!r} and {factor.label!r}; rename one "
-                    f"with with_path_names()"
+                    f"the field {component!r} is produced by both factor "
+                    f"{producers[component]} ({factors[producers[component]].label!r}) and "
+                    f"factor {index} ({factor.label!r}); rename one with with_path_names() or "
+                    f"declare its output with OutputSpec"
                 )
             producers[component] = index
             component_specs[component] = spec
@@ -1004,21 +1006,20 @@ class _SoleField(Distribution):
 
     def __init__(self, law: Distribution) -> None:
         ((component, spec),) = law.event_spec.components.items()
-        super().__init__(law.label, OutputSpec(**{component: spec}))
+        super().__init__(
+            OutputSpec(**{component: spec}),
+            label=law.label,
+        )
         object.__setattr__(self, "_law", law)
         object.__setattr__(self, "_component", component)
 
-    def _repr_class_name(self) -> str:
-        """The class of the record law, which this law presents as a whole term."""
-        return self._law._repr_class_name()
+    def __repr__(self) -> str:
+        """A call of the record law's constructor, with the whole-term declaration as ``event_spec=``."""
+        return _law_repr(self, self._law._repr_arguments(), self._law)
 
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The family parameters of the record law."""
-        return self._law._repr_arguments()
-
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The whole-term declaration, by which this law differs from the record law."""
-        return [("event_spec", repr(self.event_spec))]
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """No component, and the whole-term declaration, by which this law differs from the record law."""
+        return None, repr(self.event_spec)
 
 
 def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -1577,9 +1578,15 @@ def _joint_marginal(self: Any, path: str | tuple[str, ...]) -> Distribution:
     if len(kept) == 1 and (projection or kept[0].event_spec.exposes_record):
         marginal = _law_at_defaults(kept[0], ())
     elif closed is None:
-        marginal = FactoredDistribution(label, kept)
+        marginal = FactoredDistribution(
+            kept,
+            label=label,
+        )
     else:
-        marginal = FactoredDistribution(label, closed)
+        marginal = FactoredDistribution(
+            closed,
+            label=label,
+        )
     if not projection:
         marginal = _in_requested_order(marginal, paths)
     return _carrying(marginal, _marginal_expression_at(self, path))
@@ -1893,7 +1900,10 @@ def _rebuilt(joint: Any, method: str, mapping: Mapping[str, Any], *, free: Any =
     if method == "with_dim_sizes":
         scope.update(mapping)
     rebuilt = base(
-        joint.label, _each_factor(joint.factors, method, mapping), _scope=scope, **_packaging(joint)
+        _each_factor(joint.factors, method, mapping),
+        label=joint.label,
+        _scope=scope,
+        **_packaging(joint),
     )
     return _derived_product(rebuilt, joint).with_provenance(
         Provenance.create(method, parents=[joint], metadata=dict(mapping))
@@ -2005,10 +2015,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The factors, in conditional-first order.
+    label : str, optional
+        The joint's display alias. Defaults to the product of its factors' descriptions.
     _scope : Mapping[str, int], optional
         The size of each dimension bound in the joint that a transform rebuilds,
         keyed by its name, which the factor graph starts from.
@@ -2027,13 +2037,16 @@ class FactoredDistribution(Distribution, SupportsFactors):
         ``FactoredConditionalDistribution``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table = _joint_table("FactoredDistribution", conditional=False)
 
     def __new__(
         cls,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> FactoredDistribution:
@@ -2047,12 +2060,17 @@ class FactoredDistribution(Distribution, SupportsFactors):
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
+        expression = _product_of(factors) if label is None else None
+        rendering = None
+        if expression is not None:
+            rendering = expression.label_rendering()
+            label = rendering[0]
         graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
             raise ValueError(
@@ -2060,8 +2078,13 @@ class FactoredDistribution(Distribution, SupportsFactors):
                 f"condition on; add a factor for them, or build a "
                 f"FactoredConditionalDistribution"
             )
-        super().__init__(label, _joint_declaration(graph, _component))
+        super().__init__(
+            _joint_declaration(graph, _component),
+            label=label,
+        )
         object.__setattr__(self, "_graph", graph)
+        if expression is not None:
+            self._store_expression(expression, rendering)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
@@ -2135,10 +2158,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The factors, in conditional-first order.
+    label : str, optional
+        The joint's display alias. Defaults to the product of its factors' descriptions.
     _scope : Mapping[str, int], optional
         The size of each dimension bound in the joint that a transform rebuilds,
         keyed by its name, which the factor graph starts from.
@@ -2156,13 +2179,16 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         joint a ``FactoredDistribution``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table = _joint_table("FactoredConditionalDistribution", conditional=True)
 
     def __new__(
         cls,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> FactoredConditionalDistribution:
@@ -2172,20 +2198,31 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Factor],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
+        expression = _product_of(factors) if label is None else None
+        rendering = None
+        if expression is not None:
+            rendering = expression.label_rendering()
+            label = rendering[0]
         graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
                 f"the factors of {label!r} define every field they condition on; build a "
                 f"FactoredDistribution instead"
             )
-        super().__init__(label, graph.unmet, _joint_declaration(graph, _component))
+        super().__init__(
+            graph.unmet,
+            _joint_declaration(graph, _component),
+            label=label,
+        )
         object.__setattr__(self, "_graph", graph)
+        if expression is not None:
+            self._store_expression(expression, rendering)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
@@ -2271,9 +2308,17 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
                     factor = _bound_factor(factor, bound, options)
             factors.append(factor)
         if set(self.given_spec.required) <= set(values):
-            joint = FactoredDistribution(self.label, factors, **_packaging(self))
+            joint = FactoredDistribution(
+                factors,
+                **_packaging(self),
+                label=self.label,
+            )
         else:
-            joint = FactoredConditionalDistribution(self.label, factors, **_packaging(self))
+            joint = FactoredConditionalDistribution(
+                factors,
+                **_packaging(self),
+                label=self.label,
+            )
         return _derived_product(joint, self)
 
 

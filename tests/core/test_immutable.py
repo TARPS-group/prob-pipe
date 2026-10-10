@@ -160,14 +160,20 @@ class TestAMemoIsRebuiltAfterARoundTrip:
 
     @ROUND_TRIPS
     def test_a_numpy_leaf_still_converts(self, operation):
-        record = NumericRecord("nr", {"x": np.array([1.0, 2.0])})
+        record = NumericRecord(
+            {"x": np.array([1.0, 2.0])},
+            label="nr",
+        )
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
 
     @ROUND_TRIPS
     def test_a_converted_leaf_reconverts(self, operation):
         # Converting first populates the memo on the original, which the copy
         # must not depend on.
-        record = NumericRecord("nr", {"x": np.array([1.0, 2.0])})
+        record = NumericRecord(
+            {"x": np.array([1.0, 2.0])},
+            label="nr",
+        )
         record.to_vector()
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
 
@@ -175,7 +181,10 @@ class TestAMemoIsRebuiltAfterARoundTrip:
     def test_a_native_container_leaf_still_converts(self, operation):
         xr = pytest.importorskip("xarray")
         leaf = xr.DataArray([1.0, 2.0], dims=["t"], coords={"t": [10, 20]})
-        record = NumericRecord("nr", {"x": leaf})
+        record = NumericRecord(
+            {"x": leaf},
+            label="nr",
+        )
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
         # The native leaf itself survives; only the converted form is rebuilt.
         assert operation(record).raw("x").dims == ("t",)
@@ -198,19 +207,43 @@ class TestTheHostsInTheTree:
 
     @pytest.fixture(
         params=[
-            pytest.param(lambda: Record("r", {"x": jnp.ones(2), "tag": "m"}), id="record"),
-            pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(2)}), id="numeric-record"),
+            pytest.param(
+                lambda: Record(
+                    {"x": jnp.ones(2), "tag": "m"},
+                    label="r",
+                ),
+                id="record",
+            ),
+            pytest.param(
+                lambda: NumericRecord(
+                    {"x": jnp.ones(2)},
+                    label="nr",
+                ),
+                id="numeric-record",
+            ),
             pytest.param(lambda: RecordSpec(x=(2,), tag=OpaqueSpec()), id="event-template"),
             pytest.param(
                 lambda: RecordBatch.stack(
-                    [Record("r", {"x": jnp.ones(2), "tag": "m"})] * 2,
+                    [
+                        Record(
+                            {"x": jnp.ones(2), "tag": "m"},
+                            label="r",
+                        )
+                    ]
+                    * 2,
                     level_name="draw",
                 ),
                 id="record-batch",
             ),
             pytest.param(
                 lambda: NumericRecordBatch.stack(
-                    [NumericRecord("nr", {"x": jnp.ones(2)})] * 2,
+                    [
+                        NumericRecord(
+                            {"x": jnp.ones(2)},
+                            label="nr",
+                        )
+                    ]
+                    * 2,
                     level_name="draw",
                 ),
                 id="numeric-record-batch",
@@ -314,21 +347,36 @@ class TestEveryTrackedTermIsImmutable:
             del term._label
 
     def test_a_record_refuses_assignment_and_deletion(self):
-        term = Record("r", {"x": jnp.ones(2)})
+        term = Record(
+            {"x": jnp.ones(2)},
+            label="r",
+        )
         with pytest.raises(AttributeError, match="Record is immutable"):
             term.attribute = 1
         with pytest.raises(AttributeError, match="Record is immutable"):
             del term._label
 
     def test_a_record_batch_refuses_assignment_and_names_itself(self):
-        term = RecordBatch.stack([Record("r", {"x": jnp.ones(2)})] * 2, level_name="draw")
+        term = RecordBatch.stack(
+            [
+                Record(
+                    {"x": jnp.ones(2)},
+                    label="r",
+                )
+            ]
+            * 2,
+            level_name="draw",
+        )
         with pytest.raises(AttributeError, match="RecordBatch is immutable"):
             term.attribute = 1
 
 
 class TestTheConstructionWindow:
     def test_it_closes_when_the_constructor_returns(self):
-        term = Record("r", {"x": jnp.ones(2)})
+        term = Record(
+            {"x": jnp.ones(2)},
+            label="r",
+        )
         with pytest.raises(AttributeError):
             term.attribute = 1
 
@@ -413,7 +461,10 @@ class TestTheConstructionWindow:
 
         # Different instances rather than one nested in itself: the factors
         # are built first, and the joint's own window is unaffected by theirs.
-        joint = FactoredDistribution("j", [Normal("x", 0.0, 1.0, label="a")])
+        joint = FactoredDistribution(
+            [Normal("x", 0.0, 1.0, label="a")],
+            label="j",
+        )
         assert joint.label == "j"
         assert joint.factors[0].label == "a"
         with pytest.raises(AttributeError, match="is immutable"):

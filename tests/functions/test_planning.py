@@ -51,19 +51,32 @@ def _lifted_rate() -> Function:
 class TestTheDeclaredOutput:
     def test_a_bare_term_spec_completes_to_the_default_declaration(self):
         spec = NumericArraySpec(())
-        wrapped = Function("f", lambda x: x, output_label="value", output_spec=spec)
+        wrapped = Function(
+            lambda x: x,
+            output_label="value",
+            output_spec=OutputSpec.default(spec, component="value"),
+            label="f",
+        )
 
         assert wrapped.output_spec == OutputSpec.default(spec, component="value")
 
     def test_a_bare_record_spec_exposes_its_fields(self):
         spec = RecordSpec(a=NumericArraySpec(()))
-        wrapped = Function("f", lambda x: {"a": x}, output_spec=spec)
+        wrapped = Function(
+            lambda x: {"a": x},
+            output_spec=spec,
+            label="f",
+        )
 
         assert wrapped.output_spec.exposes_record
         assert set(wrapped.output_spec.components) == {"a"}
 
     def test_a_type_hole_is_filled_per_call_and_the_declaration_keeps_it(self):
-        wrapped = Function("f", lambda x: x, output_spec=OutputSpec(mean=None))
+        wrapped = Function(
+            lambda x: x,
+            output_spec=OutputSpec(mean=None),
+            label="f",
+        )
 
         first = wrapped(jnp.ones(2))
         second = wrapped(jnp.ones(3))
@@ -97,7 +110,7 @@ class TestTheResultOfALift:
         assert result.event_spec.spec.support is positive
 
     def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -108,7 +121,7 @@ class TestTheResultOfALift:
         assert not result.event_spec.exposes_record
 
     def test_the_sampling_lift_constructs_an_empirical_approximation(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -128,7 +141,12 @@ class TestTheResultOfALift:
         def double(x):
             return 2.0 * x
 
-        empty = NumericArrayBatch("rows", jnp.zeros((0,)), "row", element_spec=NumericArraySpec(()))
+        empty = NumericArrayBatch(
+            jnp.zeros((0,)),
+            "row",
+            element_spec=NumericArraySpec(()),
+            label="rows",
+        )
 
         assert error_of(lambda: double(empty)) is not None
 
@@ -167,7 +185,12 @@ class TestIncludingTheInputs:
         assert set(result.event_spec.components) == {"theta", "mean"}
 
     def test_a_one_field_record_draw_remains_nested(self):
-        @function(include_inputs=True, n_broadcast_samples=6, dispatch="sequential")
+        @function(
+            include_inputs=True,
+            n_broadcast_samples=6,
+            dispatch="sequential",
+            output_spec=OutputSpec(weigh=None),
+        )
         def weigh(theta):
             return 0.0
 
@@ -191,9 +214,9 @@ class TestIncludingTheInputs:
 class TestFailures:
     def test_arguments_that_do_not_unify_raise_applicability_error(self):
         wrapped = Function(
-            "add",
             lambda x, y: x + y,
             input_spec={"x": NumericArraySpec(("n",)), "y": NumericArraySpec(("n",))},
+            label="add",
         )
 
         assert isinstance(error_of(lambda: wrapped(jnp.ones(3), jnp.ones(4))), ApplicabilityError)

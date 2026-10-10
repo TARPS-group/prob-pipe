@@ -38,7 +38,13 @@ def _numeric_record_batch(
     field: str, values: range, *, level_name: str = "draw"
 ) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        [
+            NumericRecord(
+                {**{field: float(value)}},
+                label="nr",
+            )
+            for value in values
+        ],
         level_name=level_name,
     )
 
@@ -70,7 +76,14 @@ def _require_not_called(*args, **kwargs):
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
         parent = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)], level_name="draw"
+            [
+                NumericRecord(
+                    {"x": float(i), "y": float(10 + i)},
+                    label="nr",
+                )
+                for i in range(3)
+            ],
+            level_name="draw",
         )
         views = parent.select_all()
         values = {"x": views["x"], "y": views["y"]}
@@ -117,7 +130,11 @@ class TestSliceSweepValues:
         ]
 
     def test_a_distribution_batch_cell_is_a_view_of_its_law(self):
-        laws = DistributionBatch("d", [Normal("x", 3.0, 1.0), Normal("x", 4.0, 1.0)], "law")
+        laws = DistributionBatch(
+            [Normal("x", 3.0, 1.0), Normal("x", 4.0, 1.0)],
+            "law",
+            label="d",
+        )
         values = {"d": laws}
         plan = _plan(values)
 
@@ -291,14 +308,26 @@ class TestASweptBodyThatReturnsABatch:
     @staticmethod
     def _rows(n: int, *, level_name: str = "row") -> RecordBatch:
         return RecordBatch.stack(
-            [Record("p", {"x": jnp.asarray(float(i))}) for i in range(n)],
+            [
+                Record(
+                    {"x": jnp.asarray(float(i))},
+                    label="p",
+                )
+                for i in range(n)
+            ],
             level_name=level_name,
         )
 
     @staticmethod
     def _body(p):
         return RecordBatch.stack(
-            [Record("r", {"y": p["x"] * k}) for k in (1.0, 2.0, 3.0)],
+            [
+                Record(
+                    {"y": p["x"] * k},
+                    label="r",
+                )
+                for k in (1.0, 2.0, 3.0)
+            ],
             level_name="k",
         )
 
@@ -317,27 +346,27 @@ class TestASweptBodyThatReturnsABatch:
             return real(**kwargs)
 
         monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
-        Function(fn=self._body, label="swept")(self._rows(4))
+        Function(self._body, label="swept")(self._rows(4))
 
         assert reached == [1]
 
     def test_the_levels_are_the_sweeps_then_the_bodys(self):
-        out = Function(fn=self._body, label="swept")(self._rows(4))
+        out = Function(self._body, label="swept")(self._rows(4))
 
         assert out.level_names == ("row", "k")
         assert out.axis_groups == ((4,), (3,))
 
     def test_the_shape_agrees_with_the_columns_it_holds(self):
         """A batch whose spec its own columns contradict is the failure to avoid."""
-        out = Function(fn=self._body, label="swept")(self._rows(4))
+        out = Function(self._body, label="swept")(self._rows(4))
 
         assert out.batch_shape == (4, 3)
         assert out.batch_size == 12
         assert np.shape(out._raw_column("y")) == (4, 3)
 
     def test_it_matches_sequential_dispatch(self):
-        mapped = Function(fn=self._body, label="swept")(self._rows(4))
-        sequential = Function(fn=self._body, label="swept", dispatch="sequential")(self._rows(4))
+        mapped = Function(self._body, label="swept")(self._rows(4))
+        sequential = Function(self._body, label="swept", dispatch="sequential")(self._rows(4))
 
         assert mapped.element_spec == sequential.element_spec
         assert mapped.level_names == sequential.level_names
@@ -364,15 +393,15 @@ class TestASweptBodyThatReturnsABatch:
         monkeypatch.setattr(_sweep, "execute_sweep_rows_jax", spy)
 
         grid = RecordBatch(
-            "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             "cell",
             element_spec=RecordSpec(x=()),
             axes_per_level=(2,),
+            label="batch",
         )
 
-        mapped = Function(fn=self._body, label="swept")(grid)
-        sequential = Function(fn=self._body, label="swept", dispatch="sequential")(grid)
+        mapped = Function(self._body, label="swept")(grid)
+        sequential = Function(self._body, label="swept", dispatch="sequential")(grid)
 
         assert reached == [1]
         assert mapped.level_names == ("cell", "k")
@@ -392,18 +421,30 @@ class TestASweptBodyThatReturnsABatch:
 
         def body(p, q):
             return RecordBatch.stack(
-                [Record("r", {"z": p["x"] * q["w"] * k}) for k in (1.0, 2.0)],
+                [
+                    Record(
+                        {"z": p["x"] * q["w"] * k},
+                        label="r",
+                    )
+                    for k in (1.0, 2.0)
+                ],
                 level_name="k",
             )
 
         first = self._rows(2, level_name="a")
         second = RecordBatch.stack(
-            [Record("q", {"w": jnp.asarray(float(i))}) for i in range(3)],
+            [
+                Record(
+                    {"w": jnp.asarray(float(i))},
+                    label="q",
+                )
+                for i in range(3)
+            ],
             level_name="b",
         )
 
-        mapped = Function(fn=body, label="swept")(first, second)
-        sequential = Function(fn=body, label="swept", dispatch="sequential")(first, second)
+        mapped = Function(body, label="swept")(first, second)
+        sequential = Function(body, label="swept", dispatch="sequential")(first, second)
 
         assert mapped.level_names == ("a", "b", "k")
         assert mapped.axis_groups == ((2,), (3,), (2,))
@@ -415,12 +456,18 @@ class TestASweptBodyThatReturnsABatch:
 
         def body(p):
             return RecordBatch.stack(
-                [Record("r", {"inner": {"y": p["x"] * k}}) for k in (1.0, 2.0)],
+                [
+                    Record(
+                        {"inner": {"y": p["x"] * k}},
+                        label="r",
+                    )
+                    for k in (1.0, 2.0)
+                ],
                 level_name="k",
             )
 
-        mapped = Function(fn=body, label="swept")(self._rows(3))
-        sequential = Function(fn=body, label="swept", dispatch="sequential")(self._rows(3))
+        mapped = Function(body, label="swept")(self._rows(3))
+        sequential = Function(body, label="swept", dispatch="sequential")(self._rows(3))
 
         assert mapped.level_names == ("row", "k")
         assert mapped.element_spec == sequential.element_spec
@@ -431,7 +478,7 @@ class TestASweptBodyThatReturnsABatch:
 
     def test_the_carrier_does_not_reach_the_caller(self):
         """It is wrapped and unwrapped inside one call, by construction."""
-        out = Function(fn=self._body, label="swept")(self._rows(4))
+        out = Function(self._body, label="swept")(self._rows(4))
 
         assert not isinstance(out, _MappedBatchColumns)
         assert isinstance(out, RecordBatch)
@@ -446,7 +493,13 @@ class TestASweptBodyThatReturnsABatch:
         with pytest.raises(ValueError, match="To add a level, build a new"):
             jax.vmap(
                 lambda v: RecordBatch.stack(
-                    [Record("r", {"y": v * k}) for k in (1.0, 2.0)],
+                    [
+                        Record(
+                            {"y": v * k},
+                            label="r",
+                        )
+                        for k in (1.0, 2.0)
+                    ],
                     level_name="k",
                 )
             )(jnp.arange(4.0))
@@ -464,11 +517,11 @@ def numeric_sweep_source(request):
     shape, levels, axes_per_level = request.param
     values = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape) / 4
     return NumericRecordBatch(
-        "inputs",
         {"x": values},
         levels,
         element_spec=RecordSpec(x=NumericArraySpec((), dtype=np.float32)),
         axes_per_level=axes_per_level,
+        label="inputs",
     )
 
 
@@ -485,9 +538,13 @@ class TestNumericArraySweep:
         source = numeric_sweep_source
         native = np.arange(1, np.prod(event_shape) + 1, dtype=np.float32).reshape(event_shape)
         declared = NumericArraySpec(declared_shape, dtype=np.float64, support=positive)
-        value = NumericArray("original", native, spec=declared)
+        value = NumericArray(
+            native,
+            spec=declared,
+            label="original",
+        )
 
-        result = Function(fn=lambda row: value, label="repeated", dispatch=dispatch)(source)
+        result = Function(lambda row: value, label="repeated", dispatch=dispatch)(source)
 
         assert isinstance(result, NumericArrayBatch)
         # The rows are stored as one JAX array, whose dtype the declaration records.
@@ -514,16 +571,20 @@ class TestNumericArraySweep:
             for shape in (("d",), ("other",), (2,))
         ]
         outputs = [
-            NumericArray("row", jnp.full((2,), i + 1, dtype=jnp.float32), spec=spec)
+            NumericArray(
+                jnp.full((2,), i + 1, dtype=jnp.float32),
+                spec=spec,
+                label="row",
+            )
             for i, spec in enumerate(declarations)
         ]
         if reverse:
             outputs.reverse()
         source = _numeric_record_batch("x", range(3))
 
-        result = Function(
-            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
-        )(source)
+        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
+            source
+        )
 
         assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
         assert result.values.dtype == np.float32
@@ -552,10 +613,12 @@ class TestNumericArraySweep:
             if representation == "raw":
                 return value
             return NumericArray(
-                "row-result", value, spec=declared if representation == "declared" else None
+                value,
+                spec=declared if representation == "declared" else None,
+                label="row-result",
             )
 
-        result = Function(fn=body, label="shift", dispatch=dispatch)(source)
+        result = Function(body, label="shift", dispatch=dispatch)(source)
 
         expected = np.asarray(source["x"]) * 2 + 1
         if event_shape:
@@ -579,7 +642,7 @@ class TestNumericArraySweep:
     def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, dispatch):
         source = numeric_sweep_source
         law = Normal("x", 0.0, 1.0)
-        result = Function(fn=lambda row: log_prob(law, row["x"]), label="score", dispatch=dispatch)(
+        result = Function(lambda row: log_prob(law, row["x"]), label="score", dispatch=dispatch)(
             source
         )
 
@@ -591,9 +654,7 @@ class TestNumericArraySweep:
         assert result.element_spec == NumericArraySpec((), dtype=np.float32)
         np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
 
-        shifted = Function(label="function", fn=lambda value: value + 1, dispatch="sequential")(
-            result
-        )
+        shifted = Function(lambda value: value + 1, label="function", dispatch="sequential")(result)
         assert shifted.axis_groups == source.axis_groups
         assert shifted.level_names == source.level_names
         np.testing.assert_allclose(np.asarray(shifted), expected + 1, rtol=2e-7, atol=1e-7)
@@ -603,9 +664,13 @@ class TestNumericArraySweep:
         pd = pytest.importorskip("pandas")
         native = pd.Series([1.0, 2.0], index=[5, 7])
         declared = NumericArraySpec((2,), dtype=np.float64, support=positive)
-        value = NumericArray("original", native, spec=declared)
+        value = NumericArray(
+            native,
+            spec=declared,
+            label="original",
+        )
 
-        result = Function(fn=lambda row: value, label="repeated", dispatch=dispatch)(
+        result = Function(lambda row: value, label="repeated", dispatch=dispatch)(
             numeric_sweep_source
         )
 
@@ -624,17 +689,23 @@ class TestNumericArraySweep:
 
     def test_disagreeing_numeric_row_supports_are_refused(self):
         declared = NumericArraySpec((), dtype=np.float64, support=positive)
-        first = NumericArray("first", jnp.asarray(1.0), spec=declared)
+        first = NumericArray(
+            jnp.asarray(1.0),
+            spec=declared,
+            label="first",
+        )
         second = NumericArray(
-            "second", jnp.asarray(2.0), spec=NumericArraySpec((), dtype=np.float64)
+            jnp.asarray(2.0),
+            spec=NumericArraySpec((), dtype=np.float64),
+            label="second",
         )
         source = _numeric_record_batch("x", range(2))
 
         with pytest.raises(
-            ValueError, match=r"different: the rows returned arrays with different specs"
+            ValueError, match=r"different\(nr\): the rows returned arrays with different specs"
         ):
             Function(
-                fn=lambda row: first if float(row["x"]) == 0 else second,
+                lambda row: first if float(row["x"]) == 0 else second,
                 label="different",
                 dispatch="sequential",
             )(source)
@@ -649,13 +720,19 @@ class TestNumericArraySweep:
             native = np.full(event_shape, 1.25, dtype=np.float64)
             if not event_shape:
                 native = native[()]
-            first = NumericArray("native", native)
-            second = NumericArray("jax", jnp.full(event_shape, 2.5, dtype=jnp.float32))
+            first = NumericArray(
+                native,
+                label="native",
+            )
+            second = NumericArray(
+                jnp.full(event_shape, 2.5, dtype=jnp.float32),
+                label="jax",
+            )
             outputs = [second, first] if reverse else [first, second]
             source = _numeric_record_batch("x", range(2))
 
             result = Function(
-                fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
+                lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
             )(source)
 
         expected = np.stack([np.full(event_shape, 1.25), np.full(event_shape, 2.5)])
@@ -681,20 +758,20 @@ class TestNumericArraySweep:
         self, reverse, other_dtype, support, expected_dtype
     ):
         first = NumericArray(
-            "first",
             jnp.asarray(1.0),
             spec=NumericArraySpec((), dtype=np.float64, support=support),
+            label="first",
         )
         second = NumericArray(
-            "second",
             jnp.asarray(2.0),
             spec=NumericArraySpec((), dtype=other_dtype, support=support),
+            label="second",
         )
         outputs = [second, first] if reverse else [first, second]
 
-        result = Function(
-            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
-        )(_numeric_record_batch("x", range(2)))
+        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
+            _numeric_record_batch("x", range(2))
+        )
 
         assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=support)
         np.testing.assert_array_equal(np.asarray(result), [2.0, 1.0] if reverse else [1.0, 2.0])
@@ -708,9 +785,9 @@ class TestNumericArraySweep:
     def test_jax_extended_numeric_dtypes_promote(self, reverse, other_dtype, expected_dtype):
         outputs = [
             NumericArray(
-                "row",
                 jnp.asarray(value, dtype=dtype),
                 spec=NumericArraySpec((), dtype=dtype, support=positive),
+                label="row",
             )
             for value, dtype in ((1, jnp.bfloat16), (2, other_dtype))
         ]
@@ -718,9 +795,9 @@ class TestNumericArraySweep:
             outputs.reverse()
         source = _numeric_record_batch("x", range(2))
 
-        result = Function(
-            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
-        )(source)
+        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
+            source
+        )
 
         assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=positive)
         assert result.values.dtype == np.dtype(expected_dtype)
@@ -740,14 +817,14 @@ class TestNumericArraySweep:
         for order in (dtypes, ("int8", "float16", "uint8")):
             outputs = [
                 NumericArray(
-                    "row",
                     jnp.asarray(1, dtype=dtype),
                     spec=NumericArraySpec((), dtype=dtype, support=positive),
+                    label="row",
                 )
                 for dtype in order
             ]
             batch = Function(
-                fn=lambda row, outputs=outputs: outputs[int(row["x"])],
+                lambda row, outputs=outputs: outputs[int(row["x"])],
                 label="mixed",
                 dispatch="sequential",
             )(source)
@@ -759,7 +836,7 @@ class TestNumericArraySweep:
             np.testing.assert_array_equal(np.asarray(batch), [1, 1, 1])
 
         result = Function(
-            fn=lambda row: batches[int(row["x"])], label="combined", dispatch="sequential"
+            lambda row: batches[int(row["x"])], label="combined", dispatch="sequential"
         )(_numeric_record_batch("x", range(2), level_name="outer"))
 
         assert result.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
@@ -775,18 +852,26 @@ class TestNumericArraySweep:
         self, reverse, tracked_float
     ):
         integer = NumericArray(
-            "integer",
             jnp.asarray(1, dtype=jnp.int32),
             spec=NumericArraySpec((), dtype=np.int32),
+            label="integer",
         )
         floating = jnp.asarray(2.5, dtype=jnp.float32)
-        outputs = [integer, NumericArray("float", floating) if tracked_float else floating]
+        outputs = [
+            integer,
+            NumericArray(
+                floating,
+                label="float",
+            )
+            if tracked_float
+            else floating,
+        ]
         if reverse:
             outputs.reverse()
 
-        result = Function(
-            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
-        )(_numeric_record_batch("x", range(2)))
+        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
+            _numeric_record_batch("x", range(2))
+        )
 
         # The rows are stored as one JAX array, whose dtype the declaration records.
         assert result.element_spec == NumericArraySpec((), dtype=np.float32)
@@ -799,11 +884,15 @@ class TestNumericArraySweep:
         self, raw_value, tracked_first, event_shape
     ):
         declared = NumericArraySpec(event_shape, dtype=np.float64, support=positive)
-        value = NumericArray("held", jnp.full(event_shape, 2.0), spec=declared)
+        value = NumericArray(
+            jnp.full(event_shape, 2.0),
+            spec=declared,
+            label="held",
+        )
         raw = jnp.full(event_shape, raw_value) if event_shape else raw_value
         source = _numeric_record_batch("x", range(2))
         result = Function(
-            fn=lambda row: value if (float(row["x"]) == 0) == tracked_first else raw,
+            lambda row: value if (float(row["x"]) == 0) == tracked_first else raw,
             label="mixed",
             dispatch="sequential",
         )(source)
@@ -821,18 +910,22 @@ class TestNumericArraySweep:
     def test_mixed_numeric_rows_do_not_adopt_conflicting_partial_declarations(self, raw_position):
         outputs = [
             NumericArray(
-                "positive",
                 jnp.asarray(2.0),
                 spec=NumericArraySpec((), dtype=np.float64, support=positive),
+                label="positive",
             ),
-            NumericArray("unconstrained", jnp.asarray(3.0), spec=NumericArraySpec(())),
+            NumericArray(
+                jnp.asarray(3.0),
+                spec=NumericArraySpec(()),
+                label="unconstrained",
+            ),
         ]
         outputs.insert(raw_position, -1.0)
         source = _numeric_record_batch("x", range(3))
 
-        result = Function(
-            fn=lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential"
-        )(source)
+        result = Function(lambda row: outputs[int(row["x"])], label="mixed", dispatch="sequential")(
+            source
+        )
 
         expected = [2.0, 3.0]
         expected.insert(raw_position, -1.0)
@@ -847,11 +940,11 @@ class TestASweptBatchOfArrays:
     @staticmethod
     def _grid() -> NumericArrayBatch:
         return NumericArrayBatch(
-            "grid",
             jnp.arange(24.0).reshape(2, 4, 3),
             ("rows", "cols"),
             element_spec=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
+            label="grid",
         )
 
     def test_the_mapped_storage_flattens_the_levels_in_row_major_order(self):
@@ -860,17 +953,21 @@ class TestASweptBatchOfArrays:
 
     def test_a_batch_of_records_maps_one_column_per_field(self):
         source = NumericRecordBatch(
-            "rows",
             {"a": jnp.arange(4.0).reshape(2, 2), "b": jnp.ones((2, 2, 3))},
             ("rows", "cols"),
             axes_per_level=(1, 1),
+            label="rows",
         )
         storage = _sweep.mapped_storage(source, 4)
         assert list(storage) == ["a", "b"]
         assert (storage["a"].shape, storage["b"].shape) == ((4,), (4, 3))
 
     def test_a_batch_that_stores_objects_raises_type_error(self):
-        laws = DistributionBatch("laws", [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "law")
+        laws = DistributionBatch(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)],
+            "law",
+            label="laws",
+        )
         with pytest.raises(TypeError, match="DistributionBatch stores objects"):
             _sweep.mapped_storage(laws, 2)
 
@@ -882,7 +979,7 @@ class TestASweptBatchOfArrays:
             rows.append(v)
             return jnp.sum(jnp.asarray(v) ** 2)
 
-        result = Function(fn=norm, label="norm", dispatch=dispatch)(self._grid())
+        result = Function(norm, label="norm", dispatch=dispatch)(self._grid())
 
         assert all(isinstance(row, NumericArray) for row in rows)
         assert len(rows) == 8 if dispatch == "sequential" else len(rows) < 8
@@ -901,14 +998,20 @@ class TestARecordedDtypeIsTheStoredDtype:
     @staticmethod
     def _rows():
         return NumericRecordBatch(
-            "rows", {"x": jnp.arange(3.0)}, "row", element_spec=RecordSpec(x=())
+            {"x": jnp.arange(3.0)},
+            "row",
+            element_spec=RecordSpec(x=()),
+            label="rows",
         )
 
     @staticmethod
     def _bodies():
         return {
             "raw": lambda row: np.arange(3.0),
-            "tracked": lambda row: NumericArray("stored", np.arange(3.0)),
+            "tracked": lambda row: NumericArray(
+                np.arange(3.0),
+                label="stored",
+            ),
         }
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
@@ -925,7 +1028,14 @@ class TestARecordedDtypeIsTheStoredDtype:
     )
     def test_a_sweep_of_64_bit_rows_records_the_stored_dtype(self, dispatch, body, declaration):
         assert not jax.config.jax_enable_x64
-        wrapped = Function("f", self._bodies()[body], output_spec=declaration, dispatch=dispatch)
+        wrapped = Function(
+            self._bodies()[body],
+            output_spec=declaration
+            if isinstance(declaration, OutputSpec) or declaration is None
+            else OutputSpec.default(declaration, component="f"),
+            dispatch=dispatch,
+            label="f",
+        )
         result = wrapped(self._rows())
         assert np.asarray(result.values).dtype == np.float32
         assert result.element_spec == NumericArraySpec((3,), dtype="float32")
@@ -938,11 +1048,11 @@ class TestARecordedDtypeIsTheStoredDtype:
     )
     def test_a_lift_of_64_bit_draws_records_the_stored_dtype(self, dispatch, declaration):
         wrapped = Function(
-            "f",
             lambda x: np.arange(3.0),
-            output_spec=declaration,
+            output_spec=OutputSpec.default(declaration, component="f"),
             dispatch=dispatch,
             n_broadcast_samples=5,
+            label="f",
         )
         result = wrapped(EmpiricalDistribution(jnp.arange(3.0), component="x"))
         assert np.asarray(result.atoms.values).dtype == np.float32
@@ -952,10 +1062,10 @@ class TestARecordedDtypeIsTheStoredDtype:
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax"])
     def test_a_declared_64_bit_record_field_records_the_stored_dtype(self, dispatch):
         wrapped = Function(
-            "f",
             lambda row: {"y": np.arange(3.0)},
             output_spec=RecordSpec(y=NumericArraySpec((3,), dtype="float64")),
             dispatch=dispatch,
+            label="f",
         )
         result = wrapped(self._rows())
         assert result._raw_column("y").dtype == np.float32
@@ -965,7 +1075,14 @@ class TestARecordedDtypeIsTheStoredDtype:
     def test_sequential_and_jax_sweeps_agree_on_a_dtype_record_leaves_leave_unset(self, output):
         """A record whose leaves declare no dtype gives the body views that declare none."""
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)], level_name="draw"
+            [
+                NumericRecord(
+                    {"value": jnp.ones((2,)) * i},
+                    label="row",
+                )
+                for i in range(3)
+            ],
+            level_name="draw",
         )
         assert rows.element_spec["value"].dtype is None
 
@@ -974,7 +1091,11 @@ class TestARecordedDtypeIsTheStoredDtype:
             return value if output == "array" else {"y": value}
 
         specs = {
-            dispatch: Function("f", body, dispatch=dispatch)(rows).element_spec
+            dispatch: Function(
+                body,
+                dispatch=dispatch,
+                label="f",
+            )(rows).element_spec
             for dispatch in ("sequential", "thread", "jax")
         }
         assert specs["sequential"] == specs["thread"] == specs["jax"]

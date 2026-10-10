@@ -55,7 +55,9 @@ class _Simulator(ConditionalDistribution, SupportsConditionalSampling):
     def __init__(self, prior):
         width = prior.event_spec.spec.vector_size
         super().__init__(
-            "y", dict(prior.event_spec.components), OutputSpec(y=NumericArraySpec((width,)))
+            dict(prior.event_spec.components),
+            OutputSpec(y=NumericArraySpec((width,))),
+            label="y",
         )
 
     def _condition_on(self, given, /, **options):
@@ -80,7 +82,10 @@ def _observed(*values: float) -> dict:
 
 
 def _product(*names: str):
-    return FactoredDistribution("prior", [Normal(n, loc=0.0, scale=3.0) for n in names])
+    return FactoredDistribution(
+        [Normal(n, loc=0.0, scale=3.0) for n in names],
+        label="prior",
+    )
 
 
 def _means(post) -> dict[str, np.ndarray]:
@@ -437,7 +442,12 @@ class TestPyABCDistributionBacking:
     def test_supports_non_converter_family(self):
         """Any sampleable marginal with a density works (no fixed family list):
         StudentT, which has no scipy-converter mapping, is feasible."""
-        model = _model(FactoredDistribution("prior", [C.StudentT("t", df=5.0, loc=0.0, scale=3.0)]))
+        model = _model(
+            FactoredDistribution(
+                [C.StudentT("t", df=5.0, loc=0.0, scale=3.0)],
+                label="prior",
+            )
+        )
         assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
 
 

@@ -8,6 +8,7 @@ from probpipe import (
     EmpiricalDistribution,
     NumericArrayBatch,
     NumericArraySpec,
+    OutputSpec,
     ResolutionError,
     convert,
     converter_registry,
@@ -185,7 +186,9 @@ class TestComplexValues:
         from probpipe import Function
 
         load = Function(
-            "load", lambda: jnp.asarray(1j), output_spec=NumericArraySpec((), support=positive)
+            lambda: jnp.asarray(1j),
+            output_spec=OutputSpec(load=NumericArraySpec((), support=positive)),
+            label="load",
         )
         with pytest.raises(ValueError, match="output/load does not conform to declared support"):
             load()
@@ -292,7 +295,10 @@ class TestDistributionSupport:
 
     def test_empirical_support_is_what_its_atoms_declare(self):
         atoms = NumericArrayBatch(
-            "x", jnp.ones((5, 2)), "atom", element_spec=NumericArraySpec((2,), support=real)
+            jnp.ones((5, 2)),
+            "atom",
+            element_spec=NumericArraySpec((2,), support=real),
+            label="x",
         )
         assert EmpiricalDistribution(atoms, component="x").support == real
         assert EmpiricalDistribution(jnp.ones((5, 2)), component="x").support is None

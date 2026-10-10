@@ -82,7 +82,12 @@ def _target_atoms(prior: EmpiricalDistribution, declaration: OutputSpec) -> Any:
     (component,) = declaration.components
     levels = prior.atoms.level_names
     level = levels[0] if len(levels) == 1 else "atom"
-    return NumericRecordBatch(prior.label, {component: prior._rows}, (level,), axes_per_level=(1,))
+    return NumericRecordBatch(
+        {component: prior._rows},
+        (level,),
+        axes_per_level=(1,),
+        label=prior.label,
+    )
 
 
 class EmpiricalReweightingMethod(InferenceMethod):
