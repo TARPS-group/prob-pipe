@@ -369,12 +369,23 @@ class TestARawClassAnnotation:
         [
             (jax.Array | None, jnp.arange(3.0)),
             (npt.NDArray[np.float64], np.arange(3.0)),
+            (npt.NDArray, np.arange(3.0)),
+            (_ArrayAlias, np.arange(3.0)),
             (np.ndarray[Any, np.dtype[np.float64]], np.arange(3.0)),
             (_ArrayAlias[np.float64], np.arange(3.0)),
             (_ArrayAlias[np.float64] | None, np.arange(3.0)),
             (Annotated[_ArrayAlias[np.float64], "array"], np.arange(3.0)),
         ],
-        ids=["optional", "numpy", "legacy", "alias", "optional-alias", "annotated-alias"],
+        ids=[
+            "optional",
+            "numpy",
+            "bare-numpy",
+            "bare-alias",
+            "legacy",
+            "alias",
+            "optional-alias",
+            "annotated-alias",
+        ],
     )
     def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
         wrapped, seen = _receiving({"x": annotation})

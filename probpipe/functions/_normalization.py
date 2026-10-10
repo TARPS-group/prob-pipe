@@ -253,12 +253,14 @@ def _arms(expected: Any) -> tuple[Any, ...]:
 
 
 def _hint_class(arm: Any) -> Any:
-    """The class a parametrized annotation names, resolving an aliased origin.
+    """The class an annotation names, resolving type aliases and aliased origins.
 
-    A generic type alias names the class of its value, so an array alias
+    A type alias names the class of its value, so an array alias
     parametrized by a dtype names the array class. Other annotations retain
     their existing class or value.
     """
+    if isinstance(arm, TypeAliasType):
+        return _hint_class(arm.__value__)
     origin = get_origin(arm)
     if isinstance(origin, TypeAliasType):
         return _hint_class(origin.__value__)
