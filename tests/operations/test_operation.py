@@ -784,6 +784,10 @@ class TestDelegatingRoutes:
         toy = self._operation(_Delegate(exact_available=False)).with_options(method="delegate")
         report = toy.check(Gaussian("g"))
         assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
 
     def test_provenance_records_the_exactness_its_probe_reported(self):
         metadata = self._operation(_Delegate(exact_available=True))(

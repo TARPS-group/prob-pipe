@@ -176,18 +176,17 @@ def _assembled(
     value: Any,
     call: BoundCall,
     result: OutputSpec | None,
-    parts: Iterable[TrackedTerm],
     *,
-    route: str,
+    parents: Iterable[TrackedTerm],
+    metadata: Mapping[str, Any],
 ) -> Any:
-    """*value*, which *route* assembled from the results of other calls, as the result of *call*.
+    """*value*, which a route assembled from parts it computed, as the result of *call*.
 
-    The value becomes the term *result* declares, under the call's label, and
-    its provenance names *route* and keeps *parts*, the results of the calls it
-    was assembled from, as its parents. The call's own record keeps that
-    provenance as a parent, so each constituent step stays recorded with the
-    route and the exactness it took. Under the ``raw`` control the value is
-    returned as it is, since the result is detached.
+    The value becomes the term *result* declares, under the call's label, with
+    a provenance record of how the route assembled it: the operation's name,
+    *parents*, and *metadata*, which names the route and what each part took.
+    The call's own record keeps that record as a parent. Under the ``raw``
+    control the value is returned as it is, since the result is detached.
 
     Parameters
     ----------
@@ -197,15 +196,15 @@ def _assembled(
         The call the route realizes.
     result : OutputSpec or None
         The call's result declaration.
-    parts : iterable of TrackedTerm
-        The results of the constituent calls, in the order they were assembled.
-    route : str
-        The name of the route that assembled *value*.
+    parents : iterable of TrackedTerm
+        The terms the parts were computed from.
+    metadata : Mapping of str to Any
+        The record's metadata, whose ``"route"`` entry names the route.
 
     Returns
     -------
     Any
-        The declared term carrying the provenance, or *value* under ``raw``.
+        The declared term carrying the record, or *value* under ``raw``.
 
     Raises
     ------
@@ -218,7 +217,7 @@ def _assembled(
         return value
     term = _result.declared_term(value, result, _call_label(call))
     term.with_provenance(
-        Provenance.create(call.operation.name, parents=list(parts), metadata={"route": route})
+        Provenance.create(call.operation.name, parents=list(parents), metadata=dict(metadata))
     )
     return term
 
@@ -262,7 +261,12 @@ class OperationRoute(Protocol):
     exact : bool or None
         Whether the result denotes the requested mathematical object; ``None``
         for a route whose exactness is that of the implementation it delegates
-        to, until that implementation is selected.
+        to, until that implementation is selected. A delegating route, which
+        can restrict itself to exact implementations, is ranked twice: among
+        the exact routes and among the approximate ones. Any other route whose
+        exactness is ``None``, such as a derived operation's identity, is
+        ranked once, among the approximate routes, and ``exact_only`` excludes
+        it.
     """
 
     name: str
@@ -274,7 +278,12 @@ class OperationRoute(Protocol):
         ...
 
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
-        """Realize *call* and return its raw result."""
+        """Realize *call* and return its raw result.
+
+        A route may instead return the declared term with a provenance record
+        of how the route produced it, which the call's own record keeps as a
+        parent.
+        """
         ...
 
 
@@ -594,7 +603,11 @@ class _DelegatingRoute(_Route, ABC):
     def run(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
-        """The route's raw result for *call*, under the same restriction as its probe."""
+        """The route's raw result for *call*, under the same restriction as its probe.
+
+        As for :meth:`OperationRoute.execute`, the route may instead return the
+        declared term with a provenance record of how it produced it.
+        """
 
     def check(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """The route's report under the call's ``exact_only``."""
@@ -818,9 +831,9 @@ class _Candidate:
         """The exactness of the implementation the candidate selects, as *report* gives it.
 
         A route that delegates its exactness reports that of what its probe
-        selected: a registry route's method, the constituent calls a composing
-        route makes, or the route a derived operation's constituent selects. Any other report reads at the exactness of the
-        methods the candidate covers.
+        selected: a registry route's method, the routes a composing route
+        resolves, or the route a derived operation's constituent selects. Any
+        other report reads at the exactness of the methods the candidate covers.
         """
         if self.route.exact is not None:
             return self.route.exact
@@ -1169,8 +1182,9 @@ class Operation(Function):
     def routes(self) -> tuple[OperationRoute, ...]:
         """The registered routes, in selection order.
 
-        A route whose exactness is delegated is listed where its exact
-        implementations rank.
+        A delegating route is listed where its exact implementations rank, and
+        any other route whose exactness is ``None`` where approximate routes
+        rank.
         """
         indexed = list(enumerate(self._route_table.routes))
 

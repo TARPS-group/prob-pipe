@@ -9,8 +9,10 @@ draws. ``mean``, ``variance``, and ``quantile`` are computed coordinate by
 coordinate, so they also carry the structural route ``by_component``: for a
 law whose event is a record, it computes each component that has an exact
 route of its own by that route, on the component's view, and the other
-components together by one call, so a dependent joint's root factors keep
-their closed forms. ``cov`` couples components and has no such route. A moment of the event's kind keeps the event's packaging and derives its
+components together, so a dependent joint's root factors keep their closed
+forms. ``cov`` couples components and has no such route.
+
+A moment of the event's kind keeps the event's packaging and derives its
 term specs, support included, and it names each component for the moment, so
 the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
@@ -45,6 +47,7 @@ from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
+    ResolutionError,
 )
 from ..core._expression import Applied, Expression, Summary, draw_of
 from ..core._record_batch import RecordBatch, _batch_class_for
@@ -76,7 +79,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
-from ..functions._resolution import PointReport
+from ..functions._resolution import PointReport, check_point, selected
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
 from ._evaluate import (
@@ -553,22 +556,31 @@ def _block_values(view: Distribution, value: Any, summary: str) -> dict[str, Any
 
 
 @dataclass(frozen=True)
-class _Partition:
-    """How ``by_component`` splits a call: the components computed alone and the rest.
+class _Block:
+    """Components of the law that one resolution of the operation computes together.
 
     Attributes
     ----------
-    exact : tuple of str
-        The components whose own call selects an exact route, in event order;
-        each is computed by a call of its own.
-    rest : tuple of str
-        The other components, in event order, computed together by one call.
+    components : tuple of str
+        The components, in event order.
+    view : Distribution
+        The law's view at the components: the view of one, or the selection of
+        several.
     report : Feasibility
-        Whether the split realizes the call, and with what exactness.
+        The operation's report on the view, which names the route it selects
+        and that route's exactness.
     """
 
-    exact: tuple[str, ...]
-    rest: tuple[str, ...]
+    components: tuple[str, ...]
+    view: Distribution
+    report: Feasibility
+
+
+@dataclass(frozen=True)
+class _Partition:
+    """How ``by_component`` splits a call: its blocks in event order, and the split's report."""
+
+    blocks: tuple[_Block, ...]
     report: Feasibility
 
 
@@ -579,18 +591,21 @@ class _ByComponent(_DelegatingRoute):
     coordinate, so the summary of a law ``d`` whose event exposes a record is
     the record of the summaries of the views ``d[B]`` over any partition of its
     components into blocks ``B``. The route forms the partition from the
-    checks of the operation itself on each component's view: a component whose
-    own call selects an exact route is a block of its own, and the other
-    components form one block, whose draws they share. Each block is an
-    ordinary call of the operation, with the call's controls apart from
-    ``method``, which is reset, and ``exact_only``, which is the candidate's.
+    operation's own resolution on each component's view: a component for which
+    the operation selects an exact route is a block of its own, and the other
+    components form one block, whose draws they share. Each block is resolved
+    and run as the operation resolves a call on its view, under the call's
+    controls with ``method`` unset and ``exact_only`` that of the candidate,
+    inside the call itself, so its draws are the call's own.
 
-    The route's exactness is that of its constituent calls: it is exact when
-    every block is, and approximate otherwise. It applies when the event is a
-    record of at least two components and at least one component has an exact
-    route, so a law with no exact component keeps the Monte Carlo fallback.
-    The result's provenance keeps the result of each constituent call as a
-    parent, with the route and exactness that call took.
+    The route's exactness is that of its blocks: it is exact when every block's
+    route is, and approximate otherwise. It applies when the event is a record
+    of at least two components, at least one of which has an exact route, and
+    the other components have a route together, so a law with no exact
+    component keeps the Monte Carlo fallback. It splits the top-level
+    components only, so a record-valued component is one block, whose route its
+    view selects. The result's provenance names, for each block, its
+    components, its route, and that route's exactness.
 
     Parameters
     ----------
@@ -613,24 +628,48 @@ class _ByComponent(_DelegatingRoute):
             "route of its own, and the rest of which have a route together"
         )
 
+    @staticmethod
+    def _controls(call: BoundCall, exact_only: bool) -> dict[str, Any]:
+        """The controls a block is resolved under: the call's, with ``method`` unset.
+
+        A block returns its raw value, which the route assembles.
+        """
+        return {**call.controls, "method": None, "exact_only": exact_only, "raw": True}
+
+    @staticmethod
+    def _values(call: BoundCall, view: Distribution) -> dict[str, Any]:
+        """The call's arguments, with the law replaced by *view*."""
+        return {**call.operands, "d": view}
+
+    def _resolve(self, call: BoundCall, view: Distribution, exact_only: bool) -> Feasibility:
+        """The operation's report on *view*: the route it selects and that route's exactness."""
+        operation = call.operation
+        controls = self._controls(call, exact_only)
+        return check_point(
+            operation,
+            self._values(call, view),
+            controls,
+            operation._route_candidates(controls),
+        )
+
     def _partition(self, call: BoundCall, exact_only: bool) -> _Partition:
-        """The components computed alone and the rest, with the report of the split.
+        """The blocks of the call, in event order, with the report of the split.
 
         Parameters
         ----------
         call : BoundCall
             The call, whose law is ``call.operands["d"]``.
         exact_only : bool
-            Whether the constituent calls are restricted to exact routes.
+            Whether each block is restricted to exact routes.
 
         Returns
         -------
         _Partition
-            The split, whose report is infeasible when the event is not a
-            record of several components, when no component has an exact
-            route, or when the remaining components have no route together;
-            unresolved when a component's check is; and otherwise feasible,
-            exact exactly when every block's route is.
+            The blocks and the split's report, which is infeasible when the
+            event is not a record of several components, when no component has
+            an exact route, or when the other components have no route
+            together; unresolved when a component's resolution is; and
+            otherwise feasible, exact exactly when every block's route is.
         """
         d = call.operands["d"]
         if (
@@ -638,70 +677,70 @@ class _ByComponent(_DelegatingRoute):
             or not d.event_spec.exposes_record
             or len(d.event_spec.components) < 2
         ):
-            return _Partition(
-                (), (), Feasibility(False, "the event is not a record of several components")
-            )
+            reason = "the event is not a record of several components"
+            return _Partition((), Feasibility(False, reason))
         components = tuple(d.event_spec.components)
-        reports = {c: self._check(call, _view(d, (c,)), exact_only) for c in components}
+        views = {c: _view(d, (c,)) for c in components}
+        reports = {c: self._resolve(call, views[c], exact_only) for c in components}
         unresolved = [report for report in reports.values() if report.feasible is None]
         if unresolved:
             pending = tuple(dict.fromkeys(item for report in unresolved for item in report.pending))
-            return _Partition((), (), Feasibility(None, pending=pending))
+            return _Partition((), Feasibility(None, pending=pending))
         exact = tuple(c for c in components if reports[c].feasible is True and reports[c].exact)
-        rest = tuple(c for c in components if c not in exact)
         if not exact:
-            return _Partition(
-                exact, rest, Feasibility(False, f"no component has an exact {self.summary}")
-            )
-        if not rest:
-            return _Partition(exact, rest, PointReport(True, exact=True))
-        remaining = self._check(call, _view(d, rest), exact_only)
-        if remaining.feasible is None:
-            return _Partition(exact, rest, Feasibility(None, pending=remaining.pending))
-        if remaining.feasible is False:
-            return _Partition(exact, rest, self._declined(d, exact, rest, remaining, exact_only))
-        return _Partition(exact, rest, PointReport(True, exact=remaining.exact is True))
-
-    def _check(self, call: BoundCall, view: Distribution, exact_only: bool) -> Feasibility:
-        """The report of the operation's check on *view*, an applicability failure being infeasible."""
-        others = [value for name, value in call.operands.items() if name != "d"]
-        try:
-            report = self._constituent(call, exact_only).check(view, *others)
-        except ApplicabilityError as error:
-            return Feasibility(False, str(error))
-        if report.selected is None:
-            return Feasibility(None, pending=report.pending)
-        return report.selected
+            return _Partition((), Feasibility(False, f"no component has an exact {self.summary}"))
+        blocks = [_Block((c,), views[c], reports[c]) for c in exact]
+        rest = tuple(c for c in components if c not in exact)
+        if rest:
+            view = _view(d, rest)
+            remaining = self._resolve(call, view, exact_only)
+            if remaining.feasible is None:
+                return _Partition((), Feasibility(None, pending=remaining.pending))
+            if remaining.feasible is False:
+                return _Partition((), self._declined(call, exact, rest, exact_only))
+            blocks.append(_Block(rest, view, remaining))
+        blocks.sort(key=lambda block: components.index(block.components[0]))
+        exactness = all(block.report.exact is True for block in blocks)
+        return _Partition(tuple(blocks), PointReport(True, exact=exactness))
 
     def _declined(
-        self,
-        d: Distribution,
-        exact: tuple[str, ...],
-        rest: tuple[str, ...],
-        remaining: Feasibility,
-        exact_only: bool,
+        self, call: BoundCall, exact: tuple[str, ...], rest: tuple[str, ...], exact_only: bool
     ) -> Feasibility:
-        """The report when the remaining components have no route together.
+        """The report when the components in *rest* have no route together.
 
-        Restricted to exact routes, the report names the components that have
-        none and the views whose summaries are exact, which the caller can
-        compute instead.
+        When the call itself sets ``exact_only``, the report says how to
+        compute the exact components, and the call's error leads with it.
         """
         if not exact_only:
             return Feasibility(
-                False, f"the components {format_names(rest)} have no route: {remaining.description}"
+                False, f"the components {format_names(rest)} have no {self.summary} route"
             )
-        views = ", ".join(f"{self.summary}({d.label}[{c!r}])" for c in exact)
+        reason = (
+            f"the components {format_names(rest)} have no exact {self.summary}, but "
+            f"{format_names(exact)} do"
+        )
+        if not call.controls["exact_only"]:
+            return Feasibility(False, reason)
         return Feasibility(
             False,
-            f"the components {format_names(rest)} have no exact {self.summary}, while "
-            f"{format_names(exact)} do; call {views} for the exact ones",
+            f"{reason}; call {self.summary} on the view of each component that does, as "
+            f"{self.summary}(d[{exact[0]!r}])",
             actionable=True,
         )
 
-    def _constituent(self, call: BoundCall, exact_only: bool) -> Any:
-        """The operation as a constituent call runs it: the call's controls, with ``method`` reset."""
-        return call.operation.with_options(method=None, exact_only=exact_only, raw=False)
+    def _run_block(self, call: BoundCall, block: _Block, exact_only: bool) -> tuple[Any, str, bool]:
+        """The raw summary of *block*, with the route that computed it and that route's exactness.
+
+        The block is resolved and run as the operation runs a call on its view,
+        inside this call, so its draws are this call's own.
+        """
+        operation = call.operation
+        controls = self._controls(call, exact_only)
+        point, declared, _ = operation._plan_point(self._values(call, block.view), controls)
+        candidates = operation._route_candidates(controls)
+        candidate, report = selected(operation.label, controls, candidates, point, declared)
+        exactness = candidate.exactness(report) is True
+        return candidate.run(point, declared, report), candidate.route_name, exactness
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -712,33 +751,60 @@ class _ByComponent(_DelegatingRoute):
     def run(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
-        """The summary of each block by its own call, assembled in the event's order.
+        """The summary of each block by its own route, assembled in the event's order.
 
-        Each component computed alone, and then the rest together, is one call
-        of the operation on its view. The values are assembled by component in
-        the order of the event, and each component is named for the summary.
+        Parameters
+        ----------
+        call : BoundCall
+            The call, whose law is ``call.operands["d"]``.
+        result : OutputSpec or None
+            The call's result declaration.
+        method : str or None
+            Unused; a ``method`` control names this route itself.
+        exact_only : bool
+            Whether each block is restricted to exact routes.
+
+        Returns
+        -------
+        Any
+            The summary keyed by the law's components, each named for the
+            summary, as a term whose provenance records each block's
+            components, route, and exactness; under ``raw``, its raw form.
+
+        Raises
+        ------
+        ResolutionError
+            If the split does not realize the call, which a probe reports first.
+        MathematicalDomainError
+            If a block's route finds its summary undefined, as for a Cauchy
+            component's mean.
         """
         d = call.operands["d"]
         partition = self._partition(call, exact_only)
-        others = [value for name, value in call.operands.items() if name != "d"]
-        constituent = self._constituent(call, exact_only)
-        blocks = [(c,) for c in partition.exact]
-        if partition.rest:
-            blocks.append(partition.rest)
-        order = tuple(d.event_spec.components)
-        blocks.sort(key=lambda block: order.index(block[0]))
+        if partition.report.feasible is not True:
+            raise ResolutionError(
+                f"{call.operation.label}: route {self.name!r} does not apply: "
+                f"{partition.report.description}"
+            )
         values: dict[str, Any] = {}
-        parts = []
-        for block in blocks:
-            view = _view(d, block)
-            part = constituent(view, *others)
-            parts.append(part)
-            values.update(_block_values(view, part.raw(), self.summary))
-        assembled = {c: values[c] for c in order}
+        records = []
+        for block in partition.blocks:
+            value, route, exactness = self._run_block(call, block, exact_only)
+            values.update(_block_values(block.view, value, self.summary))
+            records.append(
+                {"components": list(block.components), "route": route, "exact": exactness}
+            )
+        assembled = {c: values[c] for c in d.event_spec.components}
         # A quantile at several levels is a batch of records, which
         # ``_record_batch`` assembles; any other value passes through it.
         value = _record_batch(_named_value(assembled, self.summary, d.event_spec), call, result)
-        return _assembled(value, call, result, parts, route=self.name)
+        return _assembled(
+            value,
+            call,
+            result,
+            parents=[block.view for block in partition.blocks],
+            metadata={"route": self.name, "blocks": records},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -780,6 +846,9 @@ def mean(d: Distribution):
     ResolutionError
         If *d* has no closed-form mean and does not sample, or, under
         ``exact_only``, if a component of a record event has no exact mean.
+    MathematicalDomainError
+        If the mean of *d*, or of a component whose own route is exact, is
+        known to be undefined, as a Cauchy law's is.
     """
 
 
@@ -825,6 +894,9 @@ def variance(d: Distribution):
     ResolutionError
         If *d* has no closed-form variance and does not sample, or, under
         ``exact_only``, if a component of a record event has no exact variance.
+    MathematicalDomainError
+        If the variance of *d*, or of a component whose own route is exact, is
+        known to be undefined, as a Cauchy law's is.
     """
 
 

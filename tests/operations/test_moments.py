@@ -20,6 +20,7 @@ from probpipe import (
     NumericRecordBatch,
     Record,
     RecordSpec,
+    replay_run,
     workflow_run,
 )
 from probpipe.core._dispatch import (
@@ -526,8 +527,8 @@ class TestByComponent:
     """A record law's mean, variance, and quantile compute each component by its own route."""
 
     @staticmethod
-    def _steps(result: Any) -> list[tuple[str, bool]]:
-        """The route and exactness of each constituent call, as the result's provenance records."""
+    def _blocks(result: Any) -> list[tuple[tuple[str, ...], str, bool]]:
+        """Each block's components, route, and exactness, as the result's provenance records them."""
         (assembled,) = [
             parent
             for parent in result.provenance.parents
@@ -535,8 +536,8 @@ class TestByComponent:
             and parent.provenance.metadata.get("route") == "by_component"
         ]
         return [
-            (step.provenance.metadata["route"], step.provenance.metadata["exact"])
-            for step in assembled.provenance.parents
+            (tuple(block["components"]), block["route"], block["exact"])
+            for block in assembled.provenance.metadata["blocks"]
         ]
 
     def test_a_dependent_joint_with_an_exact_component_takes_the_route(self):
@@ -547,11 +548,10 @@ class TestByComponent:
         routes = {info.method_name: info for info in mean.check(_dependent_joint()).routes}
         declined = routes["by_component (exact)"]
         assert declined.feasible is False
-        assert "the components ('y',) have no exact mean, while ('mu',) do" in declined.description
-        assert (
-            routes["by_component (approximate)"].feasible,
-            routes["by_component (approximate)"].exact,
-        ) == (True, False)
+        assert declined.description == "the components ('y',) have no exact mean, but ('mu',) do"
+        assert not declined.actionable
+        approximate = routes["by_component (approximate)"]
+        assert (approximate.feasible, approximate.exact) == (True, False)
 
     @pytest.mark.parametrize(
         ("moment", "closed_form", "seed"), [(mean, 2.0, 7), (variance, 1.0, 8)]
@@ -588,22 +588,40 @@ class TestByComponent:
         assert isinstance(result, Record)
         assert _value(result["quantile(mu)"]) == 2.0
 
-    def test_provenance_records_the_route_and_exactness_of_each_constituent_call(self):
+    def test_provenance_records_the_route_and_exactness_of_each_block(self):
         with workflow_run(seed=7):
             result = mean(_dependent_joint())
         assert result.provenance.metadata["route"] == "by_component"
         assert result.provenance.metadata["exact"] is False
-        assert self._steps(result) == [("monte_carlo", False), ("closed_form", True)]
+        assert self._blocks(result) == [
+            (("y",), "monte_carlo", False),
+            (("mu",), "closed_form", True),
+        ]
 
-    def test_the_components_without_an_exact_route_are_estimated_by_one_call(self):
-        """``z = mu - 1`` and ``y = mu + 1`` share one call, and so its draws."""
+    def test_the_components_without_an_exact_route_are_one_block(self):
+        """``z = mu - 1`` and ``y = mu + 1`` are computed from one set of draws."""
         joint = _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0)
         with workflow_run(seed=7):
             result = mean(joint)
-        assert self._steps(result) == [("monte_carlo", False), ("closed_form", True)]
+        assert self._blocks(result) == [
+            (("z", "y"), "monte_carlo", False),
+            (("mu",), "closed_form", True),
+        ]
         assert _value(result["mean(mu)"]) == 2.0
-        # One call draws z and y together, so they differ by 2 at every draw.
+        # Shared draws differ by 2 at every draw, so their means do too.
         assert _value(result["mean(y)"]) - _value(result["mean(z)"]) == pytest.approx(2.0)
+
+    def test_a_record_valued_component_is_one_block(self):
+        """A group of fields is summarized whole, by the route its view selects."""
+        joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
+        nested = joint.with_path_names({"mu": "g/mu", "y": "g/y"})
+        with workflow_run(seed=7):
+            result = mean(nested)
+        assert self._blocks(result) == [
+            (("g",), "monte_carlo", False),
+            (("c",), "closed_form", True),
+        ]
+        assert _value(result["mean(c)"]) == 5.0
 
     def test_a_law_whose_components_are_all_exact_takes_the_exact_candidate(self):
         law = _Coupled()
@@ -611,28 +629,40 @@ class TestByComponent:
         assert (report.route, report.exact) == ("by_component", True)
         result = mean.with_options(exact_only=True)(law)
         assert (_value(result["mean(a)"]), _value(result["mean(b)"])) == (1.0, -1.0)
-        assert self._steps(result) == [("closed_form", True), ("closed_form", True)]
+        assert self._blocks(result) == [
+            (("a",), "closed_form", True),
+            (("b",), "closed_form", True),
+        ]
 
-    def test_exact_only_names_the_views_whose_summary_is_exact(self):
-        with pytest.raises(ResolutionError, match=r"^mean: the components \('y',\) have no exact"):
-            mean.with_options(exact_only=True)(_dependent_joint())
+    @pytest.mark.parametrize("moment", [mean, variance])
+    def test_exact_only_says_how_to_compute_the_exact_components(self, moment):
+        name = moment.name
+        message = (
+            rf"^{name}: the components \('y',\) have no exact {name}, but \('mu',\) do; call "
+            rf"{name} on the view of each component that does, as {name}\(d\['mu'\]\)"
+        )
+        with pytest.raises(ResolutionError, match=message):
+            moment.with_options(exact_only=True)(_dependent_joint())
+
+    def test_exact_only_says_how_to_compute_the_exact_quantiles(self):
+        with pytest.raises(ResolutionError, match=r"as quantile\(d\['mu'\]\)"):
+            quantile.with_options(exact_only=True)(_dependent_joint(), 0.5)
 
     def test_naming_the_route_under_exact_only_requires_every_component_exact(self):
         view = mean.with_options(method="by_component", exact_only=True)
         assert view.check(_Coupled()).route == "by_component"
         assert view.check(_dependent_joint()).feasible is False
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="by_component splits the top-level components only, so a record-valued "
-        "component is summarized whole, by its own route",
-    )
-    def test_an_exact_field_inside_a_record_valued_component_is_exact(self):
-        joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
-        nested = joint.with_path_names({"mu": "g/mu", "y": "g/y"})
-        with workflow_run(seed=7):
-            result = mean.with_options(raw=True)(nested)
-        assert float(result["mean(g)"]["mu"]) == 2.0
+    def test_an_unresolved_component_leaves_the_route_unresolved(self):
+        report = mean.check(_Shift() * GuardedMean("mu", None))
+        assert report.feasible is None
+        assert report.route is None
+
+    def test_components_with_no_route_together_decline_the_route(self):
+        routes = {info.method_name: info for info in mean.check(Gaussian("mu") * Bare("b")).routes}
+        assert routes["by_component (approximate)"].description == (
+            "the components ('b',) have no mean route"
+        )
 
     def test_an_edge_free_joint_keeps_its_closed_form(self):
         report = mean.check(Gaussian("a", 1.0) * Gaussian("b", 2.0))
@@ -661,6 +691,13 @@ class TestByComponent:
             with workflow_run(seed=12):
                 results.append(_value(mean(_dependent_joint())["mean(y)"]))
         assert results[0] == results[1]
+
+    def test_replay_reproduces_the_result(self):
+        with workflow_run(seed=12):
+            original = mean(_dependent_joint())
+        with replay_run(original.provenance):
+            replayed = mean(_dependent_joint())
+        assert _value(replayed["mean(y)"]) == _value(original["mean(y)"])
 
     def test_the_raw_result_is_the_named_mapping(self):
         with workflow_run(seed=7):
