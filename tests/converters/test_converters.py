@@ -7,6 +7,8 @@ density estimate approximately; every conversion carries the source's event
 declaration and records the converter in the result's provenance.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -1185,10 +1187,13 @@ class TestKDEDistribution:
     def test_repr(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (50,))
         kde = KDEDistribution(samples, component="test_kde")
-        assert repr(kde) == (
-            "KDEDistribution(\n"
-            "    atoms=array(shape=(50,), dtype=float32),\n"
-            "    kernel=GaussianKernel,\n"
-            "    component='test_kde',\n"
-            ")"
+        # Scott's rule selects the bandwidth, which the repr shows as the scale it chose.
+        assert re.fullmatch(
+            r"KDEDistribution\(\n"
+            r"    atoms=array\(shape=\(50,\), dtype=float32\),\n"
+            r"    bandwidth=0\.\d+,\n"
+            r"    kernel=GaussianKernel,\n"
+            r"    component='test_kde',\n"
+            r"\)",
+            repr(kde),
         )

@@ -368,6 +368,12 @@ _EVALUABLE = {
     "MixtureDistribution": lambda: MixtureDistribution(
         [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], jnp.array([0.25, 0.75]), label="mix"
     ),
+    "KDEDistribution": lambda: KDEDistribution(
+        jnp.array([0.0, 1.0, 3.0]), 0.5, component="x", label="prior"
+    ),
+    "KDEDistribution under a rule": lambda: KDEDistribution(
+        jnp.array([0.0, 1.0, 3.0]), weights=jnp.array([0.5, 0.25, 0.25]), component="x"
+    ),
 }
 
 
