@@ -2137,3 +2137,50 @@ class TestRecordSpecStorage:
                 event_template=RecordSpec(physics=(), x=()),
                 label="r",
             )
+
+
+class TestConstructionMessages:
+    """Each refusal names the constructor, what it got, and the fix."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: Record("r", {"a": 1.0}), id="label-and-fields"),
+            pytest.param(lambda: Record("r"), id="label-alone"),
+        ],
+    )
+    def test_the_label_first_form_names_the_new_form(self, build):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^Record takes the fields first and the label as the keyword label, but got "
+                r"the string 'r' as the fields; write Record\(fields, label='r'\)$"
+            ),
+        ):
+            build()
+
+    def test_fields_that_are_not_a_mapping_are_refused_with_their_type(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^Record takes a mapping of field names to values, got list; pass a dict",
+        ):
+            Record([1.0])
+
+    def test_an_empty_record_without_a_label_is_refused(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^cannot derive a default label for a Record with no fields; pass label=\.\.\.$",
+        ):
+            Record({})
+        assert Record({}, label="empty").label == "empty"
+
+    def test_from_fields_with_no_fields_points_to_the_constructor(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^Record\.from_fields\(\) requires at least one field; .*Record\(\{\}, label=",
+        ):
+            Record.from_fields()
+
+    def test_from_fields_refuses_a_path_separator_in_a_name(self):
+        with pytest.raises(ValueError, match="/"):
+            Record.from_fields(**{"a/b": 1.0})

@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Self
 import jax
 import numpy as np
 
-from .._messages import count
+from .._messages import count, label_given_first
 from ..custom_types import ArrayLike
 from ._array_backend import (
     _metadata_of,
@@ -99,11 +99,35 @@ def _is_numeric_field_value(value: Any) -> bool:
 
 
 def _derived_record_name(field_keys: Iterable[str]) -> str:
-    """The deterministic label an operation derives for a record it produces."""
+    """The default label of a record or a batch of records: ``record(field,...)``.
+
+    Parameters
+    ----------
+    field_keys : iterable of str
+        The top-level field names, in canonical order.
+
+    Returns
+    -------
+    str
+        Such as ``"record(x,y)"``.
+
+    Raises
+    ------
+    TypeError
+        If there are no fields, which leaves nothing to derive the label from.
+    """
     keys = tuple(field_keys)
     if not keys:
-        raise TypeError("an empty record requires label=...")
+        raise TypeError("cannot derive a default label for a Record with no fields; pass label=...")
     return "record(" + ",".join(keys) + ")"
+
+
+def _not_a_field_mapping(kind: str, fields: Any) -> str:
+    """The message for a record constructor given *fields* that are not a mapping."""
+    return (
+        f"{kind} takes a mapping of field names to values, got {type_name(fields)}; "
+        f"pass a dict such as {{'x': value}}"
+    )
 
 
 def _leaf_values_equal(a: Any, b: Any) -> bool:
@@ -395,6 +419,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # template decides directly, and otherwise the raw values are
         # probed with the same predicate template inference uses, so the
         # decision agrees with the template the instance will carry.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            # A string is never a mapping of fields, so one in first place with no
+            # label keyword is a label passed in the earlier label-first form.
+            raise TypeError(label_given_first(cls.__name__, "fields", args[0]))
         if cls is Record:
             from ._numeric_record import NumericRecord
 
@@ -430,7 +458,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         _validate_leaves: bool = True,
     ):
         if not isinstance(fields, Mapping):
-            raise TypeError(f"fields must be a mapping, got {type(fields).__name__}")
+            raise TypeError(_not_a_field_mapping(type(self).__name__, fields))
         field_inputs = _unflatten_paths(fields)
         label = _derived_record_name(field_inputs) if label is None else label
 
@@ -1090,8 +1118,15 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Raises
         ------
         TypeError
-            If no fields were supplied, since an empty record needs an explicit label.
+            If no fields are given, since the label is derived from them.
+        ValueError
+            If a field name contains ``/``.
         """
+        if not fields:
+            raise TypeError(
+                f"{cls.__name__}.from_fields() requires at least one field; "
+                f"build an empty record with {cls.__name__}({{}}, label=...)"
+            )
         for field_name in fields:
             _check_no_path_sep(field_name)
         return cls(fields)

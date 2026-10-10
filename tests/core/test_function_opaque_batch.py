@@ -635,6 +635,21 @@ class TestTheDefaultLabel:
         assert FunctionBatch([], "model", label="none").batch_shape == (0,)
 
 
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    """Three positional arguments led by a string are the earlier label-first form."""
+
+    def test_a_label_first_call_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^FunctionBatch takes the elements first and the label as the keyword label, "
+                r"but got the string 'f' as the elements; "
+                r"write FunctionBatch\(elements, level_names, label='f'\)$"
+            ),
+        ):
+            FunctionBatch("f", [abs], "variant")
+
+
 class TestFieldKeys:
     def test_these_elements_have_no_fields(self, functions):
         with pytest.raises(TypeError, match="its elements have no named fields"):

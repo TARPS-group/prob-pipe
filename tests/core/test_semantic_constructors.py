@@ -33,7 +33,7 @@ def test_raw_values_require_names_but_named_structures_derive_them():
         NumericArrayBatch(jnp.ones(3), "draw")
     assert Record({"temperature": 1.0}).label == "record(temperature)"
     assert RecordBatch({"temperature": jnp.ones(3)}, "draw").label == "record(temperature)"
-    with pytest.raises(TypeError, match="empty record requires label"):
+    with pytest.raises(TypeError, match="Record with no fields; pass label="):
         Record({})
     assert Record({}, label="empty_measurements").label == "empty_measurements"
 

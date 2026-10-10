@@ -43,7 +43,7 @@ from ._specs import (
     RecordSpec,
 )
 from .named_tree import _PATH_SEP, _unflatten_paths
-from .record import Record
+from .record import Record, _not_a_field_mapping
 from .tracked import _NO_DESCRIPTION
 
 # ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
@@ -186,7 +186,7 @@ class NumericRecord(Record, Numeric):
         _validate_leaves: bool = True,
     ):
         if not isinstance(fields, Mapping):
-            raise TypeError(f"fields must be a mapping, got {type(fields).__name__}")
+            raise TypeError(_not_a_field_mapping(type(self).__name__, fields))
         raw_inputs = _unflatten_paths(fields)
         # Materialise structural nesting (path-keyed construction) into nested
         # NumericRecords *before* leaf validation, so the numeric check happens

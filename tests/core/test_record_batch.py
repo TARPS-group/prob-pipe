@@ -2188,3 +2188,15 @@ class TestRankZeroReconstruction:
         element = jax.tree.map(lambda c: c.reshape(()), batch)
         assert isinstance(element, Record)
         assert spec.is_valid(element["f"])
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    def test_a_label_first_call_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^RecordBatch takes the fields first and the label as the keyword label, but got "
+                r"the string 'x' as the fields; write RecordBatch\(fields, level_names, label='x'\)$"
+            ),
+        ):
+            RecordBatch("x", {"a": jnp.zeros(3)}, "draw")

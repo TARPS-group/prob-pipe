@@ -1310,3 +1310,31 @@ class TestTheFlatVector:
     def test_from_vector_needs_bound_dimensions(self):
         with pytest.raises(ValueError):
             NumericArray.from_vector("x", NumericArraySpec(("n",)), jnp.zeros(3))
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    """A string where the values go is a label passed in the earlier form."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: NumericArray("x", jnp.ones(3)), id="label-and-value"),
+            pytest.param(lambda: NumericArray("x"), id="label-alone"),
+        ],
+    )
+    def test_a_numeric_array(self, build):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericArray takes the value first and the label as the keyword label, but "
+                r"got the string 'x' as the value; write NumericArray\(value, label='x'\)$"
+            ),
+        ):
+            build()
+
+    def test_a_numeric_array_batch(self):
+        with pytest.raises(
+            TypeError,
+            match=r"write NumericArrayBatch\(values, level_names, label='x'\)$",
+        ):
+            NumericArrayBatch("x", jnp.ones(3), "draw")

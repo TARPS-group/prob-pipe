@@ -10,7 +10,7 @@ from typing import Any, Self, cast
 import jax
 import numpy as np
 
-from .._messages import count
+from .._messages import count, label_given_first
 from ._array_backend import (
     _event_shape_of,
     _is_numeric_leaf,
@@ -118,6 +118,15 @@ class NumericArrayBatch(Batch[NumericArray]):
 
     #: Derived from the store rather than transported, as for ``NumericArray``.
     _transient_state = ("_jax_cache",)
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # A string is never a numeric value, so one in first place with no label
+        # keyword is a label passed in the earlier label-first form.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            raise TypeError(
+                label_given_first(cls.__name__, "values", args[0], then=("level_names",))
+            )
+        return object.__new__(cls)
 
     def __init__(
         self,

@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import operator
 from math import prod
-from typing import Any
+from typing import Any, Self
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._messages import label_given_first
 from ._array_backend import (
     _event_shape_of,
     _is_numeric_leaf,
@@ -123,6 +124,13 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     #: Derived from the value rather than transported, as for ``NumericRecord``.
     _transient_state = ("_jax_cache",)
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # A string is never a numeric value, so one in first place with no label
+        # keyword is a label passed in the earlier label-first form.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            raise TypeError(label_given_first(cls.__name__, "value", args[0]))
+        return object.__new__(cls)
 
     def __init__(
         self,

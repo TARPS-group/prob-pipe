@@ -585,3 +585,25 @@ class TestSingleFieldCoercion:
         )
         with pytest.raises(TypeError, match="nested NumericRecord"):
             float(outer)
+
+
+class TestConstructionMessages:
+    """Each refusal names the constructor, what it got, and the fix."""
+
+    def test_the_label_first_form_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^NumericRecord takes the fields first .* write NumericRecord\(fields, label='nr'\)$",
+        ):
+            NumericRecord("nr", {"a": 1.0})
+
+    def test_fields_that_are_not_a_mapping_are_refused_with_their_type(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^NumericRecord takes a mapping of field names to values, got jax\.Array",
+        ):
+            NumericRecord(jnp.ones(3))
+
+    def test_an_empty_record_without_a_label_is_refused(self):
+        with pytest.raises(TypeError, match=r"^cannot derive a default label .* pass label="):
+            NumericRecord({})
