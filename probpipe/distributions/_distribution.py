@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
+from .._messages import label_given_first
 from ..core._expression import Named, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
@@ -158,10 +159,7 @@ def _label_given_first(owner: str, first: str, value: str) -> str:
     the label as the keyword ``label=``, so a string there is a label passed
     in the earlier form.
     """
-    return (
-        f"{owner} takes the {first} first and the label as the keyword label, but got the "
-        f"string {value!r} as the {first}"
-    )
+    return label_given_first(owner, first, value)
 
 
 def _class_label(term: Any) -> str:
