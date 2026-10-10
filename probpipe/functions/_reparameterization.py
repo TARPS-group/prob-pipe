@@ -119,10 +119,15 @@ def _is_affine(bijector: Function) -> bool:
 
 
 class _ForwardMap:
-    """The forward map of a backend bijector at one point."""
+    """The forward map of a backend bijector at one point, named as the backend names it.
+
+    The name makes the bijector's output component the backend's name, as
+    ``exp``, by the rule that names a Function's output after its callable.
+    """
 
     def __init__(self, bijector: tfb.Bijector) -> None:
         self._bijector = bijector
+        self.__name__ = bijector.name
 
     def __call__(self, x: ArrayLike) -> Array:
         return self._bijector.forward(jnp.asarray(x))
