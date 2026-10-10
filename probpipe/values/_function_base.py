@@ -14,6 +14,7 @@ Provides:
 from __future__ import annotations
 
 import inspect
+import keyword
 import os
 import warnings
 from collections.abc import Callable, Mapping
@@ -230,9 +231,10 @@ def _callable_component(fn: Any) -> str:
     """The default output component of a Function wrapping *fn*.
 
     It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
-    so a lambda's is ``f``, when that name is a Python identifier, and
-    ``result`` otherwise, as for a ``functools.partial``, a callable instance,
-    or a ``__name__`` such as ``"Model.fit"``. A label never changes it.
+    so a lambda's is ``f``, when that name is a Python identifier and no
+    keyword, and ``result`` otherwise, as for a ``functools.partial``, a
+    callable instance, a ``__name__`` such as ``"Model.fit"``, or a keyword
+    such as ``"class"``. A label never changes it.
 
     Parameters
     ----------
@@ -245,7 +247,9 @@ def _callable_component(fn: Any) -> str:
         The component, which is a valid component name.
     """
     name = _callable_name(fn)
-    return name if name is not None and name.isidentifier() else _NAMELESS_COMPONENT
+    if name is None or not name.isidentifier() or keyword.iskeyword(name):
+        return _NAMELESS_COMPONENT
+    return name
 
 
 def _complete_output_spec(
@@ -903,12 +907,12 @@ class Function(Node, TrackedTerm, Annotated):
             return super().__new__(cls)
         if args and isinstance(args[0], str):
             raise TypeError(label_given_first("Function", "fn", args[0]))
-        for keyword in ("fn", "func"):
-            if keyword in kwargs:
+        for alias in ("fn", "func"):
+            if alias in kwargs:
                 label = kwargs.get("label")
                 shown = repr(label) if isinstance(label, str) else "..."
                 raise TypeError(
-                    f"Function got the callable as {keyword}=, but takes it as its first "
+                    f"Function got the callable as {alias}=, but takes it as its first "
                     f"positional argument; write Function(fn, label={shown})"
                 )
         if len(args) >= 2 and isinstance(args[1], str):

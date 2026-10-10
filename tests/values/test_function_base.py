@@ -296,6 +296,16 @@ class TestFunctionDeclarations:
                 label="value",
             )
 
+    @pytest.mark.parametrize("name", ["class", "lambda", "None"])
+    def test_a_keyword_name_infers_the_result_component(self, name):
+        def value():
+            return 1.0
+
+        value.__name__ = name
+        wrapped = Function(value, output_spec=NumericArraySpec(()))
+        assert wrapped.label == name
+        assert tuple(wrapped.output_spec.components) == ("result",)
+
     @pytest.mark.parametrize("name", ["group/value", "Model.fit", ""])
     def test_a_non_identifier_name_infers_the_result_component(self, name):
         def value():
