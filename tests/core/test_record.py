@@ -5,7 +5,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, OpaqueSpec, Provenance, Record, RecordSpec, provenance_ancestors
+from probpipe import (
+    Normal,
+    NumericArray,
+    OpaqueSpec,
+    Provenance,
+    Record,
+    RecordSpec,
+    provenance_ancestors,
+)
+from probpipe.core.record import _pack_fields
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -1120,6 +1129,56 @@ class TestEnsure:
         v = Record.ensure(np.array([1.0]), label="measurements")
         assert isinstance(v, Record)
         assert "data" in v
+
+    def test_a_path_keyed_mapping_is_labeled_by_its_top_level_fields(self):
+        v = Record.ensure({"y/a": 1.0, "y/b": 2.0})
+        assert v.label == "record(y)"
+        assert v.label == Record({"y": {"a": 1.0, "b": 2.0}}).label
+
+    def test_a_mapping_takes_a_supplied_label(self):
+        assert Record.ensure({"a": 1.0}, label="measurements").label == "measurements"
+
+    def test_a_wrapped_tracked_term_lends_the_record_its_label(self):
+        term = NumericArray(jnp.ones(3), label="temperature")
+        v = Record.ensure(term)
+        assert v.label == "temperature"
+        assert term.label == "temperature"
+
+    def test_a_supplied_label_overrides_a_wrapped_terms_label(self):
+        term = NumericArray(jnp.ones(3), label="temperature")
+        assert Record.ensure(term, label="reading").label == "reading"
+
+    def test_a_record_passes_through_and_ignores_a_supplied_label(self):
+        v = Record({"x": 1.0}, label="r")
+        assert Record.ensure(v, label="other") is v
+
+    def test_a_value_without_a_label_requires_one(self):
+        with pytest.raises(
+            TypeError, match=r"^Record\.ensure\(\) needs a label for a jax\.Array, .*label=\.\.\.$"
+        ):
+            Record.ensure(jnp.ones(3))
+
+    def test_an_empty_mapping_without_a_label_is_refused(self):
+        with pytest.raises(TypeError, match="label"):
+            Record.ensure({})
+        assert Record.ensure({}, label="empty").label == "empty"
+
+
+class TestPackFields:
+    """``_pack_fields`` builds a record labeled as the constructor labels it."""
+
+    def test_the_record_is_labeled_by_its_fields_in_the_given_order(self):
+        packed = _pack_fields(("b", "a"), {"a": 1.0, "b": 2.0})
+        assert tuple(packed) == ("b", "a")
+        assert packed.label == "record(b,a)"
+
+    def test_path_keyed_fields_are_labeled_by_their_top_level_field(self):
+        packed = _pack_fields(("y/a", "y/b"), {"y/a": 1.0, "y/b": 2.0})
+        assert packed.label == "record(y)"
+
+    def test_a_missing_or_unexpected_field_is_refused(self):
+        with pytest.raises(TypeError, match=r"^Owner: expected exactly the fields"):
+            _pack_fields(("a",), {"b": 1.0}, owner="Owner")
 
 
 # ---------------------------------------------------------------------------

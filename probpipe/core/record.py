@@ -1098,36 +1098,50 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     @classmethod
     def ensure(cls, x: Any, *, label: str | None = None) -> Record:
-        """Coerce *x* to Record if it isn't already.
+        """Coerce *x* to a record, returning a record unchanged.
 
-        - ``Record`` → pass through (any *label* is ignored)
-        - ``dict`` → its entries become the fields; a nested ``dict`` value
-          becomes a nested subtree (mappings are never leaves)
-        - anything else → a single-field record keyed ``data``
+        - a ``Record`` is returned as it is, and *label* is ignored;
+        - a mapping becomes a record of its entries, and a nested mapping value
+          becomes a nested record;
+        - any other value becomes a record of one field, ``data``, holding it.
 
-        A freshly wrapped value is labeled *label* when given; otherwise its
-        label is derived from the top-level field keys at construction.
+        Parameters
+        ----------
+        x : Any
+            The value to coerce.
+        label : str, optional
+            The label of a newly built record. A record built from a mapping is
+            labeled ``record(field,...)`` by default, from its top-level fields.
+            A record wrapping a tracked term takes the term's label by default,
+            and any other value has no default.
+
+        Returns
+        -------
+        Record
+            *x* itself when it is a record of this class; otherwise a new record,
+            promoted to ``NumericRecord`` when every field is numeric.
+
+        Raises
+        ------
+        TypeError
+            If *x* is a value other than a mapping or a tracked term and *label*
+            is omitted, or *x* is an empty mapping and *label* is omitted.
+        ValueError
+            If the fields of a mapping *x* are invalid, as the constructor
+            states.
         """
         if isinstance(x, cls):
             return x
         if isinstance(x, Mapping):
-            fields = x
-        else:
-            if label is None:
-                if isinstance(x, TrackedTerm):
-                    label = x.label
-                else:
-                    raise TypeError("wrapping an unnamed value as a record requires label=...")
-            fields = {"data": x}
+            return cls(x, label=label)
         if label is None:
-            return cls(
-                fields,
-                label=_derived_record_name(fields),
-            )
-        return cls(
-            fields,
-            label=label,
-        )
+            if not isinstance(x, TrackedTerm):
+                raise TypeError(
+                    f"Record.ensure() needs a label for a {type_name(x)}, which has none of its "
+                    f"own; pass label=..."
+                )
+            label = x.label
+        return cls({"data": x}, label=label)
 
     # -- Constructors -------------------------------------------------------
 
@@ -1389,11 +1403,7 @@ def _pack_fields(
             parts.append(f"unexpected {extra}")
         prefix = f"{owner}: " if owner else ""
         raise TypeError(f"{prefix}expected exactly the fields {tuple(fields)}, {', '.join(parts)}")
-    field_map = {f: field_kwargs[f] for f in fields}
-    return Record(
-        field_map,
-        label=_derived_record_name(field_map),
-    )
+    return Record({f: field_kwargs[f] for f in fields})
 
 
 # ---------------------------------------------------------------------------

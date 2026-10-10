@@ -51,7 +51,7 @@ def test_record_controls_and_field_names_have_distinct_namespaces():
 
 
 def test_coercion_requires_a_semantic_source():
-    with pytest.raises(TypeError, match="unnamed value"):
+    with pytest.raises(TypeError, match="needs a label"):
         Record.ensure(jnp.ones(3))
     assert Record.ensure(jnp.ones(3), label="temperature").label == "temperature"
     assert Record.ensure({"temperature": jnp.ones(3)}).label == "record(temperature)"
