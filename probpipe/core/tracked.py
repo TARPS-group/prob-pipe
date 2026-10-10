@@ -36,10 +36,6 @@ from ._expression import (
     Expression,
     Named,
     Signature,
-    expression_of,
-    fixed_paths_of,
-    label_of,
-    with_defaulted_givens,
 )
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
@@ -224,28 +220,44 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         overrides this, so the state follows the expression.
         """
         object.__setattr__(self, "_expression", expression)
-        object.__setattr__(self, "_label", label_of(expression))
+        object.__setattr__(self, "_label", expression.render_label())
 
     def _own_signature(self) -> Signature | None:
         """The signature the term's declaration states; ``None`` for a value, which has none."""
         return None
+
+    def _embedded_expression(self) -> Expression:
+        """The term's expression as a child of another node, recording the term's own signature.
+
+        A node holds no term, so a node that has a law, a kernel, or a function
+        as a child records the signature that the term's declaration states. A
+        value's expression is returned as it is.
+        """
+        own = self._own_signature()
+        return self._expression if own is None else self._expression.signed(own)
 
     def _relabeled_expression(self, label: str) -> Expression:
         """The expression of this term under *label*, which keeps the paths the term holds fixed."""
         own = self._own_signature()
         if own is None:
             return Named(label)
-        expression = expression_of(self)
-        kept = with_defaulted_givens(own, expression)
-        return Named(
-            label, Signature(kept.components, kept.given, fixed_paths_of(expression), kept.defaults)
-        )
+        expression = self._expression
+        return Named(label, expression.full_signature(own)).with_fixed(expression.fixed_paths())
 
     # -- identity ------------------------------------------------------------
 
     @property
     def label(self) -> str:
         """Human-readable label of this object."""
+        return self._label
+
+    def _displayed_label(self) -> str:
+        """The label as ``str()`` and the repr show it.
+
+        Showing a label warns when its rendering collapses a level beyond
+        ``notation_config.max_depth``, and reading :attr:`label` never warns.
+        """
+        self._expression.render_label(warn=True)
         return self._label
 
     def with_label(self, label: str) -> Self:

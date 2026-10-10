@@ -22,7 +22,7 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
-from ._expression import Expression, Operator, constant, embedded, label_of
+from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
 from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
@@ -311,7 +311,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         fields = [("shape", repr(tuple(spec.shape))), ("dtype", format_dtype(dtype))]
         if spec.support is not None:
             fields.append(("support", repr(spec.support)))
-        return term_repr("NumericArray", self.label, fields)
+        return term_repr("NumericArray", self._displayed_label(), fields)
 
     # -- the array surface --------------------------------------------------
 
@@ -379,7 +379,7 @@ _UNARY_SYMBOLS = {"neg": "-", "pos": "+", "abs": "abs", "invert": "~"}
 def _operand(operand: Any) -> Expression:
     """*operand* as a node of an operator's expression: a term's expression, or a constant's value."""
     if isinstance(operand, TrackedTerm):
-        return embedded(operand)
+        return operand._embedded_expression()
     return constant(operand)
 
 
@@ -406,7 +406,7 @@ def _tracked_result(
     )
     dtype = _numpy_dtype_of(value) if declared else None
     result = NumericArray(
-        label_of(expression),
+        expression.render_label(),
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),

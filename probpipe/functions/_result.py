@@ -20,7 +20,7 @@ import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
 from ..core._batch import Batch, BatchSpec, _ranks_of
-from ..core._expression import Expression, Named, expression_of
+from ..core._expression import Expression, Named
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -220,7 +220,7 @@ def _coerce_output(
             value._store_expression(_prepared(value, expression))
     elif isinstance(value, TrackedTerm):
         if expression is KEEP_EXPRESSION:
-            value = value._with_expression(expression_of(value))
+            value = value._with_expression(value._expression)
         else:
             value = value._with_expression(_prepared(value, expression))
     if isinstance(value, TrackedTerm) and provenance is not None:

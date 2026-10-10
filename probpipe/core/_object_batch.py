@@ -28,7 +28,7 @@ import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
-from ._expression import Applied, Expression, expression_of
+from ._expression import Applied, Expression
 from ._repr import type_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
@@ -213,7 +213,7 @@ class _ObjectBatch[E](Batch[E]):
     def _element_call(self, index: tuple[int, ...]) -> Expression | None:
         """The call the stored law at *index* carries when a function lifted over laws gave it, else ``None``."""
         stored = self._store[index]
-        expression = expression_of(stored) if isinstance(stored, TrackedTerm) else None
+        expression = stored._expression if isinstance(stored, TrackedTerm) else None
         return expression if isinstance(expression, Applied) else None
 
     def _wrap_element(self, value: Any, label: str) -> Any:

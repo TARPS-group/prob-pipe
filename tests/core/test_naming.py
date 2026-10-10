@@ -47,7 +47,7 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.core._expression import Signature, expression_of, notation_of
+from probpipe.core._expression import Signature
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
 from probpipe.distributions._batches import DistributionBatch
@@ -660,7 +660,7 @@ class TestTheLabelsOfResults:
     def test_the_prior_predictive_keeps_the_models_label(self):
         """``marginal(model, "y")`` integrates ``mu`` out, which no route of this model does."""
         expression = marginal._derived_expression({"d": _model(), "field": "y"})
-        assert notation_of(expression, Signature(("y",))) == "model(y)"
+        assert expression.render_notation(Signature(("y",))) == "model(y)"
 
 
 #: A default that is not a scalar, which a signature shows as ``…``.
@@ -706,6 +706,11 @@ class TestADefaultedSlotShowsItsDefault:
     def test_a_relabeled_law_keeps_the_defaulted_slot(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
         assert at.notation == "at_values(y | n0=50.0; K, r)"
+
+    def test_a_relabeled_law_keeps_the_defaulted_slot_inside_another_term(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
+        assert log_prob(at, 1.0).label == "log at_values(y | n0=50.0; K, r)"
+        assert str(at * Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
 
     def test_a_value_computed_from_the_law_reads_its_notation(self):
         at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
@@ -794,7 +799,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
         with workflow_run(seed=0):
             posterior = condition_on(_empirical_model(), {"y": 0.5})
             assert sample(posterior).label == "mu ~ model; y"
-            assert log_prob(_prior()._with_expression(expression_of(posterior)), 0.1).label == (
+            assert log_prob(_prior()._with_expression(posterior._expression), 0.1).label == (
                 "log model(mu; y)"
             )
 

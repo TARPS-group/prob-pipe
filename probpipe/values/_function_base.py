@@ -29,7 +29,7 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
-from ..core._expression import Expression, Signature, expression_of, notation_of
+from ..core._expression import Expression, Signature
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
@@ -1270,7 +1270,7 @@ class Function(Node, TrackedTerm, Annotated):
         The parameters are the names of :attr:`signature`, in order, joined by
         ``", "``. No operation reads the notation.
         """
-        return notation_of(expression_of(self), self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
         """The signature: the names of the parameters, in order, each default as ``name=value``."""
@@ -1280,7 +1280,7 @@ class Function(Node, TrackedTerm, Annotated):
             for name, parameter in parameters.items()
             if parameter.default is not parameter.empty
         )
-        return Signature(tuple(parameters), (), (), defaults)
+        return Signature(tuple(parameters), defaults=defaults)
 
     def __str__(self) -> str:
         """The function's :attr:`notation`, as ``predict(x, y)``."""
@@ -1291,7 +1291,9 @@ class Function(Node, TrackedTerm, Annotated):
 
         The result label is shown where it differs from the function's own.
         """
-        return term_repr(public_class_name(type(self)), self.label, self._repr_arguments())
+        return term_repr(
+            public_class_name(type(self)), self._displayed_label(), self._repr_arguments()
+        )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the repr shows after the label, each by name and formatted value."""

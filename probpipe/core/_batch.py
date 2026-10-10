@@ -79,10 +79,6 @@ from ._expression import (
     Expression,
     Indexed,
     Named,
-    expression_of,
-    fixed_paths_of,
-    label_of,
-    with_fixed,
 )
 from ._record_spec import RecordSpec, _check_kind_of
 from ._repr import (
@@ -739,7 +735,9 @@ class Batch[E](TrackedTerm, ABC):
         """
         levels = ("levels", format_levels(self.level_names, self.axis_groups))
         return term_repr(
-            public_class_name(type(self)), self.label, [levels, *self._element_repr_arguments()]
+            public_class_name(type(self)),
+            self._displayed_label(),
+            [levels, *self._element_repr_arguments()],
         )
 
     def _element_repr_arguments(self) -> list[tuple[str, str]]:
@@ -1041,7 +1039,7 @@ class Batch[E](TrackedTerm, ABC):
             expression = Indexed(self._root_expression, rendered)
         else:
             expression = self._root_expression
-        label = label_of(expression)
+        label = expression.render_label()
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
@@ -1049,11 +1047,12 @@ class Batch[E](TrackedTerm, ABC):
             if call is not None and isinstance(expression, Indexed):
                 expression = replace(expression, element=call)
             element = self._element_at(dropped, label=label)
-            given = expression_of(element) if isinstance(element, TrackedTerm) else None
-            if isinstance(given, Named) and given.label == label:
+            given = element._expression if isinstance(element, TrackedTerm) else None
+            core = None if given is None else given.core()
+            if isinstance(core, Named) and core.label == label:
                 # A view built under the derived label carries the selection, and a
                 # stored law keeps the paths it holds fixed, after the batch's own.
-                held = with_fixed(expression, fixed_paths_of(given))
+                held = expression.with_fixed(element._expression.fixed_paths())
                 _assign_expression(element, held, label)
             return element
 

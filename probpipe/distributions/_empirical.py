@@ -25,7 +25,7 @@ from .._weights import (
 from ..core._array_backend import _to_jax_array
 from ..core._batch import Batch
 from ..core._dispatch import Feasibility
-from ..core._expression import Indexed, expression_of, label_of
+from ..core._expression import Indexed
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
@@ -832,10 +832,10 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
         expression = Indexed(
-            expression_of(atoms), repr(tuple(requested for requested, _, _ in selected))
+            atoms._expression, repr(tuple(requested for requested, _, _ in selected))
         )
         batch = batch_class(
-            label_of(expression),
+            expression.render_label(),
             columns,
             atoms.level_names,
             element_spec=element,

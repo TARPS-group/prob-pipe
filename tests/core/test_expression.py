@@ -6,6 +6,7 @@ import copy
 import pickle
 import warnings
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -18,6 +19,9 @@ from probpipe import (
     Record,
     RecordBatch,
     conditional_distribution,
+    function,
+    sample,
+    workflow_run,
 )
 from probpipe.core._expression import (
     _STORED_DEPTH,
@@ -32,13 +36,6 @@ from probpipe.core._expression import (
     Signature,
     Summary,
     constant,
-    core_of,
-    embedded,
-    expression_of,
-    fixed_paths_of,
-    label_of,
-    notation_of,
-    with_fixed,
 )
 from probpipe.core._fingerprint import fingerprint
 
@@ -75,12 +72,6 @@ class TestNodes:
     def test_an_unknown_summary_raises(self):
         with pytest.raises(ValueError, match="unknown summary kind"):
             Summary("median", Named("x"))
-
-    def test_a_term_restored_without_an_expression_carries_its_label(self):
-        value = NumericArray("x", jnp.zeros(2))
-        stripped = copy.copy(value)
-        object.__setattr__(stripped, "_expression", None)
-        assert expression_of(stripped) == Named("x")
 
 
 class TestRendering:
@@ -145,7 +136,7 @@ class TestRendering:
         ],
     )
     def test_a_law_renders_its_label_and_its_notation(self, expression, label, notation):
-        assert (label_of(expression), notation_of(expression)) == (label, notation)
+        assert (expression.render_label(), expression.render_notation()) == (label, notation)
 
     @pytest.mark.parametrize(
         ("expression", "label"),
@@ -227,38 +218,38 @@ class TestRendering:
         ],
     )
     def test_a_value_renders_in_full_as_its_label(self, expression, label):
-        assert label_of(expression) == notation_of(expression) == label
+        assert expression.render_label() == expression.render_notation() == label
 
     def test_a_terms_own_signature_replaces_the_recorded_one(self):
         expression = Conditioned(_named("model", "y", "mu"), ("y",))
-        assert notation_of(expression) == "model"
-        assert notation_of(expression, Signature(("mu",))) == "model(mu; y)"
+        assert expression.render_notation() == "model"
+        assert expression.render_notation(Signature(("mu",))) == "model(mu; y)"
 
     def test_labels_join_associatively_and_group_other_labels(self):
         product = Product((Named("lik·prior"), Named("model | y"), Named("my prior")))
-        assert label_of(product) == "lik·prior·(model | y)·[my prior]"
+        assert product.render_label() == "lik·prior·(model | y)·[my prior]"
 
 
 class TestFixedPaths:
     """A law's fixed paths are read from its expression."""
 
     def test_each_node_holds_its_bases_fixed_paths(self):
-        named = Named("post", Signature(("mu",), (), ("y",)))
-        assert fixed_paths_of(named) == ("y",)
-        conditioned = Conditioned(named, ("z", "y"))
-        assert fixed_paths_of(conditioned) == ("y", "z")
-        assert fixed_paths_of(Selected(conditioned, ("mu",))) == ("y", "z")
-        assert fixed_paths_of(Indexed(conditioned, "row=0")) == ("y", "z")
-        assert fixed_paths_of(Product((conditioned,))) == ()
+        named = _named("post", "mu")
+        assert named.fixed_paths() == ()
+        conditioned = Conditioned(Conditioned(named, ("y",)), ("z", "y"))
+        assert conditioned.fixed_paths() == ("y", "z")
+        assert Selected(conditioned, ("mu",)).fixed_paths() == ("y", "z")
+        assert Indexed(conditioned, "row=0").fixed_paths() == ("y", "z")
+        assert Product((conditioned,)).fixed_paths() == ()
 
     def test_with_fixed_adds_only_the_paths_not_held(self):
         base = Conditioned(Named("model"), ("y",))
-        assert with_fixed(base, ("y",)) is base
-        assert fixed_paths_of(with_fixed(base, ("z/a", "y"))) == ("y", "z/a")
+        assert base.with_fixed(("y",)) is base
+        assert base.with_fixed(("z/a", "y")).fixed_paths() == ("y", "z/a")
 
-    def test_core_of_strips_conditionings_and_selections(self):
+    def test_core_strips_conditionings_and_selections(self):
         product = Product((Named("a"), Named("b")))
-        assert core_of(Selected(Conditioned(product, ("y",)), ("a",))) is product
+        assert Selected(Conditioned(product, ("y",)), ("a",)).core() is product
 
 
 class TestDepth:
@@ -274,22 +265,22 @@ class TestDepth:
     def test_a_shallow_rendering_does_not_warn(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert label_of(self._chain(2)) == "(x + 1) + 1"
+            assert self._chain(2).render_label(warn=True) == "(x + 1) + 1"
 
     def test_a_deeper_rendering_collapses_a_value_to_an_ellipsis_and_warns(self):
         probpipe.notation_config.max_depth = 2
         with pytest.warns(UserWarning, match="notation_config.max_depth=2"):
-            assert label_of(self._chain(3)) == "(… + 1) + 1"
+            assert self._chain(3).render_label(warn=True) == "(… + 1) + 1"
 
     def test_a_collapsed_law_or_function_shows_its_label(self):
         probpipe.notation_config.max_depth = 1
         lifted = Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),))))
         with pytest.warns(UserWarning, match="max_depth"):
-            assert label_of(lifted) == "E[f]"
+            assert lifted.render_label(warn=True) == "E[f]"
         product = Draw(("a", "b"), Product((_named("a", "a"), _named("b", "b"))))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert label_of(product) == "(a, b) ~ a·b"
+            assert product.render_label(warn=True) == "(a, b) ~ a·b"
 
     def test_a_law_reads_in_full_at_any_depth(self):
         """A conditioning or a selection nests no level, so a draw from one reads in full."""
@@ -297,16 +288,16 @@ class TestDepth:
         draw = Draw(("mu",), Selected(Conditioned(Named("model"), ("y",)), ("mu",)))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert label_of(Summary("E", draw)) == "E[mu ~ model; y]"
+            assert Summary("E", draw).render_label(warn=True) == "E[mu ~ model; y]"
 
     def test_raising_the_depth_shows_the_collapsed_levels(self):
         deep = self._chain(10)
         with pytest.warns(UserWarning):
-            assert "…" in label_of(deep)
+            assert "…" in deep.render_label(warn=True)
         probpipe.notation_config.max_depth = 12
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert "…" not in label_of(deep)
+            assert "…" not in deep.render_label(warn=True)
 
     def test_a_stored_tree_is_bounded(self):
         """A long derivation stores a tree of bounded depth, which copies and pickles."""
@@ -316,13 +307,63 @@ class TestDepth:
 
     def test_a_term_derived_in_a_long_loop_pickles(self):
         value = NumericArray("x", jnp.asarray(1.0))
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            for _ in range(300):
-                value = value + 1.0
-            restored = pickle.loads(pickle.dumps(value))
+        for _ in range(300):
+            value = value + 1.0
+        restored = pickle.loads(pickle.dumps(value))
         assert restored.label == value.label
         assert float(restored) == 301.0
+
+    def test_a_rendering_that_stores_a_label_does_not_warn(self):
+        probpipe.notation_config.max_depth = 2
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert self._chain(3).render_label() == "(… + 1) + 1"
+
+
+class TestTheWarningFiresWhenATermIsShown:
+    """A collapsed rendering warns when a term is shown, and never while terms are computed."""
+
+    @staticmethod
+    def _looped() -> NumericArray:
+        with workflow_run(seed=0):
+            value = sample(_prior())
+        for _ in range(20):
+            value = value + 1.0
+        return value
+
+    def test_deriving_a_term_in_a_loop_and_reading_its_label_do_not_warn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            value = self._looped()
+            assert "…" in value.label
+
+    def test_the_repr_of_a_collapsed_label_warns_once(self):
+        value = self._looped()
+        with pytest.warns(UserWarning, match="notation_config.max_depth=8") as caught:
+            repr(value)
+        assert len([w for w in caught if "max_depth" in str(w.message)]) == 1
+
+    def test_the_warning_names_the_line_that_shows_the_term(self):
+        value = self._looped()
+        with pytest.warns(UserWarning, match="max_depth") as caught:
+            repr(value)
+        assert caught[0].filename == __file__
+
+    def test_the_str_and_notation_of_a_collapsed_law_warn(self):
+        @function
+        def f(mu: jax.Array) -> jax.Array:
+            return mu + 1.0
+
+        with workflow_run(seed=0):
+            law = f.with_options(n_broadcast_samples=4)(_prior())
+        probpipe.notation_config.max_depth = 1
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert law.label == "f"
+        with pytest.warns(UserWarning, match="max_depth=1"):
+            assert str(law) == "f(…)"
+        with pytest.warns(UserWarning, match="max_depth=1"):
+            assert law.notation == "f(…)"
 
 
 class TestTheLabelIsTheExpressionsLabel:
@@ -358,14 +399,16 @@ class TestTheLabelIsTheExpressionsLabel:
 
     def test_every_term_carries_the_label_of_its_expression(self):
         for term in self._terms():
-            assert term.label == label_of(expression_of(term)), term
+            assert term.label == term._expression.render_label(), term
 
     def test_with_label_replaces_the_expression_with_the_label(self):
         """A user's label hides the derivation, and the paths the law holds fixed stay."""
         model = _prior() * Normal("y", 0.0, 1.0)
-        derived = model._with_expression(Conditioned(expression_of(model), ("y",)))
+        derived = model._with_expression(Conditioned(model._expression, ("y",)))
         relabeled = derived.with_label("posterior")
-        assert expression_of(relabeled) == Named("posterior", Signature(("mu", "y"), (), ("y",)))
+        assert relabeled._expression == Conditioned(
+            Named("posterior", Signature(("mu", "y"))), ("y",)
+        )
         assert relabeled.notation == "posterior(mu, y; y)"
         assert relabeled.provenance.operation == "with_label"
 
@@ -375,8 +418,8 @@ class TestTheLabelIsTheExpressionsLabel:
             given_spec={"beta": NumericArraySpec(())},
             label="glm",
         )
-        assert embedded(kernel) == Named("glm", Signature(("y",), ("beta",)))
-        assert expression_of(kernel) == Named("glm")
+        assert kernel._embedded_expression() == Named("glm", Signature(("y",), ("beta",)))
+        assert kernel._expression == Named("glm")
 
 
 class TestIndependenceFromComputation:
@@ -384,15 +427,15 @@ class TestIndependenceFromComputation:
 
     def test_the_expression_leaves_the_fingerprint_unchanged(self):
         prior = _prior()
-        conditioned = prior._with_expression(Conditioned(expression_of(prior), ("y",)))
+        conditioned = prior._with_expression(Conditioned(prior._expression, ("y",)))
         assert fingerprint(conditioned) == fingerprint(prior)
 
     @pytest.mark.parametrize("round_trip", [copy.copy, copy.deepcopy, pickle.dumps])
     def test_copies_and_pickles_keep_the_expression(self, round_trip):
         prior = _prior()
-        conditioned = prior._with_expression(Conditioned(expression_of(prior), ("y",)))
+        conditioned = prior._with_expression(Conditioned(prior._expression, ("y",)))
         restored = round_trip(conditioned)
         if isinstance(restored, bytes):
             restored = pickle.loads(restored)
-        assert expression_of(restored) == expression_of(conditioned)
+        assert restored._expression == conditioned._expression
         assert restored.notation == "prior(mu; y)"

@@ -406,8 +406,9 @@ class NotationConfig:
         """The number of nested levels a label or a notation shows, 8 by default.
 
         A part nested deeper renders as its label, the name of a law or a
-        function, or as ``…`` for a value, and the rendering warns with a
-        ``UserWarning``. Every label the library derives from one law and a
+        function, or as ``…`` for a value, and ``str()``, ``repr()``, and
+        ``notation`` warn with a ``UserWarning`` when what they show has such
+        a part. Every label the library derives from one law and a
         few operators on it nests at most 5 levels, as
         ``E[f(beta ~ model; y)][sample=0] + 1`` does, so the default shows
         each of them in full, while a label derived through a long chain of

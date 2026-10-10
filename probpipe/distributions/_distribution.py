@@ -23,10 +23,6 @@ if TYPE_CHECKING:
 
 from ..core._expression import (
     Signature,
-    expression_of,
-    fixed_paths_of,
-    notation_of,
-    with_fixed,
 )
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name, term_repr
@@ -208,7 +204,7 @@ def _repr_label(term: Any) -> str | None:
     ``Normal('Normal', ...)`` would, so the repr shows a label only where a
     caller or an operation gave one.
     """
-    return None if term.label == term._default_label else term.label
+    return None if term.label == term._default_label else term._displayed_label()
 
 
 #: The message for a selection of field paths that names none.
@@ -431,7 +427,7 @@ def _fixed_paths(term: Any) -> tuple[str, ...]:
     They are read from the term's expression, where a conditioning records the
     paths it fixes, and the signature lists them after ``;``.
     """
-    return fixed_paths_of(expression_of(term))
+    return term._expression.fixed_paths()
 
 
 def _keeps_fixed_paths(term: Any, source: Any) -> Any:
@@ -442,8 +438,8 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     *term* is set in place only when that adds a path, so a caller passes a
     term it has just built, or one that holds every path of *source* already.
     """
-    expression = expression_of(term)
-    held = with_fixed(expression, _fixed_paths(source))
+    expression = term._expression
+    held = expression.with_fixed(_fixed_paths(source))
     if held is not expression:
         term._store_expression(held)
     return term
@@ -457,8 +453,8 @@ def _holding_fixed_paths(term: Any, paths: Iterable[str]) -> Any:
     also an operand of the call, such as a factor that conditioning leaves,
     keeps its own paths.
     """
-    expression = expression_of(term)
-    held = with_fixed(expression, paths)
+    expression = term._expression
+    held = expression.with_fixed(paths)
     if held is expression:
         return term
     clone = term._shallow_copy()
@@ -1155,7 +1151,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         ``notation_config.max_depth`` nested levels. No operation reads the
         notation.
         """
-        return notation_of(expression_of(self), self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
         """The signature the declaration states: the event components, in declaration order."""

@@ -24,7 +24,7 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
-from ..core._expression import ELLIPSIS, Signature, expression_of, notation_of
+from ..core._expression import ELLIPSIS, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -776,7 +776,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
         kernel's expression. No operation reads the notation.
         """
-        return notation_of(expression_of(self), self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
         """The signature the declaration states: the event components, then the given slots.
@@ -790,7 +790,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             for slot in self.given_spec
             if slot in self.given_spec.optional
         )
-        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), (), defaults)
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), defaults)
 
     def _given_defaults(self) -> Mapping[str, Any]:
         """The value each optional given slot takes when a binding omits it, where the kernel knows it."""

@@ -21,7 +21,6 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.core._dispatch import Feasibility, ResolutionError, UnaryDispatchRegistry
-from probpipe.core._expression import fixed_paths_of
 from probpipe.core._specs import InputSpec, OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
@@ -432,7 +431,7 @@ class TestTheConditionedLabel:
         law = Gaussian("mu").with_label("prior")
         values = {"d": law, "given": 0.5}
         assert condition_on._derived_label(values) == "prior"
-        assert fixed_paths_of(condition_on._derived_expression(values)) == ()
+        assert condition_on._derived_expression(values).fixed_paths() == ()
 
     def test_the_factors_left_are_an_unlabeled_joint_that_shows_its_fixed_paths(self):
         joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
@@ -525,7 +524,7 @@ class TestTheFixedPaths:
 
     def test_a_law_given_as_the_given_fixes_its_components(self):
         values = {"d": _NormalKernel("y", ("mu",)), "given": Gaussian("mu")}
-        assert fixed_paths_of(condition_on._derived_expression(values)) == ("mu",)
+        assert condition_on._derived_expression(values).fixed_paths() == ("mu",)
 
 
 class TestTheConditionedDeclaration:

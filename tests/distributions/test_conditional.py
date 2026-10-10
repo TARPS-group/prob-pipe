@@ -26,7 +26,6 @@ from probpipe import (
     condition_on,
     mean,
 )
-from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions import (
     ConditionalDistribution,
     ConditionalDistributionSpec,
@@ -646,7 +645,7 @@ class TestWithPathNames:
 
 def _with_fixed_paths(term, *paths: str):
     """*term* holding *paths* fixed, as applying a kernel at given values records."""
-    term._store_expression(with_fixed(expression_of(term), paths))
+    term._store_expression(term._expression.with_fixed(paths))
     return term
 
 
