@@ -775,7 +775,7 @@ class Function(Node, TrackedTerm, Annotated):
     fn : Callable
         The wrapped Python callable. Its signature is captured at construction.
     label : str, optional
-        Optional non-empty display alias. Defaults to the callable name, or ``f``
+        Optional non-empty display alias. Defaults to the callable name, or ``𝒻``
         for a lambda; a callable without a name requires an explicit label.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         Authoritative input slots matching fixed signature parameters by name.

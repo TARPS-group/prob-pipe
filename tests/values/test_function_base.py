@@ -313,7 +313,7 @@ class TestFunctionDeclarations:
 
     def test_decorated_lambda_keeps_its_default_component(self):
         wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
-        assert wrapped.label == "f"
+        assert wrapped.label == "𝒻"
         assert wrapped.output_spec == OutputSpec(f=NumericArraySpec(()))
         assert float(wrapped()) == 1
 
@@ -1552,8 +1552,8 @@ class TestFunctionLabels:
             return temperature + 1
 
         assert Function(predict).notation == "predict(temperature)"
-        assert Function(lambda temperature: temperature + 1).notation == "f(temperature)"
-        assert function(lambda temperature: temperature + 1).notation == "f(temperature)"
+        assert Function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
+        assert function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
         assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
         assert Function(predict, output_label="prediction")(2.0).label == "prediction"
 

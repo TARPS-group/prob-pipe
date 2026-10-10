@@ -601,7 +601,7 @@ class TestTheDefaultLabel:
         def predict(x, y):
             return x + y
 
-        assert FunctionBatch([predict, lambda x: x], "model").label == "[predict(x, y), f(x)]"
+        assert FunctionBatch([predict, lambda x: x], "model").label == "[predict(x, y), 𝒻(x)]"
 
     def test_a_callable_without_an_inspectable_signature_reads_as_its_name(self):
         """``max`` has no signature to inspect, so construction must not need one."""

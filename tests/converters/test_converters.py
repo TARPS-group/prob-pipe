@@ -159,7 +159,7 @@ class TestMomentMatching:
         ("target", "notation"),
         [
             (Normal, "Normal(g)"),
-            (EmpiricalDistribution, "p(g)"),
+            (EmpiricalDistribution, "ℙ(g)"),
             (KDEDistribution, "KDEDistribution(g)"),
         ],
     )

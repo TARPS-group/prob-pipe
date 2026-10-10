@@ -450,7 +450,7 @@ def _pair(label: str = "pair", law: type[Law] = Law, **options: Any) -> Law:
 
 
 def _exponential_location_model() -> FactoredDistribution:
-    """``x ~ Normal(0, 1)`` and ``y | x ~ Normal(exp(x), 1)``, whose ``E[y]`` is ``e^{1/2}``."""
+    """``x ~ Normal(0, 1)`` and ``y | x ~ Normal(exp(x), 1)``, whose ``𝔼[y]`` is ``e^{1/2}``."""
     kernel = FullKernel("y_given_x", {"x": SCALAR}, OutputSpec(y=SCALAR), loc=_exp_x)
     return kernel * Normal("x", 0.0, 1.0)
 
@@ -743,7 +743,7 @@ class TestMomentCapabilities:
         assert not any(isinstance(joint, moment) for moment in _MOMENTS)
 
     def test_the_exponential_location_model_has_no_moment(self):
-        # E[y] = E[exp(x)] = e^{1/2}, which the factors' means, 0 and exp(x), do not give.
+        # 𝔼[y] = 𝔼[exp(x)] = e^{1/2}, which the factors' means, 0 and exp(x), do not give.
         joint = _exponential_location_model()
         assert isinstance(joint, SupportsSampling)
         assert not any(isinstance(joint, moment) for moment in _MOMENTS)
@@ -787,7 +787,7 @@ class TestMomentCapabilities:
     def test_the_exponential_location_mean_is_not_a_composition_of_factor_means(self):
         draws = _exponential_location_model()._sample(jax.random.PRNGKey(0), (20_000,))
         mean = float(jnp.mean(jnp.asarray(draws["y"])))
-        # exp(E[x]) = 1, while E[y] = e^{1/2}; sd(y) is about 2.4, a standard error of 0.017.
+        # exp(𝔼[x]) = 1, while 𝔼[y] = e^{1/2}; sd(y) is about 2.4, a standard error of 0.017.
         assert abs(mean - float(jnp.exp(0.5))) < 0.1
 
     def test_each_factor_covariance_is_a_block_in_factor_order(self):

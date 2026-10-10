@@ -542,7 +542,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
-        label = _constructor_label(self, label, "p") if label is None else label
+        label = _constructor_label(self, label, DEFAULT_LABEL) if label is None else label
         _given_label(label, owner=public_class_name(type(self)))
         self._init_tracked(label, provenance=_provenance)
         _record_default_expression(self)
@@ -1465,7 +1465,7 @@ def _function_kernel(
     ----------
     label : str or None
         The kernel's label. ``None`` takes the label from ``fn.__name__``, and
-        ``p`` for a lambda or a callable without a name.
+        ``ℙ`` for a lambda or a callable without a name.
     fn : callable
         The function of the given values that returns a law.
     given_spec : InputSpec or Mapping[str, TermSpec] or None
@@ -1528,7 +1528,7 @@ def conditional_distribution(
     binding fewer slots curries the kernel over the rest.
 
     The kernel is labeled *label*, or after the function's ``__name__``, and
-    ``p`` for a lambda. The call form takes the function first::
+    ``ℙ`` for a lambda. The call form takes the function first::
 
         likelihood = conditional_distribution(
             lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec={"mu": real, "tau": scale}
@@ -1559,7 +1559,7 @@ def conditional_distribution(
         result is a decorator.
     label : str, optional
         The kernel's label. Defaults to the function's ``__name__``, and to
-        ``p`` for a lambda or a callable without a name.
+        ``ℙ`` for a lambda or a callable without a name.
     given_spec : InputSpec or Mapping[str, TermSpec], optional
         The specs of some or all given slots, keyed by parameter.
     event_spec : OutputSpec or TermSpec, optional

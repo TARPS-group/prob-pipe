@@ -298,7 +298,7 @@ class TestEmpiricalDistribution:
 
     def test_name(self, simple_samples):
         ed = EmpiricalDistribution(simple_samples, component="emp")
-        assert ed.label == "p"
+        assert ed.label == "ℙ"
         assert tuple(ed.event_spec.components) == ("emp",)
         assert EmpiricalDistribution(simple_samples, component="emp", label="e").label == "e"
 

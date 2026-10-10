@@ -185,7 +185,7 @@ class SupportsQuantile(Protocol):
 
 @runtime_checkable
 class SupportsExpectation(Protocol):
-    """A distribution with the exact expectation ``E[f(X)]`` of an arbitrary ``f``.
+    """A distribution with the exact expectation ``𝔼[f(X)]`` of an arbitrary ``f``.
 
     ``_expectation(f)`` integrates any function exactly, which in practice
     means finite support. Its argument is an opaque callable that no guard can
@@ -355,7 +355,7 @@ class SupportsConditionalQuantile(Protocol):
 
 @runtime_checkable
 class SupportsConditionalExpectation(Protocol):
-    """A kernel with the exact expectation ``E[f(Y)]`` for ``Y ~ K(given, ·)``."""
+    """A kernel with the exact expectation ``𝔼[f(Y)]`` for ``Y ~ K(given, ·)``."""
 
     def _conditional_expectation(
         self, given: Record | Mapping[str, Any], f: Callable[[Any], Array]

@@ -34,7 +34,14 @@ from collections.abc import Callable, Mapping
 from typing import Any, Self, _ProtocolMeta, cast
 
 from .._messages import label_given_first
-from ._expression import Collapse, Expression, Named, Signature, warn_collapsed
+from ._expression import (
+    _ANONYMOUS_FUNCTION_SYMBOL,
+    Collapse,
+    Expression,
+    Named,
+    Signature,
+    warn_collapsed,
+)
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
@@ -115,7 +122,7 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 _NO_DESCRIPTION = "<no description>"
 
 
-#: The name a lambda takes, as a label and as an output component.
+#: The ASCII name a lambda takes as an output component.
 _LAMBDA_NAME = "f"
 
 
@@ -135,7 +142,7 @@ def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = 
     """The label of a term named after the callable *fn*.
 
     It is *label* when one is given, and otherwise the callable's name by
-    :func:`_callable_name`, so a lambda is labeled ``f``.
+    :func:`_callable_name`, so a lambda is labeled ``𝒻``.
 
     Parameters
     ----------
@@ -158,6 +165,8 @@ def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = 
     """
     if label is not None:
         return label
+    if getattr(fn, "__name__", None) == "<lambda>":
+        return _ANONYMOUS_FUNCTION_SYMBOL
     name = _callable_name(fn)
     if name is None:
         raise TypeError(
@@ -241,7 +250,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     The label is read from the term's **expression**, a private immutable tree
     that states what the term is: a term constructed directly carries its label
     alone, and an operation's result carries the expression the operation
-    builds from its operands', as ``E[(y, mu) ~ model]`` for the mean of a law
+    builds from its operands', as ``𝔼[(y, mu) ~ model]`` for the mean of a law
     ``model``. :meth:`with_label` replaces the expression with the new label,
     so the label hides the derivation, which provenance still records.
 

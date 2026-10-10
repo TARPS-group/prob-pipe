@@ -1061,7 +1061,7 @@ class TestResultAndRandomness:
         toy.structural_route("value", **_route(True, 1.0), exact=True)
         _install_expression_rule(toy, lambda d: Summary("E", draw_of(d)))
         result = toy(Gaussian("g"))
-        assert (float(result), result.label) == (1.0, "E[g ~ g]")
+        assert (float(result), result.label) == (1.0, "𝔼[g ~ g]")
 
     def test_an_expression_rule_that_returns_none_keeps_the_routes_expression(self):
         toy = _toy()

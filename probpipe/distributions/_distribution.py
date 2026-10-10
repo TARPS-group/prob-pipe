@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from ._views import _EventRenames
 
 from .._messages import label_given_first
-from ..core._expression import Named, Signature
+from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -38,7 +38,7 @@ from ._capabilities import _check_guards
 
 
 #: The label of a law or a kernel whose constructor is given none and that is not a family.
-DEFAULT_LABEL = "p"
+DEFAULT_LABEL = _GENERIC_LAW_SYMBOL
 
 
 def _complete_event_spec(event_spec: Any) -> OutputSpec:
@@ -292,7 +292,7 @@ def _labeled_by_default(term: Any) -> bool:
 
     Its expression is then the default label alone, so it records no label that
     a caller or an operation chose and no path held fixed. The default names
-    the class, or ``p``, so a law converted from *term* takes its converter's
+    the class, or ``ℙ``, so a law converted from *term* takes its converter's
     label, which names the target (VI.10).
     """
     default = getattr(term, "_default_label", None)
@@ -621,7 +621,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     component of its event first and an optional ``label=``, which defaults to
     the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
     ``Normal`` over the component ``mu``; any other law's label defaults to
-    ``p``, and a joint that ``*`` composes is labeled by its operands' labels.
+    ``ℙ``, and a joint that ``*`` composes is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
@@ -679,7 +679,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
-        label = _constructor_label(self, label, "p") if label is None else label
+        label = _constructor_label(self, label, DEFAULT_LABEL) if label is None else label
         _given_label(label, owner=public_class_name(type(self)))
         # ``_provenance`` and ``_annotations`` carry state a reconstruction
         # already holds and that construction cannot otherwise reach: provenance

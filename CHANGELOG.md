@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
+  expectation, generic laws or kernels, quantile, variance, covariance, and
+  anonymous functions. Explicit labels remain literal, and generated component
+  names remain ASCII.
+
 - **A value, a batch, and a function take their data first and the label as
   the keyword `label=`.** `NumericArray(values, label="x")` replaces
   `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
@@ -18,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after their data, as `NumericArray.from_vector(spec, vec, label="x")`. A raw
   array, an opaque value, and a batch of either require the label. A record and
   a record batch derive it from their top-level fields, as `record(a,b)`. A
-  function derives it from its callable's name, with `f` for a lambda, and a
+  function derives it from its callable's name, with `𝒻` for a lambda, and a
   batch of functions or laws from its members, at most eight in row-major order
   and then `…`. A call in the label-first form raises a `TypeError` that shows the new
   call.
@@ -81,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that are not records and refuse it for record atoms, whose fields are the
   components, and array atoms are labeled by the component.
   `conditional_distribution` labels a kernel after its function's
-  `__name__`, and `p` for a lambda. A law converted from a law under its
+  `__name__`, and `ℙ` for a lambda. A law converted from a law under its
   default label takes its own default, so `convert(Laplace("g", 9.0, 1.0),
   Normal)` displays as `Normal(g)`, and any other converted law keeps its
   source's label. A subclass of `Distribution` or
@@ -90,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `RecordSpec` no longer takes the label as its component. The repr of a law
   or a kernel reads as a call of its constructor, as
   `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
-  equal to the constructor's default, the class name or `p`, as
+  equal to the constructor's default, the class name or `ℙ`, as
   `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
   nothing fixed evaluates to an equal law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default

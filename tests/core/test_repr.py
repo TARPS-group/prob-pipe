@@ -503,7 +503,7 @@ class TestGrouping:
         assert is_compound(label)
         assert grouped_label(label) == f"({label})"
 
-    @pytest.mark.parametrize("label", ["prior", "prior(mu)", "x[sample=0]", "E[mu ~ prior]"])
+    @pytest.mark.parametrize("label", ["prior", "prior(mu)", "x[sample=0]", "𝔼[mu ~ prior]"])
     def test_a_label_of_one_word_is_used_as_it_is(self, label):
         """A call or a selection holds its spaces and symbols inside its brackets."""
         assert not is_compound(label)
@@ -515,7 +515,7 @@ class TestGrouping:
         assert not is_compound(label)
         assert grouped_label(label) == f"[{label}]"
 
-    @pytest.mark.parametrize("label", ["f(lik·prior)", "E[lik·prior]", "f(mu ~ prior)"])
+    @pytest.mark.parametrize("label", ["f(lik·prior)", "𝔼[lik·prior]", "f(mu ~ prior)"])
     def test_a_symbol_inside_parentheses_or_brackets_is_not_at_the_top_level(self, label):
         assert not is_compound(label)
         assert grouped_label(label) == label

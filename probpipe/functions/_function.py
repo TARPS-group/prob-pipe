@@ -161,7 +161,7 @@ def function(
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
     label : str or None
-        The function label, defaulting to the callable's name, or ``f`` for a lambda.
+        The function label, defaulting to the callable's name, or ``𝒻`` for a lambda.
         A callable with none, such as a ``functools.partial``, needs it.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         The authoritative input slots, as :class:`Function` takes them.

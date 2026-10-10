@@ -21,7 +21,7 @@ child nodes. No node holds a reference to a term. The node classes are these:
    ``f(beta ~ model; y)``;
 7. :class:`AppliedValue`: the value a function's call returns, as
    ``f(beta, 2.0)``;
-8. :class:`Summary`: a summary of a law or a draw, as ``E[mu ~ prior]`` or
+8. :class:`Summary`: a summary of a law or a draw, as ``𝔼[mu ~ prior]`` or
    ``log prior(mu)``;
 9. :class:`Operator`: an operator applied to values, as ``2 * effect``;
 10. :class:`Indexed`: a selection of a batch, as ``(mu ~ prior)[sample=0]``;
@@ -329,7 +329,7 @@ class Expression:
         A conditioning and a selection keep their base's label, a product without
         a label joins its factors' labels with ``·``, and an applied function takes
         the function's label. A value renders in full, as ``(y, mu) ~ model`` or
-        ``E[mu ~ prior]``, with each part grouped by design II.4.
+        ``𝔼[mu ~ prior]``, with each part grouped by design II.4.
 
         Returns
         -------
@@ -896,8 +896,15 @@ class AppliedValue(Applied):
         return self._notation(rendering, level, None)
 
 
+#: Automatic law and anonymous-function descriptions; explicit labels stay literal.
+_GENERIC_LAW_SYMBOL = "ℙ"
+_ANONYMOUS_FUNCTION_SYMBOL = "𝒻"
+
+#: Internal summary kinds keep their spelling; only their presentation uses Unicode.
+_SUMMARY_SYMBOLS = {"E": "𝔼", "Var": "𝕍", "Cov": "ℂ", "Q": "ℚ"}
+
 #: The summaries a :class:`Summary` node writes as ``kind[argument]``.
-_BRACKETED_SUMMARIES = frozenset({"E", "Var", "Cov", "Q"})
+_BRACKETED_SUMMARIES = frozenset(_SUMMARY_SYMBOLS)
 
 #: The summary of a law's score, written ``log`` and the law's notation.
 SCORE = "log"
@@ -910,10 +917,12 @@ DENSITY = "density"
 class Summary(Expression):
     """A value that summarizes a law or a draw.
 
-    The kinds and their renderings:
+    Internal summary kinds keep their ASCII spelling. Their displayed symbols
+    are ``𝔼``, ``𝕍``, ``ℂ``, and ``ℚ`` for ``E``, ``Var``, ``Cov``, and ``Q``.
+    Explicit labels are rendered literally. The kinds and their renderings:
 
     1. ``E``, ``Var``, ``Cov``, and ``Q``: the expectation, the variance, the
-       covariance, and the quantile of a draw, as ``E[(y, mu) ~ model]``;
+       covariance, and the quantile of a draw, as ``𝔼[(y, mu) ~ model]``;
     2. ``log``: a score, ``log`` followed by the law's notation, as
        ``log prior(mu)``;
     3. ``density``: a density, which reads as the law's notation, as
@@ -951,8 +960,10 @@ class Summary(Expression):
             return argument._notation(rendering, level + 1, None)
         if isinstance(argument, Applied):
             # The expectation of a function at draws is the expectation of the call.
-            return f"{self.kind}[{argument._notation(rendering, level + 1, None)}]"
-        return f"{self.kind}[{argument._label(rendering, level + 1)}]"
+            return (
+                f"{_SUMMARY_SYMBOLS[self.kind]}[{argument._notation(rendering, level + 1, None)}]"
+            )
+        return f"{_SUMMARY_SYMBOLS[self.kind]}[{argument._label(rendering, level + 1)}]"
 
 
 #: The unary operators written as a call of their operand, as ``abs(x)``.
