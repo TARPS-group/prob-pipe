@@ -15,7 +15,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -304,7 +304,9 @@ def _lift_result(
     """The empirical law of a lifted call's evaluations, under their weights.
 
     The atoms are the outputs on the level ``draw``, and the event declaration
-    is the completed output declaration. Under *include_inputs* each atom joins
+    is the completed output declaration. A declaration that exposes a returned
+    law's components holds each law whole under *output_component* instead,
+    since each atom is a law. Under *include_inputs* each atom joins
     the draw of every lifted argument, under its parameter's label, to the
     output's components.
 
@@ -343,6 +345,11 @@ def _lift_result(
     atoms, declaration = _output_atoms(
         draws.outputs, draws.count, output_label, output_spec, output_component
     )
+    if declaration._component_name is None and not declaration.exposes_record:
+        # A law's event is a value, so the law of the evaluations holds each
+        # returned law whole under the default component, as an undeclared
+        # output places its result.
+        declaration = OutputSpec(**{output_component: declaration.spec})
     if not include_inputs:
         return EmpiricalDistribution(
             atoms, draws.weights, label=output_label, event_spec=declaration
@@ -517,11 +524,7 @@ def _joint_atoms(
         fields.update(declaration.spec.children)
         columns.update(stored)
     else:
-        component = declaration._component_name
-        if component is None:
-            raise ResultSchemaError(
-                "include_inputs requires a declared whole-term output component"
-            )
+        component = cast(str, declaration._component_name)
         fields[component] = declaration.spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
