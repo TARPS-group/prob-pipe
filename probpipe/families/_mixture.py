@@ -20,7 +20,7 @@ from .. import _messages
 from ..core._expression import Applied
 from ..core._object_batch import _collection_expression
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_value, sequence_repr
+from ..core._repr import _MAX_SHOWN_ENTRIES, format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -446,8 +446,9 @@ def _weights(weights: ArrayLike, count: int) -> Array:
     return array
 
 
-#: How many components a mixture's repr shows before it gives their count instead.
-_SHOWN_COMPONENTS = 4
+#: How many components a mixture's repr shows before it gives their count instead,
+#: which is as many as the weights whose entries it shows.
+_SHOWN_COMPONENTS = _MAX_SHOWN_ENTRIES
 
 
 class MixtureDistribution(Distribution):
@@ -521,7 +522,7 @@ class MixtureDistribution(Distribution):
             _record_default_expression(self)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The components, by their count when there are more than four, and the weights."""
+        """The components, by their count when there are more than eight, and the weights."""
         components = self._components
         shown = (
             sequence_repr(repr(law) for law in components)
