@@ -3,7 +3,7 @@
 # Labels and provenance
 
 Each tracked term carries a label and a write-once provenance record, which names the operation that produced the term and its parents.
-This page documents the identity of a tracked term, the provenance record and its traversal, and the setting of how much history a provenance chain keeps.
+This page documents the identity of a tracked term, the provenance record and its traversal, the setting of how much history a provenance chain keeps, and the setting of how many nested levels a label or a notation shows.
 Replay from a provenance record is on [Workflows and reproducibility](workflows.md).
 
 ## Labels and annotations
@@ -33,5 +33,13 @@ Replay from a provenance record is on [Workflows and reproducibility](workflows.
 ::: probpipe.provenance_config
 
 ::: probpipe.core.config.ProvenanceConfig
+    options:
+      show_root_full_path: true
+
+## Notation settings
+
+::: probpipe.notation_config
+
+::: probpipe.core.config.NotationConfig
     options:
       show_root_full_path: true

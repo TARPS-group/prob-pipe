@@ -13,6 +13,7 @@ from typing import cast
 
 import numpy as np
 
+from ..core._expression import Signature
 from ..core._kinds import register_kind
 from ..core._object_batch import _as_object_array, _ObjectBatch
 from ..core._shapes import AxisCountsLike, NamesLike
@@ -156,6 +157,23 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
 
+    def _own_signature(self) -> Signature:
+        """The signature the elements share, which a value computed from the batch shows.
+
+        A batch of laws reads as one law under the batch's label, so a draw of
+        it is labeled ``effect ~ schools`` and a score ``log schools(effect)``.
+        """
+        return Signature(tuple(self.event_spec.components))
+
+    def __str__(self) -> str:
+        """The batch's notation and its levels, as ``schools(effect) over school``.
+
+        The notation is that of one law under the batch's label, and a batch
+        that a function lifted over laws gives reads as the call, as
+        ``effect_of(mu ~ prior, tau) over tau``.
+        """
+        return _batch_notation(self)
+
     def _element_at(self, index: tuple[int, ...], *, label: str) -> Distribution:
         """The stored law at *index*, as a view that records the stored law as its source.
 
@@ -167,6 +185,12 @@ class DistributionBatch(_ObjectBatch[Distribution]):
         view = super()._element_at(index, label=label)
         object.__setattr__(view, _ELEMENT_SOURCE, self._store[index])
         return view
+
+
+def _batch_notation(batch: DistributionBatch | ConditionalDistributionBatch) -> str:
+    """The notation of *batch*'s elements under its label, then ``over`` and its levels."""
+    notation = batch._expression.render_notation(batch._own_signature(), warn=True)
+    return f"{notation} over {', '.join(batch.level_names)}"
 
 
 def _check_declarations(store: np.ndarray, element_spec: DistributionSpec) -> None:
@@ -300,6 +324,14 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     def event_spec(self) -> OutputSpec:
         """The event declaration the elements share, a view on ``spec``."""
         return self.element_spec.event_spec
+
+    def _own_signature(self) -> Signature:
+        """The signature the elements share: their event components, then their given slots."""
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec))
+
+    def __str__(self) -> str:
+        """The batch's notation and its levels, as ``glm(y | beta) over dataset``."""
+        return _batch_notation(self)
 
 
 register_kind(DistributionSpec, term_class=Distribution, batch_class=DistributionBatch)

@@ -24,8 +24,9 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
+from ..core._expression import ELLIPSIS, Signature
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import format_default, format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
@@ -44,14 +45,17 @@ from ._capabilities import (
 )
 from ._distribution import (
     _DECLARATION_MARKERS,
+    DEFAULT_LABEL,
     Distribution,
     DistributionSpec,
     _check_marker_claims,
     _complete_event_spec,
     _compose_operands,
     _detached_term,
-    _is_default_declaration,
+    _event_repr_fields,
     _no_free_dims,
+    _ordered_fields,
+    _repr_label,
     _unify_declarations,
 )
 
@@ -473,8 +477,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     The kernel stores one ``ConditionalDistributionSpec``, its :attr:`spec`;
     :attr:`given_spec` and :attr:`event_spec` are views on it. The event
     declaration is read as a ``Distribution``'s is: a bare ``RecordSpec``
-    exposes its fields, and any other term spec is a whole term whose component
-    defaults to the kernel's label. The given slots and the produced
+    exposes its fields, and an ``OutputSpec`` names the component of a whole
+    term. The given slots and the produced
     components are distinct roles, so their names are disjoint even when the
     two spaces coincide, as in a Markov kernel ``state → next_state``. Symbolic
     dimensions are scoped over both sides jointly.
@@ -485,6 +489,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     operation on ``condition_on(K, s)``. A subclass implements
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
+    ``str(K)`` returns the kernel's :attr:`notation`, its label followed by its
+    signature, as ``glm(y | beta)``, and the repr shows the label first unless
+    it is the constructor's default.
+
     Parameters
     ----------
     label : str
@@ -492,7 +500,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     given_spec : InputSpec or Mapping[str, TermSpec]
         The named slots the kernel conditions on, at least one; the keys are
         Python identifiers.
-    event_spec : OutputSpec or TermSpec
+    event_spec : OutputSpec or RecordSpec
         The declaration of one produced draw, completed as above.
     _provenance : Provenance, optional
         The provenance of the kernel that a reconstruction rebuilds. By default the
@@ -505,12 +513,16 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     ------
     TypeError
         If *label* is not a non-empty string, *given_spec* is not a mapping of
-        term specs, or *event_spec* is not a spec.
+        term specs, or *event_spec* is neither an ``OutputSpec`` nor a
+        ``RecordSpec``.
     ValueError
-        If *given_spec* has no slots, *event_spec* has a type hole, a given slot
-        shares a name with a produced component, or *event_spec* is a bare term
-        spec other than a record and *label* is not a valid component name.
+        If *given_spec* has no slots, *event_spec* has a type hole, or a given
+        slot shares a name with a produced component.
     """
+
+    #: The label the constructor gives when it is given none, which the repr leaves out;
+    #: ``None`` for a class whose constructor requires a label.
+    _default_label: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -522,9 +534,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
         if not isinstance(label, str) or not label:
-            raise TypeError(
-                f"{type(self).__name__} requires a non-empty label as its first argument"
-            )
+            raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
         self._init_tracked(label, provenance=_provenance)
         self._init_annotations(_annotations)
         self._init_declaration(given_spec, event_spec)
@@ -541,7 +551,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
             self,
             "_spec",
             ConditionalDistributionSpec(
-                _complete_given_spec(given_spec), _complete_event_spec(event_spec, self._label)
+                _complete_given_spec(given_spec), _complete_event_spec(event_spec)
             ),
         )
 
@@ -752,18 +762,54 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """
         return _compose_operands(self, other)
 
+    # -- notation ---------------------------------------------------------------
+
+    @property
+    def notation(self) -> str:
+        """The kernel's label followed by its signature, as ``glm(y | beta)``, which ``str()`` returns.
+
+        The signature lists the event components in declaration order, then
+        `` | `` and every given slot in declaration order, then ``;`` and the
+        paths the kernel holds fixed at given values when it holds any, as
+        ``glm(y | sigma; beta)``. Components, slots, and paths are each joined by
+        ``", "``. A product without a label reads factor by factor, as
+        ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
+        kernel's expression. No operation reads the notation.
+        """
+        return self._expression.render_notation(self._own_signature(), warn=True)
+
+    def _own_signature(self) -> Signature:
+        """The signature the declaration states: the event components, then the given slots.
+
+        An optional slot shows its default, as ``n0=50.0``, or ``n0=…`` where
+        the default is not a scalar or the kernel does not know its value.
+        """
+        known = self._given_defaults()
+        defaults = tuple(
+            (slot, format_default(known[slot]) if slot in known else ELLIPSIS)
+            for slot in self.given_spec
+            if slot in self.given_spec.optional
+        )
+        return Signature(tuple(self.event_spec.components), tuple(self.given_spec), defaults)
+
+    def _given_defaults(self) -> Mapping[str, Any]:
+        """The value each optional given slot takes when a binding omits it, where the kernel knows it."""
+        return {}
+
+    def __str__(self) -> str:
+        """The kernel's :attr:`notation`, as ``glm(y | beta)``."""
+        return self.notation
+
     def __repr__(self) -> str:
         """The public class, the label, the family parameters, the given slots, and the declaration.
 
-        The event declaration is shown when it differs from the default for the
-        kernel's label, as for a law.
+        The event shows its component, or its declaration, the label is left
+        out where it is the default, and the slots bound by conditioning show as
+        ``fixed=(...)``, as for a law.
         """
-        fields = [
-            *self._repr_arguments(),
-            ("given", format_names(self.given_spec)),
-            *self._event_repr_arguments(),
-        ]
-        return term_repr(self._repr_class_name(), self.label, fields)
+        arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
+        fields = _ordered_fields(arguments, self._event_repr_arguments(), self)
+        return term_repr(self._repr_class_name(), _repr_label(self), fields)
 
     def _repr_class_name(self) -> str:
         """The first public class in this kernel's method-resolution order, which the repr names."""
@@ -774,10 +820,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return []
 
     def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The event declaration, unless it is the default for this kernel's label."""
-        if _is_default_declaration(self.event_spec, self.label):
-            return []
-        return [("event_spec", repr(self.event_spec))]
+        """The component of the event, or its declaration, as for a law."""
+        return _event_repr_fields(self.event_spec)
 
 
 # ---------------------------------------------------------------------------
@@ -983,6 +1027,7 @@ class _FunctionKernel(ConditionalDistribution):
     """
 
     _capability_table: ClassVar = _FUNCTION_KERNEL_CAPABILITIES
+    _default_label: ClassVar[str | None] = DEFAULT_LABEL
 
     def __new__(
         cls,
@@ -1008,6 +1053,18 @@ class _FunctionKernel(ConditionalDistribution):
         object.__setattr__(self, "_slots", given_spec)
         object.__setattr__(self, "_bound", {})
         object.__setattr__(self, "_guards", dict(guards))
+
+    def _given_defaults(self) -> Mapping[str, Any]:
+        """The defaults of the function's parameters, which its optional slots take."""
+        try:
+            parameters = inspect.signature(self._fn).parameters
+        except (TypeError, ValueError):
+            return {}
+        return {
+            name: parameter.default
+            for name, parameter in parameters.items()
+            if parameter.default is not parameter.empty
+        }
 
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
@@ -1332,11 +1389,11 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
     Parameters
     ----------
     label : str
-        The kernel's label, which is the component of a bare term spec and which
-        error messages name.
+        The kernel's label, which error messages name.
     declared : OutputSpec or TermSpec
-        The event declaration the caller passed. A bare term spec declares a whole
-        term under the component *label*.
+        The event declaration the caller passed. A bare ``RecordSpec`` exposes
+        its fields, and any other bare term spec declares a whole term under the
+        component of *law*.
     law : OutputSpec
         The event declaration of the law the function returns at the stand-ins.
 
@@ -1352,11 +1409,12 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
         If *declared* names other components or another packaging than *law*,
         or its type does not unify with the law's.
     """
-    declaration = (
-        declared
-        if isinstance(declared, OutputSpec)
-        else OutputSpec.default(declared, component=label)
-    )
+    if isinstance(declared, OutputSpec):
+        declaration = declared
+    elif isinstance(declared, RecordSpec) or law.exposes_record or len(law.components) != 1:
+        declaration = OutputSpec.default(declared, component=label)
+    else:
+        declaration = OutputSpec.default(declared, component=next(iter(law.components)))
     if declaration.exposes_record != law.exposes_record or tuple(declaration.components) != tuple(
         law.components
     ):
@@ -1378,7 +1436,8 @@ def _function_kernel(
     Parameters
     ----------
     label : str or None
-        The kernel's label. ``None`` takes the label from ``fn.__name__``.
+        The kernel's label. ``None`` takes the label from ``fn.__name__``, and
+        ``p`` for a lambda or a callable without a name.
     fn : callable
         The function of the given values that returns a law.
     given_spec : InputSpec or Mapping[str, TermSpec] or None
@@ -1397,20 +1456,15 @@ def _function_kernel(
     Raises
     ------
     TypeError
-        If *fn* is not callable or there is no label, or as :func:`_slots_of`
-        and :func:`_probe` raise.
+        If *fn* is not callable, or as :func:`_slots_of` and :func:`_probe` raise.
     ValueError
         As :func:`_agreed_event_spec` raises.
     """
     if not callable(fn):
         raise TypeError(f"conditional_distribution: fn must be callable; got {type(fn).__name__}")
     if label is None:
-        label = getattr(fn, "__name__", None)
-    if not isinstance(label, str) or not label:
-        raise TypeError(
-            f"conditional_distribution needs a label for a {type(fn).__name__}, which has no "
-            f"__name__ to take it from; pass the label as the first argument"
-        )
+        name = getattr(fn, "__name__", None)
+        label = name if isinstance(name, str) and name.isidentifier() else DEFAULT_LABEL
     slots = _slots_of(label, fn, given_spec)
     probe = _probe(label, fn, slots)
     declaration = (
@@ -1422,10 +1476,10 @@ def _function_kernel(
 
 
 def conditional_distribution(
-    label: str | Callable[..., Distribution] | None = None,
     fn: Callable[..., Distribution] | None = None,
     /,
     *,
+    label: str | None = None,
     given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> Any:
@@ -1445,10 +1499,11 @@ def conditional_distribution(
     for each optional slot left unbound, and returns the law the call returns;
     binding fewer slots curries the kernel over the rest.
 
-    The call form takes the label first and the function second::
+    The kernel is labeled *label*, or after the function's ``__name__``, and
+    ``p`` for a lambda. The call form takes the function first::
 
         likelihood = conditional_distribution(
-            "y", lambda mu, tau: Normal("y", mu, tau), given_spec={"mu": real, "tau": scale}
+            lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec={"mu": real, "tau": scale}
         )
 
     An optional slot holds a constant of the model. In a joint, a factor that
@@ -1456,8 +1511,8 @@ def conditional_distribution(
     with the default and a model with a prior on the slot::
 
         counts = conditional_distribution(
-            "counts",
             lambda r, n0=50.0: Poisson("y", n0 * jnp.exp(r)),
+            label="counts",
             given_spec={"r": real},
         )
         fixed = counts * Normal("r", 0.0, 1.0)                           # n0 is 50
@@ -1471,17 +1526,18 @@ def conditional_distribution(
 
     Parameters
     ----------
-    label : str or callable, optional
-        The kernel's label; a function passed alone is the function, labeled
-        after its ``__name__``.
     fn : callable, optional
         The function of the given values that returns a law; without it, the
         result is a decorator.
+    label : str, optional
+        The kernel's label. Defaults to the function's ``__name__``, and to
+        ``p`` for a lambda or a callable without a name.
     given_spec : InputSpec or Mapping[str, TermSpec], optional
         The specs of some or all given slots, keyed by parameter.
     event_spec : OutputSpec or TermSpec, optional
         The event declaration, which must name the components of the returned
-        law and unify with its type.
+        law and unify with its type. A bare term spec other than a record
+        declares the returned law's one component.
 
     Returns
     -------
@@ -1491,19 +1547,23 @@ def conditional_distribution(
     Raises
     ------
     TypeError
-        If a parameter without a default declares no term spec, a parameter is
-        variadic or positional-only, or *given_spec* names a key that is not a
-        parameter; if a required slot is
+        If *fn* is a string, since the label is the keyword *label*; if *label*
+        is not a non-empty string; if a parameter without a default declares no
+        term spec, a parameter is variadic or positional-only, or *given_spec*
+        names a key that is not a parameter; if a required slot is
         neither an array nor a record of arrays, or declares free dimensions;
         or if the function returns something other than a law.
     ValueError
         If *event_spec* departs from the declaration of the returned law.
     """
-    if callable(label) and fn is None:
-        return _function_kernel(None, label, given_spec, event_spec)
-    if label is not None and not isinstance(label, str):
+    if isinstance(fn, str):
         raise TypeError(
-            f"conditional_distribution: label must be a string; got {type(label).__name__}"
+            f"conditional_distribution takes the function first and the label as the keyword "
+            f"label; got the string {fn!r} as the function"
+        )
+    if label is not None and (not isinstance(label, str) or not label):
+        raise TypeError(
+            f"conditional_distribution: label must be a non-empty string; got {label!r}"
         )
     if fn is not None:
         return _function_kernel(label, fn, given_spec, event_spec)

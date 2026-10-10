@@ -1762,7 +1762,7 @@ class TestRemoteReportTransactions:
 
     def test_second_replay_effect_failure_rolls_back_every_ledger(self):
         with workflow_run(seed=17):
-            recorded = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            recorded = sample(Normal("value", loc=0.0, scale=1.0))
         replay_state = replay_mod._validate_provenance(recorded.provenance)
         expected = replay_state.expected_events[0].managed_effect()
         unexpected = replace(
@@ -2799,7 +2799,7 @@ class TestFunctionExecutionConfig:
             )
 
         with workflow_run(seed=0):
-            result = wf(x=Normal(loc=0.0, scale=1.0, label="x"))
+            result = wf(x=Normal("x", loc=0.0, scale=1.0))
 
         assert result.num_atoms == 8
 

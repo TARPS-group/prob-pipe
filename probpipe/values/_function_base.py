@@ -21,7 +21,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -29,10 +29,11 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
+from ..core._expression import Expression, Signature
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr, type_name
+from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
@@ -833,9 +834,11 @@ class Function(Node, TrackedTerm, Annotated):
 
     ``spec`` contains only input/output declarations. ``with_label`` changes the
     function label and callable metadata; output_label and component names are
-    preserved. ``with_options`` returns a shallow copy with revised controls.
-    A Function stores only the controls set on it, so ``options`` reads every
-    other control's default when it is read.
+    preserved. ``str(f)`` returns :attr:`notation`, the label followed by the
+    parameters, as ``predict(x, y)``, and the repr keeps the label first.
+    ``with_options`` returns a shallow copy with revised controls. A Function
+    stores only the controls set on it, so ``options`` reads every other
+    control's default when it is read.
 
     The engine reads three declarations from the Function it runs (V.1): what
     each parameter accepts, the result declaration, and the realization. A
@@ -1121,12 +1124,14 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def _with_label(self, label: str) -> Self:
-        """Relabel the function and its Python names, preserving output_label and its declaration."""
-        renamed = cast(Self, TrackedTerm._with_label(self, label))
-        object.__setattr__(renamed, "__name__", label)
-        object.__setattr__(renamed, "__qualname__", label)
-        return renamed
+    def _store_expression(self, expression: Expression) -> None:
+        """Store *expression* and its label, which the function's Python names follow.
+
+        The output label and its declaration are kept.
+        """
+        super()._store_expression(expression)
+        object.__setattr__(self, "__name__", self._label)
+        object.__setattr__(self, "__qualname__", self._label)
 
     def raw(self) -> Callable[..., Any]:
         """Return the wrapped callable, or the raw evaluator of a private payload."""
@@ -1258,12 +1263,37 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _call_engine(self, *args, **kwargs)
 
+    @property
+    def notation(self) -> str:
+        """The function's label followed by its parameters, as ``predict(x, y)``, which ``str()`` returns.
+
+        The parameters are the names of :attr:`signature`, in order, joined by
+        ``", "``. No operation reads the notation.
+        """
+        return self._expression.render_notation(self._own_signature(), warn=True)
+
+    def _own_signature(self) -> Signature:
+        """The signature: the names of the parameters, in order, each default as ``name=value``."""
+        parameters = self.signature.parameters
+        defaults = tuple(
+            (name, format_default(parameter.default))
+            for name, parameter in parameters.items()
+            if parameter.default is not parameter.empty
+        )
+        return Signature(tuple(parameters), defaults=defaults)
+
+    def __str__(self) -> str:
+        """The function's :attr:`notation`, as ``predict(x, y)``."""
+        return self.notation
+
     def __repr__(self) -> str:
         """The public class, the label, the parameters, and the declarations set on the function.
 
         The result label is shown where it differs from the function's own.
         """
-        return term_repr(public_class_name(type(self)), self.label, self._repr_arguments())
+        return term_repr(
+            public_class_name(type(self)), self._displayed_label(), self._repr_arguments()
+        )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the repr shows after the label, each by name and formatted value."""

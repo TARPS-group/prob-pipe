@@ -21,6 +21,8 @@ from probpipe import (
     DistributionSpec,
     Function,
     FunctionSpec,
+    Gamma,
+    Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
@@ -122,6 +124,24 @@ class TestLabelAndProvenance:
 
         assert isinstance(law, Distribution) and law.label == "prediction"
         assert isinstance(rows, Batch) and rows.label == "prediction"
+
+    def test_a_returned_product_takes_the_output_label_as_its_label(self):
+        """The product displays by the label, and the returned object is left unlabeled."""
+        product = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
+        result = Function("predict", lambda: product)()
+
+        assert result.label == "predict"
+        assert str(result) == result.notation == "predict(a, b)"
+        assert product.notation == "Normal(a)·Gamma(b)"
+
+    def test_each_product_of_a_sweep_displays_by_its_element_label(self):
+        def predict(loc):
+            return Normal("a", loc, 1.0) * Gamma("b", 2.0, 1.0)
+
+        rows = NumericArrayBatch("rows", jnp.arange(2.0), "row", element_spec=SCALAR)
+        result = Function("predict", predict)(rows)
+
+        assert result[0].notation == "predict[row=0](a, b)"
 
     def test_provenance_records_the_function_its_dependencies_and_its_inputs(self):
         wrapped = Function("add", lambda x, y: x + y)

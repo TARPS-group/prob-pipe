@@ -13,6 +13,10 @@ A helper reads declarations and array metadata, and it reads a parameter's
 entries only when it has at most eight, so a repr raises no storage error.
 :meth:`~probpipe.core.tracked.TrackedTerm.with_provenance` interpolates a term
 into its error, which depends on that.
+
+The module also groups a label where a derived label is built from it, and
+formats the notation ``label(signature)`` that ``str()`` of a law, a kernel, or
+a function shows.
 """
 
 from __future__ import annotations
@@ -29,9 +33,13 @@ import numpy as np
 __all__ = [
     "WIDTH",
     "call_repr",
+    "format_components",
+    "format_default",
     "format_dtype",
     "format_levels",
     "format_names",
+    "format_notation",
+    "format_signature",
     "format_value",
     "mapping_repr",
     "public_class_name",
@@ -271,12 +279,19 @@ BINARY_SYMBOLS = {
     "lt": "<", "le": "<=", "eq": "==", "ne": "!=", "gt": ">", "ge": ">=",
 }  # fmt: skip
 
-#: The symbols that make a label an expression: the binary operators', of which
-#: ``|`` also reads as conditioning.
-_OPERATOR_SYMBOLS = frozenset(BINARY_SYMBOLS.values())
+#: The symbol that joins the labels of a product's factors, as in ``lik·prior``.
+PRODUCT_SYMBOL = "·"
+
+#: The symbols that make a label compound as a top-level word: the binary
+#: operators', of which ``|`` also reads as conditioning, and the ``~`` of a
+#: draw, as in ``mu ~ prior``.
+_OPERATOR_SYMBOLS = frozenset(BINARY_SYMBOLS.values()) | {"~"}
 
 #: The prefixes of the unary operators' forms that apply an operator to what follows.
 _UNARY_PREFIXES = ("-", "+", "~")
+
+#: The prefix of a score's label, as in ``log prior(mu)``.
+_SCORE_PREFIX = "log "
 
 
 def _top_level_words(label: str) -> list[str]:
@@ -296,22 +311,149 @@ def _top_level_words(label: str) -> list[str]:
     return words
 
 
-def is_expression(label: str) -> bool:
-    """Whether *label* is an expression: one of its top-level words is an operator's
-    symbol, as in ``effect + 1.0`` or ``model | y``, or it opens with a unary operator,
-    as ``-effect`` does."""
-    words = _top_level_words(label)
-    return label.startswith(_UNARY_PREFIXES) or any(word in _OPERATOR_SYMBOLS for word in words)
+def _top_level_text(label: str) -> str:
+    """The characters of *label* outside its parentheses and brackets."""
+    kept, depth = [], 0
+    for char in label:
+        if char in "([":
+            depth += 1
+        elif char in ")]" and depth:
+            depth -= 1
+        elif depth == 0:
+            kept.append(char)
+    return "".join(kept)
+
+
+def is_compound(label: str) -> bool:
+    """Whether *label* is compound, which a derived label parenthesizes.
+
+    A label is compound when one of these holds:
+
+    1. a top-level word is an operator's symbol, as in ``effect + 1.0``,
+       ``model | y``, or the draw ``mu ~ prior``;
+    2. it joins labels with ``·`` outside its parentheses and brackets, as the
+       product ``lik·prior`` does;
+    3. it opens with a unary operator, as ``-effect`` does, or with ``log``, as
+       the score ``log prior(mu)`` does.
+
+    A call such as ``prior(mu)`` is one word with no top-level symbol, so it is
+    not compound.
+    """
+    return (
+        label.startswith((*_UNARY_PREFIXES, _SCORE_PREFIX))
+        or any(word in _OPERATOR_SYMBOLS for word in _top_level_words(label))
+        or PRODUCT_SYMBOL in _top_level_text(label)
+    )
+
+
+def is_product(label: str) -> bool:
+    """Whether *label* is a product of labels: one word that joins labels with ``·``.
+
+    A product, such as ``lik·prior`` or ``lik·(model | y)``, joins a further
+    factor's label as it is, so labels join associatively.
+    """
+    return (
+        len(_top_level_words(label)) == 1
+        and PRODUCT_SYMBOL in _top_level_text(label)
+        and not label.startswith(_UNARY_PREFIXES)
+    )
 
 
 def grouped_label(label: str) -> str:
     """*label* as it reads inside a derived label, grouped so it reads as one operand.
 
-    An expression is parenthesized, so the derived label states the order of
-    evaluation. Any other label with a top-level space, such as a user's label
-    ``other effect``, is bracketed, so it reads as one label, and a label with
-    none is used as it is.
+    A compound label (:func:`is_compound`) is parenthesized, so the derived
+    label states the order of evaluation, as in ``(x·y)[sample=0:2]``. Any
+    other label with a top-level space, such as a user's label ``other
+    effect``, is bracketed, so it reads as one label. A label of one word, a
+    call such as ``prior(mu)`` included, is used as it is.
     """
-    if is_expression(label):
+    if is_compound(label):
         return f"({label})"
     return f"[{label}]" if len(_top_level_words(label)) > 1 else label
+
+
+def format_signature(
+    components: Iterable[str],
+    given: Iterable[str] = (),
+    fixed: Iterable[str] = (),
+    defaults: Mapping[str, str] | None = None,
+) -> str:
+    """The signature of a law, a kernel, or a function, which states what it is over.
+
+    Parameters
+    ----------
+    components : iterable of str
+        A law's or a kernel's event components, or a function's parameters, in
+        declaration order.
+    given : iterable of str, optional
+        A kernel's given slots, in declaration order.
+    fixed : iterable of str, optional
+        The paths fixed at given values.
+    defaults : Mapping[str, str], optional
+        The formatted default of each given slot or parameter that has one,
+        as :func:`format_default` gives it.
+
+    Returns
+    -------
+    str
+        The components joined by ``", "``, then `` | `` and the given slots when
+        there are any, then ``; `` and the fixed paths when there are any, as
+        ``y, mu``, ``y | beta``, or ``y | sigma; beta``. A name with a default
+        reads ``name=value``, as ``y | K, n0=50.0``.
+    """
+    defaults = defaults or {}
+
+    def entry(name: str) -> str:
+        return f"{name}={defaults[name]}" if name in defaults else name
+
+    text = ", ".join(entry(name) for name in components)
+    given, fixed = list(given), list(fixed)
+    if given:
+        text = f"{text} | {', '.join(entry(name) for name in given)}"
+    if fixed:
+        text = f"{text}; {', '.join(fixed)}"
+    return text
+
+
+def format_default(value: Any) -> str:
+    """The default of a given slot or a parameter as a signature shows it.
+
+    A number, a string, ``None``, or an array of no axes reads as its value,
+    as ``50.0``, and any other value as ``…``, since its entries would not
+    read as one name's value.
+    """
+    if isinstance(value, bool | int | float | complex | str | type(None)):
+        return repr(value)
+    if getattr(value, "shape", None) == () and getattr(value, "dtype", None) is not None:
+        return format_value(value)
+    return "…"
+
+
+def format_components(components: Iterable[str]) -> str:
+    """Several components as one label: one as it is, as ``mu``, and several in parentheses, as ``(y, mu)``.
+
+    A draw's components read this way before its ``~``, and the atoms of a
+    posterior are labeled this way by its components.
+
+    Parameters
+    ----------
+    components : iterable of str
+        A law's event components, in declaration order.
+
+    Returns
+    -------
+    str
+        The one component, or the components joined by ``", "`` in parentheses.
+    """
+    names = list(components)
+    return names[0] if len(names) == 1 else f"({', '.join(names)})"
+
+
+def format_notation(label: str, signature: str) -> str:
+    """The notation ``label(signature)``, with *label* grouped as :func:`grouped_label` groups it.
+
+    A label of one word is used as it is, as in ``prior(mu)``, and a product
+    is parenthesized, as in ``(lik·prior)(y)``, so the call applies to all of it.
+    """
+    return f"{grouped_label(label)}({signature})"

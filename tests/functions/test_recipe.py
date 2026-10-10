@@ -76,7 +76,7 @@ def _add(row, noise):
 
 
 def _draw_value(value):
-    return sample(Normal(loc=value, scale=1.0, label="draw"))
+    return sample(Normal("draw", loc=value, scale=1.0))
 
 
 _INNER_DRAW = Function(label="_draw_value", fn=_draw_value, dispatch="sequential")
@@ -158,7 +158,7 @@ class TestWorkflowRecipeRecording:
             n_broadcast_samples=11,
         )
         with workflow_run(seed=7):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         recipe = _randomness(result)
         assert recipe["schema"] == "probpipe.rng_recipe/v1"
@@ -196,8 +196,8 @@ class TestWorkflowRecipeRecording:
             return_value=entropy,
         ) as urandom:
             with workflow_run():
-                anonymous = workflow(value=Normal(loc=0.0, scale=1.0, label="x"))
-            ephemeral = workflow(value=Normal(loc=0.0, scale=1.0, label="x"))
+                anonymous = workflow(value=Normal("x", loc=0.0, scale=1.0))
+            ephemeral = workflow(value=Normal("x", loc=0.0, scale=1.0))
 
         assert _randomness(anonymous)["root_words"] == [0x01234567, 0x89ABCDEF]
         assert _randomness(ephemeral)["root_words"] == [0x01234567, 0x89ABCDEF]
@@ -210,14 +210,16 @@ class TestWorkflowRecipeRecording:
     def test_deterministic_and_exact_calls_have_no_recipe(self):
         deterministic = Function(label="_identity", fn=_identity)(value=3.0)
         exact_workflow = Function(label="_identity", fn=_identity, n_broadcast_samples=8)
-        exact = exact_workflow(value=EmpiricalDistribution("exact", jnp.asarray([1.0, 2.0])))
+        exact = exact_workflow(
+            value=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="exact")
+        )
 
         assert deterministic.provenance.controls == {}
         assert exact.provenance.controls == {}
 
     def test_direct_automatic_sample_recipe_remains_standalone(self):
         with workflow_run(seed=4):
-            result = sample(Normal(loc=0.0, scale=1.0, label="x"))
+            result = sample(Normal("x", loc=0.0, scale=1.0))
 
         replay = _replay_controls(result)
         assert replay["plan"]["canonical_fields"]["kind"] == "direct_operation"
@@ -228,8 +230,8 @@ class TestWorkflowRecipeRecording:
         workflow = Function(label="_difference", fn=_difference, n_broadcast_samples=5)
         with workflow_run(seed=9):
             result = workflow(
-                left=EmpiricalDistribution("left", jnp.asarray([1.0, 2.0])),
-                right=Normal(loc=0.0, scale=1.0, label="right"),
+                left=EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="left"),
+                right=Normal("right", loc=0.0, scale=1.0),
             )
 
         recipe = _randomness(result)
@@ -244,7 +246,7 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=12):
             result = workflow(
                 row=_record_batch(),
-                noise=Normal(loc=0.0, scale=1.0, label="noise"),
+                noise=Normal("noise", loc=0.0, scale=1.0),
             )
 
         recipe = _randomness(result)
@@ -361,7 +363,7 @@ class TestWorkflowRecipeRecording:
             n_broadcast_samples=5,
         )
         with workflow_run(seed=21):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         replay = _replay_controls(result)
         randomness = _randomness(result)
@@ -376,7 +378,7 @@ class TestWorkflowRecipeRecording:
             label="_identity", fn=_identity, dispatch="thread", n_broadcast_samples=5
         )
         with workflow_run(seed=5):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         payload = result.provenance.to_dict()
         restored = Provenance.from_dict(json.loads(json.dumps(payload)))
@@ -398,7 +400,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(label="_identity", fn=_identity, n_broadcast_samples=5)
 
         with workflow_run(seed=7):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert result.provenance is None
 
@@ -424,7 +426,7 @@ class TestWorkflowRecipeRecording:
         )
 
         with workflow_run(seed=7):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert (result.provenance is not None) is expect_provenance
         if result.provenance is not None:
@@ -437,7 +439,7 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=7):
             probpipe.provenance_config.mode = ProvenanceMode.OFF
             with workflow_run(seed=8):
-                result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+                result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert result.provenance is not None
         assert result.provenance.controls["replay"]["callable"]["supported"] is True
@@ -450,7 +452,7 @@ class TestWorkflowRecipeRecording:
         def controls_for(mode):
             probpipe.provenance_config.mode = mode
             with workflow_run(seed=7):
-                result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+                result = workflow(value=Normal("value", loc=0.0, scale=1.0))
             return result.provenance.controls
 
         assert controls_for(ProvenanceMode.FULL) == controls_for(ProvenanceMode.LIGHTWEIGHT)
@@ -526,7 +528,7 @@ class TestWorkflowCallableAnchor:
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=17):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         with (
@@ -537,7 +539,7 @@ class TestWorkflowCallableAnchor:
             ) as capture,
             replay_run(original.provenance),
         ):
-            replayed = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         assert jnp.array_equal(np.asarray(replayed.atoms), np.asarray(original.atoms))
         assert replayed.provenance is None
@@ -600,7 +602,7 @@ class TestWorkflowCallableAnchor:
             for _ in range(5):
                 workflow(value=1.0)
             for _ in range(3):
-                sample(Normal(loc=0.0, scale=1.0, label="value"))
+                sample(Normal("value", loc=0.0, scale=1.0))
 
         assert reads == dict.fromkeys(expected_paths, 1)
 
@@ -655,7 +657,7 @@ class TestWorkflowCallableAnchor:
 
         with workflow_run(seed=19):
             result = workflow(
-                value=Normal(loc=0.0, scale=1.0, label="value"),
+                value=Normal("value", loc=0.0, scale=1.0),
                 offset=1.25,
             )
 
@@ -708,9 +710,9 @@ class TestWorkflowCallableAnchor:
         )
 
         with workflow_run(seed=4):
-            plain_result = plain(value=Normal(loc=0.0, scale=1.0, label="value"))
+            plain_result = plain(value=Normal("value", loc=0.0, scale=1.0))
         with workflow_run(seed=4):
-            declared_result = declared(value=Normal(loc=0.0, scale=1.0, label="value"))
+            declared_result = declared(value=Normal("value", loc=0.0, scale=1.0))
 
         assert (
             _replay_controls(plain_result)["callable"]["sha256"]
@@ -738,7 +740,7 @@ class TestWorkflowCallableAnchor:
         )
 
         with workflow_run(seed=6):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
@@ -762,7 +764,7 @@ class TestWorkflowCallableAnchor:
         workflow = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
 
         with workflow_run(seed=6):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False
@@ -775,7 +777,7 @@ class TestWorkflowCallableAnchor:
         )
 
         with workflow_run(seed=6):
-            result = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            result = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         callable_anchor = _replay_controls(result)["callable"]
         assert callable_anchor["supported"] is False

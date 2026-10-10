@@ -23,6 +23,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericArraySpec,
     Opaque,
+    OutputSpec,
     ResolutionError,
     SupportsSampling,
     function,
@@ -70,7 +71,7 @@ class _UnsampledView(Distribution):
     """A view that cannot sample itself, over the law it views."""
 
     def __init__(self, parent: Distribution) -> None:
-        super().__init__("view", SCALAR)
+        super().__init__("view", OutputSpec(view=SCALAR))
         object.__setattr__(self, "_viewed", parent)
 
     @property
@@ -134,7 +135,9 @@ class TestTheRegistry:
     def test_the_sampling_lift_declines_a_law_that_cannot_sample(self):
         wrapped = Function("identity", _identity)
 
-        info = evaluation_rule_registry.check(wrapped, _Unsampled("bare", SCALAR), parameter="x")
+        info = evaluation_rule_registry.check(
+            wrapped, _Unsampled("bare", OutputSpec(bare=SCALAR)), parameter="x"
+        )
 
         assert info.feasible is False
         assert "SupportsSampling" in info.description
@@ -159,7 +162,7 @@ class TestTheRegistry:
         assert info.method_name == "sampling_lift"
 
     def test_a_view_over_a_law_that_cannot_sample_is_declined(self):
-        view = _UnsampledView(_Unsampled("bare", SCALAR))
+        view = _UnsampledView(_Unsampled("bare", OutputSpec(bare=SCALAR)))
 
         info = evaluation_rule_registry.check(Function("identity", _identity), view, parameter="x")
 
@@ -316,7 +319,7 @@ class TestTheDirectCall:
         def identity(x):
             return x
 
-        error = error_of(lambda: identity(_Unsampled("bare", SCALAR)))
+        error = error_of(lambda: identity(_Unsampled("bare", OutputSpec(bare=SCALAR))))
 
         assert isinstance(error, ResolutionError)
         assert "SupportsSampling" in str(error)

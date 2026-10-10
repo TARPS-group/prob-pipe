@@ -9,6 +9,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A law's label is optional, and the component of its event is required.**
+  A family takes the component first and the label as the keyword `label=`,
+  which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps
+  its syntax and is labeled `Normal` over the component `mu`, where it was
+  labeled `mu`, and displays as `Normal(mu)`. Pass `label=` to name the law,
+  as `Normal("mu", 0.0, 1.0, label="prior")`, which replaces
+  `Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))`; an
+  `event_spec` that names another component than the first argument raises
+  `ValueError`. The other catalog families follow: `TFPDistribution`,
+  `BootstrapDistribution`, `BootstrapReplicateDistribution`,
+  `BijectorTransformedDistribution`, `GaussianProcess`,
+  `LinearBasisFunction`, `RandomFunction`, `RandomMeasure`, and
+  `glm_likelihood` take the component first, and `GLMFamily.build` takes it
+  in place of the label. Laws and kernels without a family default to the
+  label `p`, and the calls change:
+
+  | Before | After |
+  |---|---|
+  | `EmpiricalDistribution("theta", draws)` | `EmpiricalDistribution(draws, component="theta")` |
+  | `EmpiricalDistribution("post", record_atoms)` | `EmpiricalDistribution(record_atoms, label="post")` |
+  | `KDEDistribution("x", atoms, 0.5)` | `KDEDistribution(atoms, 0.5, component="x")` |
+  | `distribution("z", sample=f, event_spec=NumericArraySpec(()))` | `distribution(sample=f, event_spec=NumericArraySpec(()), component="z")` |
+  | `conditional_distribution("lik", fn, given_spec=...)` | `conditional_distribution(fn, label="lik", given_spec=...)` |
+  | `MixtureDistribution("mix", laws, weights)` | `MixtureDistribution(laws, weights, label="mix")` |
+  | `PyMCModel("model", model_fn)` | `PyMCModel(model_fn, label="model")` |
+  | `StanModel("model", "model.stan", data=data)` | `StanModel("model.stan", data=data, label="model")` |
+
+  `EmpiricalDistribution` and `KDEDistribution` require `component` for atoms
+  that are not records and refuse it for record atoms, whose fields are the
+  components, and array atoms are labeled by the component.
+  `conditional_distribution` labels a kernel after its function's
+  `__name__`, and `p` for a lambda. A subclass of `Distribution` or
+  `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
+  as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
+  a `RecordSpec` no longer takes the label as its component. The repr shows
+  the label and then the component, as
+  `Normal('prior', component='mu', loc=0.0, scale=1.0)`, and leaves out a
+  label equal to the constructor's default, the class name or `p`, as
+  `Normal(component='mu', loc=0.0, scale=1.0)`; a family
+  pickled before this change loads to the same law. Lightweight provenance
+  keys a root parent by its identity, so two root laws under one default
+  label stay two ancestors.
+- **A value computed from a law is labeled by that value in probability
+  notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
+  `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled
+  `E[(y, mu) ~ model]`, and `log_prob(prior, x)` is labeled `log prior(mu)`,
+  where each was labeled by its law, as `prior` or `model`. A draw from a
+  posterior lists the paths the posterior holds fixed, as `mu ~ model; y`.
+  `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
+  `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
+  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]`. A batch of draws has
+  the label of one draw, so its element is `(mu ~ prior)[sample=0]`, and a
+  value computed from a batch of laws reads the batch as one law under its
+  label, as `E[effect ~ schools]`. The law of a function lifted over laws
+  keeps the function's label and prints as the function applied to draws of
+  its inputs, as `f(beta ~ model; y)`, and its mean is labeled
+  `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
+  a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
+  as `x + (-1.0)`. Replace a comparison of such a result's label with
+  its law's label by one with the new label, or set a label with
+  `with_label`.
+- **A score's component names the scored components.** `log_prob(d, x)` for a
+  law over `mu` declares its result under the component `log_prob(mu)`, and
+  for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
+  `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
+  as `prob(mu)`. The law of an operation lifted over a law, such as
+  `log_prob(prior, q)` for a law `q` of values, names its component by the
+  operation, as `log_prob`, where it took the label of the scored law. Replace a
+  lookup of the component `log_prob` by one of `log_prob(mu)`.
+- **The atoms of a posterior are labeled by its components.** The atoms of the
+  empirical law that `condition_on` or an inference method returns are labeled
+  by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
+  `posterior`, so an atom reads as `(K, r, phi)[chain=0, draw=7]`. The atoms of
+  an `EmpiricalDistribution` a user constructs keep the label they were given.
+- **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
+  and a batch of either flatten with their spec alone as the static data, where
+  the label rode with it, so two terms that differ only in their labels have
+  equal treedefs and share a `jax.jit` compilation. A term rebuilt from its
+  leaves, as `jax.tree_util.tree_map` returns one, is labeled by its class, as
+  `NumericArray` or `RecordBatch`, where it kept the label it had; a
+  `Function` call still labels its result by the function's output label.
+  Relabel a rebuilt term with `with_label`.
+- **A map of a Gaussian random function keeps its label, and a sum is labeled
+  by its expression.** `A @ f`, `f + b`, and `alpha * f` are labeled `f`, where
+  they were labeled `linear_map(f)`, `shift(f)`, and `scale(f)`, and `f + g` is
+  labeled `f + g`, where it was `sum(f,g)`.
+- **A conditioned law keeps the label of the law it conditions, and prints the
+  paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
+  where it was `model | y`, and it prints as `model(mu; y)`: its signature
+  lists the fixed paths after `;`, after any paths the conditioned law held
+  fixed. A kernel applied at some of its given slots prints the other slots
+  as given, as `glm(y | sigma; beta)`. Fixing the whole events of upstream
+  factors still gives the labels of the factors left, so
+  `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
+  `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
+  inference method's included, and a marginal, a view, and `raw()` keep them.
+  The repr shows them after the component, as
+  `Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)` or
+  `EmpiricalDistribution('model', fixed=('y',), atoms=...)`.
+  The posterior an inference method returns, which the result's provenance
+  keeps as a parent with the method's own record, is recorded under the
+  result's label, as `model`, where it was recorded as `posterior`.
+  Replace a comparison with a label such as `"model | y"` by one with
+  `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
+- **`raw()` of a field view returns the raw form of the marginal at its path.**
+  `d[p].raw()` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw()` for a `Normal` prior over `mu` is
+  the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
+  labeled as `marginal(d, p)` labels it, where it was always a detached law
+  under the view's label. A parameter annotated with a TFP class, such as
+  `tfd.Distribution`, therefore receives the TFP marginal for each view of a
+  swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
+- **A field view is labeled as the marginal at its path, and prints as it.** A
+  view at the whole event of one factor takes the factor's label, so
+  `model["mu"]` for `model = (lik * prior).with_label("model")` is labeled
+  `prior` and prints as `prior(mu)`, where it was labeled `model`. A view of the
+  whole events of several factors takes their joined label and prints factor by
+  factor, as `model[("b", "a")]` prints as `b(b)·a(a)`. Any other view keeps its
+  parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
+  view names `FieldView` and the path. Replace a comparison of such a view's
+  label with its parent's label by one with the factor's label.
 - **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
   maps each level's name to the shape of its axes, outermost first, as in
   `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
@@ -1208,6 +1329,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`notation_config.max_depth` sets how many nested levels a label or a
+  notation shows.** A label derived from other terms, such as
+  `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
+  value or law they are computed from. A rendering shows at most
+  `notation_config.max_depth` levels, 8 by default or the value of the
+  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
+  number of levels a stored expression keeps. A part nested deeper
+  shows as its label, the name of a law or a function, or as `…` for a value,
+  so a label derived through a long loop of operations stays short. Showing a
+  term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` that
+  names the setting when what they show has a collapsed part.
 - **A single int is a shape of one axis wherever a shape is taken.**
   `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
   `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
@@ -2130,6 +2262,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A law, a kernel, and a function print as their notation, and a derived
+  label groups a product.** `str()` of a law, a kernel, or a function returns
+  its new `notation` property: its label followed by its signature, which lists
+  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
+  kernel, and `predict(x, y)` for a function. A given slot or a parameter
+  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
+  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
+  A slot with a default stays given once conditioning binds the others, so
+  `condition_on(counts, {"K": k, "r": q})` prints as
+  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
+  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
+  `with_label` or by the `FactoredDistribution` constructor prints by that
+  label, as `model(y, mu)`. A label built from another label parenthesizes a
+  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
+  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
+  as `[my draws][draw=1]`. Labels still join associatively, so
+  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model * d` prints as
+  `model(y, mu)·d(z)`. A marginal over the whole
+  events of several factors prints factor by factor, in the order the paths
+  name them where a product can take that order, so
+  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
+  where it was labeled `a·b`. A product that a function returns prints by the
+  function's output label, as `predict(y, mu)`. A batch of laws prints as the
+  notation of one law under its label, `over`, and its levels, as
+  `schools(effect) over school`, and a batch that a function lifted over a
+  law and swept over a batch gives prints as the call, as
+  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
+  position, as `effect_of[tau=3]`, and prints as its row's call, as
+  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
+  notation, as `log_prob(g(g), q ~ q)`.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`

@@ -16,6 +16,7 @@ import jax.numpy as jnp
 from .._weights import Weights
 from ..core._dispatch import Feasibility
 from ..core._numeric_record_batch import NumericRecordBatch
+from ..core._repr import format_components
 from ..core._specs import OutputSpec
 from ..distributions._capabilities import SupportsConditionalLogProb
 from ..distributions._conditional import ConditionalDistribution
@@ -182,11 +183,14 @@ class EmpiricalReweightingMethod(InferenceMethod):
                 f"so the posterior is undefined"
             )
         weights = Weights(log_weights=log_weights)
+        atoms = _target_atoms(prior, target.event_spec)
+        # The posterior's atoms are labeled by its components, as an inference
+        # method's are.
+        atoms_label = format_components(target.event_spec.components)
+        if atoms.label != atoms_label:
+            atoms = atoms.with_label(atoms_label)
         result = EmpiricalDistribution(
-            "posterior",
-            _target_atoms(prior, target.event_spec),
-            weights,
-            event_spec=target.event_spec,
+            atoms, weights, label="posterior", event_spec=target.event_spec
         )
         return _record_run(
             result,

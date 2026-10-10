@@ -58,6 +58,7 @@ class Opaque(TrackedTerm, Annotated):
 
     __slots__ = (
         "_annotations",
+        "_expression",
         "_label",
         "_provenance",
         "_spec",
@@ -120,7 +121,7 @@ class Opaque(TrackedTerm, Annotated):
 
     def __repr__(self) -> str:
         """The label, then the declared type and the metadata where the spec sets them."""
-        return term_repr("Opaque", self.label, self._spec._repr_arguments())
+        return term_repr("Opaque", self._displayed_label(), self._spec._repr_arguments())
 
     def __str__(self) -> str:
         """The wrapped value's string, as ``print`` and an f-string show the value."""

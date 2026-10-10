@@ -25,6 +25,7 @@ except ImportError:
     task = flow = None
 
 from ..core._batch import Batch
+from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _ObjectBatch
@@ -65,6 +66,7 @@ def execute_sweep(
     ],
     function_name: str,
     output_label: str | None = None,
+    output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
     include_inputs: bool = False,
     output_template: RecordSpec | None = None,
@@ -76,7 +78,9 @@ def execute_sweep(
     """Execute pure or nested sweep regimes for one workflow call.
 
     *route* is the selected route's name and exactness, which provenance
-    records.
+    records. The aggregate is labeled *output_label* and carries
+    *output_expression*, the expression the call gives its result, when one
+    is given.
     """
     if plan.regime not in ("sweep", "nested"):
         raise ValueError(f"execute_sweep requires a sweep plan; got {plan.regime!r}")
@@ -144,6 +148,7 @@ def execute_sweep(
             broadcast_mode=_result.BROADCAST_STACK,
             provenance=provenance,
             field_name=output_label,
+            expression=output_expression,
         )
 
     if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
@@ -185,6 +190,7 @@ def execute_sweep(
         broadcast_mode=_result.BROADCAST_NESTED,
         provenance=provenance,
         field_name=output_label,
+        expression=output_expression,
     )
 
 

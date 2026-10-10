@@ -29,6 +29,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 import probpipe
 from probpipe import (
@@ -72,6 +73,7 @@ from probpipe.distributions._capabilities import (
     _capability_subclass,
     _marginal_claims,
 )
+from probpipe.distributions._distribution import _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.families import Cauchy, HalfCauchy, StudentT
 from probpipe.linalg import DenseLinOp, LinOp
@@ -389,7 +391,9 @@ def _joint_gaussian() -> Distribution:
 
 def _dependent_joint() -> Distribution:
     """The joint ``p(y | beta) p(beta)``, whose marginal at ``y`` has no closed form."""
-    return _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal("beta", 0.0, 1.0)
+    return _Kernel("likelihood", {"beta": _REAL}, OutputSpec(y=_REAL)) * Normal(
+        "beta", 0.0, 1.0, label="beta"
+    )
 
 
 # -- The derivation table -----------------------------------------------------
@@ -776,7 +780,9 @@ class TestCapabilityDerivation:
         assert parent.report_calls == ["model/theta/mu"]
 
     def test_a_joint_reports_the_claims_of_the_factors_a_marginal_keeps(self):
-        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", jnp.array([0.0, 1.0, 3.0]))
+        joint = Normal("a", 0.0, 1.0) * EmpiricalDistribution(
+            jnp.array([0.0, 1.0, 3.0]), component="b"
+        )
         assert _claimed(joint["a"]) >= _DENSITIES
         assert not _DENSITIES & _claimed(joint["b"])
         assert SupportsSampling in _claimed(joint["b"])
@@ -1015,14 +1021,14 @@ class TestDerivedBehavior:
             "row",
             element_spec=RecordSpec(b=(2,), a=()),
         )
-        parent = EmpiricalDistribution("post", atoms)
+        parent = EmpiricalDistribution(atoms, label="post")
         quantiles = FieldView(parent, "a")._quantile(q)
         assert jnp.shape(quantiles) == shape
-        expected = EmpiricalDistribution("a", jnp.array([3.0, 1.0, 2.0]))._quantile(q)
+        expected = EmpiricalDistribution(jnp.array([3.0, 1.0, 2.0]), component="a")._quantile(q)
         assert jnp.allclose(quantiles, expected)
 
     def test_a_selection_of_a_whole_array_keeps_every_level(self):
-        parent = EmpiricalDistribution("theta", jnp.array([4.0, 1.0, 3.0, 2.0]))
+        parent = EmpiricalDistribution(jnp.array([4.0, 1.0, 3.0, 2.0]), component="theta")
         levels = jnp.array([0.25, 0.5, 1.0])
         quantiles = FieldView(parent, ("theta",))._quantile(levels)
         assert list(quantiles) == ["theta"]
@@ -1036,7 +1042,7 @@ class TestDerivedBehavior:
             "row",
             element_spec=RecordSpec(u=(), v=()),
         )
-        parent = EmpiricalDistribution("e", atoms)
+        parent = EmpiricalDistribution(atoms, label="e")
         levels = jnp.array([0.25, 0.5])
         quantiles = FieldView(parent, "v")._quantile(levels)
         assert quantiles.shape == (2,)
@@ -1207,13 +1213,22 @@ class TestDerivedBehavior:
             FieldView(parent, "model/theta/tau")._condition_on({"tau": jnp.zeros(2)})
         assert parent.given_calls == []
 
-    def test_the_raw_form_of_a_view_is_the_detached_marginal(self):
+    def test_the_raw_form_of_a_view_is_the_backend_object_of_the_marginal(self):
         parent = _UnguardedMarginalLaw("parent", _EVENT)
+        raw = FieldView(parent, "model/theta/mu").raw()
+        assert parent.marginal_calls == ["model/theta/mu"]
+        assert isinstance(raw, tfd.Normal)
+
+    def test_the_raw_form_of_a_view_is_the_detached_marginal_without_a_backend(self):
+        parent = _UnguardedMarginalLaw("parent", _EVENT, scores=False)
         view = FieldView(parent, "model/theta/mu")
         raw = view.raw()
         assert parent.marginal_calls == ["model/theta/mu"]
         assert not isinstance(raw, FieldView)
-        assert (raw.label, raw.spec, raw.provenance) == (view.label, view.spec, None)
+        # The detached marginal carries the view's expression, whatever label the
+        # double gives its marginal.
+        assert (raw.label, raw.spec, raw.provenance) == ("parent", view.spec, None)
+        assert raw.notation == view.notation == "parent(mu)"
 
 
 class TestTheViewOfAWeightedLaw:
@@ -1245,14 +1260,191 @@ class TestTheViewOfAWeightedLaw:
         assert float(probpipe.variance(view)) == pytest.approx(1.04)
 
     def test_a_weighted_record_empirical_law(self):
-        view = EmpiricalDistribution("d", self._record_atoms(), self._WEIGHTS)["a"]
+        view = EmpiricalDistribution(self._record_atoms(), self._WEIGHTS, label="d")["a"]
         assert float(probpipe.mean(view)) == pytest.approx(0.6)
         assert float(probpipe.variance(view)) == pytest.approx(1.04)
 
     def test_a_weighted_record_kde(self):
         # A KDE's mean is its atoms' weighted mean, whatever the bandwidth.
-        law = KDEDistribution("kde", self._record_atoms(), weights=self._WEIGHTS)
+        law = KDEDistribution(self._record_atoms(), weights=self._WEIGHTS, label="kde")
         assert float(probpipe.mean(law["a"])) == pytest.approx(0.6)
+
+
+def _with_fixed_paths(term: Any, *paths: str) -> Any:
+    """*term* holding *paths* fixed, as conditioning on them records."""
+    term._store_expression(term._expression.with_fixed(paths))
+    return term
+
+
+class TestNotation:
+    """A view reads as the detached marginal at its path: its label followed by its components."""
+
+    def test_a_view_reads_by_its_parents_label_and_its_component(self):
+        model = _dependent_joint().with_label("model")
+        assert str(model["y"]) == model["y"].notation == "model(y)"
+
+    def test_a_view_of_a_nested_path_reads_by_the_final_segment(self):
+        assert FieldView(_Law("parent", _EVENT), "model/theta").notation == "parent(theta)"
+
+    def test_a_selection_reads_by_its_components_in_order(self):
+        view = FieldView(_Law("parent", _EVENT), ("y", "model/theta"))
+        assert view.notation == "parent(y, theta)"
+
+    def test_a_view_of_an_unlabeled_product_groups_its_label(self):
+        assert _dependent_joint()["y"].notation == "(likelihood·beta)(y)"
+
+    def test_a_view_keeps_the_paths_its_parent_holds_fixed(self):
+        parent = _with_fixed_paths(_Law("model", _EVENT), "obs")
+        view = parent["y"]
+        assert _fixed_paths(view) == ("obs",)
+        assert view.notation == "model(y; obs)"
+
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(lambda view: view["model/theta/mu"], id="sub-view"),
+            pytest.param(lambda view: view.with_label("other"), id="with_label"),
+            pytest.param(lambda view: view.with_dim_names(n="m"), id="with_dim_names"),
+        ],
+    )
+    def test_a_view_derived_from_a_view_keeps_the_fixed_paths(self, derive):
+        parent = _with_fixed_paths(_Law("model", _EVENT), "obs")
+        assert _fixed_paths(derive(parent["model"])) == ("obs",)
+
+    def test_the_detached_marginal_keeps_the_fixed_paths(self):
+        joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
+            jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
+        )
+        parent = _with_fixed_paths(joint.with_label("model"), "obs")
+        detached = parent["b"].raw()
+        assert _fixed_paths(detached) == ("obs",)
+        assert detached.notation == "b(b; obs)"
+
+    def test_a_view_at_a_whole_factor_displays_as_the_factor(self):
+        model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
+        view, detached = model["mu"], marginal(model, "mu")
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert (view.label, view.notation) == ("prior", "prior(mu)")
+
+    @pytest.mark.parametrize(
+        ("paths", "label", "notation"),
+        [
+            pytest.param(("a", "b"), "a·b", "a(a)·b(b)", id="declaration-order"),
+            pytest.param(("b", "a"), "b·a", "b(b)·a(a)", id="selection-order"),
+        ],
+    )
+    def test_a_view_of_several_whole_factors_displays_factor_by_factor(
+        self, paths, label, notation
+    ):
+        model = (
+            Normal("a", 0.0, 1.0, label="a")
+            * Normal("b", 0.0, 1.0, label="b")
+            * Normal("c", 0.0, 1.0, label="c")
+        ).with_label("model")
+        view, detached = model[paths], marginal(model, paths)
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert (view.label, view.notation) == (label, notation)
+
+    def test_a_selection_no_product_can_order_displays_by_its_joined_label(self):
+        """``lik`` conditions on ``mu``, so no product lists ``prior`` first."""
+        model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
+        view, detached = model[("mu", "y")], marginal(model, ("mu", "y"))
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert view.notation == "(lik·prior)(mu, y)"
+
+    def test_a_view_at_part_of_a_factor_keeps_its_parents_label(self):
+        atoms = NumericRecordBatch(
+            "atoms",
+            {"u": jnp.array([0.0, 1.0]), "v": jnp.array([2.0, 3.0])},
+            "obs",
+            element_spec=NumericRecordSpec(u=(), v=()),
+        )
+        model = (
+            EmpiricalDistribution(atoms, label="pair") * Normal("a", 0.0, 1.0, label="a")
+        ).with_label("model")
+        view, detached = model["u"], marginal(model, "u")
+        assert (view.label, view.notation) == (detached.label, detached.notation)
+        assert view.notation == "model(u)"
+
+    def test_a_view_of_a_view_displays_as_the_marginal_of_the_view(self):
+        model = (
+            Normal("a", 0.0, 1.0, label="a")
+            * Normal("b", 0.0, 1.0, label="b")
+            * Normal("c", 0.0, 1.0, label="c")
+        ).with_label("model")
+        selection = model[("b", "a")]
+        for key, notation in [("a", "a(a)"), (("a", "b"), "a(a)·b(b)")]:
+            view, detached = selection[key], marginal(selection, key)
+            assert (view.label, view.notation) == (detached.label, detached.notation)
+            assert view.notation == notation == model[key].notation
+
+    def test_a_sub_view_off_the_factors_keeps_the_label_of_the_view(self):
+        parent = _Law("parent", _EVENT)
+        view = parent["model"].with_label("theta")
+        assert view["model/theta/mu"].notation == "theta(mu)"
+
+    def test_a_relabeled_view_of_several_factors_displays_by_its_label(self):
+        model = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
+        view = model[("a", "b")].with_label("pair")
+        assert view.notation == "pair(a, b)"
+        assert marginal(view, ("a", "b")).notation == "pair(a, b)"
+
+    def test_a_view_of_several_factors_holding_fixed_paths_lists_them(self):
+        model = _with_fixed_paths(
+            (Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")), "obs"
+        )
+        view, detached = model[("a", "b")], marginal(model, ("a", "b"))
+        assert view.notation == detached.notation == "(a·b)(a, b; obs)"
+
+    def test_a_view_at_a_factor_holding_fixed_paths_holds_them_first(self):
+        factor = _with_fixed_paths(_prior(), "obs")
+        model = _with_fixed_paths(
+            (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * factor).with_label("model"),
+            "z",
+        )
+        view, detached = model["mu"], marginal(model, "mu")
+        assert _fixed_paths(view) == _fixed_paths(detached) == ("obs", "z")
+        assert view.notation == detached.notation == "prior(mu; obs, z)"
+
+    def test_a_view_and_the_marginal_of_a_law_without_factors_share_a_notation(self):
+        atoms = NumericRecordBatch(
+            "atoms",
+            {"y": jnp.array([0.0, 1.0]), "mu": jnp.array([2.0, 3.0])},
+            "obs",
+            element_spec=NumericRecordSpec(y=(), mu=()),
+        )
+        model = EmpiricalDistribution(atoms, label="model")
+        assert model["y"].notation == marginal(model, "y").notation == "model(y)"
+
+
+def _prior() -> Distribution:
+    """``prior``, a standard normal law over ``mu``."""
+    return Normal("mu", 0.0, 1.0, label="prior")
+
+
+class TestTheRawFormOfAView:
+    """A view's ``raw()`` is the raw form of its parent's marginal at the path."""
+
+    def test_a_view_at_a_tfp_factor_gives_the_tfp_distribution(self):
+        model = (_Kernel("lik", {"mu": _REAL}, OutputSpec(y=_REAL)) * _prior()).with_label("model")
+        raw = model["mu"].raw()
+        assert isinstance(raw, tfd.Normal)
+        assert (float(raw.loc), float(raw.scale)) == (0.0, 1.0)
+
+    def test_a_view_of_a_gaussian_joint_gives_the_tfp_marginal_of_the_factor(self):
+        raw = _joint_gaussian()["y"].raw()
+        assert isinstance(raw, tfd.MultivariateNormalLinearOperator)
+        assert jnp.allclose(raw.mean(), _MEAN[1:])
+
+    def test_a_view_of_a_law_without_a_backend_gives_the_detached_marginal(self):
+        joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
+            jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
+        )
+        view = joint.with_label("model")["b"]
+        raw = view.raw()
+        assert isinstance(raw, EmpiricalDistribution) and not isinstance(raw, FieldView)
+        assert (raw.notation, raw.provenance) == ("b(b)", None)
+        assert raw.notation == marginal(joint.with_label("model"), "b").notation
 
 
 class TestSelections:

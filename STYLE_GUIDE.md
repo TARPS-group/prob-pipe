@@ -693,7 +693,7 @@ Define reusable fixtures at module scope:
 ```python
 @pytest.fixture
 def normal():
-    return Normal(loc=2.0, scale=0.5, label="x")
+    return Normal("x", loc=2.0, scale=0.5)
 ```
 
 Use `@pytest.fixture(params=...)` for parametrized testing across

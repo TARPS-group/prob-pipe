@@ -841,8 +841,25 @@ class TestNumericArrayIsAPyTree:
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
 
         assert isinstance(rebuilt, NumericArray)
-        assert rebuilt.label == "draw"
+        # The label does not cross a transform, so the rebuilt value takes its class's.
+        assert rebuilt.label == "NumericArray"
         np.testing.assert_array_equal(np.asarray(rebuilt), np.arange(3.0))
+
+    def test_values_that_differ_only_in_label_share_a_treedef_and_a_compilation(self):
+        """A label never enters the static data, so it never splits a compilation (II.4)."""
+        traces: list[int] = []
+
+        @jax.jit
+        def double(value):
+            traces.append(1)
+            return value * 2
+
+        first = NumericArray("first", jnp.arange(3.0))
+        second = NumericArray("second", jnp.arange(3.0)) + 1.0
+        assert jax.tree_util.tree_structure(first) == jax.tree_util.tree_structure(second)
+        double(first)
+        double(second)
+        assert len(traces) == 1
 
     def test_a_transform_that_changes_the_shape_keeps_the_declaration(self):
         """On this path a shape is transform-relative, so it states nothing.
@@ -913,7 +930,7 @@ class TestNumericArrayIsAPyTree:
         skeleton = jax.tree_util.tree_map(lambda x: None, value)
 
         assert isinstance(skeleton, NumericArray)
-        assert skeleton.label == "draw"
+        assert skeleton.label == "NumericArray"
 
     def test_a_sentinel_child_rebuilds(self):
         _, treedef = jax.tree_util.tree_flatten(

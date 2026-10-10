@@ -38,9 +38,9 @@ from probpipe.distributions._conditional import (
     ConditionalDistribution,
     ConditionalDistributionSpec,
 )
-from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
-from probpipe.distributions._factored import FactoredDistribution
+from probpipe.distributions._factored import FactoredDistribution, _is_named
 from probpipe.operations._condition import (
     InferenceMethod,
     _UnnormalizedConditional,
@@ -202,7 +202,7 @@ class _StructuredKernel(ConditionalDistribution, SupportsConditionalSampling):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
     def __init__(self, label: str = "y") -> None:
-        super().__init__(label, {"theta": RecordSpec(a=REAL, b=REAL)}, REAL)
+        super().__init__(label, {"theta": RecordSpec(a=REAL, b=REAL)}, OutputSpec(**{label: REAL}))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Gaussian(self.name)
@@ -231,7 +231,7 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
     """A kernel whose laws are known only up to a constant, as a program's posterior targets are."""
 
     def __init__(self, label: str = "theta", slots: tuple[str, ...] = ("data",)) -> None:
-        super().__init__(label, {slot: REAL for slot in slots}, REAL)
+        super().__init__(label, {slot: REAL for slot in slots}, OutputSpec(**{label: REAL}))
         self.slots = tuple(slots)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
@@ -246,7 +246,7 @@ class _UndeclaredKernel(ConditionalDistribution):
     """A kernel whose laws are unnormalized, which it implements without declaring a capability."""
 
     def __init__(self, label: str = "theta") -> None:
-        super().__init__(label, {"data": REAL}, REAL)
+        super().__init__(label, {"data": REAL}, OutputSpec(**{label: REAL}))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Unnormalized(self.label)
@@ -258,7 +258,7 @@ class _AmortizedKernel(
     """A learned kernel from ``y`` to ``theta``, whose evaluation stands in for a posterior."""
 
     def __init__(self, label: str = "theta") -> None:
-        super().__init__(label, {"y": REAL}, REAL)
+        super().__init__(label, {"y": REAL}, OutputSpec(**{label: REAL}))
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         object.__setattr__(self, "options", kwargs)
@@ -396,7 +396,7 @@ class TestSlice:
 
 
 class TestTheConditionedLabel:
-    """A conditioned law is labeled by what it is (II.4)."""
+    """A conditioned law keeps the label of the law it conditions (II.4, VI.6)."""
 
     def test_applying_a_kernel_at_its_givens_keeps_the_kernel_label(self):
         kernel = _NormalKernel("y", ("mu",)).with_label("likelihood")
@@ -412,19 +412,119 @@ class TestTheConditionedLabel:
         joint = joint * Gaussian("c").with_label("third")
         assert condition_on(joint, {"a": 0.0}).label == "second·third"
 
-    def test_conditioning_part_of_a_factor_is_labeled_by_the_expression(self):
+    def test_conditioning_part_of_a_factor_keeps_the_laws_label(self):
         joint = (_NormalKernel("w", ("theta",)) * ExactPosterior("model")).with_label("joint")
         assert condition_on.check(joint, {"y": 0.3}).route == "slice"
-        assert condition_on(joint, {"y": 0.3}).label == "joint | y"
+        result = condition_on(joint, {"y": 0.3})
+        assert (result.label, result.notation) == ("joint", "joint(w, theta; y)")
 
-    def test_bayes_rule_brackets_a_label_with_a_space(self, approximate_method):
+    def test_bayes_rule_keeps_a_label_with_a_space_and_groups_it(self, approximate_method):
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("my model")
-        assert condition_on(joint, {"y": 0.3}).label == "[my model] | y"
+        posterior = condition_on(joint, {"y": 0.3})
+        assert (posterior.label, posterior.notation) == ("my model", "[my model](mu; y)")
 
-    def test_the_expression_lists_every_conditioned_path(self):
+    def test_bayes_rule_keeps_the_label_of_an_unlabeled_joint(self, approximate_method):
+        posterior = condition_on(Kernel("y", ("mu",)) * Gaussian("mu"), {"y": 0.3})
+        assert (posterior.label, posterior.notation) == ("y·mu", "(y·mu)(mu; y)")
+
+    def test_a_given_that_names_no_path_keeps_the_laws_label_and_fixes_none(self):
+        law = Gaussian("mu").with_label("prior")
+        values = {"d": law, "given": 0.5}
+        assert condition_on._derived_label(values) == "prior"
+        assert condition_on._derived_expression(values).fixed_paths() == ()
+
+    def test_the_factors_left_are_an_unlabeled_joint_that_shows_its_fixed_paths(self):
+        joint = Gaussian("a").with_label("first") * Gaussian("b").with_label("second")
+        joint = (joint * Gaussian("c").with_label("third")).with_label("model")
+        left = condition_on(joint, {"a": 0.0})
+        assert _is_named(left) is False
+        assert left.notation == "(second·third)(b, c; a)"
+
+
+class TestThePosteriorsRecord:
+    """The method's posterior is a parent of the result under the result's label (V.10)."""
+
+    def _posterior(self) -> Any:
+        likelihood = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": REAL}
+        )
+        prior = EmpiricalDistribution(jnp.linspace(-2.0, 2.0, 9), component="mu", label="prior")
+        with workflow_run(seed=0):
+            return condition_on((likelihood * prior).with_label("model"), {"y": 0.5})
+
+    def test_the_methods_posterior_is_recorded_under_the_posteriors_label(self):
+        posterior = self._posterior()
+        parents = posterior.provenance.parents
+        assert [(p.label, p.type_name) for p in parents] == [
+            ("condition_on", "Operation"),
+            ("model", "FactoredDistribution"),
+            ("model", "EmpiricalDistribution"),
+        ]
+
+    def test_the_recorded_posterior_keeps_the_methods_record(self):
+        route_result = self._posterior().provenance.parents[-1]
+        assert route_result.provenance.operation == "empirical_reweighting"
+        assert [p.label for p in route_result.provenance.parents] == ["model"]
+
+
+class TestTheFixedPaths:
+    """A conditioned law holds the paths it is conditioned on fixed, after any it held (II.4)."""
+
+    def test_a_posterior_holds_the_data_fixed(self, approximate_method):
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
-        label = condition_on._derived_label({"d": joint, "given": {"y": 0.3, "mu": 0.0}})
-        assert label == "model | y, mu"
+        posterior = condition_on(joint, {"y": 0.3})
+        assert _fixed_paths(posterior) == ("y",)
+        assert str(posterior) == posterior.notation == "model(mu; y)"
+
+    def test_a_factor_at_a_value_holds_the_value_fixed(self):
+        likelihood = _NormalKernel("y", ("mu",)).with_label("likelihood")
+        joint = (likelihood * Gaussian("mu").with_label("prior")).with_label("model")
+        assert condition_on(joint, {"mu": 1.5}).notation == "likelihood(y; mu)"
+
+    def test_a_factor_returned_as_the_result_is_left_unchanged(self):
+        prior = Gaussian("mu").with_label("prior")
+        joint = Gaussian("y").with_label("other") * prior
+        left = condition_on(joint, {"y": 1.5})
+        assert left.notation == "prior(mu; y)"
+        assert _fixed_paths(prior) == () and prior.notation == "prior(mu)"
+
+    def test_a_kernel_at_its_givens_holds_them_fixed(self):
+        kernel = _NormalKernel("y", ("beta",)).with_label("glm")
+        assert condition_on(kernel, {"beta": 1.5}).notation == "glm(y; beta)"
+
+    def test_a_partial_curry_holds_the_bound_slots_fixed_and_the_others_given(self):
+        kernel = _NormalKernel("y", ("beta", "sigma")).with_label("glm")
+        curried = condition_on(kernel, {"beta": 1.5})
+        assert isinstance(curried, ConditionalDistribution)
+        assert _fixed_paths(curried) == ("beta",)
+        assert curried.notation == "glm(y | sigma; beta)"
+        assert _fixed_paths(kernel) == ()
+
+    def test_currying_again_appends_the_new_slots(self):
+        kernel = _NormalKernel("y", ("beta", "sigma")).with_label("glm")
+        law = condition_on(condition_on(kernel, {"beta": 1.5}), {"sigma": 2.0})
+        assert _fixed_paths(law) == ("beta", "sigma")
+        assert law.notation == "glm(y; beta, sigma)"
+
+    def test_conditioning_a_conditioned_law_again_appends_the_new_paths(self):
+        joint = Gaussian("a") * Gaussian("b") * Gaussian("c").with_label("third")
+        left = condition_on(condition_on(joint.with_label("model"), {"a": 0.0}), {"b": 1.0})
+        assert _fixed_paths(left) == ("a", "b")
+        assert left.notation == "third(c; a, b)"
+
+    def test_each_law_of_a_batch_of_givens_holds_the_paths_fixed(self):
+        kernel = _NormalKernel("y", ("beta",)).with_label("glm")
+        givens = NumericRecordBatch(
+            "betas", {"beta": jnp.array([0.0, 1.0])}, "row", element_spec=RecordSpec(beta=REAL)
+        )
+        laws = condition_on(kernel, givens)
+        assert isinstance(laws, DistributionBatch) and laws.label == "glm"
+        assert [_fixed_paths(laws[i]) for i in range(2)] == [("beta",), ("beta",)]
+        assert laws[0].notation == "glm[row=0](y; beta)"
+
+    def test_a_law_given_as_the_given_fixes_its_components(self):
+        values = {"d": _NormalKernel("y", ("mu",)), "given": Gaussian("mu")}
+        assert condition_on._derived_expression(values).fixed_paths() == ("mu",)
 
 
 class TestTheConditionedDeclaration:
@@ -447,7 +547,7 @@ class TestOptionalSlots:
     @staticmethod
     def _scaled() -> ConditionalDistribution:
         return conditional_distribution(
-            "lik", lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}
+            lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": REAL}, label="lik"
         )
 
     def test_binding_the_required_slots_declares_the_kernel_law(self):
@@ -468,7 +568,7 @@ class TestOptionalSlots:
         np.testing.assert_allclose(law._variance(), 4.0)
 
     def test_slicing_off_every_producer_leaves_a_kernel_at_its_defaults(self):
-        kernel = conditional_distribution("lik0", lambda scale=2.0: Normal("y", 0.0, scale))
+        kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik0")
         law = condition_on(kernel * Normal("mu", 0.0, 1.0), {"mu": 0.0})
         assert isinstance(law, Normal)
         np.testing.assert_allclose(law._variance(), 4.0)
@@ -640,9 +740,9 @@ class TestTheExactStage:
 
 
 class TestTheNormalizationStage:
-    def test_the_posterior_is_labeled_by_the_conditioned_law_and_paths(self, approximate_method):
+    def test_the_posterior_keeps_the_conditioned_laws_label(self, approximate_method):
         joint = (Kernel("y", ("mu",)) * Gaussian("mu")).with_label("model")
-        assert condition_on(joint, {"y": 0.0}).label == "model | y"
+        assert condition_on(joint, {"y": 0.0}).label == "model"
 
     def test_a_normalized_result_is_returned_without_inference(self, suite_methods):
         exact, approximate = suite_methods
@@ -732,7 +832,7 @@ class TestTheNormalizationStage:
         program.write_text(
             "data { int N; vector[N] y; } parameters { real mu; } model { y ~ normal(mu, 1); }"
         )
-        kernel = condition_on(StanModel("mean", str(program)), {"N": 3})
+        kernel = condition_on(StanModel(str(program), label="mean"), {"N": 3})
         assert set(kernel.given_spec) == {"y"}
         view = condition_on.with_options(method_options={"num_results": 30, "num_warmup": 7})
         assert view(kernel, {"y": [1.0, 2.0, 3.0]}).loc == 4.0
@@ -939,7 +1039,7 @@ class TestNoRouteMessages:
 
     def test_fixing_every_field_leads(self):
         with pytest.raises(
-            ResolutionError, match=r"^condition_on: given fixes every field of 'mu'"
+            ResolutionError, match=r"^condition_on: given fixes every field of 'Normal'"
         ):
             condition_on(Normal("mu", 0.0, 1.0), {"mu": 1.0})
 
@@ -1019,9 +1119,9 @@ def _unnormalized_pair():
         return -0.5 * (jnp.asarray(v["a"]) ** 2 + (jnp.asarray(v["b"]) - v["a"]) ** 2)
 
     return distribution(
-        "pair",
         unnormalized_log_prob=density,
         event_spec=OutputSpec(RecordSpec(a=NumericArraySpec(()), b=NumericArraySpec(()))),
+        label="pair",
     )
 
 
@@ -1029,9 +1129,9 @@ def _unnormalized_vector():
     from probpipe import NumericArraySpec, distribution
 
     return distribution(
-        "u",
         unnormalized_log_prob=lambda x: -0.5 * jnp.sum((x - 1.0) ** 2),
         event_spec=OutputSpec(x=NumericArraySpec((2,))),
+        label="u",
     )
 
 
@@ -1052,9 +1152,9 @@ class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedL
 
         s = float(given["s"])
         return distribution(
-            "theta",
             unnormalized_log_prob=lambda x: -0.5 * jnp.sum((jnp.asarray(x) - s) ** 2),
             event_spec=self.event_spec,
+            label="theta",
         )
 
     def _conditional_unnormalized_log_prob(self, given: Any, value: Any) -> Any:
@@ -1074,13 +1174,15 @@ class TestEndToEnd:
         assert _is_normalized(law)
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
-    def test_the_posterior_is_labeled_by_the_model_and_the_data_and_names_its_method(self):
+    def test_the_posterior_keeps_the_models_label_holds_the_data_and_names_its_method(self):
         model = _logistic_joint().with_label("logistic")
         with workflow_run(seed=0):
             posterior = condition_on.with_options(method_options=_MCMC)(
                 model, {"y": jnp.array([1, 0, 1, 0])}
             )
-        assert posterior.label == "logistic | y"
+        assert posterior.label == "logistic"
+        assert _fixed_paths(posterior) == ("y",)
+        assert posterior.notation == "logistic(beta; y)"
         assert method_of(posterior) == "blackjax_nuts"
         assert posterior.provenance.metadata["method"] == "blackjax_nuts"
 
@@ -1097,6 +1199,7 @@ class TestEndToEnd:
             posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)
         element = posteriors[1]
         assert method_of(element) == "blackjax_nuts"
+        assert _fixed_paths(element) == ("y",)
         operations = {
             ancestor.parent.provenance.operation
             for ancestor in provenance_ancestors(element)
@@ -1177,7 +1280,7 @@ class TestEndToEnd:
                 pm.Normal("y", beta * x, sigma, observed=y)
             return model
 
-        kernel = PyMCModel("regression", regression)
+        kernel = PyMCModel(regression, label="regression")
         given = {"x": np.linspace(0.0, 1.0, 6), "y": np.linspace(0.0, 1.0, 6)}
         view = condition_on.with_options(
             method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
@@ -1206,7 +1309,7 @@ class TestEndToEnd:
         view = condition_on.with_options(
             method_options={"num_results": 30, "num_warmup": 30, "num_chains": 1}
         )
-        kernel = view(PyMCModel("regression", regression), {"y": np.linspace(0.0, 1.0, 6)})
+        kernel = view(PyMCModel(regression, label="regression"), {"y": np.linspace(0.0, 1.0, 6)})
         given = {"x": np.linspace(0.0, 1.0, 6), "beta": 0.3}
         with monkeypatch.context() as patched:
             patched.setattr(inference_method_registry, "execute", _refuse_to_execute)
@@ -1226,7 +1329,9 @@ class TestEndToEnd:
             "data { int N; vector[N] y; } parameters { real mu; } "
             "model { mu ~ normal(0, 1); y ~ normal(mu, 1); }"
         )
-        report = condition_on.check(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
+        report = condition_on.check(
+            StanModel(str(program), label="mean"), {"N": 3, "y": [1.0, 2.0, 3.0]}
+        )
         assert report.route == "curry"
         stan_methods = {"nutpie_nuts", "cmdstan_nuts"} & set(
             inference_method_registry.list_methods()
@@ -1247,7 +1352,7 @@ class TestEndToEnd:
         view = condition_on.with_options(
             method_options={"num_results": 200, "num_warmup": 200, "num_chains": 1}
         )
-        posterior = view(StanModel("mean", str(program)), {"N": 3, "y": [1.0, 2.0, 3.0]})
+        posterior = view(StanModel(str(program), label="mean"), {"N": 3, "y": [1.0, 2.0, 3.0]})
         assert _is_normalized(posterior)
         assert tuple(posterior.event_spec.components) == ("mu",)
         # mu ~ N(0, 1) and y_i ~ N(mu, 1) give mu | y ~ N(1.5, 0.25).

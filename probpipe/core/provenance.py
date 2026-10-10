@@ -71,6 +71,10 @@ class ParentInfo:
         fingerprints remain useful for distinguishing live objects in one
         process but must not be reused as portable content keys. Excluded from
         equality and hashing.
+    identity : int or None
+        The ``id`` of the parent object when the descriptor was made, which
+        tells apart two parents that share a type and a label, as two laws
+        under a family's default label do. Excluded from equality and hashing.
     """
 
     type_name: str
@@ -79,6 +83,7 @@ class ParentInfo:
     fingerprint: str | None = field(default=None, compare=False)
     parent: Any | None = field(default=None, compare=False)
     fingerprint_is_weak: bool = field(default=False, compare=False)
+    identity: int | None = field(default=None, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +243,7 @@ class Provenance:
                 fingerprint=_identity_fingerprint(parent),
                 parent=parent if keep else None,
                 fingerprint_is_weak=True,
+                identity=id(parent),
             )
             for parent in (container, source)
             if parent is not None
@@ -314,6 +320,7 @@ class Provenance:
                 fingerprint=fp,
                 parent=p if keep else None,
                 fingerprint_is_weak=fingerprint_is_weak,
+                identity=id(p),
             )
 
         refs = tuple(_make_parent(p) for p in parents)
@@ -376,20 +383,19 @@ def _validate_json_native(value: Any, *, path: str) -> None:
 def _parent_key(p: Any) -> Any:
     """Stable dedup key for a parent node.
 
-    Uses live-object identity in FULL mode (``p.parent`` is set), and a
-    ``(type_name, label, id(provenance))`` tuple in LIGHTWEIGHT mode. The
-    parent's ``.provenance`` node is the same object on every path to the
-    same ancestor, so its id is stable even though each path holds a
-    distinct ``ParentInfo`` instance.
-
-    Two distinct *root* parents (``provenance is None``) that share a type
-    and label collapse to one key in LIGHTWEIGHT — an accepted limitation of
-    dropping object identity; FULL keeps them distinct via ``id(p.parent)``.
+    Uses live-object identity in FULL mode (``p.parent`` is set). In
+    LIGHTWEIGHT mode a parent with provenance is keyed by its provenance node,
+    which is the same object on every path to the same ancestor, and a root
+    parent, which has none, by the identity and the fingerprint its descriptor
+    recorded, so two root laws that share a type and a label, as two laws
+    under a family's default label do, stay distinct.
     """
     if isinstance(p, ParentInfo):
         if p.parent is not None:
             return id(p.parent)
-        return (p.type_name, p.label, id(p.provenance))
+        if p.provenance is not None:
+            return (p.type_name, p.label, id(p.provenance))
+        return (p.type_name, p.label, p.identity, p.fingerprint)
     return id(p)
 
 

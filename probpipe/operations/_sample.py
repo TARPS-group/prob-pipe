@@ -3,7 +3,10 @@
 ``sample(d)`` returns one draw at the kind the law's event declaration names,
 and a non-empty ``sample_shape`` prepends batch axes on a level named
 ``sample``, returning the batch form of that kind. The draw's key is a
-workflow-owned random event, so the operation takes no key.
+workflow-owned random event, so the operation takes no key. A draw is labeled
+by its components, ``~``, and the law's label, as ``mu ~ prior``, followed by
+the paths the law holds fixed, as ``mu ~ model; y``, and a batch of draws
+takes the label of one draw.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import jax
 import numpy as np
 
 from ..core._batch import BatchSpec, _ranks_of
+from ..core._expression import Expression, draw_of
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._shapes import SizesLike, _as_shape
@@ -25,7 +29,13 @@ from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
 from ..functions._result import SAMPLE_LEVEL
 from ..values import FunctionSpec
-from ._operation import BoundCall, _call_label, _workflow_draws, operation
+from ._operation import (
+    BoundCall,
+    _call_label,
+    _install_expression_rule,
+    _workflow_draws,
+    operation,
+)
 
 __all__ = ["sample"]
 
@@ -138,9 +148,13 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
         One draw at the kind the event declaration names, such as a
         ``NumericArray`` or a ``Record``; or, for a non-empty *sample_shape*, the
         batch form of that kind with the leading axes on a level named
-        ``sample``. Under ``with_options(raw=True)`` the draws are returned as
-        ``d._sample`` gives them, so a record-valued law's batch of draws is the
-        nested mapping of its raw columns.
+        ``sample``. A draw keeps *d*'s components and is labeled by them, ``~``,
+        and *d*'s label, as ``mu ~ prior`` or ``(y, mu) ~ model``, followed by
+        ``;`` and the paths *d* holds fixed, as ``mu ~ model; y``. A batch of
+        draws takes the label of one draw, so its element is labeled
+        ``(mu ~ prior)[sample=0]``. Under ``with_options(raw=True)`` the draws
+        are returned as ``d._sample`` gives them, so a record-valued law's
+        batch of draws is the nested mapping of its raw columns.
 
     Raises
     ------
@@ -193,3 +207,11 @@ def _function_draws(draws: Any, shape: tuple[int, ...]) -> Any:
 sample.capability_route(
     "exact", operand="d", protocol=SupportsSampling, method="_sample", exact=True, execute=_draw
 )
+
+
+def _drawn_expression(d: Any) -> Expression:
+    """The expression of a draw from *d*: its components drawn from *d*, as ``mu ~ prior`` (II.4)."""
+    return draw_of(d)
+
+
+_install_expression_rule(sample, _drawn_expression)

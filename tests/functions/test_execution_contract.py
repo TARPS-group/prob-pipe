@@ -47,7 +47,7 @@ def _record_batch():
 
 
 def _add_automatic_noise(row):
-    noise = sample(Normal(loc=0.0, scale=1.0, label="noise"))
+    noise = sample(Normal("noise", loc=0.0, scale=1.0))
     return row["x"] + noise
 
 
@@ -60,7 +60,7 @@ class TestExecutionContract:
             _execution_contract.transport_for_workflow_kind(WorkflowKind.DEFAULT)
 
     def test_contract_is_frozen_and_uses_the_fixed_abi(self):
-        plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
+        plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
         contract = _execution_contract.make_execution_contract(
             evaluator="jax_vmap",
             transport="local_inline",
@@ -77,7 +77,7 @@ class TestExecutionContract:
 
     def test_an_exact_plan_is_jax_capable_and_rowwise_capable(self):
         plan = _plan(
-            {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
+            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="x")},
             n_broadcast_samples=8,
         )
         assert plan.evaluation_mode == "exact"
@@ -102,7 +102,7 @@ class TestExecutionContract:
         )
 
     def test_unknown_provider_or_key_abi_fails_the_single_predicate(self):
-        plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
+        plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
         contract = _execution_contract.make_execution_contract(
             evaluator="rowwise",
             transport="prefect_task",
@@ -132,7 +132,7 @@ class TestExecutionContract:
         ],
     )
     def test_evaluator_transport_support_matrix(self, evaluator, transport, expected):
-        plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
+        plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
         contract = _execution_contract.make_execution_contract(
             evaluator=evaluator,
             transport=transport,
@@ -142,9 +142,9 @@ class TestExecutionContract:
         assert _execution_contract.supports_execution_contract(contract, plan) is expected
 
     def test_execution_request_rejects_plan_drift_before_broker_or_user_code(self):
-        sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, label="x")})
+        sampled_plan = _plan({"x": Normal("x", loc=0.0, scale=1.0)})
         exact_plan = _plan(
-            {"x": EmpiricalDistribution("x", jnp.asarray([1.0, 2.0]))},
+            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="x")},
             n_broadcast_samples=8,
         )
         contract = _execution_contract.make_execution_contract(

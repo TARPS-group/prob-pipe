@@ -49,7 +49,7 @@ def _prefect_harness():
 
 @pytest.fixture
 def normal_dist():
-    return Normal(loc=1.0, scale=0.5, label="x")
+    return Normal("x", loc=1.0, scale=0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 
 
 def _draw_standard_normal():
-    return sample(Normal(loc=0.0, scale=1.0, label="x"))
+    return sample(Normal("x", loc=0.0, scale=1.0))
 
 
 _THREADED_DRAW = Function(
@@ -353,7 +353,7 @@ class TestPrefectTaskRowWise:
             dispatch="sequential",
             n_broadcast_samples=30,
         )
-        d2 = Normal(loc=2.0, scale=0.3, label="y")
+        d2 = Normal("y", loc=2.0, scale=0.3)
         with workflow_run(seed=2):
             result = wf(x=normal_dist, y=d2)
         assert isinstance(result, EmpiricalDistribution)

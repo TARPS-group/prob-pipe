@@ -48,12 +48,12 @@ def _identity(value):
 
 
 def _nested_draw(value):
-    return sample(Normal(loc=value, scale=1.0, label="draw"))
+    return sample(Normal("draw", loc=value, scale=1.0))
 
 
 def _nested_seeded_draw(value):
     with workflow_run(seed=42):
-        return sample(Normal(loc=value, scale=1.0, label="draw"))
+        return sample(Normal("draw", loc=value, scale=1.0))
 
 
 class TestWorkflowRunBoundary:

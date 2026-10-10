@@ -132,8 +132,8 @@ class MultivariateNormal(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     loc : array-like, shape ``(..., d)``
         Mean vector, or one per row.
     scale_tril : array-like, shape ``(..., d, d)``, optional
@@ -142,10 +142,11 @@ class MultivariateNormal(TFPDistribution):
     cov : LinOp or array-like, shape ``(..., d, d)``, optional
         Covariance, as an operator or a matrix, or one matrix per row, factored
         for the backend.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is *label*.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
@@ -164,11 +165,12 @@ class MultivariateNormal(TFPDistribution):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         loc: ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
         cov: LinOp | ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and cov is not None:
@@ -204,7 +206,7 @@ class MultivariateNormal(TFPDistribution):
         self._given_cov = operator if operator is not None else cov
         self._positive_definite = positive_definite
         backend = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -309,14 +311,15 @@ class Dirichlet(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     concentration : array-like, shape ``(..., k)``
         Positive concentration (alpha) parameters, or one vector per row.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is *label*.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
@@ -331,7 +334,12 @@ class Dirichlet(TFPDistribution):
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
-        self, label: str, concentration: ArrayLike, *, event_spec: OutputSpec | None = None
+        self,
+        component: str,
+        concentration: ArrayLike,
+        *,
+        label: str | None = None,
+        event_spec: OutputSpec | None = None,
     ):
         concentration = _as_float_array(concentration)
         if concentration.ndim == 0:
@@ -339,7 +347,7 @@ class Dirichlet(TFPDistribution):
 
         self._concentration = concentration
         backend = tfd.Dirichlet(concentration=concentration)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -370,18 +378,19 @@ class Multinomial(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     total_count : int or array-like
         Number of trials, or one per row.
     probs : array-like, shape ``(..., k)``, optional
         Event probabilities (need not be normalised), or one vector per row.
     logits : array-like, shape ``(..., k)``, optional
         Log-odds of each event, or one vector per row.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is *label*.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
@@ -397,11 +406,12 @@ class Multinomial(TFPDistribution):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         total_count: int | ArrayLike,
         probs: ArrayLike | None = None,
         logits: ArrayLike | None = None,
         *,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if (probs is None) == (logits is None):
@@ -419,7 +429,7 @@ class Multinomial(TFPDistribution):
             backend = tfd.Multinomial(total_count=total_count, logits=logits)
 
         self._total_count = total_count
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -454,18 +464,19 @@ class Wishart(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     df : float or array-like
         Degrees of freedom (must be >= dimension), or one per row.
     scale_tril : array-like, shape ``(..., d, d)``, optional
         Lower-triangular Cholesky factor of the scale matrix, or one per row.
     scale : array-like, shape ``(..., d, d)``, optional
         Full scale matrix (Cholesky-decomposed internally), or one per row.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is *label*.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
@@ -481,11 +492,12 @@ class Wishart(TFPDistribution):
 
     def __init__(
         self,
-        label: str,
+        component: str,
         df: float | ArrayLike,
         scale_tril: ArrayLike | None = None,
         *,
         scale: ArrayLike | None = None,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         if scale_tril is not None and scale is not None:
@@ -502,7 +514,7 @@ class Wishart(TFPDistribution):
         self._df = df
         self._scale_tril = scale_tril
         backend = tfd.WishartTriL(df=df, scale_tril=scale_tril)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 
@@ -542,34 +554,37 @@ class VonMisesFisher(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     mean_direction : array-like, shape ``(..., d)``
         Unit vector giving the mean direction, or one per row.
     concentration : float or array-like
         Scalar concentration parameter (kappa >= 0), or one per row.
+    label : str, optional
+        The law's label, the family's class name by default.
     event_spec : OutputSpec, optional
-        The declaration of one draw, which names its component. The family
-        fills a pending type, as in ``OutputSpec(theta=None)``. By default the
-        component is *label*.
+        A declaration of *component* that declares the type of one draw, which
+        the family completes, as ``OutputSpec(theta=NumericArraySpec((3,)))``.
 
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, or *event_spec* is not an
+        :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
-        If *event_spec* declares a type that one draw does not conform to.
+        If *component* is not a valid component name, or *event_spec* names
+        another component or declares a type that one draw does not conform to.
     """
 
     _backend_capabilities = frozenset({SupportsMean, SupportsVariance, SupportsCovariance})
 
     def __init__(
         self,
-        label: str,
+        component: str,
         mean_direction: ArrayLike,
         concentration: float | ArrayLike,
         *,
+        label: str | None = None,
         event_spec: OutputSpec | None = None,
     ):
         _, (mean_direction, concentration) = _promote_floats(mean_direction, concentration)
@@ -577,7 +592,7 @@ class VonMisesFisher(TFPDistribution):
         self._mean_direction = mean_direction
         self._concentration = concentration
         backend = tfd.VonMisesFisher(mean_direction=mean_direction, concentration=concentration)
-        super().__init__(label, backend, event_spec=event_spec)
+        super().__init__(component, backend, label=label, event_spec=event_spec)
 
     # -- convenient accessors -----------------------------------------------
 

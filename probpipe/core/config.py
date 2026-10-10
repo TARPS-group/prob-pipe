@@ -5,6 +5,8 @@ Provides:
   controlling how ``Function`` instances dispatch work.
 - ``ProvenanceMode`` enum and ``ProvenanceConfig`` singleton
   (``provenance_config``) controlling how much lineage history is retained.
+- ``NotationConfig`` singleton (``notation_config``) setting how many nested
+  levels a label or a notation shows.
 
 Users import from the top-level package::
 
@@ -13,6 +15,7 @@ Users import from the top-level package::
 
     probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
     probpipe.provenance_config.mode = ProvenanceMode.FULL
+    probpipe.notation_config.max_depth = 12
 """
 
 from __future__ import annotations
@@ -20,15 +23,19 @@ from __future__ import annotations
 import os
 
 __all__ = [
+    "NotationConfig",
     "PrefectConfig",
     "ProvenanceConfig",
     "ProvenanceMode",
     "WorkflowKind",
+    "notation_config",
     "prefect_config",
     "provenance_config",
 ]
 from enum import Enum
 from typing import Any
+
+from ._expression import _STORED_DEPTH
 
 # ---------------------------------------------------------------------------
 # WorkflowKind enum
@@ -296,3 +303,134 @@ class ProvenanceConfig:
 # Module-level singleton
 provenance_config = ProvenanceConfig()
 """The global provenance tracking settings, an instance of ``ProvenanceConfig``."""
+
+
+# ---------------------------------------------------------------------------
+# NotationConfig singleton
+# ---------------------------------------------------------------------------
+
+_NOTATION_MAX_DEPTH_ENV_VAR = "PROBPIPE_NOTATION_MAX_DEPTH"
+
+#: The number of nested levels a label or a notation shows by default.
+_DEFAULT_MAX_DEPTH = 8
+
+
+def _checked_max_depth(value: Any, source: str) -> int:
+    """*value* as a number of nested levels, a positive integer of at most ``_STORED_DEPTH``.
+
+    A stored expression keeps at most ``_STORED_DEPTH`` levels, so a rendering
+    of more levels would meet parts that storage collapsed without a warning.
+
+    Parameters
+    ----------
+    value : Any
+        The value assigned.
+    source : str
+        The name of the setting, which the error messages open with.
+
+    Returns
+    -------
+    int
+        *value*.
+
+    Raises
+    ------
+    TypeError
+        If *value* is not an integer, a bool included.
+    ValueError
+        If *value* is less than 1 or greater than ``_STORED_DEPTH``.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{source} must be a positive integer, got {type(value).__name__}")
+    if value < 1:
+        raise ValueError(f"{source} must be a positive integer, got {value}")
+    if value > _STORED_DEPTH:
+        raise ValueError(
+            f"{source} must be at most {_STORED_DEPTH}, the number of levels a stored "
+            f"expression keeps, got {value}"
+        )
+    return value
+
+
+def _initial_max_depth() -> int:
+    """Resolve the initial ``max_depth`` from the environment.
+
+    Reads ``PROBPIPE_NOTATION_MAX_DEPTH``. Unset gives 8, and a value that is
+    not a positive integer of at most ``_STORED_DEPTH`` raises ``ValueError``,
+    so a typo in a deployment's configuration surfaces rather than falling back
+    to the default.
+    """
+    raw = os.environ.get(_NOTATION_MAX_DEPTH_ENV_VAR)
+    if raw is None:
+        return _DEFAULT_MAX_DEPTH
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1 or value > _STORED_DEPTH:
+        raise ValueError(
+            f"{_NOTATION_MAX_DEPTH_ENV_VAR}={raw!r} is not a valid depth. It must be a "
+            f"positive integer of at most {_STORED_DEPTH}."
+        )
+    return value
+
+
+class NotationConfig:
+    """Global settings of how labels and notations render.
+
+    A tracked term's label and the notation of a law, a kernel, or a function
+    are renderings of the expression the term carries, which nests one level
+    for each value or law it was computed from, as
+    ``E[f(beta ~ model; y)]`` nests four. A rendering shows at most
+    :attr:`max_depth` levels::
+
+        import probpipe
+
+        probpipe.notation_config.max_depth = 12
+
+    The initial depth can also be set by the ``PROBPIPE_NOTATION_MAX_DEPTH``
+    environment variable. The depth is a positive integer of at most 64, the
+    number of levels a stored expression keeps, so a rendering never shows a
+    part that storage collapsed.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """Restore all settings to defaults (re-reading the env var)."""
+        self._max_depth: int = _initial_max_depth()
+
+    @property
+    def max_depth(self) -> int:
+        """The number of nested levels a label or a notation shows, 8 by default.
+
+        A part nested deeper renders as its label, the name of a law or a
+        function, or as ``…`` for a value, and ``str()``, ``repr()``, and
+        ``notation`` warn with a ``UserWarning`` when what they show has such
+        a part. Every label the library derives from one law and a
+        few operators on it nests at most 5 levels, as
+        ``E[f(beta ~ model; y)][sample=0] + 1`` does, so the default shows
+        each of them in full, while a label derived through a long chain of
+        operations, such as a loop that adds to a value, stays bounded.
+        Setting it changes the renderings made afterwards, and a term keeps
+        the label it was given.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not an integer, a bool included.
+        ValueError
+            On assignment of an integer less than 1 or greater than 64, the
+            number of levels a stored expression keeps.
+        """
+        return self._max_depth
+
+    @max_depth.setter
+    def max_depth(self, value: int) -> None:
+        self._max_depth = _checked_max_depth(value, "max_depth")
+
+
+# Module-level singleton
+notation_config = NotationConfig()
+"""The global notation settings, an instance of ``NotationConfig``."""

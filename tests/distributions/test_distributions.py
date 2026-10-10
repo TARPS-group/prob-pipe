@@ -10,6 +10,7 @@ from probpipe import (
     EmpiricalDistribution,
     MultivariateNormal,
     NumericDistribution,
+    OutputSpec,
     Provenance,
     TFPDistribution,
     Weights,
@@ -55,7 +56,7 @@ def cov_matrix(dim):
 
 @pytest.fixture
 def gaussian(loc, cov_matrix):
-    return MultivariateNormal(loc=loc, cov=cov_matrix, label="test_gaussian")
+    return MultivariateNormal("test_gaussian", loc=loc, cov=cov_matrix, label="test_gaussian")
 
 
 @pytest.fixture
@@ -75,33 +76,33 @@ def simple_weights():
 
 class TestMultivariateNormal:
     def test_construction_with_cov(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
+        g = MultivariateNormal("z", loc=loc, cov=cov_matrix)
         assert g.event_shape == (3,)
         assert g.dim == 3
         np.testing.assert_allclose(g.loc, loc, atol=1e-6)
 
     def test_construction_with_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
-        g = MultivariateNormal(loc=loc, scale_tril=L, label="z")
+        g = MultivariateNormal("z", loc=loc, scale_tril=L)
         np.testing.assert_allclose(g.cov, cov_matrix, atol=1e-5)
 
     def test_scalar_loc_promoted(self):
-        g = MultivariateNormal(loc=1.0, scale_tril=jnp.eye(1), label="z")
+        g = MultivariateNormal("z", loc=1.0, scale_tril=jnp.eye(1))
         assert g.event_shape == (1,)
         assert g.dim == 1
 
     def test_rejects_both_cov_and_scale_tril(self, loc, cov_matrix):
         L = jnp.linalg.cholesky(cov_matrix)
         with pytest.raises(ValueError, match="cannot both be given"):
-            MultivariateNormal(loc=loc, scale_tril=L, cov=cov_matrix, label="z")
+            MultivariateNormal("z", loc=loc, scale_tril=L, cov=cov_matrix)
 
     def test_rejects_neither_cov_nor_scale_tril(self, loc):
         with pytest.raises(ValueError, match="one of scale_tril or cov must be provided"):
-            MultivariateNormal(loc=loc, label="z")
+            MultivariateNormal("z", loc=loc)
 
     def test_rejects_dim_mismatch(self):
         with pytest.raises(ValueError, match="does not match"):
-            MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(3), label="z")
+            MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(3))
 
     def test_sample_shape(self, gaussian, key):
         s = sample(gaussian, sample_shape=(5,))
@@ -168,13 +169,18 @@ class TestMultivariateNormal:
         assert gaussian.label == "test_gaussian"
 
     def test_name_set(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
-        assert g.label == "z"
+        g = MultivariateNormal("z", loc=loc, cov=cov_matrix, label="prior")
+        assert g.label == "prior"
+        assert tuple(g.event_spec.components) == ("z",)
 
     def test_repr(self, gaussian):
         assert repr(gaussian) == (
-            "MultivariateNormal('test_gaussian', loc=[0.0, 1.0, 2.0], "
-            "cov=array(shape=(3, 3), dtype=float32))"
+            "MultivariateNormal(\n"
+            "    'test_gaussian',\n"
+            "    component='test_gaussian',\n"
+            "    loc=[0.0, 1.0, 2.0],\n"
+            "    cov=array(shape=(3, 3), dtype=float32),\n"
+            ")"
         )
 
     def test_dtype(self, gaussian, loc):
@@ -205,13 +211,13 @@ class TestMultivariateNormal:
 
 class TestEmpiricalDistribution:
     def test_uniform_weights(self, simple_samples):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         assert ed.num_atoms == 3
         assert ed.event_shape == (1,)
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
 
     def test_custom_weights(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution(simple_samples, simple_weights, component="x")
         np.testing.assert_allclose(ed.weights.sum(), 1.0)
         expected_mean = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(jnp.asarray(mean(ed)).ravel(), expected_mean, atol=1e-6)
@@ -219,65 +225,65 @@ class TestEmpiricalDistribution:
     def test_weights_normalized(self):
         """Unnormalized weights should be normalized internally."""
         samples = jnp.array([[1.0], [2.0]])
-        ed = EmpiricalDistribution("x", samples, jnp.array([2.0, 8.0]))
+        ed = EmpiricalDistribution(samples, jnp.array([2.0, 8.0]), component="x")
         np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.8]))
 
     def test_invalid_weights_negative(self, simple_samples):
         with pytest.raises(ValueError, match="non-negative"):
-            EmpiricalDistribution("x", simple_samples, jnp.array([-0.1, 0.5, 0.6]))
+            EmpiricalDistribution(simple_samples, jnp.array([-0.1, 0.5, 0.6]), component="x")
 
     def test_invalid_weights_zero_sum(self, simple_samples):
         with pytest.raises(ValueError, match="positive value"):
-            EmpiricalDistribution("x", simple_samples, jnp.array([0.0, 0.0, 0.0]))
+            EmpiricalDistribution(simple_samples, jnp.array([0.0, 0.0, 0.0]), component="x")
 
     def test_invalid_weights_wrong_length(self, simple_samples):
         with pytest.raises(ValueError, match="one weight per item"):
-            EmpiricalDistribution("x", simple_samples, jnp.array([0.5, 0.5]))
+            EmpiricalDistribution(simple_samples, jnp.array([0.5, 0.5]), component="x")
 
     def test_1d_input_scalar_event(self):
-        ed = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        ed = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
         assert ed.event_shape == ()
         assert ed.atoms.values.shape == (3,)
 
     def test_multidim_event_shape(self):
         samples = jnp.ones((5, 3))
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         assert ed.event_shape == (3,)
 
     def test_event_shape(self, simple_samples):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         assert ed.event_shape == (1,)
 
     def test_sample_shape(self, simple_samples, key):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         s = sample(ed, sample_shape=(10,))
         assert s.shape == (10, 1)
 
     def test_sample_no_shape(self, simple_samples, key):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         s = sample(ed)
         assert s.shape == (1,)
 
     def test_sample_values_from_support(self, simple_samples, key):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         s = jnp.asarray(sample(ed, sample_shape=(100,)))
         for val in s:
             assert jnp.any(jnp.all(jnp.isclose(simple_samples, val), axis=-1))
 
     def test_mean(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution(simple_samples, simple_weights, component="x")
         expected = jnp.sum(simple_samples.ravel() * ed.weights)
         np.testing.assert_allclose(jnp.asarray(mean(ed)).ravel(), expected, atol=1e-6)
 
     def test_variance(self, simple_samples, simple_weights):
-        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution(simple_samples, simple_weights, component="x")
         mu = jnp.asarray(mean(ed))
         expected = jnp.sum(ed.weights * (simple_samples.ravel() - mu.ravel()) ** 2)
         np.testing.assert_allclose(jnp.asarray(variance(ed)).ravel(), expected, atol=1e-6)
 
     def test_cov_matrix(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         C = jnp.asarray(cov(ed))
         assert C.shape == (2, 2)
         np.testing.assert_allclose(C, C.T, atol=1e-6)
@@ -285,14 +291,16 @@ class TestEmpiricalDistribution:
     def test_cov_psd(self):
         """Covariance matrix should be positive semi-definite."""
         samples = jnp.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [0.0, 0.0]])
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         C = jnp.asarray(cov(ed))
         eigvals = jnp.linalg.eigvalsh(C)
         assert jnp.all(eigvals >= -1e-8)
 
     def test_name(self, simple_samples):
-        ed = EmpiricalDistribution("emp", simple_samples)
-        assert ed.label == "emp"
+        ed = EmpiricalDistribution(simple_samples, component="emp")
+        assert ed.label == "p"
+        assert tuple(ed.event_spec.components) == ("emp",)
+        assert EmpiricalDistribution(simple_samples, component="emp", label="e").label == "e"
 
     def test_from_distribution(self, gaussian):
         ed = convert.with_options(method_options={"num_samples": 50})(
@@ -326,7 +334,7 @@ class TestEmpiricalValidationMessages:
     def test_zero_dim_numeric_array_reports_its_missing_axis(self):
         """``EmpiricalDistribution('x', jnp.array(1.0))`` has no axis of atoms."""
         with pytest.raises(ValueError, match="0-d array"):
-            EmpiricalDistribution("x", jnp.array(1.0))
+            EmpiricalDistribution(jnp.array(1.0), component="x")
 
 
 class TestEmpiricalLogWeights:
@@ -335,7 +343,7 @@ class TestEmpiricalLogWeights:
     def test_log_weights_construction(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         lw = jnp.log(jnp.array([0.2, 0.3, 0.5]))
-        ed = EmpiricalDistribution("x", samples, Weights(log_weights=lw))
+        ed = EmpiricalDistribution(samples, Weights(log_weights=lw), component="x")
         np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.3, 0.5]), atol=1e-5)
 
     def test_log_weights_unnormalized(self):
@@ -343,32 +351,34 @@ class TestEmpiricalLogWeights:
         samples = jnp.array([[1.0], [2.0]])
         # log(2) and log(8) → weights 0.2 and 0.8
         lw = jnp.array([jnp.log(2.0), jnp.log(8.0)])
-        ed = EmpiricalDistribution("x", samples, Weights(log_weights=lw))
+        ed = EmpiricalDistribution(samples, Weights(log_weights=lw), component="x")
         np.testing.assert_allclose(ed.weights, jnp.array([0.2, 0.8]), atol=1e-5)
 
     def test_log_weights_wrong_length_raises(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         with pytest.raises(ValueError, match="one per item, got 2"):
-            EmpiricalDistribution("x", samples, Weights(log_weights=jnp.array([0.0, 0.0])))
+            EmpiricalDistribution(
+                samples, Weights(log_weights=jnp.array([0.0, 0.0])), component="x"
+            )
 
     def test_uniform_weights_by_default(self, simple_samples):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         np.testing.assert_allclose(ed.weights, jnp.ones(3) / 3)
 
     def test_uniform_mean_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         np.testing.assert_allclose(mean(ed), jnp.array([3.0]), atol=1e-6)
 
     def test_uniform_variance_matches_numpy(self):
         samples = jnp.array([[1.0], [3.0], [5.0]])
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         expected_var = jnp.mean((samples - jnp.array([[3.0]])) ** 2, axis=0)
         np.testing.assert_allclose(variance(ed), expected_var, atol=1e-6)
 
     def test_uniform_sampling(self, key):
         samples = jnp.array([[10.0], [20.0], [30.0]])
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         draws = sample(ed, sample_shape=(1000,))
         # All draws should be from the support
         for val in [10.0, 20.0, 30.0]:
@@ -378,14 +388,14 @@ class TestEmpiricalLogWeights:
         """Very large log-weights should not overflow."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         lw = jnp.array([1000.0, 1001.0, 1000.5])
-        ed = EmpiricalDistribution("x", samples, Weights(log_weights=lw))
+        ed = EmpiricalDistribution(samples, Weights(log_weights=lw), component="x")
         # Should produce valid weights that sum to 1
         assert jnp.all(jnp.isfinite(ed.weights))
         np.testing.assert_allclose(ed.weights.sum(), 1.0, atol=1e-5)
 
     def test_weights_backward_compatible(self, simple_samples, simple_weights):
         """Existing weights= API should work unchanged."""
-        ed = EmpiricalDistribution("x", simple_samples, simple_weights)
+        ed = EmpiricalDistribution(simple_samples, simple_weights, component="x")
         expected = simple_weights / simple_weights.sum()
         np.testing.assert_allclose(ed.weights, expected, atol=1e-5)
 
@@ -393,14 +403,14 @@ class TestEmpiricalLogWeights:
         """Mean with log_weights should match weights-based mean."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         weights = jnp.array([0.2, 0.3, 0.5])
-        ed_w = EmpiricalDistribution("x", samples, weights)
-        ed_lw = EmpiricalDistribution("x", samples, Weights(log_weights=jnp.log(weights)))
+        ed_w = EmpiricalDistribution(samples, weights, component="x")
+        ed_lw = EmpiricalDistribution(samples, Weights(log_weights=jnp.log(weights)), component="x")
         np.testing.assert_allclose(mean(ed_w), mean(ed_lw), atol=1e-5)
 
     def test_uniform_cov(self):
         """Uniform cov should match standard formula."""
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         mu = jnp.mean(samples, axis=0)
         diff = samples - mu
         expected = diff.T @ diff / 3
@@ -431,10 +441,10 @@ class TestProvenance:
         assert "test_gaussian" in r
 
     def test_repr_unnamed_parent(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
+        g = MultivariateNormal("z", loc=loc, cov=cov_matrix)
         p = Provenance("op", parents=(g,))
         r = repr(p)
-        assert "z" in r
+        assert "MultivariateNormal" in r
 
     def test_frozen(self, gaussian):
         p = Provenance("test_op")
@@ -472,7 +482,7 @@ class TestDistributionABC:
             convert(None, NumericDistribution)
 
     def test_provenance_default_none(self, gaussian):
-        g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
+        g = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
         assert g.provenance is None
 
     def test_with_provenance(self, gaussian):
@@ -484,12 +494,13 @@ class TestDistributionABC:
         p1 = Provenance("first")
         gaussian.with_provenance(p1)
         p2 = Provenance("second")
-        with pytest.raises(RuntimeError, match=r"provenance of .* is already set"):
+        with pytest.raises(RuntimeError, match=r"(?s)provenance of .* is already set"):
             gaussian.with_provenance(p2)
 
     def test_name(self, loc, cov_matrix):
-        g = MultivariateNormal(loc=loc, cov=cov_matrix, label="z")
-        assert g.label == "z"
+        g = MultivariateNormal("z", loc=loc, cov=cov_matrix)
+        assert g.label == "MultivariateNormal"
+        assert tuple(g.event_spec.components) == ("z",)
 
 
 # ---------------------------------------------------------------------------
@@ -529,13 +540,13 @@ class TestShapeSemantics:
         assert lp.shape == (4, 2)
 
     def test_empirical_sample_shape(self, simple_samples, key):
-        ed = EmpiricalDistribution("x", simple_samples)
+        ed = EmpiricalDistribution(simple_samples, component="x")
         s = sample(ed, sample_shape=(5, 3))
         assert s.shape == (5, 3, 1)
 
     def test_empirical_2d_sample_shape(self, key):
         samples = jnp.ones((4, 3))
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         s = sample(ed, sample_shape=(10,))
         assert s.shape == (10, 3)
 
@@ -555,7 +566,7 @@ class TestDistributionCoverageGaps:
 
         class Scalar(NumericDistribution):
             def __init__(self, label):
-                super().__init__(label, NumericArraySpec((), "float32"))
+                super().__init__(label, OutputSpec(**{label: NumericArraySpec((), "float32")}))
 
         s = Scalar("s")
         assert tuple(s.event_spec.components) == ("s",)
@@ -566,10 +577,10 @@ class TestDistributionCoverageGaps:
         """NumericDistribution.dtype is the common dtype when all fields match."""
         from probpipe import Normal
 
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         assert n.dtype == n._tfp_dist.dtype
 
     def test_array_empirical_dtype(self):
         """An empirical law's dtype is its atoms' dtype."""
         samples = jnp.array([[1.0, 2.0]], dtype=jnp.float32)
-        assert EmpiricalDistribution("x", samples).dtype == jnp.float32
+        assert EmpiricalDistribution(samples, component="x").dtype == jnp.float32
