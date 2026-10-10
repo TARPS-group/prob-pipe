@@ -232,7 +232,7 @@ A moment of the event's kind keeps the event's packaging and names each componen
 - `fixed_args`: the other parameters of a map with several, bound as for `evaluate`;
 - randomness: the workflow-owned draws of a sampling route (V.8).
 
-The Monte Carlo expectation is therefore the mean of the sampling lift's empirical law, which requires sampling from `d` and integrability of the outputs of `f`, whatever the event type of `d`. An integration rule registers once, as an evaluation rule (V.7), and then serves `evaluate` and `expectation` alike. The arguments of `expectation` are `(d, f)`, law first, as for `mean(d)` and `quantile(d, q)`. An undeclared integrand uses the fixed internal component `integrand` for the temporary pushforward; this component is independent of the integrand's label.
+The Monte Carlo expectation is therefore the mean of the sampling lift's empirical law, which requires sampling from `d` and integrability of the outputs of `f`, whatever the event type of `d`. An integration rule registers once, as an evaluation rule (V.7), and then serves `evaluate` and `expectation` alike. The arguments of `expectation` are `(d, f)`, law first, as for `mean(d)` and `quantile(d, q)`. The result of an undeclared integrand is the same whatever the integrand's name or label.
 
 ### Rationale
 
