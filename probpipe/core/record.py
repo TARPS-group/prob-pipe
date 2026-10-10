@@ -187,11 +187,6 @@ def _canonical_dtype_str(leaf: Any) -> str:
 # Record
 # ---------------------------------------------------------------------------
 
-#: Constructor keywords that name a construction option rather than a field, so
-#: the keyword form of ``Record(...)`` does not read them as data. The positional
-#: dict form takes a field of any name, including these.
-_RESERVED_INIT_KWARGS = frozenset({"event_template", "_validate_leaves"})
-
 
 class Record(NamedTree[Any], TrackedTerm, Annotated):
     """A single structured value with metadata.

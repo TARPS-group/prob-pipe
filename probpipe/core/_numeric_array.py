@@ -536,8 +536,4 @@ def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericA
     return value
 
 
-#: The label of a value rebuilt from its leaves, which carry no label (II.4).
-_REBUILT_LABEL = _NO_DESCRIPTION
-
-
 jax.tree_util.register_pytree_node(NumericArray, _numeric_array_flatten, _numeric_array_unflatten)
