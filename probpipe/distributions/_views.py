@@ -389,15 +389,6 @@ def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> E
     return product.with_fixed(held)
 
 
-def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
-    """The label of the marginal of *law* at *path*, as :func:`_marginal_expression_at` gives it.
-
-    One whole factor gives its own label, several their labels joined with
-    ``·``, and any other marginal keeps *law*'s label.
-    """
-    return _marginal_expression_at(law, path).render_label()
-
-
 def _carrying(law: Any, expression: Expression) -> Any:
     """*law* carrying *expression*: *law* itself when it carries it, and otherwise a copy that does.
 

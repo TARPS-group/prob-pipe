@@ -24,7 +24,7 @@ from ._array_backend import (
 )
 from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
-from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
+from ._repr import BINARY_SYMBOLS, format_dtype, public_class_name, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -516,12 +516,8 @@ def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericA
     value = object.__new__(NumericArray)
     object.__setattr__(value, "_value", array)
     object.__setattr__(value, "_spec", spec)
-    value._init_tracked(_REBUILT_LABEL)
+    value._init_tracked(public_class_name(NumericArray))
     return value
-
-
-#: The label of a value rebuilt from its leaves, which carry no label (II.4).
-_REBUILT_LABEL = "NumericArray"
 
 
 jax.tree_util.register_pytree_node(NumericArray, _numeric_array_flatten, _numeric_array_unflatten)

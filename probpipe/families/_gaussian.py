@@ -341,9 +341,10 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     Raises
     ------
     TypeError
-        If *component* is not a string, *output_spec* is not an ``OutputSpec``
-        naming one component, or *event_spec* is not an ``OutputSpec`` or
-        declares a type that is not a ``FunctionSpec``.
+        If *component* is not a string, *label* is not a non-empty string,
+        *output_spec* is not an ``OutputSpec`` naming one component, or
+        *event_spec* is not an ``OutputSpec`` or declares a type that is not a
+        ``FunctionSpec``.
     ValueError
         If *event_spec* names another component than *component*, or the
         ``FunctionSpec`` it declares names another output component.

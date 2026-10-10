@@ -1426,10 +1426,10 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, BatchSpec]:
     """Flatten for JAX pytree traversal: the columns, keyed by the aux spec.
 
     Children are the columns in the template's canonical order, so they realign
-    with the aux spec on unflatten. The static aux is the batch's own type
-    alone, matching ``Record``: the label, the expression, and the provenance
-    do not cross a JAX transform boundary, so two batches that differ only in
-    their labels have equal treedefs and share a compilation (II.4).
+    with the aux spec on unflatten. The static aux is the batch's spec alone,
+    matching ``Record``: the label, the expression, and the provenance do not
+    cross a JAX transform boundary, so two batches that differ only in their
+    labels have equal treedefs and share a compilation (II.4).
     """
     # ``_columns`` is already in the template's canonical order at every
     # construction site, so the order the aux spec expects needs no second walk —
@@ -1521,7 +1521,7 @@ def _unflatten_with(cls: type[RecordBatch]):
                 for path, column in columns.items()
             }
             return Record(
-                "Record",
+                public_class_name(Record),
                 element,
                 event_template=element_spec,
                 _validate_leaves=False,

@@ -273,8 +273,8 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     ------
     TypeError
         If *source* is not a law that samples, *component* or *level* is not a
-        string, *replicate_size* is not an integer, or *event_spec* is not an
-        ``OutputSpec`` or exposes a record.
+        string, *label* is not a non-empty string, *replicate_size* is not an
+        integer, or *event_spec* is not an ``OutputSpec`` or exposes a record.
     ValueError
         If *replicate_size* is not positive or is omitted for a source without
         atoms, *level* is omitted for a source exposing several components or is
@@ -1034,8 +1034,9 @@ class KDEDistribution(
     TypeError
         If *atoms* is neither a numeric array nor a ``NumericRecordBatch``,
         *kernel* is not a ``SmoothingKernel`` class, *component* is missing for
-        array atoms or given for record atoms, *event_spec* is not an
-        ``OutputSpec``, or *event_spec* exposes a record for array atoms.
+        array atoms or given for record atoms, *label* is not a non-empty
+        string, *event_spec* is not an ``OutputSpec``, or *event_spec* exposes a
+        record for array atoms.
     ValueError
         If the atoms hold none or have no leading axis, the weights are invalid,
         *bandwidth* names no rule or a rule selects a zero scale, the scales do not

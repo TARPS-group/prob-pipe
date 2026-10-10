@@ -36,6 +36,7 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
+from ._repr import public_class_name
 from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
@@ -646,7 +647,7 @@ def _numeric_record_unflatten(spec: RecordSpec, children: list) -> NumericRecord
     its class until a result boundary labels it.
     """
     return NumericRecord(
-        "NumericRecord",
+        public_class_name(NumericRecord),
         dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,

@@ -1268,7 +1268,10 @@ class Function(Node, TrackedTerm, Annotated):
         """The function's label followed by its parameters, as ``predict(x, y)``, which ``str()`` returns.
 
         The parameters are the names of :attr:`signature`, in order, joined by
-        ``", "``. No operation reads the notation.
+        ``", "``. A parameter with a default reads ``name=value``, as
+        ``predict(x, scale=1.0)``, when the default is a number, a string,
+        ``None``, or an array of no axes, and ``name=…`` for any other default.
+        No operation reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)
 

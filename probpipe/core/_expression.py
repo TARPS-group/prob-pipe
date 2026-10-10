@@ -45,6 +45,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ._repr import (
+    ELLIPSIS,
     PRODUCT_SYMBOL,
     format_components,
     format_notation,
@@ -73,9 +74,6 @@ __all__ = [
     "draw_of",
     "joined_labels",
 ]
-
-#: The text a collapsed value renders as.
-ELLIPSIS = "…"
 
 #: The package directory, whose frames a collapse warning skips, so the warning
 #: names the user's line that displays the term.

@@ -9,7 +9,7 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
@@ -443,23 +443,6 @@ def _keeps_fixed_paths(term: Any, source: Any) -> Any:
     if held is not expression:
         term._store_expression(held)
     return term
-
-
-def _holding_fixed_paths(term: Any, paths: Iterable[str]) -> Any:
-    """The law or kernel *term*, holding *paths* fixed after the paths it holds.
-
-    *term* is returned as it is when it holds every path of *paths* already,
-    and otherwise as a copy that shares its representation, so a term that is
-    also an operand of the call, such as a factor that conditioning leaves,
-    keeps its own paths.
-    """
-    expression = term._expression
-    held = expression.with_fixed(paths)
-    if held is expression:
-        return term
-    clone = term._shallow_copy()
-    clone._store_expression(held)
-    return clone
 
 
 def _compose_operands(left: Any, right: Any) -> Any:
@@ -914,9 +897,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         prior`` reads as ``p(y | β) · p(β)``. The result is a
         ``FactoredDistribution`` when no given is left unmet and a
         ``FactoredConditionalDistribution`` otherwise, flattened over the
-        operands' factors and labeled by their labels joined with ``·``. The
-        joint is unlabeled, so its notation joins its factors' notations, as
-        ``lik(y | mu)·prior(mu)``.
+        operands' factors. The joint is a product that no one gave a label, so
+        its label joins the operands' labels with ``·``, as ``lik·prior``, and
+        its notation joins its factors' notations, as ``lik(y | mu)·prior(mu)``.
 
         Parameters
         ----------

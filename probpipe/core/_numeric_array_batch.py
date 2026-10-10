@@ -32,6 +32,7 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
+from ._repr import public_class_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
@@ -333,7 +334,7 @@ def _numeric_array_batch_unflatten(aux, children):
     boundary labels it (II.4).
     """
     spec = aux
-    label = "NumericArrayBatch"
+    label = public_class_name(NumericArrayBatch)
     (values,) = children
     element_spec = spec.element_spec
     event_rank = len(element_spec.shape)
@@ -362,7 +363,7 @@ def _numeric_array_batch_unflatten(aux, children):
         view._init_batch(spec, label=label)
         return view
     if not surviving:
-        return NumericArray("NumericArray", values, spec=element_spec)
+        return NumericArray(public_class_name(NumericArray), values, spec=element_spec)
     raise ValueError(
         _changed_batch_shape(
             _cannot_rebuild("NumericArrayBatch"), tuple(spec.batch_shape), surviving

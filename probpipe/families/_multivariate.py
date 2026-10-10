@@ -151,8 +151,8 @@ class MultivariateNormal(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *scale_tril* and *cov* is given, the trailing axes
         of *cov* are not ``(d, d)`` for the length ``d`` of *loc*, or
@@ -324,8 +324,8 @@ class Dirichlet(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *concentration* is a scalar, or *event_spec* declares a type that one
         draw does not conform to.
@@ -395,8 +395,8 @@ class Multinomial(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -481,8 +481,8 @@ class Wishart(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *scale_tril* and *scale* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -569,8 +569,8 @@ class VonMisesFisher(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.

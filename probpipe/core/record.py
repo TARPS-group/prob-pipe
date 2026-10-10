@@ -1384,7 +1384,7 @@ def _record_unflatten(spec: RecordSpec, children: list) -> Record:
     """
     r = object.__new__(Record)
     r.__init__(
-        "Record",
+        public_class_name(Record),
         dict(zip(tuple(spec.children), children)),
         event_template=spec,
         _validate_leaves=False,

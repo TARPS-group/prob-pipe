@@ -110,8 +110,8 @@ class RandomFunction(Distribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* declares a type that is
-        not a ``FunctionSpec``.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* declares a type that is not a ``FunctionSpec``.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component.
@@ -159,8 +159,8 @@ class RandomMeasure(Distribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* declares a type that is
-        not a ``DistributionSpec``.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* declares a type that is not a ``DistributionSpec``.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component.
