@@ -344,6 +344,38 @@ class TestDepth:
         with pytest.warns(UserWarning, match=f"the {_STORED_DEPTH} levels a term stores"):
             assert deep.render_notation(warn=True) == "… + 1"
 
+    def test_a_derivation_is_truncated_whole_each_time_it_reaches_the_stored_depth(self):
+        """The stored levels of a loop restart every ``_STORED_DEPTH - 1`` steps."""
+        period = _STORED_DEPTH - 1
+        depths = [self._chain(steps).depth for steps in range(1, 3 * period + 2)]
+        assert max(depths) == _STORED_DEPTH
+        restarts = [steps for steps, depth in enumerate(depths, start=1) if depth == 2]
+        assert restarts == [1, 1 + period, 1 + 2 * period, 1 + 3 * period]
+        assert self._chain(1 + period).render_label() == "… + 1"
+
+    def test_a_child_stored_by_many_nodes_is_truncated_once(self):
+        """Reusing a deep operand stores one truncation of it, so each use is cheap."""
+        deep = self._chain(_STORED_DEPTH - 1)
+        assert deep.depth == _STORED_DEPTH and deep.truncation is None
+        first = Operator("+", (deep, constant(2)))
+        second = Operator("-", (deep, constant(3)))
+        assert first.operands[0] is second.operands[0] is deep.truncation
+        assert deep.truncation == Truncated("…", label_lost=True, notation_lost=True)
+
+    def test_the_stored_truncation_takes_no_part_in_equality_or_pickling_loss(self):
+        deep = self._chain(_STORED_DEPTH - 1)
+        fresh = self._chain(_STORED_DEPTH - 1)
+        Operator("+", (deep, constant(2)))
+        assert deep == fresh and hash(deep) == hash(fresh)
+        assert pickle.loads(pickle.dumps(deep)) == fresh
+
+    def test_a_node_records_whether_it_holds_a_lost_part(self):
+        assert not self._chain(_STORED_DEPTH - 1).holds_loss
+        assert self._chain(_STORED_DEPTH).holds_loss
+        assert Product((self._chain(_STORED_DEPTH), _named("q", "a"))).holds_loss
+        kept_name = Truncated("m", label_lost=False, notation_lost=False)
+        assert not Selected(kept_name, ("mu",)).holds_loss
+
     @pytest.mark.parametrize("signed", [False, True], ids=["unsigned", "signed"])
     def test_a_truncated_law_keeps_the_paths_it_holds_fixed_without_a_warning(self, signed):
         """After more selections than storage keeps, the posterior still reads ``m(mu; y)``.
