@@ -44,7 +44,7 @@ from ..custom_types import Array, PRNGKey
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..values._binding import FunctionInputRef, input_ref_value, replace_input_refs
-from ..values._function_base import _validate_stacked_output
+from ..values._function_base import _NAMELESS_COMPONENT, _validate_stacked_output
 from . import _execution, _plan, _recipe
 from ._broker import _record_active_execution_contract
 from ._call import ApplicabilityError
@@ -110,7 +110,7 @@ def execute_distribution_broadcast(
     require_jax_traceable: Callable[[dict[str, Any], list[FunctionInputRef]], None],
     function_name: str,
     output_label: str | None = None,
-    output_component: str = "result",
+    output_component: str = _NAMELESS_COMPONENT,
     output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
     workflow_kind: WorkflowKind,
@@ -482,8 +482,7 @@ def _joint_atoms(
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments, in the order of their fields.
     output_label : str
-        The batch's label, and the component of a whole-term output whose
-        declaration names none.
+        The batch's label. The output's components come from *declaration*.
 
     Returns
     -------
@@ -509,7 +508,9 @@ def _joint_atoms(
             named, held = f"parameters {clash}", "components with those names"
         raise ApplicabilityError(
             f"include_inputs=True cannot add {named} to the output of {output_label!r}, which "
-            f"already has {held}. Rename the parameters or the output components."
+            f"already has {held}; rename the {'parameter' if len(clash) == 1 else 'parameters'}, "
+            f"or pass output_spec=OutputSpec({_free_component(fields)}=None) to hold the output "
+            "under a name no parameter has"
         )
     stored = _batch_columns(atoms)
     if declaration.exposes_record:
@@ -521,6 +522,14 @@ def _joint_atoms(
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
     return _batch_class_for(element)(columns, DRAW_LEVEL, element_spec=element, label=output_label)
+
+
+def _free_component(taken: Mapping[str, Any]) -> str:
+    """A component name that no key of *taken* is: ``output``, extended by ``_`` until it is free."""
+    name = "output"
+    while name in taken:
+        name += "_"
+    return name
 
 
 def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
