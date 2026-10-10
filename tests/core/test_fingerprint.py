@@ -582,6 +582,21 @@ class TestFunctionHashing:
         assert fingerprint(build(before, label="renamed", output_label="relabeled")) == baseline
         assert fingerprint(build(OutputSpec(a=NumericArraySpec((3,))))) != baseline
 
+    def test_an_undeclared_output_named_after_the_callable_keeps_the_fingerprint(self):
+        """A callable's name names its undeclared output, so a rename changes no value."""
+
+        def first(x):
+            return x
+
+        def second(x):
+            return x
+
+        a = Function(first)
+        b = Function(second)
+        assert a.output_spec is None and b.output_spec is None
+        assert a._output_component != b._output_component
+        assert fingerprint(a) == fingerprint(b)
+
     @pytest.mark.parametrize(
         "declaration",
         [None, OutputSpec(value=NumericArraySpec(())), OutputSpec(result=NumericArraySpec(()))],
@@ -719,9 +734,9 @@ class TestFunctionHashing:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = Function(f, dispatch="sequential", n_broadcast_samples=10, label = "f", )
+            wf = Function(f, label="f", dispatch="sequential", n_broadcast_samples=10)
             print(fingerprint(wf))
-""")
+        """)
         site = str(next(p for p in sys.path if "site-packages" in p))
         run = lambda: subprocess.check_output(  # noqa: E731
             [sys.executable, "-c", script, site], text=True
@@ -1161,8 +1176,8 @@ class TestNumericContainerHashing:
             from probpipe import Record
             from probpipe.core._fingerprint import fingerprint
             da = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"], coords={"t": [10, 20, 30]})
-            print(fingerprint(Record({'counts': da}, label = "r", )))
-""")
+            print(fingerprint(Record({"counts": da}, label="r")))
+        """)
         site = str(next(p for p in sys.path if "site-packages" in p))
 
         def run():
