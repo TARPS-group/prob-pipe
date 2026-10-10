@@ -247,8 +247,8 @@ class BijectorTransformedDistribution(Distribution):
     ------
     TypeError
         If *base* is not a ``Distribution`` whose draws are arrays, *component*
-        is not a string, or *bijector* is neither a ``Function`` nor a backend
-        bijector.
+        is not a string, *label* is not a non-empty string, or *bijector* is
+        neither a ``Function`` nor a backend bijector.
     ValueError
         If *component* is not a valid component name.
     ResolutionError

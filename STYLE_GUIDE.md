@@ -383,7 +383,7 @@ and a non-empty ``sample_shape`` prepends batch axes on a level named
 Usage::
 
     from probpipe import Normal, sample
-    draws = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(100,))
+    draws = sample(Normal("x", 0.0, 1.0), sample_shape=(100,))
 """
 ```
 
@@ -398,12 +398,14 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     loc : array-like
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
+    label : str, optional
+        The law's label, the family's class name by default.
     """
 ```
 

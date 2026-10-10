@@ -742,17 +742,21 @@ def _named_weight_grf(label):
 
 
 class TestAlgebraNames:
-    """A map of a random function keeps its label, and a sum is labeled by its expression."""
+    """A map or sum of random functions displays its operation and operands."""
 
     @pytest.mark.parametrize(
         ("build", "expected"),
         [
-            pytest.param(lambda f, g: jnp.eye(3) @ f, "f", id="linear-map"),
-            pytest.param(lambda f, g: f + 1.0, "f", id="shift"),
-            pytest.param(lambda f, g: 2.0 * f, "f", id="scale"),
+            pytest.param(
+                lambda f, g: jnp.eye(3) @ f,
+                "array(shape=(3, 3), dtype=float32) @ f",
+                id="linear-map",
+            ),
+            pytest.param(lambda f, g: f + 1.0, "f + 1.0", id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, "2.0 * f", id="scale"),
             pytest.param(lambda f, g: f + g, "f + g", id="sum"),
             pytest.param(lambda f, g: (f + g) + f, "(f + g) + f", id="nested"),
-            pytest.param(lambda f, g: (2.0 * f) + g, "f + g", id="sum-of-a-map"),
+            pytest.param(lambda f, g: (2.0 * f) + g, "(2.0 * f) + g", id="sum-of-a-map"),
         ],
     )
     def test_a_result_is_labeled_from_its_operands(self, build, expected):

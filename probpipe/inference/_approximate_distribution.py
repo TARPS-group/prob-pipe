@@ -330,7 +330,7 @@ def _chain_columns(law: EmpiricalDistribution) -> dict[str, Array]:
     """
     if not _has_chains(law):
         raise ValueError(
-            f"{law.label!r} has no chains: its draws are indexed by "
+            f"{law.notation} has no chains: its draws are indexed by "
             f"{list(law.atoms.level_names)}, but chain diagnostics need the levels "
             f"{list(_CHAIN_LEVELS)} of a posterior from an MCMC method"
         )

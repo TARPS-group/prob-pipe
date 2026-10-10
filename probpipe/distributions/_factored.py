@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -78,6 +78,7 @@ from ._distribution import (
     _declares_numeric_event,
     _fixed_paths,
     _keeps_fixed_paths,
+    _law_repr,
     _no_free_dims,
     _recorded_copy,
     _shared_final_names,
@@ -1011,17 +1012,13 @@ class _SoleField(Distribution):
         object.__setattr__(self, "_law", law)
         object.__setattr__(self, "_component", component)
 
-    def _repr_class_name(self) -> str:
-        """The class of the record law, which this law presents as a whole term."""
-        return self._law._repr_class_name()
+    def __repr__(self) -> str:
+        """A call of the record law's constructor, with the whole-term declaration as ``event_spec=``."""
+        return _law_repr(self, self._law._repr_arguments(), self._law)
 
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The family parameters of the record law."""
-        return self._law._repr_arguments()
-
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The whole-term declaration, by which this law differs from the record law."""
-        return [("event_spec", repr(self.event_spec))]
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """No component, and the whole-term declaration, by which this law differs from the record law."""
+        return None, repr(self.event_spec)
 
 
 def _requested_paths(joint: Any, path: str | tuple[str, ...]) -> tuple[str, ...]:
@@ -2039,6 +2036,9 @@ class FactoredDistribution(Distribution, SupportsFactors):
         ``FactoredConditionalDistribution``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table = _joint_table("FactoredDistribution", conditional=False)
 
     def __new__(
@@ -2175,6 +2175,9 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         :class:`FactoredDistribution`, or meet every given, which makes the
         joint a ``FactoredDistribution``.
     """
+
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     _capability_table = _joint_table("FactoredConditionalDistribution", conditional=True)
 

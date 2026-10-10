@@ -734,10 +734,13 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     #: The BridgeStan model, built on first use, is not state.
     _transient_state = ("_memo",)
 
+    #: ``StanModel`` builds the posterior, so the repr reads as its call.
+    _repr_component: ClassVar[str | None] = None
+
     def __init__(self, label: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
         super().__init__(
             OutputSpec(program.parameter_record(data)),
-            label=label,
+            label=_constructor_label(self, label, "StanModel"),
         )
         self._program = program
         self._data = dict(data)
@@ -808,6 +811,10 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     def as_unconstrained_distribution(self) -> _UnconstrainedStanView:
         """The posterior in the unconstrained parameterization, whose density has the Jacobian."""
         return _UnconstrainedStanView(self)
+
+    def _repr_class_name(self) -> str:
+        """``StanModel``, the constructor that builds the posterior."""
+        return "StanModel"
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The Stan file and the data-block entries bound."""
@@ -915,6 +922,9 @@ class StanModel(
         If stanc rejects the program, the program declares no parameters, or a
         declaration cannot be read.
     """
+
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     #: The program reads its observed variables' shapes from the data it
     #: receives, so ``condition_on`` leaves their givens to the program.
@@ -1299,6 +1309,9 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _pymc_density},
@@ -1502,6 +1515,9 @@ class _PyMCKernel(ConditionalDistribution):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
+    #: ``PyMCModel`` builds the kernel, so the repr reads as its call.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table: ClassVar = {
         SupportsConditionalLogProb: {"_conditional_log_prob": _pymc_kernel_log_prob},
         SupportsConditionalUnnormalizedLogProb: {
@@ -1522,7 +1538,7 @@ class _PyMCKernel(ConditionalDistribution):
         super().__init__(
             {slot: OpaqueSpec() for slot in program.given},
             OutputSpec(program.event_record(symbolic=True)),
-            label=label,
+            label=_constructor_label(self, label, "PyMCModel"),
         )
         object.__setattr__(self, "_program", program)
 
@@ -1551,6 +1567,10 @@ class _PyMCKernel(ConditionalDistribution):
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
         return PyMCModel(self._program.bind(values), label=self.label)
+
+    def _repr_class_name(self) -> str:
+        """``PyMCModel``, the constructor that builds the kernel."""
+        return "PyMCModel"
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The model function, by its name, and its free variables."""

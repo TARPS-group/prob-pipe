@@ -798,7 +798,16 @@ def _update_distribution(
         # default label, and the expression state how the law displays, and
         # record nothing about what it computes.
         _SKIP = frozenset(
-            {"_label", "_default_label", "_expression", "_provenance", "_annotations"}
+            {
+                "_label",
+                "_label_collapse",
+                "_default_label",
+                "_uses_default_label",
+                "_default_expression",
+                "_expression",
+                "_provenance",
+                "_annotations",
+            }
         )
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):

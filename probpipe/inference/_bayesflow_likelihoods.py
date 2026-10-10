@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -41,7 +41,7 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _constructor_label
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -131,6 +131,9 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         The kernel's label.
     """
 
+    #: The constructors take no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     def __init__(
         self,
         approximator: ContinuousApproximator | RatioApproximator,
@@ -140,10 +143,11 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         data_dim: int,
         label: str,
     ):
+        # A subclass passes its own fixed label, which is its constructor's default.
         super().__init__(
             dict(prior.event_spec.components),
             OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
-            label=label,
+            label=_constructor_label(self, None, label),
         )
         attributes = {
             "_approximator": approximator,

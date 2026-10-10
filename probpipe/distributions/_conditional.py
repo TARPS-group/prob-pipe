@@ -53,10 +53,11 @@ from ._distribution import (
     _compose_operands,
     _constructor_label,
     _detached_term,
-    _event_repr_fields,
+    _event_repr_parts,
+    _given_label,
+    _label_given_first,
+    _law_repr,
     _no_free_dims,
-    _ordered_fields,
-    _repr_label,
     _unify_declarations,
 )
 
@@ -491,8 +492,8 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
     ``str(K)`` returns the kernel's :attr:`notation`, its label followed by its
-    signature, as ``glm(y | beta)``, and the repr shows the label first unless
-    it is the constructor's default.
+    signature, as ``glm(y | beta)``, and the repr reads as a call of the
+    constructor, with ``label=`` where the label differs from the default.
 
     Parameters
     ----------
@@ -525,6 +526,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
 
+    #: Where the constructor takes the component of a whole-term event, which the
+    #: repr follows, as for a law.
+    _repr_component: ClassVar[str | None] = "first"
+
     def __init__(
         self,
         given_spec: InputSpec | Mapping[str, TermSpec],
@@ -535,8 +540,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
         label = _constructor_label(self, label, "p") if label is None else label
-        if not isinstance(label, str) or not label:
-            raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
+        _given_label(label, owner=public_class_name(type(self)))
         self._init_tracked(label, provenance=_provenance)
         self._init_annotations(_annotations)
         self._init_declaration(given_spec, event_spec)
@@ -776,7 +780,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         ``glm(y | sigma; beta)``. Components, slots, and paths are each joined by
         ``", "``. A product without a label reads factor by factor, as
         ``lik(y | beta)·prior(beta | tau)``. The notation is a rendering of the
-        kernel's expression. No operation reads the notation.
+        kernel's expression, made each time it is shown, which shows at most
+        the current ``notation_config.max_depth`` nested levels. No operation
+        reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)
 
@@ -803,15 +809,15 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         return self.notation
 
     def __repr__(self) -> str:
-        """The public class, the label, the family parameters, the given slots, and the declaration.
+        """A call of the kernel's public constructor, followed by the paths it holds fixed.
 
-        The event shows its component, or its declaration, the label is left
-        out where it is the default, and the slots bound by conditioning show as
-        ``fixed=(...)``, as for a law.
+        The component, the family parameters, and the given slots come first,
+        as ``given=('mu',)``, then ``label=`` and ``event_spec=`` where they
+        differ from the constructor's defaults, and the slots that conditioning
+        bound follow as ``fixed=(...)``, as for a law.
         """
         arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
-        fields = _ordered_fields(arguments, self._event_repr_arguments(), self)
-        return term_repr(self._repr_class_name(), _repr_label(self), fields)
+        return _law_repr(self, arguments)
 
     def _repr_class_name(self) -> str:
         """The first public class in this kernel's method-resolution order, which the repr names."""
@@ -821,9 +827,9 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The family parameters the repr shows, each by name and formatted value; none here."""
         return []
 
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The component of the event, or its declaration, as for a law."""
-        return _event_repr_fields(self.event_spec)
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """The component of the event and the declaration's repr, as for a law."""
+        return _event_repr_parts(self.event_spec)
 
 
 # ---------------------------------------------------------------------------
@@ -1575,14 +1581,9 @@ def conditional_distribution(
         If *event_spec* departs from the declaration of the returned law.
     """
     if isinstance(fn, str):
-        raise TypeError(
-            f"conditional_distribution takes the function first and the label as the keyword "
-            f"label; got the string {fn!r} as the function"
-        )
-    if label is not None and (not isinstance(label, str) or not label):
-        raise TypeError(
-            f"conditional_distribution: label must be a non-empty string; got {label!r}"
-        )
+        raise TypeError(_label_given_first("conditional_distribution", "function", fn))
+    if label is not None:
+        _given_label(label, owner="conditional_distribution")
     if fn is not None:
         return _function_kernel(label, fn, given_spec, event_spec)
 

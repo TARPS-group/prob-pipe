@@ -29,7 +29,7 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
-from ..core._expression import Expression, Signature
+from ..core._expression import Collapse, Expression, Signature
 from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
@@ -1122,12 +1122,21 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def _store_expression(self, expression: Expression) -> None:
+    def _store_expression(
+        self, expression: Expression, rendering: tuple[str, Collapse | None] | None = None
+    ) -> None:
         """Store *expression* and its label, which the function's Python names follow.
 
         Explicit output aliases and the output declaration are kept.
+
+        Parameters
+        ----------
+        expression : Expression
+            The function's expression.
+        rendering : tuple of (str, Collapse or None), optional
+            The label and what it left out, for a caller that rendered it already.
         """
-        super()._store_expression(expression)
+        super()._store_expression(expression, rendering)
         object.__setattr__(self, "__name__", self._label)
         object.__setattr__(self, "__qualname__", self._label)
 
@@ -1267,7 +1276,11 @@ class Function(Node, TrackedTerm, Annotated):
         """The function's label followed by its parameters, as ``predict(x, y)``, which ``str()`` returns.
 
         The parameters are the names of :attr:`signature`, in order, joined by
-        ``", "``. No operation reads the notation.
+        ``", "``. A parameter with a default reads ``name=value``, as
+        ``predict(x, scale=1.0)``, when the default is a number, a string,
+        ``None``, or an array of no axes, and ``name=…`` for any other default.
+        The notation is rendered each time it is shown, at the current
+        ``notation_config.max_depth``. No operation reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)
 

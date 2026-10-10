@@ -47,7 +47,7 @@ def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
 class _Leaf(TrackedTerm):
     """A minimal tracked element."""
 
-    __slots__ = ("_expression", "_label", "_provenance", "value")
+    __slots__ = ("_expression", "_label", "_label_collapse", "_provenance", "value")
 
     def __init__(self, value, label="leaf"):
         object.__setattr__(self, "value", value)
@@ -213,6 +213,8 @@ class _StoringBatch(Batch[_Leaf]):
 
     def raw(self):
         return self._store
+
+    _borrows_elements = True
 
     def _element_at(self, index, *, label):
         return self._store[index[0]]

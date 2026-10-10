@@ -362,6 +362,42 @@ def check_points(
     return _combined(reports)
 
 
+def lifted_declaration(
+    function: Any, values: Mapping[str, Any], controls: Mapping[str, Any], plan: BroadcastPlan
+) -> OutputSpec | None:
+    """The result declaration of one point of a call that lifts laws, as the call's check plans it.
+
+    The point binds a stand-in for a draw of each law the call lifts, so the law
+    of the evaluations declares the components that one point's result
+    declares, as ``log_prob(mu)`` for a score.
+
+    Parameters
+    ----------
+    function : Function
+        The Function realized by routes, which plans the point.
+    values : Mapping of str to Any
+        The arguments of the call, or of one row of a sweep, by parameter name.
+    controls : Mapping of str to Any
+        The call's resolved controls.
+    plan : BroadcastPlan
+        The call's broadcast plan, which names the laws the call lifts.
+
+    Returns
+    -------
+    OutputSpec or None
+        The point's result declaration, or ``None`` when the declarations
+        leave it open.
+
+    Raises
+    ------
+    ApplicabilityError
+        If an applicability condition of the function fails at the point.
+    """
+    point = replace_input_refs(values, _draws(values, plan))
+    _, result, _ = function._plan_point(point, controls)
+    return result
+
+
 def call_report(
     point: PointReport,
     *,

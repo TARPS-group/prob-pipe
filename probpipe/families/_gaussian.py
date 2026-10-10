@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
-from ..core._expression import Operator
+from ..core._expression import Operator, constant
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -46,7 +46,7 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution, _class_label
+from ..distributions._distribution import Distribution, _check_component, _class_label
 from ..distributions._factored import (
     FactoredDistribution,
     FactoredNumericDistribution,
@@ -352,9 +352,10 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     Raises
     ------
     TypeError
-        If *component* is not a string, *output_spec* is not an ``OutputSpec``
-        naming one component, or *event_spec* is not an ``OutputSpec`` or
-        declares a type that is not a ``FunctionSpec``.
+        If *component* is not a string, *label* is not a non-empty string,
+        *output_spec* is not an ``OutputSpec`` naming one component, or
+        *event_spec* is not an ``OutputSpec`` or declares a type that is not a
+        ``FunctionSpec``.
     ValueError
         If *event_spec* names another component than *component*, or the
         ``FunctionSpec`` it declares names another output component.
@@ -368,11 +369,7 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        if not isinstance(component, str):
-            raise TypeError(
-                f"{_class_label(self)} takes the component of its event as its first argument, "
-                f"a string; got {type(component).__name__}"
-            )
+        _check_component(component, _class_label(self))
         output, event = _declarations(component, output_spec, event_spec)
         self._output_spec = output
         super().__init__(component, event, label=label)
@@ -696,8 +693,7 @@ class _LinearMapGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(base._expression)
+        self._store_expression(Operator("@", (constant(A), base._embedded_expression())))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``A``."""
@@ -761,8 +757,7 @@ class _ShiftedGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(base._expression)
+        self._store_expression(Operator("+", (base._embedded_expression(), constant(b))))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``b``."""
@@ -799,8 +794,7 @@ class _ScaledGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(base._expression)
+        self._store_expression(Operator("*", (constant(alpha), base._embedded_expression())))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``alpha``."""

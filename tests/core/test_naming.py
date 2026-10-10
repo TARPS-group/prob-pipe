@@ -846,6 +846,18 @@ class TestTheLabelsOfValuesComputedFromALaw:
             assert expectation(_prior(), square).label == "E[square(mu ~ prior)]"
             assert expectation(_prior(), lambda x: x).label == "E[f(mu ~ prior)]"
 
+    def test_an_expectation_names_its_integrand_as_a_lifted_call_does(self):
+        """A relabeled Function keeps its output label, which both labels read."""
+
+        @function(output_spec=OutputSpec(squared=None), output_label="sq")
+        def square(x: jax.Array) -> jax.Array:
+            return x**2
+
+        renamed = square.with_label("g")
+        with workflow_run(seed=0):
+            lifted = mean(renamed.with_options(n_broadcast_samples=8)(_prior()))
+            assert expectation(_prior(), renamed).label == lifted.label == "E[sq(mu ~ prior)]"
+
     def test_a_draw_and_a_score_of_a_posterior_list_its_fixed_paths(self):
         with workflow_run(seed=0):
             posterior = condition_on(_empirical_model(), {"y": 0.5})
@@ -995,6 +1007,39 @@ class TestTheLabelsOfALiftedFunction:
             )
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(prior(g), q ~ proposal)")
         assert list(lifted.event_spec.components) == ["log_prob(g)"]
+
+    def test_a_lifted_score_keeps_the_component_its_check_declares(self):
+        prior = Normal("g", 0.0, 1.0, label="prior")
+        proposal = Normal("q", 0.0, 1.0, label="proposal")
+        declared = log_prob.check(prior, proposal).result
+        with workflow_run(seed=0):
+            lifted = log_prob(prior, proposal)
+        assert tuple(lifted.event_spec.components) == tuple(declared.components)
+        assert tuple(lifted.event_spec.components) == ("log_prob(g)",)
+
+    def test_a_parameter_the_caller_omits_is_not_shown(self):
+        @function(output_spec=OutputSpec(scaled_value=None))
+        def scaled(x: jax.Array, scale: float = 2.0) -> jax.Array:
+            return x * scale
+
+        lift = scaled.with_options(n_broadcast_samples=4)
+        with workflow_run(seed=0):
+            prior = Normal("mu", 0.0, 1.0, label="prior")
+            assert lift(prior).notation == "scaled(mu ~ prior)"
+
+    @pytest.mark.parametrize(
+        "scale", [2.0, jnp.float32(2.0)], ids=["the-default-literal", "an-equal-array"]
+    )
+    def test_a_parameter_the_caller_passes_is_shown_even_at_its_default(self, scale):
+        @function(output_spec=OutputSpec(scaled_value=None))
+        def scaled(x: jax.Array, scale: float = 2.0) -> jax.Array:
+            return x * scale
+
+        lift = scaled.with_options(n_broadcast_samples=4)
+        with workflow_run(seed=0):
+            prior = Normal("mu", 0.0, 1.0, label="prior")
+            assert lift(prior, scale=scale).notation == "scaled(mu ~ prior, 2.0)"
+            assert lift(prior, scale).notation == "scaled(mu ~ prior, 2.0)"
 
     def test_a_function_called_on_values_takes_its_output_label(self):
         @function

@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -201,6 +201,9 @@ class MinibatchedDistribution(
         If ``data`` has no leading axis, or ``batch_size`` is not in
         ``[1, len(data)]``.
     """
+
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     def __init__(
         self,

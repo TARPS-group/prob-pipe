@@ -34,7 +34,12 @@ from ..distributions._capabilities import (
     _conjunction,
 )
 from ..distributions._conversion import _event_difference, _term_difference
-from ..distributions._distribution import Distribution, _class_label, _constructor_label
+from ..distributions._distribution import (
+    Distribution,
+    _class_label,
+    _constructor_label,
+    _label_given_first,
+)
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
@@ -289,10 +294,12 @@ def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``.
+        If *components* is a string, or a component is not a ``Distribution``.
     ValueError
         If there is no component, or two components declare different events.
     """
+    if isinstance(components, str):
+        raise TypeError(_label_given_first("MixtureDistribution", "components", components))
     laws = tuple(components)
     if not laws:
         raise ValueError("MixtureDistribution needs at least one component")
@@ -469,14 +476,17 @@ class MixtureDistribution(Distribution):
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``, or *label* is not a non-empty
-        string.
+        If *components* is a string, a component is not a ``Distribution``, or
+        *label* is not a non-empty string.
     ValueError
         If there is no component, two components declare different events, or
         the weights are not one nonnegative weight per component summing to one.
     """
 
     _capability_table: ClassVar = _MIXTURE_CAPABILITIES
+
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     _components: tuple[Distribution, ...]
     _weights: Array

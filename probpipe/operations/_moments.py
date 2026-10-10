@@ -840,9 +840,14 @@ def _moment_expression(summary: str) -> Callable[[Any], Expression]:
 
 
 def _integrand_label(f: Any) -> str:
-    """The label of an integrand: a Function's label, a callable's ``__name__``, and ``f`` for a lambda."""
+    """The label of an integrand, as ``evaluate`` names its call.
+
+    It is a Function's ``output_label``, so ``expectation(d, g)`` and
+    ``mean(g(d))`` are labeled alike, a callable's ``__name__``, and ``f`` for a
+    lambda.
+    """
     if isinstance(f, Function):
-        return f.label
+        return f.output_label
     name = getattr(f, "__name__", "f")
     return "f" if name == "<lambda>" else name
 

@@ -71,6 +71,7 @@ from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.distributions._factored import _is_named, _SoleField
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._marginal import marginal as marginal_operation
+from tests._fixed_paths import with_fixed_paths
 
 SCALAR = NumericArraySpec(())
 SYMBOLIC = NumericArraySpec(("n",))
@@ -1408,12 +1409,6 @@ class TestPathRenames:
 # -- Notation -----------------------------------------------------------------------
 
 
-def _with_fixed_paths(term: Any, *paths: str) -> Any:
-    """*term* holding *paths* fixed, as conditioning on them records."""
-    term._store_expression(term._expression.with_fixed(paths))
-    return term
-
-
 class TestNotation:
     """An unlabeled joint reads factor by factor, and a labeled one by its label."""
 
@@ -1451,14 +1446,16 @@ class TestNotation:
         joint = _law("d", "d") * model
         assert joint.notation == "d(d)·model(obs, beta)"
 
-    def test_the_repr_keeps_the_label_first(self):
-        assert repr(_likelihood() * _prior()).startswith("FactoredDistribution(\n    'lik·prior',")
+    def test_the_repr_reads_as_the_constructor_call_with_the_label_as_a_keyword(self):
+        text = repr(_likelihood() * _prior())
+        assert text.startswith("FactoredDistribution(\n    factors=(")
+        assert text.endswith("    label='lik·prior',\n)")
 
     def test_an_unlabeled_joint_that_holds_paths_fixed_reads_by_its_label(self):
         """Its factors' notations would leave out the fixed paths."""
-        joint = _with_fixed_paths(_law("a", "x") * _law("b", "z"), "y")
+        joint = with_fixed_paths(_law("a", "x") * _law("b", "z"), "y")
         assert joint.notation == "(a·b)(x, z; y)"
-        model = _with_fixed_paths((_law("a", "x") * _law("b", "z")).with_label("model"), "y")
+        model = with_fixed_paths((_law("a", "x") * _law("b", "z")).with_label("model"), "y")
         assert model.notation == "model(x, z; y)"
 
 
@@ -1522,12 +1519,12 @@ class TestTheLabeledFlag:
         ],
     )
     def test_a_derived_joint_keeps_the_fixed_paths(self, derive):
-        joint = _with_fixed_paths(_symbolic_joint(), "y")
+        joint = with_fixed_paths(_symbolic_joint(), "y")
         assert _fixed_paths(derive(joint)) == ("y",)
 
     def test_a_bound_conditional_joint_keeps_the_fixed_paths(self):
         _, _, joint = _sigma_model()
-        assert _fixed_paths(_with_fixed_paths(joint, "y")._condition_on({"sigma": 1.0})) == ("y",)
+        assert _fixed_paths(with_fixed_paths(joint, "y")._condition_on({"sigma": 1.0})) == ("y",)
 
 
 # -- Round trips ----------------------------------------------------------------------

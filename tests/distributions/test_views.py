@@ -79,6 +79,7 @@ from probpipe.families import Cauchy, HalfCauchy, StudentT
 from probpipe.linalg import DenseLinOp, LinOp
 from probpipe.operations._marginal import marginal
 from probpipe.operations._moments import mean
+from tests._fixed_paths import with_fixed_paths
 from tests._posterior import posterior_of
 
 # -- Declarations -------------------------------------------------------------
@@ -1316,12 +1317,6 @@ class TestTheViewOfAWeightedLaw:
         assert float(probpipe.mean(law["a"])) == pytest.approx(0.6)
 
 
-def _with_fixed_paths(term: Any, *paths: str) -> Any:
-    """*term* holding *paths* fixed, as conditioning on them records."""
-    term._store_expression(term._expression.with_fixed(paths))
-    return term
-
-
 class TestNotation:
     """A view reads as the detached marginal at its path: its label followed by its components."""
 
@@ -1340,7 +1335,7 @@ class TestNotation:
         assert _dependent_joint()["y"].notation == "(likelihood·beta)(y)"
 
     def test_a_view_keeps_the_paths_its_parent_holds_fixed(self):
-        parent = _with_fixed_paths(_Law("model", _EVENT), "obs")
+        parent = with_fixed_paths(_Law("model", _EVENT), "obs")
         view = parent["y"]
         assert _fixed_paths(view) == ("obs",)
         assert view.notation == "model(y; obs)"
@@ -1354,14 +1349,14 @@ class TestNotation:
         ],
     )
     def test_a_view_derived_from_a_view_keeps_the_fixed_paths(self, derive):
-        parent = _with_fixed_paths(_Law("model", _EVENT), "obs")
+        parent = with_fixed_paths(_Law("model", _EVENT), "obs")
         assert _fixed_paths(derive(parent["model"])) == ("obs",)
 
     def test_the_detached_marginal_keeps_the_fixed_paths(self):
         joint = Normal("a", 0.0, 1.0, label="a") * EmpiricalDistribution(
             jnp.array([0.0, 1.0, 3.0]), component="b", label="b"
         )
-        parent = _with_fixed_paths(joint.with_label("model"), "obs")
+        parent = with_fixed_paths(joint.with_label("model"), "obs")
         detached = parent["b"].raw()
         assert _fixed_paths(detached) == ("obs",)
         assert detached.notation == "b(b; obs)"
@@ -1450,15 +1445,15 @@ class TestNotation:
         assert marginal(view, ("a", "b")).notation == "pair(a, b)"
 
     def test_a_view_of_several_factors_holding_fixed_paths_lists_them(self):
-        model = _with_fixed_paths(
+        model = with_fixed_paths(
             (Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")), "obs"
         )
         view, detached = model[("a", "b")], marginal(model, ("a", "b"))
         assert view.notation == detached.notation == "(a·b)(a, b; obs)"
 
     def test_a_view_at_a_factor_holding_fixed_paths_holds_them_first(self):
-        factor = _with_fixed_paths(_prior(), "obs")
-        model = _with_fixed_paths(
+        factor = with_fixed_paths(_prior(), "obs")
+        model = with_fixed_paths(
             (
                 _Kernel(
                     {"mu": _REAL},

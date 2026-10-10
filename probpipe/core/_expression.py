@@ -32,8 +32,13 @@ child records the law's signature, because the node holds no term.
 
 A rendering shows at most :attr:`~probpipe.core.config.NotationConfig.max_depth`
 nested levels. A node deeper than that renders as its collapsed text, which is
-the name of a law or a function, or ``…`` for a value. A display of a term warns
-when its rendering collapses a node, and storing a label renders it silently.
+the name of a law or a function, or ``…`` for a value. A stored expression keeps
+at most :data:`_STORED_DEPTH` levels, and a part nested deeper is stored as a
+:class:`Truncated` node, which renders as the part's collapsed text and holds
+the paths the part holds fixed. A term's label is rendered once, when the term
+is built, and its notation each time it is shown. A display of a term warns
+when what it shows collapsed a level or shows a truncated part, and storing a
+label renders it silently.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from ._repr import (
+    ELLIPSIS,
     PRODUCT_SYMBOL,
     format_components,
     format_notation,
@@ -59,6 +65,7 @@ __all__ = [
     "ELLIPSIS",
     "SCORE",
     "Applied",
+    "Collapse",
     "Conditioned",
     "Draw",
     "Expression",
@@ -69,25 +76,23 @@ __all__ = [
     "Selected",
     "Signature",
     "Summary",
+    "Truncated",
     "constant",
     "draw_of",
     "joined_labels",
+    "warn_collapsed",
 ]
-
-#: The text a collapsed value renders as.
-ELLIPSIS = "…"
 
 #: The package directory, whose frames a collapse warning skips, so the warning
 #: names the user's line that displays the term.
 _WARNING_SKIP_PREFIXES = (os.path.dirname(os.path.dirname(__file__)) + os.sep,)
 
 #: The greatest depth of a stored expression. A node built over a child that
-#: nests this many levels stores the child's collapsed text in its place, so a
+#: nests this many levels stores a :class:`Truncated` node in its place, so a
 #: long derivation, such as a loop that adds to a value, never builds a tree
-#: too deep to copy, hash, or pickle. This bound is separate from
-#: ``notation_config.max_depth``, which bounds what a rendering shows and may
-#: change after a term is built. That setting may not exceed this bound, so a
-#: rendering never meets a part that storage collapsed without a warning.
+#: too deep to copy, hash, or pickle. ``notation_config.max_depth``, which bounds
+#: what a rendering shows, is at most this bound, since a rendering of more
+#: levels would show no more.
 _STORED_DEPTH = 64
 
 
@@ -114,8 +119,26 @@ class Signature:
     defaults: tuple[tuple[str, str], ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class Collapse:
+    """What a rendering left out, which a display of it warns about.
+
+    Attributes
+    ----------
+    max_depth : int
+        The ``notation_config.max_depth`` the rendering showed.
+    beyond_depth : bool
+        Whether the rendering collapsed a part nested deeper than *max_depth*.
+        It is false for a rendering that left out only the parts storage
+        truncated.
+    """
+
+    max_depth: int
+    beyond_depth: bool
+
+
 class _Rendering:
-    """The state of one rendering: the levels it shows and whether it collapsed a node.
+    """The state of one rendering: the levels it shows and what it left out.
 
     Parameters
     ----------
@@ -126,6 +149,7 @@ class _Rendering:
     def __init__(self, max_depth: int) -> None:
         self.max_depth = max_depth
         self.collapsed = False
+        self.truncated = False
 
     def beyond(self, level: int) -> bool:
         """Whether a node at nesting *level* is deeper than the rendering shows."""
@@ -135,6 +159,12 @@ class _Rendering:
         """The collapsed text of *node*, recorded so that a rendering for display warns."""
         self.collapsed = True
         return node._collapsed()
+
+    def result(self) -> Collapse | None:
+        """What the rendering left out, or ``None`` when it shows every part in full."""
+        if not (self.collapsed or self.truncated):
+            return None
+        return Collapse(self.max_depth, self.collapsed)
 
 
 class Expression:
@@ -270,8 +300,8 @@ class Expression:
             dict(signature.defaults),
         )
 
-    def render_label(self, *, warn: bool = False) -> str:
-        """The label this node renders.
+    def render_label(self) -> str:
+        """The label this node renders, at the current ``notation_config.max_depth``.
 
         The label of a law, a kernel, or a function is its name, and a value's
         label is its rendering.
@@ -281,29 +311,29 @@ class Expression:
         the function's label. A value renders in full, as ``(y, mu) ~ model`` or
         ``E[mu ~ prior]``, with each part grouped by design II.4.
 
-        Parameters
-        ----------
-        warn : bool, optional
-            Whether the rendering warns when it collapses a node, as a display
-            of a term does. A label stored on a term renders without a warning.
-
         Returns
         -------
         str
             The label, which shows at most ``notation_config.max_depth`` nested
             levels.
+        """
+        return self.label_rendering()[0]
 
-        Warns
-        -----
-        UserWarning
-            When *warn* is true and the rendering nests more levels than
-            ``notation_config.max_depth``.
+    def label_rendering(self) -> tuple[str, Collapse | None]:
+        """The label this node renders, as :meth:`render_label` gives it, and what it left out.
+
+        A term stores both when it is built, and a display of its label warns
+        with :func:`warn_collapsed` when the label left a part out.
+
+        Returns
+        -------
+        tuple of (str, Collapse or None)
+            The label, and what its rendering left out, or ``None`` when it shows
+            every part in full.
         """
         rendering = _Rendering(_max_depth())
         text = self._label(rendering, 1)
-        if warn:
-            _warn_if_collapsed(rendering)
-        return text
+        return text, rendering.result()
 
     def render_notation(self, own: Signature | None = None, *, warn: bool = False) -> str:
         """The notation this node renders.
@@ -334,24 +364,28 @@ class Expression:
         Warns
         -----
         UserWarning
-            When *warn* is true and the rendering nests more levels than
-            ``notation_config.max_depth``.
+            When *warn* is true and the rendering collapses a part nested deeper
+            than ``notation_config.max_depth`` or shows a part that storage
+            truncated.
         """
         rendering = _Rendering(_max_depth())
         text = self._notation(rendering, 1, own)
-        if warn:
-            _warn_if_collapsed(rendering)
+        collapse = rendering.result()
+        if warn and collapse is not None:
+            warn_collapsed(collapse, stored=False)
         return text
 
 
 def _kept(child: Expression) -> Expression:
     """*child* as a node stores it.
 
-    A child that nests :data:`_STORED_DEPTH` levels is stored as its collapsed text.
+    A child that nests :data:`_STORED_DEPTH` levels is stored as a
+    :class:`Truncated` node, which keeps its collapsed text, the paths it holds
+    fixed, and the defaulted given slots it leaves free.
     """
     if child.depth < _STORED_DEPTH:
         return child
-    return Named(child._collapsed())
+    return Truncated(child._collapsed(), child.fixed_paths(), child._defaulted_givens())
 
 
 def _kept_all(children: Iterable[Expression]) -> tuple[Expression, ...]:
@@ -428,6 +462,50 @@ class Named(_Signed):
 
     def _label(self, rendering: _Rendering, level: int) -> str:
         return self.label
+
+
+@dataclass(frozen=True, slots=True)
+class Truncated(Expression):
+    """A part that storage truncated, which renders as the part's collapsed text.
+
+    A node built over a child that nests :data:`_STORED_DEPTH` levels stores
+    this node in the child's place. It renders as the name of a law or a
+    function, or as ``…`` for a value, and a rendering that shows it records
+    that it left a part out, so a display of it warns. It holds the paths the
+    part holds fixed, so a law selected from a truncated posterior still lists
+    them after ``;``.
+
+    Attributes
+    ----------
+    text : str
+        The collapsed text of the part.
+    fixed : tuple of str
+        The paths the part holds fixed, in the order fixed.
+    givens : tuple of (str, str)
+        The given slots with a default that the part leaves free, each with its
+        formatted default.
+    """
+
+    text: str
+    fixed: tuple[str, ...] = ()
+    givens: tuple[tuple[str, str], ...] = ()
+    depth: int = _depth_field()
+
+    def __post_init__(self) -> None:
+        self._set_depth()
+
+    def fixed_paths(self) -> tuple[str, ...]:
+        return self.fixed
+
+    def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
+        return self.givens
+
+    def _collapsed(self) -> str:
+        return self.text
+
+    def _label(self, rendering: _Rendering, level: int) -> str:
+        rendering.truncated = True
+        return self.text
 
 
 @dataclass(frozen=True, slots=True)
@@ -917,16 +995,43 @@ def joined_labels(labels: Iterable[str]) -> str:
     )
 
 
-def _warn_if_collapsed(rendering: _Rendering) -> None:
-    """Warn that *rendering* collapsed a node, naming the setting that shows more levels."""
-    if rendering.collapsed:
-        warnings.warn(
-            f"a label or notation nests more than notation_config.max_depth="
-            f"{rendering.max_depth} levels, so its deeper parts show as their labels or "
-            f"{ELLIPSIS!r}. Raise notation_config.max_depth to show them.",
-            UserWarning,
-            skip_file_prefixes=_WARNING_SKIP_PREFIXES,
+def warn_collapsed(collapse: Collapse, *, stored: bool) -> None:
+    """Warn that a label or a notation shown left parts out, as *collapse* records.
+
+    Parameters
+    ----------
+    collapse : Collapse
+        What the rendering shown left out.
+    stored : bool
+        Whether the rendering is a term's label, which the term stores when it
+        is built, so a setting raised later does not change it.
+
+    Warns
+    -----
+    UserWarning
+        Always. The message names ``notation_config.max_depth`` where raising it
+        shows more, and says that a part nested deeper than a term stores shows
+        as its label otherwise.
+    """
+    if collapse.beyond_depth and stored:
+        message = (
+            f"this label nests more than notation_config.max_depth={collapse.max_depth} "
+            f"levels, the setting when the term was built, so its deeper parts show as their "
+            f"labels or {ELLIPSIS!r}. Raise notation_config.max_depth before building the term "
+            f"to show them."
         )
+    elif collapse.beyond_depth:
+        message = (
+            f"a label or notation nests more than notation_config.max_depth="
+            f"{collapse.max_depth} levels, so its deeper parts show as their labels or "
+            f"{ELLIPSIS!r}. Raise notation_config.max_depth to show them."
+        )
+    else:
+        message = (
+            f"a label or notation nests more than the {_STORED_DEPTH} levels a term stores, "
+            f"so its deeper parts show as their labels or {ELLIPSIS!r}"
+        )
+    warnings.warn(message, UserWarning, skip_file_prefixes=_WARNING_SKIP_PREFIXES)
 
 
 def _max_depth() -> int:

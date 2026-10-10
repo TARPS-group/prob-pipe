@@ -380,6 +380,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         "_annotations",
         "_expression",
         "_label",
+        "_label_collapse",
         "_provenance",
         "_spec",
         "_tree",

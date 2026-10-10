@@ -32,11 +32,7 @@ from collections.abc import Mapping
 # exposes; the conflict-avoidance constraint itself doesn't change.
 from typing import Any, Self, _ProtocolMeta
 
-from ._expression import (
-    Expression,
-    Named,
-    Signature,
-)
+from ._expression import Collapse, Expression, Named, Signature, warn_collapsed
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
@@ -194,7 +190,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     Notes
     -----
     The mixin holds no per-instance storage of its own (``__slots__ = ()``);
-    the state is stored in the ``_expression`` / ``_label`` / ``_provenance``
+    the state is stored in the ``_expression`` / ``_label`` / ``_label_collapse`` / ``_provenance``
     attributes, which a host class declares in its ``__slots__`` (when it uses
     slots) and initializes via :meth:`_init_tracked`. All writes go through
     ``object.__setattr__`` so the mixin also works on immutable hosts that
@@ -207,6 +203,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     """
 
     _label: str
+    _label_collapse: Collapse | None
     _expression: Expression
     _provenance: Provenance | None
     __slots__ = ()
@@ -225,18 +222,37 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         own ``label`` policy (required vs. auto-derived default).
         """
         object.__setattr__(self, "_expression", Named(label))
+        if getattr(self, "_uses_default_label", False):
+            object.__setattr__(self, "_default_expression", self._expression)
         object.__setattr__(self, "_label", label)
+        object.__setattr__(self, "_label_collapse", None)
         object.__setattr__(self, "_provenance", provenance)
 
-    def _store_expression(self, expression: Expression) -> None:
+    def _store_expression(
+        self, expression: Expression, rendering: tuple[str, Collapse | None] | None = None
+    ) -> None:
         """Store *expression* and the label it renders, on a term that no caller holds yet.
 
-        The label is stored as the expression renders it now, so it is read
-        once and the term keeps it. A kind whose state derives from its label
-        overrides this, so the state follows the expression.
+        The label is rendered once, now, at the current
+        ``notation_config.max_depth``, and the term keeps it, together with
+        what its rendering left out, which a display of the label warns about.
+        A kind whose state derives from its label overrides this, so the state
+        follows the expression.
+
+        Parameters
+        ----------
+        expression : Expression
+            The term's expression.
+        rendering : tuple of (str, Collapse or None), optional
+            The label and what it left out, as
+            :meth:`Expression.label_rendering` gives them, for a caller that has
+            rendered the label already. By default the expression is rendered
+            here.
         """
+        label, collapse = expression.label_rendering() if rendering is None else rendering
         object.__setattr__(self, "_expression", expression)
-        object.__setattr__(self, "_label", expression.render_label())
+        object.__setattr__(self, "_label", label)
+        object.__setattr__(self, "_label_collapse", collapse)
 
     def _own_signature(self) -> Signature | None:
         """The signature the term's declaration states; ``None`` for a value, which has none."""
@@ -264,16 +280,25 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     @property
     def label(self) -> str:
-        """Human-readable label of this object."""
+        """Human-readable label of this object.
+
+        The label is rendered from the term's expression once, when the term is
+        built, and shows at most the ``notation_config.max_depth`` levels set
+        then. A later setting changes the labels of terms built afterwards, and
+        the notation of a law, a kernel, or a function, which is rendered each
+        time it is shown.
+        """
         return self._label
 
     def _displayed_label(self) -> str:
-        """The label as ``str()`` and the repr show it.
+        """The stored label, as the repr shows it.
 
-        Showing a label warns when its rendering collapses a level beyond
-        ``notation_config.max_depth``, and reading :attr:`label` never warns.
+        Showing a label warns when its rendering, made when the term was built,
+        left a part out, and reading :attr:`label` never warns.
         """
-        self._expression.render_label(warn=True)
+        collapse = getattr(self, "_label_collapse", None)
+        if collapse is not None:
+            warn_collapsed(collapse, stored=True)
         return self._label
 
     def with_label(self, label: str) -> Self:

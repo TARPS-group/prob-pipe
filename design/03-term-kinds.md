@@ -122,6 +122,8 @@ class Function(TrackedTerm):
     # with no tracking or lifting; the raw map operations build on
     def __call__(self, *args, **kwargs) -> Any: ...
     # run the call handler: plain evaluation on the base, the Part V engine after import
+    @property
+    def notation(self) -> str: ...   # the label and the parameters, as predict(x, y); str() returns it (II.4)
 
 def install_call_engine(engine: Callable[..., Any]) -> None: ...
     # plain evaluation on concrete values.
@@ -411,6 +413,8 @@ class Distribution(TrackedTerm):
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution: ...
     # the law itself at a whole term's component, or the field view at another event path;
     # any other argument raises
+    @property
+    def notation(self) -> str: ...   # the label and the signature, as prior(mu); str() returns it (II.4)
 ```
 
 **Numeric distributions.** A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does. Membership is read from the declaration, so `isinstance(d, NumericDistribution)` holds if and only if the declaration of `d` is numeric, whatever its class. A class whose every instance is numeric may inherit the marker, and construction checks that each instance is numeric. Exactly the numeric laws have the marker's properties, which, like `event_shape`, are final and computed from the declaration:
@@ -549,7 +553,7 @@ The projection rows are exact whenever the parent's answer is, and the rows thro
 
 Each derived capability carries the parent's guard for the call that its derivation makes, such as the parent's quantile guard at the same probabilities for the quantile row. A moment row through the marginal carries the parent's marginal guard at `p` and then the marginal's guard of the moment, so the view returns or raises as the marginal does. The sample row passes its key and sample shape to the parent unchanged, so a view's draw at a key is the projection at `p` of its parent's draw at that key. A given that covers every field of the view is malformed, since no law remains, so the conditioning row's guard rejects it and `_condition_on` raises `ValueError`. A selection drops each node that the given covers and keeps the rest.
 
-**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution("b", atoms)` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed. It offers the density rows when the report includes the density, and a moment row its parent does not claim when the report includes the moment, so a view of a dependent joint at a root factor carries the factor's exact moments, which the joint does not claim. The projection rows derive from the parent's own capabilities, since each computes from the parent's answer.
+**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution(atoms, component="b")` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed. It offers the density rows when the report includes the density, and a moment row its parent does not claim when the report includes the moment, so a view of a dependent joint at a root factor carries the factor's exact moments, which the joint does not claim. The projection rows derive from the parent's own capabilities, since each computes from the parent's answer.
 
 ### Rationale
 
@@ -577,6 +581,8 @@ class ConditionalDistribution(TrackedTerm):
     @property
     def event_spec(self) -> OutputSpec: ...              # the event declaration, read from spec
     def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions on both sides (II.1)
+    @property
+    def notation(self) -> str: ...   # the label and the signature, as glm(y | beta); str() returns it (II.4)
     def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution | ConditionalDistribution: ...
     # the required primitive: the law K(given, ·), or a curried kernel for a partial given; every given value arrives in given, and the keyword options configure the kernel or the method, such as a budget
 

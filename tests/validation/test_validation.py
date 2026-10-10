@@ -78,6 +78,8 @@ class TestPredictiveCheck:
         with workflow_run(seed=0):
             result = predictive_check(likelihood, prior, sample_mean, num_replications=50)
         assert result["replicated_statistics"].num_atoms == 50
+        # The law is labeled by the statistic, and the record's field view by its key.
+        assert str(result.raw()["replicated_statistics"]) == "sample_mean(replicated_statistics)"
         assert result["test_fn_name"].value == "sample_mean"
         assert "observed_statistic" not in result
         assert "p_value" not in result

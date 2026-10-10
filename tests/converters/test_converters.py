@@ -153,6 +153,36 @@ class TestMomentMatching:
         assert result.label == "g"
         assert list(result.event_spec.components) == ["theta"]
 
+    @pytest.mark.parametrize(
+        ("target", "notation"),
+        [
+            (Normal, "Normal(g)"),
+            (EmpiricalDistribution, "p(g)"),
+            (KDEDistribution, "KDEDistribution(g)"),
+        ],
+    )
+    def test_a_source_under_its_default_label_converts_under_the_targets(self, target, notation):
+        """The default label names the source's class, so the result names the target's."""
+        with workflow_run(seed=0):
+            result = convert.with_options(method_options={"num_samples": 200})(
+                Laplace("g", 9.0, 1.0), target
+            )
+            labeled = convert.with_options(method_options={"num_samples": 200})(
+                Laplace("g", 9.0, 1.0, label="lp"), target
+            )
+        assert str(result) == notation
+        assert str(labeled) == "lp(g)"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            Laplace("g", 9.0, 1.0, label="Laplace"),
+            Laplace("g", 9.0, 1.0).with_label("Laplace"),
+        ],
+    )
+    def test_an_explicit_alias_equal_to_the_family_name_is_preserved(self, source):
+        assert convert(source, Normal).notation == "Laplace(g)"
+
     def test_support_mismatch_raises_by_default(self):
         """A fit to a family on another support is infeasible at check, before any fitting."""
         n = Normal("x", loc=0.5, scale=0.1)
@@ -1157,8 +1187,8 @@ class TestKDEDistribution:
         kde = KDEDistribution(samples, component="test_kde")
         assert repr(kde) == (
             "KDEDistribution(\n"
-            "    component='test_kde',\n"
             "    atoms=array(shape=(50,), dtype=float32),\n"
             "    kernel=GaussianKernel,\n"
+            "    component='test_kde',\n"
             ")"
         )

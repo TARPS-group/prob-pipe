@@ -256,9 +256,15 @@ def _coerce_output(
 
 
 def _prepared(term: Any, expression: Expression) -> Expression:
-    """*expression* as *term* carries it: a label alone keeps the paths a law or kernel holds fixed."""
+    """*expression* as *term* carries it: a label alone keeps the paths a law or kernel holds fixed.
+
+    A label alone that *term* carries already gives *term*'s own node, so a
+    caller tells by identity that *term* needs no copy. That comparison reads
+    a node of at most two levels, whatever the depth of *term*'s expression.
+    """
     if isinstance(expression, Named) and expression.signature is None:
-        return term._relabeled_expression(expression.label)
+        relabeled = term._relabeled_expression(expression.label)
+        return term._expression if term._expression == relabeled else relabeled
     return expression
 
 

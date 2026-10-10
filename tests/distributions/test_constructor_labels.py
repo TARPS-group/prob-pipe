@@ -70,6 +70,11 @@ class TestAnEmpiricalLaw:
         law = EmpiricalDistribution(jnp.arange(3.0), event_spec=OutputSpec(theta=None))
         assert list(law.event_spec.components) == ["theta"]
 
+    @pytest.mark.parametrize("constructor", [EmpiricalDistribution, KDEDistribution])
+    def test_a_label_passed_first_raises_naming_the_keyword(self, constructor):
+        with pytest.raises(TypeError, match="takes the atoms first and the label as the keyword"):
+            constructor("theta", jnp.arange(3.0))
+
     def test_a_kde_follows_the_empirical_law(self):
         kde = KDEDistribution(jnp.array([0.0, 1.0, 3.0]), 0.5, component="x")
         assert (kde.label, list(kde.event_spec.components)) == ("KDEDistribution", ["x"])
@@ -123,3 +128,24 @@ def test_a_mixture_takes_its_label_as_a_keyword():
     laws = [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)]
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "mixture"
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5]), label="mix").label == "mix"
+    with pytest.raises(TypeError, match="takes the components first and the label as the"):
+        MixtureDistribution("mix", laws)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Normal("mu", 0.0, 1.0, label=3),
+        lambda: EmpiricalDistribution(jnp.arange(3.0), component="mu", label=3),
+        lambda: distribution(
+            sample=lambda key: jax.random.normal(key), event_spec=_SCALAR, component="z", label=3
+        ),
+        lambda: conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": _SCALAR}, label=3
+        ),
+    ],
+    ids=["family", "empirical", "distribution", "conditional_distribution"],
+)
+def test_every_label_check_names_the_bad_value(build):
+    with pytest.raises(TypeError, match="label must be a non-empty string, got 3"):
+        build()

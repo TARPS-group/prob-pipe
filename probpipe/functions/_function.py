@@ -320,21 +320,9 @@ def _call_function_in_context(
         _call._CHECKING.reset(token)
 
 
-def _result_label(function: Function, values: Mapping[str, Any]) -> str:
-    """The label of the result of a call of *function* on the arguments *values* (V.10).
-
-    A function's result takes its explicit alias or application expression, and an operation's result the
-    label of the expression its operands give it (II.4). The label names a
-    term built before the result boundary gives it its expression, and it is
-    never a component or a level name.
-    """
-    derive = getattr(function, "_derived_label", None)
-    if derive is not None:
-        return derive(values)
-    return _result_expression(function, values).render_label()
-
-
-def _result_expression(function: Function, values: Mapping[str, Any]) -> Expression | None:
+def _result_expression(
+    function: Function, values: Mapping[str, Any], passed: frozenset[str] | None = None
+) -> Expression | None:
     """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
     A function's result carries its explicit alias or application expression, and an operation's result
@@ -346,20 +334,34 @@ def _result_expression(function: Function, values: Mapping[str, Any]) -> Express
         return derive(values)
     if function._output_label is not None:
         return Named(function.output_label)
-    return AppliedValue(function.label, _value_arguments(function, values))
+    return AppliedValue(
+        function.label,
+        _value_arguments(function, values, frozenset(values) if passed is None else passed),
+    )
 
 
-def _value_arguments(function: Function, values: Mapping[str, Any]) -> tuple[Expression, ...]:
+def _value_arguments(
+    function: Function, values: Mapping[str, Any], passed: frozenset[str]
+) -> tuple[Expression, ...]:
     """Arguments in parameter order, using declared slot names for unnamed arrays."""
-    parameters = function.signature.parameters
     arguments = []
     for ref in _binding.iter_input_refs(function._signature_info, values):
         value = _binding.input_ref_value(values, ref)
         if isinstance(value, TrackedTerm):
             arguments.append(value._embedded_expression())
-        elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
+        elif ref.subscript is not None or ref.parameter_name in passed:
             arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
     return tuple(arguments)
+
+
+def _result_identity(
+    function: Function, values: Mapping[str, Any], passed: frozenset[str] | None = None
+) -> tuple[str, Expression | None]:
+    """Build the result expression once and derive its presentation label."""
+    expression = _result_expression(function, values, passed)
+    if hasattr(function, "_result_label"):
+        return function._result_label(values, expression), expression
+    return expression.render_label(), expression
 
 
 def _lifted_expression(
@@ -367,6 +369,8 @@ def _lifted_expression(
     values: Mapping[str, Any],
     plan: _plan.StochasticPlan,
     call_values: Mapping[str, Any] | None = None,
+    *,
+    passed: frozenset[str],
 ) -> Applied:
     """The expression of the law of *function* lifted over the laws among *values* (II.4).
 
@@ -374,10 +378,11 @@ def _lifted_expression(
     ``f(beta ~ model; y)``: a draw of each law the plan lifts, where arguments
     whose laws the plan draws together from one root share one draw of the
     root, as ``f((a, b) ~ model)``; each other tracked argument by its
-    expression; and each other value by its value when it is a scalar, as
-    ``2.0``, and by its parameter's name otherwise, as ``X``, except a value
-    left at its parameter's default. A row of a sweep shows each scalar it
-    takes from a swept batch by its value, as ``f(mu ~ prior, 4.0)``.
+    expression; and each other value the caller passed by its value when it is
+    a scalar, as ``2.0``, and by its parameter's name otherwise, as ``X``. A
+    value the caller did not pass, such as a parameter's default, is not shown,
+    whatever its value. A row of a sweep shows each scalar it takes from a
+    swept batch by its value, as ``f(mu ~ prior, 4.0)``.
 
     Parameters
     ----------
@@ -390,8 +395,10 @@ def _lifted_expression(
         The plan of the lift, whose source groups say which arguments are
         drawn together.
     call_values : Mapping of str to Any or None, optional
-        The arguments of the sweep *values* is a row of; an argument whose
-        row value is not the call's is a row of a swept batch.
+        The arguments of the sweep *values* is a row of. An argument whose row
+        value is not the call's is a row of a swept batch.
+    passed : frozenset of str
+        The parameters the caller's arguments bind.
 
     Returns
     -------
@@ -403,7 +410,6 @@ def _lifted_expression(
         for group in plan.source_groups
         for consumer in group.consumers
     }
-    parameters = function.signature.parameters
     drawn: set[int] = set()
     arguments: list[Expression] = []
     for ref in _binding.iter_input_refs(function._signature_info, values):
@@ -429,7 +435,7 @@ def _lifted_expression(
             arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
         elif isinstance(value, TrackedTerm):
             arguments.append(value._embedded_expression())
-        elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
+        elif ref.subscript is not None or ref.parameter_name in passed:
             arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
     return Applied(function.output_label, tuple(arguments))
 
@@ -439,14 +445,16 @@ def _swept_expression(
     values: Mapping[str, Any],
     expression: Expression | None,
     plan: _plan.StochasticPlan | None,
+    passed: frozenset[str],
 ) -> Any:
     """The expression of a sweep's batch: the lifted call for a sweep of broadcasts, as ``f(mu ~ d, tau)``.
 
     A sweep without a law keeps the call's *expression*, and ``None`` keeps
-    the expression of the aggregate.
+    the expression of the aggregate. *passed* names the parameters the
+    caller's arguments bind, which the lifted call shows.
     """
     if plan is not None:
-        return _lifted_expression(function, values, plan)
+        return _lifted_expression(function, values, plan, passed=passed)
     return _result.KEEP_EXPRESSION if expression is None else expression
 
 
@@ -485,12 +493,14 @@ def _expressed(term: Any, expression: Expression | None) -> Any:
     A result that is not a tracked term, an expression of ``None``, and a term
     that carries the expression already are returned as they are, so a term
     that is also an operand of the call, such as a factor that conditioning
-    returns, keeps its own expression.
+    returns, keeps its own expression. A term carries the expression when it
+    holds that same node, which the expression rule takes from its operand,
+    or a label that the expression states alone.
     """
     if expression is None or not isinstance(term, TrackedTerm):
         return term
     expression = _result._prepared(term, expression)
-    if term._expression == expression:
+    if term._expression is expression:
         return term
     clone = term._shallow_copy()
     clone._store_expression(expression)
@@ -576,10 +586,9 @@ def _realized_point(
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
-    term = _result.declared_term(
-        value, result, _result_label(function, values), kind_error=kind_error
-    )
-    return _expressed(_keeping_route_record(term, value), _result_expression(function, values))
+    label, expression = _result_identity(function, values)
+    term = _result.declared_term(value, result, label, kind_error=kind_error)
+    return _expressed(_keeping_route_record(term, value), expression)
 
 
 def _run_call(
@@ -614,8 +623,10 @@ def _run_call(
         signature_info=function._signature_info,
         roles=function._roles,
     )
-    label = _result_label(function, values)
-    expression = _result_expression(function, values)
+    passed = frozenset(function.signature.bind_partial(*args, **call_inputs).arguments) | frozenset(
+        function._bind
+    )
+    label, expression = _result_identity(function, values, passed)
     controls = function.options
     candidates = function._route_candidates(controls)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
@@ -805,6 +816,14 @@ def _run_call(
         record_recipe: bool = True,
         route_metadata: Mapping[str, Any] = route.metadata,
     ):
+        output_spec, output_template = concrete_output_spec, concrete_output_template
+        if output_spec is None and candidates is not None:
+            # A Function realized by routes declares its result at each point, so the
+            # law of the evaluations declares the components one point declares.
+            output_spec = _resolution.lifted_declaration(
+                function, row_values, controls, broadcast_plan
+            )
+            output_template = None if output_spec is None else _output_record_spec(output_spec)
         return _broadcast.execute_distribution_broadcast(
             func=invoke_point,
             values=row_values,
@@ -818,10 +837,10 @@ def _run_call(
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
             output_label=function.output_label,
-            output_expression=_lifted_expression(function, row_values, plan, values),
-            output_spec=concrete_output_spec,
+            output_expression=_lifted_expression(function, row_values, plan, values, passed=passed),
+            output_spec=output_spec,
             workflow_kind=workflow_kind,
-            output_template=concrete_output_template,
+            output_template=output_template,
             provenance_parents=provenance_parents,
             provenance_inputs=provenance_inputs,
             record_recipe=record_recipe,
@@ -832,7 +851,7 @@ def _run_call(
         lifted = (
             expression
             if stochastic_plan is None
-            else _lifted_expression(function, values, stochastic_plan)
+            else _lifted_expression(function, values, stochastic_plan, passed=passed)
         )
         return _run_registered_rule(
             function, route, provenance_parents, provenance_inputs, label, lifted
@@ -879,7 +898,9 @@ def _run_call(
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
-            output_expression=_swept_expression(function, values, expression, stochastic_plan),
+            output_expression=_swept_expression(
+                function, values, expression, stochastic_plan, passed
+            ),
             output_spec=concrete_output_spec,
             include_inputs=function.options["include_inputs"],
             output_template=concrete_output_template,

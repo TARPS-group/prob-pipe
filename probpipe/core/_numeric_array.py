@@ -115,6 +115,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         "_expression",
         "_jax_cache",
         "_label",
+        "_label_collapse",
         "_provenance",
         "_spec",
         "_value",
@@ -411,13 +412,14 @@ def _tracked_result(
         operand.spec.dtype is not None for operand in parents if isinstance(operand, NumericArray)
     )
     dtype = _numpy_dtype_of(value) if declared else None
+    rendering = expression.label_rendering()
     result = NumericArray(
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),
-        label=expression.render_label(),
+        label=rendering[0],
     )
-    result._store_expression(expression)
+    result._store_expression(expression, rendering)
     return result
 
 
@@ -522,7 +524,7 @@ def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericA
     value = object.__new__(NumericArray)
     object.__setattr__(value, "_value", array)
     object.__setattr__(value, "_spec", spec)
-    value._init_tracked(_REBUILT_LABEL)
+    value._init_tracked(_NO_DESCRIPTION)
     return value
 
 

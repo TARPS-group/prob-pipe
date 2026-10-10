@@ -26,7 +26,7 @@ import contextvars
 import functools
 import inspect
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -53,9 +53,6 @@ from ..distributions._distribution import (
     _whole_term_event,
 )
 from ..linalg import DenseLinOp, DiagonalLinOp, LinOp
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = ["TFPDistribution"]
 
@@ -182,32 +179,13 @@ def _recording_arguments(init: Callable[..., None]) -> Callable[..., None]:
     return __init__
 
 
-#: The form of the recorded constructor arguments: the component first, and the label a keyword.
-_COMPONENT_FIRST = 2
-
-
 def _rebuilt_family(
     cls: type[TFPDistribution],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     separate_laws: bool,
-    form: int = 1,
 ) -> TFPDistribution:
-    """The family *cls* constructed from *args* and *kwargs* in the form it was built in.
-
-    Arguments of *form* 1, which a pickle written before the component became
-    the first argument records, hold the label first, and the component is
-    the one their ``event_spec`` names, or else the label; they are rebuilt
-    with the component first and the label as a keyword.
-    """
-    if form < _COMPONENT_FIRST and args:
-        label, *rest = args
-        declared = kwargs.get("event_spec")
-        named = None
-        if isinstance(declared, OutputSpec) and not declared.exposes_record:
-            (named,) = declared.components
-        args = (label if named is None else named, *rest)
-        kwargs = {**kwargs, "label": label}
+    """The family *cls* constructed from *args* and *kwargs* in the form it was built in."""
     layout = _allow_batched_tfp_init() if separate_laws else contextlib.nullcontext()
     with layout:
         return cls(*args, **kwargs)
@@ -352,21 +330,9 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         kept = {key: value for key, value in (instance_dict or {}).items() if key not in rebuilt}
         return (
             _rebuilt_family,
-            (type(self), *arguments, _COMPONENT_FIRST),
+            (type(self), *arguments),
             (kept or None, slots),
         )
-
-    def __setstate__(self, state: Any) -> None:
-        """Restore *state*, keeping the constructor arguments the rebuilt family recorded.
-
-        A pickle written before the component became the first argument restores
-        arguments of the earlier form, which the rebuilt family's own record
-        replaces.
-        """
-        recorded = getattr(self, "_constructor_arguments", None)
-        super().__setstate__(state)
-        if recorded is not None:
-            object.__setattr__(self, "_constructor_arguments", recorded)
 
     # -- sampling and the density ---------------------------------------------
 
@@ -409,7 +375,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
     def _make_array_backend(
         cls,
         *,
-        label: str,
+        component: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
     ) -> _TFPArrayBackend:
@@ -420,7 +386,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
         """
         return _TFPArrayBackend(
             dist_cls=cls,
-            label=label,
+            component=component,
             batch_shape=tuple(batch_shape),
             batched_params=dict(batched_params),
         )
@@ -432,7 +398,7 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 
 
 _ARRAY_BACKEND_LABEL_SUFFIX = "__array_backend"
-"""Suffix appended to a backend's base ``label`` when constructing the
+"""Suffix appended to the component of a backend's laws to label the
 wrapped batched ``TFPDistribution``. Centralised so
 ``_TFPArrayBackend.__init__`` and ``tree_unflatten`` can't drift."""
 
@@ -440,18 +406,20 @@ wrapped batched ``TFPDistribution``. Centralised so
 def _construct_batched_dist(
     dist_cls: type[TFPDistribution],
     *,
-    label: str,
+    component: str,
     batched_params: dict[str, Any],
 ) -> TFPDistribution:
     """Construct the fused batched distribution in the separate-laws form,
-    over the component *label*, with the centralised ``__array_backend``-suffixed label.
+    over *component*, with the centralised ``__array_backend``-suffixed label.
 
     Used by both :meth:`_TFPArrayBackend.__init__` and
     :meth:`_TFPArrayBackend.tree_unflatten` so the suffix and the form
     are fixed in one place.
     """
     with _allow_batched_tfp_init():
-        return dist_cls(label, **batched_params, label=f"{label}{_ARRAY_BACKEND_LABEL_SUFFIX}")
+        return dist_cls(
+            component, **batched_params, label=f"{component}{_ARRAY_BACKEND_LABEL_SUFFIX}"
+        )
 
 
 class _TFPArrayBackend:
@@ -472,8 +440,8 @@ class _TFPArrayBackend:
     ----------
     dist_cls : type[TFPDistribution]
         The concrete ``TFPDistribution`` subclass (e.g., ``Normal``).
-    label : str
-        The component of the wrapped law, whose label is *label* with the
+    component : str
+        The component of the wrapped law, whose label is *component* with the
         suffix ``__array_backend``.
     batch_shape : tuple of int
         Leading shape of the batched parameters.
@@ -486,12 +454,12 @@ class _TFPArrayBackend:
         self,
         *,
         dist_cls: type[TFPDistribution],
-        label: str,
+        component: str,
         batch_shape: tuple[int, ...],
         batched_params: dict[str, Any],
     ) -> None:
         self._dist_cls = dist_cls
-        self._label = label
+        self._component = component
         self._batch_shape = tuple(batch_shape)
         # Single pass: validate every higher-rank param's leading
         # axes against the declared ``batch_shape``, broadcasting
@@ -520,7 +488,7 @@ class _TFPArrayBackend:
         self._batched_params = batched_params
         self._batched_dist: TFPDistribution = _construct_batched_dist(
             dist_cls,
-            label=label,
+            component=component,
             batched_params=batched_params,
         )
         # Final sanity check: TFP's inferred batch_shape must match
@@ -591,7 +559,7 @@ class _TFPArrayBackend:
     def __repr__(self) -> str:
         return (
             f"_TFPArrayBackend({self._dist_cls.__name__}, "
-            f"batch_shape={self._batch_shape}, label={self._label!r})"
+            f"batch_shape={self._batch_shape}, component={self._component!r})"
         )
 
     # -- JAX pytree registration --------------------------------------------
@@ -601,15 +569,15 @@ class _TFPArrayBackend:
 
         Children are the batched parameter values (the JAX-array
         leaves the user passed); aux carries everything needed to
-        reconstruct the backend (the distribution class, the cells'
-        base label, the declared ``batch_shape``, and the parameter keys
+        reconstruct the backend (the distribution class, the
+        component of its laws, the declared ``batch_shape``, and the parameter keys
         in iteration order). The wrapped ``_batched_dist`` is
         reconstructed inside ``tree_unflatten`` from the params, so
         successive ``jit`` / ``vmap`` traces stay consistent.
         """
         keys = tuple(self._batched_params.keys())
         children = tuple(self._batched_params[k] for k in keys)
-        aux = (self._dist_cls, self._label, self._batch_shape, keys)
+        aux = (self._dist_cls, self._component, self._batch_shape, keys)
         return children, aux
 
     @classmethod
@@ -625,15 +593,15 @@ class _TFPArrayBackend:
         round-trip; the wrapped ``_batched_dist`` is rebuilt directly
         from the leaves.
         """
-        dist_cls, label, batch_shape, keys = aux
+        dist_cls, component, batch_shape, keys = aux
         instance = cls.__new__(cls)
         instance._dist_cls = dist_cls
-        instance._label = label
+        instance._component = component
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
         instance._batched_dist = _construct_batched_dist(
             dist_cls,
-            label=label,
+            component=component,
             batched_params=instance._batched_params,
         )
         return instance
