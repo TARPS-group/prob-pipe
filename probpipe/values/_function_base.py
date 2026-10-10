@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 import jax
 import jax.numpy as jnp
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
 from ..core._expression import Collapse, Expression, Signature
@@ -702,11 +702,9 @@ _DEFAULTED_BY_NONE = frozenset(
     {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
-#: Removed construction keywords, each with the warning it raises: ``func``
-#: aliases ``fn``, and the rest are ignored.
+#: Removed construction keywords, each with the warning it raises, which are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {
-        "func": "Function(func=...) is deprecated; pass the callable positionally",
         "input_template": (
             "Function(input_template=...) is no longer supported and is ignored; use input_spec=..."
         ),
@@ -834,7 +832,9 @@ class Function(Node, TrackedTerm, Annotated):
         For an invalid name, callable, declaration type, workflow kind, or
         worker-count type, a control of the wrong type, or a keyword that is
         no control, which the message names; for a label given before the
-        callable, as ``Function("g", g)``, or a callable given as ``fn=``.
+        callable, as ``Function("g", g)``, or as a second positional argument,
+        as ``Function(g, "g")``; and for a callable given as ``fn=`` or
+        ``func=``.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker or sample counts, conversions for a
@@ -846,7 +846,7 @@ class Function(Node, TrackedTerm, Annotated):
     Warns
     -----
     FutureWarning
-        For the removed keywords ``func``, ``seed``, ``input_template``, and
+        For the removed keywords ``seed``, ``input_template``, and
         ``output_template``, one warning for each one given, pointing at the
         caller's line.
     UserWarning
@@ -854,8 +854,8 @@ class Function(Node, TrackedTerm, Annotated):
 
     Notes
     -----
-    Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
-    ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
+    The legacy constructor keywords ``seed``, ``input_template``, and
+    ``output_template`` emit ``FutureWarning`` and are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
     wrapped callable's seed parameter. ``fn`` is required; the callable name
     supplies an omitted ``label``.
@@ -896,20 +896,25 @@ class Function(Node, TrackedTerm, Annotated):
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
-        # them, so the two call forms it no longer takes get a message naming the
+        # them, so the call forms it no longer takes get a message naming the
         # form it takes rather than Python's count of positional arguments. A
         # subclass with a constructor of its own takes its own arguments.
         if cls.__init__ is not Function.__init__:
             return super().__new__(cls)
-        if len(args) >= 2 and isinstance(args[0], str) and callable(args[1]):
+        if args and isinstance(args[0], str):
+            raise TypeError(label_given_first("Function", "fn", args[0]))
+        for keyword in ("fn", "func"):
+            if keyword in kwargs:
+                label = kwargs.get("label")
+                shown = repr(label) if isinstance(label, str) else "..."
+                raise TypeError(
+                    f"Function got the callable as {keyword}=, but takes it as its first "
+                    f"positional argument; write Function(fn, label={shown})"
+                )
+        if len(args) >= 2 and isinstance(args[1], str):
             raise TypeError(
-                f"Function takes the callable first and the label as a keyword, got the label "
-                f"{args[0]!r} first; write Function(fn, label={args[0]!r})"
-            )
-        if not args and "fn" in kwargs:
-            raise TypeError(
-                "Function takes the callable as its first positional argument, not as fn=; "
-                "write Function(fn, label=...)"
+                f"Function got the string {args[1]!r} as a second positional argument; "
+                f"pass the label by keyword: Function(fn, label={args[1]!r})"
             )
         return super().__new__(cls)
 
@@ -932,9 +937,7 @@ class Function(Node, TrackedTerm, Annotated):
             warnings.warn(
                 _REMOVED_KEYWORDS[key], FutureWarning, skip_file_prefixes=_WARNING_SKIP_PREFIXES
             )
-            value = controls.pop(key)
-            if key == "func":
-                fn = value
+            controls.pop(key)
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
         label = _callable_label(fn, label, subject="Function")

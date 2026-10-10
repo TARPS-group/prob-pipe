@@ -388,17 +388,40 @@ class TestFunctionDeclarations:
         def g(x):
             return x
 
-        with pytest.raises(
-            TypeError, match=r"got the label 'g' first; write Function\(fn, label='g'\)"
-        ):
+        with pytest.raises(TypeError, match=r"'g'.*Function\(fn, label='g'\)"):
             Function("g", g)
 
-    def test_a_callable_given_as_fn_names_the_positional_form(self):
+    def test_a_label_before_a_callable_given_as_fn_names_the_new_form(self):
         def g(x):
             return x
 
-        with pytest.raises(TypeError, match=r"not as fn=; write Function\(fn, label=...\)"):
-            Function(fn=g)
+        with pytest.raises(TypeError, match=r"'g'.*Function\(fn, label='g'\)"):
+            Function("g", fn=g)
+
+    def test_a_label_after_the_callable_names_the_keyword_form(self):
+        def g(x):
+            return x
+
+        with pytest.raises(
+            TypeError,
+            match=r"^Function got the string 'lab' as a second positional argument; "
+            r"pass the label by keyword: Function\(fn, label='lab'\)$",
+        ):
+            Function(g, "lab")
+
+    @pytest.mark.parametrize("keyword", ["fn", "func"])
+    def test_a_callable_given_by_keyword_names_the_positional_form(self, keyword):
+        def g(x):
+            return x
+
+        with pytest.raises(
+            TypeError,
+            match=rf"^Function got the callable as {keyword}=, but takes it as its first "
+            r"positional argument; write Function\(fn, label=...\)$",
+        ):
+            Function(**{keyword: g})
+        with pytest.raises(TypeError, match=r"write Function\(fn, label='g'\)$"):
+            Function(**{keyword: g, "label": "g"})
 
     def test_a_function_copies_after_the_argument_check(self):
         wrapped = Function(_module_level_add, label="add")
