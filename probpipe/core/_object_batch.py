@@ -87,8 +87,8 @@ def _member_expression(member: Any) -> Expression:
     try:
         parameters = tuple(inspect.signature(member).parameters)
     except (TypeError, ValueError):
-        return Named(_callable_label(member))
-    return Named(_callable_label(member), Signature(parameters))
+        return Named(_callable_label(member, subject="FunctionBatch"))
+    return Named(_callable_label(member, subject="FunctionBatch"), Signature(parameters))
 
 
 class _ObjectBatch[E](Batch[E]):
