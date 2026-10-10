@@ -593,6 +593,39 @@ class TestConstructionRefusals:
                 label="batch",
             )
 
+    def test_a_list_of_columns_is_refused_as_not_a_mapping(self):
+        with pytest.raises(TypeError, match=r"^RecordBatch: fields must be a mapping .* got list"):
+            RecordBatch([jnp.zeros(3)], "draw")
+
+    @pytest.mark.parametrize("label", [None, "draws"], ids=["unlabeled", "labeled"])
+    def test_an_empty_mapping_is_refused_whether_or_not_it_is_labeled(self, label):
+        """One error for both calls: a label does not make an empty mapping admissible."""
+        with pytest.raises(
+            ValueError, match=r"^RecordBatch requires at least one field, got an empty mapping$"
+        ):
+            RecordBatch({}, "draw", label=label)
+
+
+class TestTheDefaultLabel:
+    """An unlabeled batch is labeled by the top-level fields of its element spec."""
+
+    def test_the_label_names_the_top_level_fields_in_canonical_order(self):
+        batch = RecordBatch({"b": jnp.zeros(3), "a": jnp.zeros(3)}, "draw")
+        assert batch.label == "record(b,a)"
+
+    def test_path_keyed_and_nested_columns_give_the_same_label(self):
+        path_keyed = RecordBatch({"y/a": jnp.zeros(3), "y/b": jnp.zeros(3)}, "draw")
+        nested = RecordBatch({"y": {"a": jnp.zeros(3), "b": jnp.zeros(3)}}, "draw")
+        assert path_keyed.label == nested.label == "record(y)"
+
+    def test_the_label_agrees_with_a_record_of_the_same_fields(self):
+        batch = RecordBatch({"y/a": jnp.zeros(3), "z": jnp.zeros(3)}, "draw")
+        record = Record({"y/a": 0.0, "z": 0.0})
+        assert batch.label == record.label == "record(y,z)"
+
+    def test_a_supplied_label_is_kept(self):
+        assert RecordBatch({"x": jnp.zeros(3)}, "draw", label="draws").label == "draws"
+
 
 class TestTheElementSpecIsInferredWhenOmitted:
     """The columns imply the element spec, as a record's values imply its spec."""

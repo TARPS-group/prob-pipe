@@ -97,8 +97,9 @@ class RecordBatch(Batch[Record]):
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
         operations can align operands by meaning.
     label : str, optional
-        The batch's display alias. Defaults to a bounded description of its
-        declared fields or members. Empty unnamed collections require an alias.
+        The batch's label. Defaults to ``record(field,...)``, which names the
+        top-level fields of the element spec in canonical order, so path-keyed
+        and nested columns of the same fields give the same label.
     element_spec : RecordSpec, optional
         The schema and kind spec every element satisfies. Defaults to the spec
         the columns imply, as a :class:`~probpipe.Record` infers its spec from
@@ -207,7 +208,6 @@ class RecordBatch(Batch[Record]):
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        label = _derived_record_name(fields) if label is None else label
         kind = type(self).__name__
         names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
@@ -219,6 +219,9 @@ class RecordBatch(Batch[Record]):
             element_spec = _inferred_element_spec(fields, _batch_axis_count(names, axes), kind=kind)
         spec = _record_element_spec(element_spec, kind=kind)
         store = _leaf_keyed_columns(fields, spec, kind=kind)
+        # Derived from the validated spec, so a path-keyed and a nested mapping of
+        # the same columns read alike, as a ``Record``'s top-level fields do.
+        label = _derived_record_name(spec.children) if label is None else label
 
         batch_shape = _batch_shape_of(store, spec, kind=kind)
         groups = _axis_groups_for(batch_shape, names, axes, kind=kind)
@@ -1083,7 +1086,7 @@ def _flat_columns(fields: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
             f"got {type(fields).__name__}"
         )
     if not fields:
-        raise ValueError(f"{kind} requires at least one field")
+        raise ValueError(f"{kind} requires at least one field, got an empty mapping")
     flat: dict[str, Any] = {}
 
     def _flatten(node: Mapping[str, Any], prefix: str) -> None:
