@@ -190,8 +190,8 @@ Every tracked term carries four things through the one mixin `TrackedTerm`:
 Every normally constructed term has a semantic description. Constructors take mathematical data first and presentation metadata as keyword `label=`. A label is required when the data cannot identify what the value represents: raw `NumericArray`, `Opaque`, `NumericArrayBatch`, and `OpaqueBatch` values. Otherwise, construction derives a description from declared structure or described operands:
 
 1. records and record batches use their ordered field names; an empty record requires a label;
-2. functions use the callable's name, with `f` for a lambda; lambda kernels use `p`;
-3. catalog laws use their family name and declared components; generic laws and kernels use `p` and their declarations;
+2. functions use the callable's name, with `𝒻` for a lambda; lambda kernels use `ℙ`;
+3. catalog laws use their family name and declared components; generic laws and kernels use `ℙ` and their declarations;
 4. products, mixtures, and minibatched laws describe their operands; object batches describe their ordered members, showing at most eight members, and empty object batches require a label.
 
 A managed function call derives an application expression from the function and arguments unless an explicit `output_label` supplies an alias. Unnamed array arguments appear by their parameter names. An operation derives its result's expression from its operands as its own rule specifies. Computational names belong to declarations: labels never supply components, fields, levels, fingerprints, or random-stream identity.
@@ -236,7 +236,7 @@ A term's label is the name part of the rendering:
 1. a conditioned or a selected law keeps its base's label;
 2. a product without a label joins its factors' labels;
 3. an applied function takes the function's label;
-4. a value renders in full, as `mu ~ prior` or `E[mu ~ prior]`.
+4. a value renders in full, as `mu ~ prior` or `𝔼[mu ~ prior]`.
 
 The notation is the whole rendering, grouped by the rules below. A law's signature is read from its declaration, and the paths it holds fixed and whether a product was given a label are read from its expression (IV.2). `with_label` replaces the expression with the new label, so a user's label hides the derivation, which provenance still records. Provenance records how a term was computed, and the expression records what the term is, for a reader. Fingerprints and replay omit the expression, as they omit the label, and copies and pickles keep it.
 
@@ -245,12 +245,12 @@ A rendering shows at most `notation_config.max_depth` nested levels, eight by de
 **Values computed from a law.** A value computed from a law `d` is labeled by the value written in probability notation over `d`, and its components name each number as a call over `d`'s components (VI.0):
 1. **A draw** (VI.3) is labeled by its components, `~`, and `d`'s label, then `;` and the paths `d` holds fixed when it holds any, as `mu ~ prior`, `(y, mu) ~ model`, or `mu ~ model; y`, and it keeps `d`'s components.
 2. **A score** (VI.4) is labeled `log` followed by `d`'s notation, as `log prior(mu)` or `log model(mu; y)`, and a density is labeled by `d`'s notation, as `prior(mu)`, since that notation denotes the density.
-3. **A moment** (VI.5) is labeled `E[draw]`, `Var[draw]`, or `Cov[draw]`, and a quantile `Q[draw]`, as `E[(y, mu) ~ model]`.
-4. **An expectation** of `f` is labeled `E[f(draw)]`, as `E[f(mu ~ prior)]`, by `f`'s `output_label`, as a call of `f` is labeled, and `f` for a lambda, so `expectation(d, f)` and `mean(f(d))` read alike.
+3. **A moment** (VI.5) is labeled `𝔼[draw]`, `𝕍[draw]`, or `ℂ[draw]`, and a quantile `ℚ[draw]`, as `𝔼[(y, mu) ~ model]`.
+4. **An expectation** of `f` is labeled `𝔼[f(draw)]`, as `𝔼[f(mu ~ prior)]`, by `f`'s `output_label`, as a call of `f` is labeled, and `𝒻` for a lambda, so `expectation(d, f)` and `mean(f(d))` read alike.
 
-A batch of draws or of scores has the label of one draw or one score and a level of its own, and its element is grouped before the selection, as `(mu ~ prior)[sample=0]`. A batch of laws reads as one law under its label, so a value computed from a batch `schools` of laws over `effect` is labeled `effect ~ schools`, `E[effect ~ schools]`, or `log schools(effect)`, and `str()` of the batch shows that notation, `over`, and its levels, as `schools(effect) over school`. The atoms of an empirical law that `condition_on` or an inference method produces are labeled by the law's components, as `beta` or `(K, r, phi)`, and the atoms of an empirical law a user constructs keep the label they were given. A field of a value takes its key, so `sample(model)["y"]` is labeled `y`, and an operator on values is labeled by its expression, as `2 * effect` or `2 * E[mu ~ prior]`.
+A batch of draws or of scores has the label of one draw or one score and a level of its own, and its element is grouped before the selection, as `(mu ~ prior)[sample=0]`. A batch of laws reads as one law under its label, so a value computed from a batch `schools` of laws over `effect` is labeled `effect ~ schools`, `𝔼[effect ~ schools]`, or `log schools(effect)`, and `str()` of the batch shows that notation, `over`, and its levels, as `schools(effect) over school`. The atoms of an empirical law that `condition_on` or an inference method produces are labeled by the law's components, as `beta` or `(K, r, phi)`, and the atoms of an empirical law a user constructs keep the label they were given. A field of a value takes its key, so `sample(model)["y"]` is labeled `y`, and an operator on values is labeled by its expression, as `2 * effect` or `2 * 𝔼[mu ~ prior]`.
 
-**Lifted functions.** A law that lifting a function over laws produces (V.5) is labeled by the function's `output_label`, and it displays as the function applied to draws of its inputs, as `challenger_damage_probability(beta ~ oring_model; damage)`, since it is the law of that random quantity. Arguments that the lift draws together from one law share one draw, as `f((a, b) ~ model)`. A law that is not lifted appears by its notation, as `log_prob(g(g), q ~ q)`, any other tracked argument by its label, and any other argument that the caller passed by its value when it is a scalar, as `f(beta ~ model; y, 2.0)`, and by its parameter's name otherwise, as `f(beta ~ model; y, X)`. A batch of such laws, which a lift over a law and a sweep over a batch give together, carries the same expression, so its mean is labeled `E[f(mu ~ prior, tau)]`. Its element keeps the label of its position, as `f[tau=3]`, and displays as its row's call, which shows a scalar of the swept batch by its value, as `f(mu ~ prior, 4.0)`; any other selection displays as the batch's call and the selected levels, as `f(mu ~ prior, tau)[tau=1:3]`. A value computed from such a law takes the law's notation in place of a draw, as `E[challenger_damage_probability(beta ~ oring_model; damage)]`.
+**Lifted functions.** A law that lifting a function over laws produces (V.5) is labeled by the function's `output_label`, and it displays as the function applied to draws of its inputs, as `challenger_damage_probability(beta ~ oring_model; damage)`, since it is the law of that random quantity. Arguments that the lift draws together from one law share one draw, as `f((a, b) ~ model)`. A law that is not lifted appears by its notation, as `log_prob(g(g), q ~ q)`, any other tracked argument by its label, and any other argument that the caller passed by its value when it is a scalar, as `f(beta ~ model; y, 2.0)`, and by its parameter's name otherwise, as `f(beta ~ model; y, X)`. A batch of such laws, which a lift over a law and a sweep over a batch give together, carries the same expression, so its mean is labeled `𝔼[f(mu ~ prior, tau)]`. Its element keeps the label of its position, as `f[tau=3]`, and displays as its row's call, which shows a scalar of the swept batch by its value, as `f(mu ~ prior, 4.0)`; any other selection displays as the batch's call and the selected levels, as `f(mu ~ prior, tau)[tau=1:3]`. A value computed from such a law takes the law's notation in place of a draw, as `𝔼[challenger_damage_probability(beta ~ oring_model; damage)]`.
 
 **Grouping.** A label is grouped where another label is built from it, so it reads as one operand:
 1. a **compound** label is parenthesized, and a label is compound when it has one of these forms:
@@ -269,7 +269,7 @@ Every tracked term exposes `raw()` as the single access point to the representat
 Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied. A batch's label is grouped before the selection, as in `(lik·prior)[dataset=0]`, so the selection reads as applying to the whole label.
 
 **The repr.** A law's or kernel's repr reads as a call of its public constructor, followed by any paths it holds fixed. Other terms show diagnostic summaries of their label and structure:
-1. **the label**: a value, a record, or a batch displays it first in its diagnostic summary, as in `RecordBatch('schools', ...)`. A law or a kernel takes it as the keyword `label=` after its other arguments, and leaves out a label equal to its constructor's default, the class name or `p`, since the default records no choice of the caller's. A label that a function's name gives is shown, as in `ConditionalDistribution('y', given=('mu',), label='ricker_counts')`, since the class does not state it;
+1. **the label**: a value, a record, or a batch displays it first in its diagnostic summary, as in `RecordBatch('schools', ...)`. A law or a kernel takes it as the keyword `label=` after its other arguments, and leaves out a label equal to its constructor's default, the class name or `ℙ`, since the default records no choice of the caller's. A label that a function's name gives is shown, as in `ConditionalDistribution('y', given=('mu',), label='ricker_counts')`, since the class does not state it;
 2. **a batch's levels**: a mapping of level name to size, as in `levels={'chain': 4, 'draw': 500}`, with the tuple of its sizes for a level of several axes;
 3. **the element's structure**, named for what it is:
    - a record: its field paths, as in `fields=('data/effect', 'data/se', 'label')`;
@@ -334,6 +334,17 @@ Fingerprints are best-effort and tiered, from a content hash, through the code h
 ### Notes
 
 - *Reconstruction.* `pickle` and `copy` restore a term by assigning its state back rather than through its constructor, so a schema fixed by an explicit declaration, a class decided at construction, and a field written afterward all survive the round-trip. A term declares any memo as transient and any store written in place (annotations) as decoupled, so a copy takes its own container.
+
+Automatic summaries use these symbols:
+
+| Summary | Symbol |
+|---|---|
+| Mean and expectation | `𝔼` |
+| Variance | `𝕍` |
+| Covariance | `ℂ` |
+| Quantile | `ℚ` |
+
+Explicit labels remain literal, including ASCII `p`, `f`, `E`, and `Q`. Generated component names retain their ASCII spelling, and caller-supplied keys are unchanged. An anonymous function displays as `𝒻` while its default output component is `f`.
 
 ## II.5 — `Batch`
 

@@ -32,7 +32,14 @@ from collections.abc import Mapping
 # exposes; the conflict-avoidance constraint itself doesn't change.
 from typing import Any, Self, _ProtocolMeta
 
-from ._expression import Collapse, Expression, Named, Signature, warn_collapsed
+from ._expression import (
+    _ANONYMOUS_FUNCTION_SYMBOL,
+    Collapse,
+    Expression,
+    Named,
+    Signature,
+    warn_collapsed,
+)
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
@@ -80,7 +87,7 @@ def _callable_label(fn: Any, label: str | None = None) -> str:
         return label
     name = getattr(fn, "__name__", None)
     if name == "<lambda>":
-        return "f"
+        return _ANONYMOUS_FUNCTION_SYMBOL
     if not name:
         raise TypeError("a callable without a name requires an explicit label=...")
     return name
@@ -160,7 +167,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     The label is read from the term's **expression**, a private immutable tree
     that states what the term is: a term constructed directly carries its label
     alone, and an operation's result carries the expression the operation
-    builds from its operands', as ``E[(y, mu) ~ model]`` for the mean of a law
+    builds from its operands', as ``𝔼[(y, mu) ~ model]`` for the mean of a law
     ``model``. :meth:`with_label` replaces the expression with the new label,
     so the label hides the derivation, which provenance still records.
 

@@ -62,8 +62,8 @@ def test_function_defaults_and_explicit_aliases():
         return temperature + 1
 
     assert Function(predict).notation == "predict(temperature)"
-    assert Function(lambda temperature: temperature + 1).notation == "f(temperature)"
-    assert function(lambda temperature: temperature + 1).notation == "f(temperature)"
+    assert Function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
+    assert function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
     assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
     assert Function(predict, output_label="prediction")(2.0).label == "prediction"
 
@@ -87,7 +87,7 @@ def test_output_components_are_declared_independently_of_aliases():
 
 def test_generic_law_default_uses_a_declared_component():
     law = Distribution(OutputSpec(tau=NumericArraySpec(())))
-    assert law.notation == "p(tau)"
+    assert law.notation == "ℙ(tau)"
     assert law.with_label("prior").event_spec == law.event_spec
 
 
@@ -98,7 +98,7 @@ def test_collection_defaults_are_bounded_and_describe_members():
     assert "prior7(tau)" in batch.label
     assert "prior8" not in batch.label
     assert "…" in batch.label
-    assert FunctionBatch([lambda x: x], "model").label == "[f(x)]"
+    assert FunctionBatch([lambda x: x], "model").label == "[𝒻(x)]"
     with pytest.raises(TypeError, match="empty collection requires label"):
         DistributionBatch([], "model", element_spec=laws[0].spec)
 

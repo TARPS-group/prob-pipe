@@ -486,7 +486,7 @@ def distribution(
         The component of a whole-term event declared by a bare spec other than
         a record; required for one, and refused with any other declaration.
     label : str, optional
-        The law's label, ``p`` by default.
+        The law's label, ``ℙ`` by default.
 
     Returns
     -------

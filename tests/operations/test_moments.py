@@ -176,8 +176,8 @@ class TestDerivedLabelsAreNeverComponents:
     @pytest.mark.parametrize(
         ("moment", "label", "component"),
         [
-            (mean, "E[g ~ g; y/obs]", "mean(g)"),
-            (variance, "Var[g ~ g; y/obs]", "variance(g)"),
+            (mean, "𝔼[g ~ g; y/obs]", "mean(g)"),
+            (variance, "𝕍[g ~ g; y/obs]", "variance(g)"),
         ],
     )
     def test_a_monte_carlo_moment_is_labeled_over_the_nested_path(self, moment, label, component):
@@ -191,7 +191,7 @@ class TestDerivedLabelsAreNeverComponents:
         held = self._held()
         with workflow_run(seed=0):
             result = quantile.with_options(method="monte_carlo")(held, jnp.array([0.1, 0.9]))
-        assert result.label == "Q[g ~ g; y/obs]"
+        assert result.label == "ℚ[g ~ g; y/obs]"
         assert result.level_names == ("quantile",)
         assert tuple(quantile.check(held, 0.5).result.components) == ("quantile(g)",)
 
@@ -200,7 +200,7 @@ class TestMean:
     def test_the_closed_form_mean_has_the_event_declaration(self):
         result = mean(Gaussian("g", 2.0))
         assert isinstance(result, NumericArray)
-        assert result.label == "E[g ~ g]"
+        assert result.label == "𝔼[g ~ g]"
         assert result.spec == NumericArraySpec((), jnp.float32, real)
         assert _value(result) == 2.0
 

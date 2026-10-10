@@ -870,7 +870,7 @@ def glm_likelihood(
         The invertible link from the mean to the linear predictor. Defaults to
         the family's canonical link.
     label : str, optional
-        The kernel's label, ``p`` by default.
+        The kernel's label, ``ℙ`` by default.
     event_spec : OutputSpec, optional
         A declaration of *component* that declares the response's type, passed
         through to the family.

@@ -100,7 +100,7 @@ class TestTheClaims:
         law = _law(sample=_normal_draw)
         assert isinstance(law, Distribution)
         assert isinstance(law, NumericDistribution)
-        assert law.label == "p"
+        assert law.label == "ℙ"
         assert law.event_spec == OutputSpec(x=VECTOR)
 
     def test_a_normalized_density_is_also_the_unnormalized_one(self):

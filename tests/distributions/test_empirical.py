@@ -322,13 +322,13 @@ class TestNotation:
     """An empirical law reads by its label and the components of its atoms."""
 
     def test_a_law_of_array_atoms_reads_by_its_one_component(self):
-        assert str(_array_law()) == _array_law().notation == "p(theta)"
+        assert str(_array_law()) == _array_law().notation == "ℙ(theta)"
 
     def test_a_law_of_record_atoms_reads_by_its_fields_in_order(self):
         assert _record_law().notation == "post(b, a)"
 
     def test_a_law_of_opaque_atoms_reads_by_its_one_component(self):
-        assert _opaque_law().notation == "p(where)"
+        assert _opaque_law().notation == "ℙ(where)"
 
 
 class TestConstructionErrors:

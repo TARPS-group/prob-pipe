@@ -312,7 +312,7 @@ class TestFunctionDeclarations:
                 test_decorated_lambda_keeps_its_default_component=NumericArraySpec(())
             )
         )(lambda: 1)
-        assert wrapped.label == "f"
+        assert wrapped.label == "𝒻"
         assert tuple(wrapped.output_spec.components) == (
             "test_decorated_lambda_keeps_its_default_component",
         )

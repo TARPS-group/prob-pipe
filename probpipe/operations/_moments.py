@@ -9,12 +9,12 @@ draws. A moment of the event's kind keeps the event's packaging and derives its
 term specs, support included, and it names each component for the moment, so
 the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
-``E[(mu, tau) ~ d]``, ``Var[...]``, ``Cov[...]``, or ``Q[...]``, and the law of a
+``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and the law of a
 function lifted over laws contributes its notation in place of the draw, as
-``E[f(beta ~ model; y)]``.
+``𝔼[f(beta ~ model; y)]``.
 
-``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``, labeled
-``E[f(mu ~ d)]``. It is the derived
+``expectation(d, f)`` returns ``𝔼[f(X)]`` for ``X ~ d``, labeled
+``𝔼[f(mu ~ d)]``. It is the derived
 operation ``mean(evaluate(f, d))``: a law claiming
 :class:`~probpipe.distributions._capabilities.SupportsExpectation` computes it
 in closed form, and otherwise the call takes the routes of ``evaluate``. Its
@@ -40,7 +40,14 @@ from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
 )
-from ..core._expression import Applied, Expression, Summary, draw_of
+from ..core._expression import (
+    _ANONYMOUS_FUNCTION_SYMBOL,
+    _SUMMARY_SYMBOLS,
+    Applied,
+    Expression,
+    Summary,
+    draw_of,
+)
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
@@ -529,7 +536,7 @@ def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
 
 @operation(result=_mean_result)
 def mean(d: Distribution):
-    """The mean ``E[X]`` for ``X ~ d``, a value shaped like one draw.
+    """The mean ``𝔼[X]`` for ``X ~ d``, a value shaped like one draw.
 
     A record-drawing law's mean is a ``Record`` with the law's schema, a random
     function's is its mean function, and a random measure's is the
@@ -544,7 +551,7 @@ def mean(d: Distribution):
     Returns
     -------
     TrackedTerm
-        The mean at the law's declared event kind, labeled ``E[(mu, tau) ~ d]``
+        The mean at the law's declared event kind, labeled ``𝔼[(mu, tau) ~ d]``
         for a law ``d`` over ``mu`` and ``tau``.
 
     Raises
@@ -579,7 +586,7 @@ def variance(d: Distribution):
     -------
     TrackedTerm
         The variance at the law's declared event kind, with non-negative
-        leaves, labeled ``Var[(mu, tau) ~ d]``.
+        leaves, labeled ``𝕍[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -618,7 +625,7 @@ def cov(d: Distribution):
     -------
     NumericArray
         The dense covariance over the event's coordinates in canonical order,
-        labeled ``Cov[(mu, tau) ~ d]``.
+        labeled ``ℂ[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -667,7 +674,7 @@ def quantile(d: Distribution, q: Any):
     TrackedTerm
         For one level, a value of the event's kind; for several, the batch of
         those values on a level named ``quantile``. It is labeled
-        ``Q[mu ~ d]``.
+        ``ℚ[mu ~ d]``.
 
     Raises
     ------
@@ -714,7 +721,7 @@ def _evaluate_applies(d: Any, f: Any, fixed_args: Mapping[str, Any] | None = Non
     identity_check=_evaluate_applies,
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
-    """The expectation ``E[f(X)]`` for ``X ~ d``, defined as ``mean(evaluate(f, d))``.
+    """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(evaluate(f, d))``.
 
     A law claiming ``SupportsExpectation`` computes it in closed form, and
     otherwise the call takes the routes of ``evaluate``: its evaluation rules,
@@ -735,9 +742,9 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     Returns
     -------
     TrackedTerm
-        ``E[f(X)]`` at the kind the integrand's output declaration names,
-        labeled ``E[f(mu ~ d)]`` by the integrand's label: a ``Function``'s
-        label, a callable's ``__name__``, and ``f`` for a lambda.
+        ``𝔼[f(X)]`` at the kind the integrand's output declaration names,
+        labeled ``𝔼[f(mu ~ d)]`` by the integrand's label: a ``Function``'s
+        label, a callable's ``__name__``, and ``𝒻`` for a lambda.
 
     Raises
     ------
@@ -825,12 +832,12 @@ expectation.register_route(_PushforwardMean())
 
 
 def _moment_expression(summary: str) -> Callable[[Any], Expression]:
-    """The expression rule of a moment *summary*: the moment of a draw of the law, as ``E[mu ~ d]``."""
+    """The expression rule of a moment *summary*: the moment of a draw of the law, as ``𝔼[mu ~ d]``."""
 
     def rule(d: Any) -> Expression:
         return Summary(summary, draw_of(d))
 
-    rule.__doc__ = f"The expression ``{summary}[draw]`` of the moment of a draw of *d* (II.4)."
+    rule.__doc__ = f"The expression ``{_SUMMARY_SYMBOLS[summary]}[draw]`` of the moment of a draw of *d* (II.4)."
     return rule
 
 
@@ -838,17 +845,17 @@ def _integrand_label(f: Any) -> str:
     """The label of an integrand, as ``evaluate`` names its call.
 
     It is a Function's ``output_label``, so ``expectation(d, g)`` and
-    ``mean(g(d))`` are labeled alike, a callable's ``__name__``, and ``f`` for a
+    ``mean(g(d))`` are labeled alike, a callable's ``__name__``, and ``𝒻`` for a
     lambda.
     """
     if isinstance(f, Function):
         return f.output_label
-    name = getattr(f, "__name__", "f")
-    return "f" if name == "<lambda>" else name
+    name = getattr(f, "__name__", _ANONYMOUS_FUNCTION_SYMBOL)
+    return _ANONYMOUS_FUNCTION_SYMBOL if name == "<lambda>" else name
 
 
 def _expectation_expression(d: Any, f: Any) -> Expression:
-    """The expression of ``E[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``E[f(mu ~ d)]``."""
+    """The expression of ``𝔼[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``𝔼[f(mu ~ d)]``."""
     return Summary("E", Applied(_integrand_label(f), (draw_of(d),)))
 
 

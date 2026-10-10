@@ -27,7 +27,7 @@ Some important mathematical operations supported by ProbPipe include the followi
 | evaluation | `f(x)`, `K(s, ·)`, `Ax`, and the pushforward `f♯μ` (i.e., the law of `f(X)` for `X ~ μ`) |
 | sampling | `x ~ μ` |
 | density evaluation | `(dμ/dν)(x)` |
-| distribution functionals | `E[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
+| distribution functionals | `𝔼[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
 | composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
 | conditioning | `μ(· \| y = b)` for a field `y` |
 | marginalization | the law of a named field of `X ~ μ` |

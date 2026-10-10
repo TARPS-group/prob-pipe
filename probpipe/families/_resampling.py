@@ -372,7 +372,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     under *component*.
 
     **Capabilities.** The measure samples, and its mean, the marginalized law
-    ``E[D](A)`` of a draw ``D``, is the source itself, since each atom of a
+    ``𝔼[D](A)`` of a draw ``D``, is the source itself, since each atom of a
     replicate is a draw of the source. A draw has no density, so the measure
     claims no random log-density.
 

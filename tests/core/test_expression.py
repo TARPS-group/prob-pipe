@@ -169,15 +169,15 @@ class TestRendering:
             pytest.param(Summary("density", _named("prior", "mu")), "prior(mu)", id="density"),
             pytest.param(
                 Summary("E", Draw(("y", "mu"), _named("model", "y", "mu"))),
-                "E[(y, mu) ~ model]",
+                "𝔼[(y, mu) ~ model]",
                 id="mean",
             ),
             pytest.param(
-                Summary("Q", Draw(("mu",), _named("prior", "mu"))), "Q[mu ~ prior]", id="quantile"
+                Summary("Q", Draw(("mu",), _named("prior", "mu"))), "ℚ[mu ~ prior]", id="quantile"
             ),
             pytest.param(
                 Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),)))),
-                "E[f(b ~ m)]",
+                "𝔼[f(b ~ m)]",
                 id="mean-of-a-lifted-law",
             ),
             pytest.param(
@@ -192,7 +192,7 @@ class TestRendering:
                         ),
                     ),
                 ),
-                "E[f(2.0)]",
+                "𝔼[f(2.0)]",
                 id="mean-of-an-element-of-a-lifted-batch",
             ),
             pytest.param(Operator("*", (constant(2), Named("effect"))), "2 * effect", id="binary"),
@@ -283,7 +283,7 @@ class TestDepth:
         probpipe.notation_config.max_depth = 1
         lifted = Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),))))
         with pytest.warns(UserWarning, match="max_depth"):
-            assert lifted.render_notation(warn=True) == "E[f]"
+            assert lifted.render_notation(warn=True) == "𝔼[f]"
         product = Draw(("a", "b"), Product((_named("a", "a"), _named("b", "b"))))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -295,7 +295,7 @@ class TestDepth:
         draw = Draw(("mu",), Selected(Conditioned(Named("model"), ("y",)), ("mu",)))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert Summary("E", draw).render_notation(warn=True) == "E[mu ~ model; y]"
+            assert Summary("E", draw).render_notation(warn=True) == "𝔼[mu ~ model; y]"
 
     def test_raising_the_depth_shows_the_collapsed_levels(self):
         deep = self._chain(10)

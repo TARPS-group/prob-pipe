@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Automatic mathematical notation uses blackboard symbols for distribution
+  summaries and generic laws or kernels. Anonymous functions use script `𝒻`.
+  Explicit labels remain literal. Generated component names remain ASCII,
+  and indexing keys retain their spelling. The notation reference lists all
+  six symbols.
+
 - Value constructors take data first and keyword `label=`. Raw arrays and opaque
   values (including their batches) require a label; records derive it from fields,
   functions from callable names (`f` for lambdas), and object collections from

@@ -689,7 +689,7 @@ class TestDerivedLabels:
             pytest.param(
                 lambda: Normal("law", 0.0, 1.0),
                 lambda x: x,
-                "E[f(law ~ Normal)]",
+                "𝔼[𝒻(law ~ Normal)]",
                 id="monte-carlo",
             ),
             pytest.param(
@@ -702,13 +702,13 @@ class TestDerivedLabels:
                     component="law",
                 ),
                 lambda x: jnp.asarray(1.0),
-                "E[f(law ~ p)]",
+                "𝔼[𝒻(law ~ ℙ)]",
                 id="generic-empirical",
             ),
             pytest.param(
                 lambda: EmpiricalDistribution(jnp.arange(10.0), component="law"),
                 lambda x: x,
-                "E[f(law ~ p)]",
+                "𝔼[𝒻(law ~ ℙ)]",
                 id="array-empirical",
             ),
             pytest.param(
@@ -716,13 +716,13 @@ class TestDerivedLabels:
                     "law", EmpiricalDistribution(jnp.arange(5.0), component="data")
                 ),
                 jnp.mean,
-                "E[mean(law ~ BootstrapReplicateDistribution)]",
+                "𝔼[mean(law ~ BootstrapReplicateDistribution)]",
                 id="bootstrap-replicate",
             ),
             pytest.param(
                 lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"],
                 lambda x: x,
-                "E[f(a ~ Normal)]",
+                "𝔼[𝒻(a ~ Normal)]",
                 id="field-view",
             ),
         ],
