@@ -1,3 +1,5 @@
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
+
 # Help & Community
 
 ## Questions and bug reports

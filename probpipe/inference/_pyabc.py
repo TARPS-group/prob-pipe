@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -11,15 +12,31 @@ import numpy as np
 import pyabc
 from pyabc.sampler import SingleCoreSampler
 
-from ..core.ops import log_prob, sample
+from ..core._dispatch import Feasibility
 from ..custom_types import PRNGKey
-from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._registry import Feasibility, InferenceMethod
+from ..distributions._capabilities import SupportsConditionalSampling
+from ..distributions._conditional import ConditionalDistribution
+from ..distributions._empirical import EmpiricalDistribution
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ._approximate_distribution import make_posterior
+from ._inference_utils import (
+    _declared_vector,
+    described,
+    flat_unflatten,
+    flat_vector,
+    integer_seed,
+    model_factors,
+    parameter_given,
+    run_seed,
+    unconstrained_coordinates,
+    unfactored_model_reason,
+)
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from .. import NumericRecordDistribution
+    from ..distributions._distribution import Distribution
+
 
 # Key under which the simulated/observed vector lives in pyabc's sumstat dict.
 _DATA_KEY = "y"
@@ -30,47 +47,114 @@ _SummaryFn = Callable[[np.ndarray], np.ndarray]
 _DistanceFn = Callable[[_SumStat, _SumStat], float]
 
 
+class _ProcessKeys:
+    """A stream of JAX keys that differs in each process that draws from it.
+
+    A sampler whose workers run in other processes gives each worker a copy of
+    the stream, so without a change every worker would draw the same keys. The
+    first draw in a process other than the one that made the stream folds a
+    value of that process's numpy generator into the key, and pyabc seeds each
+    worker's generator afresh, so the workers draw different keys. The process
+    that made the stream draws the keys it always did.
+
+    Parameters
+    ----------
+    key : PRNGKey
+        The first key of the stream.
+    """
+
+    def __init__(self, key: PRNGKey) -> None:
+        self._key = key
+        self._owner = os.getpid()
+
+    def next(self) -> PRNGKey:
+        """The next key of the stream in this process.
+
+        Returns
+        -------
+        PRNGKey
+            A key that no earlier draw in this process returned.
+        """
+        if os.getpid() != self._owner:
+            salt = int(np.random.randint(0, 2**31 - 1))
+            self._key = jax.random.fold_in(self._key, salt)
+            self._owner = os.getpid()
+        self._key, sub = jax.random.split(self._key)
+        return sub
+
+
 def _flat_key(i: int) -> str:
     """pyabc parameter name for flat position ``i`` of the parameter vector."""
     return f"p{i}"
 
 
 class PyABCDistribution(pyabc.Distribution):
-    """A pyabc prior that samples and scores a ProbPipe prior jointly over its
-    *flattened* parameter vector.
+    """A pyabc prior over the unconstrained coordinates of a ProbPipe prior's flat parameter vector.
 
-    Sampling (:meth:`rvs`) and density (:meth:`pdf`) go through
-    ``prior.as_flat_distribution()``, so correlated and multivariate priors are
-    supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
-    by flat ``pN`` names, which give pyabc the parameter names and the flat
-    columns its perturbation kernel operates on.
+    The flat vector is the layout III.7 fixes for a numeric law, so correlated
+    and multivariate priors are supported. A leaf on a constrained support is
+    moved onto it by the bijector :func:`~probpipe.bijector_for` gives, so
+    pyabc's perturbation kernel keeps every particle in the support. Sampling
+    (:meth:`rvs`) maps a prior draw to its coordinates, and the density
+    (:meth:`pdf`) is the prior's in those coordinates. The object is a
+    dict-like, picklable ``pyabc.Distribution`` keyed by ``pN`` names, which
+    give pyabc the parameter names and the coordinates its perturbation kernel
+    moves.
+
+    Parameters
+    ----------
+    prior : Distribution
+        The ProbPipe prior, which samples and has a joint density.
+    key : PRNGKey
+        The first key of the stream that :meth:`rvs` draws from, split per draw
+        and distinct in each worker process.
     """
 
-    def __init__(self, prior: NumericRecordDistribution, key: PRNGKey):
-        """Wrap *prior* as a joint pyabc prior over its flat parameter vector.
-
-        ``key`` is the JAX key threaded through :meth:`rvs` (split per draw). The
-        per-position ``pN`` keys give pyabc the parameter names
-        (``get_parameter_names``) and the flat columns its perturbation kernel
-        operates on; sampling and scoring go through the joint flat view.
-        """
+    def __init__(self, prior: Distribution, key: PRNGKey):
         self._prior = prior
-        self._flat = prior.as_flat_distribution()
-        self._key = key
-        self._d = self._flat.vector_size
+        self._keys = _ProcessKeys(key)
+        self._d = unconstrained_coordinates(prior).size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
+    #: The compiled draw and density, which derive from the prior and do not
+    #: pickle, so a copy rebuilds them on first use.
+    _DERIVED = ("_draw", "_log_density")
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {k: v for k, v in self.__dict__.items() if k not in self._DERIVED}
+
+    def _compiled_prior(self) -> tuple[Callable[..., Any], Callable[..., Any]]:
+        """The coordinates of a prior draw at a key and the log-density at coordinates, compiled."""
+        if "_draw" not in self.__dict__:
+            prior = self._prior
+            unflatten = flat_unflatten(prior)
+            coordinates = unconstrained_coordinates(prior)
+
+            def log_density(z: Any) -> Any:
+                value = unflatten(coordinates.forward(z))
+                return prior._log_prob(value) + coordinates.log_jacobian(z)
+
+            self._draw = _compiled(
+                lambda key: coordinates.inverse(_declared_vector(prior, prior._sample(key)))
+            )
+            self._log_density = _compiled(log_density)
+        return self._draw, self._log_density
+
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
-        """One joint draw from the prior, as a flat-keyed pyabc ``Parameter``."""
-        self._key, sub = jax.random.split(self._key)
-        vec = np.asarray(sample(self._flat, key=sub)).ravel()
+        """One joint draw from the prior, at its coordinates, as a ``pN``-keyed pyabc ``Parameter``."""
+        draw, _ = self._compiled_prior()
+        vec = np.asarray(draw(self._keys.next()))
         return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
     def pdf(self, x: Mapping[str, float]) -> float:
-        """Joint prior density at *x*, the flat parameter vector reassembled
-        from its ``pN`` keys and scored through the flat view's ``log_prob``."""
+        """The prior's joint density at the coordinates *x*, reassembled from their ``pN`` keys.
+
+        It is the prior's density at the point the coordinates map to, times the
+        Jacobian determinant of that map.
+        """
+        _, log_density = self._compiled_prior()
         vec = jnp.asarray([x[_flat_key(i)] for i in range(self._d)])
-        return float(np.exp(np.asarray(log_prob(self._flat, vec))))
+        return float(np.exp(np.asarray(log_density(vec))))
 
 
 def _euclidean_distance(x: _SumStat, x0: _SumStat) -> float:
@@ -85,13 +169,41 @@ def _summarize(data: Any, summary_fn: _SummaryFn | None) -> np.ndarray:
     return np.asarray(data, dtype=float).ravel()
 
 
+def _compiled(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """*fn*, compiled with ``jax.jit`` when it traces and run eagerly otherwise.
+
+    pyabc calls the prior and the simulator once per particle, so an eager call
+    repeats its dispatch at every particle, and its compilation too when it
+    samples with a JAX loop, as a Gamma or a Poisson draw does. The compiled
+    form traces once and is reused at every particle. A function that does not
+    trace, such as a simulator that calls NumPy or an external program, runs
+    eagerly instead: the first call decides, and the later calls keep its choice.
+    """
+    compiled = jax.jit(fn)
+    chosen: list[Callable[..., Any]] = []
+
+    def run(*args: Any) -> Any:
+        if chosen:
+            return chosen[0](*args)
+        try:
+            value = compiled(*args)
+        except Exception:
+            # The function does not trace; an error of its own raises again eagerly.
+            chosen.append(fn)
+            return fn(*args)
+        chosen.append(compiled)
+        return value
+
+    return run
+
+
 def _smc_diagnostics(history: Any) -> DataTree:
     """Per-generation SMC-ABC convergence trajectory as an ArviZ ``DataTree``.
 
     Builds a ``smc_diagnostics`` group indexed by generation, holding the
     epsilon (acceptance-threshold) schedule, the sample attempts, the accepted
     particles, and the acceptance rate; ``total_nr_simulations`` is a scalar
-    attribute. Recovered from ``dist.arviz_data`` after a run.
+    attribute. It is stored under ``arviz/`` in the result's annotations.
     """
     import xarray as xr
 
@@ -117,8 +229,9 @@ def _smc_diagnostics(history: Any) -> DataTree:
 class PyABCSMCMethod(InferenceMethod):
     """pyabc SMC-ABC, registered as ``pyabc_smcabc`` at priority 6.
 
-    Applies to a :class:`~probpipe.modeling.SimpleGenerativeModel` whose
-    prior can flatten, sample, and score jointly.
+    Applies to the unnormalized conditional of a factored joint at observed
+    fields, whose likelihood is a kernel that samples, the simulator, and
+    whose prior can flatten, sample, and score jointly.
 
     Notes
     -----
@@ -126,106 +239,148 @@ class PyABCSMCMethod(InferenceMethod):
     tolerance, so it ranks below every likelihood-based method.
     """
 
+    _method_options = (
+        "distance_fn",
+        "eps",
+        "eps_alpha",
+        "max_populations",
+        "max_total_nr_simulations",
+        "max_walltime",
+        "min_acceptance_rate",
+        "minimum_epsilon",
+        "n_particles",
+        "sampler",
+        "summary_fn",
+        "transitions",
+    )
+
     @property
     def name(self) -> str:
         return "pyabc_smcabc"
 
     def supported_types(self) -> tuple[type, ...]:
-        # lazy: avoid an inference->modeling import cycle
-        from ..modeling._simple_generative import SimpleGenerativeModel
-
-        return (SimpleGenerativeModel,)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int:
         return 6
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
-        # lazy: avoid an inference->modeling import cycle
-        from ..modeling._simple_generative import SimpleGenerativeModel
-
-        if not isinstance(dist, SimpleGenerativeModel):
-            return Feasibility(feasible=False, description="Requires SimpleGenerativeModel")
-        prior = dist["parameters"]
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target conditions a joint whose likelihood simulates and whose prior scores."""
+        factors = model_factors(target)
+        if factors is None:
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
+        if not (
+            isinstance(factors.likelihood, ConditionalDistribution)
+            and isinstance(factors.likelihood, SupportsConditionalSampling)
+        ):
+            return Feasibility(
+                feasible=False,
+                description=(
+                    "the likelihood must be a ConditionalDistribution that can be sampled, "
+                    f"since ABC simulates from it; got {described(factors.likelihood)}"
+                ),
+            )
         # Feasible means the prior can flatten, sample, *and* score jointly.
         # Build the backing distribution, then score one in-support draw — this
         # exercises log_prob, so a sampleable-but-density-less prior is caught
         # here rather than crashing later in pyabc's weight computation.
         try:
-            pyabc_prior = PyABCDistribution(prior, jax.random.PRNGKey(0))
+            pyabc_prior = PyABCDistribution(factors.prior, jax.random.PRNGKey(0))
             density = pyabc_prior.pdf(pyabc_prior.rvs())
         except Exception as e:
             return Feasibility(feasible=False, description=str(e))
         if not np.isfinite(density):
             return Feasibility(
                 feasible=False,
-                description="prior has no usable joint density",
+                description=(
+                    f"the joint density of the prior {described(factors.prior)} is not finite "
+                    f"at a draw from it"
+                ),
             )
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """Run SMC-ABC and return a weighted posterior.
+
+        The run's seed is drawn from a workflow-owned random event, so
+        ``workflow_run(seed=...)`` reproduces the run, and an unscoped call
+        runs afresh. The seed fixes the JAX keys of the prior's draws and of
+        the simulator. It also seeds numpy's global generator for the duration
+        of the run, and pyabc draws its perturbations from that generator. The
+        caller's numpy state is restored afterwards.
 
         Parameters
         ----------
-        dist : SimpleGenerativeModel
-            Prior (any distribution that flattens to a parameter vector and
-            carries a joint density) plus a ``GenerativeLikelihood`` simulator.
-        observed : array-like
-            Observed data; flattened (after ``summary_fn``) to the target vector.
-        n_particles : int, default 100
-            SMC population size.
-        max_populations : int, default 4
-            Number of SMC generations.
-        eps_alpha : float, default 0.5
-            ``QuantileEpsilon`` alpha for the default epsilon schedule; ignored
-            if ``eps`` is given.
-        eps : pyabc epsilon, optional
-            Epsilon (acceptance-threshold) strategy. Defaults to
-            ``QuantileEpsilon(alpha=eps_alpha)``; pass any pyabc epsilon (e.g.
-            ``MedianEpsilon``, ``ListEpsilon``, ``AcceptanceRateScheduler``) to
-            override.
-        transitions : pyabc transition, optional
-            Perturbation kernel. Defaults to pyabc's own (a multivariate-normal
-            transition); pass a custom one to override.
-        minimum_epsilon, min_acceptance_rate, max_total_nr_simulations, max_walltime : optional
-            Additional stopping criteria forwarded to ``ABCSMC.run`` alongside
-            ``max_populations`` (whichever is hit first stops the run); pyabc's
-            defaults apply when omitted.
-        random_seed : int, default 0
-            Seeds the JAX keys threaded into the prior and simulator and pyabc's
-            own (numpy-global) proposal RNG, so repeated calls are reproducible.
-        summary_fn : callable, optional
-            ``(batch, dim) -> (batch, summary_dim)`` applied to simulated and
-            observed data before the distance.
-        distance_fn : callable, optional
-            ``(x, x0) -> float`` over the ``{"y": vector}`` sumstat dicts;
-            defaults to Euclidean. Note: summary statistics are passed as a
-            single flat vector under the ``"y"`` key, so pyabc's multi-statistic
-            adaptive/weighted distances are not used; supply a custom
-            ``summary_fn``/``distance_fn`` pair for bespoke weighting.
-        sampler : pyabc sampler, optional
-            Defaults to ``SingleCoreSampler``. pyabc's multicore samplers
-            ``fork()``, which can deadlock alongside JAX's threads (the same
-            reason the PyMC backend avoids forking); pass an explicit sampler to
-            opt into local-multicore parallelism.
+        target : Distribution
+            The unnormalized conditional of a factored joint at its observed
+            fields: a prior that flattens to a parameter vector and carries a
+            joint density, a likelihood kernel that samples, the simulator, and
+            the observed value, flattened (after ``summary_fn``) to the target
+            vector.
+        **kwargs : Any
+            The call's ``method_options``:
+
+            - ``n_particles`` (int, default 100): SMC population size.
+            - ``max_populations`` (int, default 4): number of SMC generations.
+            - ``eps_alpha`` (float, default 0.5): ``QuantileEpsilon`` alpha for
+              the default epsilon schedule; ignored if ``eps`` is given.
+            - ``eps`` (pyabc epsilon): epsilon (acceptance-threshold) strategy.
+              Defaults to ``QuantileEpsilon(alpha=eps_alpha)``; pass any pyabc
+              epsilon (e.g. ``MedianEpsilon``, ``ListEpsilon``,
+              ``AcceptanceRateScheduler``) to override.
+            - ``transitions`` (pyabc transition): perturbation kernel over the
+              prior's unconstrained coordinates. Defaults to pyabc's own, a
+              multivariate-normal transition; pass a custom one to override.
+            - ``minimum_epsilon``, ``min_acceptance_rate``,
+              ``max_total_nr_simulations``, ``max_walltime``: additional
+              stopping criteria forwarded to ``ABCSMC.run`` alongside
+              ``max_populations`` (whichever is hit first stops the run);
+              pyabc's defaults apply when omitted.
+            - ``summary_fn`` (callable): ``(batch, dim) -> (batch, summary_dim)``
+              applied to simulated and observed data before the distance.
+            - ``distance_fn`` (callable): ``(x, x0) -> float`` over the
+              ``{"y": vector}`` sumstat dicts; defaults to Euclidean. Note:
+              summary statistics are passed as a single flat vector under the
+              ``"y"`` key, so pyabc's multi-statistic adaptive/weighted
+              distances are not used; supply a custom
+              ``summary_fn``/``distance_fn`` pair for bespoke weighting.
+            - ``sampler`` (pyabc sampler): defaults to ``SingleCoreSampler``,
+              which simulates in this process, so the run's seed fixes every
+              draw. A sampler whose workers run in other processes, such as
+              pyabc's multicore samplers, draws outside ProbPipe's control.
+              Each worker reseeds numpy's generator from fresh entropy, so the
+              run does not reproduce. Each worker folds a value of its own
+              numpy generator into the run's JAX keys at its first draw, so the
+              workers draw different prior samples and simulation keys. pyabc's
+              multicore samplers also
+              ``fork()``, which can deadlock alongside JAX's threads (the same
+              reason the PyMC backend avoids forking).
 
         Returns
         -------
-        ApproximateDistribution
-            The final population's particles, keyed by parameter name, carrying
-            their (non-resampled) SMC importance weights. The per-generation
-            convergence trajectory (epsilon schedule, sample / particle counts,
-            acceptance rate) is attached as a ``smc_diagnostics`` group on
-            ``arviz_data``.
+        EmpiricalDistribution
+            The final population's particles, mapped onto the prior's support
+            and keyed by parameter name, carrying their SMC importance weights,
+            which are not resampled. The per-generation convergence trajectory,
+            which holds the epsilon schedule, the sample and particle counts,
+            and the acceptance rate, is the ``arviz/smc_diagnostics`` group of
+            the result's annotations.
+
+        Raises
+        ------
+        TypeError
+            If a keyword is none of the options above.
         """
-        prior = dist["parameters"]
-        simulator = dist["data"]
+        self._check_options(kwargs)
+        factors = model_factors(target)
+        prior = factors.prior
+        simulator = factors.likelihood
 
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
         eps_alpha = float(kwargs.get("eps_alpha", 0.5))
-        random_seed = int(kwargs.get("random_seed", 0))
+        random_seed = integer_seed(run_seed(self.name))
         summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
         distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()
@@ -238,20 +393,24 @@ class PyABCSMCMethod(InferenceMethod):
         pyabc_prior = PyABCDistribution(prior, prior_key)
         d = pyabc_prior._d
 
-        x0 = {_DATA_KEY: _summarize(jnp.atleast_1d(jnp.asarray(observed))[None, :], summary_fn)}
+        x0 = {_DATA_KEY: _summarize(flat_vector(factors.observed)[None, :], summary_fn)}
+        unflatten = flat_unflatten(prior)
+        coordinates = unconstrained_coordinates(prior)
 
-        sim_key = [sim_key0]  # threaded per simulator call (no numpy reseed)
+        sim_keys = _ProcessKeys(sim_key0)
+        simulate = _compiled(
+            lambda z, key: flat_vector(
+                simulator._conditional_sample(
+                    parameter_given(factors, unflatten(coordinates.forward(z))), key
+                )
+            )
+        )
 
         def model_fn(parameters: Mapping[str, float]) -> _SumStat:
-            vec = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
-            sim_key[0], sub = jax.random.split(sim_key[0])
-            raw = jnp.atleast_2d(simulator.generate_data(vec, 1, key=sub)[0])
+            z = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
+            raw = simulate(z, sim_keys.next())[None, :]
             return {_DATA_KEY: _summarize(raw, summary_fn)}
 
-        # Known limitation: pyabc perturbs in the prior's *constrained* space, so
-        # for bounded parameters it can propose out-of-support points (density 0
-        # — correct but wasteful). Perturbing in unconstrained space through the
-        # prior's constraint bijectors would avoid these proposals.
         abc = pyabc.ABCSMC(
             model_fn,
             pyabc_prior,
@@ -283,19 +442,21 @@ class PyABCSMCMethod(InferenceMethod):
         finally:
             np.random.set_state(np_state)
 
-        # Final population: flat columns p0..p{d-1}, with SMC importance weights.
+        # Final population: coordinates p0..p{d-1}, with SMC importance weights,
+        # mapped onto the support. The map keeps each particle's weight.
         df, weights = history.get_distribution(m=0, t=history.max_t)
-        flat = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
+        particles = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
+        flat = jax.vmap(coordinates.forward)(jnp.asarray(particles))
         weights = np.asarray(weights, dtype=float)
 
-        # Lift the flat columns back to name-keyed Records via the prior's declaration.
+        # Lift the flat columns back to name-keyed Records via the target's declaration.
         return make_posterior(
-            [jnp.asarray(flat)],
-            parents=(dist,),
-            algorithm="pyabc_smcabc",
+            [flat],
+            parents=(target,),
+            method="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()),
-            event_spec=prior.event_spec,
-            field_order=list(prior.event_shapes),
+            event_spec=target.event_spec,
+            field_order=list(target.event_spec.components),
             annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,

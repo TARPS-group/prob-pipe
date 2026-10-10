@@ -80,13 +80,19 @@ class TestConditionalRoundTrip:
             Record("r", physics=Record("r", force=jnp.zeros(3), mass=2.0), obs="y"),  # nested mixed
             NumericRecord("nr", a=jnp.zeros(2), b=NumericRecord("nr", c=1.0)),  # nested numeric
         ]:
-            assert type(r)(r.name, dict(r), event_template=r.event_template) == r
+            assert type(r)(r.label, dict(r), event_template=r.event_template) == r
 
     def test_value_only_dict_is_lossy_for_dtype(self):
         # A template carrying dtype is not recoverable from a value-only dict.
         tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
         r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
-        assert Record("r", dict(r)) != r  # re-inferred template drops the dtype
+        assert Record("r", r.raw()) != r  # re-inferred template drops the dtype
+
+    def test_a_dict_of_views_keeps_the_dtype(self):
+        # Each view carries its field's declaration, so inference recovers it.
+        tpl = RecordSpec(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
+        r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
+        assert Record("r", dict(r)) == r
 
     def test_numeric_record_value_only_round_trips(self):
         nr = NumericRecord("nr", a=1.0, b=2.0)
@@ -146,7 +152,7 @@ class TestSubtreeTemplateInvariant:
         tpl = RecordSpec(physics=child.event_template, obs=())
         r = Record("r", physics=child, obs=3.0, event_template=tpl)
         assert r.at_path("physics") is child
-        assert r.at_path("physics").name == "physics"
+        assert r.at_path("physics").label == "physics"
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +201,7 @@ class TestConvenienceConstructors:
             # layout, which from_field_values reconstructs).
             Record("r", physics=NumericRecord("nr", force=jnp.zeros(2), mass=1.0), obs="tag"),
         ]:
-            rebuilt = Record.from_field_values(r.name, r.event_template, r.values())
+            rebuilt = Record.from_field_values(r.label, r.event_template, r.values())
             assert rebuilt == r
 
     def test_from_field_values_count_mismatch_raises(self):
@@ -274,7 +280,7 @@ class TestEditTemplateThreading:
         r = Record("r", x=1.0, y=2.0)
         assert isinstance(r.event_template, NumericRecordSpec)
         r2 = r.replace(x="hello")
-        assert r2["x"] == "hello"
+        assert r2.raw("x") == "hello"
         assert not isinstance(r2.event_template, NumericRecordSpec)
         # ... and merging a mixed record into a numeric one likewise demotes.
         m = r.merge(Record("r", label="fox"))
@@ -287,7 +293,7 @@ class TestEditTemplateThreading:
 
     def test_edits_reuse_untouched_children_verbatim(self):
         # An untouched nested child already named by its field key survives
-        # an edit as the SAME object — class, name, and metadata preserved
+        # an edit as the SAME object — class, label, and metadata preserved
         # (never demoted to the outer record's class).
         child = NumericRecord("phys", x=1.0, y=2.0)
         r = Record("r", phys=child, obs="tag")
@@ -307,7 +313,7 @@ class TestEditTemplateThreading:
             {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
             {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
         ):
-            with pytest.raises(ValueError, match="overlap"):
+            with pytest.raises(ValueError, match="got both 'physics' and the path 'physics/mass'"):
                 r.replace(updates)
         with pytest.raises(ValueError, match="overlap"):
             r.event_template.replace(
@@ -336,7 +342,7 @@ class TestRecordSpecOps:
             tpl.map(lambda s: object())
 
     def test_map_to_numeric_promotes(self):
-        tpl = RecordSpec(a=None, b=())  # mixed -> base RecordSpec
+        tpl = RecordSpec(a=OpaqueSpec(), b=())  # mixed -> base RecordSpec
         assert not isinstance(tpl, NumericRecordSpec)
         mapped = tpl.map(lambda s: NumericArraySpec((2,)))  # every spec numeric now
         assert isinstance(mapped, NumericRecordSpec)
@@ -402,7 +408,7 @@ class TestBoundaryRules:
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(jnp.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
         nr = NumericRecord("nr", {"a/b": da, "c": 3.0})
-        restored = nr.at_path("a/b")
+        restored = nr.raw("a/b")
         assert isinstance(restored, xr.DataArray)
         assert restored.dims == ("t",)
 

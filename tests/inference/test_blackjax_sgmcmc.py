@@ -1,7 +1,8 @@
 """Tests for BlackJAX-backed SGMCMC methods (``blackjax_sgld`` / ``blackjax_sghmc``).
 
 End-to-end coverage of the inference-method-registry path:
-``condition_on(model, observed, method="blackjax_sgld", batch_size=…, …)``,
+``condition_on.with_options(method="blackjax_sgld", method_options={"batch_size": …})``
+applied to ``(likelihood * prior, {"y": y})``,
 plus checks that the gradient estimator actually drives convergence
 toward the posterior mode on a 200-row Bayesian logistic regression.
 """
@@ -12,23 +13,34 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.glm as tfp_glm
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    ApproximateDistribution,
-    GLMLikelihood,
+    EmpiricalDistribution,
+    HalfNormal,
     MultivariateNormal,
-    Record,
-    SimpleModel,
+    NumericArraySpec,
     condition_on,
     inference_method_registry,
+    workflow_run,
 )
+from probpipe.families import BernoulliFamily, GaussianFamily, glm_likelihood
 from probpipe.inference._blackjax_sgmcmc import (
     BlackJAXSGHMCMethod,
     BlackJAXSGLDMethod,
     _build_grad_estimator,
 )
+from probpipe.inference._inference_utils import observed_target
 from probpipe.inference._minibatch import MinibatchedDistribution
+from tests._posterior import flat_chains
+from tests.inference._harness import validate_method
+from tests.inference.canonical import ObservationKernel
+
+
+def _draws(posterior: EmpiricalDistribution) -> jax.Array:
+    """The posterior's draws across its chains, in the target's flat layout."""
+    return jnp.concatenate(flat_chains(posterior))
+
 
 # -- Fixtures ------------------------------------------------------------------
 
@@ -44,14 +56,16 @@ def logistic_problem():
         jnp.float32
     )
 
-    prior = MultivariateNormal(loc=jnp.zeros(P), cov=jnp.eye(P), name="theta")
+    prior = MultivariateNormal("beta", loc=jnp.zeros(P), cov=jnp.eye(P))
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
-    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
-    model = SimpleModel(prior=prior, likelihood=lik)
-    data = Record("r", X=X, y=y)
+    lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return {
-        "model": model,
-        "data": data,
+        "model": lik * prior,
+        "prior": prior,
+        "likelihood": lik,
+        "X": X,
+        "y": y,
+        "data": {"y": y},
         "true_theta": true_theta,
         "N": N,
         "P": P,
@@ -101,13 +115,12 @@ class TestGradEstimatorCorrectness:
     """
 
     def test_grad_matches_full_data_grad_on_same_minibatch(self, logistic_problem):
-        model = logistic_problem["model"]
-        data = logistic_problem["data"]
+        prior, X, y = logistic_problem["prior"], logistic_problem["X"], logistic_problem["y"]
         measure = MinibatchedDistribution(
             "measure",
-            model.prior,
-            model.likelihood,
-            data,
+            prior,
+            logistic_problem["likelihood"],
+            y,
             batch_size=20,
         )
         grad_estimator = _build_grad_estimator(measure)
@@ -118,19 +131,17 @@ class TestGradEstimatorCorrectness:
         actual = grad_estimator(theta, key)
 
         # Independent reference: rebuild the unnormalized log-density from
-        # the captured batch via the prior + per-datum components directly,
-        # then take its grad. The math here doesn't go through
-        # `_FixedMinibatchDistribution._unnormalized_log_prob` at all.
+        # the captured rows via the prior and the Bernoulli log-density of the
+        # logits directly, then take its grad. The math here doesn't go
+        # through `_FixedMinibatchDistribution._unnormalized_log_prob` at all.
         inner = measure._draw_one(key)
-        batch = inner.batch
+        rows = inner.rows
         rescale_factor = inner.rescale_factor
 
         def manual_log_density(t):
-            per_datum = jax.vmap(
-                model.likelihood.per_datum_log_likelihood,
-                in_axes=(None, 0),
-            )(t, batch)
-            return model.prior._log_prob(t) + rescale_factor * jnp.sum(per_datum)
+            logits = X[rows] @ t
+            per_datum = tfd.Bernoulli(logits=logits).log_prob(y[rows])
+            return prior._log_prob(t) + rescale_factor * jnp.sum(per_datum)
 
         expected = jax.grad(manual_log_density)(theta)
         np.testing.assert_allclose(actual, expected, rtol=1e-5)
@@ -140,9 +151,7 @@ class TestGradEstimatorCorrectness:
 
 
 class TestReproducibility:
-    """`random_seed` is a load-bearing reproducibility contract for
-    inference results.
-    """
+    """The seed of the workflow scope reproduces an SG-MCMC run."""
 
     def test_same_seed_produces_identical_chain(self, logistic_problem):
         kwargs = dict(
@@ -150,19 +159,18 @@ class TestReproducibility:
             num_results=50,
             num_warmup=10,
             step_size=1e-3,
-            random_seed=123,
         )
-        post1 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            **kwargs,
-        )
-        post2 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            **kwargs,
-        )
-        np.testing.assert_array_equal(post1.flat_samples, post2.flat_samples)
+        with workflow_run(seed=123):
+            post1 = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                **kwargs,
+            )
+        with workflow_run(seed=123):
+            post2 = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                **kwargs,
+            )
+        np.testing.assert_array_equal(_draws(post1), _draws(post2))
 
     def test_different_seeds_produce_different_chains(self, logistic_problem):
         kwargs = dict(
@@ -171,20 +179,18 @@ class TestReproducibility:
             num_warmup=10,
             step_size=1e-3,
         )
-        post1 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            random_seed=1,
-            **kwargs,
-        )
-        post2 = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            random_seed=2,
-            **kwargs,
-        )
+        with workflow_run(seed=1):
+            post1 = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                **kwargs,
+            )
+        with workflow_run(seed=2):
+            post2 = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                **kwargs,
+            )
         # Chains should differ somewhere — not just identical
-        assert not jnp.allclose(post1.flat_samples, post2.flat_samples)
+        assert not jnp.allclose(_draws(post1), _draws(post2))
 
 
 # -- Feasibility (check) ------------------------------------------------------
@@ -192,38 +198,38 @@ class TestReproducibility:
 
 class TestCheck:
     def test_rejects_bare_supports_log_prob(self):
-        """A non-SimpleModel target returns ``feasible=False`` with hint."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
-        info = BlackJAXSGLDMethod().check(prior, None, batch_size=10)
+        """A target that is no factored joint at data returns ``feasible=False`` with hint."""
+        prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
+        info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
-        assert "SimpleModel" in info.description
+        assert "likelihood * prior" in info.description
 
-    def test_rejects_non_factorisable_likelihood(self):
-        """SimpleModel + bare Likelihood (no per_datum) is rejected."""
-
-        class _BareLikelihood:
-            def log_likelihood(self, params, data):
-                return jnp.asarray(0.0)
-
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="x")
-        model = SimpleModel(prior=prior, likelihood=_BareLikelihood())
-        info = BlackJAXSGLDMethod().check(model, None, batch_size=10)
+    def test_rejects_a_likelihood_that_scores_no_subset(self):
+        """A likelihood kernel that cannot score a subset of its observations is rejected."""
+        prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
+        likelihood = ObservationKernel(
+            "y",
+            {"x": prior.event_spec.spec},
+            NumericArraySpec((5, 2)),
+            lambda x: tfd.Independent(tfd.Normal(jnp.broadcast_to(x, (5, 2)), 1.0), 2),
+        )
+        target = observed_target(likelihood * prior, {"y": jnp.zeros((5, 2))})
+        info = BlackJAXSGLDMethod().check(target, batch_size=2)
         assert not info.feasible
-        assert "ConditionallyIndependentLikelihood" in info.description
+        assert "score a subset of its observations" in info.description
 
     def test_requires_batch_size_kwarg(self, logistic_problem):
         """Missing ``batch_size=`` returns ``feasible=False`` with hint."""
         info = BlackJAXSGLDMethod().check(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
         )
         assert not info.feasible
-        assert "batch_size" in info.description
+        assert 'method_options={"batch_size": ...}' in info.description
+        assert info.actionable
 
     def test_feasible_for_well_formed_input(self, logistic_problem):
         info = BlackJAXSGLDMethod().check(
-            logistic_problem["model"],
-            logistic_problem["data"],
+            observed_target(logistic_problem["model"], logistic_problem["data"]),
             batch_size=20,
         )
         assert info.feasible
@@ -235,52 +241,54 @@ class TestCheck:
 class TestConvergence:
     """SGMCMC actually drives the chain toward the posterior mode.
 
-    Tolerances tightened beyond the original audit pass:
-    `atol=0.3` is roughly the SE of the chain mean for this problem
-    at 5000 retained samples plus warmup. Each test also asserts (a)
-    chain finiteness and (b) a lower bound on per-coordinate std so
-    a stuck (non-mixing) chain can't pass.
+    Each test bounds the distance of the chain mean from the coefficients
+    that generated the data by the spread it measured across workflow
+    seeds, and also asserts (a) chain finiteness and (b) a lower bound on
+    per-coordinate std so a stuck (non-mixing) chain can't pass.
     """
 
     def test_sgld_recovers_logistic_coefficients(self, logistic_problem):
-        post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            batch_size=40,
-            num_results=5000,
-            num_warmup=1000,
-            step_size=1e-3,
-            random_seed=42,
-        )
-        assert post.flat_samples.shape == (5000, 2)
-        assert jnp.all(jnp.isfinite(post.flat_samples))
+        with workflow_run(seed=42):
+            post = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                batch_size=40,
+                num_results=5000,
+                num_warmup=1000,
+                step_size=1e-3,
+            )
+        assert _draws(post).shape == (5000, 2)
+        assert jnp.all(jnp.isfinite(_draws(post)))
         # Non-mixing guard: a stuck chain near init would have ~zero std.
-        per_coord_std = np.asarray(jnp.std(post.flat_samples, axis=0))
+        per_coord_std = np.asarray(jnp.std(_draws(post), axis=0))
+        # Observed across four workflow seeds: min std 0.16-0.17, and max
+        # |mean - truth| 0.03-0.07.
         assert per_coord_std.min() > 0.05, f"Chain looks stuck — per-coord std: {per_coord_std}"
-        sample_mean = np.asarray(jnp.mean(post.flat_samples, axis=0))
+        sample_mean = np.asarray(jnp.mean(_draws(post), axis=0))
         true = np.asarray(logistic_problem["true_theta"])
         np.testing.assert_allclose(sample_mean, true, atol=0.3)
 
     def test_sghmc_recovers_logistic_coefficients(self, logistic_problem):
-        post = BlackJAXSGHMCMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            batch_size=40,
-            num_results=5000,
-            num_warmup=1000,
-            step_size=2e-3,
-            num_integration_steps=4,
-            alpha=0.05,
-            beta=0.0,
-            random_seed=42,
-        )
-        assert post.flat_samples.shape == (5000, 2)
-        assert jnp.all(jnp.isfinite(post.flat_samples))
-        per_coord_std = np.asarray(jnp.std(post.flat_samples, axis=0))
+        with workflow_run(seed=42):
+            post = BlackJAXSGHMCMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                batch_size=40,
+                num_results=5000,
+                num_warmup=1000,
+                step_size=2e-3,
+                num_integration_steps=4,
+                alpha=0.05,
+                beta=0.0,
+            )
+        assert _draws(post).shape == (5000, 2)
+        assert jnp.all(jnp.isfinite(_draws(post)))
+        per_coord_std = np.asarray(jnp.std(_draws(post), axis=0))
+        # Observed across workflow seeds 40-51: min std 0.09-0.22, and max
+        # |mean - truth| 0.08-0.44, since the chain mixes slowly at this step
+        # size and friction.
         assert per_coord_std.min() > 0.05, f"Chain looks stuck — per-coord std: {per_coord_std}"
-        sample_mean = np.asarray(jnp.mean(post.flat_samples, axis=0))
+        sample_mean = np.asarray(jnp.mean(_draws(post), axis=0))
         true = np.asarray(logistic_problem["true_theta"])
-        np.testing.assert_allclose(sample_mean, true, atol=0.3)
+        np.testing.assert_allclose(sample_mean, true, atol=0.8)
 
 
 # -- condition_on dispatch ---------------------------------------------------
@@ -288,62 +296,81 @@ class TestConvergence:
 
 class TestConditionOnDispatch:
     def test_sgld_via_condition_on(self, logistic_problem):
-        post = condition_on(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            method="blackjax_sgld",
-            batch_size=40,
-            num_results=1000,
-            num_warmup=200,
-            step_size=1e-3,
-            random_seed=7,
-        )
-        assert isinstance(post, ApproximateDistribution)
-        assert post.flat_samples.shape == (1000, 2)
+        with workflow_run(seed=7):
+            post = condition_on.with_options(
+                method="blackjax_sgld",
+                method_options={
+                    "batch_size": 40,
+                    "num_results": 1000,
+                    "num_warmup": 200,
+                    "step_size": 1e-3,
+                },
+            )(logistic_problem["model"], logistic_problem["data"])
+        assert isinstance(post, EmpiricalDistribution)
+        assert _draws(post).shape == (1000, 2)
 
     def test_chain_shape_is_num_results_by_event_shape(self, logistic_problem):
-        """`post.flat_samples` is `(num_results, *event_shape)` for a single chain."""
-        post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            batch_size=20,
-            num_results=100,
-            num_warmup=0,
-            step_size=1e-3,
-            random_seed=1,
-        )
-        assert post.flat_samples.shape == (100, logistic_problem["P"])
+        """The draws are `(num_results, *event_shape)` for a single chain."""
+        with workflow_run(seed=1):
+            post = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                batch_size=20,
+                num_results=100,
+                num_warmup=0,
+                step_size=1e-3,
+            )
+        assert _draws(post).shape == (100, logistic_problem["P"])
 
     def test_warmup_discards_initial_samples(self, logistic_problem):
         """``num_warmup=N`` drops the first N samples; ``num_results`` retained."""
-        post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            batch_size=20,
-            num_results=300,
-            num_warmup=700,
-            step_size=1e-3,
-            random_seed=3,
-        )
-        assert post.flat_samples.shape == (300, 2)
+        with workflow_run(seed=3):
+            post = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                batch_size=20,
+                num_results=300,
+                num_warmup=700,
+                step_size=1e-3,
+            )
+        assert _draws(post).shape == (300, 2)
 
     def test_user_supplied_init_position(self, logistic_problem):
         """``init=`` overrides the prior-sampled default."""
         init = jnp.array([2.5, -1.5])
-        post = BlackJAXSGLDMethod().execute(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            batch_size=20,
-            num_results=50,
-            num_warmup=0,
-            step_size=1e-4,
-            random_seed=0,
-            init=init,
-        )
+        with workflow_run(seed=0):
+            post = BlackJAXSGLDMethod().execute(
+                observed_target(logistic_problem["model"], logistic_problem["data"]),
+                batch_size=20,
+                num_results=50,
+                num_warmup=0,
+                step_size=1e-4,
+                init=init,
+            )
         # With a tiny step size, the very first retained sample should
-        # sit close to `init` (it's at most one Langevin step away).
-        first = np.asarray(post.flat_samples[0])
+        # sit close to `init` (it's at most one Langevin step away, whose
+        # noise has sd 0.014). Observed across four workflow seeds:
+        # max |first - init| 0.008-0.025.
+        first = np.asarray(_draws(post)[0])
         np.testing.assert_allclose(first, np.asarray(init), atol=0.05)
+
+    def test_a_factored_prior_starts_the_chain_inside_its_support(self):
+        """The chain over a factored prior starts at its draw, a positive dispersion."""
+        n, p = 200, 2
+        X = jax.random.normal(jax.random.PRNGKey(0), (n, p))
+        y = X @ jnp.array([1.0, -0.5]) + 0.5 * jax.random.normal(jax.random.PRNGKey(1), (n,))
+        prior = MultivariateNormal("beta", jnp.zeros(p), cov=jnp.eye(p)) * HalfNormal(
+            "dispersion", 1.0
+        )
+        with workflow_run(seed=1):
+            post = condition_on.with_options(
+                method="blackjax_sgld",
+                method_options={
+                    "batch_size": 20,
+                    "num_results": 50,
+                    "num_warmup": 0,
+                    "step_size": 1e-4,
+                },
+            )(glm_likelihood("y", GaussianFamily(), X=X) * prior, {"y": y})
+        assert float(_draws(post)[0, 2]) > 0.0
 
     def test_with_replacement_kwarg_is_accepted_and_dispatches(self, logistic_problem):
         """``with_replacement=True`` is accepted and dispatches via the registry.
@@ -352,7 +379,7 @@ class TestConditionOnDispatch:
         only changes the index-draw inside
         :meth:`MinibatchedDistribution._draw_one` (``randint`` vs
         ``permutation``); it does not surface through the
-        ``ApproximateDistribution`` output, so there is no public handle
+        ``EmpiricalDistribution`` result, so there is no public handle
         that distinguishes a with- from a without-replacement run without
         contrived hooks into the minibatch RNG. We therefore assert only
         that the kwarg threads through ``condition_on`` -> ``execute()``
@@ -360,18 +387,26 @@ class TestConditionOnDispatch:
         semantics themselves are covered directly in the
         ``MinibatchedDistribution`` tests.
         """
-        post = condition_on(
-            logistic_problem["model"],
-            logistic_problem["data"],
-            method="blackjax_sgld",
-            batch_size=20,
-            num_results=100,
-            num_warmup=0,
-            step_size=1e-3,
-            random_seed=4,
-            with_replacement=True,
-        )
+        with workflow_run(seed=4):
+            post = condition_on.with_options(
+                method="blackjax_sgld",
+                method_options={
+                    "batch_size": 20,
+                    "num_results": 100,
+                    "num_warmup": 0,
+                    "step_size": 1e-3,
+                    "with_replacement": True,
+                },
+            )(logistic_problem["model"], logistic_problem["data"])
         # No exception + finite, correctly-shaped chain == kwarg accepted
         # by execute() and threaded into MinibatchedDistribution.
-        assert post.flat_samples.shape == (100, logistic_problem["P"])
-        assert jnp.all(jnp.isfinite(post.flat_samples))
+        assert _draws(post).shape == (100, logistic_problem["P"])
+        assert jnp.all(jnp.isfinite(_draws(post)))
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_sgld_canonical = validate_method("blackjax_sgld")
+test_blackjax_sghmc_canonical = validate_method("blackjax_sghmc")

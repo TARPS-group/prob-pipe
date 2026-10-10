@@ -16,11 +16,15 @@ Supported types
   scalars; ``float`` ``-0.0``/``0.0`` and all NaN payloads are canonicalized
 - ``set`` / ``frozenset`` — order-independent (element sub-digests, sorted)
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
-- ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
-  hashes samples + weights; ``Weights`` are hashed by content
-- ``Function`` — frozen signature and input/output templates, plus either
-  plain-callable bytecode, referenced names, and captured/default values or a
-  private implementation type
+- ``Distribution`` — class + parameters, without the label; ``EmpiricalDistribution``
+  hashes its atoms' levels + element spec + stored rows + weights,
+  ``KDEDistribution`` hashes atoms + weights + kernel class + scales;
+  ``Weights`` are hashed by content
+- ``Function`` — frozen signature, input declaration, and output declaration
+  without its component names, plus either plain-callable bytecode, referenced
+  names, and captured/default values or a private implementation type, so
+  relabeling the function or its output, or renaming its output's components,
+  keeps the digest
 - Closure-free Python functions — module + qualified name + bytecode +
   defaults. Closure-bearing functions and every other callable kind are
   process-local identities.
@@ -110,10 +114,10 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
 
     Parameters
     ----------
-    obj:
+    obj : Any
         Any ProbPipe object or Python primitive. Unknown types fall back to a
         process-local identity hash.
-    max_array_bytes:
+    max_array_bytes : int or None
         Arrays whose byte size is at or below this threshold are hashed in
         full (zero-copy via ``memoryview``).  Larger arrays are sampled at
         evenly-spaced offsets.  Pass ``None`` to always hash the full buffer.
@@ -229,29 +233,39 @@ def _update(
         for k, v in sorted(obj.items(), key=lambda kv: str(kv[0])):
             _update(h, k, depth + 1, max_array_bytes, state)
             _update(h, v, depth + 1, max_array_bytes, state)
-    elif _is_tfp_object(obj):
-        _update_tfp_object(h, obj, depth, max_array_bytes, state)
-    elif (content := _numeric_container_to_numpy(obj)) is not None:
-        # A numeric container (xarray / pandas / a registered array backend):
-        # hash by concrete type, materialised values, AND the container's
-        # identity-bearing metadata (coords / index / dims / attrs), so the
-        # digest is a complete content identifier — two containers with equal
-        # values but different coords fingerprint differently — and is
-        # content-stable across processes rather than falling to ``repr``.
-        h.update(b"container:")
-        h.update(type(obj).__qualname__.encode())
-        h.update(b":")
-        _update_array(h, content, max_array_bytes, state)
-        from ._array_backend import _metadata_of
-
-        metadata = _metadata_of(obj)
-        if metadata is not None:
-            h.update(b":meta:")
-            _update(h, metadata, depth + 1, max_array_bytes, state)
-    elif inspect.isfunction(obj) and obj.__closure__ is None:
-        _update_plain_function(h, obj, depth, max_array_bytes, state)
     else:
-        _update_weak_identity(h, obj, state)
+        from ._specs import InputSpec, OutputSpec
+
+        if isinstance(obj, InputSpec):
+            h.update(b"input_spec:")
+            _update(h, dict(obj), depth + 1, max_array_bytes, state)
+        elif isinstance(obj, OutputSpec):
+            h.update(b"output_spec:")
+            _update(h, obj._component_name, depth + 1, max_array_bytes, state)
+            _update(h, obj.spec, depth + 1, max_array_bytes, state)
+        elif _is_tfp_object(obj):
+            _update_tfp_object(h, obj, depth, max_array_bytes, state)
+        elif (content := _numeric_container_to_numpy(obj)) is not None:
+            # A numeric container (xarray / pandas / a registered array backend):
+            # hash by concrete type, materialised values, AND the container's
+            # identity-bearing metadata (coords / index / dims / attrs), so the
+            # digest is a complete content identifier — two containers with equal
+            # values but different coords fingerprint differently — and is
+            # content-stable across processes rather than falling to ``repr``.
+            h.update(b"container:")
+            h.update(type(obj).__qualname__.encode())
+            h.update(b":")
+            _update_array(h, content, max_array_bytes, state)
+            from ._array_backend import _metadata_of
+
+            metadata = _metadata_of(obj)
+            if metadata is not None:
+                h.update(b":meta:")
+                _update(h, metadata, depth + 1, max_array_bytes, state)
+        elif inspect.isfunction(obj) and obj.__closure__ is None:
+            _update_plain_function(h, obj, depth, max_array_bytes, state)
+        else:
+            _update_weak_identity(h, obj, state)
 
 
 def _subdigest(
@@ -264,6 +278,13 @@ def _subdigest(
     sub = hashlib.sha256()
     _update(sub, obj, depth, max_array_bytes, state)
     return sub.digest()
+
+
+def _identity_fingerprint(obj: Any) -> str:
+    """The identity-tier digest of *obj*: its type and process-local identity, hashing no content."""
+    h = hashlib.sha256()
+    _update_weak_identity(h, obj, _FingerprintState())
+    return h.hexdigest()[:16]
 
 
 def _update_weak_identity(
@@ -361,13 +382,10 @@ def _update_value_spec(
 ) -> None:
     """Hash a built-in TermSpec by the declaration fields that define it."""
     from ..distributions._distribution import DistributionSpec
+    from ..values._function_base import FunctionSpec
     from ._batch import BatchSpec
     from ._opaque import OpaqueSpec
-    from ._specs import (
-        FunctionSpec,
-        NumericArraySpec,
-        RecordSpec,
-    )
+    from ._specs import NumericArraySpec, RecordSpec
 
     spec_type = type(spec)
     h.update(b"spec:")
@@ -385,6 +403,11 @@ def _update_value_spec(
         _update_constraint(h, spec.support, depth + 1, max_array_bytes, state)
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
+        if spec.type is not None:
+            # A class hashes by where it is defined, so equal types hash alike
+            # across processes.
+            h.update(b":type=")
+            h.update(f"{spec.type.__module__}.{spec.type.__qualname__}".encode())
     elif isinstance(spec, RecordSpec):
         _update_event_template(h, spec, depth, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
@@ -392,13 +415,13 @@ def _update_value_spec(
         # term ``x`` and a one-field record exposing ``x`` hash apart.
         declaration = spec.event_spec
         h.update(b"component=")
-        component = None if declaration.exposes_record else next(iter(declaration.components))
+        component = declaration._component_name
         _update(h, component, depth + 1, max_array_bytes, state)
         h.update(b":event=")
         _update(h, declaration.spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
-        _update(h, spec.input_template, depth + 1, max_array_bytes, state)
-        _update(h, spec.output_spec, depth + 1, max_array_bytes, state)
+        _update(h, spec.input_spec, depth + 1, max_array_bytes, state)
+        _update_output_declaration(h, spec.output_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, BatchSpec):
         _update(h, spec.element_spec, depth + 1, max_array_bytes, state)
         h.update(b":axis_groups=")
@@ -617,20 +640,24 @@ def _update_record(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a Record by its leaf-keyed items (full ``/``-paths → leaf values).
+    """Hash a Record by its stored leaves, keyed by their full ``/``-paths.
 
-    ``Record`` is a leaf-keyed collection: ``items()`` yields every leaf by its
-    canonical ``/``-joined path, so this flat walk captures the full nested
-    structure without recursing — and without indexing interior sub-Records,
-    which raises under the leaf-keyed API.
+    The traversal yields every stored leaf by its canonical ``/``-joined path,
+    so it captures the full nested structure in one flat pass. It reads the stored
+    leaves rather than the views ``items()`` returns, since a view records the
+    record as its provenance's parent, and hashing that parent would hash the
+    record again. A leaf is read as record equality reads it, so equal records
+    fingerprint alike.
     """
+    from .record import _leaf_value
+
     h.update(b"record:")
     h.update(type(record).__name__.encode())
     h.update(b":")
-    for path, value in record.items():
+    for path, value in record._walk_leaves():
         h.update(path.encode())
         h.update(b"=")
-        _update(h, value, depth + 1, max_array_bytes, state)
+        _update(h, _leaf_value(value), depth + 1, max_array_bytes, state)
         h.update(b";")
 
 
@@ -650,9 +677,18 @@ def _is_distribution(obj: Any) -> bool:
 
 def _is_empirical(obj: Any) -> bool:
     try:
-        from ._empirical import EmpiricalDistribution
+        from ..distributions._empirical import EmpiricalDistribution
 
         return isinstance(obj, EmpiricalDistribution)
+    except ImportError:
+        return False
+
+
+def _is_kde(obj: Any) -> bool:
+    try:
+        from ..families._resampling import KDEDistribution
+
+        return isinstance(obj, KDEDistribution)
     except ImportError:
         return False
 
@@ -694,7 +730,13 @@ def _update_distribution(
     max_array_bytes: int | None,
     state: _FingerprintState,
 ) -> None:
-    """Hash a distribution by class name, distribution name, and parameters.
+    """Hash a distribution by class name and parameters.
+
+    The label names the law for display and records nothing about what it
+    computes, so a relabeled law keeps its fingerprint, as a relabeled function does.
+    The law's expression, which holds the paths it holds fixed and whether a
+    product was labeled, also states only how the law displays, so it is not
+    hashed.
 
     For TFP-backed distributions (those with a ``_tfp_dist`` attribute) the
     TFP parameter dict is hashed directly — this covers every concrete
@@ -705,15 +747,12 @@ def _update_distribution(
     h.update(b"dist:")
     h.update(type(dist).__name__.encode())
     h.update(b":")
-    name = getattr(dist, "name", None) or ""
-    h.update(name.encode())
-    h.update(b":")
 
     tfp_dist = getattr(dist, "_tfp_dist", None)
 
     if tfp_dist is not None:
         params = getattr(tfp_dist, "parameters", {}) or {}
-        # Skip construction flags and the name (already hashed above).
+        # Skip construction flags and the backend's name for the law.
         _TFP_SKIP = frozenset({"name", "validate_args", "allow_nan_stats"})
         for k, v in sorted(params.items()):
             if k in _TFP_SKIP:
@@ -723,22 +762,44 @@ def _update_distribution(
             _update(h, v, depth + 1, max_array_bytes, state)
             h.update(b";")
     elif _is_empirical(dist):
-        # EmpiricalDistribution / RecordEmpiricalDistribution: hash the sample
-        # data and weights via the PUBLIC accessors. The Record-backed subclass
-        # stores no ``_samples`` attribute, so keying on it silently dropped
-        # into the generic fallback below and hashed weights by repr (losing the
-        # values); using ``.samples`` / ``.is_uniform`` / ``.log_weights``
-        # distinguishes reweighted posteriors (IS/SMC) from the original.
-        h.update(b"samples=")
-        _update(h, dist.samples, depth + 1, max_array_bytes, state)
-        h.update(b"uniform=")
-        h.update(b"1" if dist.is_uniform else b"0")
-        if not dist.is_uniform:
-            h.update(b"log_weights=")
-            _update(h, dist.log_weights, depth + 1, max_array_bytes, state)
+        # An empirical law: hash the levels its atoms lie on, their element spec,
+        # the stored rows, and the normalized weights. The rows are hashed by
+        # content whatever the atoms' kind, an object array element by element, so
+        # equal laws over opaque atoms agree, and a reweighted posterior (IS/SMC) is
+        # distinguished from the original by its weights' values.
+        atoms = dist.atoms
+        h.update(b"atoms=")
+        h.update(type(atoms).__name__.encode())
+        h.update(b":levels=")
+        for level, group in zip(atoms.level_names, atoms.axis_groups, strict=True):
+            h.update(level.encode())
+            h.update(b"@")
+            h.update(repr(tuple(group)).encode())
+            h.update(b",")
+        h.update(b":spec=")
+        _update(h, atoms.element_spec, depth + 1, max_array_bytes, state)
+        h.update(b":rows=")
+        _update(h, dist._rows, depth + 1, max_array_bytes, state)
+        h.update(b"weights=")
+        _update(h, dist.weights, depth + 1, max_array_bytes, state)
+    elif _is_kde(dist):
+        # A kernel density estimate: hash the parameters of its mixture, which are
+        # the atoms, the weights, the kernel class, and the copies' scales.
+        h.update(b"atoms=")
+        _update(h, dist._atoms, depth + 1, max_array_bytes, state)
+        h.update(b"weights=")
+        _update(h, dist._w, depth + 1, max_array_bytes, state)
+        h.update(b"kernel=")
+        h.update(f"{dist._kernel.__module__}.{dist._kernel.__qualname__}".encode())
+        h.update(b"scales=")
+        _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
-        # Generic fallback for other non-TFP distributions.
-        _SKIP = frozenset({"_name", "_provenance", "_annotations", "_sampling_cost"})
+        # Generic fallback for other non-TFP distributions. The label, the
+        # default label, and the expression state how the law displays, and
+        # record nothing about what it computes.
+        _SKIP = frozenset(
+            {"_label", "_default_label", "_expression", "_provenance", "_annotations"}
+        )
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue
@@ -755,7 +816,7 @@ def _update_distribution(
 
 def _is_function(obj: Any) -> bool:
     try:
-        from .node import Function
+        from ..values import Function
 
         return isinstance(obj, Function)
     except ImportError:
@@ -820,6 +881,25 @@ def _update_plain_function(
     _update(h, func.__kwdefaults__, depth + 1, max_array_bytes, state)
 
 
+def _update_output_declaration(
+    h: hashlib._Hash,
+    declaration: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a function's output declaration without its component names.
+
+    Two functions that differ only in the names of their outputs compute the
+    same values, so they share a fingerprint.
+    """
+    from ._specs import _unnamed_declaration
+
+    if declaration is not None:
+        declaration = _unnamed_declaration(declaration)
+    _update(h, declaration, depth, max_array_bytes, state)
+
+
 def _update_function(
     h: hashlib._Hash,
     function: Any,
@@ -828,7 +908,7 @@ def _update_function(
 ) -> None:
     """Hash a Function by callable content or stable implementation declaration.
 
-    Every Function includes its frozen signature and templates. Plain-callable
+    Every Function includes its frozen signature and declarations. Plain-callable
     Functions additionally use bytecode plus default and closure content.
     Other private implementations add only their implementation type,
     excluding implementation instance state and artifact identity.
@@ -836,14 +916,14 @@ def _update_function(
     if state is None:
         state = _FingerprintState()
     h.update(b"wf:")
-    from ._function_contract import _CallableFunctionImplementation
+    from ..values._function_base import _CallableFunctionImplementation
 
     h.update(b"signature=")
     _update_signature_declaration(h, function.signature, max_array_bytes, state)
-    h.update(b":input_template=")
-    _update(h, function.input_template, 1, max_array_bytes, state)
-    h.update(b":output_template=")
-    _update(h, function.output_template, 1, max_array_bytes, state)
+    h.update(b":input_spec=")
+    _update(h, function.input_spec, 1, max_array_bytes, state)
+    h.update(b":output_spec=")
+    _update_output_declaration(h, function.output_spec, 1, max_array_bytes, state)
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):

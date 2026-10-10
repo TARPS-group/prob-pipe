@@ -6,13 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ._utils import _leaf_keys
 from ._view_base import NotComputed
 
 if TYPE_CHECKING:
     import xarray as xr
 
-    from ..inference._approximate_distribution import ApproximateDistribution
+    from ..distributions._empirical import EmpiricalDistribution
 
 
 __all__ = [
@@ -38,8 +37,7 @@ def _flatten_datatree(tree: xr.DataTree) -> dict[str, Any]:
             ) from exc
 
         if len(ds.data_vars) > 0 or len(ds.coords) > 0 or len(ds.attrs) > 0:
-            if prefix:
-                out[prefix] = ds
+            out[prefix or "/"] = ds
 
         children = getattr(node, "children", {}) or {}
         for child_name in children:
@@ -52,14 +50,15 @@ def _flatten_datatree(tree: xr.DataTree) -> dict[str, Any]:
 
 
 def _add_group(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     group_name: str,
     dataset: xr.Dataset,
 ) -> None:
     """Add or replace a group in ``posterior._annotations`` in place.
 
-    Preserves existing nested DataTree groups by flattening the tree to a
-    path -> Dataset dictionary, replacing/inserting the target group, and
+    Preserves the existing groups and the root's attributes, such as the
+    ``method`` an inference result records, by flattening the tree to a
+    path -> Dataset dictionary, replacing or inserting the target group, and
     rebuilding the DataTree.
     """
     import xarray as xr
@@ -80,7 +79,7 @@ def _add_group(
     )
 
 
-def _get_or_create_mcmc_ds(posterior: ApproximateDistribution) -> xr.Dataset:
+def _get_or_create_mcmc_ds(posterior: EmpiricalDistribution) -> xr.Dataset:
     """Return existing ``/diagnostics/mcmc`` dataset or an empty one."""
     import xarray as xr
 
@@ -96,7 +95,7 @@ def _get_or_create_mcmc_ds(posterior: ApproximateDistribution) -> xr.Dataset:
 
 
 def _write_mcmc_field(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     field_name: str,
     values: dict[str, float | NotComputed],
     *,
@@ -131,7 +130,7 @@ def _write_mcmc_field(
 
 
 def _mcmc_has_field(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     field_name: str,
 ) -> bool:
     """Return True if ``field_name`` exists in ``/diagnostics/mcmc``."""
@@ -149,12 +148,24 @@ def _mcmc_has_field(
 
 
 def to_named_posterior_dataset(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
 ) -> xr.Dataset:
     """Build a Dataset with one variable per parameter.
 
     Scalar parameters have dims ``(chain, draw)``. Vector or array-valued
     parameters preserve their event axes after ``draw``.
+
+    Parameters
+    ----------
+    posterior : EmpiricalDistribution
+        The inference result, whose atoms lie on the levels ``chain`` and
+        ``draw``.
+
+    Returns
+    -------
+    xr.Dataset
+        The dataset, in which the event axes of a variable ``x`` are named
+        ``x_dim_0``, ``x_dim_1``, and so on.
 
     Notes
     -----
@@ -166,19 +177,17 @@ def to_named_posterior_dataset(
     Raises
     ------
     ValueError
-        If the posterior has no chains.
+        If the posterior's atoms do not lie on the levels ``chain`` and ``draw``.
     """
     import xarray as xr
 
+    from ..inference._approximate_distribution import _chain_columns
+
     data_vars: dict[str, xr.DataArray] = {}
 
-    # One variable per leaf field of the draws, keyed by its full /-path (see
-    # ``_leaf_keys`` for the nested-vs-duck-typed rule).
-    per_chain = [posterior.draws(chain=i) for i in range(posterior.num_chains)]
-    if not per_chain:
-        raise ValueError("to_named_posterior_dataset: the posterior has no chains")
-    for field in _leaf_keys(per_chain[0]):
-        stacked = np.stack([np.asarray(draws[field]) for draws in per_chain], axis=0)
+    # One variable per leaf of the draws, keyed by its full /-path.
+    for field, column in _chain_columns(posterior).items():
+        stacked = np.asarray(column)
         event_dims = [f"{field}_dim_{i}" for i in range(max(stacked.ndim - 2, 0))]
         data_vars[field] = xr.DataArray(
             stacked,

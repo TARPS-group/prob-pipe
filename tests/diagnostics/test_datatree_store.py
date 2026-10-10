@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
+from probpipe import EmpiricalDistribution, NumericArraySpec, OutputSpec, RecordSpec
 from probpipe.diagnostics._datatree_store import (
     _add_group,
     _flatten_datatree,
@@ -15,6 +16,7 @@ from probpipe.diagnostics._datatree_store import (
     to_named_posterior_dataset,
 )
 from probpipe.diagnostics._view_base import NotComputed
+from probpipe.inference._approximate_distribution import make_posterior
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -186,23 +188,10 @@ class TestToNamedPosteriorDataset:
     def _posterior(self, params, n_chains=2, n_draws=100, shapes=None):
         rng = np.random.default_rng(42)
         shapes = shapes or {}
-
-        class _FakeRecord(dict):
-            @property
-            def fields(self):
-                return list(self.keys())
-
-        class _Post:
-            def __init__(self):
-                self.fields = params
-                self.num_chains = n_chains
-
-            def draws(self, *, chain):
-                return _FakeRecord(
-                    {p: rng.standard_normal((n_draws, *tuple(shapes.get(p, ())))) for p in params}
-                )
-
-        return _Post()
+        specs = {p: NumericArraySpec(tuple(shapes.get(p, ()))) for p in params}
+        width = sum(int(np.prod(spec.shape)) for spec in specs.values())
+        chains = [rng.standard_normal((n_draws, width)) for _ in range(n_chains)]
+        return make_posterior(chains, (), "test", event_spec=OutputSpec(RecordSpec(**specs)))
 
     def test_output_is_dataset(self):
         post = self._posterior(["mu", "sigma"])
@@ -226,9 +215,10 @@ class TestToNamedPosteriorDataset:
         assert "alpha" in ds.data_vars
         assert ds["alpha"].shape == (2, 50)
 
-    def test_a_posterior_with_no_chains_is_refused(self):
-        with pytest.raises(ValueError, match="no chains"):
-            to_named_posterior_dataset(self._posterior(["mu"], n_chains=0))
+    def test_a_law_without_chains_is_refused(self):
+        law = EmpiricalDistribution(np.array([1.0, 2.0]), component="x")
+        with pytest.raises(ValueError, match="levels"):
+            to_named_posterior_dataset(law)
 
     def test_vector_param_preserves_event_dim(self):
         post = self._posterior(["beta"], n_chains=2, n_draws=50, shapes={"beta": (3,)})

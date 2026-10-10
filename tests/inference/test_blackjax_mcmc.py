@@ -5,17 +5,22 @@ from __future__ import annotations
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
     Normal,
-    ProductDistribution,
-    SimpleModel,
+    NumericArraySpec,
     condition_on,
     mean,
     variance,
+    workflow_run,
 )
+from probpipe.distributions import FactoredDistribution
 from probpipe.inference import inference_method_registry
-from probpipe.modeling._likelihood import Likelihood
+from probpipe.inference._inference_utils import observed_target
+from tests._posterior import arviz_data, flat_draws
+from tests.inference._harness import validate_method
+from tests.inference.canonical import ObservationKernel
 
 # TFP/JAX emit a deprecation warning during random-key construction
 # (``shape requires ndarray or scalar arguments, got <class 'NoneType'>``)
@@ -26,34 +31,43 @@ pytestmark = pytest.mark.filterwarnings(
 )
 
 
-class _IdentityLikelihood(Likelihood):
-    """``log p(y | theta) = 0`` — posterior collapses to the prior."""
+def _identity(prior, n=4):
+    """``n`` observations whose density does not depend on the parameters, times *prior*.
 
-    def log_likelihood(self, params, data) -> float:
-        return jnp.asarray(0.0)
+    The posterior collapses to the prior.
+    """
+    return (
+        ObservationKernel(
+            "y",
+            dict(prior.event_spec.components),
+            NumericArraySpec((n,)),
+            lambda **values: tfd.Independent(tfd.Normal(jnp.zeros(n), 1.0), 1),
+        )
+        * prior
+    )
 
 
-class _GaussianMeanLikelihood(Likelihood):
-    """``log p(y | mu) = sum_i log N(y_i; mu, 1)`` — closed-form posterior.
+def _gaussian_mean(prior, n=3):
+    """``y_i ~ N(mu, 1)`` for ``n`` observations, times *prior* over ``mu``.
 
     Prior ``N(0, 1)`` on ``mu`` paired with ``n`` observations gives
     posterior ``N(n * y_bar / (n + 1), 1 / (n + 1))``.
     """
-
-    def log_likelihood(self, params, data) -> float:
-        mu = params if not hasattr(params, "fields") else params["mu"]
-        y = data
-        # Sum of N(y_i; mu, 1) log-densities, dropping the constant.
-        return -0.5 * jnp.sum((y - mu) ** 2)
+    return (
+        ObservationKernel(
+            "y",
+            dict(prior.event_spec.components),
+            NumericArraySpec((n,)),
+            lambda mu: tfd.Independent(tfd.Normal(jnp.broadcast_to(mu, (n,)), 1.0), 1),
+        )
+        * prior
+    )
 
 
 @pytest.fixture
-def small_model() -> SimpleModel:
-    prior = ProductDistribution(
-        a=Normal(loc=1.0, scale=0.5, name="a"),
-        b=Normal(loc=-2.0, scale=0.7, name="b"),
-    )
-    return SimpleModel(prior, _IdentityLikelihood(), name="m")
+def small_model():
+    prior = Normal("a", loc=1.0, scale=0.5) * Normal("b", loc=-2.0, scale=0.7)
+    return _identity(prior)
 
 
 class TestBlackJAXRegistration:
@@ -78,33 +92,34 @@ class TestBlackJAXNuts:
     """End-to-end smoke + correctness checks for ``blackjax_nuts``."""
 
     def test_runs_end_to_end(self, small_model):
-        posterior = condition_on(
-            small_model,
-            jnp.zeros((4,)),
-            method="blackjax_nuts",
-            num_results=200,
-            num_warmup=200,
-            num_chains=2,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_nuts",
+                method_options={
+                    "num_results": 200,
+                    "num_warmup": 200,
+                    "num_chains": 2,
+                },
+            )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert m["a"].shape == ()
-        assert m["b"].shape == ()
+        assert m["mean(a)"].shape == ()
+        assert m["mean(b)"].shape == ()
 
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
-        posterior = condition_on(
-            small_model,
-            jnp.zeros((4,)),
-            method="blackjax_nuts",
-            num_results=400,
-            num_warmup=400,
-            num_chains=2,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_nuts",
+                method_options={
+                    "num_results": 400,
+                    "num_warmup": 400,
+                    "num_chains": 2,
+                },
+            )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        np.testing.assert_allclose(float(m["a"].squeeze()), 1.0, atol=0.15)
-        np.testing.assert_allclose(float(m["b"].squeeze()), -2.0, atol=0.15)
+        # Observed across four workflow seeds: |mean error| 0.004-0.044.
+        np.testing.assert_allclose(float(jnp.squeeze(m["mean(a)"])), 1.0, atol=0.15)
+        np.testing.assert_allclose(float(jnp.squeeze(m["mean(b)"])), -2.0, atol=0.15)
 
     def test_closed_form_gaussian_target(self):
         """Single-parameter conjugate Gaussian: closed-form posterior recovery.
@@ -114,33 +129,33 @@ class TestBlackJAXNuts:
         prior precision ``1`` + likelihood precision ``n = 3`` ⇒
         posterior precision ``4`` (variance ``0.25``); posterior mean
         is the precision-weighted average ``sum(y) / 4 = 1.5``.
-        Tolerances below check mean to ~3 σ_MC and variance to 10%.
+        Tolerances below check mean to 6 σ_MC and variance to 15%.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
+        model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
-        posterior = condition_on(
-            model,
-            y,
-            method="blackjax_nuts",
-            num_results=2000,
-            num_warmup=1000,
-            num_chains=2,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_nuts",
+                method_options={
+                    "num_results": 2000,
+                    "num_warmup": 1000,
+                    "num_chains": 2,
+                },
+            )(model, {"y": y})
 
-        # Analytic posterior: N(1.5, 0.25). MC std error on the posterior
-        # mean is sqrt(0.25 / 4000) ≈ 0.0079; allow 3 σ_MC.
+        # Analytic posterior: N(1.5, 0.25). The MC std error of the mean of
+        # 4000 independent draws is sqrt(0.25 / 4000) ≈ 0.0079 = σ_MC.
+        # Observed across workflow seeds 0-15 and 3000: |mean error|
+        # 0.002-0.032 (up to 4 σ_MC), variance error 0.2-7.2%.
         analytic_mean = 1.5
         analytic_var = 0.25
         sigma_mc = (analytic_var / (2 * 2000)) ** 0.5
-        post_mean = float(mean(posterior)["mu"].squeeze())
-        post_var = float(variance(posterior)["mu"].squeeze())
-        np.testing.assert_allclose(post_mean, analytic_mean, atol=3 * sigma_mc)
-        # Variance MC SE for 4000 draws of an N(.,.25) is ~0.0056 — allow
-        # ~3 sigma plus a small slack for residual warmup bias.
-        np.testing.assert_allclose(post_var, analytic_var, rtol=0.10)
+        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
+        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
+        np.testing.assert_allclose(post_mean, analytic_mean, atol=6 * sigma_mc)
+        np.testing.assert_allclose(post_var, analytic_var, rtol=0.15)
 
     def test_zero_warmup_uses_user_step_size(self, small_model):
         """Exercises the ``_adapt`` fallback (``num_warmup == 0``).
@@ -152,42 +167,62 @@ class TestBlackJAXNuts:
         propagates verbatim into ``sample_stats`` (no adaptation to
         overwrite it).
         """
-        posterior = condition_on(
-            small_model,
-            jnp.zeros((4,)),
-            method="blackjax_nuts",
-            num_results=50,
-            num_warmup=0,
-            step_size=0.05,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_nuts",
+                method_options={
+                    "num_results": 50,
+                    "num_warmup": 0,
+                    "step_size": 0.05,
+                },
+            )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert jnp.isfinite(m["a"]).all()
-        assert jnp.isfinite(m["b"]).all()
+        assert jnp.isfinite(m["mean(a)"]).all()
+        assert jnp.isfinite(m["mean(b)"]).all()
 
         # With no warmup, the kernel runs at exactly the user step size.
-        step_size = posterior.inference_data["sample_stats"]["step_size"]
+        step_size = arviz_data(posterior)["sample_stats"]["step_size"]
         np.testing.assert_allclose(np.asarray(step_size), 0.05)
+
+
+class TestObservedDataInRawHosts:
+    """Observed data held in a pandas or xarray object condition as their array does."""
+
+    @pytest.mark.parametrize("host", ["pandas", "xarray"])
+    def test_the_draws_match_those_of_the_array(self, host):
+        y = np.array([0.4, 0.9, -0.1], dtype=np.float32)
+        if host == "pandas":
+            hosted = pytest.importorskip("pandas").Series(y, name="y")
+        else:
+            hosted = pytest.importorskip("xarray").DataArray(y, dims="observation")
+        model = _gaussian_mean(Normal("mu", 0.0, 1.0))
+        options = {"num_results": 50, "num_warmup": 50, "num_chains": 1}
+        fit = condition_on.with_options(method="blackjax_nuts", method_options=options)
+        with workflow_run(seed=0):
+            from_host = flat_draws(fit(model, {"y": hosted}))
+        with workflow_run(seed=0):
+            from_array = flat_draws(fit(model, {"y": jnp.asarray(y)}))
+        np.testing.assert_array_equal(from_host, from_array)
 
 
 class TestBlackJAXHmc:
     """End-to-end smoke + correctness checks for ``blackjax_hmc``."""
 
     def test_runs_end_to_end(self, small_model):
-        posterior = condition_on(
-            small_model,
-            jnp.zeros((4,)),
-            method="blackjax_hmc",
-            num_results=200,
-            num_warmup=200,
-            num_chains=1,
-            step_size=0.05,
-            num_integration_steps=10,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_hmc",
+                method_options={
+                    "num_results": 200,
+                    "num_warmup": 200,
+                    "num_chains": 1,
+                    "step_size": 0.05,
+                    "num_integration_steps": 10,
+                },
+            )(small_model, {"y": jnp.zeros((4,))})
         m = mean(posterior)
-        assert m["a"].shape == ()
-        assert m["b"].shape == ()
+        assert m["mean(a)"].shape == ()
+        assert m["mean(b)"].shape == ()
 
     def test_closed_form_gaussian_target(self):
         """HMC analogue of the NUTS closed-form Gaussian recovery.
@@ -198,31 +233,31 @@ class TestBlackJAXHmc:
 
         Pinned to HMC with ``num_integration_steps=5`` — now the *mean*
         trajectory length, since production randomizes the leapfrog count
-        with a Halton sequence around this value. Empirically (8 seeds)
-        the posterior-mean estimate has SD ≈ 0.005 and the variance
-        estimate stays within ~3% of analytic, so the bands below (mean
-        atol ``0.05`` ≈ several MC σ; variance rtol ``0.10``) are
-        conservative MC-noise tolerances — far tighter than the ``O(0.5)``
-        error a mis-specified posterior would produce.
+        with a Halton sequence around this value. Observed across four
+        workflow seeds, the posterior-mean error is 0.005-0.007 and the
+        variance estimate stays within 0.4-3.4% of analytic, so the bands
+        below (mean atol ``0.05`` ≈ several MC σ; variance rtol ``0.10``)
+        are conservative MC-noise tolerances — far tighter than the
+        ``O(0.5)`` error a mis-specified posterior would produce.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
+        model = _gaussian_mean(prior)
         y = jnp.asarray([1.0, 2.0, 3.0])
 
-        posterior = condition_on(
-            model,
-            y,
-            method="blackjax_hmc",
-            num_results=4000,
-            num_warmup=2000,
-            num_chains=2,
-            step_size=0.1,
-            num_integration_steps=5,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_hmc",
+                method_options={
+                    "num_results": 4000,
+                    "num_warmup": 2000,
+                    "num_chains": 2,
+                    "step_size": 0.1,
+                    "num_integration_steps": 5,
+                },
+            )(model, {"y": y})
 
-        post_mean = float(mean(posterior)["mu"].squeeze())
-        post_var = float(variance(posterior)["mu"].squeeze())
+        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
+        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.10)
 
@@ -235,20 +270,20 @@ class TestBlackJAXHmc:
         deterministic check that the Halton trajectory-length jitter is
         active.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
-        posterior = condition_on(
-            model,
-            jnp.asarray([1.0, 2.0, 3.0]),
-            method="blackjax_hmc",
-            num_results=1000,
-            num_warmup=500,
-            num_chains=2,
-            step_size=0.1,
-            num_integration_steps=10,
-            random_seed=0,
-        )
-        steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
+        model = _gaussian_mean(prior)
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_hmc",
+                method_options={
+                    "num_results": 1000,
+                    "num_warmup": 500,
+                    "num_chains": 2,
+                    "step_size": 0.1,
+                    "num_integration_steps": 10,
+                },
+            )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
+        steps = np.asarray(arviz_data(posterior)["sample_stats"]["num_integration_steps"])
         # Randomized, not a single fixed L.
         assert np.unique(steps).size >= 5
         # Mean trajectory length tracks the configured value.
@@ -266,21 +301,23 @@ class TestBlackJAXHmc:
         here at the default ``num_integration_steps`` rather than the
         hand-dodged value used above.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
-        posterior = condition_on(
-            model,
-            jnp.asarray([1.0, 2.0, 3.0]),
-            method="blackjax_hmc",
-            num_results=4000,
-            num_warmup=2000,
-            num_chains=2,
-            step_size=0.1,
-            num_integration_steps=10,
-            random_seed=0,
-        )
-        post_mean = float(mean(posterior)["mu"].squeeze())
-        post_var = float(variance(posterior)["mu"].squeeze())
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
+        model = _gaussian_mean(prior)
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_hmc",
+                method_options={
+                    "num_results": 4000,
+                    "num_warmup": 2000,
+                    "num_chains": 2,
+                    "step_size": 0.1,
+                    "num_integration_steps": 10,
+                },
+            )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
+        post_mean = float(jnp.squeeze(mean(posterior)["mean(mu)"]))
+        post_var = float(jnp.squeeze(variance(posterior)["variance(mu)"]))
+        # Observed across four workflow seeds: |mean error| 0.001-0.004,
+        # variance error 0.8-4.8%.
         np.testing.assert_allclose(post_mean, 1.5, atol=0.05)
         np.testing.assert_allclose(post_var, 0.25, rtol=0.12)
 
@@ -310,25 +347,25 @@ class TestBlackJAXHmc:
         the user-supplied ``step_size`` is used directly) against the
         randomized-``L`` production kernel.
         """
-        prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
-        model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
-        posterior = condition_on(
-            model,
-            jnp.asarray([1.0, 2.0, 3.0]),
-            method="blackjax_hmc",
-            num_results=100,
-            num_warmup=0,
-            num_chains=1,
-            step_size=0.1,
-            num_integration_steps=10,
-            random_seed=0,
-        )
-        draws = np.asarray(posterior.draws()["mu"]).reshape(-1)
+        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
+        model = _gaussian_mean(prior)
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_hmc",
+                method_options={
+                    "num_results": 100,
+                    "num_warmup": 0,
+                    "num_chains": 1,
+                    "step_size": 0.1,
+                    "num_integration_steps": 10,
+                },
+            )(model, {"y": jnp.asarray([1.0, 2.0, 3.0])})
+        draws = np.asarray(flat_draws(posterior)["mu"]).reshape(-1)
         assert draws.shape[0] == 100
         assert np.all(np.isfinite(draws))
         # Trajectory length is still randomized (and floored) on the
         # zero-warmup path.
-        steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
+        steps = np.asarray(arviz_data(posterior)["sample_stats"]["num_integration_steps"])
         assert steps.min() >= 1
         assert np.unique(steps).size >= 5
 
@@ -344,22 +381,22 @@ class TestSampleStats:
 
     def test_sample_stats_keys_shapes_and_ranges(self, small_model):
         num_chains, num_results = 2, 200
-        posterior = condition_on(
-            small_model,
-            jnp.zeros((4,)),
-            method="blackjax_nuts",
-            num_results=num_results,
-            num_warmup=200,
-            num_chains=num_chains,
-            random_seed=0,
-        )
-        ds = posterior.inference_data["sample_stats"]
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_nuts",
+                method_options={
+                    "num_results": num_results,
+                    "num_warmup": 200,
+                    "num_chains": num_chains,
+                },
+            )(small_model, {"y": jnp.zeros((4,))})
+        ds = arviz_data(posterior)["sample_stats"]
 
         # NUTS plumbs these four info fields plus the injected step_size.
         expected = {
             "step_size",
             "acceptance_rate",
-            "is_divergent",
+            "diverging",
             "num_integration_steps",
             "energy",
         }
@@ -375,7 +412,7 @@ class TestSampleStats:
         ar = np.asarray(ds["acceptance_rate"])
         assert np.all(ar >= 0.0) and np.all(ar <= 1.0 + 1e-5)
 
-        div = np.asarray(ds["is_divergent"])
+        div = np.asarray(ds["diverging"])
         assert div.dtype == np.bool_
         # A well-adapted NUTS run on a Gaussian prior should rarely diverge.
         assert div.mean() < 0.05
@@ -389,18 +426,30 @@ class TestSampleStats:
 
     def test_posterior_has_one_chain_dim_per_chain(self, small_model):
         num_chains = 2
-        posterior = condition_on(
-            small_model,
-            jnp.zeros((4,)),
-            method="blackjax_nuts",
-            num_results=100,
-            num_warmup=100,
-            num_chains=num_chains,
-            random_seed=0,
-        )
-        post_grp = posterior.inference_data["posterior"]
+        with workflow_run(seed=0):
+            posterior = condition_on.with_options(
+                method="blackjax_nuts",
+                method_options={
+                    "num_results": 100,
+                    "num_warmup": 100,
+                    "num_chains": num_chains,
+                },
+            )(small_model, {"y": jnp.zeros((4,))})
+        post_grp = arviz_data(posterior)["posterior"]
         assert post_grp.sizes["chain"] == num_chains
-        assert posterior.inference_data["sample_stats"].sizes["chain"] == num_chains
+        assert arviz_data(posterior)["sample_stats"].sizes["chain"] == num_chains
+
+    def test_the_mcmc_diagnostics_count_the_divergences(self, small_model):
+        """``add_mcmc_diagnostics`` records the sum of ``diverging`` over chains and draws."""
+        from probpipe.diagnostics import add_mcmc_diagnostics
+
+        posterior = condition_on.with_options(
+            method="blackjax_nuts",
+            method_options={"num_results": 100, "num_warmup": 100, "num_chains": 2},
+        )(small_model, {"y": jnp.zeros((4,))})
+        add_mcmc_diagnostics(posterior)
+        expected = int(np.asarray(arviz_data(posterior)["sample_stats"]["diverging"]).sum())
+        assert posterior.diagnostics.mcmc.n_divergences == expected
 
 
 class TestCheckFeasibility:
@@ -408,11 +457,19 @@ class TestCheckFeasibility:
 
     def test_check_rejects_non_logprob_target(self):
         method = inference_method_registry.get_method("blackjax_nuts")
-        info = method.check("not a distribution", observed=None)
+        info = method.check("not a distribution")
         assert info.feasible is False
         assert "SupportsUnnormalizedLogProb" in info.description
 
-    def test_check_passes_on_simple_model(self, small_model):
+    def test_check_passes_on_a_joint_at_its_data(self, small_model):
         method = inference_method_registry.get_method("blackjax_nuts")
-        info = method.check(small_model, observed=jnp.zeros((4,)))
+        info = method.check(observed_target(small_model, {"y": jnp.zeros((4,))}))
         assert info.feasible is True
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_nuts_canonical = validate_method("blackjax_nuts")
+test_blackjax_hmc_canonical = validate_method("blackjax_hmc")

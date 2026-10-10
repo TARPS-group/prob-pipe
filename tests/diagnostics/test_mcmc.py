@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import probpipe.diagnostics._mcmc as mcmc
-from probpipe import Record
+from probpipe import NumericArraySpec, RecordSpec
 from probpipe.diagnostics._datatree_store import _mcmc_has_field
 from probpipe.diagnostics._mcmc import (
     _check_arviz,
@@ -23,6 +23,7 @@ from probpipe.diagnostics._mcmc import (
 )
 from probpipe.diagnostics._view_base import NotComputed
 from probpipe.diagnostics._views import DiagnosticsView
+from tests._posterior import posterior_of
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -30,52 +31,38 @@ if TYPE_CHECKING:
 # conftest.py provides: posterior, posterior_single_chain, posterior_3params
 
 
-class _VectorPosterior:
-    def __init__(self):
-        self.fields = ["beta"]
-        self.num_chains = 2
-        self.chains = [object(), object()]
-        rng = np.random.default_rng(123)
-        self._data = rng.standard_normal((2, 120, 2))
-        self._annotations = None
-
-    def draws(self, *, chain):
-        return Record("draws", beta=self._data[chain])
+def _scalar_vector_draws() -> dict[str, np.ndarray]:
+    """Draws of a scalar ``alpha`` and a vector ``beta``, each ``(chains, draws, *shape)``."""
+    rng = np.random.default_rng(321)
+    # Single precision, as an inference result stores its draws, so that both sides
+    # of a comparison with ArviZ read the same values.
+    return {
+        "alpha": rng.standard_normal((2, 160)).astype(np.float32),
+        "beta": rng.standard_normal((2, 160, 2)).astype(np.float32),
+    }
 
 
-class _ScalarVectorPosterior:
-    def __init__(self):
-        self.fields = ["alpha", "beta"]
-        self.num_chains = 2
-        self.chains = [object(), object()]
-        rng = np.random.default_rng(321)
-        self._data = {
-            "alpha": rng.standard_normal((2, 160)),
-            "beta": rng.standard_normal((2, 160, 2)),
-        }
-        self._annotations = None
-
-    def draws(self, *, chain):
-        return Record("draws", {name: values[chain] for name, values in self._data.items()})
+def _vector_draws() -> dict[str, np.ndarray]:
+    """Draws of a vector ``beta``, ``(chains, draws, 2)``."""
+    return {"beta": np.random.default_rng(123).standard_normal((2, 120, 2))}
 
 
-class _NonMixingPosterior:
-    def __init__(self):
-        self.fields = ["theta"]
-        self.num_chains = 2
-        self.chains = [object(), object()]
-        rng = np.random.default_rng(456)
-        self._data = np.stack(
-            [
-                rng.normal(loc=-4.0, scale=0.1, size=120),
-                rng.normal(loc=4.0, scale=0.1, size=120),
-            ],
+def _non_mixing_draws() -> dict[str, np.ndarray]:
+    """Two chains of ``theta`` that stay apart, at -4 and at 4."""
+    rng = np.random.default_rng(456)
+    return {
+        "theta": np.stack(
+            [rng.normal(loc=-4.0, scale=0.1, size=120), rng.normal(loc=4.0, scale=0.1, size=120)],
             axis=0,
         )
-        self._annotations = None
+    }
 
-    def draws(self, *, chain):
-        return Record("draws", theta=self._data[chain])
+
+def _posterior_of_draws(draws: dict[str, np.ndarray]) -> Any:
+    """The inference result whose chains hold *draws*, one record field per entry."""
+    flat = np.concatenate([np.reshape(v, (*v.shape[:2], -1)) for v in draws.values()], axis=-1)
+    event = RecordSpec(**{name: NumericArraySpec(v.shape[2:]) for name, v in draws.items()})
+    return posterior_of(list(flat), event_spec=event)
 
 
 def _arviz_stats_module():
@@ -86,22 +73,10 @@ def _arviz_stats_module():
     return azs
 
 
-def _independent_arviz_posterior(posterior: Any) -> xr.Dataset:
+def _independent_arviz_posterior(draws: dict[str, np.ndarray]) -> xr.Dataset:
     import arviz as az
 
-    return az.from_dict(
-        {
-            "posterior": {
-                field: np.stack(
-                    [
-                        np.asarray(posterior.draws(chain=i)[field])
-                        for i in range(posterior.num_chains)
-                    ]
-                )
-                for field in posterior.fields
-            }
-        }
-    ).posterior
+    return az.from_dict({"posterior": dict(draws)}).posterior
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +114,20 @@ class TestAddRhat:
         from probpipe.diagnostics._views import DiagnosticsView
 
         view = DiagnosticsView(posterior_single_chain._annotations["diagnostics"])
+        assert set(view.rhat) == {"alpha", "beta"}
         for v in view.rhat.values():
-            assert isinstance(v, NotComputed)
+            assert v == NotComputed("R-hat requires at least 2 chains")
+
+    def test_a_single_chain_posterior_reports_each_component(self):
+        import jax.numpy as jnp
+
+        from probpipe import NumericArraySpec, RecordSpec
+
+        draws = jnp.asarray(np.random.default_rng(0).normal(size=(50, 3)), jnp.float32)
+        event = RecordSpec(mu=NumericArraySpec((2,), jnp.float32), sigma=NumericArraySpec(()))
+        payload = mcmc._compute_rhat_op(posterior_of([draws], event_spec=event))
+        not_computed = NotComputed("R-hat requires at least 2 chains")
+        assert payload["values"] == {"mu": not_computed, "sigma": not_computed}
 
     def test_idempotent(self, posterior):
         """Calling add_rhat twice should not raise and last write wins."""
@@ -152,8 +139,9 @@ class TestAddRhat:
         assert add_rhat(posterior) is None
 
     def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
-        posterior = _ScalarVectorPosterior()
-        ds = _independent_arviz_posterior(posterior)
+        draws = _scalar_vector_draws()
+        posterior = _posterior_of_draws(draws)
+        ds = _independent_arviz_posterior(draws)
         expected = _arviz_stats_module().rhat(ds, method="rank")
 
         add_rhat(posterior)
@@ -164,7 +152,7 @@ class TestAddRhat:
         assert view.rhat["beta[1]"] == pytest.approx(float(expected["beta"][1]))
 
     def test_non_mixing_chains_have_large_rhat(self):
-        posterior = _NonMixingPosterior()
+        posterior = _posterior_of_draws(_non_mixing_draws())
 
         add_rhat(posterior, threshold=999.0)
 
@@ -227,7 +215,7 @@ class TestMcmcHelpers:
 
         assert _mcmc_has_field(posterior, "rhat")
 
-        with pytest.raises(ValueError, match="Unknown MCMC"):
+        with pytest.raises(ValueError, match="unknown MCMC diagnostic payload kind"):
             _write_mcmc_payload(posterior, {"kind": "bogus"})
 
         class _MissingKind:
@@ -261,6 +249,15 @@ class TestAddEss:
             if isinstance(v, float):
                 assert v > 0
 
+    def test_a_posterior_without_chains_raises_naming_its_levels(self):
+        from probpipe import EmpiricalDistribution
+
+        law = EmpiricalDistribution(
+            np.random.default_rng(0).standard_normal((50, 2)), component="theta"
+        )
+        with pytest.raises(ValueError, match=r"'p' has no chains: .* \['theta'\]"):
+            add_ess(law)
+
     def test_ess_covers_all_params(self, posterior_3params):
         add_ess(posterior_3params)
         from probpipe.diagnostics._views import DiagnosticsView
@@ -292,8 +289,9 @@ class TestAddEss:
         assert calls
 
     def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
-        posterior = _ScalarVectorPosterior()
-        ds = _independent_arviz_posterior(posterior)
+        draws = _scalar_vector_draws()
+        posterior = _posterior_of_draws(draws)
+        ds = _independent_arviz_posterior(draws)
         azs = _arviz_stats_module()
         expected_bulk = azs.ess(ds, method="bulk")
         expected_tail = azs.ess(ds, method="tail")
@@ -340,8 +338,9 @@ class TestAddMcse:
         add_mcse(posterior)
 
     def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
-        posterior = _ScalarVectorPosterior()
-        ds = _independent_arviz_posterior(posterior)
+        draws = _scalar_vector_draws()
+        posterior = _posterior_of_draws(draws)
+        ds = _independent_arviz_posterior(draws)
         azs = _arviz_stats_module()
         expected_mean = azs.mcse(ds, method="mean")
         expected_sd = azs.mcse(ds, method="sd")
@@ -400,8 +399,68 @@ class TestAddMcmcDiagnostics:
     def test_does_not_return_value(self, posterior):
         assert add_mcmc_diagnostics(posterior) is None
 
+    def test_a_single_metric_name_is_one_metric(self, posterior):
+        add_mcmc_diagnostics(posterior, metrics="rhat")
+        assert _mcmc_has_field(posterior, "rhat")
+        assert not _mcmc_has_field(posterior, "ess_bulk")
+        assert not _mcmc_has_field(posterior, "mcse_mean")
+
+    def test_computes_only_the_named_metrics(self, posterior):
+        add_mcmc_diagnostics(posterior, metrics=["ess", "mcse"])
+        assert not _mcmc_has_field(posterior, "rhat")
+        assert _mcmc_has_field(posterior, "ess_bulk")
+        assert _mcmc_has_field(posterior, "mcse_mean")
+
+    def test_refuses_an_unknown_metric(self, posterior):
+        with pytest.raises(
+            ValueError,
+            match=r"unknown metric 'esss'; available metrics: \['rhat', 'ess', 'mcse', 'divergences'\]",
+        ):
+            add_mcmc_diagnostics(posterior, metrics=["rhat", "esss"])
+        assert not _mcmc_has_field(posterior, "rhat")
+
+    @pytest.mark.parametrize(
+        ("metrics", "match"),
+        [
+            (3, "add_mcmc_diagnostics metrics must be a str or a sequence of str, got int 3"),
+            (b"rhat", "got bytes"),
+            ({"rhat": 1}, "got dict"),
+            ({"rhat", "ess"}, "got set"),
+            (("rhat", 3), "add_mcmc_diagnostics metrics entry must be a str, got int 3"),
+        ],
+    )
+    def test_refuses_metrics_that_are_not_names(self, posterior, metrics, match):
+        with pytest.raises(TypeError, match=match):
+            add_mcmc_diagnostics(posterior, metrics=metrics)
+
+    def test_a_run_without_divergence_statistics_records_no_count(self, posterior):
+        add_mcmc_diagnostics(posterior)
+        assert isinstance(posterior.diagnostics.mcmc.n_divergences, NotComputed)
+
+    def test_the_divergences_are_the_sum_of_diverging(self):
+        import jax.numpy as jnp
+
+        from probpipe import MultivariateNormal
+        from probpipe.inference._approximate_distribution import make_posterior
+        from probpipe.inference._inference_utils import build_mcmc_datatree
+
+        rng = np.random.default_rng(0)
+        chains = [jnp.asarray(rng.normal(size=(50, 2))) for _ in range(2)]
+        diverging = np.zeros((2, 50), dtype=bool)
+        diverging[0, [3, 7]] = True
+        diverging[1, 11] = True
+        prior = MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
+        posterior = make_posterior(
+            chains,
+            parents=(prior,),
+            method="test",
+            annotations=build_mcmc_datatree(chains, {"diverging": diverging}),
+        )
+        add_mcmc_diagnostics(posterior)
+        assert posterior.diagnostics.mcmc.n_divergences == 3
+
     def test_vector_parameter_diagnostics_are_written_by_component(self):
-        posterior = _VectorPosterior()
+        posterior = _posterior_of_draws(_vector_draws())
 
         add_mcmc_diagnostics(posterior)
 

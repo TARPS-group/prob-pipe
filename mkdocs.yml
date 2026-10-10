@@ -60,6 +60,9 @@ markdown_extensions:
   - admonition
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -77,44 +80,32 @@ extra_javascript:
 
 nav:
   - Home: index.md
+  - Get started:
+    - Installation: get_started/installation.md
+    - Quickstart: get_started/quickstart.ipynb
   - Tutorials:
-    - Getting Started: tutorials/getting_started.ipynb
-    - Flexible Inference with condition_on: tutorials/flexible_inference.ipynb
-  - Orchestration:
-    - Ray via Prefect: orchestration/ray.md
-  - User Guide:
-    - Overview: user_guide.md
-    - Distribution basics: user_guide/01_distributions.ipynb
-    - Records and Record Distributions: user_guide/02_records.ipynb
-    - Broadcasting and Functions: user_guide/03_broadcasting.ipynb
-    - Joint distributions: user_guide/04_joint_distributions.ipynb
-    - External backends: user_guide/05_external_backends.ipynb
-    - Converting between representations: user_guide/06_converting_representations.ipynb
-    - Sequential updating: user_guide/07_sequential_updating.ipynb
-    - JAX interop (gradients, jit, vmap): user_guide/08_jax_interop.ipynb
-    - Bagged posteriors: user_guide/09_bagged_posteriors.ipynb
-    - Random functions and Gaussian emulators: user_guide/10_random_functions_and_emulators.ipynb
-    - Scalability with Prefect: user_guide/11_prefect_scalability.ipynb
-  - API Reference:
-    - Overview: api/index.md
+    - "1. A model of the moose counts": tutorials/01_first_analysis.ipynb
+    - "2. Fitting and checking the model": tutorials/02_fitting.ipynb
+    - "3. Revising and cross-checking the model": tutorials/03_revising.ipynb
+    - "4. Forecasting with uncertainty": tutorials/04_forecasting.ipynb
+    - "5. Updating forecasts as counts arrive": tutorials/05_updating.ipynb
+    - "6. Fitting a model that can only be simulated": tutorials/06_simulating.ipynb
+  - User guide:
+    - Ray via Prefect: user_guide/ray.md
+  - API reference:
+    - api/index.md
+    - Values and records: api/values.md
+    - Declarations: api/declarations.md
+    - Distributions and families: api/distributions.md
+    - Random functions: api/random_functions.md
+    - Functions: api/functions.md
     - Operations: api/operations.md
-    - Distributions:
-      - api/distributions/index.md
-      - Continuous: api/distributions/continuous.md
-      - Discrete: api/distributions/discrete.md
-      - Multivariate: api/distributions/multivariate.md
-      - Composite and joint: api/distributions/composite.md
-      - Empirical and bootstrap: api/distributions/empirical.md
-      - Random functions: api/distributions/random_functions.md
-    - Records and data: api/records.md
-    - Modeling and inference: api/inference.md
+    - Inference methods: api/inference.md
+    - Conversion: api/conversion.md
+    - Workflows and reproducibility: api/workflows.md
+    - Labels and provenance: api/provenance.md
     - Diagnostics: api/diagnostics.md
     - Validation: api/validation.md
-    - Workflows and orchestration: api/workflows.md
-    - Constraints and bijectors: api/constraints.md
-    - Conversion and interop: api/converters.md
-    - Identity & provenance: api/provenance.md
-    - Extending ProbPipe: api/extending.md
-    - Internals: api/internals.md
+    - Registries for extensions: api/extending.md
   - Cite: cite.md
   - Help: help.md

@@ -39,7 +39,10 @@ docs = [
 stan = ["bridgestan>=2.7", "cmdstanpy>=1.2"]
 # pymc 6 is the first release compatible with arviz 1.x (pymc 5.x caps
 # arviz<1.0); matplotlib is required by the pymc 6 sampler progress bar.
-pymc = ["pymc>=6", "matplotlib"]
+# pytensor before 3.2.4 draws Cauchy and half-Cauchy variables with the wrong
+# location and scale (pymc-devs/pytensor#2308), and pymc 6.2 is the first
+# release that admits pytensor 3.2.
+pymc = ["pymc>=6.2", "pytensor>=3.2.4", "matplotlib"]
 nutpie = ["nutpie>=0.12"]
 # Amortized neural SBI (NPE/FMPE/CMPE), jax-native via keras (KERAS_BACKEND=jax).
 # BayesFlow 2.x requires Python <3.14 and numpy>=2.2.6, so this extra is
@@ -52,6 +55,7 @@ dev = [
   "probpipe-core[prefect,viz,docs]",
   "pytest>=8.4",
   "pytest-cov",
+  "pytest-split",
   "pytest-xdist",
   "ruff",
   "ipykernel",
@@ -77,6 +81,8 @@ testpaths = ["tests"]
 addopts = "-n auto --dist worksteal -v --cov=probpipe --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "prefect: marks tests requiring prefect (deselect with '-m \"not prefect\"')",
+    "bayesflow: marks tests requiring the bayesflow extra (select with '-m bayesflow')",
+    "stan: marks tests requiring BridgeStan (select with '-m stan')",
 ]
 
 [tool.ruff]
@@ -126,12 +132,14 @@ exclude = ["*.ipynb"]
 [tool.ruff.lint.per-file-ignores]
 # Re-export facades: unused-import (F401) is the point, and __init__ modules
 # set up warnings or registration before importing, so module imports aren't
-# all at the top (E402).
-"__init__.py" = ["F401", "E402"]
+# all at the top (E402). The future import of STYLE_GUIDE.md §4.1 is required
+# of the other modules of probpipe/ only (I002).
+"__init__.py" = ["F401", "E402", "I002"]
+"!probpipe/**" = ["I002"]
 # Demo scripts and tests legitimately import after setup (sys.path / env) or a
 # pytest.importorskip(...) guard, so E402 there is expected.
-"example_scripts/*" = ["E402"]
 "tests/**" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["probpipe"]
+required-imports = ["from __future__ import annotations"]

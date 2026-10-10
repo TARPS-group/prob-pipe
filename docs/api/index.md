@@ -1,51 +1,23 @@
-# API Reference
+> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.
 
-A task-to-section map for the public API. Use the search box (top right)
-for known-name lookups.
+# API reference
 
-## What are you trying to do?
+The API reference documents each public name of ProbPipe on one page, grouped by what a user looks the name up for.
+A name whose heading is a bare name, such as `Normal`, imports from `probpipe`.
+A name whose heading is a dotted path, such as `probpipe.families.GaussianProcess`, imports from the module that path names.
 
-| Goal | Look here |
+| Page | What it documents |
 |---|---|
-| Sample, evaluate density, compute moments, condition | [Operations](operations.md) |
-| Use a built-in distribution family | [Distributions](distributions/index.md) |
-| Compose, transform, or stack distributions | [Distributions → Composite and joint](distributions/composite.md) |
-| Work with empirical samples or bootstrap replicates | [Distributions → Empirical and bootstrap](distributions/empirical.md) |
-| Hold structured, immutable data | [Records and data](records.md) |
-| Define a probabilistic model | [Modeling and inference → Models](inference.md#models) |
-| Run inference (MCMC, VI, SBI) | [Modeling and inference → Inference methods](inference.md#inference-methods) |
-| Check a posterior with predictive simulations | [Modeling and inference → Predictive checks](inference.md#predictive-checks) |
-| Scale to Prefect / Ray / Dask | [Workflows and orchestration](workflows.md) |
-| Constrain parameters / move to unconstrained space | [Constraints and bijectors](constraints.md) |
-| Interop with TFP, scipy, xarray, or pandas | [Conversion and interop](converters.md) |
-| Inspect provenance of computed quantities | [Identity & provenance](provenance.md) |
-| Write a new distribution, inference method, or converter | [Extending ProbPipe](extending.md) |
-
-## Pages
-
-- **[Operations](operations.md)** — `sample`, `log_prob`, `prob`,
-  `unnormalized_log_prob`, `unnormalized_prob`, `random_log_prob`,
-  `random_unnormalized_log_prob`, `mean`, `variance`, `cov`,
-  `expectation`, `condition_on`, `from_distribution`.
-- **[Distributions](distributions/index.md)** — continuous, discrete,
-  multivariate, composite and joint, empirical and bootstrap, random
-  functions.
-- **[Records and data](records.md)** — `Record`, `NumericRecord`, the
-  `RecordBatch` family, `Weights`, parameter-sweep `Design`s, and the
-  array-backend registry.
-- **[Modeling and inference](inference.md)** — model and likelihood
-  classes, the inference-method registry and built-ins, iterative
-  transformations, predictive checks.
-- **[Workflows and orchestration](workflows.md)** — `Function`,
-  `Module`, the workflow decorators, and Prefect-orchestration
-  configuration.
-- **[Constraints and bijectors](constraints.md)** — `Constraint`
-  singletons and factories, the `bijector_for` map for reparameterization.
-- **[Conversion and interop](converters.md)** — `converter_registry`,
-  `Converter`, the conversion-info dataclasses.
-- **[Identity & provenance](provenance.md)** — `TrackedTerm`, `Annotated`, `Provenance`, `provenance_ancestors`,
-  `provenance_dag`.
-- **[Extending ProbPipe](extending.md)** — base classes, protocols, and
-  extension contracts.
-- **[Internals](internals.md)** — implementation details that may move
-  between releases.
+| [Values and records](values.md) | The value kinds, such as records and numeric arrays, their batches, and the linear operators. |
+| [Declarations](declarations.md) | The term specs, the input and output declarations, and the constraints of a numeric value. |
+| [Distributions and families](distributions.md) | The distribution classes, their capabilities, and the families ProbPipe ships. |
+| [Random functions](random_functions.md) | The distributions over functions and over distributions. |
+| [Functions](functions.md) | `Function` and its decorator, the capabilities a function claims, and the errors of a call. |
+| [Operations](operations.md) | The operations, such as `sample`, `mean`, and `condition_on`, and the errors of their resolution. |
+| [Inference methods](inference.md) | The inference methods, the functions of amortized and sequential inference, and the inference-method registry. |
+| [Conversion](conversion.md) | The `convert` operation and the converter registry. |
+| [Workflows and reproducibility](workflows.md) | Workflow scopes and replay, the orchestration settings, and the default sample count. |
+| [Labels and provenance](provenance.md) | The identity of a tracked term, its provenance record, and the provenance settings. |
+| [Diagnostics](diagnostics.md) | The MCMC, predictive, and leave-one-out diagnostics, and the views that read them. |
+| [Validation](validation.md) | Predictive checks, scores against a reference posterior, and calibration. |
+| [Registries for extensions](extending.md) | The dispatch registries and the base classes that an extension implements and registers. |

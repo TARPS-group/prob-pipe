@@ -10,9 +10,10 @@ from typing import cast
 
 import numpy as np
 
+from ..values._function_base import Function, FunctionSpec
 from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
-from ._specs import FunctionSpec
+from ._shapes import AxisCountsLike, NamesLike
 from .provenance import Provenance
 
 __all__ = ["FunctionBatch"]
@@ -23,23 +24,24 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     Parameters
     ----------
-    name : str
-        The batch's name. Required, as it is for every batch: a batch is a value a
-        caller holds, and a name derived from its class says nothing about what it
+    label : str
+        The batch's label. Required, as it is for every batch: a batch is a value a
+        caller holds, and a label derived from its class says nothing about what it
         holds.
     elements : numpy.ndarray or iterable of callable
         The callables, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first.
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
-        specifies a callable and neither of its templates.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+        specifies a callable and neither of its input/output declarations.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -56,6 +58,13 @@ class FunctionBatch(_ObjectBatch[Callable]):
         the elements are stored in, or gives a count that is not one per level; or
         if it is omitted and the number of level names does not match the number
         of axes.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -64,17 +73,21 @@ class FunctionBatch(_ObjectBatch[Callable]):
     function, and a ``Function`` are all admitted, the wrapper being one such
     element and not the required type.
 
-    This batch **stores** its elements, so ``batch[i]`` is the callable that was
-    put in — the same object, under its own name and lineage, not a copy renamed
-    to its position. A sub-batch is a view and takes a derived name as any view
-    does.
+    This batch **stores** its elements, and ``batch[i]`` is a view of the
+    stored callable: a :class:`~probpipe.Function` wrapping it under the label
+    derived from the position and the batch's declarations, or, for a stored
+    ``Function``, a copy under the derived label that shares its callable. Its
+    provenance records the batch and the stored term. A callable whose
+    signature cannot be inspected, as for some builtins, has no ``Function``
+    view and raises ``ValueError`` when indexed. A sub-batch is a view and
+    takes a derived label as any view does.
 
     Examples
     --------
     >>> batch = FunctionBatch("f", [lambda x: x, lambda x: 2 * x], "variant")
     >>> batch.batch_shape
     (2,)
-    >>> batch[1](3)
+    >>> batch[1].apply(3)
     6
     """
 
@@ -84,13 +97,13 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         elements: np.ndarray | Iterable[Callable],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
         element_spec: FunctionSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:
@@ -101,7 +114,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
                 f"got {type(element_spec).__name__}"
             )
         super().__init__(
-            name,
+            label,
             elements,
             level_names,
             element_spec=element_spec,
@@ -113,6 +126,30 @@ class FunctionBatch(_ObjectBatch[Callable]):
     def element_spec(self) -> FunctionSpec:
         """The :class:`FunctionSpec` every element satisfies — a view on ``spec``."""
         return cast(FunctionSpec, self._spec.element_spec)
+
+    def _wrap_element(self, value: Callable, label: str) -> Function:
+        """The callable *value* as a ``Function`` labeled *label* under the batch's declarations.
+
+        Parameters
+        ----------
+        value : callable
+            The object stored at the element's position.
+        label : str
+            The label of the element view, derived from its position.
+
+        Returns
+        -------
+        Function
+            A new ``Function``, which the caller gives the view's provenance.
+
+        Raises
+        ------
+        ValueError
+            If the callable's signature cannot be inspected, or does not match the
+            declared input slots.
+        """
+        spec = self.element_spec
+        return Function(label, value, input_spec=spec.input_spec, output_spec=spec.output_spec)
 
 
 register_kind(FunctionSpec, batch_class=FunctionBatch)

@@ -10,14 +10,6 @@ being one (``C2 – Functional interface over immutable objects``);
 :class:`~probpipe.core._specs.RecordSpec` mixes it in directly, being
 immutable without being a term.
 
-One layer is exempt for now:
-:class:`~probpipe.Distribution` permits assignment and
-deletion, since the documented way to build an emulator is to subclass a random
-function and train it in place, and fitting has no contract yet that returns a
-new term instead. Deleting **both** of its overrides — ``__setattr__`` and
-``__delattr__`` — turns the guard on for the layer; dropping one leaves half an
-exemption, which is how it was first written.
-
 A constructor still has to write, so construction runs inside
 :func:`constructing`, a per-instance window in which assignment is allowed.
 ``TrackedTerm``'s metaclass opens it around every construction; code that
@@ -31,6 +23,8 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, ClassVar
+
+import numpy as np
 
 __all__ = ["Immutable", "constructing", "declared_state_names", "transient_memo"]
 
@@ -259,12 +253,18 @@ class Immutable:
         container. ``copy.copy`` passes the original's own attribute values as
         the state, so restoring such a store verbatim would leave both objects
         writing to one container.
+
+        Every other attribute has each NumPy array in it marked read-only, as
+        construction marks the arrays a term stores, because ``copy.deepcopy``
+        restores writable copies of them.
         """
         instance_dict, slots = state if isinstance(state, tuple) else (state, None)
         decoupled = declared_state_names(type(self), "_decoupled_state")
         for attribute, value in ((instance_dict or {}) | (slots or {})).items():
             if attribute in decoupled and value is not None:
                 value = decoupled_container(value)
+            else:
+                _mark_read_only(value)
             object.__setattr__(self, attribute, value)
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -285,3 +285,16 @@ class Immutable:
         made again.
         """
         return (object.__new__, (type(self),), self.__getstate__())
+
+
+def _mark_read_only(value: Any) -> None:
+    """Mark each NumPy array in *value* read-only, looking inside dicts, lists, and tuples."""
+    if isinstance(value, np.ndarray):
+        if value.flags.writeable:
+            value.flags.writeable = False
+    elif isinstance(value, dict):
+        for item in value.values():
+            _mark_read_only(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _mark_read_only(item)

@@ -11,11 +11,11 @@ from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec
 from probpipe.core.provenance import Provenance
 
 
-def _batch(values=None, level_names="draw", name="draws", **kwargs) -> NumericArrayBatch:
+def _batch(values=None, level_names="draw", label="draws", **kwargs) -> NumericArrayBatch:
     if values is None:
         values = jnp.arange(12.0).reshape(4, 3)
     kwargs.setdefault("element_spec", NumericArraySpec(shape=(3,), dtype=jnp.float32))
-    return NumericArrayBatch(name, values, level_names, **kwargs)
+    return NumericArrayBatch(label, values, level_names, **kwargs)
 
 
 class TestNumericArrayHoldsOneValue:
@@ -39,7 +39,7 @@ class TestNumericArrayHoldsOneValue:
         assert value.spec == NumericArraySpec(shape=(3,), dtype=jnp.float32)
 
     def test_a_supplied_spec_is_checked(self):
-        with pytest.raises(ValueError, match="does not satisfy its declaration"):
+        with pytest.raises(ValueError, match="does not match spec NumericArraySpec"):
             NumericArray(
                 "v",
                 jnp.arange(3.0),
@@ -47,7 +47,7 @@ class TestNumericArrayHoldsOneValue:
             )
 
     def test_a_value_that_is_not_an_array_is_refused(self):
-        with pytest.raises(TypeError, match="holds one numeric array"):
+        with pytest.raises(TypeError, match="value must be a numeric array or scalar"):
             NumericArray(
                 "v",
                 object(),
@@ -65,7 +65,7 @@ class TestNumericArrayHoldsOneValue:
 class TestNumericArrayStoresNativeForm:
     """Construction validates without converting, as `NumericRecord` does.
 
-    A lazy or disk-backed value is not materialised merely to be named, and a
+    A lazy or disk-backed value is not materialised merely to be labeled, and a
     container's own metadata is not discarded.
     """
 
@@ -221,7 +221,7 @@ class TestNumericArrayStoresNativeForm:
         assert value.spec.dtype == jnp.float64
 
     def test_a_non_numeric_value_is_refused(self):
-        with pytest.raises(TypeError, match="is not a numeric leaf"):
+        with pytest.raises(TypeError, match="value must be a numeric array or scalar"):
             NumericArray(
                 "v",
                 "not numeric",
@@ -229,25 +229,25 @@ class TestNumericArrayStoresNativeForm:
 
 
 class TestNumericArrayCarriesIdentity:
-    def test_a_name_is_kept(self):
+    def test_a_label_is_kept(self):
         value = NumericArray(
             "draw",
             jnp.arange(3.0),
         )
 
-        assert value.name == "draw"
+        assert value.label == "draw"
 
-    def test_a_name_is_required(self):
-        """A value carries no fields to describe it, so the name is what says
-        which one it is; a class-name default would name every array alike."""
-        with pytest.raises(TypeError, match="name"):
+    def test_a_label_is_required(self):
+        """A value carries no fields to describe it, so the label is what says
+        which one it is; a class-name default would label every array alike."""
+        with pytest.raises(TypeError, match="label"):
             NumericArray()
 
-    def test_a_derived_name_is_kept(self):
+    def test_a_derived_label_is_kept(self):
         """Set by an operation that derives one, as the output boundary does."""
         value = NumericArray("outer", jnp.arange(3.0))
 
-        assert value.name == "outer"
+        assert value.label == "outer"
 
     def test_provenance_is_write_once(self):
         value = NumericArray(
@@ -292,68 +292,96 @@ class TestNumericArrayComputesAsAnArray:
     """The full array surface, because with no fields `arr + 1` has one meaning."""
 
     @pytest.mark.parametrize(
-        "compute",
+        ("compute", "label"),
         [
-            lambda v: v + 1,
-            lambda v: 1 + v,
-            lambda v: v * v,
-            lambda v: v - 1.0,
-            lambda v: 2.0 / (v + 1),
-            lambda v: -v,
-            lambda v: abs(v),
-            lambda v: v**2,
+            (lambda v: v + 1, "v + 1"),
+            (lambda v: 1 + v, "1 + v"),
+            (lambda v: v * v, "v * v"),
+            (lambda v: v - 1.0, "v - 1.0"),
+            (lambda v: 2.0 / (v + 1), "2.0 / (v + 1)"),
+            (lambda v: -v, "-v"),
+            (lambda v: abs(v), "abs(v)"),
+            (lambda v: v**2, "v ** 2"),
         ],
     )
-    def test_arithmetic_yields_a_bare_array(self, compute):
-        """Identity is attached by operations; arithmetic is not one."""
-        result = compute(
-            NumericArray(
-                "v",
-                jnp.arange(3.0),
-            )
+    def test_arithmetic_returns_a_term_labeled_in_evaluation_order(self, compute, label):
+        """III.1: arithmetic returns a tracked term under an evaluation-order label."""
+        result = compute(NumericArray("v", jnp.arange(3.0)))
+
+        assert isinstance(result, NumericArray)
+        assert result.label == label
+        assert isinstance(result.raw(), jax.Array)
+
+    @pytest.mark.parametrize(
+        ("compute", "label"),
+        [
+            (lambda v, w: v + w, "v + [other value]"),
+            (lambda v, w: -w, "-[other value]"),
+            (lambda v, w: 2 * (v + w), "2 * (v + [other value])"),
+            (lambda v, w: (2 * v) + 1, "(2 * v) + 1"),
+            (lambda v, w: (-v) ** 2, "(-v) ** 2"),
+            (lambda v, w: abs(w) + 1, "abs(other value) + 1"),
+        ],
+    )
+    def test_each_operand_reads_as_one_unit_in_the_label(self, compute, label):
+        """An expression operand is parenthesized, and a user's label with a space is bracketed."""
+        v = NumericArray("v", jnp.arange(3.0))
+        w = NumericArray("other value", jnp.ones(3))
+
+        assert compute(v, w).label == label
+
+    def test_an_element_of_a_batch_labeled_by_an_expression_groups_it(self):
+        batch = NumericArrayBatch("model | y", jnp.zeros(3), "dataset")
+        assert batch[0].label == "(model | y)[dataset=0]"
+
+    def test_an_element_label_is_one_unit_already(self):
+        """The space of a two-level element's label sits inside its brackets."""
+        batch = NumericArrayBatch(
+            "posterior",
+            jnp.zeros((2, 3)),
+            ("chain", "draw"),
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(1, 1),
         )
 
-        assert not isinstance(result, NumericArray)
-        assert isinstance(result, jax.Array)
+        assert (batch.at_levels(chain=0, draw=1) + 1).label == "posterior[chain=0, draw=1] + 1"
 
-    def test_arithmetic_returns_the_stored_types_own_result(self):
+    def test_a_result_records_the_operator_and_its_tracked_operands(self):
+        left, right = NumericArray("a", jnp.arange(3.0)), NumericArray("b", jnp.ones(3))
+
+        result = left * right + 1
+
+        assert result.provenance.operation == "__add__"
+        (product,) = result.provenance.parents
+        assert product.label == "a * b"
+        np.testing.assert_array_equal(np.asarray(result), np.arange(3.0) + 1)
+
+    def test_a_result_declares_what_its_operands_declare(self):
+        """The shape always, and the dtype when every tracked operand declares one."""
+        inferred = NumericArray("v", jnp.arange(3.0))
+        open_dtype = NumericArray("w", jnp.arange(3.0), spec=NumericArraySpec((3,)))
+
+        assert (inferred + 1).spec == NumericArraySpec((3,), dtype=jnp.float32)
+        assert (inferred + open_dtype).spec == NumericArraySpec((3,))
+
+    def test_arithmetic_keeps_the_stored_types_own_result(self):
         """The operators forward to the value, so numpy stays numpy."""
-        result = (
-            NumericArray(
-                "v",
-                np.arange(3.0),
-            )
-            + 1
-        )
+        result = NumericArray("v", np.arange(3.0)) + 1
 
-        assert isinstance(result, np.ndarray)
-        assert not isinstance(result, jax.Array)
+        assert isinstance(result.raw(), np.ndarray)
+        assert not isinstance(result.raw(), jax.Array)
 
     def test_it_computes_the_same_values_as_the_array_it_holds(self):
         raw = jnp.arange(3.0)
 
         np.testing.assert_array_equal(
-            np.asarray(
-                NumericArray(
-                    "v",
-                    raw,
-                )
-                * 2
-                + 1
-            ),
-            np.asarray(raw * 2 + 1),
+            np.asarray(NumericArray("v", raw) * 2 + 1), np.asarray(raw * 2 + 1)
         )
 
     def test_two_numeric_arrays_combine(self):
-        pair = NumericArray(
-            "v",
-            jnp.arange(3.0),
-        ) + NumericArray(
-            "v",
-            jnp.ones(3),
-        )
+        pair = NumericArray("v", jnp.arange(3.0)) + NumericArray("v", jnp.ones(3))
 
-        assert not isinstance(pair, NumericArray)
+        assert pair.label == "v + v"
         np.testing.assert_array_equal(np.asarray(pair), np.asarray(jnp.arange(1.0, 4.0)))
 
     def test_the_reflected_operators_agree_with_the_forward_ones(self):
@@ -363,32 +391,38 @@ class TestNumericArrayComputesAsAnArray:
         computes one way and refuses the other would be a trap rather than a
         simplification.
         """
-        value = NumericArray(
-            "v",
-            jnp.arange(3.0),
-        )
+        value = NumericArray("v", jnp.arange(3.0))
 
         np.testing.assert_array_equal(np.asarray(1.0 - value), np.asarray(1.0 - jnp.arange(3.0)))
         np.testing.assert_array_equal(np.asarray(2.0 * value), np.asarray(value * 2.0))
 
-    def test_an_in_place_operator_rebinds_to_a_bare_array(self):
+    def test_an_in_place_operator_rebinds_to_a_new_term(self):
         """An in-place operator on an immutable term is the out-of-place one.
 
-        The name is rebound to the *result*, which is a bare array like any other
-        arithmetic result — the term is not mutated, and does not survive.
+        The name is rebound to the *result*, a new term, and the original term
+        is not mutated.
         """
-        value = NumericArray(
-            "kept",
-            jnp.arange(3.0),
-        )
+        value = NumericArray("kept", jnp.arange(3.0))
         original = value
 
         value += 1.0
 
-        assert not isinstance(value, NumericArray)
-        assert isinstance(original, NumericArray)
-        assert original.name == "kept"
+        assert value is not original and value.label == "kept + 1.0"
+        assert original.label == "kept"
         np.testing.assert_array_equal(np.asarray(value), np.arange(1.0, 4.0))
+
+    def test_arithmetic_inside_a_trace_is_bare(self):
+        """A term presents as its raw representation inside a JAX trace (II.4)."""
+        results = []
+
+        @jax.jit
+        def double(x):
+            results.append(NumericArray("v", x) * 2)
+            return results[-1]
+
+        double(jnp.arange(3.0))
+
+        assert isinstance(results[0], jax.core.Tracer)
 
     def test_comparison_is_elementwise(self):
         np.testing.assert_array_equal(
@@ -523,9 +557,10 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
         assert batch.values.shape == (4, 3)
         assert batch.dtype == jnp.float32
 
-    def test_the_repr_states_the_split(self):
-        assert repr(_batch()) == (
-            "NumericArrayBatch(batch_shape=(4,), levels=('draw',), event_shape=(3,))"
+    def test_the_repr_states_the_levels_and_the_element_spec(self):
+        assert repr(_batch(label="x")) == (
+            "NumericArrayBatch('x', levels={'draw': 4}, "
+            "element_spec=NumericArraySpec(shape=(3,), dtype=float32))"
         )
 
     def test_one_level_may_span_several_axes(self):
@@ -534,6 +569,38 @@ class TestNumericArrayBatchHoldsTheMultiplicity:
 
         assert batch.level_names == ("cell",)
         assert batch.axis_groups == ((2, 4),)
+
+
+class TestNumericArrayBatchInfersItsElementSpec:
+    """With no element spec, the axes past those the levels hold are the event shape."""
+
+    def test_four_scalars_need_no_element_spec(self):
+        batch = NumericArrayBatch("draws", jnp.arange(4.0), "draw")
+
+        assert batch.batch_shape == (4,)
+        assert batch.element_spec == NumericArraySpec(shape=(), dtype=jnp.float32)
+
+    def test_the_levels_fix_where_the_event_axes_start(self):
+        batch = NumericArrayBatch("draws", jnp.zeros((2, 4, 3), dtype=jnp.int32), ("chain", "draw"))
+
+        assert batch.batch_shape == (2, 4)
+        assert batch.element_spec == NumericArraySpec(shape=(3,), dtype=jnp.int32)
+
+    @pytest.mark.parametrize("axes", [2, [2], (2,)])
+    def test_a_level_of_several_axes_counts_them_all(self, axes):
+        batch = NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=axes)
+
+        assert batch.axis_groups == ((2, 4),)
+        assert batch.element_spec.shape == (3,)
+
+    def test_a_one_shot_iterator_of_counts_is_refused(self):
+        """The counts are read more than once, so an iterator would arrive empty."""
+        with pytest.raises(TypeError, match="axes_per_level must be an int or a sequence of ints"):
+            NumericArrayBatch("cells", jnp.zeros((2, 4, 3)), "cell", axes_per_level=iter([2]))
+
+    def test_an_array_with_fewer_axes_than_the_levels_is_refused(self):
+        with pytest.raises(ValueError, match="must have at least 2 batch axes"):
+            NumericArrayBatch("draws", jnp.arange(4.0), ("chain", "draw"))
 
 
 class TestNumericArrayBatchSelection:
@@ -545,10 +612,10 @@ class TestNumericArrayBatchSelection:
         assert isinstance(element, NumericArray)
         np.testing.assert_array_equal(np.asarray(element), np.array([3.0, 4.0, 5.0]))
 
-    def test_an_element_takes_the_derived_name(self):
-        element = _batch(name="posterior")[1]
+    def test_an_element_takes_the_derived_label(self):
+        element = _batch(label="posterior")[1]
 
-        assert element.name == "posterior[draw=1]"
+        assert element.label == "posterior[draw=1]"
         pass
 
     def test_an_element_inherits_the_batch_lineage(self):
@@ -580,11 +647,11 @@ class TestNumericArrayBatchSelection:
         assert type(derived[1:3]) is NumericArrayBatch
 
     def test_a_slice_is_a_sub_batch(self):
-        sub = _batch(name="posterior")[1:3]
+        sub = _batch(label="posterior")[1:3]
 
         assert isinstance(sub, NumericArrayBatch)
         assert sub.batch_shape == (2,)
-        assert sub.name == "posterior[draw=1:3]"
+        assert sub.label == "posterior[draw=1:3]"
 
     def test_iteration_yields_elements(self):
         assert [type(e) for e in _batch()] == [NumericArray] * 4
@@ -643,7 +710,7 @@ class TestNumericArrayBatchOverNativeContainers:
 class TestNumericArrayBatchRefusals:
     def test_a_stored_array_with_no_batch_axis_is_refused(self):
         """A batch has at least one batch axis; one value is a NumericArray."""
-        with pytest.raises(ValueError, match="at least one batch axis"):
+        with pytest.raises(ValueError, match="no batch axis before the event shape"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros(3),
@@ -652,7 +719,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_trailing_axes_that_are_not_the_event_shape_are_refused(self):
-        with pytest.raises(ValueError, match="where its elements declare the event shape"):
+        with pytest.raises(ValueError, match="but element_spec declares event shape"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros((4, 5)),
@@ -671,7 +738,7 @@ class TestNumericArrayBatchRefusals:
             )
 
     def test_values_that_are_not_an_array_are_refused(self):
-        with pytest.raises(TypeError, match="stores one array"):
+        with pytest.raises(TypeError, match="values must be a numeric array"):
             NumericArrayBatch(
                 "draws",
                 object(),
@@ -681,7 +748,7 @@ class TestNumericArrayBatchRefusals:
 
     def test_a_dtype_the_declaration_does_not_admit_is_refused(self):
         """The batch asserts the spec of every element, so it checks at build."""
-        with pytest.raises(TypeError, match="does not admit"):
+        with pytest.raises(TypeError, match="cannot be cast to the declared"):
             NumericArrayBatch(
                 "draws",
                 jnp.zeros((2, 3), dtype=jnp.float32),
@@ -709,7 +776,7 @@ class TestNumericArrayBatchRefusals:
         )
         store = _NoSingleDtype(np.zeros((4, 3)))
 
-        with pytest.raises(TypeError, match="reports no single dtype"):
+        with pytest.raises(TypeError, match="values have no single dtype"):
             NumericArrayBatch(
                 "draws",
                 store,
@@ -749,11 +816,11 @@ class TestNumericArrayBatchRefusals:
         """A partition that covers fewer axes than the elements have is refused —
         the one thing a caller can get wrong now that the sizes are read off the
         data rather than restated."""
-        with pytest.raises(ValueError, match="must account for every batch axis"):
+        with pytest.raises(ValueError, match=r"axes_per_level \(1,\) covers 1 axis"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), "cell", axes_per_level=(1,))
 
     def test_a_level_holds_at_least_one_axis(self):
-        with pytest.raises(ValueError, match="every level holds at least one axis"):
+        with pytest.raises(ValueError, match="axes_per_level entry must be at least 1"):
             _batch(jnp.arange(24.0).reshape(2, 4, 3), ("a", "b"), axes_per_level=(2, 0))
 
 
@@ -774,8 +841,25 @@ class TestNumericArrayIsAPyTree:
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
 
         assert isinstance(rebuilt, NumericArray)
-        assert rebuilt.name == "draw"
+        # The label does not cross a transform, so the rebuilt value takes its class's.
+        assert rebuilt.label == "NumericArray"
         np.testing.assert_array_equal(np.asarray(rebuilt), np.arange(3.0))
+
+    def test_values_that_differ_only_in_label_share_a_treedef_and_a_compilation(self):
+        """A label never enters the static data, so it never splits a compilation (II.4)."""
+        traces: list[int] = []
+
+        @jax.jit
+        def double(value):
+            traces.append(1)
+            return value * 2
+
+        first = NumericArray("first", jnp.arange(3.0))
+        second = NumericArray("second", jnp.arange(3.0)) + 1.0
+        assert jax.tree_util.tree_structure(first) == jax.tree_util.tree_structure(second)
+        double(first)
+        double(second)
+        assert len(traces) == 1
 
     def test_a_transform_that_changes_the_shape_keeps_the_declaration(self):
         """On this path a shape is transform-relative, so it states nothing.
@@ -846,7 +930,7 @@ class TestNumericArrayIsAPyTree:
         skeleton = jax.tree_util.tree_map(lambda x: None, value)
 
         assert isinstance(skeleton, NumericArray)
-        assert skeleton.name == "draw"
+        assert skeleton.label == "NumericArray"
 
     def test_a_sentinel_child_rebuilds(self):
         _, treedef = jax.tree_util.tree_flatten(
@@ -872,22 +956,22 @@ class TestNumericArrayIsAPyTree:
         assert rebuilt.provenance is None
 
 
-class TestABatchIsNamed:
-    """A batch's name is required, as a `Record`'s and an `Opaque`'s are.
+class TestABatchIsLabeled:
+    """A batch's label is required, as a `Record`'s and an `Opaque`'s are.
 
-    The signature itself — the name first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
+    The signature itself — the label first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
     """
 
-    def test_a_given_name_is_marked_user_given(self):
-        batch = _batch(name="posterior")
+    def test_a_given_label_is_marked_user_given(self):
+        batch = _batch(label="posterior")
 
-        assert batch.name == "posterior"
+        assert batch.label == "posterior"
 
-    def test_a_derived_name_says_so(self):
-        """A view derives its name, and marks it, rather than defaulting."""
-        sub = _batch(name="posterior")[1:3]
+    def test_a_derived_label_says_so(self):
+        """A view derives its label, and marks it, rather than defaulting."""
+        sub = _batch(label="posterior")[1:3]
 
-        assert sub.name == "posterior[draw=1:3]"
+        assert sub.label == "posterior[draw=1:3]"
 
 
 class TestNumericArrayBatchIsAPyTree:
@@ -897,7 +981,7 @@ class TestNumericArrayBatchIsAPyTree:
     """
 
     def test_it_round_trips_unchanged(self):
-        batch = _batch(name="posterior")
+        batch = _batch(label="posterior")
 
         rebuilt = jax.tree_util.tree_map(lambda x: x, batch)
 
@@ -931,7 +1015,7 @@ class TestNumericArrayBatchIsAPyTree:
 
     def test_a_partial_or_resized_rank_is_refused(self):
         """A shape is not a provenance: no reading says which level survived."""
-        with pytest.raises(ValueError, match="belongs to no level"):
+        with pytest.raises(ValueError, match="the batch shape changed from"):
             jax.tree_util.tree_map(lambda x: jnp.stack([x, x]), _batch())
 
     def test_a_skeleton_rebuilds_rather_than_raising(self):
@@ -1041,7 +1125,7 @@ class TestUnflattenChecksTheElementItRebuilds:
         would otherwise build and fail at the first selection instead."""
         _, treedef = jax.tree_util.tree_flatten(self._batch())
 
-        with pytest.raises(ValueError, match="not the event shape"):
+        with pytest.raises(ValueError, match="does not end with the event shape"):
             jax.tree_util.tree_unflatten(treedef, [jnp.zeros((4, 5))])
 
     def test_an_unchanged_store_round_trips(self):
@@ -1074,7 +1158,7 @@ class TestTheFlatVector:
         spec = NumericArraySpec((2, 3), jnp.float32)
         x = NumericArray("x", jnp.arange(6.0, dtype=jnp.float32).reshape(2, 3), spec=spec)
         rebuilt = NumericArray.from_vector("y", spec, x.to_vector())
-        assert rebuilt.name == "y"
+        assert rebuilt.label == "y"
         assert rebuilt.spec is spec
         np.testing.assert_array_equal(rebuilt.value, x.value)
 

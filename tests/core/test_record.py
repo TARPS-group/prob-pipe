@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, Provenance, Record, RecordSpec, provenance_ancestors
+from probpipe import Normal, OpaqueSpec, Provenance, Record, RecordSpec, provenance_ancestors
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -68,15 +68,19 @@ class TestConstruction:
         with pytest.raises(ValueError, match="must not contain '/'"):
             Record("r", **{"a/b": 1.0})
 
+    def test_merge_refuses_a_field_against_a_group(self):
+        with pytest.raises(ValueError, match="single field in one record but a group of fields"):
+            Record("a", x=1.0).merge(Record("b", x=Record("c", z=1.0)))
+
     def test_dict_and_kwargs_raises(self):
-        with pytest.raises(ValueError, match="Cannot pass both"):
+        with pytest.raises(ValueError, match="takes either a mapping of fields or keyword fields"):
             Record("r", {"a": 1.0}, b=2.0)
 
     def test_the_empty_record_is_legal(self):
         """A record is a named tree, and the tree with no branches is one."""
         empty = Record("r")
 
-        assert (empty.name, list(empty.event_template)) == ("r", [])
+        assert (empty.label, list(empty.event_template)) == ("r", [])
 
     def test_all_numeric_promotes_and_coerces(self):
         from probpipe import NumericRecord
@@ -86,7 +90,7 @@ class TestConstruction:
         # All-numeric construction promotes to NumericRecord; leaves are
         # stored in native form (nothing is coerced at construction).
         assert type(v) is NumericRecord
-        assert v["x"] is arr
+        assert v.raw("x") is arr
 
     @pytest.mark.parametrize(
         "fields",
@@ -121,17 +125,17 @@ class TestConstruction:
         arr = np.array([1.0, 2.0, 3.0])
         v = Record("r", x=arr, label="tag")
         # A mixed record stays a plain Record and stores leaves as-is.
-        assert v["x"] is arr
+        assert v.raw("x") is arr
 
     def test_accepts_opaque_leaves(self):
         v = Record("r", label="horseshoe", x=1.0)
-        assert v["label"] == "horseshoe"
+        assert v.raw("label") == "horseshoe"
         assert v["x"] == 1.0
 
     def test_jax_arrays(self):
         arr = jnp.array([1.0, 2.0])
         v = Record("r", x=arr)
-        assert v["x"] is arr
+        assert v.raw("x") is arr
 
     def test_scalars(self):
         v = Record("r", a=1, b=2.5, c=True)
@@ -154,7 +158,7 @@ class TestConstruction:
     def test_list_input(self):
         v = Record("r", x=[1.0, 2.0, 3.0])
         # Stored as-is — caller decides conversion.
-        assert v["x"] == [1.0, 2.0, 3.0]
+        assert v.raw("x") == [1.0, 2.0, 3.0]
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +196,7 @@ class TestFieldAccess:
         """Descending past a leaf via path syntax must raise ``KeyError`` with
         a path-aware message — not a numpy ``IndexError``."""
         v = Record("r", a=np.array([1.0, 2.0]))
-        with pytest.raises(KeyError, match="non-tree leaf"):
+        with pytest.raises(KeyError, match="is a field, not a group"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v
@@ -273,7 +277,7 @@ class TestImmutability:
     def test_merge_overlap_raises(self):
         v1 = Record("r", a=1.0)
         v2 = Record("r", a=2.0)
-        with pytest.raises(ValueError, match="Overlapping"):
+        with pytest.raises(ValueError, match="cannot merge: both have the field 'a'"):
             v1.merge(v2)
 
     def test_without(self):
@@ -294,7 +298,7 @@ class TestImmutability:
 
     def test_without_all_raises(self):
         v = Record("r", a=1.0)
-        with pytest.raises(ValueError, match="Cannot remove all"):
+        with pytest.raises(ValueError, match=r"without\(\) cannot remove every field"):
             v.without("a")
 
     # replace / merge / without must preserve the subclass (regression:
@@ -337,30 +341,30 @@ class TestStorage:
         v = Record("r", x=arr)
         # Native storage: promotion never coerces — the numpy leaf is stored
         # verbatim on the promoted and the mixed record alike.
-        assert v["x"] is arr
+        assert v.raw("x") is arr
         mixed = Record("r", x=arr, label="tag")
-        assert mixed["x"] is arr
+        assert mixed.raw("x") is arr
 
     def test_scalar_coerced_by_promotion(self):
         v = Record("r", x=42.0)
         assert v["x"] == 42.0
-        assert isinstance(v["x"], jnp.ndarray)
+        assert isinstance(v.raw("x"), jnp.ndarray)
         mixed = Record("r", x=42.0, label="tag")
-        assert isinstance(mixed["x"], float)
+        assert isinstance(mixed.raw("x"), float)
 
     def test_jax_stored_verbatim(self):
         arr = jnp.array([1.0, 2.0])
         v = Record("r", x=arr)
-        assert v["x"] is arr
+        assert v.raw("x") is arr
 
     def test_string_stored_verbatim(self):
         v = Record("r", x="hello", y=1.0)
-        assert v["x"] == "hello"
+        assert v.raw("x") == "hello"
 
     def test_heterogeneous_leaves(self):
         """Strings, numbers, and arrays co-exist in a plain Record."""
         v = Record("r", label="x", count=1.0, array=jnp.zeros(3))
-        assert v["label"] == "x"
+        assert v.raw("label") == "x"
         assert v["count"] == 1.0
         assert v["array"].shape == (3,)
 
@@ -373,9 +377,9 @@ class TestStorage:
         )
         v = Record("r", y=da)
         # DataArray is preserved, coords and all.
-        assert v["y"] is da
-        assert v["y"].dims == ("time",)
-        np.testing.assert_array_equal(v["y"].coords["time"].values, [10, 20, 30])
+        assert v.raw("y") is da
+        assert v.raw("y").dims == ("time",)
+        np.testing.assert_array_equal(v.raw("y").coords["time"].values, [10, 20, 30])
 
     def test_xarray_leaf_survives_structural_edit(self):
         from probpipe import NumericRecord
@@ -388,8 +392,8 @@ class TestStorage:
         assert isinstance(v, NumericRecord)
         edited = v.without("z")
         assert isinstance(edited, NumericRecord)
-        assert edited["y"] is da
-        assert v.replace(z=jnp.array(2.0))["y"] is da
+        assert edited.raw("y") is da
+        assert v.replace(z=jnp.array(2.0)).raw("y") is da
 
     def test_backend_leaf_gives_numeric_template(self):
         # A native backend leaf infers a NumericArraySpec, so the template is
@@ -427,7 +431,7 @@ class TestNumericAPIOnRecord:
         # traversal on Record; the JAX-pytree flatten/unflatten are NOT Record
         # methods.
         v = Record("r", a=1.0, label="x")
-        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
@@ -446,7 +450,7 @@ class TestGeneralDecomposition:
         v = Record("r", x=jnp.array([1.0, 2.0]), label="horseshoe")
         leaves = list(v.values())
         assert leaves[0].shape == (2,)  # kept whole, not raveled
-        assert leaves[1] == "horseshoe"  # opaque leaf preserved as-is
+        assert leaves[1].raw() == "horseshoe"  # a view of the opaque leaf stored as-is
         assert list(v.keys()) == ["x", "label"]  # canonical order
 
     def test_container_leaf_is_one_whole_leaf(self):
@@ -455,13 +459,13 @@ class TestGeneralDecomposition:
         v = Record("r", x=jnp.zeros(2), pair=(jnp.array(1.0), jnp.array(2.0)))
         leaves = list(v.values())
         assert len(leaves) == 2  # x, pair (whole)
-        assert isinstance(leaves[1], tuple)
+        assert isinstance(leaves[1].raw(), tuple)
         assert len(jax.tree_util.tree_leaves(v)) == 3  # JAX descends the tuple
 
     def test_roundtrip_with_opaque_leaf(self):
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record("r", x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
-        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
 
     def test_roundtrip_with_backend_leaf(self):
         # A native backend leaf (xarray) round-trips through
@@ -475,9 +479,9 @@ class TestGeneralDecomposition:
         v = Record("obs", x=da)
         assert isinstance(v, NumericRecord)
         assert isinstance(v.event_template, NumericRecordSpec)
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert type(rebuilt) is type(v)
-        assert rebuilt["x"] is da
+        assert rebuilt.raw("x") is da
         assert rebuilt == v
 
     def test_roundtrip_with_out_of_order_template(self):
@@ -485,17 +489,17 @@ class TestGeneralDecomposition:
         # the template in that same order, so a record built with an explicitly
         # out-of-order template round-trips without transposing field values.
         v = Record("r", {"b": 2.0, "a": 1.0}, event_template=RecordSpec(a=(), b=()))
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert rebuilt == v
         assert float(rebuilt["a"]) == 1.0
         assert float(rebuilt["b"]) == 2.0
 
     def test_roundtrip_preserves_user_name(self):
-        # ``==`` ignores the name, so assert name fidelity separately: the
-        # reconstructed record carries exactly the name passed in.
+        # ``==`` ignores the label, so assert label fidelity separately: the
+        # reconstructed record carries exactly the label passed in.
         v = Record("mine", theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="p"), tag="t")
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
-        assert rebuilt.name == "mine"
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
+        assert rebuilt.label == "mine"
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
@@ -503,7 +507,7 @@ class TestGeneralDecomposition:
         v = NumericRecord(
             "nr", a=jnp.array([1.0, 2.0, 3.0]), b=NumericRecord("nr", c=jnp.array(5.0))
         )
-        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        rebuilt = Record.from_field_values(v.label, v.event_template, v.values())
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
         assert isinstance(rebuilt.at_path("b"), NumericRecord)
@@ -515,7 +519,7 @@ class TestGeneralDecomposition:
             theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="prior"),
             tag="run-7",
         )
-        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+        assert Record.from_field_values(v.label, v.event_template, v.values()) == v
 
     def test_wrong_leaf_count_raises(self):
         v = Record("r", a=1.0, b=2.0)
@@ -705,10 +709,10 @@ class TestConversion:
             attrs={"units": "m"},
         )
         back = Record("r", y=da).to_numeric()
-        assert back["y"] is da
-        assert back["y"].dims == ("time",)
-        np.testing.assert_array_equal(back["y"].coords["time"].values, [10, 20, 30])
-        assert back["y"].attrs == {"units": "m"}
+        assert back.raw("y") is da
+        assert back.raw("y").dims == ("time",)
+        np.testing.assert_array_equal(back.raw("y").coords["time"].values, [10, 20, 30])
+        assert back.raw("y").attrs == {"units": "m"}
 
     def test_to_numeric_recurses_into_nested_records(self):
         """``to_numeric()`` recurses into nested non-NumericRecord children."""
@@ -747,7 +751,7 @@ class TestEnsure:
         v = Record.ensure({"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0})
         assert isinstance(v, Record)
         assert list(v.keys()) == ["summary/mean", "summary/count", "x"]
-        assert v.name == "record(summary,x)"
+        assert v.label == "record(summary,x)"
 
     def test_array_coercion(self):
         v = Record.ensure(jnp.array([1.0, 2.0]))
@@ -799,7 +803,7 @@ class TestLeafOps:
         nr = NumericRecord("nr", a=1.0, b=2.0)
         out = nr.map(lambda x: "not numeric")
         assert type(out) is Record
-        assert out["a"] == "not numeric"
+        assert out.raw("a") == "not numeric"
 
     def test_map_nested(self):
         v = Record("r", inner=Record("r", x=2.0), y=3.0)
@@ -826,7 +830,7 @@ class TestLeafOps:
 
     def test_map_rejects_node_return(self):
         v = Record("r", a=1.0)
-        with pytest.raises(ValueError, match="introduce nesting"):
+        with pytest.raises(ValueError, match="must return a single value"):
             v.map(lambda x: Record("r", z=x))
 
 
@@ -836,22 +840,15 @@ class TestLeafOps:
 
 
 class TestReprAndEquality:
-    def test_repr_scalars(self):
-        v = Record("r", a=1.0, b=2.0)
-        r = repr(v)
-        assert "Record(" in r
-        assert "a=" in r
-        assert "b=" in r
+    def test_repr_names_the_label_and_the_field_paths(self):
+        assert repr(Record("r", a=1.0, b="tag")) == "Record('r', fields=('a', 'b'))"
 
-    def test_repr_arrays(self):
-        v = Record("r", x=jnp.zeros((3, 4)))
-        r = repr(v)
-        assert "shape=(3, 4)" in r
+    def test_repr_of_a_numeric_record_names_its_class(self):
+        assert repr(Record("r", x=jnp.zeros((3, 4)))) == "NumericRecord('r', fields=('x',))"
 
-    def test_repr_nested(self):
-        v = Record("r", inner=Record("r", x="tag"))
-        r = repr(v)
-        assert "inner=Record(" in r
+    def test_repr_lists_nested_fields_by_path(self):
+        school = Record("school", {"data": {"effect": 28.0, "se": 15.0}, "label": "A"})
+        assert repr(school) == "Record('school', fields=('data/effect', 'data/se', 'label'))"
 
     def test_equality(self):
         v1 = Record("r", a=1.0, b=2.0)
@@ -1000,7 +997,7 @@ class TestProvenance:
     def test_with_provenance_is_write_once(self):
         r = Record("r", x=1.0)
         r.with_provenance(Provenance("first", parents=()))
-        with pytest.raises(RuntimeError, match="write-once"):
+        with pytest.raises(RuntimeError, match="set only once"):
             r.with_provenance(Provenance("second", parents=()))
 
     # Semantic transformations reset the source — the new Record is a
@@ -1058,19 +1055,19 @@ class TestProvenance:
     # ancestor via provenance_ancestors.
 
     def test_provenance_ancestors_walks_through_distribution(self):
-        prior = Normal(loc=0.0, scale=1.0, name="prior")
+        prior = Normal("prior", loc=0.0, scale=1.0)
         r = Record("r", theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
         ancestors = provenance_ancestors(r)
         assert len(ancestors) == 1
         assert ancestors[0] is prior
 
     def test_provenance_ancestors_walks_nested_records(self):
-        prior = Normal(loc=0.0, scale=1.0, name="prior")
+        prior = Normal("theta", loc=0.0, scale=1.0, label="prior")
         middle = Record("r", theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
         outer = Record("r", result=2.0).with_provenance(Provenance("transform", parents=(middle,)))
         ancestors = provenance_ancestors(outer)
-        names = [getattr(a, "name", None) for a in ancestors]
-        assert names == [middle.name, "prior"]
+        names = [getattr(a, "label", None) for a in ancestors]
+        assert names == [middle.label, "prior"]
 
 
 # ---------------------------------------------------------------------------
@@ -1103,7 +1100,7 @@ class TestSpecStorage:
         assert r.spec is spec
 
     def test_the_two_declaration_forms_agree(self):
-        tpl = RecordSpec(x=(2,), label=None)
+        tpl = RecordSpec(x=(2,), label=OpaqueSpec())
         fields = {"x": jnp.zeros(2), "label": "a"}
         assert Record("r", dict(fields), event_template=tpl) == Record(
             "r", dict(fields), event_template=RecordSpec(tpl)
@@ -1119,7 +1116,7 @@ class TestSpecStorage:
         numeric = RecordSpec(x=(2,))
         assert isinstance(Record("r", {"x": jnp.zeros(2)}, event_template=numeric), NumericRecord)
         # A non-numeric leaf in the declaration vetoes promotion.
-        mixed = RecordSpec(x=(2,), label=None)
+        mixed = RecordSpec(x=(2,), label=OpaqueSpec())
         r = Record("r", {"x": jnp.zeros(2), "label": "a"}, event_template=mixed)
         assert not isinstance(r, NumericRecord)
 
@@ -1286,14 +1283,14 @@ class TestRecordSpecStorage:
 
         # A cross-kind dtype (a float value against an int-dtype spec) fails the
         # spec's is_valid -> construction raises.
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="does not match event_template"):
             Record(
                 "r",
                 {"x": jnp.asarray(1.0, dtype=jnp.float32)},
                 event_template=RecordSpec(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
             )
         # A shape mismatch also raises.
-        with pytest.raises(ValueError, match="does not conform"):
+        with pytest.raises(ValueError, match="does not match event_template"):
             Record(
                 "r",
                 {"x": jnp.zeros(3)},

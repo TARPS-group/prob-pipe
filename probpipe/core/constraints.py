@@ -33,7 +33,11 @@ class Constraint:
     """Describes the support of a distribution (the set of valid values)."""
 
     def check(self, value: ArrayLike) -> Array:
-        """Return a boolean array indicating which elements satisfy the constraint."""
+        """Return a boolean array indicating which elements satisfy the constraint.
+
+        A support that is a subset of the reals contains a complex entry only
+        where its imaginary part is zero and its real part is in the support.
+        """
         raise NotImplementedError
 
     def __repr__(self) -> str:
@@ -63,90 +67,116 @@ def _known_equal(a: Constraint | None, b: Constraint | None) -> bool:
         return False
 
 
+class _RealConstraint(Constraint):
+    """A constraint whose support is a subset of the reals.
+
+    A subclass states the membership of a real array in :meth:`_check_real`,
+    and :meth:`check` applies the rule of :meth:`Constraint.check` for complex
+    values around it. The rule needs an explicit check because JAX orders
+    complex values lexicographically, so ``1j > 0`` is true. ``_event_ndim``
+    is the number of trailing axes that one membership result covers.
+    """
+
+    _event_ndim: int = 0
+
+    def check(self, value: ArrayLike) -> Array:
+        """Return a boolean array indicating which elements satisfy the constraint."""
+        v = jnp.asarray(value)
+        if not jnp.iscomplexobj(v):
+            return self._check_real(v)
+        is_real = jnp.isreal(v)
+        if self._event_ndim:
+            is_real = jnp.all(is_real, axis=tuple(range(-self._event_ndim, 0)))
+        return is_real & self._check_real(v.real)
+
+    def _check_real(self, v: Array) -> Array:
+        """Return the membership of each entry of the real array *v*."""
+        raise NotImplementedError
+
+
 # ---------------------------------------------------------------------------
 # Concrete constraints
 # ---------------------------------------------------------------------------
 
 
-class _Real(Constraint):
+class _Real(_RealConstraint):
     """All real numbers."""
 
-    def check(self, value: ArrayLike) -> Array:
-        return jnp.isfinite(jnp.asarray(value))
+    def _check_real(self, v: Array) -> Array:
+        return jnp.isfinite(v)
 
     def __repr__(self) -> str:
         return "real"
 
 
-class _Positive(Constraint):
+class _Positive(_RealConstraint):
     """Strictly positive reals (0, inf)."""
 
-    def check(self, value: ArrayLike) -> Array:
-        return jnp.asarray(value) > 0
+    def _check_real(self, v: Array) -> Array:
+        return v > 0
 
     def __repr__(self) -> str:
         return "positive"
 
 
-class _NonNegative(Constraint):
+class _NonNegative(_RealConstraint):
     """Non-negative reals [0, inf)."""
 
-    def check(self, value: ArrayLike) -> Array:
-        return jnp.asarray(value) >= 0
+    def _check_real(self, v: Array) -> Array:
+        return v >= 0
 
     def __repr__(self) -> str:
         return "non_negative"
 
 
-class _NonNegativeInteger(Constraint):
+class _NonNegativeInteger(_RealConstraint):
     """Non-negative integers {0, 1, 2, ...}."""
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    def _check_real(self, v: Array) -> Array:
         return (v >= 0) & (v == jnp.floor(v))
 
     def __repr__(self) -> str:
         return "non_negative_integer"
 
 
-class _Boolean(Constraint):
+class _Boolean(_RealConstraint):
     """Binary values {0, 1}."""
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    def _check_real(self, v: Array) -> Array:
         return (v == 0) | (v == 1)
 
     def __repr__(self) -> str:
         return "boolean"
 
 
-class _UnitInterval(Constraint):
+class _UnitInterval(_RealConstraint):
     """Closed unit interval [0, 1]."""
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    def _check_real(self, v: Array) -> Array:
         return (v >= 0) & (v <= 1)
 
     def __repr__(self) -> str:
         return "unit_interval"
 
 
-class _Simplex(Constraint):
+class _Simplex(_RealConstraint):
     """Probability simplex (non-negative, sums to 1 along last axis)."""
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    _event_ndim = 1
+
+    def _check_real(self, v: Array) -> Array:
         return (jnp.all(v >= 0, axis=-1)) & (jnp.abs(jnp.sum(v, axis=-1) - 1.0) < 1e-5)
 
     def __repr__(self) -> str:
         return "simplex"
 
 
-class _PositiveDefinite(Constraint):
+class _PositiveDefinite(_RealConstraint):
     """Positive-definite matrices."""
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    _event_ndim = 2
+
+    def _check_real(self, v: Array) -> Array:
         eigvals = jnp.linalg.eigvalsh(v)
         return jnp.all(eigvals > 0, axis=-1)
 
@@ -154,26 +184,26 @@ class _PositiveDefinite(Constraint):
         return "positive_definite"
 
 
-class _Sphere(Constraint):
+class _Sphere(_RealConstraint):
     """Unit sphere (vectors with unit L2 norm)."""
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    _event_ndim = 1
+
+    def _check_real(self, v: Array) -> Array:
         return jnp.abs(jnp.linalg.norm(v, axis=-1) - 1.0) < 1e-5
 
     def __repr__(self) -> str:
         return "sphere"
 
 
-class _Interval(Constraint):
+class _Interval(_RealConstraint):
     """Half-open or closed interval [low, high]."""
 
     def __init__(self, low: ArrayLike, high: ArrayLike):
         self.low = low
         self.high = high
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    def _check_real(self, v: Array) -> Array:
         return (v >= self.low) & (v <= self.high)
 
     def __repr__(self) -> str:
@@ -193,14 +223,14 @@ class _Interval(Constraint):
         return hash(type(self))
 
 
-class _GreaterThan(Constraint):
+class _GreaterThan(_RealConstraint):
     """Record strictly greater than a lower bound."""
 
     def __init__(self, lower_bound: ArrayLike):
         self.lower_bound = lower_bound
 
-    def check(self, value: ArrayLike) -> Array:
-        return jnp.asarray(value) > self.lower_bound
+    def _check_real(self, v: Array) -> Array:
+        return v > self.lower_bound
 
     def __repr__(self) -> str:
         return f"greater_than({self.lower_bound})"
@@ -214,15 +244,14 @@ class _GreaterThan(Constraint):
         return hash(type(self))
 
 
-class _IntegerInterval(Constraint):
+class _IntegerInterval(_RealConstraint):
     """Integer values in [low, high]."""
 
     def __init__(self, low: ArrayLike, high: ArrayLike):
         self.low = low
         self.high = high
 
-    def check(self, value: ArrayLike) -> Array:
-        v = jnp.asarray(value)
+    def _check_real(self, v: Array) -> Array:
         return (v >= self.low) & (v <= self.high) & (v == jnp.floor(v))
 
     def __repr__(self) -> str:
@@ -244,14 +273,23 @@ class _IntegerInterval(Constraint):
 # ---------------------------------------------------------------------------
 
 real = _Real()
+"""The support of all finite real numbers."""
 positive = _Positive()
+"""The support of the strictly positive reals, ``(0, inf)``."""
 non_negative = _NonNegative()
+"""The support of the non-negative reals, ``[0, inf)``."""
 non_negative_integer = _NonNegativeInteger()
+"""The support of the non-negative integers, ``{0, 1, 2, ...}``."""
 boolean = _Boolean()
+"""The support of the binary values ``{0, 1}``."""
 unit_interval = _UnitInterval()
+"""The support of the closed unit interval, ``[0, 1]``."""
 simplex = _Simplex()
+"""The probability simplex: non-negative vectors that sum to one along the last axis."""
 positive_definite = _PositiveDefinite()
+"""The support of the positive-definite matrices."""
 sphere = _Sphere()
+"""The unit sphere: vectors of unit Euclidean norm along the last axis."""
 
 
 # ---------------------------------------------------------------------------
@@ -260,14 +298,17 @@ sphere = _Sphere()
 
 
 def interval(low: ArrayLike, high: ArrayLike) -> _Interval:
+    """The support of the closed interval ``[low, high]``."""
     return _Interval(low, high)
 
 
 def greater_than(lower_bound: ArrayLike) -> _GreaterThan:
+    """The support of the values strictly greater than *lower_bound*."""
     return _GreaterThan(lower_bound)
 
 
 def integer_interval(low: ArrayLike, high: ArrayLike) -> _IntegerInterval:
+    """The support of the integers in the closed interval ``[low, high]``."""
     return _IntegerInterval(low, high)
 
 

@@ -6,13 +6,13 @@ The rule (codified in STYLE_GUIDE.md §1.11):
 * :class:`Record` and :class:`NumericRecord` iterate field names dict-style.
 * :class:`RecordBatch` / :class:`NumericRecordBatch` are collections: they
   iterate leading-axis views, and fields are read from ``event_template``.
-* :class:`DistributionArray` is positional (access via ``da[i]``);
-  ``len(da)`` is the leading-axis size, ``prod(da.batch_shape)`` is
-  the total cell count. Not generally treated as an iterable.
+* :class:`DistributionBatch` is a batch: ``len`` is the leading-axis size,
+  ``batch_size`` the total count of laws, and iteration visits views of
+  the laws along the leading axis.
 * Every other :class:`Distribution` subclass is non-iterable.
-  Finite-sample subclasses (see STYLE_GUIDE §1.9) expose stored
-  samples on ``.samples`` / ``.draws()`` with ``.n`` reporting the
-  count; parametric distributions do not have ``.n``.
+  An empirical law exposes its stored atoms on ``.atoms`` with
+  ``.num_atoms`` reporting the count, and an inference result its
+  draws on ``.draws()``; parametric distributions have neither.
 """
 
 from __future__ import annotations
@@ -22,27 +22,25 @@ import pytest
 
 from probpipe import (
     Beta,
+    BootstrapDistribution,
     BootstrapReplicateDistribution,
     Distribution,
     EmpiricalDistribution,
     Gamma,
-    GLMLikelihood,
-    JointEmpirical,
     KDEDistribution,
     MinibatchedDistribution,
     MultivariateNormal,
     Normal,
     NumericRecord,
     NumericRecordBatch,
-    ProductDistribution,
     Record,
     RecordBatch,
-    TransformedDistribution,
 )
+from probpipe.families import BijectorTransformedDistribution
 
 
 def _make_transformed():
-    """Build a TransformedDistribution at parametrise time.
+    """Build a BijectorTransformedDistribution at parametrise time.
 
     Importing the bijector here keeps the test parametrisation
     side-effect-free at import — TFP's bijector module is heavy
@@ -50,75 +48,69 @@ def _make_transformed():
     """
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
-    return TransformedDistribution(
+    return BijectorTransformedDistribution(
         "td",
-        Normal(loc=0.0, scale=1.0, name="base"),
+        Normal("base", loc=0.0, scale=1.0),
         tfb.Exp(),
     )
 
 
 # User-constructible Distribution subclasses, parametrised here to pin
-# the non-iterable rule. WF-output classes (BroadcastDistribution,
-# _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
-# of an op return) are produced by the Function layer rather than
-# user code; they inherit non-iterability from their bases (Distribution
-# / RecordEmpiricalDistribution / Distribution) and don't need direct
-# parametrisation here.
+# the non-iterable rule. A lifted call's result is an EmpiricalDistribution,
+# which is parametrised with the others.
 DISTRIBUTIONS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), id="Normal"),
-    pytest.param(lambda: Beta(alpha=1.0, beta=1.0, name="x"), id="Beta"),
-    pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, name="x"), id="Gamma"),
+    pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), id="Normal"),
+    pytest.param(lambda: Beta("x", alpha=1.0, beta=1.0), id="Beta"),
+    pytest.param(lambda: Gamma("x", concentration=2.0, rate=1.0), id="Gamma"),
     pytest.param(
         lambda: MultivariateNormal(
+            "x",
             loc=jnp.zeros(3),
             cov=jnp.eye(3),
-            name="x",
         ),
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: ProductDistribution(
-            x=Normal(loc=0.0, scale=1.0, name="x"),
-            y=Normal(loc=0.0, scale=1.0, name="y"),
-        ),
-        id="ProductDistribution",
+        lambda: Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0),
+        id="FactoredDistribution",
     ),
     pytest.param(
         lambda: _make_transformed(),
-        id="TransformedDistribution",
+        id="BijectorTransformedDistribution",
     ),
     pytest.param(
-        lambda: KDEDistribution("kde", jnp.zeros((20, 3))),
+        lambda: KDEDistribution(jnp.arange(60.0).reshape(20, 3), component="kde"),
         id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
-            "theta",
             jnp.zeros((10, 3)),
+            component="theta",
         ),
-        id="RecordEmpiricalDistribution",
+        id="EmpiricalDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "obs",
-            jnp.zeros((10, 2)),
+            EmpiricalDistribution(jnp.zeros((10, 2)), component="obs"),
         ),
-        id="RecordBootstrapReplicateDistribution",
+        id="BootstrapReplicateDistribution_empirical",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "boot",
-            Normal(loc=0.0, scale=1.0, name="x"),
+            Normal("x", loc=0.0, scale=1.0),
             replicate_size=5,
         ),
         id="BootstrapReplicateDistribution_sampleable",
     ),
     pytest.param(
-        lambda: JointEmpirical(
-            x=jnp.zeros((10,)),
-            y=jnp.zeros((10,)),
+        lambda: BootstrapDistribution(
+            "measure",
+            Normal("x", loc=0.0, scale=1.0),
+            5,
         ),
-        id="NumericJointEmpirical",
+        id="BootstrapDistribution",
     ),
     pytest.param(
         lambda: _make_minibatched_distribution(),
@@ -129,13 +121,13 @@ DISTRIBUTIONS = [
 
 def _make_minibatched_distribution():
     """Build a MinibatchedDistribution at parametrise time."""
-    import tensorflow_probability.substrates.jax.glm as tfp_glm
+    from probpipe.families import BernoulliFamily, glm_likelihood
 
     X = jnp.eye(4)
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
-    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
-    lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-    return MinibatchedDistribution("measure", prior, lik, Record("r", X=X, y=y), batch_size=2)
+    prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
+    lik = glm_likelihood("y", BernoulliFamily(), X=X)
+    return MinibatchedDistribution("measure", prior, lik, y, batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
@@ -143,9 +135,8 @@ def test_distribution_is_not_iterable(make_dist):
     """Every Distribution subclass must reject iteration.
 
     The rule: distributions represent a single random variable, not a
-    collection. Finite-sample subclasses expose ``.samples`` /
-    ``.draws()`` and ``.n``; ``DistributionArray`` covers batched
-    cases.
+    collection. An empirical law exposes ``.atoms`` and ``.num_atoms``;
+    ``DistributionBatch`` covers batched cases.
 
     Python's iter-via-``__getitem__`` fallback returns a non-empty
     iterator object even on classes without ``__iter__``, so we

@@ -9,6 +9,338 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A law's label is optional, and the component of its event is required.**
+  A family takes the component first and the label as the keyword `label=`,
+  which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps
+  its syntax and is labeled `Normal` over the component `mu`, where it was
+  labeled `mu`, and displays as `Normal(mu)`. Pass `label=` to name the law,
+  as `Normal("mu", 0.0, 1.0, label="prior")`, which replaces
+  `Normal("prior", 0.0, 1.0, event_spec=OutputSpec(mu=None))`; an
+  `event_spec` that names another component than the first argument raises
+  `ValueError`. The other catalog families follow: `TFPDistribution`,
+  `BootstrapDistribution`, `BootstrapReplicateDistribution`,
+  `BijectorTransformedDistribution`, `GaussianProcess`,
+  `LinearBasisFunction`, `RandomFunction`, `RandomMeasure`, and
+  `glm_likelihood` take the component first, and `GLMFamily.build` takes it
+  in place of the label. Laws and kernels without a family default to the
+  label `p`, and the calls change:
+
+  | Before | After |
+  |---|---|
+  | `EmpiricalDistribution("theta", draws)` | `EmpiricalDistribution(draws, component="theta")` |
+  | `EmpiricalDistribution("post", record_atoms)` | `EmpiricalDistribution(record_atoms, label="post")` |
+  | `KDEDistribution("x", atoms, 0.5)` | `KDEDistribution(atoms, 0.5, component="x")` |
+  | `distribution("z", sample=f, event_spec=NumericArraySpec(()))` | `distribution(sample=f, event_spec=NumericArraySpec(()), component="z")` |
+  | `conditional_distribution("lik", fn, given_spec=...)` | `conditional_distribution(fn, label="lik", given_spec=...)` |
+  | `MixtureDistribution("mix", laws, weights)` | `MixtureDistribution(laws, weights, label="mix")` |
+  | `PyMCModel("model", model_fn)` | `PyMCModel(model_fn, label="model")` |
+  | `StanModel("model", "model.stan", data=data)` | `StanModel("model.stan", data=data, label="model")` |
+
+  `EmpiricalDistribution` and `KDEDistribution` require `component` for atoms
+  that are not records and refuse it for record atoms, whose fields are the
+  components, and array atoms are labeled by the component.
+  `conditional_distribution` labels a kernel after its function's
+  `__name__`, and `p` for a lambda. A subclass of `Distribution` or
+  `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
+  as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
+  a `RecordSpec` no longer takes the label as its component. The repr shows
+  the label and then the component, as
+  `Normal('prior', component='mu', loc=0.0, scale=1.0)`, and leaves out a
+  label equal to the constructor's default, the class name or `p`, as
+  `Normal(component='mu', loc=0.0, scale=1.0)`; a family
+  pickled before this change loads to the same law. Lightweight provenance
+  keys a root parent by its identity, so two root laws under one default
+  label stay two ancestors.
+- **A value computed from a law is labeled by that value in probability
+  notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
+  `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled
+  `E[(y, mu) ~ model]`, and `log_prob(prior, x)` is labeled `log prior(mu)`,
+  where each was labeled by its law, as `prior` or `model`. A draw from a
+  posterior lists the paths the posterior holds fixed, as `mu ~ model; y`.
+  `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
+  `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
+  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]`. A batch of draws has
+  the label of one draw, so its element is `(mu ~ prior)[sample=0]`, and a
+  value computed from a batch of laws reads the batch as one law under its
+  label, as `E[effect ~ schools]`. The law of a function lifted over laws
+  keeps the function's label and prints as the function applied to draws of
+  its inputs, as `f(beta ~ model; y)`, and its mean is labeled
+  `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
+  a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
+  as `x + (-1.0)`. Replace a comparison of such a result's label with
+  its law's label by one with the new label, or set a label with
+  `with_label`.
+- **A score's component names the scored components.** `log_prob(d, x)` for a
+  law over `mu` declares its result under the component `log_prob(mu)`, and
+  for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
+  `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
+  as `prob(mu)`. The law of an operation lifted over a law, such as
+  `log_prob(prior, q)` for a law `q` of values, names its component by the
+  operation, as `log_prob`, where it took the label of the scored law. Replace a
+  lookup of the component `log_prob` by one of `log_prob(mu)`.
+- **The atoms of a posterior are labeled by its components.** The atoms of the
+  empirical law that `condition_on` or an inference method returns are labeled
+  by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
+  `posterior`, so an atom reads as `(K, r, phi)[chain=0, draw=7]`. The atoms of
+  an `EmpiricalDistribution` a user constructs keep the label they were given.
+- **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
+  and a batch of either flatten with their spec alone as the static data, where
+  the label rode with it, so two terms that differ only in their labels have
+  equal treedefs and share a `jax.jit` compilation. A term rebuilt from its
+  leaves, as `jax.tree_util.tree_map` returns one, is labeled by its class, as
+  `NumericArray` or `RecordBatch`, where it kept the label it had; a
+  `Function` call still labels its result by the function's output label.
+  Relabel a rebuilt term with `with_label`.
+- **A map of a Gaussian random function keeps its label, and a sum is labeled
+  by its expression.** `A @ f`, `f + b`, and `alpha * f` are labeled `f`, where
+  they were labeled `linear_map(f)`, `shift(f)`, and `scale(f)`, and `f + g` is
+  labeled `f + g`, where it was `sum(f,g)`.
+- **A conditioned law keeps the label of the law it conditions, and prints the
+  paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
+  where it was `model | y`, and it prints as `model(mu; y)`: its signature
+  lists the fixed paths after `;`, after any paths the conditioned law held
+  fixed. A kernel applied at some of its given slots prints the other slots
+  as given, as `glm(y | sigma; beta)`. Fixing the whole events of upstream
+  factors still gives the labels of the factors left, so
+  `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
+  `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
+  inference method's included, and a marginal, a view, and `raw()` keep them.
+  The repr shows them after the component, as
+  `Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)` or
+  `EmpiricalDistribution('model', fixed=('y',), atoms=...)`.
+  The posterior an inference method returns, which the result's provenance
+  keeps as a parent with the method's own record, is recorded under the
+  result's label, as `model`, where it was recorded as `posterior`.
+  Replace a comparison with a label such as `"model | y"` by one with
+  `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
+- **`raw()` of a field view returns the raw form of the marginal at its path.**
+  `d[p].raw()` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw()` for a `Normal` prior over `mu` is
+  the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
+  labeled as `marginal(d, p)` labels it, where it was always a detached law
+  under the view's label. A parameter annotated with a TFP class, such as
+  `tfd.Distribution`, therefore receives the TFP marginal for each view of a
+  swept batch of views. To keep the ProbPipe law, call `marginal(d, p)`.
+- **A field view is labeled as the marginal at its path, and prints as it.** A
+  view at the whole event of one factor takes the factor's label, so
+  `model["mu"]` for `model = (lik * prior).with_label("model")` is labeled
+  `prior` and prints as `prior(mu)`, where it was labeled `model`. A view of the
+  whole events of several factors takes their joined label and prints factor by
+  factor, as `model[("b", "a")]` prints as `b(b)·a(a)`. Any other view keeps its
+  parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
+  view names `FieldView` and the path. Replace a comparison of such a view's
+  label with its parent's label by one with the factor's label.
+- **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
+  maps each level's name to the shape of its axes, outermost first, as in
+  `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
+  is one axis. A level name that no keyword spells goes in a mapping passed
+  positionally, as `BatchSpec(spec, {"my level": 2})`. Replace
+  `BatchSpec(spec, ((4,), (100,)), ("chain", "draw"))` with
+  `BatchSpec(spec, chain=4, draw=100)`, and
+  `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
+  `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
+  mapping, and the repr is the keyword call. `dataclasses.replace` no longer
+  rebuilds a `BatchSpec`; use `copy.replace` on Python 3.13 or later, or
+  construct a new one.
+- **A string shape is one dimension.** `NumericArraySpec("loc")` is
+  `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
+  and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
+  rank-0 shape. A dimension name must be a Python identifier, so
+  `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
+  `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
+  and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
+  a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
+  level names, or axis counts are taken, so pass a tuple or a list. A
+  `PyMCModel` names the symbolic dimensions of a variable whose name is not
+  an identifier by replacing each other character with `_`, so a nested
+  model's `sub::beta` has the dimension `sub__beta_0`, where it was
+  `sub::beta_0`.
+- **A sequence of names is a str or a sequence of str.**
+  `score_posterior(metrics=...)`, `add_mcmc_diagnostics(metrics=...)`, and
+  `simulation_based_calibration(observed=...)` read their names as level names
+  are read. A set, an iterator, `bytes`, or a mapping raises `TypeError`, where
+  a set was read in an arbitrary order and a mapping by its keys, so pass a
+  tuple or a list.
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
+- **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
+  `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
+  every column is numeric and no explicit non-numeric `element_spec` vetoes it,
+  as `Record(...)` returns a `NumericRecord`. A view over numeric fields, such
+  as a field that `select` takes from a mixed batch or a `Design`, is a
+  `NumericRecordBatch` too. Such a batch has `to_vector`,
+  where it was a plain `RecordBatch` before. Replace a check of
+  `type(batch) is RecordBatch` with `isinstance(batch, RecordBatch)`.
+- **A term marks each NumPy array it stores read-only.** Constructing a term
+  from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
+  family, sets the array's `writeable` flag to `False` in place. A write into
+  that array afterwards, through the caller's handle or through `.raw()`,
+  raises `ValueError: assignment destination is read-only`, where it used to
+  change the term. To keep a writable array, pass a copy,
+  as in `NumericArray("x", values.copy())`. A pandas or xarray container is
+  stored by reference as before.
+- **A relabeled or dimension-bound copy of a law draws together with the law
+  it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
+  `with_dim_sizes` returns together with the law it is made from, as it draws a
+  law that `with_path_names` returns. Each method returns the same law under a
+  new label, new dimension names, or bound dimensions. So
+  `f(d, d.with_label("e"))` evaluates `f` on one draw of `d` per repetition,
+  where it drew two independent values before, and
+  `d.with_path_names(x="y").with_dim_sizes(n=3)` and
+  `d.with_dim_sizes(n=3).with_path_names(x="y")` both draw with `d`. A law read
+  from a `Record` field draws with the law the record stores, so
+  `f(r["x"], r["x"])` also evaluates `f` on one draw. To draw two independent
+  values, construct the law twice.
+- **A distribution is immutable, as every tracked term is.** Assigning to or
+  deleting an attribute of a constructed law raises `AttributeError`, naming
+  its class, and an operation that changes a law returns a new one. A
+  subclass's `__init__` assigns its attributes as before. Replace an
+  assignment after construction as follows:
+  - Pass the value to the constructor and build a new law with it.
+  - Write a diagnostic or a validation result into the `annotations` store,
+    which stays writable.
+  - In a test, patch a method on the law's class:
+    replace `patch.object(law, "_sample", ...)` with
+    `patch.object(type(law), "_sample", ...)`.
+- **`simulation_based_calibration` calibrates any posterior, takes its
+  randomness from the enclosing workflow scope, and reads a fit's budgets from
+  `method_options`.** Its signature is
+  `simulation_based_calibration(model, *, observed, num_simulations, num_posterior_draws, posterior=None, method=None, method_options=None)`.
+  A `posterior` kernel, such as an amortized posterior, is evaluated at each
+  replication's observed values, with no fit: its given slots take the observed
+  fields of their names, and a kernel with one given slot, such as an amortized
+  posterior's `observation`, takes the one observed field. Without `posterior`,
+  each replication fits `model` with
+  `condition_on.with_options(method=method, method_options=method_options)`.
+  A `method` or `method_options` beside `posterior` raises `ValueError`. Each
+  replication draws `num_posterior_draws` times from its posterior with
+  `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
+  by its weights. The function claims the workflow-owned random events of the
+  enclosing scope in program order: one
+  `sample(model, sample_shape=(num_simulations,))` draws the `θ★` and `y` of
+  every replication, and then each replication forms its posterior and draws
+  from it. A call inside `workflow_run(seed=...)` therefore reproduces its
+  ranks, and an unscoped call draws afresh.
+  - `key` is removed: replace
+    `simulation_based_calibration(model, ..., key=jax.random.key(0))` with the
+    call inside `with workflow_run(seed=0):`.
+  - The keyword budgets are retired, and a keyword other than the named
+    parameters raises `TypeError`: replace
+    `simulation_based_calibration(model, ..., num_warmup=500)` with
+    `simulation_based_calibration(model, ..., method_options={"num_warmup": 500})`.
+  - `num_posterior_draws` sets the number of draws, and no longer sets an MCMC
+    method's `num_results`, so the chain length goes in `method_options`, as
+    `{"num_results": 2000}`. The draws are drawn at random from the chains'
+    atoms, and `SBCResult.num_posterior_draws` is `num_posterior_draws`, where
+    it counted every atom of every chain. The ranks need nearly independent
+    draws, so `num_posterior_draws` should not exceed the chains' effective
+    sample size.
+- **A tracked term's identity is its `label`.** A term's label is read as
+  `.label` and replaced with `with_label`, whose provenance records
+  `old_label` and `new_label`. Every constructor takes the label as its first
+  argument `label`, so `Normal("x", 0.0, 1.0)` reads as before and its keyword
+  form is `Normal(loc=0.0, scale=1.0, label="x")`, and the factories that label
+  a term take `label` the same way, such as `function(label=...)`,
+  `conditional_distribution(label, fn)`, and `RecordBatch.stack`. A
+  `Function`'s result label is `output_label`, and a provenance parent records
+  the label as `ParentInfo.label`, which `Provenance.to_dict` serializes under
+  `"label"`. `name` stays for the identifiers that are matched or looked up: a
+  component, a field, or a level, and a method's, a route's, or an operation's
+  registry key. Replace a term's `.name`, `with_name`, and `name=` with
+  `.label`, `with_label`, and `label=`, and a function's `output_name` with
+  `output_label`.
+- **`with_resampling` takes its randomness from the workflow scope.** Its `seed`
+  parameter is removed: each resampling is a workflow-owned random event, so
+  `workflow_run(seed=...)` reproduces the resampled particles, and another seed
+  or an unscoped run resamples afresh. Replace
+  `iterate(with_resampling(step, seed=0), ...)` with
+  `iterate(with_resampling(step), ...)` inside `workflow_run(seed=0)`.
+- **Every inference method takes its seed from the workflow scope.** Each run of
+  an inference method, and each training of an amortized learner, draws its
+  seed from a workflow-owned random event. `workflow_run(seed=...)` therefore
+  reproduces it, and another seed or an unscoped call runs afresh.
+  - The `random_seed` method option is removed from `blackjax_nuts`,
+    `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`,
+    `blackjax_sgld`, `blackjax_sghmc`, `tfp_nuts`, `nutpie_nuts`, `pymc_nuts`,
+    `pymc_advi`, `cmdstan_nuts`, and `pyabc_smcabc`, and setting it raises the
+    `TypeError` of an unknown option.
+  - The `random_seed` parameter is removed from `rwmh`, `elliptical_slice`,
+    `condition_on_nutpie`, `learn_amortized_posterior`,
+    `learn_amortized_likelihood`, and `learn_amortized_ratio`, so the learners
+    no longer train at the seed 0 by default. A `random_seed=` or `seed=`
+    keyword raises the `TypeError` of an unexpected keyword, including in the
+    keywords that `condition_on_nutpie` passes to `nutpie.sample` and the
+    learners pass to `approximator.fit`.
+  - `pymc_advi` seeds the draws of an empirical result from the run's key, so
+    `workflow_run(seed=...)` reproduces them.
+  - `pyabc_smcabc` with a sampler whose workers run in other processes gives
+    each worker its own JAX keys, folded from the worker's numpy generator, so
+    the workers no longer repeat one another's prior draws and simulations.
+
+  Replace
+  `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.with_options(method_options={"num_results": 500})(model, data)`
+  inside `workflow_run(seed=0)`, and
+  `learn_amortized_posterior(prior, simulator, random_seed=0)` with
+  `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
+- **A result names each component by what its value means.**
+  - `mean`, `variance`, and `quantile` name each component of the law's event
+    by their call. The mean of a law over `mu` and `tau` is a record whose
+    fields are `mean(mu)` and `mean(tau)`, and the mean of a law over `theta` is
+    declared under `mean(theta)`: replace `mean(posterior)["mu"]` with
+    `mean(posterior)["mean(mu)"]`. A plug-in call such as
+    `predict(**mean(posterior))` names its keywords instead.
+  - `cov` is declared under the call on every component of the event, as
+    `cov(mu, tau)`, and `expectation(d, f)` under `mean(c)` for each component
+    `c` of `f`'s output declaration.
+  - A batch of draws is declared under the event's components, where it was
+    declared under `sample`.
+  - `OutputSpec` takes a positional `DistributionSpec`,
+    `ConditionalDistributionSpec`, or `BatchSpec` of a record or a law, which
+    exposes the term's components: a law's event components, or a batch
+    element's. `condition_on`, `marginal`, `convert`, and `mixture` declare the
+    law they return in this form, so its components are its event's, where
+    each was declared under the operation's name. `factor`, `joint`,
+    `random_log_prob`, `random_unnormalized_log_prob`, and the Bayes stage of
+    `condition_on` declare none, and the returned law carries its own.
+  - A repr writes names that are no Python identifiers, such as `mean(mu)`,
+    in order inside one `**{...}` mapping, as in
+    `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+- **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
+  from the workflow scope.** The three drop their `key` parameter, and a `key=`
+  keyword raises `TypeError`. A call claims one workflow-owned random event of
+  the enclosing workflow scope, as a call without a key did. A call inside
+  `workflow_run(seed=...)` therefore reproduces its result, and a call outside
+  every scope draws afresh. `score_posterior` claims the event only when it
+  scores `sliced_wasserstein`. Move a call that passed a key into a seeded scope,
+  so `predictive_check(likelihood, posterior, test_fn, y, key=jax.random.key(0))`
+  becomes
+
+  ```python
+  with workflow_run(seed=0):
+      check = predictive_check(likelihood, posterior, test_fn, y)
+  ```
+
+  The scope derives the call's key from the seed and the call's position in the
+  scope, so the result differs from the one the old key gave.
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
+  skipping sliced Wasserstein when the reference has no draws, remains
+  compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
   alone decides the packaging. The form with several keywords, which exposed a
   record of them, raises `TypeError`: replace `OutputSpec(a=a_spec, b=b_spec)`
@@ -20,6 +352,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `r.with_path_names(mu="loc")` with `r.with_path_names({"g/mu": "loc"})`. A
   top-level node whose name recurs deeper, which no key could address, is
   renamed by its name.
+- **A `Function` is constructed from its label and its callable, and declares
+  its sides with `InputSpec` and `OutputSpec`.** Construct with
+  `Function(label, fn, *, input_spec=None, output_spec=None, output_label=None, ...)`.
+  The label is required, and `@function` takes it from the decorated
+  callable's `__name__`. `FunctionSpec` stores an `InputSpec` and an
+  `OutputSpec`, and the Function template properties are removed. The removed
+  constructor keywords `input_template`, `output_template`, and `seed` are
+  ignored, and `func` replaces `fn`, with a `FutureWarning` that points at the
+  caller's line; `label` and `fn` stay required.
+  - A bare `RecordSpec` exposes its fields, and any other bare term spec
+    declares one whole component under `output_label`, which defaults to the
+    label given at construction and is kept by `with_label`. An array stays an
+    array, and a one-field record stays a record.
+  - Each call completes a type hole, the dtype and the support a declared
+    array leaves unset, and the symbolic output dimensions from the term it
+    returns. The completed declaration survives sweeps and broadcasts, a
+    returned function's declaration included. `__call__` copies and relabels a
+    returned tracked term, and `apply` returns it as it is.
+  - `Function` and `FunctionSpec` are defined in `probpipe.values`, and the
+    engine moves from `core/_workflow_*` into `probpipe.functions`, with no
+    shims for the old imports. `probpipe.core.node` keeps `Node` and
+    `InputFrozenError` and no longer exports `Function`, `function`, `Module`,
+    `AbstractModule`, `workflow_method`, or `abstract_workflow_method`: import
+    them from `probpipe`. The invocation logger is
+    `probpipe.functions._function`, so a handler or a filter configured for
+    `probpipe.core.node` names it instead.
+  - Declaration fingerprints and replay anchors change, so regenerate
+    persisted artifacts.
+  - `Module`, `AbstractModule`, and both method decorators are experimental. A
+    module method infers its return as a function does and labels its result
+    by the method's name.
+- **A replay anchor stores a function's declarations under
+  `signature_and_declarations`.** The callable anchor that a call's provenance
+  records for `replay_run` stored the function's signature and its input and
+  output declarations under `signature_and_templates`. `replay_run` refuses an
+  anchor recorded before this change with `ReplayCompatibilityError`, as it
+  already refuses one recorded for a function that declares an output, since
+  that anchor's digest included the names its fingerprint now leaves out.
+  Record the call again to replay it. An anchor of another callable definition
+  ABI is refused before its fields are read, and the error names the ABI this
+  version reads.
+
 - `event_template` is removed from every distribution, so a law's event
   declaration is the one schema it records. Read the declaration instead:
   replace `law.event_template` with `law.event_spec.spec` for a law that draws
@@ -38,13 +412,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `NumericRecord` or a `NumericRecordBatch` whatever its number of fields, so
     a one-field record no longer comes back as a bare array. `treedef` follows
     the same rule.
-  - A Function with an output template checks a returned distribution as it
-    checks a returned record. The record the law's components form must match
-    the template's fields and shapes, a dtype the template sets admits a
-    same-kind cast, and a support it sets must hold the law's. Before, the law's
-    `event_template` had to equal the template, and a parametric family's
-    template carried no dtype or support, so a template that set either
-    rejected such a law.
+  - A Function declares a returned law with `DistributionSpec`; matching uses
+    event-declaration unification, including packaging, component names,
+    dimensions, and same-kind dtypes. Where both are declared, a declared
+    support must contain the returned law's, component by component, and the
+    returned law retains its own declaration through calls and lifting.
   - The BayesFlow learners accept a prior whose declaration is numeric,
     whatever its class, and raise `TypeError` for any other before simulating.
 - `NumericRecord.from_vector` and `NumericRecordBatch.from_vector` name their
@@ -59,15 +431,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `_tfp_dist` after `TFPDistribution.__init__` passes its own `event_spec`.
   - A bare `RecordSpec` exposes its fields, even when it has one, and any other
     term spec is a whole-term event whose component defaults to the law's
-    name. A law that draws one array, such as a parametric family, therefore
+    label. A law that draws one array, such as a parametric family, therefore
     declares a whole term. A component name follows the rule for a record's
     field names, so it is non-empty and has no `/`, and an `InputSpec` slot
-    name must still be a Python identifier. A name with a `/` therefore raises
+    name must still be a Python identifier. A label with a `/` therefore raises
     `ValueError` for every law whose whole-term component defaults to its
-    name, which is new for laws such as an `EmpiricalDistribution` of opaque
+    label, which is new for laws such as an `EmpiricalDistribution` of opaque
     atoms, a `SimpleGenerativeModel`, or a `MinibatchedDistribution`.
-  - `with_name` no longer moves the event component, so a renamed family keeps
-    its event component, and indexing it by that component still returns it.
+  - `with_label` no longer moves the event component, so a relabeled family
+    keeps its event component, and indexing it by that component still returns it.
   - `event_shape` is defined only for a law that draws a single array. It raises
     `ValueError` for unbound dimensions and `AttributeError` for any other draw,
     so `hasattr(law, "event_shape")` is `False` for a law that draws a record. A
@@ -99,7 +471,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the exposed form, and matches a law by unifying the two declarations. An
     unset dtype accepts any dtype and a set one a same-kind cast, sizes agree,
     and support is not compared. `DistributionSpec(RecordSpec(x=()))` therefore
-    no longer matches a `Normal` named `x`, which declares a whole term.
+    no longer matches a `Normal` labeled `x`, which declares a whole term.
   - `law[name]` returns a whole-term law itself under its component, as
     `law[(name,)]` does, and raises `KeyError` under any other key.
     `RecordSpec.infer_from` gives a distribution-valued field the law's own
@@ -107,25 +479,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fingerprints of distribution specs change, since they hash the packaging and
     the component, so cached results keyed on these fingerprints are
     invalidated.
-- A distribution's name is the required first argument of every constructor
+- A distribution's label is the required first argument of every constructor
   the design keeps, so `Normal("x", 0.0, 1.0)` replaces
-  `Normal(0.0, 1.0, name="x")`. A keyword `name=` still binds.
+  `Normal(0.0, 1.0, name="x")`. A keyword `label=` still binds.
   - The constructors are those of the parametric families and
     `TFPDistribution`, the empirical and bootstrap laws, `KDEDistribution`,
     `TransformedDistribution`, the random functions and measures,
     `MinibatchedDistribution`, `StanModel`, and `PyMCModel`.
-  - A call without a name raises `TypeError`, since no kept class derives
-    one, and so does a call that passes a keyword `name=` after positional
+  - A call without a label raises `TypeError`, since no kept class derives
+    one, and so does a call that passes a keyword `label=` after positional
     arguments. A call in the old order whose first data argument binds to
-    `name` fails as well, with `TypeError` or with a constructor's own
+    `label` fails as well, with `TypeError` or with a constructor's own
     `ValueError`: `MultivariateNormal(loc, scale_tril)`, for example, raises
     `ValueError`, since it then finds neither `scale_tril` nor `cov`.
-  - A law that `expectation` constructs is named `expectation`, for the
-    operation, and a result of the Gaussian random-function algebra is named
+  - A law that `expectation` constructs is labeled `expectation`, for the
+    operation, and a result of the Gaussian random-function algebra is labeled
     from its operands, as `sum(f,g)`.
   - The joints, `BroadcastDistribution`, `DistributionArray`, `SimpleModel`,
     `SimpleGenerativeModel`, and `ApproximateDistribution` keep a keyword
-    `name`, and `BayesFlowModel` takes none and derives its own.
+    `label`, and `BayesFlowModel` takes none and derives its own.
 - The distribution classes and the distribution capability protocols take no
   type parameter. A draw's type follows from the distribution's event
   declaration, so a parameter could record only the declaration's kind.
@@ -156,8 +528,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its separate wrapper; `NumericRecordSpec` replaces `NumericEventTemplate`.
   Replace `ValueSpec` with `TermSpec` in custom specs. Dimension binding returns
   a refined spec, `with_dim_sizes` permits partial substitution, and `with_dim_names`
-  renames symbols throughout nested declarations. Existing live function and
-  distribution template APIs retain their signatures for their later migration.
+  renames symbols throughout nested declarations.
   Moving and renaming schema classes changes their fingerprints and those of
   containing terms; affected persisted provenance fingerprints no longer match.
   A custom `NumericSpec` implements `_vector_size`; the public `vector_size`
@@ -272,19 +643,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method subclassing `UnaryDispatchMethod` directly must declare `exact`
   itself.
 
-- Names are set at construction and preserved by structural transforms;
-  `with_name` is the sole renaming operation. The `name_is_auto` attribute,
-  constructor keywords, and carried state are removed. `auto_name` now returns
+- Labels are set at construction and preserved by structural transforms;
+  `with_label` is the sole relabeling operation. The `name_is_auto` attribute,
+  constructor keywords, and carried state are removed. `auto_label` now returns
   only the resolved string. Existing pickles carrying the removed state are
   unsupported.
 
-- **A batch's name is its first argument, and construction takes the axis
+- **A batch's label is its first argument, and construction takes the axis
   partition rather than the sizes (#398).** Two changes to the same signatures.
 
-  `Record(name, fields)` and `Opaque(name, value)` put the name first;
+  `Record(label, fields)` and `Opaque(label, value)` put the label first;
   `NumericArray` and all five batch forms took it as a keyword. They now match —
   `RecordBatch("draws", columns, "draw", element_spec=...)`,
-  `NumericArray("x", values)` — with the name and the data positional-only, as
+  `NumericArray("x", values)` — with the label and the data positional-only, as
   `Record`'s are, and the level names still acceptable either way.
 
   `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
@@ -318,15 +689,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field of a record, and `"field" in drawn` is now
   `"field" in drawn.event_template`. A single draw is unchanged.
 
-- **Every batch requires a name (#398).** `RecordBatch`, `NumericRecordBatch`,
+- **Every batch requires a label (#398).** `RecordBatch`, `NumericRecordBatch`,
   `OpaqueBatch`, and `FunctionBatch` defaulted to their own lowercased class name,
-  so a pipeline full of them read `recordbatch` / `opaquebatch` — a name that says
+  so a pipeline full of them read `recordbatch` / `opaquebatch` — a label that says
   what the object *is*, which its type already says, and nothing about which one it
   is. `NumericArray` and `NumericArrayBatch` require one for the same reason.
 
-  A name is now given, or derived from something that carries meaning. `stack`
+  A label is now given, or derived from something that carries meaning. `stack`
   derives one from the records it stacks, so no call site has to invent it, and a
-  structural transform carries the name forward with the flag saying where it came
+  structural transform carries the label forward with the flag saying where it came
   from rather than dropping it for a default that no longer exists.
 
   The distribution-side placeholders (`DistributionArray`, `EmpiricalDistribution`,
@@ -359,23 +730,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anonymous, and nested `workflow_run` scopes derive keys from stable call,
   source, and logical-unit identities. All omitted-key sampling, conversion,
   validation, and diagnostics routes use the same broker. Explicit sampling
-  keys and inference `random_seed` arguments remain caller-owned, are passed
-  through unchanged, and do not advance the workflow stream. A wrapped user
-  callable's own `seed` parameter is still an ordinary input.
+  keys remain caller-owned, are passed through unchanged, and do not advance
+  the workflow stream. Each run of an inference method draws its seed from the
+  stream, as the entry "Every inference method takes its seed from the
+  workflow scope" states. A wrapped user callable's own `seed` parameter is
+  still an ordinary input.
 
-  `score_posterior(..., key=None)` no longer uses a fixed
-  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
-  the same ownership rule: a bare score receives a fresh ephemeral root, while
-  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
-  explicit `key=`) to remain reproducible.
-
-  Omitted-key `predictive_check`, `simulation_based_calibration`, and `add_ppc`
-  certify only the exact built-in `GLMLikelihood` data generator. Custom or
-  otherwise opaque likelihoods, including subclasses, must pass `key=`
-  explicitly; inheriting `generate_data` does not certify that a subclass's
-  sampling still matches the built-in stochastic-effect descriptor. The
-  omitted-key route also requires that exact likelihood to carry its stored
-  design matrix.
+  `score_posterior` no longer uses a fixed `jax.random.PRNGKey(0)` for sliced
+  Wasserstein projections. It now follows the same ownership rule: a bare score
+  receives a fresh ephemeral root, while benchmark scoring must run inside
+  `workflow_run(seed=...)` to remain reproducible.
 
   PPC test functions must have unique `__name__` values because those names
   label the returned statistics; use distinct named functions instead of
@@ -415,7 +779,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that do not stack numerically fell to a single-field `RecordBatch` keyed by the
   function's name — the burial the output boundary otherwise stopped doing — and
   it was the one aggregation that left the result auto-named. Opaque rows now give
-  an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
+  an `OpaqueBatch` and callable rows a `FunctionBatch`, both labeled for the
   function as every other aggregation already was.
 - **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
   raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
@@ -424,7 +788,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
   what kind it holds, and every element spec holds vacuously of none.
 
-  `Record()`, `EventTemplate()`, and `OpaqueBatch(name, [], level)` are legal as a
+  `Record()`, `EventTemplate()`, and `OpaqueBatch(label, [], level)` are legal as a
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
@@ -484,9 +848,602 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function`, `NumericArray`, or `Opaque` gets it back as itself, as a `Record`,
   `Distribution`, or `Batch` always did. A declared `output_template` still
   shapes the result, being a caller's declaration rather than a default.
+- **The ArviZ data of an MCMC result name each component.** The `posterior` and
+  `warmup` groups under `annotations["arviz"]` held the draws as one flat
+  variable `params`, so `arviz_stats.summary` reported `params[0]`,
+  `params[1]`, and so on. Each leaf of the target is now its own variable,
+  named by its path with `.` between the parts, as `K` or `params.a`, since a
+  `DataTree` variable has no `/` in its name. Replace
+  `annotations["arviz"]["posterior"]["params"]` with the leaf's variable.
+- **`predictive_check` takes the kernel of the observations and a law over its
+  given slots.** A replication is a draw of the kernel's event from
+  `kernel * law`, so a model `likelihood * prior` is checked with its own
+  likelihood: the posterior as the law gives a posterior predictive check, and
+  the prior gives a prior predictive check. Replace
+  `predictive_check(posterior, simulator, test_fn, y, num_observations=n)` with
+  `predictive_check(likelihood, posterior, test_fn, y)`.
+  - The kernel's event declares the shape of a replication, so
+    `num_observations` is removed.
+  - `test_fn` is renamed `test_fns` and takes one statistic or a sequence of
+    them, all computed on the same replications. A sequence nests each
+    statistic's result under its name, as in `check["max_count/p_value"]`.
+  - The observed data is a replication's value or a mapping from the kernel's
+    components to their values, as `condition_on` takes it.
+  - A law that leaves a given slot unfilled raises `ValueError` naming the slot.
+  - The workflow supplies an omitted `key` for every kernel.
+- **`add_ppc` takes the kernel as `kernel=`.** Replace
+  `add_ppc(posterior, test_fns, y, generative_likelihood=simulator, num_observations=n)`
+  with `add_ppc(posterior, test_fns, y, kernel=likelihood)`. Its statistics
+  read one set of replications.
+- **`GenerativeLikelihood` is removed from `probpipe.core.protocols`.** The
+  observations of a model are a `ConditionalDistribution`, built with
+  `conditional_distribution` and composed with a prior as `likelihood * prior`.
+  The certification of a data generator for an omitted key is removed with it.
+
+- **`Function` controls now live outside user call kwargs.**
+  `@function(...)` configures definition-time controls, and
+  `workflow.with_options(...)(...)` is the call-time override API for
+  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
+  functions may now declare and receive those names as ordinary
+  parameters. Passing those names as call kwargs no longer configures
+  ProbPipe controls; use `workflow.with_options(...)(...)` instead.
+- **`Function.workflow_kind` and `Module.workflow_kind` now require
+  `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
+  and `None` are no longer accepted and now raise `TypeError`; use
+  `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
+  The old `parallel=` / `vectorize=` keyword guard on `Function` was
+  also removed, so those names are no longer specially reserved by the
+  constructor.
+- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
+  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
+  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
+  ``method="blackjax_rwmh"``.
+- **Sample-count / observation-count terminology unified
+  across the codebase.** Several adjacent concepts had drifted into
+  different naming styles (`.n`, `num_draws`, `n_samples`, `n_iter`,
+  `n_simulations`, `n_replications`, `num_steps`). Audited and
+  consolidated under three canonical names per concept:
+
+  *Finite-sample distribution size.* `.n` is gone. Use
+  **`num_atoms`** for any empirical-measure size (one atom = one
+  stored realisation): `EmpiricalDistribution.num_atoms`,
+  `RecordEmpiricalDistribution.num_atoms`,
+  `JointEmpirical.num_atoms`, `BootstrapDistribution.num_atoms`,
+  `KDEDistribution.num_atoms`, `BroadcastDistribution` family +
+  marginals — all expose `num_atoms`. `ApproximateDistribution`
+  inherits `num_atoms` (total chain×draw count) and additionally
+  exposes `num_draws` (draws *per chain*).
+
+  *Bootstrap replicate size.* Use **`replicate_size`** for the number
+  of items in each bootstrap replicate:
+  `BootstrapReplicateDistribution.replicate_size`,
+  `RecordBootstrapReplicateDistribution.replicate_size`. The
+  constructor kwarg changes from ``n=`` to ``replicate_size=``; the
+  related ``source_n`` property becomes ``source_size``. Callers that
+  previously wrote ``BootstrapReplicateDistribution(data, n=N)`` will
+  now get a ``TypeError`` and must rename to ``replicate_size=N``.
+  (`replicate_size`, not `num_observations`: the resampled items come
+  from an arbitrary source — parameter samples, function values, etc. —
+  so "observations" would overclaim.)
+
+  *Generative-likelihood observation count.*
+  ``generate_data(params, n_samples, ...)`` is now
+  ``generate_data(params, num_observations, ...)`` across the
+  `GenerativeLikelihood` protocol, `GLMLikelihood`,
+  `SimpleGenerativeModel`, and `predictive_check` (the latter's
+  `n_replications` kwarg also becomes `num_replications`).
+
+- **Inference-method count kwargs unified under `num_*`.** Several
+  inference methods exposed `n_*`-style kwargs out of sync with the
+  rest of the registry (which uniformly used `num_results` /
+  `num_warmup` / `num_chains`). Renamed:
+  - `blackjax_sgld` / `blackjax_sghmc`: `num_steps=` → `num_results=`
+    (SGMCMC produces one chain draw per step; the kwarg matches
+    every other MCMC backend now).
+  - `sbi_learn_conditional` / `sbi_learn_likelihood`: `n_iter=` →
+    `num_iterations=`, `n_simulations=` → `num_simulations=`.
+  - `sbi_learn_conditional` posterior-sampling default
+    `n_samples=` → `num_results=`; `DirectSamplerSBIModel.__init__`
+    and `condition_on(direct_sampler_model, ...,
+    n_samples=...)` likewise.
+
+  Internal `sbijax.simulate_data(..., n_simulations=...)` /
+  `sbijax.fit(..., n_iter=...)` / `sbijax.sample_posterior(...,
+  n_samples=...)` calls keep their native sbijax kwarg names —
+  only the probpipe-facing surface changes.
+
+  Bug fix bundled with the rename: `tests/test_sbijax.py` was
+  calling `condition_on(nle_model, obs, method="tfp_nuts",
+  n_samples=500, n_warmup=500, n_chains=2, ...)` — the MCMC backend
+  silently ignored those kwargs (it expects `num_results=` /
+  `num_warmup=` / `num_chains=`) and the test passed by accident.
+  Fixed.
+
+- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS,
+  plus inference-method priority re-anchoring.** Several entangled
+  changes consolidated into a single migration:
+
+  *Auto-dispatch winner switches to BlackJAX NUTS.* `blackjax_nuts`
+  (priority 85, tier 81–90) wins auto-dispatch for any
+  `SupportsLogProb` + JAX-traceable target — the canonical ProbPipe
+  model class. `tfp_nuts` / `tfp_hmc` are demoted to the opt-in-only
+  sentinel (`priority=0`); they stay registered and reachable via
+  `method="tfp_nuts"` / `method="tfp_hmc"` for bit-pattern regression
+  checks or side-by-side comparisons.
+
+  *Structurally-unreachable methods demoted to `priority=0`.* Methods
+  whose `check()` is identical to a higher-priority sibling can never
+  win auto-dispatch — they're opt-in in effect. Made that explicit:
+  `blackjax_hmc` (same `check()` as `blackjax_nuts`) and
+  `blackjax_sghmc` (same `check()` as `blackjax_sgld`, which is also
+  the simpler default — fewer tuning dials) are now opt-in only.
+
+  *VI demoted to opt-in.* `pymc_advi` (was priority 25) is now
+  `priority=0`. VI is a deliberate bias-for-speed tradeoff that users
+  should pick explicitly via `method="pymc_advi"`; silently dispatching
+  into it when (e.g.) `pymc_nuts` happens to fail would surface VI in
+  MCMC's place.
+
+  *NUTS-tier numbers retuned.* `nutpie_nuts` 85 → 88 (top of the
+  optimised-backend tier — Rust gradients are the fastest of every
+  registered NUTS backend); `pymc_nuts` 81 → 82 (ties with
+  `cmdstan_nuts` at 82; the two apply to disjoint model classes so
+  the tie is documentary).
+
+  `tfp_rwmh` (gradient-free RWMH) is unchanged at priority 55 — the
+  gradient-free-MCMC migration to BlackJAX is queued separately.
+
+  Migration: an existing `condition_on(model, data)` call that
+  previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
+  posterior is asymptotically identical but the per-seed bit pattern
+  differs. Pin `method="tfp_nuts"` for bit-pattern regression. The
+  closed-form correctness gate (mean within ~3 σ_MC, variance within
+  10% on a known 2-D Gaussian target) is tested under
+  `tests/test_blackjax_mcmc.py`. Existing `condition_on(...,
+  method="pymc_advi")` / `method="blackjax_hmc"` /
+  `method="blackjax_sghmc"` calls continue to work — only the
+  auto-dispatch path changes.
+
+- **Distribution & Record hierarchy cleanup (#200).** Implements the
+  integrated cleanup plan as six self-contained commits. The public-
+  facing changes are:
+  - **`Distribution.validation_results` is removed.**
+    `predictive_check` now writes its per-invocation payload to
+    `dist.auxiliary["predictive_check/check_N"]` (a wrapped
+    `xarray.Dataset` under a numbered group). Future validation
+    functions (LOO, WAIC, …) land under their own named groups in
+    the same `DataTree`. Code that read `dist.validation_results`
+    should read `dist.auxiliary["predictive_check"]` instead.
+  - **`flatten_value` / `unflatten_value` are now `@staticmethod` with
+    explicit kwargs.** Callers pass `event_shape=` /
+    `template=` explicitly:
+    `dist.flatten_value(value, event_shape=dist.event_shape)` and
+    `dist.unflatten_value(flat, template=dist.record_template)`.
+    The previous instance-method form (no kwargs) raises at runtime.
+  - **`_default_support` classmethods are removed** from every
+    concrete distribution (`Normal`, `Gamma`, `Poisson`, …; 24 in
+    total). Support compatibility is now checked post-construction
+    via `NumericRecordDistribution._check_support_compatible(source)`;
+    downstream code that reached for the classmethod should use the
+    instance `support` / `supports` properties.
+  - **`SimpleModel.__init__` requires a `RecordDistribution` prior**
+    (in addition to the pre-existing `SupportsLogProb` check). Priors
+    that satisfy `SupportsLogProb` but aren't `RecordDistribution`
+    raise `TypeError`. The type system can't express the intersection
+    statically, so the runtime guard is the backstop.
+  - **Default model names change from `None` to the class name.**
+    `SimpleModel()`, `SimpleGenerativeModel()`, `PyMCModel()`,
+    `StanModel()`, and `DirectSamplerSBIModel()` now default to
+    `"SimpleModel"` / `"SimpleGenerativeModel"` / `"PyMCModel"` /
+    `"StanModel"` / `"DirectSamplerSBIModel(<alg>)"` when no name is
+    supplied. The metaclass invariant requires every `Distribution`
+    instance to have a non-empty name.
+  - **`NumericRecordDistribution.event_shape` is abstract** —
+    raises `NotImplementedError` on the base. Single-leaf subclasses
+    must override directly; multi-leaf subclasses (joints) set
+    `_record_template` explicitly and never trigger the auto-build.
+    Previously the default tried to derive from `event_shapes`,
+    which looped back through `record_template`.
+  - **`ProductDistribution` and `SequentialJointDistribution`
+    conditionally mix in `NumericRecordDistribution`** based on
+    their resolved leaves. Both stay rooted at the general
+    `RecordDistribution` (their content is well-defined for
+    non-numeric leaves too — sampling produces a `Record` keyed by
+    component name, conditioning and named-component access always
+    work). When *every* leaf is itself a `NumericRecordDistribution`,
+    the dynamic class factory adds `NumericRecordDistribution` to the
+    bases, so the joint also exposes the numeric API (`event_size`,
+    `flatten_value` / `unflatten_value`, `as_flat_distribution`,
+    `dtypes`, `supports`). For mixed or non-numeric leaves those
+    methods are simply absent on the instance. Leaf type constraint
+    relaxed from `NumericRecordDistribution` to `Distribution`.
+    **Caller-visible consequence:**
+    `isinstance(joint, NumericRecordDistribution)` is no longer
+    guaranteed for `ProductDistribution` / `SequentialJointDistribution`
+    instances — it returns `True` only when every resolved leaf is
+    itself an NRD (the common case). Downstream code that branched on
+    `isinstance(..., NumericRecordDistribution)` for these joints
+    should verify the new dispatch matches its expectations, or
+    switch to checking for the specific capability (e.g.,
+    `hasattr(joint, "event_size")`).
+  - **`NumericJointEmpirical` adds `NumericRecordDistribution` as a
+    mixin** (previously implicit via `JointEmpirical` only). The
+    sibling `JointEmpirical` stays on `RecordDistribution` and now
+    builds a structural template from the stored samples (object-
+    dtype leaves use `None` specs) to satisfy the metaclass
+    invariant.
+
+- **Prefect orchestration is now opt-in** (#182). The shipped global
+  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
+  instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
+  `TASK` whenever Prefect was importable). The old behaviour silently
+  enabled Prefect for any environment with Prefect on `sys.path` —
+  including environments where Prefect was pulled in as a transitive
+  dependency — and produced a confusing `httpx.ConnectError` when no
+  Prefect server was running. The new default produces no surprise
+  network traffic; users who want orchestration opt in once per
+  session or deployment:
+
+  ```python
+  import probpipe
+  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+  ```
+
+  Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
+  (`off` / `task` / `flow` / `default`, case-insensitive), which is
+  read once at import time. Per-workflow overrides remain available via
+  `@function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
+  aliases are no longer accepted in this release (see the
+  `workflow_kind` breaking entry above).
+  Migration: production callers that relied on the implicit
+  "Prefect importable → tasks enabled" path must add the one-line
+  assignment or env var above.
+
+- **`NumericRecordDistribution.dtypes` is canonical; subclasses must
+  override.** The base accessor previously returned
+  ``{name: default_float_dtype()}`` for every field of the
+  ``record_template`` (a silent lie for every integer-valued TFP
+  distribution — ``Bernoulli`` / ``Categorical`` reported
+  ``float32``). The base now raises ``NotImplementedError`` so the
+  truth direction is unambiguous; concrete subclasses declare
+  ``dtypes`` directly via the new
+  ``_spread_to_fields(value)`` helper:
+
+  ```python
+  >>> from probpipe import Bernoulli
+  >>> Bernoulli(probs=0.5, label="x").dtype
+  jnp.int32   # was float32 (the lie)
+  >>> Categorical(probs=jnp.array([0.5, 0.5]), label="x").dtype
+  jnp.int32   # was float32
+  ```
+
+  Migration for custom subclasses: implement
+  ``dtypes`` returning ``{field: dtype}`` aligned with
+  ``record_template.fields``. The single-leaf shortcut for
+  uniform-dtype subclasses is
+  ``return self._spread_to_fields(my_dtype)``. The convenience
+  ``dtype`` accessor derives automatically.
+
+  Related cleanups landing in the same PR:
+
+  - ``supports`` is also canonical now (raises if not overridden);
+    ``support`` is a convenience that derives via
+    ``_single_field_name``. Existing single-field ``support``
+    overrides on concrete TFP-backed classes continue to work.
+  - ``record_template`` auto-build (single-field
+    ``RecordTemplate(**{name: event_shape})``) moved from
+    ``TFPDistribution`` to the base, so any concrete subclass
+    with a ``name=`` and ``event_shape`` gets a template
+    automatically.
+  - ``treedef`` derives from ``record_template`` (leaf for
+    single-leaf, ``NumericRecord`` skeleton for multi-leaf) and
+    is cached on first read.
+  - ``flat_event_shapes`` tree-walks ``event_shapes`` rather than
+    hardcoding ``[event_shape]``.
+  - ``_check_support_compatible`` reads canonical ``supports``
+    (per-field check on multi-leaf source, single-leaf message
+    preserved).
+
+- **`Distribution.batch_shape` removed.** The property is gone
+  from `Distribution` and every subclass; reads now raise
+  `AttributeError`. Collections of distributions live in
+  `DistributionArray`, which retains its own `batch_shape` (the
+  outer array shape).
+
+  ```python
+  >>> from probpipe import Normal
+  >>> hasattr(Normal(loc=0.0, scale=1.0, label="x"), "batch_shape")
+  False
+  ```
+
+  Migration: drop the read — once batched parameters were rejected,
+  it was always `()`. `GaussianRandomFunction.predict` (and every
+  `ArrayRandomFunction` subclass) now returns a `DistributionArray`
+  rather than a single batched `Normal` / `MultivariateNormal`;
+  per-cell `event_shape` is unchanged. Fully-joint predictions with
+  no extra batch axes return a 0-d `DistributionArray`; ops
+  (`sample`, `mean`, `log_prob`, …) auto-unwrap a 0-d DA to its
+  single cell, so call sites stay unchanged.
+
+- **`DistributionArray` container surface aligned with numpy / jax**
+  (#178). `iter(da)` now walks the leading axis: a 1-D array yields
+  its scalar cells (unchanged); a multi-d array yields
+  ``DistributionArray`` slices of shape ``batch_shape[1:]``,
+  mirroring ``iter(np.zeros((2, 3)))``. Use ``da.components`` for
+  flat row-major access over every cell (the pre-#178 default).
+  Adds ``DistributionArray.size`` returning ``prod(batch_shape)``,
+  matching ``np.ndarray.size`` / ``jax.Array.size``.
+
+- **`RecordDistribution.n` and `DistributionArray.n` removed.**
+  STYLE_GUIDE §1.9 reserves `.n` for finite-sample distribution
+  classes that hold a finite collection of samples / observations
+  / components (`EmpiricalDistribution`, `BootstrapDistribution`,
+  `BroadcastDistribution`, …). The two cases removed here did
+  not fit the contract: parametric `Normal(0, 1)` does not "hold"
+  any items, and `DistributionArray` is a positional collection of
+  independent cells, not a finite-sample distribution. Migration:
+  for `DistributionArray`, use `len(da)` (leading-axis size) or
+  `prod(da.batch_shape)` (total cell count) — `__repr__` now shows
+  `batch_shape=...`. For parametric distributions, drop the
+  call — it always returned `1`. Finite-sample distributions
+  retain `.n` (see STYLE_GUIDE §1.9 for the full table).
+
+- **TFP-backed distribution constructors reject batched parameters.**
+  `Normal(loc=jnp.zeros(5), scale=1.0, label="x")` (and the same
+  pattern for every other TFP-backed class — `Beta`, `Gamma`,
+  `MultivariateNormal`, `Pareto`, `TruncatedNormal`, `Binomial`, …)
+  now raises `ValueError` whenever the parameters imply a non-empty
+  TFP `batch_shape`. The framework hierarchy rule "one random
+  variable per `Distribution`" (CONTRIBUTING.md) is enforced at
+  construction time.
+
+  ```text
+  ValueError: Normal parameters imply batch_shape=(5,); wrap multiple
+  distributions in a DistributionArray instead. See
+  DistributionArray.from_batched_params(Normal, ...) (or the alias
+  Normal.from_batched_params(...)) for the factory.
+  ```
+
+  Migration: route through the
+  `DistributionArray.from_batched_params` factory (or its per-class
+  alias) added in the previous release. The factory is
+  performance-equivalent to the legacy form because the fused
+  `_TFPArrayBackend` wraps the same TFP-batched distribution under
+  the hood.
+
+  ```python
+  # Before (rejected)
+  n = Normal(loc=jnp.zeros(5), scale=1.0, label="x")
+
+  # After (recommended ergonomic form)
+  da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+
+  # After (universal entry point)
+  da = DistributionArray.from_batched_params(
+      Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+  )
+  ```
+
+  Removed associated tests that exercised the legacy form's
+  per-element support checks: ``test_uniform_support_array_bounds``,
+  ``test_half_cauchy_support_array_bounds``,
+  ``test_pareto_support_array_bounds``,
+  ``test_truncated_normal_support_array_bounds``,
+  ``test_binomial_support_array_total_count``,
+  ``test_repr_with_batch_shape``. Per-element support checks belong
+  on `Constraint` directly; batched constructions migrate to
+  `DistributionArray.from_batched_params`.
+
+  Internal infrastructure that legitimately needs the batched form
+  (the `_TFPArrayBackend` fused-storage backend, the
+  `ProbPipeConverter` dispatch, sequential-joint sampling /
+  log_prob, `GaussianRandomFunction.predict`) opts into a private
+  bypass; user code is unaffected by the bypass and always sees the
+  rejection.
+
+- **Empirical / Bootstrap / Marginal class consolidation.** The
+  generic-vs-numeric pair is collapsed into a generic ``[T]`` base
+  plus a single Record-based specialisation:
+
+  | Removed | Replacement |
+  |---|---|
+  | ``NumericEmpiricalDistribution`` | ``RecordEmpiricalDistribution`` |
+  | ``ArrayBootstrapReplicateDistribution`` | ``RecordBootstrapReplicateDistribution`` |
+  | ``_ArrayMarginal`` (private) | ``_RecordMarginal`` (private) |
+  | ``_RecordEmpiricalDistribution`` (private) | ``RecordEmpiricalDistribution`` |
+  | ``_RecordBootstrapReplicateDistribution`` (private) | ``RecordBootstrapReplicateDistribution`` |
+  | ``_RecordArrayMarginal`` (private) | ``_RecordMarginal`` (private) |
+
+  Migration: a numeric array auto-wraps as a single-field ``Record``
+  keyed by the (now mandatory) ``name=`` kwarg.
+
+  ```python
+  # Before
+  emp = EmpiricalDistribution(arr)                    # Worked
+  emp = NumericEmpiricalDistribution(arr)             # Worked
+  emp = ArrayBootstrapReplicateDistribution(arr)      # Worked
+
+  # After
+  emp = EmpiricalDistribution(arr, name="theta")       # ✓
+  emp = EmpiricalDistribution(arr)                    # ValueError: name= required
+  ```
+
+  The ``name=`` becomes the field name of the auto-wrapped
+  ``Record``; downstream code that does ``emp.samples["theta"]`` /
+  ``emp["theta"]`` then has a meaningful key. If you want to keep the
+  old call-site shape, wrap explicitly:
+  ``EmpiricalDistribution(Record(theta=arr))``.
+- **`BootstrapReplicateDistribution[T]` accepts a `SupportsSampling`
+  source.** Each replicate is ``n`` i.i.d. draws from
+  ``source._sample``. **``n`` is mandatory** when ``source`` is a
+  ``SupportsSampling`` distribution (no canonical observation count);
+  it remains optional for ``Record`` / numeric-array / ``Empirical``
+  sources, where it defaults to the source's row count.
+  ``BootstrapReplicateDistribution(Normal(0, 1, name="x"), n=50)``.
+- **`NumericJointEmpirical` no longer claims `SupportsLogProb`.** The
+  Gaussian-approximation log-density is gone — empirical distributions
+  do not advertise a density. Migration:
+  ``from_distribution(emp, KDEDistribution, ...)`` for a non-parametric
+  density, or fit a parametric distribution and call ``log_prob`` on
+  that.
+- **Distributions are non-iterable.** Codified in STYLE_GUIDE §1.11
+  with a regression test
+  (``tests/test_iteration_protocol.py``). Finite-sample subclasses
+  (see §1.9) expose stored samples via ``.samples`` / ``.draws()``
+  and ``.n``; parametric distributions do not have ``.n``.
+
+- **`Record` field ordering is now insertion-order**, not alphabetical.
+  ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
+  to ``RecordTemplate``, ``RecordBatch``, and every Record-based
+  distribution that derives ``fields`` from the underlying store.
+  Previous alphabetical ordering was an accident of
+  ``OrderedDict(sorted(...))``.
+- **`/` is reserved in `Record` and `RecordTemplate` field names.**
+  Construction-time ``ValueError``. Used as the slash-delimited path
+  separator in ``record["params/intercept"]`` style access.
+- **`Record.to_datatree()` / `Record.from_datatree(...)` removed.**
+  Use ``record.to_numeric().to_native()`` for a metadata-preserving
+  round-trip via the aux registry, or ``xr.DataTree`` directly if you
+  specifically want a DataTree.
+- **`NumericRecord(...)` (and `Record.to_numeric()`) raise `TypeError`
+  on non-coercible leaves** (strings, opaque objects). Today's
+  implicit failure inside ``NumericRecord(...)`` becomes an explicit,
+  well-messaged error at construction time.
+- **`RecordTemplate.leaf_shapes` keys for nested templates use `/`**
+  instead of ``.`` (e.g. ``"physics/force"`` instead of
+  ``"physics.force"``) for consistency with ``Record["a/b"]`` path
+  access.
+
+- **`len(RecordBatch)`** now returns the **field count** (matching
+  ``len(Record)``) instead of ``prod(batch_shape)``. For the flat batch
+  size, use ``prod(ra.batch_shape)``.
+- **`event_shapes`** now always returns ``dict[str, tuple[int, ...]]``.
+  Untemplated (legacy) distributions return ``{}``; use the singular
+  ``.event_shape`` for the whole-sample shape.
+- **`component_names` → `fields`** on every Record-based distribution and
+  model (``RecordDistribution``, ``ProductDistribution``, ``JointGaussian``,
+  ``JointEmpirical``, ``SequentialJointDistribution``,
+  ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
+  ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
+  alias.
 
 ### Added
 
+- **`notation_config.max_depth` sets how many nested levels a label or a
+  notation shows.** A label derived from other terms, such as
+  `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
+  value or law they are computed from. A rendering shows at most
+  `notation_config.max_depth` levels, 8 by default or the value of the
+  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
+  number of levels a stored expression keeps. A part nested deeper
+  shows as its label, the name of a law or a function, or as `…` for a value,
+  so a label derived through a long loop of operations stays short. Showing a
+  term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` that
+  names the setting when what they show has a collapsed part.
+- **A single int is a shape of one axis wherever a shape is taken.**
+  `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
+  `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
+  each read the int as a tuple of one, and these arguments take any sequence,
+  such as a list, a `range`, or a 1-D array. A `numpy` integer size is stored as
+  a Python `int`.
+- **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
+  warmup's step-size adaptation targets is a method option, 0.75 unless set,
+  so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
+  removes the divergent transitions of a posterior with regions of high
+  curvature. A target outside the open interval from 0 to 1 raises
+  `ValueError`.
+- **`condition_on` conditions an empirical prior exactly.** The inference method
+  `empirical_reweighting` applies Bayes' rule to a joint whose prior is an
+  `EmpiricalDistribution` over numeric atoms and whose likelihood has a
+  conditional log-density: the posterior keeps the prior's atoms, each weighted
+  by its prior weight times the likelihood of the given values there, so
+  `condition_on(likelihood * particles, {"y": y})` is a particle filter's update.
+  The method is exact, so automatic selection tries it before the approximate
+  methods and `exact_only=True` admits it. It evaluates the likelihood at every
+  atom in one `jax.vmap` when the likelihood traces.
+- **Get started and six tutorials.** The documentation site gains an
+  installation page, a quickstart that fits, checks, and forecasts the
+  Challenger O-ring model, and six tutorials that follow one analysis of a
+  Ricker model of the moose counts of 1967 to 1988:
+  1. a model of the counts, built from distributions and a conditional
+     distribution, with the operations that apply to each and the exact
+     distribution of the counts at fixed parameter values;
+  2. the fit to the counts, with MCMC diagnostics, a function lifted over the
+     prior and the posterior, and a posterior predictive check that fails;
+  3. the model revised with process noise as a stage of its own, and its
+     posterior checked with a second algorithm, with a setting of that
+     algorithm, and with the same model written in PyMC;
+  4. forecasts of the population under harvests held in a batch, the
+     probabilities of events, the sources of the forecast's uncertainty, and
+     how each result was computed;
+  5. forecasts updated as each year's count arrives, by a particle filter that
+     `iterate` runs with `with_resampling`, and the coverage of the one-year
+     forecast intervals;
+  6. a model of whole animals that can only be simulated, which `condition_on`
+     fits by SMC-ABC and `learn_amortized_posterior` fits by an amortized
+     posterior, whose intervals are checked on simulated counts.
+
+  Each notebook opens on Google Colab from its badge, and the notebook
+  job of CI gains a leg for `docs/get_started/`. A notebook links to another
+  page by its file, which the docs build rewrites to the page's URL and checks.
+- **`SBCResult.coverage(levels)`** returns, for each credible level, the share
+  of the replications whose `θ★` lies in the central interval of that level, one
+  share per parameter. It reads the ranks alone: `θ★` lies in the interval when
+  its normalized rank `(r + 0.5) / (L + 1)` does. `interval_coverage` remains the
+  check of one posterior's draws.
+- **`distribution` builds a law from a sampling function, a log-density, or
+  both.** `distribution("y", sample=simulate, event_spec=spec)` returns a law
+  whose draws are `simulate(key)`, and `log_prob=` or `unnormalized_log_prob=`
+  gives it a density of one value. The law claims `SupportsSampling`,
+  `SupportsLogProb`, or `SupportsUnnormalizedLogProb` for each function given,
+  over an event of any kind. A sample shape maps the sampler over split keys
+  with `jax.vmap`, and a sampler that does not trace in JAX, such as one that
+  calls NumPy, or that draws values that are not arrays, runs in a loop over
+  the keys. Construction draws nothing and scores no value: it checks each
+  function that traces against `event_spec` with `jax.eval_shape`, and a
+  failed check raises `ValueError`. A simulator's kernel is
+  `conditional_distribution` of a function that returns
+  `distribution(..., sample=...)`, which claims conditional sampling.
+- **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
+  writing rules for docstrings, comments, the documentation, `design/`, and PR
+  and issue text, and `design/README.md` § Conventions adds two rules for the
+  design reference alone. `CONTRIBUTING.md` § Documentation states the rules for
+  notebook output. `scripts/design/prose.py` lists the candidate breaches that
+  a script can detect, for a reader to judge, and exits with status 0 unless
+  `--strict` is given.
+- **The `check-pr` and `design-check` skills.** `check-pr` runs the pre-PR
+  checks of a branch and drafts its PR body from the template. `design-check`
+  compares the design sections a change touches with the code, through
+  `scripts/design/design_blocks.py`, the conformance tests, and the ledger. The
+  `review-pr` and `audit-tests` skills read `CONTRACTS.md` and `design/`, and
+  they cite the section that owns each rule.
+- **Checks of the contributor conventions.** The `no-issue-numbers` pre-commit
+  hook rejects an issue or PR number in `probpipe/`, and ruff's
+  `required-imports` setting requires the future import in each module of
+  `probpipe/`. The `pydoclint` pre-commit hook checks that a docstring with a
+  section documents each parameter and the returned value, and the CI lint job
+  runs it over `probpipe/`, whose docstrings pass it.
+  `tests/docs/test_changelog.py` checks that each release has one
+  heading per change type, so the Unreleased section merges its repeated
+  headings, and `tests/test_version.py` checks that the two `pyproject.toml`
+  files share one version. CI runs the conformance tests when `design/`
+  changes, reports the design ledger, and checks each PR's title, branch, and
+  body in an advisory job.
+- **A default argument of a kernel's function is an optional slot.**
+  `conditional_distribution` makes a parameter with a default an optional given
+  slot, so a constant of the model needs no closure. Binding the required slots
+  calls the function with its default, and the default's value declares the
+  slot when `given_spec` and the annotation do not. In a joint, a factor that
+  produces a component of the slot's name meets it, so one kernel serves the
+  model with the constant and the model with a prior on it:
+  `counts * prior` uses `n0=50.0`, and `counts * (prior * LogNormal("n0", ...))`
+  infers `n0`. An unmet optional slot leaves the joint unconditional.
+  `InputSpec` records the optional slots, as `InputSpec.optional`,
+  `InputSpec.required`, `with_optional`, and `without`.
+- **`AGENTS.md` and `CLAUDE.md` guide coding agents.** `AGENTS.md` maps each
+  task to the document that owns its rules, and it holds the everyday commands
+  and the verification steps, which move there from `CONTRIBUTING.md`.
+  `CLAUDE.md` imports it for Claude Code.
 - **Completing an `OutputSpec`.** A producer completes a declaration with the
   spec of the term it returns.
   - `with_spec(spec)` returns the declaration with its type set to `spec`. It
@@ -518,7 +1475,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not `Numeric`.
   - `NumericArray` gains the three members. `to_vector()` returns the array's
     elements as a 1-D vector in row-major order, and
-    `NumericArray.from_vector(name, spec, vec)` rebuilds the array that a
+    `NumericArray.from_vector(label, spec, vec)` rebuilds the array that a
     `NumericArraySpec` declares from such a vector. `from_vector` raises
     `TypeError` for a vector that is not 1-D and `ValueError` for one whose
     length is not `spec.vector_size`. Its coordinate protocols present the
@@ -555,7 +1512,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them from the event axes by its element spec, which it validates the stored
   dtype against at construction — the batch asserts that spec of every element,
   so a store that reports no single dtype cannot carry a pinned one either.
-  Selection yields a `NumericArray` under the derived name, as `RecordBatch`
+  Selection yields a `NumericArray` under the derived label, as `RecordBatch`
   yields a `Record`.
 
 - **`Opaque` — the tracked class of the opaque kind (#398).** What an operation
@@ -566,8 +1523,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged; it still hands back the object the caller put in rather than
   wrapping it.
 
-  The name is the required first argument, as a `Record`'s is: an opaque value
-  exposes nothing else that says what it is, so a default would name every one
+  The label is the required first argument, as a `Record`'s is: an opaque value
+  exposes nothing else that says what it is, so a default would label every one
   of them alike. `OpaqueSpec` moves to the same module as the class it types;
   the public import path is unchanged.
 
@@ -576,339 +1533,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so a batch stored as a `DataFrame` could not address its own elements. Backends
   now declare how to select by position, defaulting to `obj[index]`; the built-in
   `pandas` backends select through `.iloc`.
-
-### Changed
-
-- **Contributors install pre-commit as a uv tool.** The hooks are installed
-  with `uv tool install pre-commit` and then `pre-commit install`, replacing
-  `uvx pre-commit install`: its hook called an interpreter in the uv cache, so
-  every commit failed once `uv cache clean` deleted it. See
-  [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
-
-### Removed (breaking)
-
-- **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
-  `RecordBatch` / `NumericRecordBatch`.** A batched record was a `Record`
-  subclass, which made `isinstance(x, Record)` true of a collection and put a
-  batch's `len` and iteration in competition with a record's fields. The batch
-  types are `Batch` subclasses now: they hold named levels, `len` and `iter`
-  speak about the collection, and the field structure is read from
-  `event_template` where it belongs. `RecordBatch.stack` replaces
-  `RecordArray.stack`, `NumericRecordBatch.to_vector` / `from_vector` replace
-  their array counterparts, and a producer that returned a `RecordArray` returns
-  a `RecordBatch`.
-
-  `_RecordArrayView` goes with them: a field selection off a batch is an ordinary
-  batch, and sibling selections align by their shared level names rather than by
-  a parent pointer. `Design` and `FullFactorialDesign` are batches.
-
-  The batch types were built alongside the array ones and then took over, so the
-  entries below describe the batch types throughout — this is the only entry that
-  names the classes being removed.
-
-### Fixed
-
-- **A record view of a law with a joint support leaves each leaf's support
-  unset.** A record view of a `Dirichlet` gave every leaf `simplex`, which holds
-  for the joint vector only. A leaf keeps the source's support only when the
-  support holds piecewise, as a constraint with scalar parameters such as
-  `positive` does.
-- **A field view splits a slash path and takes a tuple key.** For a nested
-  product `p`, `p["a"]["b/c"]` and `p["a"][("b", "c")]` are `p["a/b/c"]`, where
-  they raised `KeyError` and `TypeError`.
-- **`iter(law)` raises `TypeError`.** Indexing made a law look like a sequence,
-  so iteration started and failed on the index `0`.
-- **A sequential joint leaves unset the support of a component that depends on
-  its parents.** The support was read off a prototype built at one draw of the
-  parents, so `x=lambda z: Uniform("x", z - 1, z + 1)` reported the interval
-  for that draw. `supports` reports `None` for such a leaf, before and after
-  conditioning, and keeps a support that takes no parameters, such as
-  `positive`.
-- **`blackjax_rwmh` adaptive warmup no longer collapses its proposal.**
-  A warmup window in which the chain barely moves leaves a singular Welford
-  covariance, and refitting the proposal to it stopped the chain for the rest
-  of the run. A window that rejected every proposal refit to a proposal scale
-  near `1e-10`; a window with fewer accepted proposals than target dimensions
-  refit to a NaN proposal in float32, which rejects every move. Windows shorter
-  than the documented 25-step minimum made the first case common:
-  `num_warmup=100` split as `[7, 13, 27, 53]`, and a 2-D standard normal
-  stopped at that warmup for about a quarter of seeds. The second case stopped
-  every chain on a 20-dimensional target at the default `num_warmup=500`. The
-  window count is now reduced until every window holds at least 25 steps, so
-  `num_warmup=100` splits as `[33, 67]` and warmups shorter than 74 steps run
-  as one window. Each refit now computes
-  `(n * Sigma_hat + 5 * Sigma_prev) / (n + 5)`, which shrinks the Welford
-  covariance `Sigma_hat` toward the covariance `Sigma_prev` that the proposal
-  in use assumes and keeps the proposal positive definite. Adaptive runs draw
-  different samples than before for a fixed seed.
-
-- Native NumPy scalars retain their original dtype and precision in
-  `NumericArray` storage and NumPy conversion. `as_jax()` and `float(value)`
-  follow JAX's x64 configuration and may round or overflow; enable x64 before
-  the first conversion when float64 is required. Python numeric subclasses
-  continue to normalise at construction, with NumPy scalars excluded.
-  Sweeps of `OpaqueBatch` or `FunctionBatch` rows pass the rows' `element_spec`
-  to the aggregate constructor, preserving declarations previously replaced by
-  defaults. Mixed batch and non-batch rows report the same schema error in
-  either order (#446).
-
-- Batched sampling preserves complete opaque events, including array-shaped
-  events, by flattening only sampling axes during aggregation (#446).
-  Object-array draws whose leading axes do not match `sample_shape` are left
-  unchanged at the batch conversion boundary, matching numeric and record draws.
-
-- Explicit-key `sample` calls accept structural `SupportsSampling` objects
-  without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic
-  name `sample`; a supplied name defaults to explicit when its naming flag is
-  absent. Single and batched raw draws retain the sampler's naming metadata
-  with either explicit or automatic keys (#446). Raw draws receive that metadata
-  during wrapping, so the name is checked at construction and sequence levels
-  retain their operation-derived names.
-
-- Sweeps returning `NumericArray`, including nested numeric operations such as
-  `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
-  preserved. When every numeric row is tracked, shared declarations survive
-  aggregation after symbolic event dimensions bind to the rows' actual shapes.
-  Differing dtypes promote together to their common NumPy dtype, independent of
-  row order, with JAX promotion for extended dtype combinations NumPy cannot
-  promote. Conflicting event shapes or supports raise an actionable error. A row
-  with an unspecified dtype leaves the aggregate's declared dtype unspecified.
-  Mixed raw and tracked numeric rows infer the aggregate's shape and dtype without adopting
-  a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
-  `NumericRecord` cache only concrete conversions, so values first converted
-  inside a JAX transform remain usable afterward (#446).
-
-- **The kind table is the single answer to which batch form a field has (#398).**
-  `RecordBatch` construction listed the admissible field kinds inline while the
-  reading end asked the registry, so registering a kind widened one and not the
-  other. Construction now asks the registry too. Aggregating a batch of rows also
-  converts each row through its own `as_jax`, whose set-once cache it was
-  bypassing by converting the raw store directly.
-
-- **A swept row of unstackable elements keeps its level (#398).** A row returning
-  a sequence of opaque objects or callables had its own batch stored whole as one
-  element of the aggregate, so the row's multiplicity vanished and a row of
-  callables came back as an `OpaqueBatch`. The row-stacking path now knows all
-  three batch families, so such a row aggregates to `(rows, row_size)` over both
-  levels and a row of callables gives a `FunctionBatch`. An empty sequence row is
-  a batch of nothing on its own level, as it already was for a single return,
-  which also settles a dispatch disagreement: the mapped path raised where the
-  row-wise path returned.
-
-- **Every density op keeps a batch operand's levels (#398).** `log_prob` restated
-  the levels its operand carried; `prob`, `unnormalized_log_prob`, and
-  `unnormalized_prob` handed back a bare array, so the same draws scored as a
-  batch over `("chain", "draw")` under one op and as one value of shape `(2, 3)`
-  under another. All four now restate them, so which op is called no longer
-  decides whether the draws were a multiplicity.
-
-- **A declared function can be swept over any kind of batch (#398).** Lifting a
-  declaration against a batched operand read `event_template`, the view only a
-  batch of records has, so a `NumericArrayBatch`, `OpaqueBatch`, or `FunctionBatch`
-  operand raised `does not expose an authoritative event_template for lifting`
-  however its declaration was written. It now reads `element_spec`, which the
-  `Batch` contract states at every kind. Two consequences: every batch kind is
-  read the same way, and a batch of one-field records no longer satisfies a
-  declaration that named a bare array — the record-only view unwrapped a
-  single-field element to its field, so `EventTemplate(v=())` accepted an operand
-  whose elements are records. A distribution operand is unchanged: it is lifted by
-  being sampled, and its event template remains what the draw is checked against.
-
-- **A swept row's kind no longer depends on which executor ran it (#398).** The
-  row-wise path gave each row the tracked class of its own kind; the mapped
-  (`jax.vmap`) path handed its rows to the aggregation raw, so a body returning a
-  mapping raised `cannot aggregate output of type dict` and one returning a
-  sequence raised a spurious row-count mismatch — under `dispatch="auto"`, on
-  bodies that worked under `dispatch="sequential"`. Both paths now read a row
-  through the same rule, and a record row crosses the map as inert columns over no
-  level of its own, the way a batch row already crossed it. A declared
-  `output_template` still names the row's kind, as before.
-
-- **Reading a distribution no longer modifies it.** `BroadcastDistribution`
-  assigned its marginal on the first `marginalize()`, and a backend-delegated
-  `DistributionArray` assigned its components on the first read, so a query
-  changed the object a caller was holding — against `C2` and the §V.1 promise
-  that an implementer's object is never modified. Each now fills a memo container
-  assigned at construction, so the result is still computed once and the term's
-  own fields stay as they were built. Both remain lazy.
-
-- **Every dispatch presents a one-field draw the same way.** A one-field
-  record-valued law — a `ProductDistribution` over a single distribution, say —
-  draws a batch of records. The row-wise paths presented each draw as its bare
-  leaf; the `vmap` path presented the record. Since the record shim carries
-  conversions but deliberately no arithmetic, a body as ordinary as `x * 2`
-  succeeded under `dispatch="sequential"` and crashed under the mapped
-  executor. All four paths now present a draw through one rule.
-
-  Design II.4 leaves the choice itself open, riding on the single-value
-  coercion question `Record` poses. What it does not leave open is that the
-  dispatches agree, which is what this restores; the bare-leaf presentation is
-  the one three of the four paths already made.
-
-- **A law that cannot report its `dtype` is probed rather than refused.** The
-  trace probe read `event_shape` and `dtype` to size a synthetic dummy. Reading
-  `dtype` was itself the refusal: `getattr(law, "dtype", None)` swallows only
-  `AttributeError`, so a law raising anything else — a
-  `SequentialJointDistribution` view raises `NotImplementedError` — failed the
-  probe and was sent to row-wise dispatch for want of a placeholder. The probe
-  now draws a sample instead, and the draw carries both.
-
-  `dispatch="jax"` consequently accepts cases it used to reject, those views
-  above all. They build each component from a Python callable, which is indeed
-  not traceable, but that runs while sampling, before the map, so only the body
-  is traced; the mapped result matches the row-wise one exactly. An empirical
-  law is unaffected, still enumerated so its exact weights are preserved.
-
-- **A body that returns a batch no longer crashes the marginalization path.**
-  Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
-  argument raised the pytree rank error out of `jax.vmap` instead of falling
-  back to sequential dispatch.
-
-  The trace probe that gates JAX dispatch models the transform its executor
-  applies, so that a body which traces cleanly bare but cannot survive the
-  transform is caught while a fallback is still available. It did that for the
-  sweep executor and not for `_broadcast_jax`, which also maps — over the draw
-  axis rather than over batch rows — so a batch-returning body passed the probe
-  and then failed inside the executor, where nothing was left to fall back to.
-  Both mapping executors are now probed under a map.
-
-- **`copy` and `pickle` no longer drop a term's annotations (#409).** `Record`,
-  `NumericRecord`, and `ProductDistribution` each reconstruct through a
-  `__reduce__` that listed its state by hand, and none of them listed
-  `_annotations`, so a copied or unpickled term came back with its annotations
-  gone — the diagnostics and inference-backend payloads written into that store
-  among them — and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
-  as well as `pickle`, so all three paths lost them.
-
-  The omission was systematic rather than careless: annotations are the one field
-  written *after* construction — the documented exception to immutability — so a
-  state list assembled from constructor arguments misses exactly this one.
-
-  So reconstruction reads the term's own state instead of a list: nothing has to
-  name a field for it to survive, and `TrackedTerm._restore_identity` — which
-  wrote identity onto an already-constructed object, bypassing both the
-  immutability guard and the write-once provenance rule for any caller who found
-  it — **is deleted**.
-
-  The container a reconstruction is handed is decoupled from the one it was built
-  from, as `with_name` already does: entries are shared, the container is not, so
-  a write on a copy does not show through on the original. Annotations still do
-  not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
-  unchanged.
-
-- **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
-  A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
-  `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was
-  invisible to `free_dims`, so `EventTemplate(law=DistributionSpec(x=("obs",)))`
-  reported itself concrete. Design II.3 draws no line at a term-spec boundary:
-  *any* symbolic entry makes a template polymorphic.
-
-  Reporting a dimension, substituting it, and binding it are now three methods
-  every `ValueSpec` answers, so the spec that declares a dimension resolves it.
-  `EventTemplate.free_dims` is the union over its children, so a name is reported
-  wherever it is declared. Three things follow. Substitution reaches through a
-  term spec, so every dimension reported is bindable. **Unification binds through
-  one too**: a spec's declaration unifies against the actual term's own, in the
-  shared binding scope, so a name inside a `DistributionSpec` is the same
-  dimension as that name beside it — it binds once, and a disagreement raises.
-  And a `BatchSpec` axis size may now be a symbolic name in that same scope,
-  bound from the actual `Batch` it is matched against, so a batch of `("n",)`
-  over arrays of shape `("n",)` is square by declaration, and a batch that is not
-  square is refused.
-
-  Each spec owns its own binding, which is what reaches a spec the schema layer
-  cannot name: `BatchSpec` lives in `_batch.py`, which imports from
-  `event_template.py`, so a type test there could report a batch axis as free
-  while nothing could bind it. Every spec that reports a dimension implements
-  both binding methods — `NumericArraySpec` and `FunctionSpec` included, which the
-  unification pass had special-cased — so the four methods are one contract
-  rather than a rule with exceptions.
-
-  A `FunctionSpec`'s output binds whatever kind it declares. Only a record
-  declaration was read before, so a callable declaring an output that contradicted
-  the input bound the input alone and reported an output schema that was wrong
-  rather than merely unbound: input `("n",)` against a declared `(3,)` and an
-  actual output of `(5,)` reported `(5,)` as `(3,)`. A non-record declaration
-  describes the one value returned, so it now meets the sole leaf of the
-  callable's output template, and several output fields do not match it.
-
-  This brings the term specs into line with `NumericArraySpec`, which has always
-  accepted a concrete value against a symbolic shape and left the sizes to the
-  single pass, per II.3's division of labor. A polymorphic term-spec declaration
-  was previously unsatisfiable: `is_valid` compared inner templates for exact
-  equality, so a symbolic declaration never matched a concrete value.
-
-  A live `Batch` still requires a concrete multiplicity — it holds elements at
-  positions — so construction refuses a polymorphic `BatchSpec`, and
-  `batch_size` raises until the dimensions are bound.
-
-- **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
-  references to the same law denote one random variable, so they must come from
-  one draw. Passing the same `Distribution` to two arguments sampled it twice
-  instead, so `f(d, d)` approximated `f(X1, X2)` — a silently wrong answer, with
-  `difference(dist, dist)` returning a spread around zero rather than zero.
-
-  Arguments were already grouped by root ancestor, as the co-sampling contract
-  requires; the grouping was then discarded for plain distributions and honored
-  only for field views. Each group is now drawn **once**, from its root, with
-  every member taking its own value out of that draw. Two further cases follow
-  from the same change: a parent passed alongside its own view no longer raises
-  (it was projected as though the parent were a view), and an empirical passed
-  twice contributes **one** enumeration axis rather than a squared grid — over
-  three atoms, `f(e, e)` enumerates 3 points instead of 9, each weighted once
-  instead of squared.
-
-  Arguments with no common root are unaffected, down to the subkeys: a group of
-  one consumes exactly one key split, as before. Only calls that were already
-  returning wrong values change their output.
-
-- **A record-valued law can be lifted.** Passing a record-valued
-  `Distribution` as an argument raised `TypeError: ... is not array-like`, from
-  two places that assumed every argument's samples were an array. Broadcast
-  assembly read the row count from the samples' `shape`, which a record batch
-  refuses unless it holds exactly one leaf; the count now comes from
-  `batch_shape`, the one accessor that means the same thing for every batched
-  value. Enumeration also stacked each argument's per-row values with
-  `jnp.stack`, which a `Record` row is not; those now stack through
-  `RecordBatch.stack`.
-
-  The first of those is what kept `f(d, d["x"])` — a parent alongside its own
-  view, the remaining co-sampling case above — from running end to end once its
-  draws were shared. Record-valued laws now lift under `auto`, `sequential`,
-  `thread`, and `jax` dispatch when the mapped body is JAX-traceable, including
-  nested sampled records and repeated roots. Exactly enumerated empirical roots
-  still report the exact-enumeration error described above under explicit
-  `dispatch="jax"`.
-
-  **The joint those lifts produce also resamples.** `include_inputs=True` keeps
-  every input beside the output, and drawing from that joint gathers the same
-  rows from each, which is what keeps a drawn tuple paired. A record-shaped
-  component has fields rather than a shape, so handing it an array of rows raised
-  `TypeError: key must be str, tuple, or int`. Every component now goes through
-  one gather that reads the container it is given: an array indexes directly, a
-  list of per-row objects gathers positionally, and a record is rebuilt from its
-  gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
-  `RecordBatch` stores its row count and a `Record` its event template, both in
-  pytree aux data, so mapping over the leaves alone would have produced a batch
-  quietly claiming the rows it started with. The same gather covers the output
-  side, where a vectorized broadcast over a record-returning function leaves the
-  output a batched `Record`. A single draw is unwrapped to one record rather than
-  a one-row batch, its field names intact.
-
-- **Value specs are fingerprinted by declaration, not identity (#381).** The
-  spec hasher now covers `RecordSpec` and recurses into a stored declaration
-  (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
-  rather than a template. The generic hasher also routes any `ValueSpec` to it,
-  so a spec reached other than as a template leaf — bare, or inside a tuple,
-  list, or mapping — records its type and declaration fields instead of falling
-  through to identity hashing. Previously such a spec hashed weakly, so two
-  *equal* declarations produced different fingerprints and silently broke jit
-  cache keys and provenance. Because a record declaration is now stored as a
-  `RecordSpec`, the digest of a template carrying a `DistributionSpec`, or a
-  `FunctionSpec` with a declared output, also changes value; fingerprints are
-  in-memory jit cache keys and provenance only, never persisted.
-
-### Added
 
 - **A sweep whose body returns a batch now vectorizes (#405).** Such a body used
   to fail the JAX trace probe and drop to row-wise dispatch: `vmap` inserts an
@@ -958,7 +1582,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the record's does, since a `/`-path could not bind to a parameter.
 
   An element is **materialized** rather than stored, which is the other side of the
-  rule the batch base states: it takes the derived name (`"post[draw=1]"`), marked
+  rule the batch base states: it takes the derived label (`"post[draw=1]"`), marked
   auto, and inherits the batch's provenance. It is built against the batch's own
   `element_spec`, so batch and element share one spec object — schema agreement is
   structural, and a row costs no declaration to build. `NumericRecordBatch` adds
@@ -1142,17 +1766,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a wrong number of indices. A whole axis is written `:` positionally; `None`
   spells it in `at_levels` alone, where a keyword cannot take a `:` literal.
 
-  A view is **named by what it selects**, naming the level each selection
+  A view is **labeled by what it selects**, naming the level each selection
   addresses — `"posterior[chain=0]"` for a sub-batch,
   `"posterior[chain=0, draw=7]"` for an element, `"posterior[draw=1:3]"` for a
   range. Levels selected whole are left out, so selecting all of a batch derives
-  the batch's own name, and the levels that appear are listed in the batch's own
-  order. The selection is tracked against the batch the name is rooted in, so a
-  derived name is a function of what the view selects: indexing two levels in one
+  the batch's own label, and the levels that appear are listed in the batch's own
+  order. The selection is tracked against the batch the label is rooted in, so a
+  derived label is a function of what the view selects: indexing two levels in one
   call, in two calls, or in the other order all read alike, and two different
   selections of one batch never do. A selection carries the *lineage* of the batch it came
   out of rather than a node recording the read: nothing is computed by reading one
-  position out of a collection, and which position it was is what the name says.
+  position out of a collection, and which position it was is what the label says.
 
   A batch's **specification is its own**, at the *family* kind: the new
   `BatchSpec` term spec carries the element's specification together with that
@@ -1171,7 +1795,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   level touches no storage, so it defaults to a shallow copy.
 
   A batch is immutable, round-trips through `pickle` and `copy`, and reprs as its
-  class, its name, and each level with its sizes, reading no element.
+  class, its label, and each level with its sizes, reading no element.
   `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
@@ -1230,16 +1854,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`TrackedTerm` / `Annotated` identity-and-metadata mixins (#336).** New
   `probpipe.core.tracked` module defining the shared identity attributes and methods every
-  ProbPipe object carries: `TrackedTerm` (a `name`, a `name_is_auto` flag, and a
-  write-once `provenance` attached via `with_provenance`, plus `with_name` for
-  rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
+  ProbPipe object carries: `TrackedTerm` (a `label`, a `name_is_auto` flag, and a
+  write-once `provenance` attached via `with_provenance`, plus `with_label` for
+  relabel-as-copy) and `Annotated` (a free-form `annotations` mapping).
   `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
   (`RecordBatch` / `NumericRecordBatch` / `DistributionArray`) are tracked
   terms too. `name_is_auto` records whether an object's name was auto-derived
   by the operation that produced it (`True`) or supplied by the user
   (`False`), so later composition can re-derive auto names while preserving
   user-given ones. The construction-time guarantee that every tracked term
-  has a non-empty name is enforced by the mixin's metaclass, replacing the
+  has a non-empty label is enforced by the mixin's metaclass, replacing the
   previous `Distribution`-only metaclass check and extending it to the
   `Record` family. Both mixins are exported from the top-level `probpipe`
   package.
@@ -1289,7 +1913,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
   control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
-  default) stores only `ParentInfo` descriptors — type name, distribution name,
+  default) stores only `ParentInfo` descriptors — type name, distribution label,
   and the parent's own provenance chain — so parent data arrays are free to be
   garbage-collected once a workflow step completes; `OFF` skips provenance
   entirely for minimum overhead.  The mode is set once at startup:
@@ -1300,7 +1924,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
-  `type_name`, `name`, `provenance` (the parent's own `Provenance`, kept in all
+  `type_name`, `label`, `provenance` (the parent's own `Provenance`, kept in all
   non-OFF modes so the ancestry DAG remains traversable), `fingerprint` and
   `fingerprint_is_weak` (see below), and `parent` (the live parent object, set
   only in FULL mode).
@@ -1322,7 +1946,446 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   codebase now route through this single entry point, so mode behavior is
   uniform everywhere.
 
+- **Contributor conventions for comments, naming, tests, and PR hygiene.**
+  CONTRIBUTING.md gains "Code comments & docstrings" (no process narration,
+  no negative documentation, public docstrings describe behavior) and "Test
+  quality" (tightest reliable tolerances, structured cases, dispatch-path
+  equivalence) sections, a description-equals-final-state PR rule, and a
+  docs-ship-with-the-change rule. STYLE_GUIDE.md gains §1.12 "Naming
+  accuracy" (semantic accuracy, ecosystem alignment, symmetry, complete
+  rename sweeps). The `review-pr` skill now checks all of these and reads
+  the convention docs from the PR's base ref.
+
+- **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
+  `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
+  ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
+  estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
+  (consistency model) — and returns a `BayesFlowModel` bundling the joint
+  model (prior + simulator, exposed as properties) with the trained
+  estimator: `condition_on(model, observed)` draws from `p(theta | observed)`
+  in a single network forward pass (no MCMC). This restores the amortized
+  half of the SBI layer dropped with sbijax.
+  - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
+    op, `simulator.generate_data` for the data); the prior is used only to
+    draw `theta` and needs no TFP translation. The trained estimator is
+    amortized — the same instance conditions on any observation with no
+    retraining — and its draws are named via the prior's `record_template`.
+    The simulator receives the prior's native structured per-draw sample (named
+    fields), matching the `GenerativeLikelihood` contract, and keras training is
+    seeded for reproducibility.
+  - Continuous priors with constrained supports — including matrix- and
+    simplex-valued ones (positive, an interval, Dirichlet's simplex, Wishart's
+    positive-definite matrices, …) — are handled by per-field `bijector_for`
+    reparameterization applied at each field's native event shape: training runs
+    in the unconstrained space and draws are mapped back to the support (identity
+    for real-valued fields). NPE's coupling-flow minimum is counted in
+    unconstrained dimensions. Discrete priors have no smooth bijector and are
+    rejected with a clear error.
+  - Training seeds keras for reproducibility but snapshots and restores the
+    caller's global NumPy / Python RNG state, so a call does not perturb
+    unrelated random streams.
+  - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
+    `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
+    TensorFlow or PyTorch. The backend is imported lazily, so `import
+    probpipe` does not load keras.
+
+- **jax-native NLE and NRE (`[bayesflow]` extra).** New
+  `learn_amortized_likelihood(prior, simulator, ...)` (neural likelihood
+  estimation: a conditional coupling flow for `p(y | theta)`) and
+  `learn_amortized_ratio(...)` (neural ratio estimation: an NRE-C classifier
+  for the likelihood-to-evidence ratio) return `BayesFlowLikelihood` /
+  `BayesFlowRatio` — `ConditionallyIndependentLikelihood` components whose
+  `log_likelihood` is **jax.grad-transparent**, so
+  `SimpleModel(prior, learned)` + `condition_on` samples the posterior with
+  the existing BlackJAX/TFP NUTS machinery. No PyTorch: this replaces the
+  planned sbi-torch default path (verified by the Step-6a spike — gradients
+  finite-difference-exact and NUTS recovering analytic posteriors, including
+  discrete-observation + constrained-parameter cases for NRE).
+  - Per-row scores sum under conditional independence, so datasets of any
+    size work natively (NPE's conditioning shape is fixed at training time),
+    and `per_datum_log_likelihood` comes for free.
+  - The networks take raw constrained `theta` as *input* (no bijector
+    reparameterization needed on that side); discrete-valued parameter
+    fields are accepted. NLE's default coupling flow needs observations with
+    >= 2 dimensions and a reverse-differentiable density (adaptive-ODE
+    networks such as `FlowMatching` integrate `log_prob` with a dynamic-bound
+    `while_loop`, which JAX cannot reverse-differentiate); NRE's MLP
+    classifier has neither restriction and handles discrete observations.
+  - `learn_amortized_likelihood(dequantize=True)` supports integer-valued
+    observations via uniform dequantization (Theis et al. 2016; Ho et al.
+    2019, Flow++): training adds `U[0,1)` jitter to the simulated `y` and the
+    wrapper scores integer data at the unit-cell midpoint `y + 1/2`. Without
+    it, the continuous fit measurably overdisperses the posterior as
+    observations concentrate on few atoms.
+  - `BayesFlowRatio` values are log-ratios — valid for conditioning (the
+    evidence constant cancels) but not for absolute-likelihood uses (model
+    comparison, LOO/WAIC); the caveat is documented on the class.
+
+- **`ProductDistribution.supports`** — per-field support constraints (each
+  component's `support`), implementing the canonical `RecordDistribution`
+  accessor that previously raised `NotImplementedError`.
+
+- **Python 3.14 to the CI test matrix.** The matrix is now
+  `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
+- **Coverage floor enforced at 88%** on the full-suite CI run
+  (`--cov-fail-under=88`). The changed-files-only PR path and local
+  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
+  is only meaningful when the whole suite executes. Current measured
+  coverage on `main` is ~91%; the floor is set conservatively within the
+  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
+- **Concurrency cancellation on CI for PR pushes.** A new push to a PR
+  branch cancels the prior in-progress CI run. Pushes to `main` are
+  unaffected (no cancellation — the merge-history gate stays solid).
+  Same pattern added to the docs build (PR builds cancel; pages deploys
+  still serialize via the original `pages` group).
+- **PR auto-labeling.** `.github/workflows/labeler.yml` +
+  `.github/labeler.yml` apply `area:*` labels to PRs based on changed
+  file paths. `kind:*` and `status:*` labels are still applied by
+  humans.
+- **Dependabot for GitHub Actions.** `.github/dependabot.yml` opens
+  weekly PRs that bump pinned action versions (`actions/checkout`,
+  `astral-sh/setup-uv`, `codecov/codecov-action`, `actions/labeler`).
+  Auto-labeled `area:infrastructure`. Pip/uv dependency bumps are NOT
+  enabled — the JAX/TFP resolver interaction means lockfile updates
+  must be intentional.
+
+- **BlackJAX-backed gradient-free MCMC.** Two new inference methods
+  bundled with the BlackJAX MCMC migration:
+  - **`blackjax_rwmh`** (priority 55) replaces the hand-rolled
+    Python-loop RWMH. Two execution paths share the same BlackJAX
+    kernel: a fast path (`jax.lax.scan` + `jax.vmap` across chains)
+    when the target log-density is JAX-traceable, and an eager
+    Python-loop fallback when it isn't (BridgeStan / scipy /
+    external-simulator likelihoods — the case the hand-rolled loop
+    existed to support). The default warmup is a Stan-style window
+    adaptation: ``n_windows`` (default 4) geometrically-growing
+    windows, each sampling with the current proposal Cholesky and
+    accumulating Welford statistics on positions, refreshing the
+    proposal at window boundaries. Production sigma is
+    ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-Gilks.
+    Short warmups (``< 50`` steps) collapse to a single phase
+    automatically. ``adapt=False`` falls back to the legacy
+    ``step_size * I`` for parity with the prior behavior.
+  - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
+    self-tuning) is new — restricted to `SimpleModel` targets with a
+    Gaussian prior and a JAX-traceable likelihood. Recognises
+    `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
+    Gaussian with cross-covariance), and `ProductDistribution`
+    compositions via the new `_gaussian_prior_params` helper.
+- New Function `probpipe.elliptical_slice(model, data, ...)`.
+
+- **`RecordTemplate.event_shapes` and `RecordTemplate.field_event_shape(name)`**
+  expose per-top-level-field event shapes (nested sub-templates and
+  opaque leaves collapse to `()`). The previous helper
+  `RecordDistribution._field_event_shape` is removed in favor of these
+  template methods.
+
+- **Metaclass-enforced invariants.** Every `Distribution` instance
+  has a non-empty `label`; every `RecordDistribution` instance has a
+  non-`None` `record_template`. The checks fire post-`__init__` via
+  the `_DistributionMeta` / `_RecordDistributionMeta` metaclasses
+  (derived from `typing._ProtocolMeta` to compose with
+  `@runtime_checkable` protocols). Subclasses that forget either
+  invariant raise `TypeError` at construction with a clear pointer.
+
+- **BlackJAX-backed SGMCMC methods** registered with
+  ``inference_method_registry``:
+  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 45.
+  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 42.
+
+  Both consume a `SimpleModel` whose `likelihood` satisfies
+  `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
+  kwarg. Internally they wrap the model+data in a
+  `MinibatchedDistribution` and feed BlackJAX's gradient estimator
+  via the per-step random-measure draw — the kernel stays oblivious
+  to the minibatching convention.
+
+  ```python
+  posterior = condition_on(
+      model, data,
+      method="blackjax_sgld",
+      batch_size=64, num_results=2000, num_warmup=500, step_size=1e-3,
+  )
+  ```
+
+  Priorities sit in the refinement-based MC tier (1–50), below every
+  exact full-batch gradient method (`tfp_nuts=75`, `tfp_hmc=65`,
+  `tfp_rwmh=55`). SGMCMC's `check()` also requires `batch_size=`, so
+  it does not fire on a routine `condition_on(model, observed)` call —
+  the user opts in by passing `batch_size=` (and typically the
+  matching `method=`).
+
+- **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
+  — a `RandomMeasure[Record]` over fixed-minibatch stochastic
+  surrogates of the full-data unnormalized log-posterior. A draw is a
+  `Distribution[Record]` with unnormalized log-density
+  `log p(theta) + (N/b) * sum_{d in B} log p(d|theta)`, an unbiased
+  stochastic surrogate (in expectation over the minibatch `B`) of the
+  full-data target; the `N/b` rescaling makes the gradient an unbiased
+  estimator.
+
+  The constructor takes a prior and a conditionally-independent
+  likelihood directly, mirroring `SimpleModel(prior, likelihood)` on
+  the first two args. Consume the measure via
+  `SupportsRandomUnnormalizedLogProb` to get the per-minibatch
+  log-density callable that SGMCMC kernels feed `jax.grad`:
+
+  ```python
+  from probpipe import MinibatchedDistribution, Record, random_unnormalized_log_prob
+
+  m = MinibatchedDistribution(prior, likelihood, Record(X=X, y=y), batch_size=64)
+
+  rf = random_unnormalized_log_prob(m)
+  target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
+  grad = jax.grad(target)(theta)             # unbiased gradient estimate
+  ```
+
+  This is the path stochastic-gradient MCMC kernels use under the
+  hood; the BlackJAX SGLD / SGHMC dispatch builds a `MinibatchedDistribution`
+  internally and threads `target` into the BlackJAX gradient
+  estimator. Tempered SMC (future work) is expected to consume the
+  same surface.
+
+- **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
+  — a `Likelihood` subclass / Protocol whose observations factorise as
+  `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a
+  `per_datum_log_likelihood(params, datum)` method on top of the base
+  `Likelihood`'s `log_likelihood(params, data)`. Required by
+  stochastic-gradient inference (the upcoming `MinibatchedDistribution`)
+  and independently useful for held-out predictive log-likelihoods,
+  leave-one-out cross-validation, and PSIS-LOO. The existing concrete
+  likelihoods (`GLMLikelihood`, `_NLELikelihood`, `_NRELikelihood`) all
+  satisfy the Protocol — `GLMLikelihood` via a direct family
+  `log_prob` evaluation that skips the per-batch tile, the two
+  sbijax-backed classes via a length-1-batch fallback.
+
+  A standalone helper `_default_per_datum_log_likelihood(likelihood,
+  params, datum)` provides the length-1-batch implementation for
+  subclasses that want a default rather than an efficient override.
+
+- **`SimpleModel.prior` / `SimpleModel.likelihood`** and
+  **`SimpleGenerativeModel.prior` / `SimpleGenerativeModel.likelihood`**
+  — public read-only properties that expose the underlying components
+  without poking at private state. The two model wrappers stay
+  symmetric: `SimpleModel.likelihood` is typed `Likelihood`,
+  `SimpleGenerativeModel.likelihood` is typed `GenerativeLikelihood`.
+
+- **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
+  — a `NumericRecordDistribution` subclass that enforces the flat
+  contract (single field, `event_shape == (N,)`). Algorithms that
+  operate on a flat parameter vector (MCMC kernels, optimisers,
+  Hessian / curvature builders, variational families, Pathfinder /
+  Laplace surrogates) can require this type rather than runtime
+  shape probes. Carries the `flat_size: int` shortcut (=
+  `event_shape[0]`) and the `as_record_distribution(template=...)`
+  method.
+
+  The natively-multivariate parametrics
+  (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`)
+  now inherit from `FlatNumericRecordDistribution` in addition to
+  `TFPDistribution`. `FlattenedDistributionView` also implements the
+  contract by construction. Scalar parametrics (`Normal`, `Beta`,
+  `Bernoulli`, …) have `event_shape == ()` and do not satisfy the
+  contract directly; call `.as_flat_distribution()` to obtain a
+  `FlattenedDistributionView` with `event_shape == (1,)`.
+
+- **`FlatNumericRecordDistribution.as_record_distribution(template=...)`**
+  — inverse of `as_flat_distribution()`. Lifts a flat distribution to
+  a Record-keyed view under a user-supplied `NumericRecordTemplate`.
+  Sampling, log-prob, and moments delegate to the source and reshape
+  via the template; capability protocols (`SupportsX`) match the
+  source via dynamic isinstance dispatch. The view is a thin wrapper —
+  no value copying.
+
+  ```python
+  from probpipe import MultivariateNormal, NumericRecordTemplate
+
+  mvn = MultivariateNormal(                     # already a FlatNRD
+      loc=jnp.array([1.0, 2.0, 3.0, 4.0]),
+      cov=jnp.diag(jnp.array([0.5, 1.0, 1.5, 2.0])),
+      name="theta",
+  )
+  template = NumericRecordTemplate(intercept=(), slope=(3,))
+  posterior = mvn.as_record_distribution(template=template)
+  draw = sample(posterior, key=k)         # NumericRecord(intercept, slope)
+  mean(posterior)["slope"]                # vector mean of the slope block
+  ```
+
+- **Framework abstraction hierarchy** documented in CONTRIBUTING.md.
+  Three rules: one random variable per ``Distribution``; two
+  implementations per concept (generic + Record-based); iteration is
+  a Record-family convention.
+
+- **`RecordEmpiricalDistribution.flat_samples`** — flat ``(n, dim)``
+  matrix view across all fields, where
+  ``dim = sum(prod(event_shape_f) for f in fields)``. Field order is
+  the dist's insertion order; multi-dim event shapes flatten
+  row-major. Use ``.samples`` for the structured ``NumericRecord``
+  view (per-field access via ``.samples[name]``) and ``.flat_samples``
+  for stacked-matrix idioms — ``post.flat_samples.mean(axis=0)``,
+  per-parameter posterior summaries, etc. Replaces hand-rolled
+  ``np.column_stack([post.samples[f] for f in post.fields])``.
+
+- **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
+  conversion to / from ProbPipe's native JAX-array form, with metadata
+  round-trip via the aux registry. Backend metadata survives the structural
+  edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
+  leave unchanged, at any nesting depth, and a pickle round-trip (an
+  aux-carrying record pickles through its native form, so `to_native` stays
+  faithful across `pickle` / Ray transport); a value transform (`map`) or a
+  JAX pytree round-trip drops it.
+- **`probpipe.AuxHooks` / `register_aux(...)` / `aux_for(...)` /
+  `aux_registry`** in :mod:`probpipe.core._array_backend` — a registry
+  of ``(capture, restore)`` hooks for round-tripping backend-specific
+  metadata across the ``Record`` ↔ ``NumericRecord`` boundary.
+  Built-in registrations (gated on import) cover
+  ``xarray.DataArray`` (dims / coords / attrs / name),
+  ``pandas.Series`` (index / name / dtype), and ``pandas.DataFrame``
+  (index / columns / dtypes).
+- **`NumericRecord.aux`** property — captured backend metadata, keyed
+  by field name. ``None`` when no field had a registered hook.
+- **Slash-delimited path access** on nested ``Record``s:
+  ``record["params/intercept"]`` is sugar for
+  ``record["params", "intercept"]``. ``"a/b/c" in record`` works the
+  same way.
+
+- **Uniform `select_all()`** on ``Record`` / ``RecordBatch`` /
+  ``RecordDistribution``. Splatting the result into a
+  ``@function`` preserves correlation on the two batched variants
+  and plain splats fields on scalar ``Record``.
+- **Public `.parent` / `.field`** properties on ``_RecordDistributionView``,
+  which say two views draw from one law.
+- **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
+  ``_RecordDistributionView`` (mirror the existing shims on
+  ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
+  raise ``TypeError``.
+
 ### Changed
+
+- **A law, a kernel, and a function print as their notation, and a derived
+  label groups a product.** `str()` of a law, a kernel, or a function returns
+  its new `notation` property: its label followed by its signature, which lists
+  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
+  kernel, and `predict(x, y)` for a function. A given slot or a parameter
+  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
+  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
+  A slot with a default stays given once conditioning binds the others, so
+  `condition_on(counts, {"K": k, "r": q})` prints as
+  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
+  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
+  `with_label` or by the `FactoredDistribution` constructor prints by that
+  label, as `model(y, mu)`. A label built from another label parenthesizes a
+  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
+  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
+  as `[my draws][draw=1]`. Labels still join associatively, so
+  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model * d` prints as
+  `model(y, mu)·d(z)`. A marginal over the whole
+  events of several factors prints factor by factor, in the order the paths
+  name them where a product can take that order, so
+  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
+  where it was labeled `a·b`. A product that a function returns prints by the
+  function's output label, as `predict(y, mu)`. A batch of laws prints as the
+  notation of one law under its label, `over`, and its levels, as
+  `schools(effect) over school`, and a batch that a function lifted over a
+  law and swept over a batch gives prints as the call, as
+  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
+  position, as `effect_of[tau=3]`, and prints as its row's call, as
+  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
+  notation, as `log_prob(g(g), q ~ q)`.
+- **Error and warning messages say what went wrong in the caller's terms.**
+  Each message names the call that failed, the argument and value at fault,
+  and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
+  §9.3. Messages no longer use design vocabulary such as "packaging", "whole
+  term", or "claim", and no longer name private helpers. A lookup of a name
+  that does not exist lists the names that do, as in
+  `unknown level 'test'; available levels: ['quantile']`. Code that matches
+  on the old wording needs updating, since the exception types are unchanged.
+- **A "no route applies" error leads with the reason the caller can fix.** A
+  `Feasibility` report takes `actionable=True` when it fails on a detail of the
+  call, such as a field name the argument does not have, and the error opens
+  with the first such reason before it lists every route tried. So
+  `condition_on(Normal("mu", 0.0, 1.0), {"x": 1.0})` raises
+  `condition_on: unknown field 'x'; available fields: ['mu']. Routes tried: ...`.
+  A route's reason no longer repeats the route's name, and a missing capability
+  reads "does not implement SupportsSampling".
+- **Error messages and a repr call a term's label its label.** A `Record` built
+  without a label says it requires its label as the first positional argument,
+  and that every keyword argument, `name=` and `label=` included, is a field.
+  `conditional_distribution` given a callable without `__name__` asks for a
+  label, `with_level_names` on a view says a reused dropped level would make
+  the labels of later selections ambiguous, and the repr of the TFP batch
+  backend shows the cells' base label as `label=`.
+- **`condition_on`'s registry route is named `inference_methods`.** The route
+  that forms the unnormalized conditional by Bayes' rule and normalizes it
+  through the inference-method registry was named `bayes`, so a `check`
+  report and a result's provenance now name it, as in
+  `inference_methods/blackjax_nuts`.
+- **The documentation site is rebuilt around the current API.** The user-guide
+  notebooks, the `getting_started` and `flexible_inference` tutorials, the
+  earlier API pages, and `example_scripts/` are removed, since each used names
+  the package no longer has. The API reference documents every public name on
+  one of thirteen topic pages, the README's quick example uses the current API,
+  and every page carries a review label that says whether a maintainer has
+  reviewed it and, for a reviewed page, which sections or parts changed since. The tour of the overhaul moves to `review/overhaul_tour.ipynb`.
+  CI fails when the docs use a removed name, and `tests/docs/` checks the API
+  coverage and the review labels.
+- **`condition_on` and `marginal` label their result by what it is.** A kernel
+  applied at given slots keeps the kernel's label. Conditioning a joint on the
+  whole events of the factors upstream of the rest returns the other factors,
+  whose labels joined with `·` label the result, so
+  `condition_on(likelihood * prior, {"mu": 0.5})` is labeled `likelihood`. Any
+  other conditioning applies Bayes' rule, and the posterior is labeled by the
+  expression of the law's label and the conditioned paths, as `model | y`. A
+  marginal that is the product of some of a joint's factors takes their labels,
+  so `marginal(location * scale, "tau")` is labeled `scale`, and any other
+  marginal keeps the law's label. Both took the law's label before.
+- **Each operand of an operator reads as one unit in the result's label.** A
+  label with a space that is not an expression, such as a user's
+  `other effect`, is bracketed, so `effect + other` is labeled
+  `effect + [other effect]`, since parentheses mark an expression. An
+  operand that opens with a unary operator is parenthesized, so `(-x) ** 2` is
+  labeled `(-x) ** 2`, since `-x ** 2` reads as `-(x ** 2)`. A joint groups each
+  factor's label the same way, so `likelihood * posterior` for a posterior
+  labeled `model | y` is labeled `likelihood·(model | y)`. A batch view of a
+  batch whose label is an expression parenthesizes it, as in
+  `(model | y)[dataset=0]`.
+- **A rename keeps a function's fingerprint and replays its calls.** A
+  function's fingerprint and its replay anchor record its code, its signature,
+  and the types of its declarations, without the names of its output's
+  components. Renaming the function, its output label, or a declared component,
+  as `OutputSpec(a=...)` to `OutputSpec(b=...)`, keeps the fingerprint, and
+  `replay_run` reproduces a recorded call's draws under the new names. A
+  declared rename made replay refuse with "the supplied Function callable
+  definition changed since recording". A call recorded before this change
+  replays only with a function that declares no output. A law's fingerprint
+  likewise omits its label, so `with_label` keeps it.
+- **MCMC methods run four chains by default.** `blackjax_nuts`,
+  `blackjax_hmc`, `blackjax_rwmh`, `blackjax_elliptical_slice`, and `tfp_nuts`
+  ran one chain, so a fit under the default budget had no R-hat. They now run
+  four, as `cmdstan_nuts`, `pymc_nuts`, and `nutpie_nuts` do. Pass
+  `method_options={"num_chains": 1}` for one chain.
+- **`CONTRACTS.md` applies to every PR.** Directive 5 states that `design/`
+  decides where it disagrees with the code or a contributor document, and
+  `design/package-structure.md` § Correspondence to the implementation replaces
+  the abstraction index. The canonical names move to `design/glossary.md`, and
+  the per-PR checklist moves into the PR template, which gains a contract
+  assessment section.
+- **The rule documents cite only what exists.** `STYLE_GUIDE.md`,
+  `CONTRIBUTING.md`, and `CONTRACTS.md` drop the packages, modules, and classes
+  the code no longer has, and `tests/docs/test_rule_documents.py` checks that
+  each path, name, link, and section pointer they cite exists. `CONTRIBUTING.md`
+  replaces its architecture overview with a pointer to `design/`, states the
+  ruff gate once, and asks for the CHANGELOG entry in the PR that makes the
+  change.
+- **Contributors install pre-commit as a uv tool.** The hooks are installed
+  with `uv tool install pre-commit` and then `pre-commit install`, replacing
+  `uvx pre-commit install`: its hook called an interpreter in the uv cache, so
+  every commit failed once `uv cache clean` deleted it. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
 
 - **Terms that build a result write it before handing it over.**
   `DistributionArray._from_backend`, `_make_distribution_array`,
@@ -1557,7 +2620,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Function calls establish a new result identity and provenance boundary
   (#368, breaking).** Existing operations such as `condition_on` and
-  `from_distribution` now record point-call operations as `workflow.<name>`,
+  `from_distribution` now record point-call operations as `workflow.<label>`,
   with the called Function as the first parent followed by tracked inputs.
   Resolved ordinary arguments are fingerprinted separately in
   `Provenance.inputs` and do not become ancestry nodes. When an implementation
@@ -1566,7 +2629,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   object, clears the implementation result's provenance, and attaches only the
   current call provenance. Consequently, implementation-domain metadata such
   as `conditioned`, `ess`, or backend algorithm details is not propagated to
-  the public call result; a plain point-call result carries `{"func": name}`
+  the public call result; a plain point-call result carries `{"func": label}`
   while broadcast and sweep results retain their own execution metadata. Use
   `Function.apply()` when raw identity, provenance, or domain metadata is
   required. Existing operation controls remain provenance metadata. Other
@@ -1574,7 +2637,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   term-result planning.
 
 - **`TrackedTerm` renamed from `Tracked` (breaking).** The mixin carrying a
-  `name`, a `name_is_auto` flag, and a `provenance` is now `TrackedTerm`, the
+  `label`, a `name_is_auto` flag, and a `provenance` is now `TrackedTerm`, the
   name the design reference uses for what it holds: the objects operations
   consume and produce are *tracked terms*, while templates and specs are
   structural helpers that are not. The private metaclass follows as
@@ -1588,11 +2651,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`from_nested_dict` and `_flatten_paths` removed — the constructor reads a
   nested mapping directly (breaking).** Under the *"a mapping is never a leaf"*
-  invariant, `Record(name, data)` already materialises every nested mapping
+  invariant, `Record(label, data)` already materialises every nested mapping
   value into a subtree, so `Record.from_nested_dict` /
   `NamedTree.from_nested_dict` (and the private `NamedTree._flatten_paths`)
   added nothing the constructor lacked. Build from a nested mapping with
-  `Record(name, data)` and round-trip via `Record(name, r.to_nested_dict())`.
+  `Record(label, data)` and round-trip via `Record(label, r.to_nested_dict())`.
   This also **tightens validation**: an input mixing a `/`-path key with a
   nested-dict value under the same prefix (e.g. `{"y/a": 1.0, "y": {"b": 2.0}}`)
   now raises, where `from_nested_dict` silently reshaped it. `Record.ensure`
@@ -1667,30 +2730,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognises its own masked dtypes. Non-numeric extension dtypes (categorical /
   string / datetime) are not numeric and leave the container a plain `Record`.
 
-- **`Record` / `NumericRecord` construction is name-first, and all-numeric
+- **`Record` / `NumericRecord` construction is label-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now
-  `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,
+  `Record(label, fields=None, /, *, event_template=None, name_is_auto=False,
   **kw_fields)` — the
-  record's name is a required first positional argument, and the old `name=`
-  keyword and nameless forms are removed. `Record(...)` whose fields are all
+  record's label is a required first positional argument, and the old `name=`
+  keyword and unlabeled forms are removed. `Record(...)` whose fields are all
   numeric (bare arrays and scalars, no backend metadata) returns a
   `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
   plain `Record`. Structural transforms (`without` / `merge` / `replace` /
   `with_path_names`) re-derive the numeric axis the same way, and a nested
   record stored as a field is renamed to its field key. An operation that
-  assembles a record supplies a meaningful, deterministic name derived from
-  its inputs (the producing distribution's or model's name, or a domain term
+  assembles a record supplies a meaningful, deterministic label derived from
+  its inputs (the producing distribution's or model's label, or a domain term
   such as `"observed"` / `"data"`) and marks it `name_is_auto=True`. The
   pytree registration now carries
   the event template and identity in the treedef aux data, so
-  `jax.tree_util.tree_map` over a `Record` preserves its template, name, and
+  `jax.tree_util.tree_map` over a `Record` preserves its template, label, and
   auto flag. Value-level (de)serialization entry points moved onto the value
-  types: `Record.from_field_values(name, template, values)` replaces
+  types: `Record.from_field_values(label, template, values)` replaces
   `EventTemplate.from_field_values(values)` (removed), and
-  `NumericRecord.from_vector(name, template, vec)` replaces
+  `NumericRecord.from_vector(label, template, vec)` replaces
   `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
   the value-level `NumericRecord.to_vector`. `Record.from_dict` likewise takes
-  the name first. Construction now validates each
+  the label first. Construction now validates each
   leaf against its field spec's `is_valid` (structure only: shape and dtype,
   the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). A
   `NumericArraySpec`'s `support` is descriptive metadata and is not checked by
@@ -1726,8 +2789,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Distribution` and `Record` is replaced by the `TrackedTerm` / `Annotated`
   mixins, with a hard rename (no aliases): `source` → `provenance`,
   `with_source(...)` → `with_provenance(...)`, `renamed(...)` →
-  `with_name(...)` (rename provenance now records the operation as
-  `"with_name"`), and the `auxiliary` metadata store → `annotations`
+  `with_label(...)` (relabel provenance now records the operation as
+  `"with_label"`), and the `auxiliary` metadata store → `annotations`
   (`_auxiliary` → `_annotations`; a `DataTree` remains a valid value and the
   diagnostics accessors are unchanged). `make_posterior`'s `auxiliary=`
   keyword is now `annotations=`. `ParentInfo` fields follow the reference:
@@ -1797,7 +2860,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   # After (LIGHTWEIGHT default)
   ancestor = provenance_ancestors(result)[0]   # ParentInfo
-  ancestor.name                                # "prior"
+  ancestor.label                               # "prior"
   ancestor.obj                                 # None — parent may be GC'd
 
   # To restore live-object access, opt in to FULL mode
@@ -1808,7 +2871,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
   Code that checks `x in provenance_ancestors(result)` or accesses
   `.samples` / `.log_prob` on ancestors needs to be updated — either
-  switch to FULL mode, or use `ancestor.name` / `ancestor.type_name` for
+  switch to FULL mode, or use `ancestor.label` / `ancestor.type_name` for
   identity checks.
 - **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
@@ -1875,8 +2938,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   placing each scalar by its parsed index so matrices pack in BridgeStan's
   column-major order; a flat array may still be passed positionally.
 
-### Changed
-
 - **`RecordTemplate` → `EventTemplate` rename + leaf-spec representation
   (#235, Phase 1a).** `RecordTemplate` is now `EventTemplate`,
   `NumericRecordTemplate` is `NumericEventTemplate`, and
@@ -1910,203 +2971,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the environment — no prior Python needed) and an experienced-user pip path,
   and note that ProbPipe installs from source (not yet on PyPI). The optional-
   extras list also gains the previously-missing `bayesflow` extra.
-
-### Fixed
-
-- **ml_dtypes arrays (bfloat16, float8, int4) now classify as numeric
-  (#343).** The numeric-dtype gates previously keyed on numpy's
-  `dtype.kind`, under which the ml_dtypes extension types JAX registers
-  report `"V"` (void) — so a bfloat16 array failed `NumericArraySpec.is_valid`,
-  inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
-  `NumericRecordBatch` leaf. All five gates (template inference, spec
-  validation, the two record-layer leaf checks, the broadcast-template
-  builder, and the `Design` marginals probe) now route through one shared
-  predicate that also admits ml_dtypes numerics; structured (record)
-  dtypes remain non-numeric. The internal `_NUMERIC_DTYPE_KINDS` constant
-  is removed in favor of the shared predicate.
-
-- **Core container indexing and nested reductions.** `DistributionArray`
-  integer indexing now raises `IndexError` for positive overflow and negatives
-  past the axis bounds, while 0-d arrays accept only empty-tuple indexing.
-  `NumericRecordBatch.mean()` and `.var()` now recurse through nested numeric
-  record fields instead of treating nested records as arrays.
-
-- **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
-  branch.** `RootLinOp.diag()` now squares diagonal roots; `CholeskyLinOp`
-  keeps lower-root (`L @ L.T`) and upper-root (`U.T @ U`) representations
-  consistent across `cholesky`, `to_cholesky_representation`, `matvec`,
-  `rmatvec`, `matmat`, `rmatmat`, `diag`, `to_dense`, and `solve`;
-  `JointGaussian.condition_on` uses linear solves instead of forming explicit
-  covariance inverses; and `SumLinOp.matmat` / `rmatmat` preserve the `(n, 1)`
-  matrix shape for single-column inputs.
-
-- **Invalid log-space weights are rejected before normalization.**
-  `Weights(log_weights=...)` now rejects `NaN` entries and zero-total-mass
-  inputs such as all `-inf`, avoiding downstream `nan` normalized weights while
-  still allowing individual `-inf` entries for zero-weight atoms.
-
-- **`StanModel` now works against a real BridgeStan backend.** Two bugs at the
-  BridgeStan boundary were hidden by the mocked tests: construction passed a
-  `data=` keyword that `bridgestan.StanModel.from_stan_file` does not accept,
-  and JAX arrays were handed to a ctypes interface that requires `float64`
-  NumPy arrays. Construction now goes through BridgeStan's supported
-  constructor — which takes the `.stan` path directly and serializes the data
-  dict — and every value crossing into `param_constrain` / `param_unconstrain`
-  / `log_density` is coerced to a `float64` ndarray, so `StanModel(stan_file)`
-  and `log_prob(stan_model, ...)` succeed end to end. The `stan` extra now pins
-  `bridgestan>=2.7` (the first release with that constructor), and a
-  compile-gated integration test guards this boundary against future drift.
-
-- **nutpie sampling of a `StanModel` keeps its construction-time data.** The
-  nutpie path rebuilt the BridgeStan model from the conditioning data alone,
-  dropping any data passed to `StanModel(file, data=...)` — so a model carrying
-  fixed data (sizes, covariates) failed on the missing variables when sampled
-  via nutpie, while the CmdStan path worked. The conditioning data is now merged
-  on top of the construction-time data (conditioning values override), matching
-  the CmdStan method.
-
-- **`condition_on` no longer silently ignores a case-mismatched data kwarg
-  (#228).** Passing `condition_on(model, x=...)` when the field is `X` used to
-  route `x` to the inference parameters, where it was silently dropped (e.g. by
-  NUTS) — a wrong result with no error. A kwarg that matches a field only up to
-  case now raises a `TypeError` with the correct casing (`did you mean X=...?`);
-  unknown kwargs that are *not* a case-variant of any field remain inference
-  parameters.
-
-- **Codecov no longer misreports coverage on targeted PRs (#261).**
-  On a PR that ran only the changed-files test path, the main test job
-  skipped its Codecov upload while the BayesFlow job still uploaded, so
-  Codecov computed project/patch from the BayesFlow report alone —
-  yielding spuriously low numbers and a "HEAD has 1 upload less than
-  BASE" warning even though every Actions job passed. Now: the main
-  test job uploads coverage on the targeted path too (tagged `unit`),
-  so **patch** coverage is accurate and stays an enforced PR gate;
-  Codecov **project** is `informational` on PRs (the real 88% floor is
-  enforced in-CI on the full-suite run via `--cov-fail-under`); the
-  BayesFlow leg is gated to run only on BayesFlow-relevant changes; and
-  per-flag `carryforward` keeps the project number sane when a flag
-  isn't uploaded.
-
-- **Package license metadata corrected to Apache-2.0 (was MIT).**
-  `pyproject.toml` declared `license = { text = "MIT" }` while the
-  repository's `LICENSE` is Apache License 2.0 — and the metadata field is
-  what PyPI displays. The field is now a PEP 639 SPDX expression
-  (`license = "Apache-2.0"` with `license-files = ["LICENSE", "AUTHORS"]`),
-  so built distributions carry `License-Expression: Apache-2.0` (core
-  metadata 2.4). The setuptools build floor rises from 61 to 77.0.3 — PEP
-  639 support landed in 77.0.0, which also deprecated the old
-  `license = { text = ... }` table form, and 77.0.3 relaxed the new
-  `license-files` validation from errors to warnings — and the redundant
-  `wheel` build requirement is dropped (`bdist_wheel` ships inside
-  setuptools since 70.1). Build-time changes only; runtime dependencies
-  are unchanged.
-
-### Added
-
-- **Contributor conventions for comments, naming, tests, and PR hygiene.**
-  CONTRIBUTING.md gains "Code comments & docstrings" (no process narration,
-  no negative documentation, public docstrings describe behavior) and "Test
-  quality" (tightest reliable tolerances, structured cases, dispatch-path
-  equivalence) sections, a description-equals-final-state PR rule, and a
-  docs-ship-with-the-change rule. STYLE_GUIDE.md gains §1.12 "Naming
-  accuracy" (semantic accuracy, ecosystem alignment, symmetry, complete
-  rename sweeps). The `review-pr` skill now checks all of these and reads
-  the convention docs from the PR's base ref.
-
-- **BayesFlow amortized-SBI backend (`[bayesflow]` extra).** New
-  `learn_amortized_posterior(prior, simulator, method="npe"|"fmpe"|"cmpe",
-  ...)` trains a jax-native (keras-on-JAX) amortized neural posterior
-  estimator — NPE (coupling flow), FMPE (flow matching), or CMPE
-  (consistency model) — and returns a `BayesFlowModel` bundling the joint
-  model (prior + simulator, exposed as properties) with the trained
-  estimator: `condition_on(model, observed)` draws from `p(theta | observed)`
-  in a single network forward pass (no MCMC). This restores the amortized
-  half of the SBI layer dropped with sbijax.
-  - Training simulates `(theta, y)` offline (`prior` drawn via the `sample`
-    op, `simulator.generate_data` for the data); the prior is used only to
-    draw `theta` and needs no TFP translation. The trained estimator is
-    amortized — the same instance conditions on any observation with no
-    retraining — and its draws are named via the prior's `record_template`.
-    The simulator receives the prior's native structured per-draw sample (named
-    fields), matching the `GenerativeLikelihood` contract, and keras training is
-    seeded for reproducibility.
-  - Continuous priors with constrained supports — including matrix- and
-    simplex-valued ones (positive, an interval, Dirichlet's simplex, Wishart's
-    positive-definite matrices, …) — are handled by per-field `bijector_for`
-    reparameterization applied at each field's native event shape: training runs
-    in the unconstrained space and draws are mapped back to the support (identity
-    for real-valued fields). NPE's coupling-flow minimum is counted in
-    unconstrained dimensions. Discrete priors have no smooth bijector and are
-    rejected with a clear error.
-  - Training seeds keras for reproducibility but snapshots and restores the
-    caller's global NumPy / Python RNG state, so a call does not perturb
-    unrelated random streams.
-  - The `[bayesflow]` extra is **Python 3.12–3.13 only** (BayesFlow 2.x caps
-    `<3.14`); keras runs on the JAX backend (`KERAS_BACKEND=jax`) — no
-    TensorFlow or PyTorch. The backend is imported lazily, so `import
-    probpipe` does not load keras.
-
-- **jax-native NLE and NRE (`[bayesflow]` extra).** New
-  `learn_amortized_likelihood(prior, simulator, ...)` (neural likelihood
-  estimation: a conditional coupling flow for `p(y | theta)`) and
-  `learn_amortized_ratio(...)` (neural ratio estimation: an NRE-C classifier
-  for the likelihood-to-evidence ratio) return `BayesFlowLikelihood` /
-  `BayesFlowRatio` — `ConditionallyIndependentLikelihood` components whose
-  `log_likelihood` is **jax.grad-transparent**, so
-  `SimpleModel(prior, learned)` + `condition_on` samples the posterior with
-  the existing BlackJAX/TFP NUTS machinery. No PyTorch: this replaces the
-  planned sbi-torch default path (verified by the Step-6a spike — gradients
-  finite-difference-exact and NUTS recovering analytic posteriors, including
-  discrete-observation + constrained-parameter cases for NRE).
-  - Per-row scores sum under conditional independence, so datasets of any
-    size work natively (NPE's conditioning shape is fixed at training time),
-    and `per_datum_log_likelihood` comes for free.
-  - The networks take raw constrained `theta` as *input* (no bijector
-    reparameterization needed on that side); discrete-valued parameter
-    fields are accepted. NLE's default coupling flow needs observations with
-    >= 2 dimensions and a reverse-differentiable density (adaptive-ODE
-    networks such as `FlowMatching` integrate `log_prob` with a dynamic-bound
-    `while_loop`, which JAX cannot reverse-differentiate); NRE's MLP
-    classifier has neither restriction and handles discrete observations.
-  - `learn_amortized_likelihood(dequantize=True)` supports integer-valued
-    observations via uniform dequantization (Theis et al. 2016; Ho et al.
-    2019, Flow++): training adds `U[0,1)` jitter to the simulated `y` and the
-    wrapper scores integer data at the unit-cell midpoint `y + 1/2`. Without
-    it, the continuous fit measurably overdisperses the posterior as
-    observations concentrate on few atoms.
-  - `BayesFlowRatio` values are log-ratios — valid for conditioning (the
-    evidence constant cancels) but not for absolute-likelihood uses (model
-    comparison, LOO/WAIC); the caveat is documented on the class.
-
-- **`ProductDistribution.supports`** — per-field support constraints (each
-  component's `support`), implementing the canonical `RecordDistribution`
-  accessor that previously raised `NotImplementedError`.
-
-- **Python 3.14 to the CI test matrix.** The matrix is now
-  `[3.12, 3.13, 3.14]`. `requires-python = ">=3.12"` is unchanged.
-- **Coverage floor enforced at 88%** on the full-suite CI run
-  (`--cov-fail-under=88`). The changed-files-only PR path and local
-  single-file runs are exempt (`--cov-fail-under=0`), since a global floor
-  is only meaningful when the whole suite executes. Current measured
-  coverage on `main` is ~91%; the floor is set conservatively within the
-  beta plan's ≥85–90% commitment to leave headroom for normal fluctuation.
-- **Concurrency cancellation on CI for PR pushes.** A new push to a PR
-  branch cancels the prior in-progress CI run. Pushes to `main` are
-  unaffected (no cancellation — the merge-history gate stays solid).
-  Same pattern added to the docs build (PR builds cancel; pages deploys
-  still serialize via the original `pages` group).
-- **PR auto-labeling.** `.github/workflows/labeler.yml` +
-  `.github/labeler.yml` apply `area:*` labels to PRs based on changed
-  file paths. `kind:*` and `status:*` labels are still applied by
-  humans.
-- **Dependabot for GitHub Actions.** `.github/dependabot.yml` opens
-  weekly PRs that bump pinned action versions (`actions/checkout`,
-  `astral-sh/setup-uv`, `codecov/codecov-action`, `actions/labeler`).
-  Auto-labeled `area:infrastructure`. Pip/uv dependency bumps are NOT
-  enabled — the JAX/TFP resolver interaction means lockfile updates
-  must be intentional.
-
-### Changed
 
 - **Pyright type checking (advisory).** A `typecheck (advisory)` CI job
   runs [pyright](https://microsoft.github.io/pyright/) over the `probpipe`
@@ -2180,74 +3044,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are intentionally *not* changed here — each lands in its own isolated
   PR (the arviz-1.x ceiling lift and the pymc 6 upgrade).
 
-### Removed
-
-- **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
-  inference (SBI) layer is removed in full, ahead of the PyMC 6 /
-  ArviZ 1.0 ecosystem upgrade — `sbijax` constrains the jax / jaxlib
-  floor and blocks the rest of the stack from moving forward. No
-  replacement ships in this release; the SBI capability is being
-  re-platformed onto **pyabc** (SMC-ABC), **BayesFlow** (amortized
-  NPE / FMPE / CMPE), and **sbi** (NLE / NRE) in subsequent releases.
-  Removed surface:
-  - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
-    `sbijax>=0.3.6` dependency.
-  - The public Functions **`sbi_learn_conditional`** and
-    **`sbi_learn_likelihood`** (exported from both `probpipe` and
-    `probpipe.inference`), the **`DirectSamplerSBIModel`** they
-    returned (exported from `probpipe.inference`), their `method=`
-    selectors (`npe` / `fmpe` / `cmpe` for the direct sampler,
-    `nle` / `nre` for the emulated-likelihood path), and the
-    `network_factory=` hook. `from probpipe import
-    sbi_learn_conditional` now raises `ImportError` rather than
-    returning an install-prompt stub.
-  - The **`sbijax_smcabc`** inference method (`SbiSMCABCMethod`,
-    priority 5) and its registration; `condition_on(generative_model,
-    data, method="sbijax_smcabc", ...)` no longer resolves.
-  - The internal `probpipe/inference/_sbijax.py` module, the `sbi`
-    pytest marker, the `tests/inference/test_sbijax.py` suite, and the
-    CI `--no-deps sbijax` install shims. The contract invariants those
-    tests covered — posterior recovery, amortization, and SMC-ABC
-    dispatch — are re-homed per backend as the replacements land,
-    rather than in this removal.
-
-  The jax / jaxlib `<0.9` and arviz `<1.0` version caps that `sbijax`
-  forced are *retained* here and lifted in their own isolated PRs (the
-  jax-0.10 floor bump and the arviz-1.x ceiling lift); this PR changes
-  no runtime version pins. The `docs/tutorials/flexible_inference.ipynb`
-  tutorial's SBI sections are flagged out of date until a replacement
-  backend ships — its `condition_on` dispatch and NUTS material remain
-  accurate.
-
-### Added
-
-- **BlackJAX-backed gradient-free MCMC.** Two new inference methods
-  bundled with the BlackJAX MCMC migration:
-  - **`blackjax_rwmh`** (priority 55) replaces the hand-rolled
-    Python-loop RWMH. Two execution paths share the same BlackJAX
-    kernel: a fast path (`jax.lax.scan` + `jax.vmap` across chains)
-    when the target log-density is JAX-traceable, and an eager
-    Python-loop fallback when it isn't (BridgeStan / scipy /
-    external-simulator likelihoods — the case the hand-rolled loop
-    existed to support). The default warmup is a Stan-style window
-    adaptation: ``n_windows`` (default 4) geometrically-growing
-    windows, each sampling with the current proposal Cholesky and
-    accumulating Welford statistics on positions, refreshing the
-    proposal at window boundaries. Production sigma is
-    ``chol(Sigma_hat) * 2.38 / sqrt(d)`` per Roberts-Gelman-Gilks.
-    Short warmups (``< 50`` steps) collapse to a single phase
-    automatically. ``adapt=False`` falls back to the legacy
-    ``step_size * I`` for parity with the prior behavior.
-  - **`blackjax_elliptical_slice`** (priority 75, tier 71-80
-    self-tuning) is new — restricted to `SimpleModel` targets with a
-    Gaussian prior and a JAX-traceable likelihood. Recognises
-    `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
-    Gaussian with cross-covariance), and `ProductDistribution`
-    compositions via the new `_gaussian_prior_params` helper.
-- New Function `probpipe.elliptical_slice(model, data, ...)`.
-
-### Changed
-
 - **`blackjax_hmc` randomizes its trajectory length.** Production now
   draws the number of leapfrog steps from a low-discrepancy Halton
   sequence (`blackjax.dynamic_hmc`) with mean `num_integration_steps`
@@ -2275,220 +3071,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   modules (`_blackjax_mcmc.py`, `_blackjax_rwmh.py`, `_blackjax_ess.py`)
   route their multi-chain dispatch through the new
   `parallel_chain_map` helper in `_inference_utils.py`.
-
-### Changed (breaking)
-
-- **`Function` controls now live outside user call kwargs.**
-  `@function(...)` configures definition-time controls, and
-  `workflow.with_options(...)(...)` is the call-time override API for
-  `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
-  functions may now declare and receive those names as ordinary
-  parameters. Passing those names as call kwargs no longer configures
-  ProbPipe controls; use `workflow.with_options(...)(...)` instead.
-- **`Function.workflow_kind` and `Module.workflow_kind` now require
-  `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
-  and `None` are no longer accepted and now raise `TypeError`; use
-  `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
-  The old `parallel=` / `vectorize=` keyword guard on `Function` was
-  also removed, so those names are no longer specially reserved by the
-  constructor.
-- **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
-  behind ``method="tfp_rwmh"`` is gone; ``blackjax_rwmh`` is the only
-  RWMH backend. Callers must rename ``method="tfp_rwmh"`` →
-  ``method="blackjax_rwmh"``.
-- **Sample-count / observation-count terminology unified
-  across the codebase.** Several adjacent concepts had drifted into
-  different naming styles (`.n`, `num_draws`, `n_samples`, `n_iter`,
-  `n_simulations`, `n_replications`, `num_steps`). Audited and
-  consolidated under three canonical names per concept:
-
-  *Finite-sample distribution size.* `.n` is gone. Use
-  **`num_atoms`** for any empirical-measure size (one atom = one
-  stored realisation): `EmpiricalDistribution.num_atoms`,
-  `RecordEmpiricalDistribution.num_atoms`,
-  `JointEmpirical.num_atoms`, `BootstrapDistribution.num_atoms`,
-  `KDEDistribution.num_atoms`, `BroadcastDistribution` family +
-  marginals — all expose `num_atoms`. `ApproximateDistribution`
-  inherits `num_atoms` (total chain×draw count) and additionally
-  exposes `num_draws` (draws *per chain*).
-
-  *Bootstrap replicate size.* Use **`replicate_size`** for the number
-  of items in each bootstrap replicate:
-  `BootstrapReplicateDistribution.replicate_size`,
-  `RecordBootstrapReplicateDistribution.replicate_size`. The
-  constructor kwarg changes from ``n=`` to ``replicate_size=``; the
-  related ``source_n`` property becomes ``source_size``. Callers that
-  previously wrote ``BootstrapReplicateDistribution(data, n=N)`` will
-  now get a ``TypeError`` and must rename to ``replicate_size=N``.
-  (`replicate_size`, not `num_observations`: the resampled items come
-  from an arbitrary source — parameter samples, function values, etc. —
-  so "observations" would overclaim.)
-
-  *Generative-likelihood observation count.*
-  ``generate_data(params, n_samples, ...)`` is now
-  ``generate_data(params, num_observations, ...)`` across the
-  `GenerativeLikelihood` protocol, `GLMLikelihood`,
-  `SimpleGenerativeModel`, and `predictive_check` (the latter's
-  `n_replications` kwarg also becomes `num_replications`).
-
-- **Inference-method count kwargs unified under `num_*`.** Several
-  inference methods exposed `n_*`-style kwargs out of sync with the
-  rest of the registry (which uniformly used `num_results` /
-  `num_warmup` / `num_chains`). Renamed:
-  - `blackjax_sgld` / `blackjax_sghmc`: `num_steps=` → `num_results=`
-    (SGMCMC produces one chain draw per step; the kwarg matches
-    every other MCMC backend now).
-  - `sbi_learn_conditional` / `sbi_learn_likelihood`: `n_iter=` →
-    `num_iterations=`, `n_simulations=` → `num_simulations=`.
-  - `sbi_learn_conditional` posterior-sampling default
-    `n_samples=` → `num_results=`; `DirectSamplerSBIModel.__init__`
-    and `condition_on(direct_sampler_model, ...,
-    n_samples=...)` likewise.
-
-  Internal `sbijax.simulate_data(..., n_simulations=...)` /
-  `sbijax.fit(..., n_iter=...)` / `sbijax.sample_posterior(...,
-  n_samples=...)` calls keep their native sbijax kwarg names —
-  only the probpipe-facing surface changes.
-
-  Bug fix bundled with the rename: `tests/test_sbijax.py` was
-  calling `condition_on(nle_model, obs, method="tfp_nuts",
-  n_samples=500, n_warmup=500, n_chains=2, ...)` — the MCMC backend
-  silently ignored those kwargs (it expects `num_results=` /
-  `num_warmup=` / `num_chains=`) and the test passed by accident.
-  Fixed.
-
-- **`condition_on` MCMC default switched from TFP to BlackJAX NUTS,
-  plus inference-method priority re-anchoring.** Several entangled
-  changes consolidated into a single migration:
-
-  *Auto-dispatch winner switches to BlackJAX NUTS.* `blackjax_nuts`
-  (priority 85, tier 81–90) wins auto-dispatch for any
-  `SupportsLogProb` + JAX-traceable target — the canonical ProbPipe
-  model class. `tfp_nuts` / `tfp_hmc` are demoted to the opt-in-only
-  sentinel (`priority=0`); they stay registered and reachable via
-  `method="tfp_nuts"` / `method="tfp_hmc"` for bit-pattern regression
-  checks or side-by-side comparisons.
-
-  *Structurally-unreachable methods demoted to `priority=0`.* Methods
-  whose `check()` is identical to a higher-priority sibling can never
-  win auto-dispatch — they're opt-in in effect. Made that explicit:
-  `blackjax_hmc` (same `check()` as `blackjax_nuts`) and
-  `blackjax_sghmc` (same `check()` as `blackjax_sgld`, which is also
-  the simpler default — fewer tuning dials) are now opt-in only.
-
-  *VI demoted to opt-in.* `pymc_advi` (was priority 25) is now
-  `priority=0`. VI is a deliberate bias-for-speed tradeoff that users
-  should pick explicitly via `method="pymc_advi"`; silently dispatching
-  into it when (e.g.) `pymc_nuts` happens to fail would surface VI in
-  MCMC's place.
-
-  *NUTS-tier numbers retuned.* `nutpie_nuts` 85 → 88 (top of the
-  optimised-backend tier — Rust gradients are the fastest of every
-  registered NUTS backend); `pymc_nuts` 81 → 82 (ties with
-  `cmdstan_nuts` at 82; the two apply to disjoint model classes so
-  the tie is documentary).
-
-  `tfp_rwmh` (gradient-free RWMH) is unchanged at priority 55 — the
-  gradient-free-MCMC migration to BlackJAX is queued separately
-  (`~/.claude/plans/bie-rwmh-blackjax-migration.md`).
-
-  Migration: an existing `condition_on(model, data)` call that
-  previously ran TFP NUTS now runs BlackJAX NUTS. The numerical
-  posterior is asymptotically identical but the per-seed bit pattern
-  differs. Pin `method="tfp_nuts"` for bit-pattern regression. The
-  closed-form correctness gate (mean within ~3 σ_MC, variance within
-  10% on a known 2-D Gaussian target) is tested under
-  `tests/test_blackjax_mcmc.py`. Existing `condition_on(...,
-  method="pymc_advi")` / `method="blackjax_hmc"` /
-  `method="blackjax_sghmc"` calls continue to work — only the
-  auto-dispatch path changes.
-
-- **Distribution & Record hierarchy cleanup (#200).** Implements the
-  integrated cleanup plan as six self-contained commits. The public-
-  facing changes are:
-  - **`Distribution.validation_results` is removed.**
-    `predictive_check` now writes its per-invocation payload to
-    `dist.auxiliary["predictive_check/check_N"]` (a wrapped
-    `xarray.Dataset` under a numbered group). Future validation
-    functions (LOO, WAIC, …) land under their own named groups in
-    the same `DataTree`. Code that read `dist.validation_results`
-    should read `dist.auxiliary["predictive_check"]` instead.
-  - **`flatten_value` / `unflatten_value` are now `@staticmethod` with
-    explicit kwargs.** Callers pass `event_shape=` /
-    `template=` explicitly:
-    `dist.flatten_value(value, event_shape=dist.event_shape)` and
-    `dist.unflatten_value(flat, template=dist.record_template)`.
-    The previous instance-method form (no kwargs) raises at runtime.
-  - **`_default_support` classmethods are removed** from every
-    concrete distribution (`Normal`, `Gamma`, `Poisson`, …; 24 in
-    total). Support compatibility is now checked post-construction
-    via `NumericRecordDistribution._check_support_compatible(source)`;
-    downstream code that reached for the classmethod should use the
-    instance `support` / `supports` properties.
-  - **`SimpleModel.__init__` requires a `RecordDistribution` prior**
-    (in addition to the pre-existing `SupportsLogProb` check). Priors
-    that satisfy `SupportsLogProb` but aren't `RecordDistribution`
-    raise `TypeError`. The type system can't express the intersection
-    statically, so the runtime guard is the backstop.
-  - **Default model names change from `None` to the class name.**
-    `SimpleModel()`, `SimpleGenerativeModel()`, `PyMCModel()`,
-    `StanModel()`, and `DirectSamplerSBIModel()` now default to
-    `"SimpleModel"` / `"SimpleGenerativeModel"` / `"PyMCModel"` /
-    `"StanModel"` / `"DirectSamplerSBIModel(<alg>)"` when no name is
-    supplied. The metaclass invariant requires every `Distribution`
-    instance to have a non-empty name.
-  - **`NumericRecordDistribution.event_shape` is abstract** —
-    raises `NotImplementedError` on the base. Single-leaf subclasses
-    must override directly; multi-leaf subclasses (joints) set
-    `_record_template` explicitly and never trigger the auto-build.
-    Previously the default tried to derive from `event_shapes`,
-    which looped back through `record_template`.
-  - **`ProductDistribution` and `SequentialJointDistribution`
-    conditionally mix in `NumericRecordDistribution`** based on
-    their resolved leaves. Both stay rooted at the general
-    `RecordDistribution` (their content is well-defined for
-    non-numeric leaves too — sampling produces a `Record` keyed by
-    component name, conditioning and named-component access always
-    work). When *every* leaf is itself a `NumericRecordDistribution`,
-    the dynamic class factory adds `NumericRecordDistribution` to the
-    bases, so the joint also exposes the numeric API (`event_size`,
-    `flatten_value` / `unflatten_value`, `as_flat_distribution`,
-    `dtypes`, `supports`). For mixed or non-numeric leaves those
-    methods are simply absent on the instance. Leaf type constraint
-    relaxed from `NumericRecordDistribution` to `Distribution`.
-    **Caller-visible consequence:**
-    `isinstance(joint, NumericRecordDistribution)` is no longer
-    guaranteed for `ProductDistribution` / `SequentialJointDistribution`
-    instances — it returns `True` only when every resolved leaf is
-    itself an NRD (the common case). Downstream code that branched on
-    `isinstance(..., NumericRecordDistribution)` for these joints
-    should verify the new dispatch matches its expectations, or
-    switch to checking for the specific capability (e.g.,
-    `hasattr(joint, "event_size")`).
-  - **`NumericJointEmpirical` adds `NumericRecordDistribution` as a
-    mixin** (previously implicit via `JointEmpirical` only). The
-    sibling `JointEmpirical` stays on `RecordDistribution` and now
-    builds a structural template from the stored samples (object-
-    dtype leaves use `None` specs) to satisfy the metaclass
-    invariant.
-
-### Added
-
-- **`RecordTemplate.event_shapes` and `RecordTemplate.field_event_shape(name)`**
-  expose per-top-level-field event shapes (nested sub-templates and
-  opaque leaves collapse to `()`). The previous helper
-  `RecordDistribution._field_event_shape` is removed in favor of these
-  template methods.
-
-- **Metaclass-enforced invariants.** Every `Distribution` instance
-  has a non-empty `name`; every `RecordDistribution` instance has a
-  non-`None` `record_template`. The checks fire post-`__init__` via
-  the `_DistributionMeta` / `_RecordDistributionMeta` metaclasses
-  (derived from `typing._ProtocolMeta` to compose with
-  `@runtime_checkable` protocols). Subclasses that forget either
-  invariant raise `TypeError` at construction with a clear pointer.
-
-### Changed
 
 - **`GLMLikelihood` fits an intercept by default** (``fit_intercept=True``).
   The covariate matrix ``X`` carries only the covariates — no leading
@@ -2580,133 +3162,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model wrappers are now parallel in both the input typing and the
   ``.prior`` property return type.
 
-### Added
-
-- **BlackJAX-backed SGMCMC methods** registered with
-  ``inference_method_registry``:
-  - ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics. Priority 45.
-  - ``blackjax_sghmc`` — Stochastic Gradient Hamiltonian Monte Carlo. Priority 42.
-
-  Both consume a `SimpleModel` whose `likelihood` satisfies
-  `ConditionallyIndependentLikelihood`, plus a required `batch_size=`
-  kwarg. Internally they wrap the model+data in a
-  `MinibatchedDistribution` and feed BlackJAX's gradient estimator
-  via the per-step random-measure draw — the kernel stays oblivious
-  to the minibatching convention.
-
-  ```python
-  posterior = condition_on(
-      model, data,
-      method="blackjax_sgld",
-      batch_size=64, num_results=2000, num_warmup=500, step_size=1e-3,
-  )
-  ```
-
-  Priorities sit in the refinement-based MC tier (1–50), below every
-  exact full-batch gradient method (`tfp_nuts=75`, `tfp_hmc=65`,
-  `tfp_rwmh=55`). SGMCMC's `check()` also requires `batch_size=`, so
-  it does not fire on a routine `condition_on(model, observed)` call —
-  the user opts in by passing `batch_size=` (and typically the
-  matching `method=`).
-
-- **`MinibatchedDistribution`** (`probpipe.MinibatchedDistribution`)
-  — a `RandomMeasure[Record]` over fixed-minibatch stochastic
-  surrogates of the full-data unnormalized log-posterior. A draw is a
-  `Distribution[Record]` with unnormalized log-density
-  `log p(theta) + (N/b) * sum_{d in B} log p(d|theta)`, an unbiased
-  stochastic surrogate (in expectation over the minibatch `B`) of the
-  full-data target; the `N/b` rescaling makes the gradient an unbiased
-  estimator.
-
-  The constructor takes a prior and a conditionally-independent
-  likelihood directly, mirroring `SimpleModel(prior, likelihood)` on
-  the first two args. Consume the measure via
-  `SupportsRandomUnnormalizedLogProb` to get the per-minibatch
-  log-density callable that SGMCMC kernels feed `jax.grad`:
-
-  ```python
-  from probpipe import MinibatchedDistribution, Record, random_unnormalized_log_prob
-
-  m = MinibatchedDistribution(prior, likelihood, Record(X=X, y=y), batch_size=64)
-
-  rf = random_unnormalized_log_prob(m)
-  target = rf._sample(k)                     # callable: theta -> log~D_B(theta)
-  grad = jax.grad(target)(theta)             # unbiased gradient estimate
-  ```
-
-  This is the path stochastic-gradient MCMC kernels use under the
-  hood; the BlackJAX SGLD / SGHMC dispatch builds a `MinibatchedDistribution`
-  internally and threads `target` into the BlackJAX gradient
-  estimator. Tempered SMC (future work) is expected to consume the
-  same surface.
-
-- **`ConditionallyIndependentLikelihood`** (`probpipe.ConditionallyIndependentLikelihood`)
-  — a `Likelihood` subclass / Protocol whose observations factorise as
-  `log p(D | theta) = sum_i log p(d_i | theta)`. Adds a
-  `per_datum_log_likelihood(params, datum)` method on top of the base
-  `Likelihood`'s `log_likelihood(params, data)`. Required by
-  stochastic-gradient inference (the upcoming `MinibatchedDistribution`)
-  and independently useful for held-out predictive log-likelihoods,
-  leave-one-out cross-validation, and PSIS-LOO. The existing concrete
-  likelihoods (`GLMLikelihood`, `_NLELikelihood`, `_NRELikelihood`) all
-  satisfy the Protocol — `GLMLikelihood` via a direct family
-  `log_prob` evaluation that skips the per-batch tile, the two
-  sbijax-backed classes via a length-1-batch fallback.
-
-  A standalone helper `_default_per_datum_log_likelihood(likelihood,
-  params, datum)` provides the length-1-batch implementation for
-  subclasses that want a default rather than an efficient override.
-
-- **`SimpleModel.prior` / `SimpleModel.likelihood`** and
-  **`SimpleGenerativeModel.prior` / `SimpleGenerativeModel.likelihood`**
-  — public read-only properties that expose the underlying components
-  without poking at private state. The two model wrappers stay
-  symmetric: `SimpleModel.likelihood` is typed `Likelihood`,
-  `SimpleGenerativeModel.likelihood` is typed `GenerativeLikelihood`.
-
-- **`FlatNumericRecordDistribution`** (`probpipe.FlatNumericRecordDistribution`)
-  — a `NumericRecordDistribution` subclass that enforces the flat
-  contract (single field, `event_shape == (N,)`). Algorithms that
-  operate on a flat parameter vector (MCMC kernels, optimisers,
-  Hessian / curvature builders, variational families, Pathfinder /
-  Laplace surrogates) can require this type rather than runtime
-  shape probes. Carries the `flat_size: int` shortcut (=
-  `event_shape[0]`) and the `as_record_distribution(template=...)`
-  method.
-
-  The natively-multivariate parametrics
-  (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`)
-  now inherit from `FlatNumericRecordDistribution` in addition to
-  `TFPDistribution`. `FlattenedDistributionView` also implements the
-  contract by construction. Scalar parametrics (`Normal`, `Beta`,
-  `Bernoulli`, …) have `event_shape == ()` and do not satisfy the
-  contract directly; call `.as_flat_distribution()` to obtain a
-  `FlattenedDistributionView` with `event_shape == (1,)`.
-
-- **`FlatNumericRecordDistribution.as_record_distribution(template=...)`**
-  — inverse of `as_flat_distribution()`. Lifts a flat distribution to
-  a Record-keyed view under a user-supplied `NumericRecordTemplate`.
-  Sampling, log-prob, and moments delegate to the source and reshape
-  via the template; capability protocols (`SupportsX`) match the
-  source via dynamic isinstance dispatch. The view is a thin wrapper —
-  no value copying.
-
-  ```python
-  from probpipe import MultivariateNormal, NumericRecordTemplate
-
-  mvn = MultivariateNormal(                     # already a FlatNRD
-      loc=jnp.array([1.0, 2.0, 3.0, 4.0]),
-      cov=jnp.diag(jnp.array([0.5, 1.0, 1.5, 2.0])),
-      name="theta",
-  )
-  template = NumericRecordTemplate(intercept=(), slope=(3,))
-  posterior = mvn.as_record_distribution(template=template)
-  draw = sample(posterior, key=k)         # NumericRecord(intercept, slope)
-  mean(posterior)["slope"]                # vector mean of the slope block
-  ```
-
-### Changed
-
 - **`FlattenedView` renamed to `FlattenedDistributionView`** and now
   inherits from `FlatNumericRecordDistribution` (formerly
   `NumericRecordDistribution`). The view's flat contract was always
@@ -2715,6 +3170,658 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`_RecordLiftedView` renamed to `NumericRecordDistributionView`** and
   made public. Constructed via
   `FlatNumericRecordDistribution.as_record_distribution(template=...)`.
+
+- **dtype handling** now follows JAX's rules. Distributions, weights, and
+  empirical classes preserve user-supplied dtypes and honor
+  ``jax.config.update("jax_enable_x64", True)`` end-to-end. Previously every
+  TFP-backed constructor silently downcast its parameters to ``float32``,
+  causing ``log_prob`` / ``sample`` / ``mean`` to raise ``TypeError`` under
+  x64. Multi-parameter constructors now promote inputs to a common float
+  dtype via ``jnp.result_type`` (integer inputs are promoted to JAX's
+  default float, so ``Normal(loc=0, scale=1)`` still works). Internal
+  helpers ``_default_float_dtype()`` and ``_promote_floats()`` live in
+  ``probpipe/_dtype.py``. The float64-truncation warning filter previously
+  in ``probpipe/__init__.py`` is removed.
+
+### Removed (breaking)
+
+- **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
+  density alone, as it builds the law of any combination of a sampler and a
+  density: replace `UnnormalizedDistribution(label, f, event_spec)` with
+  `distribution(label, unnormalized_log_prob=f, event_spec=event_spec)`. The
+  density scores one value, which arrives as an array or a `Record` for a
+  numeric event, and returns a scalar; the law maps it over a batch's leading
+  axes.
+- **`tfp_hmc` is removed.** Its fixed ten-step trajectory resonates on a
+  near-Gaussian posterior, so its chains mixed poorly and its variances came out
+  low. `blackjax_hmc` jitters its trajectory length, and `tfp_nuts` remains for
+  TFP: replace `method="tfp_hmc"` with `method="blackjax_hmc"`.
+- **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
+  `RecordBatch` / `NumericRecordBatch`.** A batched record was a `Record`
+  subclass, which made `isinstance(x, Record)` true of a collection and put a
+  batch's `len` and iteration in competition with a record's fields. The batch
+  types are `Batch` subclasses now: they hold named levels, `len` and `iter`
+  speak about the collection, and the field structure is read from
+  `event_template` where it belongs. `RecordBatch.stack` replaces
+  `RecordArray.stack`, `NumericRecordBatch.to_vector` / `from_vector` replace
+  their array counterparts, and a producer that returned a `RecordArray` returns
+  a `RecordBatch`.
+
+  `_RecordArrayView` goes with them: a field selection off a batch is an ordinary
+  batch, and sibling selections align by their shared level names rather than by
+  a parent pointer. `Design` and `FullFactorialDesign` are batches.
+
+  The batch types were built alongside the array ones and then took over, so the
+  entries below describe the batch types throughout — this is the only entry that
+  names the classes being removed.
+
+### Fixed
+
+- **A single str is one name wherever a sequence of names is taken.**
+  `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
+  an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
+  where it computed nothing. `add_mcmc_diagnostics` raises `ValueError` for an
+  unknown metric, where it ignored it.
+- A function whose returned overall kind differs from its output declaration
+  raises `ResultKindError`. A result of the declared kind with an incompatible
+  schema raises `ResultSchemaError`. The distinction applies to lifted calls
+  and operation routes. A call with `raw=True` validates its result before
+  detachment. `apply` reports output declaration violations as `ValueError`.
+- **Workflow-owned sampling works on every JAX version the package accepts.**
+  The package requires `jax>=0.9`, but a workflow-owned draw, such as `sample`
+  inside `workflow_run`, raised `AttributeError` on any JAX release before
+  0.10.1. The check of the draw's key called `jax.random.key_dtype`, which JAX
+  added in 0.10.1. The check now compares `jax.random.key_impl(key)` with
+  `"threefry2x32"`. A CI job installs the lowest version of each core
+  dependency that `pyproject.toml` allows and runs the tests of the functions,
+  converters, and operations packages against them.
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
+- **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
+  constructors document `label` as the first parameter, but a keyword call
+  `StanModel(label=..., stan_file=...)` raised `TypeError` because the class
+  call took `name`.
+- **A real-valued support rejects a complex value with a nonzero imaginary
+  part.** JAX orders complex values lexicographically, so `positive.check(1j)`
+  and `real.check(1j)` were true, and a function that declared a positive
+  output accepted `1j`. Every built-in `Constraint` now contains a complex
+  value only where its imaginary part is zero and its real part is in the
+  support. A structured support, such as `simplex`, `sphere`, or
+  `positive_definite`, requires every entry of the event to be real. The
+  result keeps its shape, and the check still traces under `jax.jit`.
+- **Renaming an empirical law's paths returns an empirical law.**
+  `with_path_names` on an `EmpiricalDistribution` over records, such as an MCMC
+  posterior, returned a law without `atoms`, `num_atoms`, or `weights`, and its
+  repr showed the posterior's atoms under the old names. It now returns an
+  `EmpiricalDistribution` with the same label and weights whose atoms carry the
+  new paths. A law that renames at its boundary, such as a renamed
+  `KDEDistribution`, reads as `KDEDistribution(...).with_path_names({...})`. A
+  lift draws every law that `with_path_names` returns together with the law it
+  renames. A factored joint rebuilt under the new paths and a rename of a whole
+  term's component used to lift independently of the law they rename, and now
+  draw with it too.
+- **A marginal or a factor lifts independently of the joint it comes from.**
+  When `marginal` or `factor` returned a factor of a factored joint, the result
+  kept the factor's link to the batch it came from or to the law it renames, so
+  a lift drew the result together with that law. Both operations now detach
+  their result, and a lift draws it independently.
+- **A PyMC model draws its Cauchy and half-Cauchy variables with their location
+  and scale.** The lock pinned PyTensor 3.0.4, whose sampler of a Cauchy
+  variable returned location `loc / scale` and scale `1 / scale`, so a prior
+  `HalfCauchy(5)` drew as `HalfCauchy(0.2)` in `sample`, in prior and
+  prior-predictive draws, and in the Monte Carlo moments; densities, and hence
+  NUTS posteriors, were unaffected. The `pymc` extra now requires `pymc>=6.2`
+  and `pytensor>=3.2.4`, the first PyTensor release with the upstream fix, and
+  the lock moves to PyMC 6.3.2 and PyTensor 3.3.3.
+- **`StanModel` constructs on a machine where BridgeStan has never compiled a
+  model.** Construction reads the program's declarations with BridgeStan's
+  stanc compiler, which BridgeStan fetches only when it first compiles a model,
+  so the first `StanModel` on a new machine raised `ImportError`. Construction
+  now downloads BridgeStan's source tree and fetches stanc with BridgeStan's own
+  Makefile target, as BridgeStan's first compile does, and a failed fetch names
+  the command that fetches the compiler.
+- **A sweep or a lift records the dtype its batch stores.** The rows of a sweep
+  and the evaluations of a lift are stacked into one JAX array, which holds
+  their canonical dtype, so while JAX's 64-bit mode is off a 64-bit NumPy row
+  is stored as a 32-bit one. A declared, inferred, or tracked 64-bit dtype was
+  recorded in the batch's element declaration and in a lift's event
+  declaration all the same. Each now records the stored dtype, an array
+  element always and a record field where its declaration states a dtype, so a
+  declaration of `float64` yields a batch that declares and holds `float32`
+  while 64-bit mode is off. A sequential sweep and a JAX sweep therefore agree
+  on the dtype when the records they sweep declare none, where the sequential
+  one recorded none.
+- **Each draw in an `apply` body is its own workflow-owned random event.**
+  `Function.apply` gave all the draws its body made directly one shared
+  occurrence, so a body that drew twice in this way raised `RuntimeError` where
+  a call of the same function succeeded. `with_resampling(step).apply(...)`
+  raised it whenever `step` drew through `converter_registry.convert` and the
+  result was resampled. An `apply` body now draws as the body of a call does:
+  each draw is its own event, in program order, and `workflow_run(seed=...)`
+  reproduces it. The seeded draws of an `apply` body change, and they now equal
+  the draws of a call of the same function at the same position in the
+  workflow. An `apply` now takes at most one position in its workflow scope,
+  however many stochastic calls its body makes, so the draws after an `apply`
+  whose body made several can change too. An `apply` that draws nothing takes
+  no position.
+- **A parameter annotated with a raw class receives the raw form.** A function
+  body received a tracked argument whatever its parameter's annotation, so
+  `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a
+  `Series`. A parameter annotated with a class such as `pd.Series`,
+  `xr.DataArray`, or `jax.Array` now receives the argument's `raw()` when that is
+  an instance of the class, in a call, in `apply`, and for each element of a
+  sweep and each draw of a broadcast.
+- **A level name is any non-empty string without `/`.** A batch required a
+  Python identifier, while a level's default name comes from a label or a
+  component, so a Monte Carlo `mean`, `variance`, or `quantile` of a law
+  labeled `"my law"` raised, as did `EmpiricalDistribution("my law", array)`. A
+  level name now follows the rule for component names, and `at_levels` takes a
+  name that is no identifier in a mapping, as `at_levels(**{"my level": 0})`. A
+  bootstrap law checks its `level` by the same rule when it is constructed.
+- **`convert` fits a family on another support under `check_support=False`.**
+  Passing the option as
+  `convert.with_options(method_options={"check_support": False})` raised
+  `ResultSchemaError` whenever the source declared a support, as converting a
+  `Gamma` law to `Normal` did. The result now has the family's own support, as
+  `converter_registry.convert(..., check_support=False)` returns it.
+- **`pymc_nuts` runs PyMC's own NUTS sampler.** It called `pm.sample` without
+  choosing a NUTS implementation, and PyMC 6 then runs nutpie wherever nutpie
+  is installed, so `pymc_nuts` ran the sampler that `nutpie_nuts` runs while its
+  result recorded `method="pymc_nuts"`. It now passes `nuts_sampler="pymc"`.
+- **`pymc_nuts` and `pymc_advi` read the `progress_bar` method option.** They
+  refused it with `TypeError`, so
+  `condition_on.with_options(method_options={"progress_bar": False})` on a
+  `PyMCModel` failed wherever `pymc_nuts` was selected, as it is without
+  nutpie, and no option turned off PyMC's progress bars. Each now passes the
+  option to PyMC as `progressbar`, `True` unless set, as `nutpie_nuts` does.
+- **`posterior.diagnostics.to_dict()` works after `add_loo`.** It raised
+  `KeyError`, because a run's view selected each pointwise value by the string
+  form of its integer observation index. The views now read by position, so
+  `to_dict()` holds the LOO run, with `pareto_k` and `loo_i` keyed `"0"`, `"1"`,
+  and so on. `add_loo` also records `loo_i`, which ArviZ 1.x names `elpd_i`.
+- **Drawing from an amortized posterior prints no progress bar.** BayesFlow's
+  sampler printed a bar on every call, so each `mean`, `quantile`, or `sample`
+  of a posterior from `learn_amortized_posterior` printed one, and a notebook
+  that summarized the posterior at many observations filled with bars.
+- **`predictive_check` takes observed data held in a pandas or xarray object.**
+  It passed such an object to the statistics as given, while each replication
+  is a JAX array, so a statistic written with `jax.numpy` failed on a pandas
+  `Series` or an xarray `DataArray`. It now converts a registered array host
+  to the JAX array a replication holds, whether the data are one value or a
+  mapping of the kernel's components.
+- **`add_mcmc_diagnostics` counts the divergent transitions.** It recorded no
+  count, so `posterior.diagnostics.mcmc.n_divergences` reported "not recorded by
+  this backend" for every method. It now records the sum of the ArviZ sample
+  statistic `diverging`, which the PyMC, Stan, and nutpie methods write.
+  `blackjax_nuts` and `blackjax_hmc` wrote the statistic as `is_divergent`, and
+  `tfp_nuts` wrote none; both now write `diverging`, so read
+  `annotations["arviz"]["sample_stats"]["diverging"]` in place of
+  `["is_divergent"]`.
+- **A completed declaration keeps its declared dtypes.** `OutputSpec.with_spec`
+  checked that the declared spec unifies with the produced one and then stored
+  the produced spec, so a declared dtype or support was lost wherever the
+  producer left it open. An `EmpiricalDistribution` declared from a prior's
+  `event_spec` over atoms without dtypes reported `dtypes` of `None` where the
+  prior declared `float32`. `with_spec` now stores the unification, as design
+  II.2 states. A numeric array keeps its declared dtype and support and takes the
+  produced ones where the declaration leaves them unset, a declared symbolic
+  dimension binds to the produced size, and a record unifies field by field.
+- **An exact lift over an empirical law runs in one `vmap`.** A function lifted
+  over an empirical law with at most `n_broadcast_samples` atoms is evaluated at
+  every combination of atoms, and these evaluations ran in a Python loop even
+  when the call traces, so a body that runs `jax.lax.scan` was traced again for
+  each atom. A 22-step population trajectory over a 2,000-atom posterior took
+  70 s. When the call traces, `dispatch="auto"` now evaluates every combination
+  in one `jax.vmap`, with the atoms and weights of the loop, and the trajectory
+  takes 0.6 s. `dispatch="jax"` maps the enumeration, where it raised before.
+  The trace probe reads a dtype that a law's declaration leaves open from the
+  law's stored atoms, so a record-valued empirical law without declared dtypes
+  maps as well, under the enumeration and the sampling lift. Atoms that are
+  objects, such as laws, and a body that does not trace run one combination at
+  a time.
+- **A sweep over a batch of arrays runs in one `vmap`.** A batch of records at
+  a parameter that expects one value runs its rows in one `jax.vmap` when the
+  call traces, but a `NumericArrayBatch` ran row by row under
+  `dispatch="auto"`, and `dispatch="jax"` refused it. The density operations
+  sweep a batch of values, so `log_prob(law, NumericArrayBatch(...))` called the
+  law's `_log_prob` once per element: 1,000 points at a coupling-flow amortized
+  posterior took 21 s, where one call of its density takes about 1 s. A batch of
+  arrays now maps as a batch of records does, the 1,000 points take under 2 s,
+  and the scores keep the batch's levels. A batch that stores objects, such as a
+  `DistributionBatch`, still runs row by row.
+- **`dispatch="jax"` raises a call's `ApplicabilityError`.** A swept batch whose
+  elements do not conform to the call's declarations, such as values of the
+  wrong shape for `log_prob`, raised `ApplicabilityError` under
+  `dispatch="auto"` and `"sequential"`, and a `ValueError` saying the function
+  failed while tracing under `dispatch="jax"`. Every dispatch now raises the
+  `ApplicabilityError`, as each raises a result's `ResultSchemaError`.
+- **A record view of a law with a joint support leaves each leaf's support
+  unset.** A record view of a `Dirichlet` gave every leaf `simplex`, which holds
+  for the joint vector only. A leaf keeps the source's support only when the
+  support holds piecewise, as a constraint with scalar parameters such as
+  `positive` does.
+- **A field view splits a slash path and takes a tuple key.** For a nested
+  product `p`, `p["a"]["b/c"]` and `p["a"][("b", "c")]` are `p["a/b/c"]`, where
+  they raised `KeyError` and `TypeError`.
+- **`iter(law)` raises `TypeError`.** Indexing made a law look like a sequence,
+  so iteration started and failed on the index `0`.
+- **A sequential joint leaves unset the support of a component that depends on
+  its parents.** The support was read off a prototype built at one draw of the
+  parents, so `x=lambda z: Uniform("x", z - 1, z + 1)` reported the interval
+  for that draw. `supports` reports `None` for such a leaf, before and after
+  conditioning, and keeps a support that takes no parameters, such as
+  `positive`.
+- **`blackjax_rwmh` adaptive warmup no longer collapses its proposal.**
+  A warmup window in which the chain barely moves leaves a singular Welford
+  covariance, and refitting the proposal to it stopped the chain for the rest
+  of the run. A window that rejected every proposal refit to a proposal scale
+  near `1e-10`; a window with fewer accepted proposals than target dimensions
+  refit to a NaN proposal in float32, which rejects every move. Windows shorter
+  than the documented 25-step minimum made the first case common:
+  `num_warmup=100` split as `[7, 13, 27, 53]`, and a 2-D standard normal
+  stopped at that warmup for about a quarter of seeds. The second case stopped
+  every chain on a 20-dimensional target at the default `num_warmup=500`. The
+  window count is now reduced until every window holds at least 25 steps, so
+  `num_warmup=100` splits as `[33, 67]` and warmups shorter than 74 steps run
+  as one window. Each refit now computes
+  `(n * Sigma_hat + 5 * Sigma_prev) / (n + 5)`, which shrinks the Welford
+  covariance `Sigma_hat` toward the covariance `Sigma_prev` that the proposal
+  in use assumes and keeps the proposal positive definite. Adaptive runs draw
+  different samples than before for a fixed seed.
+
+- Native NumPy scalars retain their original dtype and precision in
+  `NumericArray` storage and NumPy conversion. `as_jax()` and `float(value)`
+  follow JAX's x64 configuration and may round or overflow; enable x64 before
+  the first conversion when float64 is required. Python numeric subclasses
+  continue to normalise at construction, with NumPy scalars excluded.
+  Sweeps of `OpaqueBatch` or `FunctionBatch` rows pass the rows' `element_spec`
+  to the aggregate constructor, preserving declarations previously replaced by
+  defaults. Mixed batch and non-batch rows report the same schema error in
+  either order (#446).
+
+- Batched sampling preserves complete opaque events, including array-shaped
+  events, by flattening only sampling axes during aggregation (#446).
+  Object-array draws whose leading axes do not match `sample_shape` are left
+  unchanged at the batch conversion boundary, matching numeric and record draws.
+
+- Explicit-key `sample` calls accept structural `SupportsSampling` objects
+  without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic
+  name `sample`; a supplied name defaults to explicit when its naming flag is
+  absent. Single and batched raw draws retain the sampler's naming metadata
+  with either explicit or automatic keys (#446). Raw draws receive that metadata
+  during wrapping, so the name is checked at construction and sequence levels
+  retain their operation-derived names.
+
+- Sweeps returning `NumericArray`, including nested numeric operations such as
+  `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
+  preserved. When every numeric row is tracked, shared declarations survive
+  aggregation after symbolic event dimensions bind to the rows' actual shapes.
+  Differing dtypes promote together to their common NumPy dtype, independent of
+  row order, with JAX promotion for extended dtype combinations NumPy cannot
+  promote. Conflicting event shapes or supports raise an actionable error. A row
+  with an unspecified dtype leaves the aggregate's declared dtype unspecified.
+  Mixed raw and tracked numeric rows infer the aggregate's shape and dtype without adopting
+  a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
+  `NumericRecord` cache only concrete conversions, so values first converted
+  inside a JAX transform remain usable afterward (#446).
+
+- **The kind table is the single answer to which batch form a field has (#398).**
+  `RecordBatch` construction listed the admissible field kinds inline while the
+  reading end asked the registry, so registering a kind widened one and not the
+  other. Construction now asks the registry too. Aggregating a batch of rows also
+  converts each row through its own `as_jax`, whose set-once cache it was
+  bypassing by converting the raw store directly.
+
+- **A swept row of unstackable elements keeps its level (#398).** A row returning
+  a sequence of opaque objects or callables had its own batch stored whole as one
+  element of the aggregate, so the row's multiplicity vanished and a row of
+  callables came back as an `OpaqueBatch`. The row-stacking path now knows all
+  three batch families, so such a row aggregates to `(rows, row_size)` over both
+  levels and a row of callables gives a `FunctionBatch`. An empty sequence row is
+  a batch of nothing on its own level, as it already was for a single return,
+  which also settles a dispatch disagreement: the mapped path raised where the
+  row-wise path returned.
+
+- **Every density op keeps a batch operand's levels (#398).** `log_prob` restated
+  the levels its operand carried; `prob`, `unnormalized_log_prob`, and
+  `unnormalized_prob` handed back a bare array, so the same draws scored as a
+  batch over `("chain", "draw")` under one op and as one value of shape `(2, 3)`
+  under another. All four now restate them, so which op is called no longer
+  decides whether the draws were a multiplicity.
+
+- **A declared function can be swept over any kind of batch (#398).** Lifting a
+  declaration against a batched operand read `event_template`, the view only a
+  batch of records has, so a `NumericArrayBatch`, `OpaqueBatch`, or `FunctionBatch`
+  operand raised `does not expose an authoritative event_template for lifting`
+  however its declaration was written. It now reads `element_spec`, which the
+  `Batch` contract states at every kind. Two consequences: every batch kind is
+  read the same way, and a batch of one-field records no longer satisfies a
+  declaration that named a bare array — the record-only view unwrapped a
+  single-field element to its field, so `EventTemplate(v=())` accepted an operand
+  whose elements are records. A distribution operand is unchanged: it is lifted by
+  being sampled, and its event template remains what the draw is checked against.
+
+- **A swept row's kind no longer depends on which executor ran it (#398).** The
+  row-wise path gave each row the tracked class of its own kind; the mapped
+  (`jax.vmap`) path handed its rows to the aggregation raw, so a body returning a
+  mapping raised `cannot aggregate output of type dict` and one returning a
+  sequence raised a spurious row-count mismatch — under `dispatch="auto"`, on
+  bodies that worked under `dispatch="sequential"`. Both paths now read a row
+  through the same rule, and a record row crosses the map as inert columns over no
+  level of its own, the way a batch row already crossed it. A declared
+  `output_template` still names the row's kind, as before.
+
+- **Reading a distribution no longer modifies it.** `BroadcastDistribution`
+  assigned its marginal on the first `marginalize()`, and a backend-delegated
+  `DistributionArray` assigned its components on the first read, so a query
+  changed the object a caller was holding — against `C2` and the §V.1 promise
+  that an implementer's object is never modified. Each now fills a memo container
+  assigned at construction, so the result is still computed once and the term's
+  own fields stay as they were built. Both remain lazy.
+
+- **Every dispatch presents a one-field draw the same way.** A one-field
+  record-valued law — a `ProductDistribution` over a single distribution, say —
+  draws a batch of records. The row-wise paths presented each draw as its bare
+  leaf; the `vmap` path presented the record. Since the record shim carries
+  conversions but deliberately no arithmetic, a body as ordinary as `x * 2`
+  succeeded under `dispatch="sequential"` and crashed under the mapped
+  executor. All four paths now present a draw through one rule.
+
+  Design II.4 leaves the choice itself open, riding on the single-value
+  coercion question `Record` poses. What it does not leave open is that the
+  dispatches agree, which is what this restores; the bare-leaf presentation is
+  the one three of the four paths already made.
+
+- **A law that cannot report its `dtype` is probed rather than refused.** The
+  trace probe read `event_shape` and `dtype` to size a synthetic dummy. Reading
+  `dtype` was itself the refusal: `getattr(law, "dtype", None)` swallows only
+  `AttributeError`, so a law raising anything else — a
+  `SequentialJointDistribution` view raises `NotImplementedError` — failed the
+  probe and was sent to row-wise dispatch for want of a placeholder. The probe
+  now draws a sample instead, and the draw carries both.
+
+  `dispatch="jax"` consequently accepts cases it used to reject, those views
+  above all. They build each component from a Python callable, which is indeed
+  not traceable, but that runs while sampling, before the map, so only the body
+  is traced; the mapped result matches the row-wise one exactly. An empirical
+  law is unaffected, still enumerated so its exact weights are preserved.
+
+- **A body that returns a batch no longer crashes the marginalization path.**
+  Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
+  argument raised the pytree rank error out of `jax.vmap` instead of falling
+  back to sequential dispatch.
+
+  The trace probe that gates JAX dispatch models the transform its executor
+  applies, so that a body which traces cleanly bare but cannot survive the
+  transform is caught while a fallback is still available. It did that for the
+  sweep executor and not for `_broadcast_jax`, which also maps — over the draw
+  axis rather than over batch rows — so a batch-returning body passed the probe
+  and then failed inside the executor, where nothing was left to fall back to.
+  Both mapping executors are now probed under a map.
+
+- **`copy` and `pickle` no longer drop a term's annotations (#409).** `Record`,
+  `NumericRecord`, and `ProductDistribution` each reconstruct through a
+  `__reduce__` that listed its state by hand, and none of them listed
+  `_annotations`, so a copied or unpickled term came back with its annotations
+  gone — the diagnostics and inference-backend payloads written into that store
+  among them — and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
+  as well as `pickle`, so all three paths lost them.
+
+  The omission was systematic rather than careless: annotations are the one field
+  written *after* construction — the documented exception to immutability — so a
+  state list assembled from constructor arguments misses exactly this one.
+
+  So reconstruction reads the term's own state instead of a list: nothing has to
+  name a field for it to survive, and `TrackedTerm._restore_identity` — which
+  wrote identity onto an already-constructed object, bypassing both the
+  immutability guard and the write-once provenance rule for any caller who found
+  it — **is deleted**.
+
+  The container a reconstruction is handed is decoupled from the one it was built
+  from, as `with_label` already does: entries are shared, the container is not, so
+  a write on a copy does not show through on the original. Annotations still do
+  not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
+  unchanged.
+
+- **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
+  A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
+  `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was
+  invisible to `free_dims`, so `EventTemplate(law=DistributionSpec(x=("obs",)))`
+  reported itself concrete. Design II.3 draws no line at a term-spec boundary:
+  *any* symbolic entry makes a template polymorphic.
+
+  Reporting a dimension, substituting it, and binding it are now three methods
+  every `ValueSpec` answers, so the spec that declares a dimension resolves it.
+  `EventTemplate.free_dims` is the union over its children, so a name is reported
+  wherever it is declared. Three things follow. Substitution reaches through a
+  term spec, so every dimension reported is bindable. **Unification binds through
+  one too**: a spec's declaration unifies against the actual term's own, in the
+  shared binding scope, so a name inside a `DistributionSpec` is the same
+  dimension as that name beside it — it binds once, and a disagreement raises.
+  And a `BatchSpec` axis size may now be a symbolic name in that same scope,
+  bound from the actual `Batch` it is matched against, so a batch of `("n",)`
+  over arrays of shape `("n",)` is square by declaration, and a batch that is not
+  square is refused.
+
+  Each spec owns its own binding, which is what reaches a spec the schema layer
+  cannot name: `BatchSpec` lives in `_batch.py`, which imports from
+  `event_template.py`, so a type test there could report a batch axis as free
+  while nothing could bind it. Every spec that reports a dimension implements
+  both binding methods — `NumericArraySpec` and `FunctionSpec` included, which the
+  unification pass had special-cased — so the four methods are one contract
+  rather than a rule with exceptions.
+
+  A `FunctionSpec`'s output binds whatever kind it declares. Only a record
+  declaration was read before, so a callable declaring an output that contradicted
+  the input bound the input alone and reported an output schema that was wrong
+  rather than merely unbound: input `("n",)` against a declared `(3,)` and an
+  actual output of `(5,)` reported `(5,)` as `(3,)`. A non-record declaration
+  describes the one value returned, so it now meets the sole leaf of the
+  callable's output template, and several output fields do not match it.
+
+  This brings the term specs into line with `NumericArraySpec`, which has always
+  accepted a concrete value against a symbolic shape and left the sizes to the
+  single pass, per II.3's division of labor. A polymorphic term-spec declaration
+  was previously unsatisfiable: `is_valid` compared inner templates for exact
+  equality, so a symbolic declaration never matched a concrete value.
+
+  A live `Batch` still requires a concrete multiplicity — it holds elements at
+  positions — so construction refuses a polymorphic `BatchSpec`, and
+  `batch_size` raises until the dimensions are bound.
+
+- **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
+  references to the same law denote one random variable, so they must come from
+  one draw. Passing the same `Distribution` to two arguments sampled it twice
+  instead, so `f(d, d)` approximated `f(X1, X2)` — a silently wrong answer, with
+  `difference(dist, dist)` returning a spread around zero rather than zero.
+
+  Arguments were already grouped by root ancestor, as the co-sampling contract
+  requires; the grouping was then discarded for plain distributions and honored
+  only for field views. Each group is now drawn **once**, from its root, with
+  every member taking its own value out of that draw. Two further cases follow
+  from the same change: a parent passed alongside its own view no longer raises
+  (it was projected as though the parent were a view), and an empirical passed
+  twice contributes **one** enumeration axis rather than a squared grid — over
+  three atoms, `f(e, e)` enumerates 3 points instead of 9, each weighted once
+  instead of squared.
+
+  Arguments with no common root are unaffected, down to the subkeys: a group of
+  one consumes exactly one key split, as before. Only calls that were already
+  returning wrong values change their output.
+
+- **A record-valued law can be lifted.** Passing a record-valued
+  `Distribution` as an argument raised `TypeError: ... is not array-like`, from
+  two places that assumed every argument's samples were an array. Broadcast
+  assembly read the row count from the samples' `shape`, which a record batch
+  refuses unless it holds exactly one leaf; the count now comes from
+  `batch_shape`, the one accessor that means the same thing for every batched
+  value. Enumeration also stacked each argument's per-row values with
+  `jnp.stack`, which a `Record` row is not; those now stack through
+  `RecordBatch.stack`.
+
+  The first of those is what kept `f(d, d["x"])` — a parent alongside its own
+  view, the remaining co-sampling case above — from running end to end once its
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`,
+  `thread`, and `jax` dispatch when the mapped body is JAX-traceable, including
+  nested sampled records and repeated roots. Exactly enumerated empirical roots
+  still report the exact-enumeration error described above under explicit
+  `dispatch="jax"`.
+
+  **The joint those lifts produce also resamples.** `include_inputs=True` keeps
+  every input beside the output, and drawing from that joint gathers the same
+  rows from each, which is what keeps a drawn tuple paired. A record-shaped
+  component has fields rather than a shape, so handing it an array of rows raised
+  `TypeError: key must be str, tuple, or int`. Every component now goes through
+  one gather that reads the container it is given: an array indexes directly, a
+  list of per-row objects gathers positionally, and a record is rebuilt from its
+  gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
+  `RecordBatch` stores its row count and a `Record` its event template, both in
+  pytree aux data, so mapping over the leaves alone would have produced a batch
+  quietly claiming the rows it started with. The same gather covers the output
+  side, where a vectorized broadcast over a record-returning function leaves the
+  output a batched `Record`. A single draw is unwrapped to one record rather than
+  a one-row batch, its field names intact.
+
+- **Value specs are fingerprinted by declaration, not identity (#381).** The
+  spec hasher now covers `RecordSpec` and recurses into a stored declaration
+  (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
+  rather than a template. The generic hasher also routes any `ValueSpec` to it,
+  so a spec reached other than as a template leaf — bare, or inside a tuple,
+  list, or mapping — records its type and declaration fields instead of falling
+  through to identity hashing. Previously such a spec hashed weakly, so two
+  *equal* declarations produced different fingerprints and silently broke jit
+  cache keys and provenance. Because a record declaration is now stored as a
+  `RecordSpec`, the digest of a template carrying a `DistributionSpec`, or a
+  `FunctionSpec` with a declared output, also changes value; fingerprints are
+  in-memory jit cache keys and provenance only, never persisted.
+
+- **ml_dtypes arrays (bfloat16, float8, int4) now classify as numeric
+  (#343).** The numeric-dtype gates previously keyed on numpy's
+  `dtype.kind`, under which the ml_dtypes extension types JAX registers
+  report `"V"` (void) — so a bfloat16 array failed `NumericArraySpec.is_valid`,
+  inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
+  `NumericRecordBatch` leaf. All five gates (template inference, spec
+  validation, the two record-layer leaf checks, the broadcast-template
+  builder, and the `Design` marginals probe) now route through one shared
+  predicate that also admits ml_dtypes numerics; structured (record)
+  dtypes remain non-numeric. The internal `_NUMERIC_DTYPE_KINDS` constant
+  is removed in favor of the shared predicate.
+
+- **Core container indexing and nested reductions.** `DistributionArray`
+  integer indexing now raises `IndexError` for positive overflow and negatives
+  past the axis bounds, while 0-d arrays accept only empty-tuple indexing.
+  `NumericRecordBatch.mean()` and `.var()` now recurse through nested numeric
+  record fields instead of treating nested records as arrays.
+
+- **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
+  branch.** `RootLinOp.diag()` now squares diagonal roots; `CholeskyLinOp`
+  keeps lower-root (`L @ L.T`) and upper-root (`U.T @ U`) representations
+  consistent across `cholesky`, `to_cholesky_representation`, `matvec`,
+  `rmatvec`, `matmat`, `rmatmat`, `diag`, `to_dense`, and `solve`;
+  `JointGaussian.condition_on` uses linear solves instead of forming explicit
+  covariance inverses; and `SumLinOp.matmat` / `rmatmat` preserve the `(n, 1)`
+  matrix shape for single-column inputs.
+
+- **Invalid log-space weights are rejected before normalization.**
+  `Weights(log_weights=...)` now rejects `NaN` entries and zero-total-mass
+  inputs such as all `-inf`, avoiding downstream `nan` normalized weights while
+  still allowing individual `-inf` entries for zero-weight atoms.
+
+- **`StanModel` now works against a real BridgeStan backend.** Two bugs at the
+  BridgeStan boundary were hidden by the mocked tests: construction passed a
+  `data=` keyword that `bridgestan.StanModel.from_stan_file` does not accept,
+  and JAX arrays were handed to a ctypes interface that requires `float64`
+  NumPy arrays. Construction now goes through BridgeStan's supported
+  constructor — which takes the `.stan` path directly and serializes the data
+  dict — and every value crossing into `param_constrain` / `param_unconstrain`
+  / `log_density` is coerced to a `float64` ndarray, so `StanModel(stan_file)`
+  and `log_prob(stan_model, ...)` succeed end to end. The `stan` extra now pins
+  `bridgestan>=2.7` (the first release with that constructor), and a
+  compile-gated integration test guards this boundary against future drift.
+
+- **nutpie sampling of a `StanModel` keeps its construction-time data.** The
+  nutpie path rebuilt the BridgeStan model from the conditioning data alone,
+  dropping any data passed to `StanModel(file, data=...)` — so a model carrying
+  fixed data (sizes, covariates) failed on the missing variables when sampled
+  via nutpie, while the CmdStan path worked. The conditioning data is now merged
+  on top of the construction-time data (conditioning values override), matching
+  the CmdStan method.
+
+- **`condition_on` no longer silently ignores a case-mismatched data kwarg
+  (#228).** Passing `condition_on(model, x=...)` when the field is `X` used to
+  route `x` to the inference parameters, where it was silently dropped (e.g. by
+  NUTS) — a wrong result with no error. A kwarg that matches a field only up to
+  case now raises a `TypeError` with the correct casing (`did you mean X=...?`);
+  unknown kwargs that are *not* a case-variant of any field remain inference
+  parameters.
+
+- **Codecov no longer misreports coverage on targeted PRs (#261).**
+  On a PR that ran only the changed-files test path, the main test job
+  skipped its Codecov upload while the BayesFlow job still uploaded, so
+  Codecov computed project/patch from the BayesFlow report alone —
+  yielding spuriously low numbers and a "HEAD has 1 upload less than
+  BASE" warning even though every Actions job passed. Now: the main
+  test job uploads coverage on the targeted path too (tagged `unit`),
+  so **patch** coverage is accurate and stays an enforced PR gate;
+  Codecov **project** is `informational` on PRs (the real 88% floor is
+  enforced in-CI on the full-suite run via `--cov-fail-under`); the
+  BayesFlow leg is gated to run only on BayesFlow-relevant changes; and
+  per-flag `carryforward` keeps the project number sane when a flag
+  isn't uploaded.
+
+- **Package license metadata corrected to Apache-2.0 (was MIT).**
+  `pyproject.toml` declared `license = { text = "MIT" }` while the
+  repository's `LICENSE` is Apache License 2.0 — and the metadata field is
+  what PyPI displays. The field is now a PEP 639 SPDX expression
+  (`license = "Apache-2.0"` with `license-files = ["LICENSE", "AUTHORS"]`),
+  so built distributions carry `License-Expression: Apache-2.0` (core
+  metadata 2.4). The setuptools build floor rises from 61 to 77.0.3 — PEP
+  639 support landed in 77.0.0, which also deprecated the old
+  `license = { text = ... }` table form, and 77.0.3 relaxed the new
+  `license-files` validation from errors to warnings — and the redundant
+  `wheel` build requirement is dropped (`bdist_wheel` ships inside
+  setuptools since 70.1). Build-time changes only; runtime dependencies
+  are unchanged.
+
+### Removed
+
+- **sbijax dropped (breaking).** The `sbijax`-backed simulation-based
+  inference (SBI) layer is removed in full, ahead of the PyMC 6 /
+  ArviZ 1.0 ecosystem upgrade — `sbijax` constrains the jax / jaxlib
+  floor and blocks the rest of the stack from moving forward. No
+  replacement ships in this release; the SBI capability is being
+  re-platformed onto **pyabc** (SMC-ABC), **BayesFlow** (amortized
+  NPE / FMPE / CMPE), and **sbi** (NLE / NRE) in subsequent releases.
+  Removed surface:
+  - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
+    `sbijax>=0.3.6` dependency.
+  - The public Functions **`sbi_learn_conditional`** and
+    **`sbi_learn_likelihood`** (exported from both `probpipe` and
+    `probpipe.inference`), the **`DirectSamplerSBIModel`** they
+    returned (exported from `probpipe.inference`), their `method=`
+    selectors (`npe` / `fmpe` / `cmpe` for the direct sampler,
+    `nle` / `nre` for the emulated-likelihood path), and the
+    `network_factory=` hook. `from probpipe import
+    sbi_learn_conditional` now raises `ImportError` rather than
+    returning an install-prompt stub.
+  - The **`sbijax_smcabc`** inference method (`SbiSMCABCMethod`,
+    priority 5) and its registration; `condition_on(generative_model,
+    data, method="sbijax_smcabc", ...)` no longer resolves.
+  - The internal `probpipe/inference/_sbijax.py` module, the `sbi`
+    pytest marker, the `tests/inference/test_sbijax.py` suite, and the
+    CI `--no-deps sbijax` install shims. The contract invariants those
+    tests covered — posterior recovery, amortization, and SMC-ABC
+    dispatch — are re-homed per backend as the replacements land,
+    rather than in this removal.
+
+  The jax / jaxlib `<0.9` and arviz `<1.0` version caps that `sbijax`
+  forced are *retained* here and lifted in their own isolated PRs (the
+  jax-0.10 floor bump and the arviz-1.x ceiling lift); this PR changes
+  no runtime version pins. The `docs/tutorials/flexible_inference.ipynb`
+  tutorial's SBI sections are flagged out of date until a replacement
+  backend ships — its `condition_on` dispatch and NUTS material remain
+  accurate.
 
 ### Migration
 
@@ -2757,331 +3864,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       Normal, loc=jnp.zeros(5), scale=1.0, name="x",
   )
   ```
-
-### Changed (breaking)
-
-- **Prefect orchestration is now opt-in** (#182). The shipped global
-  default for `prefect_config.workflow_kind` is `WorkflowKind.OFF`
-  instead of the prior `WorkflowKind.DEFAULT` (which auto-promoted to
-  `TASK` whenever Prefect was importable). The old behaviour silently
-  enabled Prefect for any environment with Prefect on `sys.path` —
-  including environments where Prefect was pulled in as a transitive
-  dependency — and produced a confusing `httpx.ConnectError` when no
-  Prefect server was running. The new default produces no surprise
-  network traffic; users who want orchestration opt in once per
-  session or deployment:
-
-  ```python
-  import probpipe
-  probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
-  ```
-
-  Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
-  (`off` / `task` / `flow` / `default`, case-insensitive), which is
-  read once at import time. Per-workflow overrides remain available via
-  `@function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
-  aliases are no longer accepted in this release (see the
-  `workflow_kind` breaking entry above).
-  Migration: production callers that relied on the implicit
-  "Prefect importable → tasks enabled" path must add the one-line
-  assignment or env var above.
-
-- **`NumericRecordDistribution.dtypes` is canonical; subclasses must
-  override.** The base accessor previously returned
-  ``{name: default_float_dtype()}`` for every field of the
-  ``record_template`` (a silent lie for every integer-valued TFP
-  distribution — ``Bernoulli`` / ``Categorical`` reported
-  ``float32``). The base now raises ``NotImplementedError`` so the
-  truth direction is unambiguous; concrete subclasses declare
-  ``dtypes`` directly via the new
-  ``_spread_to_fields(value)`` helper:
-
-  ```python
-  >>> from probpipe import Bernoulli
-  >>> Bernoulli(probs=0.5, name="x").dtype
-  jnp.int32   # was float32 (the lie)
-  >>> Categorical(probs=jnp.array([0.5, 0.5]), name="x").dtype
-  jnp.int32   # was float32
-  ```
-
-  Migration for custom subclasses: implement
-  ``dtypes`` returning ``{field: dtype}`` aligned with
-  ``record_template.fields``. The single-leaf shortcut for
-  uniform-dtype subclasses is
-  ``return self._spread_to_fields(my_dtype)``. The convenience
-  ``dtype`` accessor derives automatically.
-
-  Related cleanups landing in the same PR:
-
-  - ``supports`` is also canonical now (raises if not overridden);
-    ``support`` is a convenience that derives via
-    ``_single_field_name``. Existing single-field ``support``
-    overrides on concrete TFP-backed classes continue to work.
-  - ``record_template`` auto-build (single-field
-    ``RecordTemplate(**{name: event_shape})``) moved from
-    ``TFPDistribution`` to the base, so any concrete subclass
-    with a ``name=`` and ``event_shape`` gets a template
-    automatically.
-  - ``treedef`` derives from ``record_template`` (leaf for
-    single-leaf, ``NumericRecord`` skeleton for multi-leaf) and
-    is cached on first read.
-  - ``flat_event_shapes`` tree-walks ``event_shapes`` rather than
-    hardcoding ``[event_shape]``.
-  - ``_check_support_compatible`` reads canonical ``supports``
-    (per-field check on multi-leaf source, single-leaf message
-    preserved).
-
-- **`Distribution.batch_shape` removed.** The property is gone
-  from `Distribution` and every subclass; reads now raise
-  `AttributeError`. Collections of distributions live in
-  `DistributionArray`, which retains its own `batch_shape` (the
-  outer array shape).
-
-  ```python
-  >>> from probpipe import Normal
-  >>> hasattr(Normal(loc=0.0, scale=1.0, name="x"), "batch_shape")
-  False
-  ```
-
-  Migration: drop the read — once batched parameters were rejected,
-  it was always `()`. `GaussianRandomFunction.predict` (and every
-  `ArrayRandomFunction` subclass) now returns a `DistributionArray`
-  rather than a single batched `Normal` / `MultivariateNormal`;
-  per-cell `event_shape` is unchanged. Fully-joint predictions with
-  no extra batch axes return a 0-d `DistributionArray`; ops
-  (`sample`, `mean`, `log_prob`, …) auto-unwrap a 0-d DA to its
-  single cell, so call sites stay unchanged.
-
-- **`DistributionArray` container surface aligned with numpy / jax**
-  (#178). `iter(da)` now walks the leading axis: a 1-D array yields
-  its scalar cells (unchanged); a multi-d array yields
-  ``DistributionArray`` slices of shape ``batch_shape[1:]``,
-  mirroring ``iter(np.zeros((2, 3)))``. Use ``da.components`` for
-  flat row-major access over every cell (the pre-#178 default).
-  Adds ``DistributionArray.size`` returning ``prod(batch_shape)``,
-  matching ``np.ndarray.size`` / ``jax.Array.size``.
-
-- **`RecordDistribution.n` and `DistributionArray.n` removed.**
-  STYLE_GUIDE §1.9 reserves `.n` for finite-sample distribution
-  classes that hold a finite collection of samples / observations
-  / components (`EmpiricalDistribution`, `BootstrapDistribution`,
-  `BroadcastDistribution`, …). The two cases removed here did
-  not fit the contract: parametric `Normal(0, 1)` does not "hold"
-  any items, and `DistributionArray` is a positional collection of
-  independent cells, not a finite-sample distribution. Migration:
-  for `DistributionArray`, use `len(da)` (leading-axis size) or
-  `prod(da.batch_shape)` (total cell count) — `__repr__` now shows
-  `batch_shape=...`. For parametric distributions, drop the
-  call — it always returned `1`. Finite-sample distributions
-  retain `.n` (see STYLE_GUIDE §1.9 for the full table).
-
-- **TFP-backed distribution constructors reject batched parameters.**
-  `Normal(loc=jnp.zeros(5), scale=1.0, name="x")` (and the same
-  pattern for every other TFP-backed class — `Beta`, `Gamma`,
-  `MultivariateNormal`, `Pareto`, `TruncatedNormal`, `Binomial`, …)
-  now raises `ValueError` whenever the parameters imply a non-empty
-  TFP `batch_shape`. The framework hierarchy rule "one random
-  variable per `Distribution`" (CONTRIBUTING.md) is enforced at
-  construction time.
-
-  ```text
-  ValueError: Normal parameters imply batch_shape=(5,); wrap multiple
-  distributions in a DistributionArray instead. See
-  DistributionArray.from_batched_params(Normal, ...) (or the alias
-  Normal.from_batched_params(...)) for the factory.
-  ```
-
-  Migration: route through the
-  `DistributionArray.from_batched_params` factory (or its per-class
-  alias) added in the previous release. The factory is
-  performance-equivalent to the legacy form because the fused
-  `_TFPArrayBackend` wraps the same TFP-batched distribution under
-  the hood.
-
-  ```python
-  # Before (rejected)
-  n = Normal(loc=jnp.zeros(5), scale=1.0, name="x")
-
-  # After (recommended ergonomic form)
-  da = Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
-
-  # After (universal entry point)
-  da = DistributionArray.from_batched_params(
-      Normal, loc=jnp.zeros(5), scale=1.0, name="x",
-  )
-  ```
-
-  Removed associated tests that exercised the legacy form's
-  per-element support checks: ``test_uniform_support_array_bounds``,
-  ``test_half_cauchy_support_array_bounds``,
-  ``test_pareto_support_array_bounds``,
-  ``test_truncated_normal_support_array_bounds``,
-  ``test_binomial_support_array_total_count``,
-  ``test_repr_with_batch_shape``. Per-element support checks belong
-  on `Constraint` directly; batched constructions migrate to
-  `DistributionArray.from_batched_params`.
-
-  Internal infrastructure that legitimately needs the batched form
-  (the `_TFPArrayBackend` fused-storage backend, the
-  `ProbPipeConverter` dispatch, sequential-joint sampling /
-  log_prob, `GaussianRandomFunction.predict`) opts into a private
-  bypass; user code is unaffected by the bypass and always sees the
-  rejection.
-
-- **Empirical / Bootstrap / Marginal class consolidation.** The
-  generic-vs-numeric pair is collapsed into a generic ``[T]`` base
-  plus a single Record-based specialisation:
-
-  | Removed | Replacement |
-  |---|---|
-  | ``NumericEmpiricalDistribution`` | ``RecordEmpiricalDistribution`` |
-  | ``ArrayBootstrapReplicateDistribution`` | ``RecordBootstrapReplicateDistribution`` |
-  | ``_ArrayMarginal`` (private) | ``_RecordMarginal`` (private) |
-  | ``_RecordEmpiricalDistribution`` (private) | ``RecordEmpiricalDistribution`` |
-  | ``_RecordBootstrapReplicateDistribution`` (private) | ``RecordBootstrapReplicateDistribution`` |
-  | ``_RecordArrayMarginal`` (private) | ``_RecordMarginal`` (private) |
-
-  Migration: a numeric array auto-wraps as a single-field ``Record``
-  keyed by the (now mandatory) ``name=`` kwarg.
-
-  ```python
-  # Before
-  emp = EmpiricalDistribution(arr)                    # Worked
-  emp = NumericEmpiricalDistribution(arr)             # Worked
-  emp = ArrayBootstrapReplicateDistribution(arr)      # Worked
-
-  # After
-  emp = EmpiricalDistribution(arr, name="theta")       # ✓
-  emp = EmpiricalDistribution(arr)                    # ValueError: name= required
-  ```
-
-  The ``name=`` becomes the field name of the auto-wrapped
-  ``Record``; downstream code that does ``emp.samples["theta"]`` /
-  ``emp["theta"]`` then has a meaningful key. If you want to keep the
-  old call-site shape, wrap explicitly:
-  ``EmpiricalDistribution(Record(theta=arr))``.
-- **`BootstrapReplicateDistribution[T]` accepts a `SupportsSampling`
-  source.** Each replicate is ``n`` i.i.d. draws from
-  ``source._sample``. **``n`` is mandatory** when ``source`` is a
-  ``SupportsSampling`` distribution (no canonical observation count);
-  it remains optional for ``Record`` / numeric-array / ``Empirical``
-  sources, where it defaults to the source's row count.
-  ``BootstrapReplicateDistribution(Normal(0, 1, name="x"), n=50)``.
-- **`NumericJointEmpirical` no longer claims `SupportsLogProb`.** The
-  Gaussian-approximation log-density is gone — empirical distributions
-  do not advertise a density. Migration:
-  ``from_distribution(emp, KDEDistribution, ...)`` for a non-parametric
-  density, or fit a parametric distribution and call ``log_prob`` on
-  that.
-- **Distributions are non-iterable.** Codified in STYLE_GUIDE §1.11
-  with a regression test
-  (``tests/test_iteration_protocol.py``). Finite-sample subclasses
-  (see §1.9) expose stored samples via ``.samples`` / ``.draws()``
-  and ``.n``; parametric distributions do not have ``.n``.
-
-- **`Record` field ordering is now insertion-order**, not alphabetical.
-  ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
-  to ``RecordTemplate``, ``RecordBatch``, and every Record-based
-  distribution that derives ``fields`` from the underlying store.
-  Previous alphabetical ordering was an accident of
-  ``OrderedDict(sorted(...))``.
-- **`/` is reserved in `Record` and `RecordTemplate` field names.**
-  Construction-time ``ValueError``. Used as the slash-delimited path
-  separator in ``record["params/intercept"]`` style access.
-- **`Record.to_datatree()` / `Record.from_datatree(...)` removed.**
-  Use ``record.to_numeric().to_native()`` for a metadata-preserving
-  round-trip via the aux registry, or ``xr.DataTree`` directly if you
-  specifically want a DataTree.
-- **`NumericRecord(...)` (and `Record.to_numeric()`) raise `TypeError`
-  on non-coercible leaves** (strings, opaque objects). Today's
-  implicit failure inside ``NumericRecord(...)`` becomes an explicit,
-  well-messaged error at construction time.
-- **`RecordTemplate.leaf_shapes` keys for nested templates use `/`**
-  instead of ``.`` (e.g. ``"physics/force"`` instead of
-  ``"physics.force"``) for consistency with ``Record["a/b"]`` path
-  access.
-
-### Added
-
-- **Framework abstraction hierarchy** documented in CONTRIBUTING.md.
-  Three rules: one random variable per ``Distribution``; two
-  implementations per concept (generic + Record-based); iteration is
-  a Record-family convention.
-
-- **`RecordEmpiricalDistribution.flat_samples`** — flat ``(n, dim)``
-  matrix view across all fields, where
-  ``dim = sum(prod(event_shape_f) for f in fields)``. Field order is
-  the dist's insertion order; multi-dim event shapes flatten
-  row-major. Use ``.samples`` for the structured ``NumericRecord``
-  view (per-field access via ``.samples[name]``) and ``.flat_samples``
-  for stacked-matrix idioms — ``post.flat_samples.mean(axis=0)``,
-  per-parameter posterior summaries, etc. Replaces hand-rolled
-  ``np.column_stack([post.samples[f] for f in post.fields])``.
-
-- **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
-  conversion to / from ProbPipe's native JAX-array form, with metadata
-  round-trip via the aux registry. Backend metadata survives the structural
-  edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
-  leave unchanged, at any nesting depth, and a pickle round-trip (an
-  aux-carrying record pickles through its native form, so `to_native` stays
-  faithful across `pickle` / Ray transport); a value transform (`map`) or a
-  JAX pytree round-trip drops it.
-- **`probpipe.AuxHooks` / `register_aux(...)` / `aux_for(...)` /
-  `aux_registry`** in :mod:`probpipe.core._array_backend` — a registry
-  of ``(capture, restore)`` hooks for round-tripping backend-specific
-  metadata across the ``Record`` ↔ ``NumericRecord`` boundary.
-  Built-in registrations (gated on import) cover
-  ``xarray.DataArray`` (dims / coords / attrs / name),
-  ``pandas.Series`` (index / name / dtype), and ``pandas.DataFrame``
-  (index / columns / dtypes).
-- **`NumericRecord.aux`** property — captured backend metadata, keyed
-  by field name. ``None`` when no field had a registered hook.
-- **Slash-delimited path access** on nested ``Record``s:
-  ``record["params/intercept"]`` is sugar for
-  ``record["params", "intercept"]``. ``"a/b/c" in record`` works the
-  same way.
-
-### Changed
-
-- **dtype handling** now follows JAX's rules. Distributions, weights, and
-  empirical classes preserve user-supplied dtypes and honor
-  ``jax.config.update("jax_enable_x64", True)`` end-to-end. Previously every
-  TFP-backed constructor silently downcast its parameters to ``float32``,
-  causing ``log_prob`` / ``sample`` / ``mean`` to raise ``TypeError`` under
-  x64. Multi-parameter constructors now promote inputs to a common float
-  dtype via ``jnp.result_type`` (integer inputs are promoted to JAX's
-  default float, so ``Normal(loc=0, scale=1)`` still works). Internal
-  helpers ``_default_float_dtype()`` and ``_promote_floats()`` live in
-  ``probpipe/_dtype.py``. The float64-truncation warning filter previously
-  in ``probpipe/__init__.py`` is removed.
-
-### Added
-
-- **Uniform `select_all()`** on ``Record`` / ``RecordBatch`` /
-  ``RecordDistribution``. Splatting the result into a
-  ``@function`` preserves correlation on the two batched variants
-  and plain splats fields on scalar ``Record``.
-- **Public `.parent` / `.field`** properties on ``_RecordDistributionView``,
-  which say two views draw from one law.
-- **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
-  ``_RecordDistributionView`` (mirror the existing shims on
-  ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
-  raise ``TypeError``.
-
-### Changed (breaking)
-
-- **`len(RecordBatch)`** now returns the **field count** (matching
-  ``len(Record)``) instead of ``prod(batch_shape)``. For the flat batch
-  size, use ``prod(ra.batch_shape)``.
-- **`event_shapes`** now always returns ``dict[str, tuple[int, ...]]``.
-  Untemplated (legacy) distributions return ``{}``; use the singular
-  ``.event_shape`` for the whole-sample shape.
-- **`component_names` → `fields`** on every Record-based distribution and
-  model (``RecordDistribution``, ``ProductDistribution``, ``JointGaussian``,
-  ``JointEmpirical``, ``SequentialJointDistribution``,
-  ``BroadcastDistribution``, ``ProbabilisticModel``, ``SimpleModel``,
-  ``SimpleGenerativeModel``, ``PyMCModel``, ``StanModel``). No backward
-  alias.
 
 ## [0.1.0] - 2025-03-21
 

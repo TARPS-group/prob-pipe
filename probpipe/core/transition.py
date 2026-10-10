@@ -6,7 +6,7 @@ filtering, active learning, etc.
 
 The central pattern is a **fold over distributions**: starting from an
 initial distribution, a step function is applied repeatedly with
-successive inputs, producing a sequence of distributions.
+successive inputs, producing the batch of the distributions the fold visits.
 
 Core API::
 
@@ -23,8 +23,13 @@ import contextlib
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from .._weights import Weights, weighted_choice
+from ..distributions._batches import DistributionBatch
+from ..distributions._conversion import converter_registry
 from ..distributions._distribution import Distribution
-from .node import Function, function
+from ..distributions._empirical import EmpiricalDistribution, _batch_form
+from ..functions import _broker, function
+from ..values import Function
 from .provenance import Provenance
 
 __all__ = [
@@ -33,10 +38,19 @@ __all__ = [
     "with_resampling",
 ]
 
+#: The sampling ABI of the PRNG key that draws one resampling's indices.
+_RESAMPLE_SAMPLING_ABI = "probpipe.resample/v1"
+#: The provider ABI of the multinomial draw of a resampling's indices by ``weighted_choice``.
+_MULTINOMIAL_RESAMPLING_PROVIDER_ABI = "probpipe.resample.multinomial/v1"
+
 
 # ---------------------------------------------------------------------------
 # iterate — the fold Function
 # ---------------------------------------------------------------------------
+
+
+#: The level of the batch ``iterate`` returns, named after the operation that mints it.
+_ITERATE_LEVEL = "iterate"
 
 
 @function
@@ -46,24 +60,24 @@ def iterate[S](
     inputs: Iterable[S],
     *,
     callback: Callable[[int, Distribution], Any] | None = None,
-) -> list[Distribution]:
-    """Fold a step function over inputs, accumulating a distribution sequence.
+) -> DistributionBatch:
+    """Fold a step function over inputs, returning the batch of the laws the fold visits.
 
-    Starting from *initial*, applies ``step_fn(dist, inp)`` for each
-    element of *inputs*, collecting the resulting distributions into a
-    list.  The returned list includes the initial distribution at
-    index 0.
+    Starting from *initial*, applies ``step_fn(dist, inp)`` for each element
+    of *inputs*. The laws visited, *initial* first, are the elements of a
+    ``DistributionBatch`` on one level named ``iterate``, so they share one
+    event declaration. Each element is a view of the law the fold produced at
+    that step, and its provenance records the batch and that law.
 
-    Provenance is automatically attached to each output distribution
-    (linking it to the previous distribution) unless the step function
-    has already set provenance.
+    A step's law that has no provenance receives a record of the step, whose
+    parent is the previous law and whose metadata holds the step's index; a
+    law that already has provenance keeps it.
 
     Parameters
     ----------
     step_fn : callable
-        ``(Distribution, S) -> Distribution``.
-        Any callable matching this signature — plain functions,
-        :class:`Function` instances, or bound methods.
+        ``(Distribution, S) -> Distribution``: a plain function, a
+        :class:`Function`, or a bound method.
     initial : Distribution
         The starting distribution.
     inputs : Iterable[S]
@@ -75,18 +89,24 @@ def iterate[S](
 
     Returns
     -------
-    list[Distribution]
-        The full sequence: ``[initial, dist_1, dist_2, ...]``.
+    DistributionBatch
+        The laws ``[initial, dist_1, dist_2, ...]`` on the level ``iterate``.
+
+    Raises
+    ------
+    TypeError
+        If a step returns something other than a ``Distribution``, or a law
+        whose event declaration does not match *initial*'s.
     """
-    dists: list[Distribution] = [initial]
+    laws: list[Distribution] = [initial]
     current = initial
 
     for i, inp in enumerate(inputs):
         result = step_fn(current, inp)
         if not isinstance(result, Distribution):
             raise TypeError(
-                f"Step function at index {i} returned "
-                f"{type(result).__name__}, expected Distribution."
+                f"step function must return a Distribution, got {type(result).__name__} "
+                f"for the input at index {i}"
             )
 
         # Auto-attach provenance if not already set
@@ -101,7 +121,7 @@ def iterate[S](
                     )
                 )
 
-        dists.append(result)
+        laws.append(result)
         current = result
 
         if callback is not None:
@@ -109,7 +129,7 @@ def iterate[S](
             if cont is False:
                 break
 
-    return dists
+    return DistributionBatch(_ITERATE_LEVEL, laws, _ITERATE_LEVEL)
 
 
 # ---------------------------------------------------------------------------
@@ -118,9 +138,9 @@ def iterate[S](
 
 
 def _step_fn_name(step_fn: Callable) -> str:
-    """Extract a human-readable name from a step function."""
+    """A step function's label, or a plain callable's Python name."""
     if isinstance(step_fn, Function):
-        return step_fn._name
+        return step_fn._label
     return getattr(step_fn, "__name__", type(step_fn).__name__)
 
 
@@ -132,10 +152,10 @@ def with_conversion(
     """Wrap a step function to convert its output after each step.
 
     After calling *step_fn*, converts the resulting distribution to
-    *target_type* using ProbPipe's standard ``from_distribution``
-    operation (which dispatches through the converter registry).
-    The pre-conversion distribution is accessible via the converted
-    distribution's provenance parents (set by the converter).
+    *target_type* through the converter registry, which returns a law that
+    already satisfies the target as it is. The pre-conversion distribution
+    is the converted distribution's provenance parent, which the registry
+    records with the converter it selected.
 
     This is useful when the step function produces samples (e.g.,
     MCMC output) but the next iteration needs a parametric
@@ -152,7 +172,8 @@ def with_conversion(
         Distribution type to convert to (e.g., ``MultivariateNormal``).
         Can also be a protocol (e.g., ``SupportsLogProb``).
     **convert_kwargs
-        Extra keyword arguments passed to ``from_distribution``.
+        The registry's controls ``method`` and ``exact_only`` and the
+        converter's options, passed to ``converter_registry.convert``.
 
     Returns
     -------
@@ -162,14 +183,12 @@ def with_conversion(
     inner_name = _step_fn_name(step_fn)
 
     def _with_conversion_impl(dist: Distribution, inp: Any) -> Distribution:
-        from .ops import from_distribution
-
         result = step_fn(dist, inp)
-        return from_distribution(result, target_type, **convert_kwargs)
+        return converter_registry.convert(result, target_type, **convert_kwargs)
 
     return Function(
-        func=_with_conversion_impl,
-        name=f"with_conversion({inner_name}, {target_type.__name__})",
+        fn=_with_conversion_impl,
+        label=f"with_conversion({inner_name}, {target_type.__name__})",
     )
 
 
@@ -177,7 +196,6 @@ def with_resampling(
     step_fn: Callable,
     *,
     ess_threshold: float = 0.5,
-    seed: int = 0,
 ) -> Function:
     """Wrap a step function to resample when particle weights degenerate.
 
@@ -185,6 +203,12 @@ def with_resampling(
     :class:`~probpipe.EmpiricalDistribution` with
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
+
+    Each resampling is a workflow-owned random event, whose PRNG key derives
+    from the seed of the enclosing ``workflow_run`` scope and from the call's
+    position in the workflow. A run inside ``workflow_run(seed=...)``
+    therefore reproduces its resampled particles, and a run under another
+    seed or outside any scope resamples afresh.
 
     When resampling occurs, the raw result from
     ``wrapper.apply(...)`` carries ``"resample"`` provenance whose
@@ -202,9 +226,6 @@ def with_resampling(
         The underlying step function.
     ess_threshold : float
         Resample when ``ESS / N`` drops below this value (default 0.5).
-    seed : int
-        Base random seed; combined with a call counter for
-        deterministic reproducibility.
 
     Returns
     -------
@@ -218,38 +239,37 @@ def with_resampling(
     decouple this combinator from the concrete
     :class:`~probpipe.EmpiricalDistribution` type.
     """
-    import jax
-
     inner_name = _step_fn_name(step_fn)
-    call_count = 0
 
     def _with_resampling_impl(dist: Distribution, inp: Any) -> Distribution:
-        nonlocal call_count
-        from ._empirical import EmpiricalDistribution
-
         out_dist = step_fn(dist, inp)
 
         if isinstance(out_dist, EmpiricalDistribution):
             n = out_dist.num_atoms
-            ess = float(out_dist.effective_sample_size)
+            ess = float(Weights(n=n, weights=out_dist.weights).effective_sample_size)
             ess_ratio = ess / n
 
             if ess_ratio < ess_threshold:
-                key = jax.random.PRNGKey(seed + call_count)
-                call_count += 1
-                indices = out_dist._w.choice(key, shape=(n,))
-                # Resample per-leaf (samples is a NumericRecord; index each
-                # leaf's stacked array along the sample axis). Path-keyed
-                # construction rebuilds any nested structure.
-                from .record import Record
-
-                new_record = Record(
-                    out_dist.name,
-                    {k: v[indices] for k, v in out_dist.samples.items()},
+                key = _broker._resolve_automatic_key(
+                    None,
+                    _broker._singleton_effect_plan(
+                        operation_kind="resample",
+                        execution_mode="sampled",
+                        sample_shape=(n,),
+                        sampling_abi=_RESAMPLE_SAMPLING_ABI,
+                        provider_abi=_MULTINOMIAL_RESAMPLING_PROVIDER_ABI,
+                    ),
+                )
+                indices = weighted_choice(key, n, weights=out_dist.weights, shape=(n,))
+                # The drawn atoms, equally weighted, on the one level resampling mints.
+                atoms = _batch_form(
+                    out_dist.label,
+                    out_dist._atoms_at(indices),
+                    "resample",
+                    out_dist.event_spec.spec,
                 )
                 resampled = EmpiricalDistribution(
-                    out_dist.name,
-                    new_record,
+                    atoms, label=out_dist.label, event_spec=out_dist.event_spec
                 )
                 resampled.with_provenance(
                     Provenance.create(
@@ -263,6 +283,6 @@ def with_resampling(
         return out_dist
 
     return Function(
-        func=_with_resampling_impl,
-        name=f"with_resampling({inner_name})",
+        fn=_with_resampling_impl,
+        label=f"with_resampling({inner_name})",
     )

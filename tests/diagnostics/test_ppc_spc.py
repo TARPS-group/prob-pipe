@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import xarray as xr
+from scipy import stats
 
+from probpipe import Normal, conditional_distribution, sample, workflow_run
 from probpipe.diagnostics._ppc_spc import (
     _dataset_from_payload,
     _observed_data_to_dataset,
@@ -22,43 +25,17 @@ from probpipe.diagnostics._views import DiagnosticsView, PPCView
 
 
 # ---------------------------------------------------------------------------
-# Fake GenerativeLikelihood (pure NumPy — no JAX required)
+# The kernel of the observations
 # ---------------------------------------------------------------------------
 
 
-class _NumpyLikelihood:
-    """Generates i.i.d. Normal(0, 1) replicated data.
-
-    Does NOT accept a ``key`` keyword so _predictive_check_loop is used.
-    """
-
-    def __init__(self, seed: int = 0):
-        self._rng = np.random.default_rng(seed)
-
-    def generate_data(self, params, n_samples: int) -> np.ndarray:
-        return self._rng.standard_normal(n_samples)
-
-
-class _KeyedLikelihood:
-    def generate_data(self, params, n_samples: int, *, key=None):
-        import jax.numpy as jnp
-
-        params_arr = jnp.asarray(params["alpha"])
-        return jnp.broadcast_to(params_arr[:, None], (params_arr.shape[0], n_samples))
-
-
-class _NormalLocationPosterior:
-    _annotations = None
-
-    def _sample(self, key, shape):
-        import jax
-
-        return jax.random.normal(key, shape)
-
-
-class _LocationLikelihood:
-    def generate_data(self, params, n_samples: int) -> np.ndarray:
-        return np.full(n_samples, float(params))
+def _kernel(posterior, n: int = 50):
+    """``y ~ Normal(alpha, 1)``, iid over *n* observations, given the posterior's slots."""
+    return conditional_distribution(
+        lambda alpha, beta: Normal("y", alpha * jnp.ones(n), 1.0),
+        given_spec=posterior.event_spec.components,
+        label="y_given_alpha",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -179,14 +156,14 @@ class TestReplicatedStatisticsSummary:
 class TestAddPpc:
     def test_writes_ppc_group(self, posterior):
         observed = np.random.default_rng(0).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         assert posterior._annotations is not None
         ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert "p_value" in ppc_ds.data_vars
@@ -196,97 +173,101 @@ class TestAddPpc:
 
     def test_p_value_in_range(self, posterior):
         observed = np.random.default_rng(1).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=50,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=50,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
-        p = view.p_values.get("_mean")
-        if isinstance(p, float):
-            assert 0.0 <= p <= 1.0
+        assert 0.0 <= view.p_values["_mean"] <= 1.0
 
-    def test_p_value_matches_known_centered_case(self):
-        posterior = _NormalLocationPosterior()
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=np.zeros(5),
-            generative_likelihood=_LocationLikelihood(),
-            n_replications=1000,
-            key=jax.random.PRNGKey(0),
-        )
-
-        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
-        assert view.p_values["_mean"] == pytest.approx(0.5, abs=0.06)
-
-    def test_p_value_responds_to_shifted_observed_data(self):
-        posterior = _NormalLocationPosterior()
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=np.full(5, 3.0),
-            generative_likelihood=_LocationLikelihood(),
-            n_replications=1000,
-            key=jax.random.PRNGKey(0),
-        )
+    @pytest.mark.parametrize("location", [0.0, 0.5, 3.0])
+    def test_p_value_matches_the_closed_form(self, posterior, location):
+        """At each atom of ``alpha``, the mean of five replicated observations is
+        ``Normal(alpha, sqrt(1/5))``, so the p-value is the average of its tail
+        probabilities over the posterior's equally weighted atoms.
+        """
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=np.full(5, location),
+                kernel=_kernel(posterior, n=5),
+                n_replications=2000,
+            )
 
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
-        assert view.p_values["_mean"] < 0.01
+        atoms = np.ravel(np.asarray(posterior.atoms["alpha"].values))
+        exact = float(np.mean(stats.norm.sf(location, atoms, np.sqrt(1.0 / 5.0))))
+        # Four Monte Carlo standard errors of 2000 replications, plus float32 rounding.
+        tolerance = 4.0 * np.sqrt(exact * (1.0 - exact) / 2000) + 2e-3
+        assert view.p_values["_mean"] == pytest.approx(exact, abs=tolerance)
 
     def test_multiple_test_fns(self, posterior):
         observed = np.random.default_rng(2).standard_normal(50)
-        add_ppc(
-            posterior,
-            test_fns=[_mean, _std],
-            observed_data=observed,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=[_mean, _std],
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert set(view.p_values.keys()) == {"_mean", "_std"}
 
     def test_observed_stored(self, posterior):
-        observed = np.random.default_rng(3).standard_normal(30)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        observed = np.random.default_rng(3).standard_normal(50)
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
-        obs = view.observed.get("_mean")
-        if isinstance(obs, float):
-            assert np.isfinite(obs)
+        assert view.observed["_mean"] == pytest.approx(float(np.mean(observed)), rel=1e-5)
+
+    def test_observed_data_may_map_the_kernel_components(self, posterior):
+        observed = np.random.default_rng(3).standard_normal(50)
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data={"y": observed},
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
+        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
+        assert view.observed["_mean"] == pytest.approx(float(np.mean(observed)), rel=1e-5)
+        arviz_observed = posterior._annotations["arviz"]["observed_data"].to_dataset()
+        assert arviz_observed["y"].shape == (50,)
 
     def test_returns_none(self, posterior):
-        observed = np.ones(10)
-        result = add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=5,
-            key=jax.random.key(0),
-        )
+        observed = np.ones(50)
+        with workflow_run(seed=0):
+            result = add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=5,
+            )
         assert result is None
 
     def test_prior_predictive_without_observed_data(self, posterior):
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=None,
-            num_observations=7,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=5,
-            key=jax.random.key(0),
-        )
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=None,
+                kernel=_kernel(posterior, n=7),
+                n_replications=5,
+            )
 
         ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert ppc_ds.attrs["has_observed_data"] is False
@@ -295,52 +276,56 @@ class TestAddPpc:
         assert np.isnan(float(ppc_ds["p_value"].sel(test_fn="_mean")))
         assert np.isnan(float(ppc_ds["observed"].sel(test_fn="_mean")))
 
-    def test_num_observations_required_without_observed_data(self, posterior):
-        with pytest.raises(ValueError, match="num_observations is required"):
-            add_ppc(
-                posterior,
-                test_fns=_mean,
-                observed_data=None,
-                generative_likelihood=_NumpyLikelihood(),
-                n_replications=5,
-            )
+    def test_a_posterior_that_misses_a_given_slot_raises_naming_it(self, posterior):
+        kernel = conditional_distribution(
+            lambda alpha, gamma: Normal("y", alpha * jnp.ones(5), 1.0),
+            given_spec={
+                "alpha": posterior.event_spec.components["alpha"],
+                "gamma": posterior.event_spec.components["alpha"],
+            },
+            label="y_given_alpha_gamma",
+        )
+        with pytest.raises(
+            ValueError, match=r"add_ppc: posterior '.*' does not produce \['gamma'\]"
+        ):
+            add_ppc(posterior, _mean, np.zeros(5), kernel=kernel)
 
-    def test_num_observations_must_be_positive(self, posterior):
+    def test_n_replications_must_be_positive(self, posterior):
         with pytest.raises(ValueError, match="positive integer"):
             add_ppc(
                 posterior,
                 test_fns=_mean,
                 observed_data=None,
-                num_observations=0,
-                generative_likelihood=_NumpyLikelihood(),
-                n_replications=5,
+                kernel=_kernel(posterior),
+                n_replications=0,
             )
 
     def test_diagnostics_view_integration(self, posterior):
-        observed = np.random.default_rng(4).standard_normal(40)
-        add_ppc(
-            posterior,
-            test_fns=_mean,
-            observed_data=observed,
-            generative_likelihood=_NumpyLikelihood(),
-            n_replications=20,
-            key=jax.random.key(0),
-        )
+        observed = np.random.default_rng(4).standard_normal(50)
+        with workflow_run(seed=0):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=observed,
+                kernel=_kernel(posterior),
+                n_replications=20,
+            )
         view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.ppc.exists
 
-    def test_keyed_likelihood_uses_batched_path(self, posterior):
-        payload = _ppc_op(
-            posterior,
-            _mean,
-            observed_data=np.ones(5),
-            generative_likelihood=_KeyedLikelihood(),
-            n_replications=4,
-            key=jax.random.key(0),
-        )
+    def test_ppc_op_returns_the_payload(self, posterior):
+        with workflow_run(seed=0):
+            payload = _ppc_op(
+                posterior,
+                _mean,
+                observed_data=np.ones(50),
+                kernel=_kernel(posterior),
+                n_replications=4,
+            )
 
         ds = _dataset_from_payload(payload)
         assert "p_value" in ds
+        assert "diagnostics" not in posterior.annotations.children
 
     def test_dataset_from_payload_rejects_non_dataset(self):
 
@@ -359,3 +344,40 @@ class TestAddPpc:
         _write_ppc_payload(posterior, payload)
 
         assert "posterior_predictive" in posterior._annotations["arviz"].children
+
+
+def _draw_after(run_first) -> float:
+    """The draw that follows *run_first* in a workflow scope seeded 7."""
+    with workflow_run(seed=7):
+        run_first()
+        return float(sample.with_options(raw=True)(Normal("z", 0.0, 1.0)))
+
+
+class TestAddPpcRandomness:
+    """The replications are one workflow-owned random event of the enclosing workflow scope."""
+
+    @staticmethod
+    def _replicated_mean(posterior) -> float:
+        add_ppc(posterior, _mean, kernel=_kernel(posterior), n_replications=20)
+        return posterior.diagnostics.ppc.replicated_stat_mean["_mean"]
+
+    def test_a_seed_reproduces_the_replications_and_another_seed_changes_them(self, posterior):
+        def replicated_mean(seed):
+            with workflow_run(seed=seed):
+                return self._replicated_mean(posterior)
+
+        first = replicated_mean(3)
+        assert replicated_mean(3) == first
+        assert replicated_mean(4) != first
+
+    def test_calls_outside_every_scope_draw_fresh_replications(self, posterior):
+        assert self._replicated_mean(posterior) != self._replicated_mean(posterior)
+
+    def test_a_call_claims_one_event_of_the_enclosing_scope(self, posterior):
+        after_ppc = _draw_after(lambda: self._replicated_mean(posterior))
+        assert after_ppc == _draw_after(lambda: sample(Normal("w", 0.0, 1.0)))
+        assert after_ppc != _draw_after(lambda: None)
+
+    def test_a_key_keyword_raises_type_error(self, posterior):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'key'"):
+            add_ppc(posterior, _mean, kernel=_kernel(posterior), key=jax.random.key(0))

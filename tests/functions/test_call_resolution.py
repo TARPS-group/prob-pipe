@@ -1,0 +1,397 @@
+"""Characterization tests for Function call resolution.
+
+These tests lock down the public-call boundary before Function
+internals are split into smaller private modules.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+
+import jax.numpy as jnp
+import pytest
+
+from probpipe import EmpiricalDistribution, Function, Normal, workflow_run
+from probpipe.core.node import Node
+from probpipe.functions import Module, _call, workflow_method
+from probpipe.values import _binding
+
+
+@pytest.fixture
+def add_func():
+    def add(x, y):
+        return x + y
+
+    return add
+
+
+@pytest.fixture
+def identity_func():
+    def identity(x):
+        return x
+
+    return identity
+
+
+@pytest.fixture
+def kwargs_recorder():
+    seen = []
+
+    def identity(x, **kwargs):
+        seen.append(kwargs)
+        return x
+
+    return identity, seen
+
+
+@pytest.fixture
+def normal_dist():
+    return Normal("x", loc=0.0, scale=1.0)
+
+
+@pytest.fixture
+def affine_func():
+    def affine(x, offset=10.0, scale=1.0):
+        return (x + offset) * scale
+
+    return affine
+
+
+class DataNode(Node):
+    pass
+
+
+class CallResolutionModule(Module):
+    @workflow_method
+    def step(self, dep: DataNode, x, y=7.0):
+        return x + y
+
+
+def _resolve_call(
+    func,
+    *args,
+    bind=None,
+    module=None,
+    **call_inputs,
+):
+    info = _binding.make_signature_info(func)
+    return _call.resolve_function_call(
+        info,
+        args,
+        call_inputs,
+        bind=bind or {},
+        module=module,
+        dependency_type=Node,
+        function_name=getattr(func, "__name__", "workflow"),
+    )
+
+
+class TestWorkflowCallHelpers:
+    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+        def collect(head, *items, **extras):
+            return head, items, extras
+
+        info = _binding.make_signature_info(collect)
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+
+        refs = _binding.iter_input_refs(info, values)
+
+        assert refs == (
+            _binding.FunctionInputRef("head"),
+            _binding.FunctionInputRef("items", subscript=0),
+            _binding.FunctionInputRef("items", subscript=1),
+            _binding.FunctionInputRef("extras", subscript="tail"),
+        )
+        assert tuple(ref.label for ref in refs) == (
+            "head",
+            "*items[0]",
+            "*items[1]",
+            "**extras['tail']",
+        )
+        assert tuple(_binding.input_ref_value(values, ref) for ref in refs) == (
+            1,
+            2,
+            3,
+            4,
+        )
+
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
+        def collect(head: Any, *items: Any, **extras: Any):
+            return head, items, extras
+
+        info = _binding.make_signature_info(collect)
+
+        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is Any
+        assert (
+            _binding.input_ref_hint(
+                info,
+                _binding.FunctionInputRef("items", subscript=0),
+            )
+            is None
+        )
+        assert (
+            _binding.input_ref_hint(
+                info,
+                _binding.FunctionInputRef("extras", subscript="tail"),
+            )
+            is None
+        )
+
+    def test_input_ref_replacement_preserves_signature_shaped_containers(self):
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+        head = _binding.FunctionInputRef("head")
+        first_item = _binding.FunctionInputRef("items", subscript=0)
+        tail = _binding.FunctionInputRef("extras", subscript="tail")
+
+        singly_replaced = _binding.replace_input_ref(values, first_item, 20)
+        jointly_replaced = _binding.replace_input_refs(
+            values,
+            {
+                head: 10,
+                first_item: 20,
+                tail: 40,
+            },
+        )
+
+        assert singly_replaced == {
+            "head": 1,
+            "items": (20, 3),
+            "extras": {"tail": 4},
+        }
+        assert jointly_replaced == {
+            "head": 10,
+            "items": (20, 3),
+            "extras": {"tail": 40},
+        }
+
+    def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
+        assert _resolve_call(add_func, 1.0, 2.0) == {"x": 1.0, "y": 2.0}
+        assert _resolve_call(add_func, 1.0, y=2.0) == {"x": 1.0, "y": 2.0}
+
+    def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
+        with pytest.raises(TypeError, match="multiple values"):
+            _resolve_call(add_func, 1.0, x=2.0)
+
+    def test_var_keyword_preserves_signature_shaped_mapping(self, kwargs_recorder):
+        identity, _ = kwargs_recorder
+
+        call = _resolve_call(identity, x=1.0, scale=2.0)
+
+        assert call == {"x": 1.0, "kwargs": {"scale": 2.0}}
+
+    def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
+        identity, _ = kwargs_recorder
+
+        call = _resolve_call(identity, x=1.0, kwargs={"scale": 2.0})
+
+        assert call == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
+
+    def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            _resolve_call(identity_func, "value", n_broadcast_samples=6)
+
+    def test_control_like_names_bind_when_declared(self):
+        def identity(x, n_broadcast_samples, include_inputs, seed):
+            return x
+
+        call = _resolve_call(
+            identity,
+            "value",
+            n_broadcast_samples=6,
+            include_inputs=True,
+            seed=123,
+        )
+
+        assert call == {
+            "x": "value",
+            "n_broadcast_samples": 6,
+            "include_inputs": True,
+            "seed": 123,
+        }
+
+    def test_bind_module_and_function_defaults_resolve_in_precedence_order(self):
+        dep = DataNode()
+        module = SimpleNamespace(child_nodes={"dep": dep}, inputs={"x": 5.0})
+
+        def step(dep: DataNode, x, y=7.0, scale=1.0):
+            return (x + y) * scale
+
+        call = _resolve_call(step, module=module, bind={"scale": 2.0})
+        override = _resolve_call(step, module=module, bind={"scale": 2.0}, y=3.0)
+
+        assert call == {"dep": dep, "x": 5.0, "y": 7.0, "scale": 2.0}
+        assert override == {"dep": dep, "x": 5.0, "y": 3.0, "scale": 2.0}
+
+    def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
+        def step(dep: DataNode):
+            return dep
+
+        module = SimpleNamespace(child_nodes={"dep": DataNode()}, inputs={})
+
+        with pytest.raises(TypeError, match="cannot be overridden"):
+            _resolve_call(step, module=module, dep=DataNode())
+
+    def test_dependency_typed_parameter_requires_node_instance(self):
+        def use_dep(dep: DataNode):
+            return dep
+
+        with pytest.raises(
+            TypeError,
+            match=r"expects a Node for dependency 'dep' \(annotated DataNode\); got object",
+        ):
+            _resolve_call(use_dep, dep=object())
+
+
+class TestArgumentBinding:
+    def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
+        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
+
+        assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
+        assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
+
+    def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
+        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
+
+        with pytest.raises(TypeError, match="multiple values"):
+            wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
+
+    def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
+        identity, seen = kwargs_recorder
+        wf = Function(label="identity", fn=identity, dispatch="sequential")
+
+        assert float(wf(x=1.0, scale=2.0)) == 1.0
+        assert seen == [{"scale": 2.0}]
+
+    def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
+        identity, seen = kwargs_recorder
+        wf = Function(label="identity", fn=identity, dispatch="sequential")
+
+        assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
+        assert seen == [{"kwargs": {"scale": 2.0}}]
+
+    def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
+        default_wf = Function(label="affine_func", fn=affine_func, dispatch="sequential")
+        bound_wf = Function(
+            label="affine_func",
+            fn=affine_func,
+            dispatch="sequential",
+            bind={"offset": 3.0, "scale": 2.0},
+        )
+
+        assert float(default_wf(x=1.0)) == 11.0
+        assert float(bound_wf(x=1.0)) == 8.0
+        assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
+
+    def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
+        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
+
+        with pytest.raises(TypeError, match=r"add_func\(\) missing required argument 'y'"):
+            wf(x=1.0)
+
+
+class TestModuleResolution:
+    def test_module_inputs_dependencies_and_defaults_resolve_for_workflow_methods(self):
+        dep = DataNode()
+        module = CallResolutionModule(dep=dep, x=5.0)
+
+        assert module.child_nodes["dep"] is dep
+        assert float(module.step()) == 12.0
+        assert float(module.step(y=2.0)) == 7.0
+
+    def test_module_records_resolved_plain_inputs(self, full_provenance_mode):
+        dep = DataNode()
+        module = CallResolutionModule(dep=dep, x=5.0)
+
+        result = module.step()
+
+        assert result.provenance is not None
+        assert result.provenance.parents[1:] == ()
+        assert tuple(result.provenance.inputs) == ("dep", "x", "y")
+        assert result.provenance.inputs["dep"].parent is dep
+        assert result.provenance.inputs["x"].parent == 5.0
+        assert result.provenance.inputs["y"].parent == 7.0
+
+    def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
+        module = CallResolutionModule(dep=DataNode(), x=5.0)
+
+        with pytest.raises(TypeError, match="cannot be overridden"):
+            module.step(dep=DataNode())
+
+    def test_dependency_typed_parameter_requires_node_instance(self):
+        def use_dep(dep: DataNode):
+            return 1.0
+
+        wf = Function(label="use_dep", fn=use_dep, dispatch="sequential")
+
+        with pytest.raises(
+            TypeError,
+            match=r"expects a Node for dependency 'dep' \(annotated DataNode\); got object",
+        ):
+            wf(dep=object())
+
+
+class TestCallOptions:
+    def test_with_options_controls_broadcast_execution(
+        self,
+        identity_func,
+        normal_dist,
+    ):
+        wf = Function(
+            label="identity_func",
+            fn=identity_func,
+            n_broadcast_samples=20,
+            dispatch="sequential",
+        )
+
+        with workflow_run(seed=42):
+            result = wf.with_options(
+                n_broadcast_samples=6,
+                include_inputs=True,
+            )(normal_dist)
+
+        assert isinstance(result, EmpiricalDistribution)
+        assert result.num_atoms == 6
+        assert result.event_spec.exposes_record
+
+    def test_workflow_run_reproduces_sampling_state_for_a_call(
+        self,
+        identity_func,
+        normal_dist,
+    ):
+        wf = Function(
+            label="identity_func",
+            fn=identity_func,
+            n_broadcast_samples=8,
+            dispatch="sequential",
+        )
+
+        with workflow_run(seed=42):
+            first = wf(normal_dist)
+        with workflow_run(seed=42):
+            second = wf(normal_dist)
+
+        assert jnp.allclose(first.atoms, second.atoms)
+
+
+@pytest.mark.parametrize("engine", ["installed", "plain"])
+def test_a_function_keyword_reaches_the_wrapped_callable(engine, monkeypatch):
+    """The engine takes the Function positionally, so a parameter named function binds."""
+    from probpipe.values import _function_base
+
+    if engine == "plain":
+        monkeypatch.setattr(_function_base, "_call_engine", _function_base._plain_call)
+    wrapped = Function("apply_fn", lambda function, x: function(x))
+
+    result = wrapped(function=jnp.sin, x=1.0)
+
+    assert float(result) == pytest.approx(float(jnp.sin(1.0)))
+    assert float(wrapped.apply(function=jnp.sin, x=1.0)) == pytest.approx(float(result))

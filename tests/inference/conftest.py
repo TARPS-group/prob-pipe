@@ -13,12 +13,21 @@ import jax
 import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax as tfp
-import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import Beta, GLMLikelihood, MultivariateNormal, SimpleModel, condition_on
+from probpipe import (
+    Beta,
+    EmpiricalDistribution,
+    MultivariateNormal,
+    NumericArraySpec,
+    condition_on,
+    workflow_run,
+)
+from probpipe.core.constraints import boolean
 from probpipe.custom_types import Array
-from probpipe.inference._approximate_distribution import ApproximateDistribution
+from probpipe.distributions import Distribution
+from probpipe.families import GaussianFamily, glm_likelihood
 from probpipe.validation import Reference
+from tests.inference.canonical import ObservationKernel
 
 tfd = tfp.distributions
 
@@ -27,7 +36,7 @@ tfd = tfp.distributions
 class ConjugateLinearModel:
     """A conjugate Gaussian linear model and its exact analytic posterior."""
 
-    model: SimpleModel
+    model: Distribution  # the joint of the response y and the coefficients beta
     design: Array  # X, shape (n, p)
     data: Array  # response y, shape (n,)
     reference: Reference  # exact posterior N(mN, SN)
@@ -45,10 +54,8 @@ def conjugate_linear_model() -> ConjugateLinearModel:
     x = jax.random.normal(k_x, (n, p))
     beta_star = jax.random.normal(k_beta, (p,)) * jnp.sqrt(tau2)
     y = x @ beta_star + jax.random.normal(k_y, (n,))
-    likelihood = GLMLikelihood(tfp_glm.Normal(), x=x, fit_intercept=False)
-    model = SimpleModel(
-        MultivariateNormal(loc=jnp.zeros(p), cov=tau2 * jnp.eye(p), name="beta"), likelihood
-    )
+    likelihood = glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0)
+    model = likelihood * MultivariateNormal("beta", loc=jnp.zeros(p), cov=tau2 * jnp.eye(p))
     cov = jnp.linalg.inv(jnp.eye(p) / tau2 + x.T @ x)
     mean = cov @ (x.T @ y)
     return ConjugateLinearModel(
@@ -59,37 +66,21 @@ def conjugate_linear_model() -> ConjugateLinearModel:
 @pytest.fixture(scope="session")
 def conjugate_nuts_posterior(
     conjugate_linear_model: ConjugateLinearModel,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """A well-mixed NUTS fit of the conjugate model — the method under validation."""
     m = conjugate_linear_model
-    return condition_on(
-        m.model,
-        m.data,
-        method="blackjax_nuts",
-        num_results=3000,
-        num_warmup=1500,
-        num_chains=2,
-        random_seed=0,
-    )
-
-
-class _BernoulliLikelihood:
-    """Bernoulli likelihood with the success probability as the parameter.
-
-    Conjugate to a Beta prior (unlike :class:`GLMLikelihood`, a logit-linear
-    model), so the posterior is Beta in closed form.
-    """
-
-    def log_likelihood(self, params, data):
-        theta = jnp.reshape(jnp.asarray(params), ())
-        return jnp.sum(tfd.Bernoulli(probs=theta).log_prob(jnp.asarray(data)))
+    with workflow_run(seed=0):
+        return condition_on.with_options(
+            method="blackjax_nuts",
+            method_options={"num_results": 3000, "num_warmup": 1500, "num_chains": 2},
+        )(m.model, {"y": m.data})
 
 
 @dataclass(frozen=True)
 class BetaBernoulliModel:
     """A Beta-Bernoulli conjugate model with its exact (skewed) Beta posterior."""
 
-    model: SimpleModel
+    model: Distribution  # the joint of the responses y and the success probability theta
     data: Array  # 0/1 responses
     reference: Reference  # exact Beta(α+k, β+n−k) posterior — moments and draws
     posterior_skewness: float  # > 0 ⇒ the reference is genuinely non-Gaussian
@@ -115,22 +106,29 @@ def beta_bernoulli_model() -> BetaBernoulliModel:
     draws = jax.random.beta(jax.random.PRNGKey(99), post_alpha, post_beta, (5000,))[:, None]
     skew = float(jnp.mean((draws[:, 0] - mean) ** 3) / var**1.5)
     reference = Reference.from_moments(mean=jnp.array([mean]), cov=jnp.array([[var]]), draws=draws)
-    model = SimpleModel(Beta("theta", alpha, beta), _BernoulliLikelihood())
+    # The success probability is the parameter, conjugate to the Beta prior (unlike
+    # a logit-linear GLM), so the posterior is Beta in closed form.
+    prior = Beta("theta", alpha, beta)
+    likelihood = ObservationKernel(
+        "y",
+        {"theta": prior.event_spec.spec},
+        NumericArraySpec((n,), jnp.float32, boolean),
+        lambda theta: tfd.Independent(
+            tfd.Bernoulli(probs=jnp.full(n, theta), dtype=jnp.float32), 1
+        ),
+    )
+    model = likelihood * prior
     return BetaBernoulliModel(model=model, data=data, reference=reference, posterior_skewness=skew)
 
 
 @pytest.fixture(scope="session")
 def beta_bernoulli_nuts_posterior(
     beta_bernoulli_model: BetaBernoulliModel,
-) -> ApproximateDistribution:
+) -> EmpiricalDistribution:
     """A NUTS fit of the constrained, skewed Beta-Bernoulli posterior."""
     m = beta_bernoulli_model
-    return condition_on(
-        m.model,
-        m.data,
-        method="blackjax_nuts",
-        num_results=2000,
-        num_warmup=1000,
-        num_chains=2,
-        random_seed=0,
-    )
+    with workflow_run(seed=0):
+        return condition_on.with_options(
+            method="blackjax_nuts",
+            method_options={"num_results": 2000, "num_warmup": 1000, "num_chains": 2},
+        )(m.model, {"y": m.data})

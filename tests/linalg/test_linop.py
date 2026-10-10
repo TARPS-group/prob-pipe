@@ -1,4 +1,5 @@
 # tests/linalg/test_linop.py
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -6,7 +7,9 @@ from probpipe.linalg.linear_operator import (
     CholeskyLinOp,
     DenseLinOp,
     DiagonalLinOp,
+    DiagonalRootLinOp,
     LinAlgError,
+    LinOp,
     ProductLinOp,
     RootLinOp,
     ScaledLinOp,
@@ -231,9 +234,93 @@ def test_scaled_preserves_positive_definite_when_scalar_positive():
     assert "positive_definite" not in s2.flags
 
 
+def test_a_scaled_operator_differentiates_and_compiles_in_its_scalar():
+    A = jnp.array([[2.0, 1.0], [1.0, 3.0]])
+    x = jnp.array([1.0, -2.0])
+
+    def total(scalar):
+        scaled = DenseLinOp(A) * scalar
+        return jnp.sum(scaled.to_dense()) + jnp.sum(scaled.matvec(x))
+
+    expected = float(jnp.sum(A) + jnp.sum(A @ x))
+    assert float(jax.grad(total)(2.0)) == pytest.approx(expected, rel=1e-6)
+    assert float(jax.jit(total)(2.0)) == pytest.approx(2.0 * expected, rel=1e-6)
+    assert float(jax.jit(jax.grad(total))(2.0)) == pytest.approx(expected, rel=1e-6)
+
+
+def test_a_traced_scalar_leaves_positive_definiteness_undeclared():
+    d = DiagonalLinOp(jnp.array([2.0, 3.0]))
+    flags = []
+    jax.jit(lambda scalar: flags.append(ScaledLinOp(d, scalar).flags) or scalar)(2.0)
+    assert "positive_definite" not in flags[0]
+
+
 def test_logdet_sign_error():
     A = jnp.array([[0.0, 1.0], [1.0, 0.0]])
     op = DenseLinOp(A)
     # determinant is -1 so slogdet sign = -1 -> logdet should raise
     with pytest.raises(LinAlgError):
         _ = op.logdet()
+
+
+class TestRaw:
+    """Design III.4: a structured operator's raw() is its stored parameterization."""
+
+    def test_raw_is_abstract_on_the_base(self):
+        assert "raw" in LinOp.__abstractmethods__
+
+    def test_a_dense_operator_is_its_matrix(self):
+        op = DenseLinOp(jnp.eye(2))
+        assert op.raw() is op.array
+
+    def test_a_diagonal_operator_is_its_diagonal(self):
+        op = DiagonalLinOp(jnp.array([1.0, 2.0]))
+        assert op.raw() is op.diagonal
+
+    def test_a_triangular_operator_is_its_triangle(self):
+        op = TriangularLinOp(jnp.array([[1.0, 0.0], [2.0, 3.0]]))
+        assert op.raw() is op.tri
+
+    def test_a_root_operator_is_its_root(self):
+        root = DenseLinOp(jnp.array([[1.0, 0.0], [2.0, 3.0]]))
+        assert RootLinOp(root).raw() is root
+
+    def test_a_cholesky_operator_is_its_factor(self):
+        factor = TriangularLinOp(jnp.array([[1.0, 0.0], [2.0, 3.0]]))
+        assert CholeskyLinOp(factor).raw() is factor
+
+    def test_a_diagonal_root_operator_is_its_root(self):
+        root = DiagonalLinOp(jnp.array([1.0, 2.0]))
+        assert DiagonalRootLinOp(root).raw() is root
+
+    def test_a_composite_is_its_operand_tuple(self):
+        a, b = DenseLinOp(jnp.eye(2)), DiagonalLinOp(jnp.array([1.0, 2.0]))
+        assert ProductLinOp(a, b).raw() == (a, b)
+        assert SumLinOp([a, b]).raw() == (a, b)
+        assert TransposedLinOp(a).raw() == (a,)
+        assert ScaledLinOp(a, 2.0).raw() == (a, 2.0)
+
+    def test_a_composite_rebuilds_from_its_operands(self):
+        a, b = DenseLinOp(jnp.eye(2)), DiagonalLinOp(jnp.array([1.0, 2.0]))
+        product = a @ b
+        assert approx(ProductLinOp(*product.raw()).to_dense(), product.to_dense())
+
+
+class TestConstructionMessages:
+    def test_a_product_of_mismatched_shapes_names_both_shapes(self):
+        with pytest.raises(
+            ValueError, match=r"shapes \(3, 3\) and \(4, 2\): inner dimensions 3 and 4"
+        ):
+            ProductLinOp(DenseLinOp(jnp.eye(3)), DenseLinOp(jnp.ones((4, 2))))
+
+    def test_a_sum_names_the_operand_that_is_not_a_linop(self):
+        with pytest.raises(ValueError, match=r"got an array of shape \(3, 3\) at index 1"):
+            SumLinOp([DenseLinOp(jnp.eye(3)), jnp.eye(3)])
+
+    def test_a_sum_names_the_mismatched_shape(self):
+        with pytest.raises(ValueError, match=r"must all have shape \(3, 3\), got \(2, 2\)"):
+            SumLinOp([DenseLinOp(jnp.eye(3)), DenseLinOp(jnp.eye(2))])
+
+    def test_a_cholesky_root_names_the_class_it_got(self):
+        with pytest.raises(ValueError, match=r"TriangularLinOp, got DenseLinOp$"):
+            CholeskyLinOp(DenseLinOp(jnp.eye(3)))

@@ -5,8 +5,12 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
-    RecordEmpiricalDistribution,
-    from_distribution,
+    EmpiricalDistribution,
+    NumericArrayBatch,
+    NumericArraySpec,
+    ResolutionError,
+    convert,
+    converter_registry,
 )
 from probpipe.core.constraints import (
     _supports_compatible,
@@ -23,7 +27,7 @@ from probpipe.core.constraints import (
     sphere,
     unit_interval,
 )
-from probpipe.distributions import (
+from probpipe.families import (
     Bernoulli,
     Beta,
     Binomial,
@@ -129,6 +133,64 @@ class TestConstraints:
         assert "interval" in repr(interval(0, 1))
 
 
+# Each real-valued constraint with one real value inside its support.
+REAL_SUPPORT_MEMBERS = [
+    pytest.param(real, 1.0, id="real"),
+    pytest.param(positive, 2.0, id="positive"),
+    pytest.param(non_negative, 0.0, id="non_negative"),
+    pytest.param(non_negative_integer, 3.0, id="non_negative_integer"),
+    pytest.param(boolean, 1.0, id="boolean"),
+    pytest.param(unit_interval, 0.5, id="unit_interval"),
+    pytest.param(interval(-2.0, 3.0), 1.0, id="interval"),
+    pytest.param(greater_than(5.0), 6.0, id="greater_than"),
+    pytest.param(integer_interval(0, 4), 2.0, id="integer_interval"),
+    pytest.param(simplex, [0.3, 0.7], id="simplex"),
+    pytest.param(sphere, [0.6, 0.8], id="sphere"),
+    pytest.param(positive_definite, [[2.0, 0.0], [0.0, 1.0]], id="positive_definite"),
+]
+
+
+class TestComplexValues:
+    """A real-valued support contains a complex value only where it is real and inside."""
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_a_complex_value_with_zero_imaginary_part_is_inside(self, constraint, member):
+        assert bool(jnp.all(constraint.check(jnp.asarray(member, dtype=jnp.complex64))))
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_a_nonzero_imaginary_part_is_outside(self, constraint, member):
+        value = jnp.asarray(member, dtype=jnp.complex64) + 0.5j
+        assert not bool(jnp.any(constraint.check(value)))
+
+    def test_an_ordered_support_rejects_a_purely_imaginary_value(self):
+        assert not bool(positive.check(jnp.asarray(1j)))
+        assert not bool(real.check(jnp.asarray(1j)))
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_the_result_has_the_shape_of_the_real_check(self, constraint, member):
+        real_values = jnp.stack([jnp.asarray(member)] * 3)
+        offset = jnp.zeros(3).at[1].set(0.5).reshape((3,) + (1,) * (real_values.ndim - 1))
+        result = constraint.check(real_values + 1j * offset)
+        assert result.shape == constraint.check(real_values).shape
+        assert result.tolist() == [True, False, True]
+
+    @pytest.mark.parametrize(("constraint", "member"), REAL_SUPPORT_MEMBERS)
+    def test_the_check_is_traceable_under_jit(self, constraint, member):
+        real_values = jnp.stack([jnp.asarray(member)] * 2)
+        offset = jnp.array([0.0, 0.5]).reshape((2,) + (1,) * (real_values.ndim - 1))
+        result = jax.jit(constraint.check)(real_values + 1j * offset)
+        assert result.tolist() == [True, False]
+
+    def test_a_declared_positive_output_rejects_an_imaginary_value(self):
+        from probpipe import Function
+
+        load = Function(
+            "load", lambda: jnp.asarray(1j), output_spec=NumericArraySpec((), support=positive)
+        )
+        with pytest.raises(ValueError, match="output/load does not conform to declared support"):
+            load()
+
+
 # ── Section 2: Support compatibility tests ────────────────────────────────────
 
 
@@ -195,7 +257,7 @@ class TestDistributionSupport:
         assert Gamma("g", 3.0, 1.0).support == positive
 
     def test_uniform_support(self):
-        assert Uniform(low=-1.0, high=2.0, name="u").support == interval(-1.0, 2.0)
+        assert Uniform("u", low=-1.0, high=2.0).support == interval(-1.0, 2.0)
 
     # NOTE: A family of "support with array bounds" tests was removed.
     # Each exercised a legacy batched constructor:
@@ -205,22 +267,22 @@ class TestDistributionSupport:
     # ``Binomial(total_count=arr, probs=arr)``. The framework
     # hierarchy ("one random variable per Distribution") no longer
     # permits these forms; migrate to
-    # ``DistributionArray.from_batched_params`` for batched
+    # a ``DistributionBatch`` of separate laws for batched
     # constructions, and use ``Constraint`` directly for per-element
     # support checks (those are a property of the ``Constraint``
     # type, not of a batched ``Distribution``).
 
     def test_bernoulli_support(self):
-        assert Bernoulli(probs=0.5, name="d").support == boolean
+        assert Bernoulli("d", probs=0.5).support == boolean
 
     def test_poisson_support(self):
-        assert Poisson(rate=3.0, name="p").support == non_negative_integer
+        assert Poisson("p", rate=3.0).support == non_negative_integer
 
     def test_dirichlet_support(self):
         assert Dirichlet("d", [1.0, 2.0]).support == simplex
 
     def test_wishart_support(self):
-        assert Wishart(df=5.0, scale_tril=jnp.eye(3), name="w").support == positive_definite
+        assert Wishart("w", df=5.0, scale_tril=jnp.eye(3)).support == positive_definite
 
     def test_vonmisesfisher_support(self):
         assert VonMisesFisher("v", [1.0, 0.0, 0.0], 5.0).support == sphere
@@ -228,114 +290,113 @@ class TestDistributionSupport:
     def test_mvn_support(self):
         assert MultivariateNormal("z", jnp.zeros(2), cov=jnp.eye(2)).support == real
 
-    def test_empirical_support(self):
-        ed = RecordEmpiricalDistribution("x", jnp.ones((5, 2)))
-        assert ed.support == real
+    def test_empirical_support_is_what_its_atoms_declare(self):
+        atoms = NumericArrayBatch(
+            "x", jnp.ones((5, 2)), "atom", element_spec=NumericArraySpec((2,), support=real)
+        )
+        assert EmpiricalDistribution(atoms, component="x").support == real
+        assert EmpiricalDistribution(jnp.ones((5, 2)), component="x").support is None
 
 
 # ── Section 4: from_distribution tests ────────────────────────────────────────
 
 
-class TestFromDistribution:
-    @pytest.fixture
-    def key(self):
-        return jax.random.PRNGKey(42)
+class TestConvert:
+    """Conversions through ``from_distribution``, whose draws are workflow-owned."""
 
     # -- same-class copy --
-    def test_normal_from_normal(self, key):
-        n = Normal(loc=3.0, scale=2.0, name="n")
-        n2 = from_distribution(n, Normal, key=key)
+    def test_normal_from_normal(self):
+        n = Normal("n", loc=3.0, scale=2.0)
+        n2 = convert(n, Normal)
         assert jnp.isclose(n2.loc, 3.0, atol=0.01)
 
-    def test_beta_from_beta(self, key):
-        b = Beta(alpha=2.0, beta=5.0, name="b")
-        b2 = from_distribution(b, Beta, key=key)
+    def test_beta_from_beta(self):
+        b = Beta("b", alpha=2.0, beta=5.0)
+        b2 = convert(b, Beta)
         assert jnp.isclose(b2.alpha, 2.0, atol=0.01)
 
     # -- moment-matching --
-    def test_normal_from_gamma(self, key):
+    def test_normal_from_gamma(self):
         """Gamma -> Normal via moment matching (check_support=False needed)."""
-        g = Gamma(concentration=9.0, rate=1.0, name="g")
-        n = from_distribution(g, Normal, key=key, check_support=False, num_samples=5000)
+        g = Gamma("g", concentration=9.0, rate=1.0)
+        n = converter_registry.convert(g, Normal, check_support=False, num_samples=5000)
         # Gamma(9,1) has mean=9, var=9
         assert jnp.isclose(n.loc, 9.0, atol=1.0)
 
-    def test_gamma_from_normal(self, key):
-        """Normal -> Gamma should fail support check by default."""
-        n = Normal(loc=5.0, scale=1.0, name="n")
-        with pytest.raises(ValueError, match="support"):
-            from_distribution(n, Gamma, key=key)
+    def test_gamma_from_normal(self):
+        """Normal -> Gamma is refused by default, since the fit's support is not the source's."""
+        n = Normal("n", loc=5.0, scale=1.0)
+        with pytest.raises(ResolutionError, match="check_support=False"):
+            convert(n, Gamma)
 
-    def test_gamma_from_normal_override(self, key):
+    def test_gamma_from_normal_override(self):
         """Normal -> Gamma with check_support=False should work."""
-        n = Normal(loc=5.0, scale=1.0, name="n")
-        g = from_distribution(n, Gamma, key=key, check_support=False, num_samples=5000)
+        n = Normal("n", loc=5.0, scale=1.0)
+        g = converter_registry.convert(n, Gamma, check_support=False, num_samples=5000)
         assert jnp.isclose(float(g.concentration * 1.0 / g.rate), 5.0, atol=1.0)
 
-    def test_beta_from_uniform(self, key):
+    def test_beta_from_uniform(self):
         """Uniform(0,1) -> Beta should work (compatible support)."""
-        u = Uniform(low=0.0, high=1.0, name="u")
-        b = from_distribution(u, Beta, key=key, num_samples=5000)
+        u = Uniform("u", low=0.0, high=1.0)
+        b = convert.with_options(method_options={"num_samples": 5000})(u, Beta)
         # Uniform(0,1) has mean=0.5, var=1/12 -> alpha~=beta~=1
         assert float(b.alpha) > 0
         assert float(b.beta) > 0
 
     # -- discrete --
-    def test_bernoulli_from_bernoulli(self, key):
-        b = Bernoulli(probs=0.7, name="b")
-        b2 = from_distribution(b, Bernoulli, key=key)
+    def test_bernoulli_from_bernoulli(self):
+        b = Bernoulli("b", probs=0.7)
+        b2 = convert(b, Bernoulli)
         assert jnp.isclose(b2.probs, 0.7, atol=0.01)
 
-    def test_poisson_from_poisson(self, key):
-        p = Poisson(rate=5.0, name="p")
-        p2 = from_distribution(p, Poisson, key=key)
+    def test_poisson_from_poisson(self):
+        p = Poisson("p", rate=5.0)
+        p2 = convert(p, Poisson)
         assert jnp.isclose(p2.rate, 5.0, atol=0.01)
 
-    def test_binomial_requires_total_count(self, key):
+    def test_binomial_requires_total_count(self):
         """Binomial.from_distribution from non-Binomial needs total_count."""
-        p = Poisson(rate=3.0, name="p")
+        p = Poisson("p", rate=3.0)
         with pytest.raises(ValueError, match="total_count"):
-            from_distribution(p, Binomial, key=key, check_support=False)
+            converter_registry.convert(p, Binomial, check_support=False)
 
-    def test_binomial_from_poisson(self, key):
-        p = Poisson(rate=3.0, name="p")
-        b = from_distribution(
-            p, Binomial, key=key, check_support=False, total_count=10, num_samples=5000
+    def test_binomial_from_poisson(self):
+        p = Poisson("p", rate=3.0)
+        b = converter_registry.convert(
+            p, Binomial, check_support=False, total_count=10, num_samples=5000
         )
         # mean ~ 3, so probs ~ 0.3
         assert b.probs is not None
 
     # -- multivariate --
-    def test_mvn_from_empirical(self, key):
-        samples = jax.random.normal(key, (100, 3))
-        ed = RecordEmpiricalDistribution("x", samples)
-        mvn = from_distribution(ed, MultivariateNormal)
+    def test_mvn_from_empirical(self):
+        samples = jax.random.normal(jax.random.PRNGKey(42), (100, 3))
+        ed = EmpiricalDistribution(samples, component="x")
+        mvn = convert(ed, MultivariateNormal)
         assert mvn.dim == 3
 
-    def test_dirichlet_from_dirichlet(self, key):
-        d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]), name="d")
-        d2 = from_distribution(d, Dirichlet, key=key)
+    def test_dirichlet_from_dirichlet(self):
+        d = Dirichlet("d", concentration=jnp.array([1.0, 2.0, 3.0]))
+        d2 = convert(d, Dirichlet)
         assert jnp.allclose(d2.concentration, d.concentration)
 
     # -- provenance --
-    def test_from_distribution_same_class_returns_source(self, key):
-        """Raw same-class conversion is a no-op; Function call is a new result."""
-        n = Normal(loc=0.0, scale=1.0, name="n")
-        raw = from_distribution.apply(n, Normal, key=key)
-        n2 = from_distribution(n, Normal, key=key)
-        assert raw is n
+    def test_convert_same_class_returns_the_source_under_fresh_identity(self):
+        n = Normal("n", loc=0.0, scale=1.0)
+        n2 = convert(n, Normal)
         assert n2 is not n
-        assert n2.provenance.operation == "workflow.from_distribution"
+        assert float(n2._loc) == float(n._loc)
+        assert n2.provenance.operation == "workflow.convert"
 
-    def test_from_distribution_cross_class_provenance(self, key):
+    def test_convert_cross_class_provenance(self):
         """Cross-class conversion attaches provenance."""
-        g = Gamma(concentration=3.0, rate=1.0, name="g")
-        n = from_distribution(g, Normal, key=key, check_support=False)
+        g = Gamma("g", concentration=3.0, rate=1.0)
+        n = converter_registry.convert(g, Normal, check_support=False)
         assert n.provenance is not None
-        assert n.provenance.operation == "workflow.from_distribution"
+        assert n.provenance.operation == "convert"
 
     # -- empirical from anything --
-    def test_empirical_from_normal(self, key):
-        n = Normal(loc=0.0, scale=1.0, name="n")
-        ed = from_distribution(n, RecordEmpiricalDistribution, key=key, num_samples=100)
+    def test_empirical_from_normal(self):
+        n = Normal("n", loc=0.0, scale=1.0)
+        ed = convert.with_options(method_options={"num_samples": 100})(n, EmpiricalDistribution)
         assert ed.num_atoms == 100

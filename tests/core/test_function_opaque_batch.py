@@ -19,11 +19,15 @@ import pytest
 from probpipe import (
     Batch,
     BatchSpec,
+    Function,
     FunctionBatch,
     FunctionSpec,
+    InputSpec,
     NumericArraySpec,
+    Opaque,
     OpaqueBatch,
     OpaqueSpec,
+    OutputSpec,
     Record,
     RecordSpec,
     TermSpec,
@@ -110,13 +114,13 @@ class TestConstruction:
         assert labels.level_names == ("site",)
 
     def test_a_given_name_is_kept(self, labels):
-        assert labels.name == "s"
+        assert labels.label == "s"
 
     def test_a_constructor_keeps_a_derived_name(self):
-        """The shape an operation deriving a batch name needs: named, but re-derivable."""
+        """The shape an operation deriving a batch label needs: labeled, but re-derivable."""
         batch = OpaqueBatch("given", ["a"], "site")
 
-        assert batch.name == "given"
+        assert batch.label == "given"
 
     def test_a_provenance_is_carried_as_given(self):
         record = Provenance.create("sample", parents=[])
@@ -137,12 +141,14 @@ class TestConstruction:
         )
 
         assert batch.batch_shape == (3,)
-        assert [batch[i] for i in range(3)] == ["0", "1", "2"]
+        assert [batch[i].value for i in range(3)] == ["0", "1", "2"]
 
 
 class TestConstructionRefusals:
     def test_a_non_callable_element_names_its_position(self):
-        with pytest.raises(TypeError, match=r"element at 1 is a int"):
+        with pytest.raises(
+            TypeError, match=r"FunctionBatch: element 1 is int, but elements must be callable"
+        ):
             FunctionBatch(
                 "batch",
                 [lambda x: x, 3],
@@ -150,12 +156,19 @@ class TestConstructionRefusals:
             )
 
     def test_a_mapping_is_not_an_opaque_element(self):
-        with pytest.raises(TypeError, match="denotes a subtree"):
+        with pytest.raises(TypeError, match="element 0 is dict, but elements cannot be mappings"):
             OpaqueBatch(
                 "batch",
                 [{"a": 1}],
                 "site",
             )
+
+    def test_an_element_of_the_wrong_type_names_the_spec(self):
+        """A typed spec refuses on type, which the message says rather than blaming a mapping."""
+        with pytest.raises(
+            TypeError, match=r"element 1 is str, but elements must match element_spec OpaqueSpec"
+        ):
+            OpaqueBatch("batch", [1, "a"], "site", element_spec=OpaqueSpec(type=int))
 
     @pytest.mark.parametrize(
         ("cls", "good", "bad"),
@@ -168,7 +181,7 @@ class TestConstructionRefusals:
         store[...] = good
         store[1, 0] = bad
 
-        with pytest.raises(TypeError, match=r"element at \(1, 0\)"):
+        with pytest.raises(TypeError, match=r"element \(1, 0\) is"):
             cls("batch", store, ["chain", "draw"])
 
     def test_no_elements_is_a_batch_of_none(self):
@@ -204,7 +217,7 @@ class TestConstructionRefusals:
             )
 
     def test_naming_fewer_levels_than_axes_is_refused(self):
-        with pytest.raises(ValueError, match="2 axes need 2 level names"):
+        with pytest.raises(ValueError, match=r"got batch shape \(2, 2\) but 1 level name"):
             OpaqueBatch(
                 "batch",
                 np.empty((2, 2), dtype=object),
@@ -230,8 +243,8 @@ class TestConstructionRefusals:
     @pytest.mark.parametrize(
         ("axes_per_level", "names", "match"),
         [
-            ((1,), ["a"], "must account for every batch axis"),
-            ((1, 1, 1), ["a", "b", "c"], "must account for every batch axis"),
+            ((1,), ["a"], r"axes_per_level \(1,\) covers 1 axis"),
+            ((1, 1, 1), ["a", "b", "c"], r"axes_per_level \(1, 1, 1\) covers 3 axes"),
             ((1, 1), ["a"], "one count per level"),
             ((2,), ["a", "b"], "one count per level"),
         ],
@@ -253,9 +266,9 @@ class TestConstructionRefusals:
     @pytest.mark.parametrize(
         ("elements", "match"),
         [
-            ("north", "iterates into its parts"),
-            (b"ab", "iterates into its parts"),
-            ({"a": 1, "b": 2}, "iterates into its parts"),
+            ("north", "which would be split into its"),
+            (b"ab", "which would be split into its"),
+            ({"a": 1, "b": 2}, "which would be split into its"),
             (np.zeros(3), "must have dtype=object"),
             (jnp.zeros(3), "must have dtype=object"),
         ],
@@ -271,7 +284,7 @@ class TestConstructionRefusals:
             )
 
     def test_something_not_iterable_at_all_is_refused(self):
-        with pytest.raises(TypeError, match="iterable of elements"):
+        with pytest.raises(TypeError, match="elements must be an object array or an iterable"):
             OpaqueBatch(
                 "batch",
                 3,
@@ -282,7 +295,7 @@ class TestConstructionRefusals:
 class TestSpec:
     def test_the_batch_is_specified_at_the_family_kind(self, functions):
         assert isinstance(functions.spec, BatchSpec)
-        assert functions.spec == BatchSpec(FunctionSpec(), ((3,),), ("variant",))
+        assert functions.spec == BatchSpec(FunctionSpec(), variant=3)
 
     def test_element_spec_is_a_view_of_the_declared_kind(self, functions, labels):
         assert isinstance(functions.element_spec, FunctionSpec)
@@ -291,7 +304,9 @@ class TestSpec:
         assert labels.element_spec is labels.spec.element_spec
 
     def test_an_element_spec_may_be_given(self):
-        declared = FunctionSpec(RecordSpec(x=()), RecordSpec(y=()))
+        declared = FunctionSpec(
+            InputSpec(RecordSpec(x=()).children), OutputSpec(result=RecordSpec(y=()))
+        )
         batch = FunctionBatch(
             "batch",
             [lambda x: x],
@@ -331,35 +346,55 @@ class TestSpec:
                 "batch",
                 three,
                 "variant",
-                element_spec=FunctionSpec(RecordSpec(x=())),
+                element_spec=FunctionSpec(InputSpec(RecordSpec(x=()).children)),
             )
         )
 
 
 class TestElements:
-    def test_an_element_is_the_object_that_was_stored(self, labels):
+    def test_an_element_holds_the_object_that_was_stored(self, labels):
         stored = ["north", "east", "south"]
-        assert [labels[i] for i in range(3)] == stored
+        assert [labels[i].value for i in range(3)] == stored
+
+    def test_an_opaque_element_is_an_opaque_named_by_its_position(self, labels):
+        element = labels[1]
+        assert isinstance(element, Opaque)
+        assert element.label == "s[site=1]"
+        assert element.spec == labels.element_spec
+
+    def test_a_callable_element_is_a_function_named_by_its_position(self, functions):
+        element = functions[1]
+        assert isinstance(element, Function)
+        assert element.label == "f[variant=1]"
+        assert element.apply(5) == 10
+
+    def test_an_element_records_the_batch_it_was_read_from(self, labels):
+        provenance = labels[2].provenance
+        assert provenance.operation == "__getitem__"
+        assert [parent.label for parent in provenance.parents] == ["s"]
+        assert provenance.metadata == {"position": [2]}
 
     def test_a_callable_element_is_callable(self, functions):
         assert functions[1](5) == 10
 
-    def test_a_tracked_element_keeps_its_own_name(self):
-        """A stored element is handed back as given, not renamed to its position.
+    def test_a_tracked_element_is_a_view_under_the_derived_name(self):
+        """A stored tracked term comes back as a view labeled by its position.
 
-        The identity rule applies to a batch that materializes an element per
-        index; here the caller's own object comes back, so a name that means
-        something is not replaced by one that states a position.
+        The view shares the stored term's representation and records it as its
+        source, and the stored term keeps its own label.
         """
 
         class _Named(TrackedTerm):
-            __slots__ = ("_name", "_provenance")
+            __slots__ = ("_expression", "_label", "_provenance")
 
-            def __init__(self, name):
-                self._init_tracked(name)
+            def __init__(self, label):
+                self._init_tracked(label)
+
+            def raw(self):
+                return self
 
             def __call__(self):
-                return self._name
+                return self._label
 
         element = _Named("alpha")
         batch = FunctionBatch(
@@ -368,8 +403,12 @@ class TestElements:
             "variant",
         )
 
-        assert batch[0] is element
-        assert batch[0].name == "alpha"
+        view = batch[0]
+        assert view is not element
+        assert view.label == "f[variant=0]"
+        assert view() == "f[variant=0]"
+        assert [parent.label for parent in view.provenance.parents] == ["f", "alpha"]
+        assert element.label == "alpha"
 
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
@@ -387,7 +426,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        np.testing.assert_array_equal(np.asarray(batch[1]), np.ones(3))
+        np.testing.assert_array_equal(np.asarray(batch[1].value), np.ones(3))
 
     def test_an_object_array_of_arrays_is_not_unpacked(self):
         """The other input path: a supplied object array, copied rather than built.
@@ -406,7 +445,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        np.testing.assert_array_equal(np.asarray(batch[1]), np.ones(3))
+        np.testing.assert_array_equal(np.asarray(batch[1].value), np.ones(3))
 
     def test_elements_holding_sequences_are_not_unpacked(self):
         batch = OpaqueBatch(
@@ -416,7 +455,7 @@ class TestElements:
         )
 
         assert batch.batch_shape == (2,)
-        assert batch[0] == [1, 2]
+        assert batch[0].value == [1, 2]
 
 
 class TestTheStorageContractIsSatisfiable:
@@ -453,7 +492,7 @@ class TestTheStorageContractIsSatisfiable:
         assert np.shares_memory(function_grid[0]._store, function_grid._store)
 
     def test_a_descending_slice_is_presented_in_the_order_given(self, labels):
-        assert [labels[::-1][i] for i in range(3)] == ["south", "east", "north"]
+        assert [labels[::-1][i].value for i in range(3)] == ["south", "east", "north"]
 
     def test_a_stepped_slice_is_presented_in_the_order_given(self, functions):
         assert [f(1) for f in functions[::2]] == [1, 3]
@@ -463,7 +502,7 @@ class TestTheStorageContractIsSatisfiable:
 
         assert whole is not labels
         assert np.shares_memory(whole._store, labels._store)
-        assert [whole[i] for i in range(3)] == [labels[i] for i in range(3)]
+        assert [whole[i].value for i in range(3)] == [labels[i].value for i in range(3)]
 
     def test_the_store_cannot_be_written_through(self, labels):
         """A view shares the buffer, so a writable store would reach the parent."""
@@ -484,8 +523,8 @@ class TestTheStorageContractIsSatisfiable:
 
         store[1] = {"a": 1}
 
-        assert batch[1] == "south"
-        assert batch.element_spec.is_valid(batch[1])
+        assert batch[1].value == "south"
+        assert batch.element_spec.is_valid(batch[1].value)
 
     def test_an_empty_selection_is_a_batch_of_nothing(self, labels):
         """Reachable by selection though the constructor refuses it — see Notes."""
@@ -498,34 +537,34 @@ class TestTheStorageContractIsSatisfiable:
         assert empty._store.size == 0
 
     def test_a_view_carries_the_spec_the_abc_computed(self, grid):
-        assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(), ((3,),), ("draw",))
+        assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(type=str), draw=3)
 
 
 class TestNaming:
     def test_a_view_is_named_by_what_it_selects(self, grid):
-        assert grid.at_levels(chain=0).name == "post[chain=0]"
-        assert grid.at_levels(draw=slice(1, 3)).name == "post[draw=1:3]"
+        assert grid.at_levels(chain=0).label == "post[chain=0]"
+        assert grid.at_levels(draw=slice(1, 3)).label == "post[draw=1:3]"
 
     def test_positional_and_named_indexing_derive_one_name(self, grid):
-        assert grid[0].name == grid.at_levels(chain=0).name
+        assert grid[0].label == grid.at_levels(chain=0).label
 
     def test_level_names_can_be_repinned(self, labels):
         renamed = labels.with_level_names(site="place")
 
         assert renamed.level_names == ("place",)
-        assert renamed[0:2].name == "s[place=0:2]"
+        assert renamed[0:2].label == "s[place=0:2]"
 
     def test_with_name_re_roots_a_view(self, labels):
-        assert labels[0:2].with_name("q")[0:1].name == "q[site=0:1]"
+        assert labels[0:2].with_label("q")[0:1].label == "q[site=0:1]"
 
 
 class TestFieldKeys:
     def test_these_elements_have_no_fields(self, functions):
-        with pytest.raises(TypeError, match="have no fields to address by name"):
+        with pytest.raises(TypeError, match="its elements have no named fields"):
             functions["anything"]
 
     def test_the_message_names_the_concrete_class(self, labels):
-        with pytest.raises(TypeError, match="this OpaqueBatch"):
+        with pytest.raises(TypeError, match="cannot index OpaqueBatch by"):
             labels["anything"]
 
 
@@ -538,15 +577,15 @@ class TestRoundTrips:
     def test_a_batch_survives(self, labels, clone):
         restored = clone(labels)
 
-        assert restored.name == labels.name
+        assert restored.label == labels.label
         assert restored.level_names == labels.level_names
-        assert [restored[i] for i in range(3)] == ["north", "east", "south"]
+        assert [restored[i].value for i in range(3)] == ["north", "east", "south"]
 
     def test_a_view_survives_pickling(self, labels):
         restored = pickle.loads(pickle.dumps(labels[0:2]))
 
-        assert restored.name == "s[site=0:2]"
-        assert [restored[i] for i in range(2)] == ["north", "east"]
+        assert restored.label == "s[site=0:2]"
+        assert [restored[i].value for i in range(2)] == ["north", "east"]
 
     def test_the_store_travels_without_being_declared(self, labels):
         """`Batch.__getstate__` walks the MRO, so `_store` needs no restating."""
@@ -561,6 +600,17 @@ class TestProvenance:
 
         assert produced[0:2].provenance is produced.provenance
 
+    def test_an_element_records_the_batch_and_the_stored_term(self, full_provenance_mode):
+        """Its parents are identity descriptors, so a read hashes no content."""
+        element = Record("r", x=1.0)
+        batch = OpaqueBatch("recs", [element, Record("r2", x=2.0)], "site")
+
+        parents = batch[0].provenance.parents
+
+        assert [parent.parent for parent in parents] == [batch, element]
+        assert all(parent.fingerprint_is_weak for parent in parents)
+        assert batch[0].provenance.metadata == {"position": [0]}
+
     def test_reading_an_element_leaves_the_caller_object_untouched(self, full_provenance_mode):
         """These batches store what they were given, so a read writes to nothing."""
         element = Record("r", x=1.0)
@@ -571,7 +621,10 @@ class TestProvenance:
         )
         batch.with_provenance(Provenance.create("collect", parents=[]))
 
-        assert batch[0] is element
+        view = batch[0]
+        assert view is not element
+        assert view.label == "recs[site=0]"
+        assert element.label == "r"
         assert element.provenance is None
 
     def test_the_caller_can_still_set_its_own_provenance_afterwards(self, full_provenance_mode):
@@ -614,9 +667,9 @@ class TestTheseAreBatches:
             for cls in (FunctionBatch, OpaqueBatch)
             for ancestor in cls.__mro__[: cls.__mro__.index(Batch)]
             for name in vars(ancestor)
-            if not name.startswith("_")
+            if not name.startswith("_") and not hasattr(Batch, name)
         }
-        assert added == {"element_spec"}
+        assert added == set()
 
     def test_repr_reads_the_levels_and_no_elements(self):
         """Load-bearing: `with_provenance` interpolates the batch into its own error."""
@@ -633,4 +686,6 @@ class TestTheseAreBatches:
             "site",
         )
 
-        assert repr(batch) == "OpaqueBatch(name='s', site=2)"
+        text = repr(batch)
+        assert text.startswith("OpaqueBatch(") and "levels={'site': 2}" in text
+        assert "element_spec=OpaqueSpec(" in text and "<locals>._Unreadable" in text

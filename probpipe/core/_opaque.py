@@ -8,6 +8,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ._array_backend import _read_only
+from ._repr import term_repr, type_name
 from ._spec_base import OpaqueSpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
@@ -28,15 +30,16 @@ class Opaque(TrackedTerm, Annotated):
 
     Parameters
     ----------
-    name : str
-        The value's name, required and first as a :class:`~probpipe.Record`
-        takes it: the name is what says which opaque value this is.
+    label : str
+        The value's label, required and first as a :class:`~probpipe.Record`
+        takes it: the label is what says which opaque value this is.
     value : Any
-        The value this names, held as given. Any non-mapping value; the value
-        layer reads a mapping as a subtree.
+        The value this term holds, stored as given. Any non-mapping value; the value
+        layer reads a mapping as a subtree. A NumPy array is marked read-only in
+        place.
     spec : OpaqueSpec, optional
-        What this value satisfies, carrying any opaque ``meta``. Defaults to a
-        bare :class:`~probpipe.OpaqueSpec`.
+        What this value satisfies, carrying any opaque ``meta``. Defaults to the
+        :class:`~probpipe.OpaqueSpec` of the value's type.
     provenance : Provenance, optional
         How this value was produced.
 
@@ -49,13 +52,14 @@ class Opaque(TrackedTerm, Annotated):
     Examples
     --------
     >>> fitted = Opaque("sklearn_model", object())
-    >>> fitted.name
+    >>> fitted.label
     'sklearn_model'
     """
 
     __slots__ = (
         "_annotations",
-        "_name",
+        "_expression",
+        "_label",
         "_provenance",
         "_spec",
         "_value",
@@ -63,7 +67,7 @@ class Opaque(TrackedTerm, Annotated):
 
     def __init__(
         self,
-        name: str,
+        label: str,
         value: Any,
         /,
         *,
@@ -74,17 +78,40 @@ class Opaque(TrackedTerm, Annotated):
             raise TypeError(f"Opaque spec must be an OpaqueSpec, got {type(spec).__name__}")
         if isinstance(value, Mapping):
             raise TypeError(
-                "Opaque holds one unstructured value, and the value layer reads a mapping as a "
-                "subtree rather than a leaf; wrap it as a Record, or as a non-mapping value"
+                f"Opaque cannot hold a mapping, got {type_name(value)}; use a Record for "
+                f"structured values"
             )
-        spec = OpaqueSpec() if spec is None else spec
-        object.__setattr__(self, "_value", value)
+        if spec is None:
+            spec = OpaqueSpec(type=type(value))
+        elif not spec.is_valid(value):
+            raise TypeError(
+                f"Opaque {label!r}: value of type {type_name(value)} does not match {spec!r}"
+            )
+        object.__setattr__(self, "_value", _read_only(value))
         object.__setattr__(self, "_spec", spec)
-        self._init_tracked(name, provenance=provenance)
+        self._init_tracked(label, provenance=provenance)
+
+    @classmethod
+    def _view(
+        cls, label: str, value: Any, spec: OpaqueSpec, provenance: Provenance | None
+    ) -> Opaque:
+        """The opaque *value* under *spec*, as a container's view of it, without validation.
+
+        The container validated the value against *spec* when it was built.
+        """
+        view = object.__new__(cls)
+        object.__setattr__(view, "_value", value)
+        object.__setattr__(view, "_spec", spec)
+        view._init_tracked(label, provenance=provenance)
+        return view
 
     @property
     def value(self) -> Any:
         """The wrapped value, untracked."""
+        return self._value
+
+    def raw(self) -> Any:
+        """The wrapped value, as :attr:`value` holds it."""
         return self._value
 
     @property
@@ -93,4 +120,13 @@ class Opaque(TrackedTerm, Annotated):
         return self._spec
 
     def __repr__(self) -> str:
-        return f"Opaque({self.name!r}, {self._value!r})"
+        """The label, then the declared type and the metadata where the spec sets them."""
+        return term_repr("Opaque", self._displayed_label(), self._spec._repr_arguments())
+
+    def __str__(self) -> str:
+        """The wrapped value's string, as ``print`` and an f-string show the value."""
+        return str(self._value)
+
+    def __format__(self, format_spec: str) -> str:
+        """The wrapped value formatted by *format_spec*."""
+        return format(self._value, format_spec)

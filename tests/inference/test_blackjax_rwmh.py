@@ -18,8 +18,15 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Distribution, MultivariateNormal, NumericArraySpec, NumericRecordDistribution
-from probpipe.core.protocols import SupportsLogProb
+from probpipe import (
+    Distribution,
+    MultivariateNormal,
+    NumericArraySpec,
+    NumericDistribution,
+    OutputSpec,
+    workflow_run,
+)
+from probpipe.distributions._capabilities import SupportsLogProb
 from probpipe.inference import (
     inference_method_registry,
     rwmh,
@@ -32,6 +39,8 @@ from probpipe.inference._blackjax_rwmh import (
     _rgg_scale,
     _window_sizes,
 )
+from tests._posterior import arviz_data, flat_chains, num_draws
+from tests.inference._harness import validate_method
 
 # Suppress an unrelated TFP/JAX deprecation that fires during random-key
 # construction inside the test fixtures.
@@ -48,16 +57,16 @@ pytestmark = pytest.mark.filterwarnings(
 @pytest.fixture(scope="module")
 def iso_gaussian():
     """A 2-D isotropic standard normal ``N(0, I)`` — analytic stds [1, 1]."""
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+    return MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
 
 
 @pytest.fixture(scope="module")
 def aniso_gaussian():
     """A 2-D anisotropic ``N(0, diag(1, 4))`` — analytic stds [1, 2]."""
     return MultivariateNormal(
+        "z",
         loc=jnp.zeros(2),
         cov=jnp.diag(jnp.array([1.0, 4.0])),
-        name="z",
     )
 
 
@@ -241,17 +250,19 @@ class TestAdaptiveWarmup:
     def test_anisotropic_target_recovers_per_dim_variance(self, aniso_gaussian):
         # N(0, diag(1, 4)) — adapt should fit the elongation and produce
         # sample stds close to [1, 2].
-        result = rwmh(
-            dist=aniso_gaussian,
-            num_results=4000,
-            num_warmup=1500,
-            num_chains=2,
-            random_seed=7,
-        )
+        with workflow_run(seed=7):
+            result = rwmh(
+                dist=aniso_gaussian,
+                num_results=4000,
+                num_warmup=1500,
+                num_chains=2,
+            )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
+        # Observed across four workflow seeds: max |mean| 0.04-0.05, std
+        # error 2-3%.
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.15)
         np.testing.assert_allclose(
             draws.std(0, ddof=1),
@@ -263,18 +274,19 @@ class TestAdaptiveWarmup:
         # 5-D isotropic Gaussian. RGG asymptotic optimum is 0.234;
         # finite-d adaptation (no dual-averaging) lands in roughly
         # [0.10, 0.65] — small enough to mix, large enough not to stick.
+        # Observed across four workflow seeds: accept 0.30-0.32.
         dist = MultivariateNormal(
+            "z",
             loc=jnp.zeros(5),
             cov=jnp.eye(5),
-            name="z",
         )
-        result = rwmh(
-            dist=dist,
-            num_results=2000,
-            num_warmup=1000,
-            num_chains=1,
-            random_seed=3,
-        )
+        with workflow_run(seed=3):
+            result = rwmh(
+                dist=dist,
+                num_results=2000,
+                num_warmup=1000,
+                num_chains=1,
+            )
         accept_rate = result.provenance.metadata["accept_rate"]
         assert 0.10 < accept_rate < 0.65, f"unexpected accept_rate {accept_rate}"
 
@@ -288,17 +300,18 @@ class TestAdaptiveWarmup:
         land the accept rate down in the operating band (~0.2-0.5), not
         near one.
         """
-        result = rwmh(
-            dist=iso_gaussian,
-            num_results=400,
-            num_warmup=100,
-            step_size=0.01,
-            adapt=False,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            result = rwmh(
+                dist=iso_gaussian,
+                num_results=400,
+                num_warmup=100,
+                step_size=0.01,
+                adapt=False,
+            )
         assert result.provenance.metadata["step_size"] == 0.01
         assert result.provenance.metadata["adapt"] is False
         # sigma = 0.01 * I → near-degenerate proposal → almost all accepted.
+        # Observed across four workflow seeds: accept 0.991-0.994.
         assert result.provenance.metadata["accept_rate"] > 0.9
 
     def test_explicit_proposal_cov_overrides_adaptation(self, iso_gaussian):
@@ -310,27 +323,29 @@ class TestAdaptiveWarmup:
         accept rate would sit in the operating band rather than near one.
         """
         tiny_chol = jnp.eye(2) * 1e-2
-        result = rwmh(
-            dist=iso_gaussian,
-            num_results=400,
-            num_warmup=50,
-            proposal_cov=tiny_chol,
-            random_seed=0,
-        )
-        assert result.num_draws == 400
+        with workflow_run(seed=0):
+            result = rwmh(
+                dist=iso_gaussian,
+                num_results=400,
+                num_warmup=50,
+                proposal_cov=tiny_chol,
+            )
+        assert num_draws(result) == 400
+        # Observed across four workflow seeds: accept 0.991-0.994.
         assert result.provenance.metadata["accept_rate"] > 0.9
 
     def test_explicit_proposal_cov_huge_kills_acceptance(self, iso_gaussian):
         """The mirror case: a huge proposal cov drives acceptance toward zero,
         a second proof the supplied cov is actually used."""
         huge_chol = jnp.eye(2) * 50.0
-        result = rwmh(
-            dist=iso_gaussian,
-            num_results=400,
-            num_warmup=50,
-            proposal_cov=huge_chol,
-            random_seed=0,
-        )
+        with workflow_run(seed=0):
+            result = rwmh(
+                dist=iso_gaussian,
+                num_results=400,
+                num_warmup=50,
+                proposal_cov=huge_chol,
+            )
+        # Observed across four workflow seeds: accept 0.0025-0.0031.
         assert result.provenance.metadata["accept_rate"] < 0.1
 
 
@@ -338,13 +353,12 @@ class TestNumWarmupZeroWarning:
     """``adapt=True`` with ``num_warmup=0`` cannot fit a proposal cov."""
 
     def test_warns_when_adapt_true_and_no_warmup(self, iso_gaussian):
-        with pytest.warns(UserWarning, match="num_warmup=0"):
+        with pytest.warns(UserWarning, match="num_warmup=0"), workflow_run(seed=0):
             rwmh(
                 dist=iso_gaussian,
                 num_results=50,
                 num_warmup=0,
                 adapt=True,
-                random_seed=0,
             )
 
     def test_no_warning_when_adapt_false(self, iso_gaussian):
@@ -352,41 +366,40 @@ class TestNumWarmupZeroWarning:
         path — no fallback, so no warning."""
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            rwmh(
-                dist=iso_gaussian,
-                num_results=50,
-                num_warmup=0,
-                adapt=False,
-                random_seed=0,
-            )
+            with workflow_run(seed=0):
+                rwmh(
+                    dist=iso_gaussian,
+                    num_results=50,
+                    num_warmup=0,
+                    adapt=False,
+                )
 
     def test_no_warning_when_proposal_cov_given(self, iso_gaussian):
         """An explicit ``proposal_cov`` supplies the proposal directly, so
         ``num_warmup=0`` adapts nothing and must not warn."""
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
-            rwmh(
-                dist=iso_gaussian,
-                num_results=50,
-                num_warmup=0,
-                adapt=True,
-                proposal_cov=jnp.eye(2) * 0.5,
-                random_seed=0,
-            )
+            with workflow_run(seed=0):
+                rwmh(
+                    dist=iso_gaussian,
+                    num_results=50,
+                    num_warmup=0,
+                    adapt=True,
+                    proposal_cov=jnp.eye(2) * 0.5,
+                )
 
     def test_step_size_sets_proposal_without_warmup(self, iso_gaussian):
         """With no warmup positions to adapt on, ``adapt=True`` samples with
         ``sigma = step_size * I``, so a tiny ``step_size`` is almost always
         accepted, whereas an adapted proposal accepts about 0.3 to 0.5."""
-        # Observed across seeds 0-3: accept 0.99-1.0.
-        with pytest.warns(UserWarning, match="num_warmup=0"):
+        # Observed across four workflow seeds: accept 0.991-0.995.
+        with pytest.warns(UserWarning, match="num_warmup=0"), workflow_run(seed=0):
             result = rwmh(
                 dist=iso_gaussian,
                 num_results=400,
                 num_warmup=0,
                 step_size=0.01,
                 adapt=True,
-                random_seed=0,
             )
         assert result.provenance.metadata["accept_rate"] > 0.9
 
@@ -396,10 +409,10 @@ class TestNumWarmupZeroWarning:
 
         class NoDensityDist(Distribution):
             def __init__(self):
-                super().__init__("no_density", NumericArraySpec((2,)))
+                super().__init__("no_density", OutputSpec(no_density=NumericArraySpec((2,))))
 
         with pytest.raises(TypeError, match="SupportsUnnormalizedLogProb"):
-            rwmh(dist=NoDensityDist(), num_results=10, num_warmup=10, random_seed=0)
+            rwmh(dist=NoDensityDist(), num_results=10, num_warmup=10)
 
     def test_bad_proposal_cov_shape_raises_valueerror(self, iso_gaussian):
         """A wrong-shape ``proposal_cov`` (here ``(3, 3)`` for a 2-D target)
@@ -413,7 +426,6 @@ class TestNumWarmupZeroWarning:
                 num_results=50,
                 num_warmup=20,
                 proposal_cov=jnp.eye(3),
-                random_seed=0,
             )
 
 
@@ -488,21 +500,22 @@ class TestWindowedWarmup:
         # 5-D with a 30x stretch in the last dim.
         true_stds = jnp.array([1.0, 1.0, 1.0, 1.0, 30.0])
         dist = MultivariateNormal(
+            "z",
             loc=jnp.zeros(5),
             cov=jnp.diag(true_stds**2),
-            name="z",
         )
-        result = rwmh(
-            dist=dist,
-            num_results=4000,
-            num_warmup=3000,
-            num_chains=1,
-            random_seed=11,
-        )
+        with workflow_run(seed=11):
+            result = rwmh(
+                dist=dist,
+                num_results=4000,
+                num_warmup=3000,
+                num_chains=1,
+            )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
+        # Observed across four workflow seeds: std error up to 6.4%.
         np.testing.assert_allclose(
             draws.std(0, ddof=1),
             np.asarray(true_stds),
@@ -514,20 +527,22 @@ class TestWindowedWarmup:
         RGG-scaled identity proposal + one-shot Welford fit). It should
         still run end-to-end and recover the moderate ``N(0, diag(1, 4))``
         target's per-dim stds."""
-        result = rwmh(
-            dist=aniso_gaussian,
-            num_results=4000,
-            num_warmup=1500,
-            num_chains=2,
-            n_windows=1,
-            random_seed=7,
-        )
-        assert result.num_draws == 4000
+        with workflow_run(seed=7):
+            result = rwmh(
+                dist=aniso_gaussian,
+                num_results=4000,
+                num_warmup=1500,
+                num_chains=2,
+                n_windows=1,
+            )
+        assert num_draws(result) == 4000
         assert result.provenance.metadata["n_windows"] == 1
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
+        # Observed across four workflow seeds: max |mean| 0.06-0.08, std
+        # error 1-4%.
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
         np.testing.assert_allclose(
             draws.std(0, ddof=1),
@@ -549,8 +564,8 @@ def _assert_every_chain_moves(result, min_std):
     proposal is always accepted and a NaN one never is, and either leaves
     the coordinates' standard deviations at zero.
     """
-    is_accepted = np.asarray(result.inference_data["sample_stats"]["is_accepted"])
-    for accept_rate, chain in zip(is_accepted.mean(axis=1), result.chains, strict=True):
+    is_accepted = np.asarray(arviz_data(result)["sample_stats"]["is_accepted"])
+    for accept_rate, chain in zip(is_accepted.mean(axis=1), flat_chains(result), strict=True):
         assert 0.1 < accept_rate < 0.9, f"accept rate {accept_rate}"
         stds = np.asarray(chain).std(0, ddof=1)
         assert stds.min() > min_std, f"per-coordinate std {stds}"
@@ -562,15 +577,15 @@ class TestProposalNeverCollapses:
 
     def test_short_warmup_moves_every_chain(self, iso_gaussian):
         # Eight chains run eight independent warmups on the vmap path.
-        # Observed across seeds 0-5: per-chain accept 0.23-0.54, per-chain
-        # min std 0.75.
-        result = rwmh(
-            dist=iso_gaussian,
-            num_results=200,
-            num_warmup=100,
-            num_chains=8,
-            random_seed=1,
-        )
+        # Observed across four workflow seeds: per-chain accept 0.29-0.46,
+        # per-chain min std 0.77.
+        with workflow_run(seed=1):
+            result = rwmh(
+                dist=iso_gaussian,
+                num_results=200,
+                num_warmup=100,
+                num_chains=8,
+            )
         _assert_every_chain_moves(result, min_std=0.35)
 
     @pytest.mark.parametrize("num_warmup", [1, 10])
@@ -578,31 +593,31 @@ class TestProposalNeverCollapses:
         """A single window shorter than 25 steps still refits to a moving
         proposal. That includes a one-step warmup, whose Welford covariance
         is ``0 / 0``."""
-        # Observed across seeds 0-5: per-chain accept 0.27-0.59, per-chain
-        # min std 0.73.
-        result = rwmh(
-            dist=iso_gaussian,
-            num_results=200,
-            num_warmup=num_warmup,
-            num_chains=4,
-            random_seed=1,
-        )
+        # Observed across four workflow seeds: per-chain accept 0.30-0.56,
+        # per-chain min std 0.73.
+        with workflow_run(seed=1):
+            result = rwmh(
+                dist=iso_gaussian,
+                num_results=200,
+                num_warmup=num_warmup,
+                num_chains=4,
+            )
         _assert_every_chain_moves(result, min_std=0.35)
 
     def test_rank_deficient_first_window_in_high_dimension(self):
         """At ``d = 20`` the first 33-step window accepts far fewer than 20
         proposals, so its covariance estimate is singular; the default warmup
         still moves every chain."""
-        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), name="z")
-        # Observed across seeds 0-7: per-chain accept 0.42-0.48, per-chain
-        # min std 0.42.
-        result = rwmh(
-            dist=dist,
-            num_results=1000,
-            num_warmup=500,
-            num_chains=2,
-            random_seed=0,
-        )
+        dist = MultivariateNormal("z", loc=jnp.zeros(20), cov=jnp.eye(20))
+        # Observed across four workflow seeds: per-chain accept 0.39-0.49,
+        # per-chain min std 0.40.
+        with workflow_run(seed=0):
+            result = rwmh(
+                dist=dist,
+                num_results=1000,
+                num_warmup=500,
+                num_chains=2,
+            )
         _assert_every_chain_moves(result, min_std=0.2)
 
 
@@ -611,7 +626,7 @@ class TestProposalNeverCollapses:
 # ---------------------------------------------------------------------------
 
 
-class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
+class _NumpyLogProbDist(NumericDistribution, SupportsLogProb):
     """A 2-D Gaussian whose log-density is *not* JAX-traceable.
 
     Uses numpy + Python control flow — the same shape as a likelihood
@@ -625,8 +640,10 @@ class _NumpyLogProbDist(NumericRecordDistribution, SupportsLogProb):
     # 1 / variance per coordinate. Standard normal by default.
     precision = (1.0, 1.0)
 
-    def __init__(self, name):
-        super().__init__(name, NumericArraySpec((len(self.precision),), "float32"))
+    def __init__(self, label):
+        super().__init__(
+            label, OutputSpec(**{label: NumericArraySpec((len(self.precision),), "float32")})
+        )
 
     def _log_prob(self, value):
         v = np.asarray(value)
@@ -669,26 +686,28 @@ class TestEagerFallback:
     def test_short_warmup_moves_chain_in_ten_dimensions(self):
         """The eager warmup uses the same refit, so a 100-step warmup in ten
         dimensions leaves a proposal that moves the chain."""
-        dist = _NumpyStdNormal10(name="np10")
-        # Observed across seeds 0-3: accept 0.33-0.43, min std 0.58.
-        result = rwmh(dist=dist, num_results=300, num_warmup=100, random_seed=0)
+        dist = _NumpyStdNormal10(label="np10")
+        # Observed across four workflow seeds: accept 0.40-0.43, min std 0.45.
+        with workflow_run(seed=0):
+            result = rwmh(dist=dist, num_results=300, num_warmup=100, num_chains=1)
         assert result.event_shape == (10,)
         _assert_every_chain_moves(result, min_std=0.25)
 
     def test_runs_end_to_end(self):
-        dist = _NumpyLogProbDist(name="np_dist")
-        result = rwmh(
-            dist=dist,
-            num_results=400,
-            num_warmup=200,
-            num_chains=2,
-            random_seed=42,
-        )
+        dist = _NumpyLogProbDist(label="np_dist")
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=400,
+                num_warmup=200,
+                num_chains=2,
+            )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
-        # Standard normal target — sample mean ~ 0, sample sd ~ 1.
+        # Standard normal target — sample mean ~ 0, sample sd ~ 1. Observed
+        # across four workflow seeds: max |mean| 0.08-0.11, sd error 2-14%.
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.3)
         np.testing.assert_allclose(
             draws.std(0, ddof=1),
@@ -697,13 +716,15 @@ class TestEagerFallback:
         )
 
     def test_accept_rate_positive(self):
-        dist = _NumpyLogProbDist(name="np_dist")
-        result = rwmh(
-            dist=dist,
-            num_results=400,
-            num_warmup=200,
-            random_seed=42,
-        )
+        dist = _NumpyLogProbDist(label="np_dist")
+        with workflow_run(seed=42):
+            result = rwmh(
+                dist=dist,
+                num_results=400,
+                num_warmup=200,
+                num_chains=1,
+            )
+        # Observed across four workflow seeds: accept 0.33-0.40.
         assert result.provenance.metadata["accept_rate"] > 0.10
 
 
@@ -737,17 +758,19 @@ class TestFastEagerEquivalence:
             aniso_gaussian._unnormalized_log_prob,
             jnp.zeros(2),
         )
-        result = rwmh(
-            dist=aniso_gaussian,
-            num_results=4000,
-            num_warmup=1500,
-            num_chains=2,
-            random_seed=7,
-        )
+        with workflow_run(seed=7):
+            result = rwmh(
+                dist=aniso_gaussian,
+                num_results=4000,
+                num_warmup=1500,
+                num_chains=2,
+            )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
+        # Observed across four workflow seeds: max |mean| 0.04-0.05, std
+        # error 2-3%.
         np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.2)
         np.testing.assert_allclose(draws.std(0, ddof=1), _ANISO_STD, rtol=0.15)
 
@@ -755,43 +778,47 @@ class TestFastEagerEquivalence:
         # Confirm we are exercising the eager path: the non-traceable target.
         from probpipe.inference._inference_utils import is_jax_traceable
 
-        dist = _NumpyAnisoLogProbDist(name="np_aniso")
+        dist = _NumpyAnisoLogProbDist(label="np_aniso")
         assert not is_jax_traceable(dist._unnormalized_log_prob, jnp.zeros(2))
         # Lighter counts than the fast path: the Python loop is ~100x
-        # slower per step. Empirically (seed sweep 1/2/7) the worst-case
-        # std error here is ~10% and the worst-case mean offset ~0.25,
-        # so the bands below carry comfortable MC margin.
-        result = rwmh(
-            dist=dist,
-            num_results=600,
-            num_warmup=300,
-            num_chains=2,
-            random_seed=7,
-        )
+        # slower per step. Observed across workflow seeds 0-15 and 1007: the
+        # largest |mean| 0.03-0.43, whose MCSE is about 0.2 for the second
+        # coordinate, and the largest std error 2-12%.
+        with workflow_run(seed=7):
+            result = rwmh(
+                dist=dist,
+                num_results=600,
+                num_warmup=300,
+                num_chains=2,
+            )
         draws = np.concatenate(
-            [np.asarray(c) for c in result.chains],
+            [np.asarray(c) for c in flat_chains(result)],
             axis=0,
         )
-        np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.4)
+        np.testing.assert_allclose(draws.mean(0), [0.0, 0.0], atol=0.6)
         np.testing.assert_allclose(draws.std(0, ddof=1), _ANISO_STD, rtol=0.2)
 
     def test_fast_path_deterministic(self, aniso_gaussian):
         """Fast path: identical seed → bit-identical draws on a rerun."""
-        kw = dict(num_results=500, num_warmup=200, num_chains=2, random_seed=11)
-        a = rwmh(dist=aniso_gaussian, **kw)
-        b = rwmh(dist=aniso_gaussian, **kw)
-        da = np.concatenate([np.asarray(c) for c in a.chains], axis=0)
-        db = np.concatenate([np.asarray(c) for c in b.chains], axis=0)
+        kw = dict(num_results=500, num_warmup=200, num_chains=2)
+        with workflow_run(seed=11):
+            a = rwmh(dist=aniso_gaussian, **kw)
+        with workflow_run(seed=11):
+            b = rwmh(dist=aniso_gaussian, **kw)
+        da = np.concatenate([np.asarray(c) for c in flat_chains(a)], axis=0)
+        db = np.concatenate([np.asarray(c) for c in flat_chains(b)], axis=0)
         np.testing.assert_array_equal(da, db)
 
     def test_eager_path_deterministic(self):
         """Eager path: identical seed → bit-identical draws on a rerun."""
-        dist = _NumpyAnisoLogProbDist(name="np_aniso")
-        kw = dict(num_results=150, num_warmup=80, num_chains=1, random_seed=5)
-        a = rwmh(dist=dist, **kw)
-        b = rwmh(dist=dist, **kw)
-        da = np.concatenate([np.asarray(c) for c in a.chains], axis=0)
-        db = np.concatenate([np.asarray(c) for c in b.chains], axis=0)
+        dist = _NumpyAnisoLogProbDist(label="np_aniso")
+        kw = dict(num_results=150, num_warmup=80, num_chains=1)
+        with workflow_run(seed=5):
+            a = rwmh(dist=dist, **kw)
+        with workflow_run(seed=5):
+            b = rwmh(dist=dist, **kw)
+        da = np.concatenate([np.asarray(c) for c in flat_chains(a)], axis=0)
+        db = np.concatenate([np.asarray(c) for c in flat_chains(b)], axis=0)
         np.testing.assert_array_equal(da, db)
 
 
@@ -803,5 +830,12 @@ class TestFastEagerEquivalence:
 class TestClassesExpose:
     def test_blackjax_rwmh_method_has_expected_check(self, iso_gaussian):
         m = BlackJAXRWMHMethod()
-        info = m.check(iso_gaussian, None)
+        info = m.check(iso_gaussian)
         assert info.feasible
+
+
+# ---------------------------------------------------------------------------
+# The canonical cases of the cross-method validation harness
+# ---------------------------------------------------------------------------
+
+test_blackjax_rwmh_canonical = validate_method("blackjax_rwmh")

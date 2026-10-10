@@ -53,12 +53,13 @@ A few conventions keep PRs consistent; the PR template
   the affected subpackage or area.
 - **Description = final state.** The title and body describe the change as
   it stands, and are updated whenever the scope shifts during review — a
-  stale description is a review blocker. No internal process jargon
-  ("Phase 1b", plan-file references, review-round narration): an outside
-  reader must be able to follow the description on its own. User-visible
-  changes get a CHANGELOG entry, and scratch planning artifacts
-  (`*_plan.md` files, references to local plan directories) never land on
-  the branch.
+  stale description is a review blocker. The PR text follows the writing
+  rules of `STYLE_GUIDE.md` §10, whose rules 9 and 10 keep it free of plan
+  labels and self-contained. Scratch planning artifacts, such as `*_plan.md`
+  files, stay off the branch.
+- **CHANGELOG** — a PR with a user-visible change adds its entry to
+  `CHANGELOG.md` in the same PR, under `## [Unreleased]` and the one heading
+  of its change type, such as `### Added` or `### Changed (breaking)`.
 - **Labels** — `area:*` labels are auto-applied from the changed paths (see
   [Labels](#labels) below); set `kind:*` / `status:*` by hand, and always add
   `kind:breaking-change` if the PR changes a user-visible API.
@@ -133,17 +134,11 @@ These commands build the **`probpipe-core`** distribution (the repository root);
 the friendly `probpipe` name is a separate code-less metapackage that bundles the
 backends — see *Package Structure* below.
 
-### Running Tests
+### Everyday commands
 
-```bash
-uv run pytest                              # parallel via xdist
-uv run pytest -p no:xdist -o "addopts="    # disable parallel for debugging
-uv run pytest tests/test_foo.py -x -v      # single file, stop on first failure
-```
-
-`uv run` executes inside the synced `.venv` without manual activation; you
-can also `source .venv/bin/activate` once per shell and then just type
-`pytest`.
+`AGENTS.md` § Commands lists the everyday commands, such as those that run the
+tests, the linter, and the docs build. `AGENTS.md` § Verify states how to choose
+and check the tests a change needs.
 
 ### Test quality
 
@@ -156,14 +151,7 @@ can also `source .venv/bin/activate` once per shell and then just type
 - Inference code gets a statistical sanity check (parameter estimates and
   uncertainty roughly correct on a known target), not just shape
   assertions.
-
-### Coverage
-
-```bash
-uv run pytest --cov=probpipe --cov-report=term-missing
-```
-
-Target: >90% on all modules.
+- Coverage targets more than 90% of each module.
 
 ### Test quality for numerical code
 
@@ -180,16 +168,8 @@ conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-a
 ### Code formatting
 
 Formatting is owned by **`ruff format`** (Black-style) — don't hand-format
-Python. The `ruff-format` pre-commit hook reformats on commit; run it directly
-with:
-
-```bash
-uv run ruff format .          # reformat the tree
-uv run ruff format --check .  # verify (this is what CI enforces)
-```
-
-Both `ruff format --check` and `ruff check` (the linter) are **blocking** CI
-steps, so a misformatted file or a lint violation fails the build. A few
+Python. The `ruff-format` pre-commit hook reformats on commit, and CI checks the
+formatting with the blocking gate of *Linting & pre-commit* below. A few
 specifics: the line
 length is 100 (`[tool.ruff]` in `pyproject.toml`); ruff keeps code on one line
 when it fits and explodes imports / call arguments one-item-per-line when it does
@@ -199,23 +179,13 @@ keep their compact, hand-curated layout.
 
 ### Code comments & docstrings
 
-Comments state constraints and contracts the code cannot express — not
-the development process. Match the comment density of the surrounding
-code, and when in doubt, delete: an over-explained obvious line is worse
-than no comment.
+Comments state constraints and contracts the code cannot express. Match the
+comment density of the surrounding code, and when in doubt, delete: an
+over-explained obvious line is worse than no comment.
 
-- **No process narration.** Never record provenance in code — which PR
-  or plan phase introduced a line, which review comment prompted it
-  ("addressed in review", "previously this was..."). Such comments are
-  noise the moment the PR merges. (Citing an issue that documents a
-  known limitation or a non-obvious rationale is fine — that is a
-  constraint, not history.)
-- **Describe what something *is*, not what it *isn't*.** Negative
-  documentation ("this is not a mixture") usually signals that the name
-  or design needs fixing instead.
-- **Public docstrings describe behavior and usage, not implementation
-  internals.** Internals discussion belongs on private helpers, or
-  nowhere.
+The prose of comments and docstrings follows the writing rules of
+`STYLE_GUIDE.md` §10. `CONTRACTS.md` directive 2 states what a public docstring
+documents, and it bans references to PRs and issues in code.
 
 ### Linting & pre-commit
 
@@ -233,41 +203,33 @@ The hook script calls the Python interpreter that ran `pre-commit install`. With
 unless another `pre-commit` is on your `PATH`. A `pre-commit` already installed by
 Homebrew or pipx works too.
 
-Once the hooks are installed, `ruff` (lint + format) plus a few file-hygiene hooks
-run on your staged files at commit time. The hooks see only the files you're
-changing, so a commit is checked without re-linting the whole tree. To run
-manually:
+Once the hooks are installed, `ruff` (lint + format), a few file-hygiene hooks,
+the `pydoclint` docstring check of STYLE_GUIDE.md §3.3, and the
+`no-issue-numbers` hook of CONTRACTS.md directive 2 run on your staged
+files at commit time. The hooks see only the files you're
+changing, so a commit is checked without re-linting the whole tree.
+`AGENTS.md` § Commands runs the linter and the hooks over the whole tree.
 
-```bash
-uv run ruff check .          # lint the whole tree (uses the uv.lock-pinned ruff)
-pre-commit run --all-files   # run every hook over everything
-```
-
-`ruff check .` and `ruff format --check .` are clean tree-wide. A full
-`--all-files` run may still surface pre-existing file-hygiene nits (trailing
-whitespace, end-of-file) in files you did not touch; the fixer hooks clean those
+A full `pre-commit run --all-files` run may report pre-existing file-hygiene nits (trailing
+whitespace, end-of-file) in files you did not change; the fixer hooks clean those
 as the relevant files are next edited.
 
-Both `ruff check` (lint) and `ruff format` are enforced:
+**The ruff gate is blocking.** The `lint & format` CI job runs `ruff check .`
+and `ruff format --check .` over the whole tree, which is clean under both, so a
+lint violation or a misformatted file fails the build. Rule selection and
+per-file ignores are in `[tool.ruff.lint]` in `pyproject.toml`, and the
+pre-commit hooks apply the same checks to your staged files at commit time.
 
-- **`ruff check` (lint) is blocking in CI.** The `lint & format` job runs
-  `ruff check .` over the whole tree, which is at zero violations; a new
-  violation fails the build. Rule selection and per-file ignores live in
-  `[tool.ruff.lint]` in `pyproject.toml`. The pre-commit hook flags the same
-  issues on your staged files at commit time.
-- **`ruff format` is enforced.** Formatting is owned by `ruff format` (see
-  *Code formatting* above): `ruff format --check` is a blocking CI step and the
-  `ruff-format` pre-commit hook reformats on commit.
+**The docstring check is blocking.** The same CI job runs
+`pre-commit run pydoclint --all-files`, which checks every module of `probpipe/`.
+The hook's entry in `.pre-commit-config.yaml` holds its version and options, so a
+local run and CI check the same rules.
 
 ### Type checking
 
 Type checking uses [pyright](https://microsoft.github.io/pyright/)
-(configured in `pyrightconfig.json`, scoped to the `probpipe` package).
-Run it locally in the synced environment:
-
-```bash
-uv run --with 'pyright[nodejs]' pyright
-```
+(configured in `pyrightconfig.json`, scoped to the `probpipe` package), and
+`AGENTS.md` § Commands runs it in the synced environment.
 
 CI pins a specific pyright version for a reproducible baseline, so a
 local run on a newer pyright may report a slightly different count — pin
@@ -275,7 +237,7 @@ to match CI (`pyright[nodejs]==<version from ci.yml>`) if you need exact
 parity.
 
 Like ruff, **pyright is advisory in CI for now** — the `typecheck
-(advisory)` job reports type issues (and surfaces the count in the run's
+(advisory)` job reports type issues (and shows the count in the run's
 job summary) but does not gate merges. The source carries a type-debt
 baseline (much of it noise from JAX/TFP untyped attributes), so enforcing
 immediately would block unrelated work. The plan is to burn the baseline
@@ -284,24 +246,64 @@ gate blocking. New code should be clean under the current `basic` mode
 where practical.
 
 ProbPipe ships a `py.typed` marker, so the package's annotations are
-consumed by downstream users' type checkers — keeping the public surface
+consumed by downstream users' type checkers — keeping the public API
 well-typed is user-facing quality, not just an internal nicety.
 
 ### Documentation
 
-```bash
-uv run mkdocs build --strict   # build docs, fail on warnings
-uv run mkdocs serve            # local preview
-```
-
-API docs use `mkdocstrings` directives in `docs/api/*.md` referencing
-fully-qualified Python paths.
+`AGENTS.md` § Commands builds and previews the docs site. API docs use
+`mkdocstrings` directives in `docs/api/*.md` referencing fully-qualified
+Python paths.
 
 A behavior or API change and its documentation ship in the **same PR**:
 docstrings, the user-guide notebooks, README / `docs/index.md`, the
 CHANGELOG, and STYLE_GUIDE.md / CONTRIBUTING.md when conventions change.
 Examples and notebooks show idiomatic usage — never add a compat shim to
 keep an example running against an old API.
+
+The prose of the docs follows the writing rules of `STYLE_GUIDE.md` §10, and
+each notebook follows three more:
+
+1. **Labeled output:** every printed line names what it shows, as
+   `print("mean:", value)` does, or each value gets a cell or a table row of
+   its own.
+2. **Public names:** output uses public names and says what each number means,
+   such as a level's size printed as `levels={'school': 8}`.
+3. **No design citations:** a notebook for users cites no section of `design/`
+   and no decision identifier, except where it reports a bug against the design.
+
+Each page of the site and README.md carries a review label, which tells users
+how far to trust the page and tells maintainers what to review next. A page is
+in one of three states:
+
+1. **AI-generated:** an AI assistant drafted the page, and no maintainer has
+   reviewed it. Its first line is
+   `> **AI-generated.** An AI assistant drafted this page, and no maintainer has reviewed it yet. Please report errors on the issue tracker.`
+2. **Human-validated:** a maintainer has read the whole page as it renders, run
+   its code, and found it correct. Its last line names the reviewer and the
+   date, as in `> **Human-validated** by Jonathan Huggins on 2026-10-20.`
+3. **AI-revised:** an AI assistant changed a validated page in more than two
+   sections. Its first line replaces the validated label and names that review,
+   as in
+   `> **AI-revised.** An AI assistant changed this page after Jonathan Huggins reviewed it on 2026-10-20, and no maintainer has reviewed the changes yet. Please report errors on the issue tracker.`
+   A pair of comments marks each changed part: `<!-- unreviewed: what changed -->`
+   before it and `<!-- /unreviewed -->` after it in markdown, and
+   `# unreviewed: what changed` and `# /unreviewed` in a notebook's code cell.
+   The note after the colon is optional.
+
+An AI assistant's change to one or two sections of a validated page keeps the
+page validated, and the first line under each changed section's heading is
+`> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.`
+A change to a third section makes the page AI-revised. A maintainer who reviews
+a page removes its other labels and markers and closes it with the validated
+label, and a maintainer's own edit keeps a page validated and updates the date.
+
+A notebook's labels are in its markdown cells, the opening label on the first
+line of the first markdown cell and the closing label on the last line of the
+last. An API page's labels cover the docstrings it renders.
+`tests/docs/test_review_labels.py` checks every page, and
+`python scripts/docs/review_status.py` lists each page with its status, its
+reviewer and date, and the sections or parts left to review.
 
 ### Prefect orchestration
 
@@ -340,32 +342,82 @@ full rationale.
 
 GitHub Actions (`.github/workflows/ci.yml`):
 
-- Tests on Python 3.12, 3.13, and 3.14
+- Tests on Python 3.12 and 3.14 for a pull request, and on 3.12, 3.13, and 3.14
+  for a push to `main` or `dev/overhaul` and for the nightly run of `main`.
+  Each version's selected tests run in four `test-shard` jobs, and a `test (<version>)`
+  job reports the version's result (see *Test shards* below)
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
-- Test job uses extras `dev,nutpie,pymc`. The notebooks job is a two-leg
+- Test job uses extras `dev,nutpie,pymc,pyabc`. The notebooks job is a two-leg
   matrix that runs in parallel — a `user_guide` leg (`dev,nutpie`) for
-  `docs/user_guide` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
+  `docs/user_guide` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc,pyabc`) for
   `docs/tutorials` — each scoped to its own directory with independent
   change detection, so an unrelated leg is skipped (`bridgestan` is installed
   only in the `stan` leg, below)
 - A separate `bayesflow` leg (Python 3.12 and 3.13 only — BayesFlow caps
-  `<3.14`) syncs `dev,nutpie,bayesflow` and runs the amortized-SBI tests
-- A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan`, caches the
-  `~/.bridgestan` build, and runs StanModel's compile-backed tests against a
-  real BridgeStan backend; coverage uploads under a `stan` flag. Gated like the
-  bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
+  `<3.14`) syncs `dev,nutpie,bayesflow` and runs every test marked `bayesflow`.
+  The other jobs skip a test that needs the extra, so such a test carries
+  `@pytest.mark.bayesflow`
+- A separate `stan` leg (Python 3.12) syncs `dev,nutpie,stan,pymc`, caches the
+  `~/.bridgestan` build and a CmdStan build under `~/.cmdstan` (the version in the
+  job's `CMDSTAN_VERSION`), and runs every test marked `stan` against a real
+  BridgeStan backend; coverage uploads under a `stan` flag. `tests/conftest.py`
+  marks a test that requests the `_stanc` or `_stan_toolchain` fixture, and a
+  test that needs BridgeStan another way carries `@pytest.mark.stan`. Gated like
+  the bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
-- Coverage uploaded to Codecov
-- The `lint & format` job runs `ruff check` (lint) and `ruff format --check`;
-  both are **blocking** (see *Linting & pre-commit*)
+- A separate `test (lowest versions)` leg (Python 3.12) syncs `dev` from the
+  lock, replaces each core dependency of `pyproject.toml` with the lowest version
+  that its specifier admits, and runs `tests/functions`, `tests/converters`, and
+  `tests/operations`. The other jobs install the locked versions, so a call to an
+  API that is newer than a floor fails only in this leg. Fix such a failure by
+  raising the floor in `pyproject.toml` or by calling an API that the floor
+  provides. The leg runs on every push, on the nightly schedule, on dependency
+  changes, and on changes under `probpipe/` or `tests/`
+- Only the Python 3.12 shards measure coverage. The `coverage` job combines
+  their data, enforces the 88% floor on a full-suite run, and uploads one report
+  to Codecov
+- The `lint & format` job runs the ruff gate and the docstring check of
+  *Linting & pre-commit*
 - Both the `test` and `notebooks` jobs choose what to run via a shared,
   unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
   in `tests/ci/`) — so a change to a source file also exercises the tests and
   notebooks that transitively import it. Edit that committed helper, not inline
   workflow scripts.
+- The `test` job also selects the tests that read files rather than import the
+  changed modules. A change to `design/` runs the four `test_design_conformance.py`
+  files and `tests/docs/`, and a change to `probpipe/`, a rule document, an agent
+  file, or the CHANGELOG runs `tests/docs/`.
+- The `test` job runs the full suite on a push, on the nightly run, and for a
+  pull request that changes a dependency file (`pyproject.toml`, `uv.lock`, or
+  `setup.py`), `tests/conftest.py`, or `probpipe/__init__.py`. A change to
+  `scripts/` or `.github/workflows/` runs `tests/ci/`.
+- The `design ledger (report)` job runs `scripts/design/ledger.py` and shows its
+  counts of stubs, pending tests, and stale docs in the job summary. It fails
+  only when the script errors.
+- The `PR hygiene (advisory)` job of `.github/workflows/pr-hygiene.yml` checks the
+  PR title, branch, and body against this guide and the PR template through
+  `scripts/ci/pr_hygiene.py`. It reports each finding as a warning and does not
+  gate merges.
 
 Docs build (`.github/workflows/docs.yml`) with `uv run mkdocs build --strict`.
+
+### Test shards
+
+`pytest-split` divides the selected tests into four groups of about equal
+duration, using the per-test durations recorded in `.test_durations`. A test
+missing from the file counts as the average duration, so new tests keep the
+groups roughly balanced, and a group with no tests passes. Refresh the file
+when the shard times in CI drift apart, such as after adding a slow test module:
+
+```bash
+uv run pytest -o addopts="" -n 4 --store-durations --clean-durations
+```
+
+`--clean-durations` drops the durations of removed tests. Run the command with
+the extras of the `test` job installed, so that no test is skipped, and commit
+the updated `.test_durations`. To run one shard locally, add
+`--splits 4 --group <k> --splitting-algorithm least_duration` to the pytest command.
 
 ### Updating dependencies
 
@@ -385,32 +437,24 @@ Commit the resulting `uv.lock` change alongside the `pyproject.toml` change.
 
 ```
 probpipe/
-├── core/           # Base abstractions: protocols, ops, node, transition
-├── distributions/  # The Distribution base and the concrete distributions
-├── record/         # Record-adjacent constructions: parameter-sweep Designs
-├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
-├── inference/      # Inference methods + registry (BlackJAX, TFP, nutpie, RWMH)
-├── validation/     # Reference metrics, SBC, and interval coverage checks
+├── core/           # Shared abstractions: specs, records, batches, identity, dispatch
+├── values/         # The Function base, FunctionSpec, and pure argument binding
+├── linalg/         # Linear operators
+├── distributions/  # The Distribution base, capabilities, factored laws, batches, conversion
+├── functions/      # The Function engine and the experimental Module containers
+├── operations/     # The operations and their routes
+├── families/       # The distribution catalog
+├── record/         # Parameter-sweep designs
+├── inference/      # Inference methods (BlackJAX, TFP, nutpie, CmdStan, PyMC, pyabc, BayesFlow)
+├── validation/     # Predictive checks, calibration, and model comparison
 ├── diagnostics/    # Posterior diagnostics, ArviZ interop, and diagnostic views
-├── converters/     # Distribution conversion registry
-├── linalg/         # Linear algebra for random functions
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
-└── _array_utils.py, _weights.py  # Internal helpers
+└── _array_utils.py, _dtype.py, _weights.py  # Internal helpers
 ```
 
-Within subpackages that contain multiple implementation files
-(`modeling/`, `inference/`, `converters/`), implementation modules use
-a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
-`__init__.py` re-exports the public API so users import from
-`probpipe` or from subpackage `__init__` modules, never from
-underscore modules directly.  See `probpipe/__init__.py` for the
-full public API surface.
-
-The diagnostics accessor is the one documented package-graph edge from
-`distributions/` back to a feature subpackage: `Distribution.diagnostics` lazily
-imports `probpipe.diagnostics.views.DiagnosticsView` only when the accessor is
-read. Keep this edge lazy so importing `probpipe` does not import the diagnostics
-subpackage or its optional ArviZ-facing dependencies.
+STYLE_GUIDE.md §2.3 states which modules are private and which are public, and
+STYLE_GUIDE.md §6 states the allowed import directions between the packages.
+`probpipe/__init__.py` lists the full public API.
 
 ### Distributions: `probpipe-core` and `probpipe`
 
@@ -429,7 +473,7 @@ same `probpipe` import package above:
 
 The two versions move in lockstep: when bumping `version`, update **both**
 `pyproject.toml` files and keep the metapackage's `probpipe-core==` pin equal to
-the core version. Build each with:
+the core version, which `tests/test_version.py` checks. Build each with:
 
 ```bash
 uv build                      # probpipe-core (repository root)
@@ -438,419 +482,20 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 ---
 
-## Architecture Overview
+## Architecture
 
-### Design principles
+The design reference in [`design/`](design/README.md) describes the
+architecture in its target state:
 
-1. **Distributions are immutable** — parameters fixed at construction;
-   operations return new distributions. Records, batches, functions, and
-   templates enforce this (assignment and deletion raise); `Distribution`
-   permits both for now, because the documented emulator pattern trains a
-   subclassed random function in place and fitting has no contract yet that
-   returns a new fitted term. Treat the rule as binding when writing new code
-   either way. Two stores are documented exceptions, both written after
-   construction. The first is the `annotations` store (`_annotations`, provided by the
-   `Annotated` mixin in `probpipe.core.tracked`; a string-keyed
-   mapping, typically an `xarray.DataTree`, of post-construction
-   metadata): validators and diagnostic ops (e.g.,
-   `predictive_check`) attach their results in-place under named
-   groups (`annotations["predictive_check"]`, future
-   `annotations["loo"]`, ...). This is a deliberate carve-out — the
-   alternative of returning a renamed clone for every diagnostic would
-   break the provenance/identity tracking that downstream code relies
-   on. Treat `_annotations` as append-only.
+- [Part I](design/01-design-principles.md): the design principles;
+- Parts II to VII: the shared abstractions, the term kinds, the distributions,
+  the `Function` engine, the operations, and the distribution catalog;
+- [`design/package-structure.md`](design/package-structure.md): the package
+  layout, whose § Correspondence to the implementation maps each module to its
+  target.
 
-   The second, narrower, is a lazily computed value: it lives in a
-   `_memo` dictionary the constructor assigns and the read fills in place,
-   declared in `_transient_state` so a copy rebuilds it rather than
-   inheriting it. Whatever reads one must tolerate its absence, since a
-   copy or an unpickle arrives without it.
-
-   Those two aside, never mutate a term's state after construction.
-2. **Operations are standalone Functions** — `sample()`, `mean()`,
-   `log_prob()`, `condition_on()` are `Function` instances in
-   `probpipe/core/ops.py`.
-3. **Capabilities via protocols** — distributions declare support through
-   `@runtime_checkable` protocols (e.g., `SupportsSampling`,
-   `SupportsLogProb`, `SupportsMean`). Operations check protocols at
-   dispatch time.  Protocols are dynamically included on composite
-   distributions (`ProductDistribution`, `TransformedDistribution`)
-   based on component capabilities.
-
-   Most protocols are *instance-level*: the contract is "this
-   `Distribution` instance can do X" and the runtime check is
-   `isinstance(my_dist, SupportsX)`. A small number are *class-level*:
-   `SupportsArrayBackend` declares `_make_array_backend` as a
-   `@classmethod`, so the contract is "this class can produce a
-   batched form" and the runtime check is on the class itself
-   (`isinstance(MyDistribution, SupportsArrayBackend)`). New
-   protocols default to instance-level; reach for class-level only
-   when the capability is genuinely a class concern (e.g., a fused-
-   storage factory that doesn't depend on per-instance state).
-4. **Private method convention** — protocols define `_method()` (e.g.,
-   `_sample`, `_log_prob`, `_mean`). The public API is via ops:
-   `sample(dist)`, not `dist.sample()`.
-5. **Record and Distributions are parallel** — `Record` is the universal
-   container for non-random structured data; `Distribution` is the
-   universal container for random quantities. Both support named fields,
-   `select()` for Function splatting, and JAX pytree
-   traversal.  The full pipeline (prior → inference → posterior
-   predictive) produces named, provenance-tracked objects at every step.
-   **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
-   `dist["x"]`.  Attribute access (`__getattr__`) was removed from
-   `Record` and `RecordDistribution` because it shadowed methods and
-   properties like `.mean`, `.var`, `.fields`, `.map`, and produced
-   confusing errors.
-6. **Every object is a tracked term** — Functions, distributions, records,
-   and the batch types all carry the `TrackedTerm` identity attributes and methods
-   (`name`, write-once `provenance` via
-   `with_provenance`, `with_name`) from `probpipe.core.tracked`, and
-   the mixin's metaclass enforces a non-empty `name` at construction
-   for every host. `Function` is an immutable, schema-aware computation term;
-   its Python signature is captured independently from its optional
-   authoritative input and output templates. A distribution takes its name
-   as the required first argument (`Normal("x", 0.0, 1.0)`), as `Record`
-   does; the classes the design retires, such as `ProductDistribution`, still
-   take it as a keyword. Names are set at construction and preserved by every transform;
-   only `with_name` replaces them. `ProductDistribution` validates that each
-   component distribution's `name` matches its keyword key (e.g.,
-   `ProductDistribution(x=Normal("x", 0, 1))`).  `Record` and
-   `NumericRecord` take the name as the required first positional
-   argument (`Record(name, ...)`); an operation that produces a record
-   supplies a meaningful name — the producing distribution's or model's
-   name, or a domain term such as `"data"` / `"observed"`. A nested
-   record view takes its field key as its name at construction.
-7. **Every return is wrapped at its own kind** — a `@function` return becomes
-   the tracked term of the kind it already is, named for the function.
-   A numeric value becomes a `NumericArray`, a mapping a `Record`,
-   a callable a `Function`, and anything else an `Opaque`; a sequence, or a
-   sweep, aggregates at the rows' kind through `_make_stack`. The kind follows
-   the host's *type*, so an empty mapping is still a `Record`.
-   A tracked term the body produced is returned as it is, every kind alike,
-   but `Function.__call__` returns a shallow copy
-   as an independent result term. The copy gets a fresh annotations container,
-   discards the returned object's prior provenance, and records the called
-   Function followed by tracked inputs as its direct parents. All resolved
-   non-tracked parameters are fingerprinted separately in
-   `Provenance.inputs`; defaults, construction bindings, Module values, and
-   distinct variadic slots therefore remain reproducible without becoming DAG
-   ancestors. Fingerprints use conservative fidelity tiers: structurally known
-   values are content-hashed, while opaque objects and complex callable forms
-   use process-local identity and set `fingerprint_is_weak=True`; weakness
-   propagates through composites. Existing operation controls remain
-   provenance metadata.
-   `Function.apply` is the raw boundary: it performs the same Python binding
-   and schema checks, but preserves the implementation return object's identity
-   and provenance.
-   Every tracked term an operation returns keeps its kind, `Function` included:
-   a term is never re-wrapped and never buried inside another.
-   Authoritative nested output templates use a private recursive aggregate
-   packer across sequential and JAX dispatch; the public
-   `RecordBatch.stack` contract remains unchanged. The field name for inferred
-   single-field output is always the function's own name. Single-field terms
-   expose shims, each only the ones its values admit. `Record` forwards
-   `__call__` to its one field, so a `Function` whose return is itself
-   callable — `sample(grf)`, which wraps the sampled random function in a
-   one-field record — is invoked as `sample(grf)(X)` rather than unwrapped
-   first. `NumericRecord` adds array conversion (`__array__`,
-   `__jax_array__`, `.shape`, `.dtype`, `.ndim`) and scalar conversion
-   (`__float__`, `__int__`, `__bool__`), so `jnp.array(log_prob(d, v))` and
-   `float(mean(d))` stay terse. `NumericRecordBatch` has the array
-   conversions but not the scalar ones.
-8. **Array inputs vectorize with the product rule** — when a
-   `@function` is called with array-valued inputs
-   (`RecordBatch` or `DistributionArray` with nonempty
-   `batch_shape`) passed to slots whose hints don't match the
-   batched type, the Function layer dispatches cell-by-cell
-   and stacks the returns.  Multiple array inputs combine by their
-   **levels**: operands carrying the same level names (sibling views of
-   one batch, or two batches naming the same levels on the same axes)
-   zip along them, operands with no level in common combine by the
-   **product rule** (Cartesian full factorial), and one level name at
-   two geometries — or shared by operands whose other levels differ —
-   is refused rather than producted silently.  The sweep's
-   `batch_shape` is the concatenation of each zip group's
-   `batch_shape`.  Scalar `Distribution` inputs marginalise via
-   Monte Carlo, unchanged.  A `DistributionArray` is always treated
-   as `Array[Distribution]` (never marginalised in-place), so
-   `sample(da)` / `mean(da)` / `log_prob(da, v)` are handled
-   uniformly by the sweep path rather than by DistArray-specific
-   methods.
-   Variadic inputs participate in the same planner: each `*args` element and
-   `**kwargs` entry is lifted or swept independently, annotations apply to each
-   element, and provenance labels use stable forms such as `*items[0]` and
-   `**extras['key']`.
-
-### Key abstractions
-
-| Abstraction | Description |
-|-------------|-------------|
-| `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `RecordSpec` and `Record` are its two families; each declares its leaf type (`TermSpec` vs arbitrary values), and mappings are never leaves. |
-| `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name` and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
-| `Distribution` | Base class of every distribution, with no type parameter. It stores one event declaration: `spec` is a `DistributionSpec` whose `event_spec` is the `OutputSpec` of one draw. A subclass passes `event_spec` to `Distribution.__init__`, which completes a bare term spec to `OutputSpec.default(spec, component=name)`, and construction raises `TypeError` for a class that leaves its event undeclared. `event_shape` is defined for a law that draws a single array, so `hasattr(law, "event_shape")` is `False` for one that draws a record. It also carries the `TrackedTerm` / `Annotated` identity attributes. |
-| `NumericDistribution` | The marker of a law whose declaration is numeric: `isinstance(d, NumericDistribution)` holds when `d.event_spec.spec` is a `NumericSpec`, whatever the class of `d`. It holds the views `dtypes` and `supports`, keyed by array-leaf path, and `dtype` and `support`, which hold the value every leaf shares or `None`; a law whose declaration is not numeric has none of them. A class whose every instance is numeric, such as `NumericRecordDistribution`, inherits the marker, and construction checks the claim. |
-| `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
-| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Implements `Numeric`: `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, spec, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
-| `Numeric` | The abstract flat-vector interface (`probpipe.core._numeric`) that `NumericArray` and `NumericRecord` implement: `vector_size`, `to_vector`, and the classmethod `from_vector(name, spec, vec)`. Its coordinate protocols present `to_vector()` to NumPy and JAX; `NumericArray` presents its array instead, and `NumericRecord` its sole field, an interim implementation detail. The batch forms are not `Numeric`. |
-| `RecordBatch` | Batch of `Record` elements over named levels (`level_names` / `axes_per_level`), stored one column per leaf path; positional index → element or sub-batch view, field index → the column in its batch form. A batched draw from a joint law is one of these. Deliberately **not** a `Record`: fields are read from `event_template`, not `fields` / `items()`. |
-| `NumericRecordBatch` (subclass of `RecordBatch`) | All-numeric batch; adds `to_vector` / `from_vector(name, spec, vec, *, level_names)` and the single-field array shims. Reduce a column directly (`jnp.mean(batch["x"], axis=0)`) — the batch has no `mean` / `var` of its own. |
-| `RecordSpec` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, spec, vec)` / `NumericRecordBatch.from_vector(...)` rebuild a numeric value from its 1-D vector given its spec, without an example instance |
-| `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
-| `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
-| `NumericRecordDistribution` | Numeric-array distribution base, which inherits the `NumericDistribution` marker and adds per-field `event_shapes` and the flat-vector interface; base for all TFP-backed distributions |
-| `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericRecordSpec`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
-| `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
-| `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordBatch` keyed by `template.fields`. |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container interface (indexing, iteration, `batch_shape`, `event_shape`, `event_spec`, `components`). `event_spec` declares the term every cell draws, which a batched array reads from its backend, so an empty batch declares one too. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordBatch` / `RecordBatch` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
-| `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. Conditioning is not offered, since dropping stored fields is marginalization; build the marginal directly. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
-| `EmpiricalDistribution` / `RecordEmpiricalDistribution` | Weighted empirical distribution. The generic base holds samples of any type; the Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record keyed by the name. Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
-| `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `replicate_size` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source, in which case `replicate_size` is mandatory. |
-| `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `RecordSpec`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
-| `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
-| Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, the two conditioning capabilities, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
-| `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration and the validation of a method's declarations, ordering by exactness, then rank, then type specificity, then registration order, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop, `_find_methods` included. Arity-specific subclasses implement `_cache_key`, `_validate_supported_types`, `_distance`, and `_format_key`. |
-| `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
-| `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
-| `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
-| `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
-| `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
-| `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
-| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordBatch` subclass carrying per-field marginals over a single `design` level; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready batch. Pipe into a `Function` as a single `Record`-typed arg to trigger the Function sweep path. |
-
-### Inference method registry
-
-`condition_on` dispatches inference via a pluggable **inference method
-registry** (`inference_method_registry`). Each method declares
-`supported_types`, whether it is `exact`, a `priority`, and `check()` /
-`execute()` methods. The registry tries methods in selection order — exact
-before approximate, then by priority, then by type specificity, then by
-registration order — and runs
-the first whose `check()` reports feasibility; a call with no feasible method
-raises `ResolutionError`. Every built-in inference method declares
-`exact = False`, so its priority is a rank among approximate methods, and
-`None` is opt-in-only (selectable by name but skipped during auto-dispatch).
-The criteria for ranking a new method are under
-[Extending ProbPipe → Exactness, then rank](docs/api/extending.md#exactness-then-rank).
-
-Models no longer implement `_condition_on` directly — conditioning is
-handled entirely by registered methods.  The removed protocol
-`SupportsConditionableComponents` is no longer part of the public API;
-use `fields` and the inference registry instead.
-
-Built-in methods:
-
-| Priority | Name | Backend | Applies to |
-|----------|------|---------|------------|
-| 88 | `nutpie_nuts` | nutpie | `StanModel`, `PyMCModel` |
-| 85 | `blackjax_nuts` | BlackJAX | Any `SupportsLogProb` (JAX-traceable) |
-| 82 | `cmdstan_nuts` | CmdStanPy | `StanModel` |
-| 82 | `pymc_nuts` | PyMC | `PyMCModel` |
-| 75 | `blackjax_elliptical_slice` | BlackJAX | `SimpleModel` + Gaussian prior + JAX-traceable likelihood |
-| 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
-| 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 6 | `pyabc_smcabc` | pyabc | `SimpleGenerativeModel` with a flattenable prior (requires the `[pyabc]` extra) |
-| None | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| None | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
-| None | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
-| None | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| None | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-
-**Amortized SBI dispatches two ways.** Trained amortized posterior estimators
-(`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
-claim `SupportsApproximateConditioning`, so `condition_on(model, observed)` is
-a single forward pass through the trained network. Because an approximate
-conditioning capability is taken whenever the registry has no feasible *exact*
-method, and none is registered for these estimators, they answer through the
-capability and register no method. The learned NLE/NRE likelihoods
-(`learn_amortized_likelihood` / `learn_amortized_ratio` → `BayesFlowLikelihood`
-/ `BayesFlowRatio`) take the opposite route: they are ordinary
-`ConditionallyIndependentLikelihood` components, so
-`SimpleModel(prior, learned)` + `condition_on` selects a sampler through the
-registry table above (typically `blackjax_nuts` — the learned scores are
-JAX-traceable) with no new registry entries.
-
-### Converter priority system
-
-The `ConverterRegistry` dispatches conversions by trying registered
-`Converter` subclasses in descending **priority** order. The first
-converter whose `check()` returns `feasible=True` wins. Built-in
-priorities:
-
-| Priority | Converter | Role |
-|----------|-----------|------|
-| 200 | `ProtocolConverter` | Intercepts protocol targets (e.g., `SupportsLogProb`), resolves to a concrete type, and delegates back to the registry |
-| 100 | `ProbPipeConverter` | ProbPipe-to-ProbPipe conversions (same-class passthrough or cross-family moment-matching) |
-| 50 | `TFPConverter` | Bidirectional TFP ↔ ProbPipe conversions |
-| 25 | `ScipyConverter` | Bidirectional scipy.stats ↔ ProbPipe conversions (optional) |
-
-When adding a new converter, choose a priority that reflects its
-specificity – higher priority means it is tried first. Protocol-level
-converters should be above concrete-type converters.
-
-### Array-backend registry
-
-The backend registry in `probpipe.core._array_backend` is a flat
-`dict[type, ArrayBackend]` mapping a native container type to its
-recognition/conversion hooks. `NumericRecord` stores leaves in native
-form, so most containers need no support code: anything exposing a
-numeric numpy `dtype` / `shape` is recognised by duck-typing and
-converted with `jnp.asarray` at the compute boundary. Register a
-backend for containers the duck path cannot see or convert — a
-non-numpy dtype, a device tensor needing custom conversion, a
-frames-style container:
-
-```python
-from probpipe import ArrayBackend, register_array_backend
-
-register_array_backend(
-    MyTensor,
-    ArrayBackend(
-        event_shape=lambda t: tuple(t.shape),
-        numpy_dtype=lambda t: np.dtype("float32"),
-        to_jax=lambda t: jnp.asarray(t.numpy()),
-        to_numpy=lambda t: t.numpy(),
-    ),
-)
-```
-
-One registration makes the type recognised everywhere at once:
-template inference and `NumericArraySpec.is_valid`, `NumericRecord`
-promotion, boundary conversion, batch stacking, and `fingerprint()`.
-The built-in registration covers `pandas.DataFrame` (per-column
-`.dtypes`, no single `.dtype`). Lookup walks the MRO of `type(obj)`,
-so registering a base class also covers its subclasses.
-
-This registry is **not** a behavioural-dispatch hierarchy — it has
-no priority system, no feasibility check, no `execute()`. Use a
-`BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` for the
-inference registry, `BinaryDispatchRegistry` for two-argument dispatch)
-or `ConverterRegistry` (distribution conversion) when behaviour
-dispatch is needed.
-
-### Constraint → Bijector registry
-
-The `_CONSTRAINT_BIJECTOR_REGISTRY` in
-`probpipe.distributions._bijector_dispatch` is a flat
-`dict[type | Constraint, BijectorFactory]` mapping a `Constraint`
-subclass *or* a specific `Constraint` instance to a factory that
-returns a TFP bijector mapping ℝⁿ to that constraint's support.
-Lookup precedence is:
-
-1. **Exact instance match** — e.g., a registration on the singleton
-   `positive` overrides the type-level `_Positive` default.
-2. **Type match via MRO** — most-specific subclass first.
-3. `NotImplementedError` if neither matches.
-
-Use `register_bijector(key, factory)` to add or override a default;
-re-registering the same key silently overwrites. The registry
-mirrors PyTorch's `constraint_registry` semantics.
-
-Like the aux registry, this is **not** a behavioural-dispatch
-hierarchy: there is no priority system or feasibility check. Reach
-for a `BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` /
-`BinaryDispatchRegistry`) or `ConverterRegistry` instead when
-dispatch needs to consider the input value, environment, or
-installed backends.
-
-### Generic vs Record-based pattern
-
-Some distribution families have a generic base over samples of any type
-and a Record-based specialisation:
-
-- `EmpiricalDistribution` / `RecordEmpiricalDistribution`
-- `BootstrapReplicateDistribution` / `RecordBootstrapReplicateDistribution`
-
-The generic base carries only type-agnostic features (sampling,
-expectation). The Record-based variant adds `event_shapes`, `dim`, and
-moment protocols (`SupportsMean`, `SupportsVariance`,
-`SupportsCovariance`). Numeric membership is read from the declaration
-rather than the class, so a numeric law of either variant has the
-`NumericDistribution` views, `dtypes` and `support` among them.
-
-**Automatic factory dispatch.** Constructing the generic base with
-a numeric array or a `Record` automatically returns the Record-based
-subclass:
-
-```python
-EmpiricalDistribution("theta", jnp.ones((100, 3)))
-# → returns RecordEmpiricalDistribution; auto-wraps the array as a
-#   single-field record with field "theta"
-
-EmpiricalDistribution("draws", Record("draws", x=jnp.zeros((50,)), y=jnp.zeros((50,))))
-# → returns RecordEmpiricalDistribution; multi-field record
-```
-
-`__new__` on the generic base implements the dispatch. Non-array,
-non-Record inputs (lists of objects, opaque sequences) stay in the
-generic base. On the numeric-array path the distribution's name also
-keys the auto-wrapped Record's field.
-
-`BootstrapReplicateDistribution` additionally accepts a
-`SupportsSampling` source (e.g. `Normal("x", 0, 1)`); each
-replicate is `replicate_size` i.i.d. draws from `source._sample`.
-`replicate_size` is mandatory in this case (no canonical observation
-count). A replicate stacks the array its source declares, or batches
-the records a record-valued source draws. A replicate of a sampler that
-is not a `Distribution`, which declares no event, is opaque.
-
-### Framework abstraction hierarchy
-
-Three rules govern how the framework's universal types relate.
-
-1. **One random variable per `Distribution`.** A single `Distribution`
-   instance represents one random quantity. To carry a *collection*
-   of distributions (a parameter sweep, a per-component posterior,
-   ...), wrap them in a `DistributionArray`. The rule is enforced
-   structurally: `Distribution` has no `batch_shape` accessor, and
-   TFP-backed constructors raise `ValueError` if their parameters
-   imply a non-empty `tfd.Distribution.batch_shape`. Use
-   `DistributionArray.from_batched_params` (or the per-class
-   `Normal.from_batched_params(...)` alias) for batched
-   constructions.
-
-2. **Two implementations per concept.** Each abstraction has at most
-   two concrete pairs:
-   - a generic implementation over values of any type
-     (`EmpiricalDistribution`,
-     `BootstrapReplicateDistribution`, `Distribution`),
-   - and a Record-based specialisation
-     (`RecordEmpiricalDistribution`,
-     `RecordBootstrapReplicateDistribution`, `RecordDistribution`).
-
-   No third "numeric-array" variant. A law that draws a single numeric
-   array, such as a parametric family, declares a whole-term array. An
-   empirical law over a numeric array wraps it as a single-field Record at
-   the constructor boundary for now.
-
-   `NumericRecordDistribution` additionally has the
-   `FlatNumericRecordDistribution` *refinement* — not a third
-   implementation, just a tighter-typed subset (single field,
-   `event_shape == (N,)`). Natively-multivariate parametrics
-   (`MultivariateNormal`, `Dirichlet`, `Multinomial`,
-   `VonMisesFisher`) and `FlattenedDistributionView` implement the
-   refinement; scalar parametrics route through `as_flat_distribution()`
-   first. Algorithms that consume a flat parameter vector should
-   declare their input as `FlatNumericRecordDistribution` so
-   receiver typing — not a runtime shape probe — enforces the
-   contract.
-
-   `NumericDistribution` is not an implementation either. It is the
-   marker of a numeric declaration, read from each law's `event_spec`,
-   so one class may hold numeric and non-numeric instances, as
-   `EmpiricalDistribution` does. Registration refuses a method whose
-   supported types list it, since dispatch selects by class.
-
-3. **Iteration is a Record-family convention.** `Record` and
-   `NumericRecord` iterate field names dict-style. A `RecordBatch` is a collection, not a named tree:
-   it iterates leading-axis views, and its fields are read from
-   `event_template`. `DistributionArray` is positional (``len(da)``
-   is the leading-axis size, ``prod(da.batch_shape)`` is the total
-   cell count; access via ``da[i]``). Every other `Distribution`
-   subclass — including `EmpiricalDistribution`,
-   `BootstrapReplicateDistribution`, marginals — is non-iterable;
-   finite-sample subclasses (see STYLE_GUIDE §1.9) expose stored
-   samples on `.samples` / `.draws()` with `.n` reporting the count;
-   parametric distributions do not have `.n`.
+[Extending ProbPipe](docs/api/extending.md) documents the extension points
+and their registries.
 
 ---
 

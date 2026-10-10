@@ -33,8 +33,15 @@ class TestOpaqueHoldsOneValue:
 
         assert Opaque("p", payload).value is payload
 
-    def test_the_spec_defaults_to_a_bare_one(self):
-        assert Opaque("p", _Payload()).spec == OpaqueSpec()
+    def test_the_spec_defaults_to_the_values_type(self):
+        assert Opaque("p", _Payload()).spec == OpaqueSpec(type=_Payload)
+        assert Opaque("s", "north").spec == OpaqueSpec(type=str)
+
+    def test_a_declared_type_the_value_lacks_is_refused(self):
+        with pytest.raises(
+            TypeError, match=r"value of type _Payload does not match OpaqueSpec\(type=str\)"
+        ):
+            Opaque("p", _Payload(), spec=OpaqueSpec(type=str))
 
     def test_a_declared_spec_carries_its_meta(self):
         spec = OpaqueSpec(meta="fitted-model")
@@ -46,8 +53,7 @@ class TestOpaqueHoldsOneValue:
             Opaque("p", _Payload(), spec="not a spec")
 
     def test_a_mapping_is_refused(self):
-        """The value layer reads a mapping as a subtree."""
-        with pytest.raises(TypeError, match="reads a mapping as a subtree"):
+        with pytest.raises(TypeError, match="Opaque cannot hold a mapping, got dict"):
             Opaque("p", {"a": 1})
 
     @pytest.mark.parametrize("value", [1, "text", None, [1, 2], (1, 2), _Payload()])
@@ -86,17 +92,17 @@ class TestOpaqueCarriesIdentity:
     def test_a_name_is_kept(self):
         wrapped = Opaque("model", _Payload())
 
-        assert wrapped.name == "model"
+        assert wrapped.label == "model"
 
     def test_a_name_is_required(self):
-        """The name is what says which opaque value this is."""
+        """The label is what says which opaque value this is."""
         with pytest.raises(TypeError):
             Opaque(_Payload())
 
     def test_a_derived_name_is_kept(self):
         wrapped = Opaque("batch[draw=0]", _Payload())
 
-        assert wrapped.name == "batch[draw=0]"
+        assert wrapped.label == "batch[draw=0]"
 
     def test_provenance_is_write_once(self):
         wrapped = Opaque("p", _Payload()).with_provenance(Provenance.create("fit", parents=[]))
@@ -119,15 +125,15 @@ class TestOpaqueCarriesIdentity:
         rebuilt = roundtrip(wrapped)
 
         assert isinstance(rebuilt, Opaque)
-        assert rebuilt.name == "model"
+        assert rebuilt.label == "model"
         assert rebuilt.value == _Payload("kept")
 
 
 class TestOpaqueAndItsBatch:
     """A collection is tracked whatever it holds."""
 
-    def test_a_batch_of_opaque_values_still_hands_back_what_was_put_in(self):
-        """Its elements are stored, so a batch hands back the caller's object."""
+    def test_a_batch_of_opaque_values_hands_back_a_view_of_what_was_put_in(self):
+        """Its elements are stored, so an element is an Opaque holding the caller's object."""
         payloads = [_Payload("a"), _Payload("b")]
 
         batch = OpaqueBatch(
@@ -136,7 +142,8 @@ class TestOpaqueAndItsBatch:
             "draw",
         )
 
-        assert batch[0] is payloads[0]
+        assert batch[0].value is payloads[0]
+        assert batch[0].label == "batch[draw=0]"
 
     def test_a_batch_may_hold_opaque_terms_as_its_elements(self):
         """An `Opaque` is itself a non-mapping value."""
@@ -148,5 +155,6 @@ class TestOpaqueAndItsBatch:
             "draw",
         )
 
-        assert batch[1] is terms[1]
-        assert batch[1].name == "second"
+        assert batch[1].value is terms[1].value
+        assert batch[1].label == "batch[draw=1]"
+        assert terms[1].label == "second"

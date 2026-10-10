@@ -4,70 +4,52 @@ Provides:
   - ``Distribution`` – Abstract base for all ProbPipe distributions.
   - ``NumericDistribution`` – The marker of a law whose event is numeric, with its views.
   - ``DistributionSpec`` – The term spec of the distribution kind.
-  - Global defaults for expectation sampling.
 """
 
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 if TYPE_CHECKING:
-    from ..core._distribution_array import DistributionArray
     from ..core.constraints import Constraint
     from ..diagnostics.views import DiagnosticsView
+    from ._batches import DistributionBatch
+    from ._conditional import ConditionalDistribution
+    from ._factored import FactoredConditionalDistribution, FactoredDistribution
+    from ._views import _EventRenames
 
+from ..core._expression import (
+    Signature,
+)
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_names, public_class_name, term_repr
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
 from ..core.provenance import Provenance
 from ..core.tracked import Annotated, TrackedTerm, _TrackedTermMeta
-
-# ---------------------------------------------------------------------------
-# Global defaults
-# ---------------------------------------------------------------------------
-
-DEFAULT_NUM_EVALUATIONS: int = 1024
-"""Default number of function evaluations for sample-based expectations."""
-
-RETURN_APPROX_DIST: bool = True
-"""When True, approximate expectations return a BootstrapDistribution
-capturing MC error instead of a plain array."""
-
-
-def set_default_num_evaluations(n: int) -> None:
-    """Set the global default for ``expectation()`` on infinite-support distributions."""
-    global DEFAULT_NUM_EVALUATIONS
-    if n < 1:
-        raise ValueError("num_evaluations must be at least 1")
-    DEFAULT_NUM_EVALUATIONS = n
-
-
-def set_return_approx_dist(value: bool) -> None:
-    """Set whether approximate expectations return error-tracking distributions."""
-    global RETURN_APPROX_DIST
-    RETURN_APPROX_DIST = bool(value)
-
+from ._capabilities import _check_guards
 
 # ---------------------------------------------------------------------------
 # The event declaration: completion and class membership
 # ---------------------------------------------------------------------------
 
 
-def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
+#: The label of a law or a kernel whose constructor is given none and that is not a family.
+DEFAULT_LABEL = "p"
+
+
+def _complete_event_spec(event_spec: Any) -> OutputSpec:
     """Complete *event_spec* into the output declaration of one draw.
 
     Parameters
     ----------
-    event_spec : OutputSpec or TermSpec
+    event_spec : OutputSpec or RecordSpec
         The declaration a constructor supplies. A ``RecordSpec`` exposes its
-        fields, even when it has one; any other term spec is a whole term whose
-        component defaults to *name*; an ``OutputSpec`` is kept as given.
-    name : str
-        The law's name, the default component of a whole-term event.
+        fields, even when it has one, and an ``OutputSpec`` is kept as given.
 
     Returns
     -------
@@ -77,25 +59,187 @@ def _complete_event_spec(event_spec: Any, name: str) -> OutputSpec:
     Raises
     ------
     TypeError
-        If *event_spec* is neither an ``OutputSpec`` nor a ``TermSpec``.
+        If *event_spec* is neither an ``OutputSpec`` nor a ``RecordSpec``, since
+        an event of any other type is a whole term that an ``OutputSpec`` names.
     ValueError
         If the declaration has a type hole, since filling one is the
-        constructor's job, or *name* is not a valid component name.
+        constructor's job.
     """
     if isinstance(event_spec, OutputSpec):
         declaration = event_spec
+    elif isinstance(event_spec, RecordSpec):
+        declaration = OutputSpec(event_spec)
     elif isinstance(event_spec, TermSpec):
-        declaration = OutputSpec.default(event_spec, component=name)
+        raise TypeError(
+            f"an event of type {type(event_spec).__name__} needs a component; declare it as "
+            f"OutputSpec(name=spec)"
+        )
     else:
         raise TypeError(
-            f"event_spec must be an OutputSpec or a TermSpec, got {type(event_spec).__name__}"
+            f"event_spec must be an OutputSpec or a RecordSpec; got {type(event_spec).__name__}"
         )
     if declaration.spec is None:
         raise ValueError(
-            f"the event declaration of {name!r} has a type hole; a distribution stores "
-            f"only a complete declaration"
+            "event_spec does not declare a type; pass a full spec, such as NumericArraySpec(())"
         )
     return declaration
+
+
+def _whole_term_event(
+    component: Any, term: TermSpec, event_spec: OutputSpec | None, owner: str
+) -> OutputSpec:
+    """The declaration of a whole-term event *term* under *component*.
+
+    Parameters
+    ----------
+    component : str
+        The component of the event, which the constructor received first.
+    term : TermSpec
+        The type of one draw, which the constructor derived.
+    event_spec : OutputSpec or None
+        A declaration of the same component that also declares a type, which
+        *term* completes as :meth:`OutputSpec.with_spec` does, or ``None``.
+    owner : str
+        The constructor, as error messages name it, such as ``"Normal"``.
+
+    Returns
+    -------
+    OutputSpec
+        The declaration ``OutputSpec(component=term)``, or *event_spec*
+        completed with *term*.
+
+    Raises
+    ------
+    TypeError
+        If *component* is not a string, *event_spec* is not an ``OutputSpec``,
+        or *event_spec* exposes a record.
+    ValueError
+        If *component* is not a valid component name, *event_spec* names
+        another component, or *event_spec* declares a type that does not unify
+        with *term*.
+    """
+    if not isinstance(component, str):
+        raise TypeError(
+            f"{owner} takes the component of its event as its first argument, a string such "
+            f"as 'mu'; got {type(component).__name__}"
+        )
+    if event_spec is None:
+        return OutputSpec.default(term, component=component)
+    if not isinstance(event_spec, OutputSpec):
+        raise TypeError(f"event_spec must be an OutputSpec, got {type(event_spec).__name__}")
+    if not event_spec.exposes_record and tuple(event_spec.components) != (component,):
+        raise ValueError(
+            f"{owner} has the component {component!r}, but its event_spec names "
+            f"{list(event_spec.components)}; name the component once"
+        )
+    return event_spec.with_spec(term)
+
+
+def _class_label(term: Any) -> str:
+    """The default label of a family's instance: the name of its public class, as ``Normal``."""
+    return public_class_name(type(term))
+
+
+def _given_label(label: Any, default: str) -> str:
+    """*label*, or *default* when it is ``None``.
+
+    Parameters
+    ----------
+    label : Any
+        The label a constructor received.
+    default : str
+        The constructor's default label.
+
+    Returns
+    -------
+    str
+        *label*, or *default* for ``None``.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
+    """
+    if label is None:
+        return default
+    if not isinstance(label, str) or not label:
+        raise TypeError(f"label must be a non-empty string; got {label!r}")
+    return label
+
+
+def _constructor_label(term: Any, label: Any, default: str) -> str:
+    """*label*, or *default* when it is ``None``, recording *default* as *term*'s default label.
+
+    The repr leaves out a label equal to the recorded default, as
+    :func:`_repr_label` states.
+
+    Parameters
+    ----------
+    term : Any
+        The law or kernel under construction.
+    label : Any
+        The label its constructor received.
+    default : str
+        Its constructor's default label.
+
+    Returns
+    -------
+    str
+        *label*, or *default* for ``None``.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
+    """
+    given = _given_label(label, default)
+    object.__setattr__(term, "_default_label", default)
+    return given
+
+
+def _repr_label(term: Any) -> str | None:
+    """The label the repr of the law or kernel *term* shows: ``None`` for its default label.
+
+    A default label repeats what the class and the arguments already state, as
+    ``Normal('Normal', ...)`` would, so the repr shows a label only where a
+    caller or an operation gave one.
+    """
+    return None if term.label == term._default_label else term._displayed_label()
+
+
+#: The message for a selection of field paths that names none.
+_EMPTY_SELECTION = "select at least one field path; got an empty tuple"
+
+
+def _shared_final_names(paths: tuple[str, ...] | list[str]) -> str:
+    """The message that two of the selected *paths* end in the same name.
+
+    The selected fields are named by the last part of each path, so two such
+    paths would give the result two fields of one name.
+    """
+    finals = [path.rsplit("/", 1)[-1] for path in paths]
+    shared = sorted({final for final in finals if finals.count(final) > 1})
+    names = repr(shared[0]) if len(shared) == 1 else str(shared)
+    return (
+        f"cannot select {list(paths)} together: more than one path ends in {names}, which "
+        f"would give the result two fields of the same name"
+    )
+
+
+def _no_free_dims(term: Any, unbound: set[str], free: set[str] | frozenset[str]) -> str:
+    """The message that *term* has no free dimensions *unbound* to bind, with those it has."""
+    return (
+        f"{public_class_name(type(term))} {term.label!r} has no free dimensions "
+        f"{sorted(unbound)} to bind; its free dimensions: {sorted(free) or 'none'}"
+    )
+
+
+def _fixes_every_field(label: str) -> str:
+    """The message that a given fixes every field of the law *label*, leaving none to infer."""
+    return (
+        f"given fixes every field of {label!r}, which leaves no field to infer; leave at least "
+        f"one field out of given"
+    )
 
 
 def _whole_term_component(declaration: OutputSpec) -> str | None:
@@ -104,6 +248,38 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
         return None
     (component,) = declaration.components
     return component
+
+
+def _ordered_fields(
+    arguments: list[tuple[str, str]], event: list[tuple[str, str]], term: Any
+) -> list[tuple[str, str]]:
+    """The repr's fields: the component, the fixed paths, the *arguments*, then a declaration.
+
+    The paths the law or kernel *term* holds fixed show as ``fixed=('y',)``
+    after the component, or first when there is none, and only where it holds
+    any, so a conditioned law reads apart from an unconditioned one.
+    """
+    paths = _fixed_paths(term)
+    fixed = [("fixed", format_names(paths))] if paths else []
+    if event and event[0][0] == "component":
+        return [*event, *fixed, *arguments]
+    return [*fixed, *arguments, *event]
+
+
+def _event_repr_fields(declaration: OutputSpec) -> list[tuple[str, str]]:
+    """The repr's fields for the event *declaration*: its component, or the declaration.
+
+    A whole term under one component shows as ``component='mu'``, an exposed
+    record shows nothing, since the record's fields are the components, and any
+    other packaging shows the declaration as ``event_spec=``.
+    """
+    spec = declaration.spec
+    if isinstance(spec, RecordSpec) and declaration == OutputSpec(spec):
+        return []
+    components = tuple(declaration.components)
+    if len(components) == 1 and declaration == OutputSpec.default(spec, component=components[0]):
+        return [("component", repr(components[0]))]
+    return [("event_spec", repr(declaration))]
 
 
 def _declares_numeric_event(value: Any) -> bool:
@@ -133,22 +309,197 @@ def _array_leaves(declaration: OutputSpec) -> dict[str, NumericArraySpec]:
     return leaves
 
 
+#: Each marker whose membership is read from an instance's declaration, with the
+#: predicate that decides it and what an instance of a class inheriting the marker
+#: must declare. ``NumericDistribution`` registers below, and the markers of the
+#: conditional and factored kinds register in their own modules.
+_DECLARATION_MARKERS: dict[type, tuple[Callable[[Any], bool], str]] = {}
+
+
+def _check_marker_claims(instance: Any) -> None:
+    """Raise ``TypeError`` if *instance*'s class inherits a marker its declaration fails."""
+    claimant = type(instance)
+    for marker, (holds, requirement) in _DECLARATION_MARKERS.items():
+        if issubclass(claimant, marker) and not holds(instance):
+            raise TypeError(
+                f"{claimant.__name__} inherits {marker.__name__}, so its instances must "
+                f"declare {requirement}"
+            )
+
+
+#: The engine behind ``*``, installed by the composition module at import.
+_composition_engine: Callable[[Any, Any], Any] | None = None
+
+
+def _install_composition(engine: Callable[[Any, Any], Any]) -> None:
+    """Install the engine that ``*`` delegates to on both distribution kinds.
+
+    Called once, by the composition module at import, so this module never
+    imports the module that imports it.
+    """
+    global _composition_engine
+    _composition_engine = engine
+
+
+#: The law that ``with_path_names`` returns, installed by the views module at import.
+_renamed_law_factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any] | None = None
+
+
+def _install_renamed_law(factory: Callable[[Any, OutputSpec, Mapping[str, str]], Any]) -> None:
+    """Install the factory of the law whose draws carry the names ``with_path_names`` gives.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _renamed_law_factory
+    _renamed_law_factory = factory
+
+
+#: The function that records the law a copy is made from, installed by the views
+#: module at import.
+_copy_source_recorder: Callable[[Any, Any, Mapping[str, str]], Any] | None = None
+
+
+def _install_copy_source(recorder: Callable[[Any, Any, Mapping[str, str]], Any]) -> None:
+    """Install the function that records the law a copy is made from, with the renames.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _copy_source_recorder
+    _copy_source_recorder = recorder
+
+
+def _recorded_copy(copy: Any, law: Any) -> Any:
+    """*copy*, which ``with_label`` or a dimension transform returns, recording *law* as its source."""
+    if _copy_source_recorder is None:
+        raise RuntimeError("the copy source is not installed; import probpipe")
+    return _copy_source_recorder(copy, law, {})
+
+
+#: The field view that indexing returns, installed by the views module at import.
+_field_view_factory: Callable[[Any, Any], Any] | None = None
+
+
+def _install_field_view(factory: Callable[[Any, Any], Any]) -> None:
+    """Install the factory of the field view that ``d[path]`` returns.
+
+    Called once, by the views module at import, so this module never imports the
+    module that imports it.
+    """
+    global _field_view_factory
+    _field_view_factory = factory
+
+
+#: Indexing a ``DistributionBatch`` returns a copy of the stored law under a derived
+#: label and sets this attribute of the copy to the stored law. A lift reads it to
+#: draw two accesses of one element, or an element and its stored law, together
+#: (V.5). Detaching the copy deletes the attribute.
+_ELEMENT_SOURCE = "_element_source"
+
+#: ``with_path_names``, ``with_label``, ``with_dim_names``, and ``with_dim_sizes`` set
+#: this attribute of each law they return that does not hold the law it is made from
+#: as its parent. The value is the pair of that law and the renames from its
+#: declaration to the result's, which are the identity for a relabeling and for a
+#: dimension transform. A lift reads it to draw the result together with that law
+#: (V.5). Detaching the result deletes the attribute.
+_COPY_SOURCE = "_copy_source"
+
+
+def _detached_term(term: Any) -> Any:
+    """*term*, a law or a kernel, detached from the workflow under its own label.
+
+    The copy shares the representation and keeps the paths *term* holds fixed,
+    and it carries no provenance, no annotations, and no reference to a
+    container or a parent, such as a batch it was an element of or a law it is
+    a copy of.
+    """
+    clone = term._shallow_copy()
+    object.__setattr__(clone, "_provenance", None)
+    for workflow_state in ("_annotations", _ELEMENT_SOURCE, _COPY_SOURCE):
+        clone.__dict__.pop(workflow_state, None)
+    return clone
+
+
+def _fixed_paths(term: Any) -> tuple[str, ...]:
+    """The paths the law or kernel *term* holds fixed at given values, in the order they were fixed.
+
+    They are read from the term's expression, where a conditioning records the
+    paths it fixes, and the signature lists them after ``;``.
+    """
+    return term._expression.fixed_paths()
+
+
+def _keeps_fixed_paths(term: Any, source: Any) -> Any:
+    """*term*, a law or kernel just derived from *source*, holding the paths *source* holds fixed.
+
+    *term* keeps the paths it holds itself, followed by those of *source* it
+    does not hold, which its expression records as a conditioning on them.
+    *term* is set in place only when that adds a path, so a caller passes a
+    term it has just built, or one that holds every path of *source* already.
+    """
+    expression = term._expression
+    held = expression.with_fixed(_fixed_paths(source))
+    if held is not expression:
+        term._store_expression(held)
+    return term
+
+
+def _holding_fixed_paths(term: Any, paths: Iterable[str]) -> Any:
+    """The law or kernel *term*, holding *paths* fixed after the paths it holds.
+
+    *term* is returned as it is when it holds every path of *paths* already,
+    and otherwise as a copy that shares its representation, so a term that is
+    also an operand of the call, such as a factor that conditioning leaves,
+    keeps its own paths.
+    """
+    expression = term._expression
+    held = expression.with_fixed(paths)
+    if held is expression:
+        return term
+    clone = term._shallow_copy()
+    clone._store_expression(held)
+    return clone
+
+
+def _compose_operands(left: Any, right: Any) -> Any:
+    """*left* ``*`` *right* through the installed engine.
+
+    The engine returns ``NotImplemented`` for an operand that is neither
+    distribution kind, so Python tries the reflected operation and a scalar
+    operand can scale.
+    """
+    if _composition_engine is None:
+        raise RuntimeError("the composition engine is not installed; import probpipe")
+    return _composition_engine(left, right)
+
+
 class _DistributionMeta(_TrackedTermMeta):
     """The metaclass of every distribution.
 
     Construction checks that the instance holds its event declaration, as the
-    tracked-term metaclass checks its name: a class that bypasses
+    tracked-term metaclass checks its label: a class that bypasses
     ``Distribution.__init__`` calls ``_init_declaration`` itself.
 
-    ``isinstance(d, NumericDistribution)`` holds if and only if ``d`` declares a
-    numeric event, whatever its class, and every other class check is the ordinary
-    one. A class whose every instance is numeric may claim the marker by
-    inheriting it, and construction checks the claim.
+    Membership in a marker registered in ``_DECLARATION_MARKERS`` is read from an
+    instance's declaration whatever its class, so ``isinstance(d,
+    NumericDistribution)`` holds if and only if ``d`` declares a numeric event,
+    and every other class check is the ordinary one. A class may claim a marker by
+    inheriting it, and construction checks the claim. Creating a class checks
+    each capability guard it defines (:func:`._capabilities._check_guards`).
     """
 
+    def __init__(cls, *args: Any, **kwargs: Any) -> None:
+        # The check runs once the class is complete, since a class that fails
+        # while type.__new__ builds it has no ABC caches of its own and would
+        # write into its base's.
+        super().__init__(*args, **kwargs)
+        _check_guards(cls)
+
     def __instancecheck__(cls, instance: Any) -> bool:
-        if cls is NumericDistribution:
-            return _declares_numeric_event(instance)
+        marker = _DECLARATION_MARKERS.get(cls)
+        if marker is not None:
+            return marker[0](instance)
         return super().__instancecheck__(instance)
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
@@ -161,11 +512,7 @@ class _DistributionMeta(_TrackedTermMeta):
                 f"{claimant.__name__}.__init__ left the event undeclared; pass event_spec to "
                 f"Distribution.__init__, or call _init_declaration when bypassing it"
             )
-        if issubclass(claimant, NumericDistribution) and not _declares_numeric_event(instance):
-            raise TypeError(
-                f"{claimant.__name__} inherits NumericDistribution, so its instances must "
-                f"declare a numeric event"
-            )
+        _check_marker_claims(instance)
         return instance
 
 
@@ -179,98 +526,96 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Abstract base for all ProbPipe distributions.
 
     Every distribution is a tracked term: it is
-    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name` and a write-once
+    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.label` and a write-once
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
-    :attr:`~Annotated.annotations`).  A distribution's constructor takes
-    its name as the required first argument, as ``Normal("x", 0.0, 1.0)``
-    does. A few classes, such as ``ProductDistribution`` and
-    ``DistributionArray``, take it as a keyword instead and derive one when it
-    is omitted. Every transform preserves the name; only ``with_name``
-    replaces it.
+    :attr:`~Annotated.annotations`).  A family's constructor takes the
+    component of its event first and an optional ``label=``, which defaults to
+    the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
+    ``Normal`` over the component ``mu``; any other law's label defaults to
+    ``p``, and a joint that ``*`` composes is labeled by its operands' labels.
+    Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
+    returns the law's :attr:`notation`, its label followed by its signature, as
+    ``prior(mu)``, and the repr shows the label first, leaving out a label equal
+    to the constructor's default, as ``Normal(component='mu', loc=0.0, scale=1.0)``.
 
     Sampling and expectation capabilities are provided by the
-    :class:`~probpipe.core.protocols.SupportsSampling` protocol.
+    :class:`~probpipe.SupportsSampling` protocol.
 
     **The event declaration.** A law stores one ``DistributionSpec``, its
     :attr:`spec`, whose :attr:`event_spec` is the output declaration of one
-    draw. A bare ``RecordSpec`` exposes its fields; any other term spec is a
-    whole-term event whose component defaults to the law's ``name``, captured
-    once at construction. :attr:`event_shape` reads the declaration, and
+    draw. A bare ``RecordSpec`` exposes its fields, and an ``OutputSpec`` names
+    the component of a whole-term event, as ``OutputSpec(mu=spec)``. :attr:`event_shape` reads the declaration, and
     a law whose declaration is numeric also has the views of
     :class:`NumericDistribution`; none of them is stored.
 
     Parameters
     ----------
-    name : str
-        Non-empty name for this distribution.
-    event_spec : OutputSpec or TermSpec
+    label : str
+        The law's label, which must be a non-empty string. A subclass's
+        constructor passes the label its caller gave, or its default.
+    event_spec : OutputSpec or RecordSpec
         The declaration of one draw, completed as above.
+    _provenance : Provenance, optional
+        The provenance of the law that a reconstruction rebuilds. By default the
+        provenance stays unset until ``with_provenance`` attaches one.
+    _annotations : Mapping[str, Any], optional
+        The annotations of the law that a reconstruction rebuilds, copied into the
+        law's own store. By default :attr:`annotations` is ``None``.
 
     Raises
     ------
     TypeError
-        If *name* is not a non-empty string, or *event_spec* is not a spec.
+        If *label* is not a non-empty string, or *event_spec* is neither an
+        ``OutputSpec`` nor a ``RecordSpec``.
     ValueError
-        If *event_spec* has a type hole, or it is a bare term spec other than a
-        record and *name* is not a valid component name.
+        If *event_spec* has a type hole.
     """
 
-    # -- Immutability: deferred for this layer ------------------------------
-
-    def __delattr__(self, name: str) -> None:
-        """Permit deletion, for the reason :meth:`__setattr__` gives.
-
-        Goes with that method: removing the exemption means removing both.
-        """
-        object.__delattr__(self, name)
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Permit assignment, which :class:`TrackedTerm` otherwise refuses.
-
-        Interim, and the only exemption from the rule that a tracked term is
-        immutable. It stands because the contract for a *fitted* mapping is not
-        settled: the documented way to build an emulator is to subclass a random
-        function and train it in place, and until fitting has a contract that
-        produces a new term instead, enforcing immutability here would break that
-        pattern without offering a replacement.
-
-        Deleting this method **and** :meth:`__delattr__` turns the guard on for
-        the whole distribution layer. Both, or the layer keeps half an
-        exemption: a trainer that clears what it fitted would still raise.
-        """
-        object.__setattr__(self, name, value)
+    #: The label the constructor gives when it is given none, which the repr leaves out;
+    #: ``None`` for a class whose constructor requires a label.
+    _default_label: ClassVar[str | None] = None
 
     def __init__(
         self,
-        name: str,
+        label: str,
         event_spec: OutputSpec | TermSpec,
         *,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
-        if not isinstance(name, str) or not name:
-            raise TypeError(
-                f"{type(self).__name__} requires a non-empty name as its first argument"
-            )
+        if not isinstance(label, str) or not label:
+            raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
         # ``_provenance`` and ``_annotations`` carry state a reconstruction
         # already holds and that construction cannot otherwise reach: provenance
         # is write-once, and annotations are written after construction, so a
         # rebuilt distribution would come back without either. Private, and the
         # reconstruction paths are the only callers.
-        self._init_tracked(name, provenance=_provenance)
+        self._init_tracked(label, provenance=_provenance)
         self._init_annotations(_annotations)
         self._init_declaration(event_spec)
 
     def _init_declaration(self, event_spec: OutputSpec | TermSpec) -> None:
         """Complete *event_spec* and store it as this law's declaration.
 
-        The constructor calls this after setting the name; a class that bypasses
+        The constructor calls this after setting the label; a class that bypasses
         the constructor calls it itself.
         """
-        object.__setattr__(
-            self, "_spec", DistributionSpec(_complete_event_spec(event_spec, self._name))
-        )
+        object.__setattr__(self, "_spec", DistributionSpec(_complete_event_spec(event_spec)))
+
+    # -- the representation ---------------------------------------------------
+
+    def raw(self) -> Distribution:
+        """This law detached from the workflow, under its label and declaration.
+
+        A law is represented by itself, so its raw form is a copy that shares
+        its representation and carries no provenance, no annotations, and no
+        reference to a container or a parent, such as a batch it was an element
+        of or a law it is a copy of. A field view returns the raw form of its
+        parent's marginal at its path instead, and a backend adapter its
+        wrapped backend distribution.
+        """
+        return _detached_term(self)
 
     # -- the event declaration ----------------------------------------------
 
@@ -301,13 +646,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         spec = self.event_spec.spec
         if not isinstance(spec, NumericArraySpec):
             raise AttributeError(
-                f"{type(self).__name__} {self.name!r} does not draw a single array; "
+                f"{type(self).__name__} {self.label!r} does not draw a single array; "
                 f"event_shape is defined only for one"
             )
         free = spec.free_dims
         if free:
             raise ValueError(
-                f"{type(self).__name__} {self.name!r} has unbound dimensions "
+                f"{type(self).__name__} {self.label!r} has unbound dimensions "
                 f"{sorted(free)}; bind them with with_dim_sizes"
             )
         return spec.shape
@@ -318,6 +663,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Python calls this only when ordinary lookup fails. A law whose declaration
         is numeric has the views of the marker whatever its class, so they resolve
         through the marker, and any other missing attribute raises as usual.
+
+        Parameters
+        ----------
+        name : str
+            The attribute that ordinary lookup did not find, such as ``"dtype"``.
+
+        Returns
+        -------
+        Any
+            The value of the marker's view *name* for this law.
 
         Raises
         ------
@@ -332,15 +687,44 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             return object.__getattribute__(self, name)
         if not _declares_numeric_event(self):
             raise AttributeError(
-                f"{type(self).__name__} declares a non-numeric event, and {name} belongs to "
-                f"NumericDistribution"
+                f"{name} is only available for a distribution with a numeric event, but "
+                f"{public_class_name(type(self))} {self.label!r} has a non-numeric event"
             )
         return view.__get__(self, type(self))
+
+    # -- copies ---------------------------------------------------------------
+
+    def with_label(self, label: str) -> Self:
+        """Return a copy of this law under a new label.
+
+        The copy shares the representation and records the relabeling in its
+        provenance, as :meth:`TrackedTerm.with_label` states. It is this law
+        under a new label, so a lift draws it together with this law (V.5).
+
+        Parameters
+        ----------
+        label : str
+            The new label, a non-empty string.
+
+        Returns
+        -------
+        Self
+            A copy of the same class under *label*; the original is unchanged.
+
+        Raises
+        ------
+        TypeError
+            If *label* is not a non-empty string.
+        """
+        return _recorded_copy(super().with_label(label), self)
 
     # -- dimension transforms -------------------------------------------------
 
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions of the declaration.
+
+        The result is this law with its dimensions bound, so a lift draws it
+        together with this law (V.5).
 
         Parameters
         ----------
@@ -350,7 +734,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and name whose declaration has the sizes
+            A copy of the same class and label whose declaration has the sizes
             substituted; the original is unchanged.
 
         Raises
@@ -363,16 +747,17 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         """
         unbound = set(sizes) - self.event_spec.spec.free_dims
         if unbound:
-            raise ValueError(
-                f"{type(self).__name__} {self.name!r} has no free dimensions "
-                f"{sorted(unbound)} to bind"
-            )
-        return self._with_declaration(
+            raise ValueError(_no_free_dims(self, unbound, self.event_spec.spec.free_dims))
+        copy = self._with_declaration(
             self.event_spec.with_dim_sizes(**sizes), "with_dim_sizes", sizes
         )
+        return _recorded_copy(copy, self)
 
     def with_dim_names(self, **names: str) -> Self:
         """Rename symbolic dimensions of the declaration, simultaneously.
+
+        The result is this law under the new dimension names, so a lift draws it
+        together with this law (V.5).
 
         Parameters
         ----------
@@ -382,12 +767,77 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         Returns
         -------
         Self
-            A copy of the same class and name whose declaration has the
+            A copy of the same class and label whose declaration has the
             dimensions renamed; the original is unchanged.
         """
-        return self._with_declaration(
+        copy = self._with_declaration(
             self.event_spec.with_dim_names(**names), "with_dim_names", names
         )
+        return _recorded_copy(copy, self)
+
+    def with_path_names(
+        self, mapping: Mapping[str, str] | None = None, /, **kwargs: str
+    ) -> Distribution:
+        """Rename or move nodes of the event declaration by their paths, ``old -> new``.
+
+        The result is this law with :meth:`OutputSpec.with_path_names` applied to
+        its declaration. A path starts with a component, and the packaging is
+        kept, so a whole term's component is renamed in place with the term's
+        fields under it. The law is unchanged: a draw of the result is a draw of
+        this law carrying the new names. Renaming a whole term's component alone
+        changes only the declaration, so the result is a copy of the same class.
+        A factored law renames through its factors where they can carry the
+        rename, and the result is the factored joint of the renamed factors over
+        the same graph. A rename that gathers components under a new node
+        regroups the factors that produce them into a packaged sub-joint, one
+        factor of the result whose event is the node. A family whose parameters
+        carry the event's paths rebuilds itself under the new paths: an
+        empirical law over records returns the empirical law of its atoms with
+        their fields at the new paths, under the same weights. Any other rename
+        that changes the path of a field of a record draw, including a gathering
+        whose groups condition on one another in a cycle, returns a law that
+        holds this one and renames values at its boundary: draws, moments, and
+        marginals on the way out, and scored values, givens, and paths on the
+        way in. A lift draws the result together with this law, as it draws a
+        view with its parent (V.5).
+
+        Parameters
+        ----------
+        mapping : Mapping[str, str], optional
+            The new exact path of each node, keyed by the node's exact path.
+        **kwargs : str
+            Further renames, keyed by paths that are identifiers.
+
+        Returns
+        -------
+        Distribution
+            The renamed law under the same label; the original is unchanged.
+
+        Raises
+        ------
+        KeyError
+            If a key is not a path of the declaration.
+        ValueError
+            As :meth:`OutputSpec.with_path_names` raises it.
+        """
+        renamed = self.event_spec.with_path_names(mapping, **kwargs)
+        renames = {**dict(mapping or {}), **kwargs}
+        if _renamed_law_factory is None:
+            raise RuntimeError("the renamed law is not installed; import probpipe")
+        return _renamed_law_factory(self, renamed, renames)
+
+    def _renamed_in_family(self, event: _EventRenames) -> Distribution | None:
+        """The member of this law's family that holds its values under *event*'s new paths, or None.
+
+        ``with_path_names`` calls this for a rename that changes the path of a
+        field of a record draw, and returns a law that renames this one's values
+        at its boundary when it gives None. A family whose parameters carry the
+        event's paths overrides it to return the member that declares
+        ``event.renamed`` and whose draw at a key is this law's draw at that key
+        under the new paths, as an empirical law over records does. The base
+        class returns None.
+        """
+        return None
 
     def _with_declaration(
         self, event_spec: OutputSpec, operation: str, arguments: Mapping[str, Any]
@@ -408,27 +858,85 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     __iter__ = None
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution:
-        """The law of the component or field at *key*.
+        """The law itself at a whole term's component, or the field view at another event path.
 
-        A whole-term law is itself under its component, given as a string or a
-        one-element tuple, so ``d[name]`` returns ``d``. The component is fixed at
-        construction, so after ``with_name`` the law is still addressed by it. For
-        an exposed record, the result is today's field view, an interim
-        implementation detail.
+        A whole-term law is itself under its component, so ``d[name]`` returns
+        ``d``; the component is fixed at construction, so after ``with_label`` the
+        law is still addressed by it. Any other event path, a field of an exposed
+        record or a path below a whole record's component, gives the
+        ``FieldView`` of the node there, which holds a reference to this law, and
+        a tuple of paths gives the view of their selection.
+
+        Parameters
+        ----------
+        key : str or tuple of str
+            An event path, which starts with a component, or a tuple of event
+            paths to view jointly.
+
+        Returns
+        -------
+        Distribution
+            This law itself, or a ``FieldView`` of it.
 
         Raises
         ------
         KeyError
-            If a whole-term law's component is not *key*.
+            If *key* is not an event path of this law, or names one that is not.
+        TypeError
+            If *key* is neither a string nor a tuple of strings.
+        ValueError
+            If *key* is an empty tuple, or two selected paths share their final
+            segment.
         """
-        component = _whole_term_component(self.event_spec)
-        if component is not None:
-            if key == component or key == (component,):
-                return self
-            raise KeyError(key)
-        from ..core._record_distribution import _RecordDistributionView
+        if isinstance(key, str) and key == _whole_term_component(self.event_spec):
+            return self
+        if _field_view_factory is None:
+            raise RuntimeError("the field view is not installed; import probpipe")
+        try:
+            return _field_view_factory(self, key)
+        except KeyError as error:
+            requested = key if isinstance(key, tuple) else (key,)
+            if len(error.args) == 1 and error.args[0] in requested:
+                raise KeyError(
+                    f"{error.args[0]!r} is not an event path of {self.label!r}; its fields: "
+                    f"{list(self.event_spec.components)}"
+                ) from None
+            raise
 
-        return _RecordDistributionView(self, key)
+    # -- composition ------------------------------------------------------------
+
+    def __mul__(
+        self, other: Distribution | ConditionalDistribution
+    ) -> FactoredDistribution | FactoredConditionalDistribution:
+        """The joint of this law and *other*, composed conditional-first.
+
+        The left operand may condition on what the right produces, so ``lik *
+        prior`` reads as ``p(y | β) · p(β)``. The result is a
+        ``FactoredDistribution`` when no given is left unmet and a
+        ``FactoredConditionalDistribution`` otherwise, flattened over the
+        operands' factors and labeled by their labels joined with ``·``. The
+        joint is unlabeled, so its notation joins its factors' notations, as
+        ``lik(y | mu)·prior(mu)``.
+
+        Parameters
+        ----------
+        other : Distribution or ConditionalDistribution
+            The right operand, whose components this law's factors may condition
+            on.
+
+        Returns
+        -------
+        FactoredDistribution or FactoredConditionalDistribution
+            The joint, or ``NotImplemented`` when *other* is neither
+            distribution kind, so that a scalar operand can scale instead.
+
+        Raises
+        ------
+        ValueError
+            If a component is produced twice, the right operand consumes a
+            component the left produces, or matched specs do not unify.
+        """
+        return _compose_operands(self, other)
 
     # -- keyword-form value construction ------------------------------------
 
@@ -447,14 +955,25 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
           built from the named fields.
 
         Distributions whose ``_log_prob`` consumes a Record but splits it
-        internally (e.g. ``SimpleModel`` → ``(params, data)``) keep this
-        default and do the split in ``_log_prob``. Override only when the
+        internally (e.g. a factored joint, which scores each factor's fields)
+        keep this default and do the split in ``_log_prob``. Override only when the
         value type is neither a bare array nor a flat Record (e.g.
         ``StanModel``'s single ``parameters=`` flat array).
 
         Builds exactly one draw (``sample_shape == ()``). Batched
         evaluation does not go through kwargs — pass the batch positionally
         and let ``Function`` broadcasting handle it.
+
+        Parameters
+        ----------
+        **field_kwargs : Any
+            One value per named field of a draw, keyed by field name.
+
+        Returns
+        -------
+        Any
+            The draw: the bare value of a single field, or the ``Record`` of
+            several.
 
         Raises
         ------
@@ -465,26 +984,16 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         from ..core.record import _pack_fields
 
         fields = getattr(self, "fields", None)
+        if fields is None and _declares_numeric_event(self):
+            # A numeric law outside the record laws names its fields by its components.
+            fields = tuple(self.event_spec.components)
         if not fields:
             raise TypeError(
-                f"{type(self).__name__} does not support the keyword form of "
-                f"the log_prob-family ops (it has no named fields); pass a "
-                f"positional value."
+                f"{public_class_name(type(self))} {self.label!r} has no named fields, so it "
+                f"cannot take the value by keyword; pass the value positionally"
             )
         rec = _pack_fields(fields, field_kwargs, owner=type(self).__name__)
         return field_kwargs[fields[0]] if len(fields) == 1 else rec
-
-    # -- approximation tracking ---------------------------------------------
-
-    @property
-    def is_approximate(self) -> bool:
-        """Whether this distribution is an approximation.
-
-        Approximate distributions are typically produced by sampling,
-        variational inference, MCMC, bootstrap procedures, or other numerical
-        approximations.
-        """
-        return getattr(self, "_approximate", False)
 
     # -- annotations ---------------------------------------------------------
     #
@@ -533,12 +1042,8 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
             posterior.diagnostics
                 # structured ProbPipe view over posterior.annotations["diagnostics"]
 
-            posterior.arviz_data
-                # ArviZ-compatible xarray DataTree subtree, typically
-                # posterior.annotations["arviz"]
-
-            posterior.inference_data
-                # backward-compatible alias for posterior.arviz_data
+            posterior.annotations["arviz"]
+                # the ArviZ-compatible xarray DataTree
 
         Examples
         --------
@@ -563,7 +1068,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
                 posterior,
                 test_fns=[...],
                 observed_data=y,
-                generative_likelihood=lik,
+                kernel=likelihood,
             )
 
             posterior.diagnostics.ppc.result
@@ -591,56 +1096,98 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
         return DiagnosticsView(aux["diagnostics"])
 
-    # -- batched-construction alias ----------------------------------------
+    # -- batched construction -----------------------------------------------
 
     @classmethod
     def from_batched_params(
         cls,
         *,
-        name: str,
+        label: str,
         batch_shape: tuple[int, ...] | None = None,
-        **batched_params,
-    ) -> DistributionArray:
-        """Class-method alias for :meth:`DistributionArray.from_batched_params`.
+        **batched_params: Any,
+    ) -> DistributionBatch:
+        """The separate laws of this class at batched parameters, one per batch position.
 
-        Lets users write the ergonomic per-class form::
+        Each parameter's leading axes are the batch axes, and the law at a
+        position is this class at that position's parameters. The form of the
+        result is not yet decided, so the method raises.
 
-            Normal.from_batched_params(loc=jnp.zeros(5), scale=1.0, name="x")
+        Parameters
+        ----------
+        label : str
+            The batch's label.
+        batch_shape : tuple of int, optional
+            The batch axes, inferred from the parameters when omitted.
+        **batched_params
+            This class's constructor arguments, with the batch axes leading.
 
-        instead of the universal entry point::
+        Returns
+        -------
+        DistributionBatch
+            The batch of these laws under the label *label*, with the batch axes
+            as its batch shape.
 
-            DistributionArray.from_batched_params(
-                Normal, loc=jnp.zeros(5), scale=1.0, name="x",
-            )
-
-        Both produce the same ``DistributionArray`` — the alias is a
-        thin classmethod that calls the universal factory with
-        ``cls`` bound. Subclasses inherit the alias automatically;
-        no per-family override is needed.
-
-        See :meth:`DistributionArray.from_batched_params` for the full
-        contract (dispatch on
-        :class:`~probpipe.core.protocols.SupportsArrayBackend`,
-        ``batch_shape`` inference, per-cell name suffixing).
+        Raises
+        ------
+        NotImplementedError
+            Always.
         """
-        # Local import: ``DistributionArray`` inherits from ``Distribution``,
-        # so importing it at module top would create a cycle.
-        from ..core._distribution_array import DistributionArray
+        raise NotImplementedError("from_batched_params is not implemented yet")
 
-        return DistributionArray.from_batched_params(
-            cls,
-            name=name,
-            batch_shape=batch_shape,
-            **batched_params,
-        )
+    # -- notation -----------------------------------------------------------
+
+    @property
+    def notation(self) -> str:
+        """The law's label followed by its signature, as ``prior(mu)``, which ``str()`` returns.
+
+        The signature lists the event components in declaration order, joined
+        by ``", "``, then ``;`` and the paths the law holds fixed at given
+        values when it holds any, as ``model(mu; y)``. The label is grouped so
+        the call applies to all of it, as in ``(lik·prior)(y)``. A product
+        without a label reads factor by factor, as ``lik(y | mu)·prior(mu)``,
+        and the law of a function lifted over laws reads as the function at
+        draws of its inputs, as ``f(beta ~ model; y)``. The notation is a
+        rendering of the law's expression, which shows at most
+        ``notation_config.max_depth`` nested levels. No operation reads the
+        notation.
+        """
+        return self._expression.render_notation(self._own_signature(), warn=True)
+
+    def _own_signature(self) -> Signature:
+        """The signature the declaration states: the event components, in declaration order."""
+        return Signature(tuple(self.event_spec.components))
+
+    def __str__(self) -> str:
+        """The law's :attr:`notation`, as ``prior(mu)``."""
+        return self.notation
 
     # -- repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = [type(self).__name__]
-        if self.name:
-            parts.append(f"name={self.name!r}")
-        return f"{parts[0]}({', '.join(parts[1:])})"
+        """The public class, the label, the component, the fixed paths, and the family parameters.
+
+        A whole-term event shows its component, as ``component='mu'``, an
+        exposed record its fields in no field of its own, and any other
+        packaging its declaration, as ``event_spec=...``. The paths the law
+        holds fixed follow the component, as ``fixed=('y',)``.
+        """
+        return term_repr(
+            self._repr_class_name(),
+            _repr_label(self),
+            _ordered_fields(self._repr_arguments(), self._event_repr_arguments(), self),
+        )
+
+    def _repr_class_name(self) -> str:
+        """The first public class in this law's method-resolution order, which the repr names."""
+        return public_class_name(type(self))
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The family parameters the repr shows, each by name and formatted value; none here."""
+        return []
+
+    def _event_repr_arguments(self) -> list[tuple[str, str]]:
+        """The component of the event, or its declaration, as :func:`_event_repr_fields` gives it."""
+        return _event_repr_fields(self.event_spec)
 
 
 class NumericDistribution(Distribution):
@@ -695,6 +1242,9 @@ class NumericDistribution(Distribution):
         return None
 
 
+_DECLARATION_MARKERS[NumericDistribution] = (_declares_numeric_event, "a numeric event")
+
+
 # The views a numeric law has whatever its class, which ``Distribution.__getattr__``
 # resolves for a class that does not inherit the marker.
 _NUMERIC_VIEWS: dict[str, property] = {
@@ -707,10 +1257,28 @@ _NUMERIC_VIEWS: dict[str, property] = {
 # ---------------------------------------------------------------------------
 
 
+def _event_form(component: str | None) -> str:
+    """The form of an event, as a message names it: a record of fields, or one named field."""
+    return "a record of fields" if component is None else f"the single field {component!r}"
+
+
 def _unify_declarations(
     expected: OutputSpec, actual: OutputSpec, bindings: dict[str, int], path: str
 ) -> None:
     """Match *actual* against *expected*: packaging and components, then their specs.
+
+    Parameters
+    ----------
+    expected : OutputSpec
+        The declaration to match against, such as a term spec's ``event_spec``.
+    actual : OutputSpec
+        The declaration a law or a kernel carries.
+    bindings : dict[str, int]
+        The size of each symbolic dimension bound so far, keyed by its name, which
+        unification extends in place.
+    path : str
+        The location of the declaration that error messages name, such as
+        ``"the declaration"``.
 
     Raises
     ------
@@ -721,8 +1289,7 @@ def _unify_declarations(
     wanted, found = _whole_term_component(expected), _whole_term_component(actual)
     if (wanted is None) != (found is None):
         raise ValueError(
-            f"{path} declares {'an exposed record' if wanted is None else f'the whole term {wanted!r}'}, "
-            f"but the law declares {'an exposed record' if found is None else f'the whole term {found!r}'}"
+            f"{path} declares {_event_form(wanted)}, but the law declares {_event_form(found)}"
         )
     if wanted != found:
         raise ValueError(
@@ -780,11 +1347,11 @@ class DistributionSpec(TermSpec):
             event_spec = OutputSpec(event_spec)
         elif not isinstance(event_spec, OutputSpec):
             raise TypeError(
-                f"DistributionSpec.event_spec must be an OutputSpec or a RecordSpec, got "
-                f"{type(event_spec).__name__}, which has no component name to complete it with"
+                f"DistributionSpec.event_spec must be an OutputSpec or a RecordSpec; got "
+                f"{type(event_spec).__name__}. Name the field, such as OutputSpec(x=...)"
             )
         if event_spec.spec is None:
-            raise ValueError("DistributionSpec.event_spec has a type hole")
+            raise ValueError("DistributionSpec.event_spec does not declare a type")
         object.__setattr__(self, "event_spec", event_spec)
 
     @property
@@ -809,6 +1376,10 @@ class DistributionSpec(TermSpec):
             return False
         _unify_declarations(self.event_spec, actual.event_spec, bindings, path)
         return True
+
+    def __repr__(self) -> str:
+        """The event declaration, as the constructor takes it."""
+        return term_repr("DistributionSpec", None, [("event_spec", repr(self.event_spec))])
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Distribution`` whose declaration matches this one."""

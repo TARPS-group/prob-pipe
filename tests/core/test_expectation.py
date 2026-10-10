@@ -1,134 +1,64 @@
-"""Tests for expectation(Distribution), BootstrapDistribution, and is_approximate."""
+"""Tests for expectation(Distribution)."""
 
-import jax
 import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
 import pytest
-import tensorflow_probability.substrates.jax.bijectors as tfb
 
-import probpipe.distributions._distribution as dist_mod
 from probpipe import (
     Bernoulli,
     Beta,
     Binomial,
-    BootstrapDistribution,
     BootstrapReplicateDistribution,
     Categorical,
     EmpiricalDistribution,
     Exponential,
+    Function,
     Gamma,
     Normal,
     NumericArray,
-    NumericRecord,
-    RecordEmpiricalDistribution,
-    TransformedDistribution,
+    evaluate,
     expectation,
-    from_distribution,
     mean,
-    sample,
-    set_default_num_evaluations,
-    set_return_approx_dist,
+    set_default_n_broadcast_samples,
     variance,
+    workflow_run,
 )
-from probpipe.core.protocols import SupportsExpectation, compute_expectation
+from probpipe.core._dispatch import BinaryDispatchMethod, Feasibility, ResolutionError
+from probpipe.distributions import Distribution
+from probpipe.functions import _rules
 
 # ---------------------------------------------------------------------------
-# BootstrapDistribution tests
-# ---------------------------------------------------------------------------
-
-
-class TestBootstrapDistribution:
-    """Test BootstrapDistribution construction and properties."""
-
-    def test_construction(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        assert bd.num_atoms == 5
-        assert bd.event_shape == ()
-        assert bd.is_approximate
-
-    def test_mean(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        np.testing.assert_allclose(float(mean(bd)), 3.0, atol=1e-6)
-
-    def test_variance(self):
-        """Variance of bootstrap mean = Var(evals) / n."""
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        sample_var = float(jnp.var(evals))
-        expected_se_var = sample_var / 5
-        np.testing.assert_allclose(float(variance(bd)), expected_se_var, atol=1e-5)
-
-    def test_weighted(self):
-        evals = jnp.array([0.0, 10.0])
-        weights = jnp.array([0.3, 0.7])
-        bd = BootstrapDistribution("bd", evals, weights=weights)
-        np.testing.assert_allclose(float(mean(bd)), 7.0, atol=1e-5)
-
-    def test_sample(self):
-        evals = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        bd = BootstrapDistribution("bd", evals)
-        key = jax.random.PRNGKey(0)
-        samples = sample(bd, key=key, sample_shape=(100,))
-        assert samples.shape == (100,)
-        # Bootstrap means should cluster around 3.0
-        np.testing.assert_allclose(float(jnp.mean(samples)), 3.0, atol=0.5)
-
-    def test_multidim_evals(self):
-        evals = jnp.ones((10, 3))
-        bd = BootstrapDistribution("bd", evals)
-        assert bd.event_shape == (3,)
-        assert mean(bd).shape == (3,)
-
-
-# ---------------------------------------------------------------------------
-# Expectation — returns BootstrapDistribution by default
+# Expectation — the estimate is an array
 # ---------------------------------------------------------------------------
 
 
-class TestExpectationReturnsDist:
-    """With RETURN_APPROX_DIST=True (default), sample-based expectations return BootstrapDistribution."""
-
-    def test_normal_returns_bootstrap(self):
-        d = Normal(loc=3.0, scale=1.0, name="x")
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=1000)
-        assert isinstance(result, BootstrapDistribution)
-        np.testing.assert_allclose(float(mean(result)), 3.0, atol=0.2)
+class TestExpectationReturnsArray:
+    """An expectation returns its estimate, exact or sample-based, as an array."""
 
     def test_return_dist_false_returns_array(self):
-        d = Normal(loc=3.0, scale=1.0, name="x")
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=1000, return_dist=False)
+        d = Normal("x", loc=3.0, scale=1.0)
+        result = expectation.with_options(n_broadcast_samples=1000)(d, lambda x: x)
         assert isinstance(result, NumericArray)
         assert isinstance(jnp.asarray(result), jnp.ndarray)
 
     def test_bernoulli_exact_returns_array(self):
         """Finite-support exact expectations always return Array."""
-        d = Bernoulli(probs=0.7, name="x")
+        d = Bernoulli("x", probs=0.7)
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 0.7, atol=1e-6)
 
     def test_categorical_exact_returns_array(self):
-        d = Categorical(probs=[0.1, 0.2, 0.3, 0.4], name="x")
+        d = Categorical("x", probs=[0.1, 0.2, 0.3, 0.4])
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericArray)
 
     def test_empirical_exact_returns_array(self):
         """EmpiricalDistribution with num_evaluations=None is exact → Array."""
-        d = EmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
         result = expectation(d, lambda x: x)
         assert isinstance(result, NumericArray)
-
-    def test_empirical_subsample_returns_bootstrap(self):
-        """EmpiricalDistribution with num_evaluations < n is approximate → Bootstrap."""
-        d = EmpiricalDistribution("x", jnp.arange(100.0))
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10)
-        assert isinstance(result, BootstrapDistribution)
 
 
 # ---------------------------------------------------------------------------
@@ -139,69 +69,68 @@ class TestExpectationReturnsDist:
 class TestExpectationSampleBased:
     """Test sample-based expectations on infinite-support distributions."""
 
+    @pytest.fixture(autouse=True)
+    def _seeded(self):
+        """Each estimate draws in one seeded workflow, so its Monte Carlo error is fixed.
+
+        The second moment of a normal has a standard error near half of its
+        tolerance, so an unseeded estimate falls outside it in a few runs of a
+        hundred.
+        """
+        with workflow_run(seed=0):
+            yield
+
     def test_normal_mean(self):
-        d = Normal(loc=3.0, scale=1.0, name="x")
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10_000, return_dist=False)
+        d = Normal("x", loc=3.0, scale=1.0)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), 3.0, atol=0.05)
 
     def test_normal_second_moment(self):
         loc, scale = 2.0, 1.5
-        d = Normal(loc=loc, scale=scale, name="x")
-        key = jax.random.PRNGKey(1)
-        result = expectation(d, lambda x: x**2, key=key, num_evaluations=10_000, return_dist=False)
+        d = Normal("x", loc=loc, scale=scale)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         expected = loc**2 + scale**2
         # Second moment has higher variance than first moment (kurtosis effect)
         np.testing.assert_allclose(float(result), expected, atol=0.15)
 
     def test_normal_variance_from_moments(self):
         loc, scale = 1.0, 2.0
-        d = Normal(loc=loc, scale=scale, name="x")
-        key1, key2 = jax.random.split(jax.random.PRNGKey(2))
-        ex = expectation(d, lambda x: x, key=key1, num_evaluations=10_000, return_dist=False)
-        ex2 = expectation(d, lambda x: x**2, key=key2, num_evaluations=10_000, return_dist=False)
+        d = Normal("x", loc=loc, scale=scale)
+        ex = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
+        ex2 = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         var_est = float(ex2) - float(ex) ** 2
         np.testing.assert_allclose(var_est, scale**2, atol=0.15)
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
-        d = Gamma(concentration=conc, rate=rate, name="x")
-        key = jax.random.PRNGKey(3)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10_000, return_dist=False)
+        d = Gamma("x", concentration=conc, rate=rate)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), conc / rate, atol=0.05)
 
     def test_gamma_log_sufficient_statistic(self):
         conc, rate = 3.0, 2.0
-        d = Gamma(concentration=conc, rate=rate, name="x")
-        key = jax.random.PRNGKey(4)
-        result = expectation(
-            d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False
-        )
+        d = Gamma("x", concentration=conc, rate=rate)
+        result = expectation.with_options(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_beta_mean(self):
         a, b = 2.0, 5.0
-        d = Beta(alpha=a, beta=b, name="x")
-        key = jax.random.PRNGKey(5)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10_000, return_dist=False)
+        d = Beta("x", alpha=a, beta=b)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), a / (a + b), atol=0.03)
 
     def test_beta_log_sufficient_statistic(self):
         a, b = 2.0, 5.0
-        d = Beta(alpha=a, beta=b, name="x")
-        key = jax.random.PRNGKey(6)
-        result = expectation(
-            d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False
-        )
+        d = Beta("x", alpha=a, beta=b)
+        result = expectation.with_options(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_exponential_second_moment(self):
         rate = 3.0
-        d = Exponential(rate=rate, name="x")
-        key = jax.random.PRNGKey(7)
-        result = expectation(d, lambda x: x**2, key=key, num_evaluations=10_000, return_dist=False)
+        d = Exponential("x", rate=rate)
+        result = expectation.with_options(n_broadcast_samples=10_000)(d, lambda x: x**2)
         np.testing.assert_allclose(float(result), 2.0 / rate**2, atol=0.03)
 
 
@@ -213,39 +142,39 @@ class TestExpectationSampleBased:
 class TestExpectationExact:
     def test_bernoulli_identity(self):
         p = 0.7
-        d = Bernoulli(probs=p, name="x")
+        d = Bernoulli("x", probs=p)
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), p, atol=1e-6)
 
     def test_bernoulli_custom_function(self):
         p = 0.4
-        d = Bernoulli(probs=p, name="x")
+        d = Bernoulli("x", probs=p)
         result = expectation(d, lambda x: 2 * x + 1)
         np.testing.assert_allclose(float(result), 1 + 2 * p, atol=1e-6)
 
     def test_categorical_identity(self):
         probs = [0.1, 0.2, 0.3, 0.4]
-        d = Categorical(probs=probs, name="x")
+        d = Categorical("x", probs=probs)
         result = expectation(d, lambda x: x)
         expected = sum(i * p for i, p in enumerate(probs))
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
     def test_categorical_custom_function(self):
         probs = [0.25, 0.5, 0.25]
-        d = Categorical(probs=probs, name="x")
+        d = Categorical("x", probs=probs)
         result = expectation(d, lambda x: x**2)
         expected = 0 * 0.25 + 1 * 0.5 + 4 * 0.25
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
     def test_binomial_mean(self):
         n, p = 10, 0.3
-        d = Binomial(total_count=n, probs=p, name="x")
+        d = Binomial("x", total_count=n, probs=p)
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), n * p, atol=1e-4)
 
     def test_binomial_second_moment(self):
         n, p = 10, 0.3
-        d = Binomial(total_count=n, probs=p, name="x")
+        d = Binomial("x", total_count=n, probs=p)
         result = expectation(d, lambda x: x**2)
         expected = n * p * (1 - p) + (n * p) ** 2
         np.testing.assert_allclose(float(result), expected, atol=1e-3)
@@ -259,69 +188,30 @@ class TestExpectationExact:
 class TestExpectationEmpirical:
     def test_uniform_mean(self):
         samples = jnp.array([1.0, 2.0, 3.0, 4.0])
-        d = EmpiricalDistribution("x", samples)
+        d = EmpiricalDistribution(samples, component="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), 2.5, atol=1e-6)
 
     def test_weighted_mean(self):
         samples = jnp.array([0.0, 10.0])
         weights = jnp.array([0.3, 0.7])
-        d = EmpiricalDistribution("x", samples, weights=weights)
+        d = EmpiricalDistribution(samples, weights=weights, component="x")
         result = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(result), 7.0, atol=1e-5)
 
     def test_custom_function(self):
         samples = jnp.array([1.0, 2.0, 3.0])
         weights = jnp.array([0.2, 0.5, 0.3])
-        d = EmpiricalDistribution("x", samples, weights=weights)
+        d = EmpiricalDistribution(samples, weights=weights, component="x")
         result = expectation(d, lambda x: x**2)
         expected = 0.2 * 1.0 + 0.5 * 4.0 + 0.3 * 9.0
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
-    def test_subsample_returns_bootstrap(self):
-        samples = jnp.arange(100.0)
-        d = EmpiricalDistribution("x", samples)
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10)
-        assert isinstance(result, BootstrapDistribution)
-
-    def test_subsample_return_dist_false(self):
-        samples = jnp.arange(100.0)
-        d = EmpiricalDistribution("x", samples)
-        key = jax.random.PRNGKey(0)
-        result = expectation(d, lambda x: x, key=key, num_evaluations=10, return_dist=False)
-        assert isinstance(result, NumericArray)
-
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
-        d = RecordEmpiricalDistribution("x", samples)
+        d = EmpiricalDistribution(samples, component="x")
         ex = expectation(d, lambda x: x)
         np.testing.assert_allclose(float(ex), float(mean(d)), atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Bootstrap error tracking — MC error decreases with n
-# ---------------------------------------------------------------------------
-
-
-class TestBootstrapErrorTracking:
-    def test_variance_decreases_with_n(self):
-        """More evaluations → smaller MC error variance."""
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        key1, key2 = jax.random.split(jax.random.PRNGKey(42))
-        bd_small = expectation(d, lambda x: x, key=key1, num_evaluations=100)
-        bd_large = expectation(d, lambda x: x, key=key2, num_evaluations=10_000)
-        assert isinstance(bd_small, BootstrapDistribution)
-        assert isinstance(bd_large, BootstrapDistribution)
-        assert float(variance(bd_large)) < float(variance(bd_small))
-
-    def test_bootstrap_mean_matches_point_estimate(self):
-        """mean(BootstrapDistribution) equals the sample mean."""
-        d = Normal(loc=5.0, scale=1.0, name="x")
-        key = jax.random.PRNGKey(0)
-        bd = expectation(d, lambda x: x, key=key, num_evaluations=1000)
-        point_est = expectation(d, lambda x: x, key=key, num_evaluations=1000, return_dist=False)
-        np.testing.assert_allclose(float(mean(bd)), float(point_est), atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -333,68 +223,23 @@ class TestMCFallbackMethods:
     """Test that base mean(Distribution)/variance()/cov() use MC when no exact override."""
 
     def test_tfp_mean_still_exact(self):
-        """mean(TFPDistribution) returns exact Array, not BootstrapDistribution."""
-        d = Normal(loc=3.0, scale=1.0, name="x")
+        """mean(TFPDistribution) returns the exact array."""
+        d = Normal("x", loc=3.0, scale=1.0)
         result = mean(d)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 3.0, atol=1e-6)
 
     def test_tfp_variance_still_exact(self):
-        d = Normal(loc=0.0, scale=2.0, name="x")
+        d = Normal("x", loc=0.0, scale=2.0)
         result = variance(d)
         assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
-        d = RecordEmpiricalDistribution("x", jnp.array([1.0, 2.0, 3.0]))
+        d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
         result = mean(d)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 2.0, atol=1e-6)
-
-
-# ---------------------------------------------------------------------------
-# is_approximate tests
-# ---------------------------------------------------------------------------
-
-
-class TestIsApproximate:
-    def test_tfp_distribution_exact(self):
-        assert not Normal(loc=0.0, scale=1.0, name="x").is_approximate
-        assert not Gamma(concentration=1.0, rate=1.0, name="x").is_approximate
-        assert not Beta(alpha=1.0, beta=1.0, name="x").is_approximate
-        assert not Bernoulli(probs=0.5, name="x").is_approximate
-
-    def test_empirical_approximate_by_default(self):
-        d = EmpiricalDistribution("x", jnp.array([1.0, 2.0]))
-        assert d.is_approximate
-
-    def test_bootstrap_always_approximate(self):
-        bd = BootstrapDistribution("bd", jnp.array([1.0, 2.0, 3.0]))
-        assert bd.is_approximate
-
-    def test_transformed_propagates(self):
-        exact_base = Normal(loc=0.0, scale=1.0, name="x")
-        t_exact = TransformedDistribution("t_exact", exact_base, tfb.Exp())
-        assert not t_exact.is_approximate
-
-        approx_base = EmpiricalDistribution("x", jnp.array([1.0, 2.0]))
-        t_approx = TransformedDistribution("t_approx", approx_base, tfb.Exp())
-        assert t_approx.is_approximate
-
-    def test_from_distribution_same_class_exact(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        d2 = from_distribution(d, Normal)
-        assert not d2.is_approximate
-
-    def test_from_distribution_different_class_approximate(self):
-        d = Normal(loc=5.0, scale=0.1, name="x")
-        d2 = from_distribution(d, Gamma, check_support=False)
-        assert d2.is_approximate
-
-    def test_from_distribution_to_empirical(self):
-        d = Normal(loc=0.0, scale=1.0, name="x")
-        d2 = from_distribution(d, RecordEmpiricalDistribution)
-        assert d2.is_approximate
 
 
 # ---------------------------------------------------------------------------
@@ -405,123 +250,135 @@ class TestIsApproximate:
 # Estimators that fall back to the default sample count when a call omits
 # ``num_evaluations``.
 _DEFAULT_SIZE_ESTIMATORS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, name="x"), lambda x: x, id="tfp"),
+    pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), lambda x: x, id="tfp"),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
-            "boot", EmpiricalDistribution("data", jnp.arange(5.0))
+            "boot", EmpiricalDistribution(jnp.arange(5.0), component="data")
         ),
         jnp.mean,
         id="bootstrap-replicate",
     ),
 ]
 
-# Estimators that consult the default result form when a call omits
-# ``return_dist``: those above and the two empirical subsampling paths.
-_RESULT_FORM_ESTIMATORS = [
-    *_DEFAULT_SIZE_ESTIMATORS,
-    pytest.param(lambda: EmpiricalDistribution("x", jnp.arange(10.0)), lambda x: x, id="empirical"),
-    pytest.param(
-        lambda: RecordEmpiricalDistribution("x", jnp.arange(20.0).reshape(10, 2)),
-        lambda x: x,
-        id="record-empirical",
-    ),
-]
-
 
 class TestGlobalDefaults:
-    def test_set_default_num_evaluations(self):
-        old = dist_mod.DEFAULT_NUM_EVALUATIONS
-        try:
-            set_default_num_evaluations(512)
-            assert dist_mod.DEFAULT_NUM_EVALUATIONS == 512
-        finally:
-            set_default_num_evaluations(old)
+    def test_the_setter_sets_the_default_sample_count(self, monkeypatch):
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
+        set_default_n_broadcast_samples(512)
+        assert Function.DEFAULT_N_BROADCAST_SAMPLES == 512
 
     @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
-    def test_default_num_evaluations_sets_the_estimate_size(self, make_dist, f):
+    def test_the_default_sample_count_sets_the_estimate_size(self, monkeypatch, make_dist, f):
         """An estimator reads the current default sample count, not a copy taken at import."""
-        old = dist_mod.DEFAULT_NUM_EVALUATIONS
-        try:
-            set_default_num_evaluations(7)
-            result = expectation(make_dist(), f, key=jax.random.PRNGKey(0))
-            assert isinstance(result, BootstrapDistribution)
-            assert result.num_atoms == 7
-        finally:
-            set_default_num_evaluations(old)
+        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
+        set_default_n_broadcast_samples(7)
+        law = make_dist()
+        assert evaluate(f, law).num_atoms == 7
+        assert np.isfinite(float(expectation(law, f)))
 
-    def test_set_default_invalid(self):
-        with pytest.raises(ValueError):
-            set_default_num_evaluations(0)
-
-    @pytest.mark.parametrize(("make_dist", "f"), _RESULT_FORM_ESTIMATORS)
-    def test_set_return_approx_dist(self, make_dist, f):
-        """An estimator reads the current default result form, not a copy taken at import."""
-        old = dist_mod.RETURN_APPROX_DIST
-        try:
-            set_return_approx_dist(False)
-            assert dist_mod.RETURN_APPROX_DIST is False
-            result = expectation(make_dist(), f, num_evaluations=4, key=jax.random.PRNGKey(0))
-            assert isinstance(result, NumericArray)
-        finally:
-            set_return_approx_dist(old)
+    @pytest.mark.parametrize(("count", "error"), [(0, ValueError), (2.5, TypeError)])
+    def test_an_inadmissible_default_raises(self, count, error):
+        with pytest.raises(error):
+            set_default_n_broadcast_samples(count)
 
 
 # ---------------------------------------------------------------------------
-# @compute_expectation decorator — dispatches _mean/_variance via _expectation
+# The routes of expectation
 # ---------------------------------------------------------------------------
 
 
-class _MCNormalDist(SupportsExpectation):
-    """Minimal distribution whose _expectation draws Monte Carlo samples."""
+class _StandIn(BinaryDispatchMethod):
+    """An approximate rule registered opt-in, standing in for quadrature.
 
-    _sampling_cost = "low"
-    _preferred_orchestration = None
+    Its pushforward is the point mass at -1, whatever the map and the law.
+    """
 
-    def __init__(self, loc: float, scale: float, n_samples: int = 4000):
-        self.loc = loc
-        self.scale = scale
-        self.n_samples = n_samples
+    name = "quadrature_stand_in"
+    exact = False
+    priority = None
 
-    def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=False):
-        if key is None:
-            key = jax.random.PRNGKey(0)
-        n = num_evaluations or self.n_samples
-        draws = self.loc + self.scale * jax.random.normal(key, (n,))
-        return jnp.mean(jax.vmap(f)(draws))
+    def supported_types(self):
+        return ((Function,), (Distribution,))
 
-    @compute_expectation
-    def _mean(self):
-        return lambda x: x
+    def check(self, f, operand, /, **call):
+        return Feasibility(True)
 
-    @compute_expectation
-    def _second_moment(self):
-        return lambda x: x**2
+    def execute(self, f, operand, /, **call):
+        return EmpiricalDistribution(jnp.array([-1.0]), component="stand_in")
 
 
-class TestComputeExpectationDecorator:
-    """The decorator must dispatch through _expectation and return the MC mean."""
+@pytest.fixture
+def rules(monkeypatch):
+    """An evaluation-rule registry holding the engine's rules and the stand-in."""
+    registry = type(_rules.evaluation_rule_registry)()
+    for rule in (
+        _rules._SamplingLift(),
+        _rules._ElementwiseSweep(),
+        _rules._EmpiricalEnumeration(),
+        _StandIn(),
+    ):
+        registry.register(rule)
+    monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+    for operation in (expectation, evaluate):
+        (route,) = [r for r in operation._route_table.routes if r.name == "evaluation_rules"]
+        monkeypatch.setattr(route, "registry", registry)
+    return registry
 
-    def test_mean_matches_analytical(self):
-        d = _MCNormalDist(loc=2.0, scale=0.5)
-        # True mean = 2.0.  4000 MC samples give sigma/sqrt(n) ~ 0.008.
-        np.testing.assert_allclose(d._mean(), 2.0, atol=0.05)
 
-    def test_second_moment_matches_analytical(self):
-        d = _MCNormalDist(loc=0.0, scale=1.0)
-        # E[X^2] = loc^2 + scale^2 = 1 for standard normal.
-        np.testing.assert_allclose(d._second_moment(), 1.0, atol=0.1)
+class TestExpectationRoutes:
+    def test_a_finite_support_law_takes_the_closed_form(self):
+        report = expectation.check(Bernoulli("b", probs=0.3), lambda x: x)
+        assert report.selected.method_name == "closed_form"
 
-    def test_dispatches_to_expectation(self):
-        """The decorator must call _expectation, not bypass it."""
-        calls: list[str] = []
+    def test_a_continuous_law_takes_the_sampling_lift(self):
+        report = expectation.check(Normal("n", 0.0, 1.0), lambda x: x)
+        assert report.selected.method_name == "evaluation_rules/sampling_lift"
 
-        class Spy(_MCNormalDist):
-            def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=False):
-                calls.append("called")
-                return super()._expectation(
-                    f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
-                )
+    def test_a_named_rule_runs_instead_of_the_closed_form(self):
+        law = Bernoulli("b", probs=0.3)
+        result = expectation.with_options(method="sampling_lift")(law, lambda x: x)
+        np.testing.assert_allclose(float(result), 0.3, atol=0.1)
 
-        d = Spy(loc=0.0, scale=1.0)
-        _ = d._mean()
-        assert calls == ["called"]
+    def test_exact_only_refuses_a_law_without_an_exact_route(self):
+        with pytest.raises(ResolutionError, match="exact_only"):
+            expectation.with_options(exact_only=True)(Normal("n", 0.0, 1.0), lambda x: x)
+
+    def test_an_unregistered_method_name_raises(self):
+        with pytest.raises(ResolutionError, match="no_such_method"):
+            expectation.with_options(method="no_such_method")(Normal("n", 0.0, 1.0), lambda x: x)
+
+    def test_an_opt_in_rule_runs_only_when_named(self, rules):
+        law = Normal("n", 0.0, 1.0)
+        assert (
+            float(expectation.with_options(method="quadrature_stand_in")(law, lambda x: x)) == -1.0
+        )
+        assert expectation.check(law, lambda x: x).selected.method_name == (
+            "evaluation_rules/sampling_lift"
+        )
+
+    def test_a_rule_serves_evaluate_and_expectation_alike(self, rules):
+        law = Normal("n", 0.0, 1.0)
+        pushforward = evaluate.with_options(method="quadrature_stand_in")(lambda x: x, law)
+        assert float(mean(pushforward)) == -1.0
+
+    def test_a_raised_priority_makes_a_rule_the_default(self, rules):
+        law = Normal("n", 0.0, 1.0)
+        rules.set_priorities(quadrature_stand_in=60)
+        assert float(expectation(law, lambda x: x)) == -1.0
+        assert expectation.check(law, lambda x: x).selected.method_name == (
+            "evaluation_rules/quadrature_stand_in"
+        )
+
+    def test_the_closed_form_ranks_before_a_higher_priority_rule(self, rules):
+        rules.set_priorities(quadrature_stand_in=1000)
+        report = expectation.check(Bernoulli("b", probs=0.3), lambda x: x)
+        assert report.selected.method_name == "closed_form"
+
+    @pytest.mark.parametrize("bad", [0, -3])
+    def test_monte_carlo_refuses_a_nonpositive_sample_count(self, bad):
+        with pytest.raises(ValueError, match="positive"):
+            expectation.with_options(n_broadcast_samples=bad)(Normal("n", 0.0, 1.0), lambda x: x)
+
+    def test_monte_carlo_refuses_a_non_integer_sample_count(self):
+        with pytest.raises(TypeError, match="integer"):
+            expectation.with_options(n_broadcast_samples=2.5)(Normal("n", 0.0, 1.0), lambda x: x)

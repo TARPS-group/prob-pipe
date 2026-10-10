@@ -1,11 +1,9 @@
 """Reading a tracked term does not modify it.
 
-`design/05-operations.md` §V.1 promises an implementer's object is never
-modified. Two terms broke that where a caller could see it: a
-``BroadcastDistribution`` assigned its marginal on first ``marginalize()``, and a
-backend-delegated ``DistributionArray`` assigned its components on first read.
-Both now fill a memo container assigned at construction, so the attributes the
-term was built with stay untouched.
+Principle C2 of `design/01-design-principles.md` promises that an object is
+never modified in place, and design II.4 makes every tracked term immutable. A
+term that memoises a derived value fills a memo container of its own, so the
+attributes the term was built with stay untouched.
 
 The rest of the class is an invariant rather than a regression: those terms wrote
 their fields before the object reached a caller, which is construction by another
@@ -18,17 +16,12 @@ import pickle
 from collections.abc import Mapping
 
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
-from probpipe import (
-    DistributionArray,
-    Normal,
-    ProductDistribution,
-    SequentialJointDistribution,
-    condition_on,
-)
-from probpipe.core._broadcast_distributions import BroadcastDistribution
+from probpipe import Normal
+from probpipe.core._specs import NumericArraySpec, OutputSpec
+from probpipe.distributions import ConditionalDistribution, SupportsConditionalSampling
+from tests._ops import condition_on
 
 
 def assigned_state(term) -> dict:
@@ -62,20 +55,36 @@ def _census(value):
     return None
 
 
-class _ScalarBackend:
-    """The smallest thing ``DistributionArray._from_backend`` accepts."""
+class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Normal(z, 0.5)``, the dependent factor of a joint."""
 
-    is_approximate = False
+    def __init__(self):
+        spec = NumericArraySpec(())
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
 
-    def __init__(self, n: int):
-        self.batch_shape = (n,)
+    def _condition_on(self, given, /, **options):
+        return Normal("x", given["z"], 0.5)
 
-    @property
-    def cell_spec(self):
-        return self.cell(0).event_spec.spec
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return Normal("x", given["z"], 0.5)._sample(key, sample_shape)
 
-    def cell(self, index: int) -> Normal:
-        return Normal(f"c{index}", float(index), 1.0)
+
+def _normal_pymc_model(y=None):
+    import pymc as pm
+
+    with pm.Model() as model:
+        mu = pm.Normal("mu", 0.0, 1.0)
+        pm.Normal("y", mu, 1.0, observed=y)
+    return model
+
+
+def _pymc_memo_case():
+    """A PyMC program, whose memo holds its compiled density, and a read that fills it."""
+    pytest.importorskip("pymc")
+    from probpipe import PyMCModel
+
+    term = PyMCModel(_normal_pymc_model, label="m")
+    return term, lambda t: t._log_prob({"mu": 0.0, "y": 0.0})
 
 
 class TestTheCheckItself:
@@ -86,97 +95,57 @@ class TestTheCheckItself:
     """
 
     def test_it_catches_an_edit_that_rebinds_nothing(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
-        name, container = next((n, v) for n, v in vars(joint).items() if isinstance(v, dict) and v)
-        before = assigned_state(joint)
-        container["injected"] = object()  # same dict object, new entry
-        assert assigned_state(joint) != before, f"an in-place edit to {name} went unseen"
+        class _Holder:
+            def __init__(self):
+                self.cache = {"filled": object()}
+
+        holder = _Holder()
+        before = assigned_state(holder)
+        holder.cache["injected"] = object()  # same dict object, new entry
+        assert assigned_state(holder) != before, "an in-place edit to cache went unseen"
 
     def test_it_catches_a_rebound_attribute(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
         before = assigned_state(joint)
-        object.__setattr__(joint, "_conditioned_names", ("z",))
+        object.__setattr__(joint, "_graph", None)
         assert assigned_state(joint) != before
 
     def test_it_ignores_the_memo(self):
         # The one store a read is meant to fill.
-        array = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        before = assigned_state(array)
-        assert array.components  # fills the memo
-        assert assigned_state(array) == before
+        term, read = _pymc_memo_case()
+        before = assigned_state(term)
+        assert read(term) is not None  # fills the memo
+        assert assigned_state(term) == before
 
 
 class TestAQueryLeavesTheTermUnchanged:
-    def test_marginalizing_a_broadcast_distribution(self):
-        broadcast = BroadcastDistribution(
-            input_samples={"x": jnp.ones((5, 1))},
-            output_samples=jnp.zeros((5, 2)),
-            weights=None,
-            broadcast_args=["x"],
-        )
-        before = assigned_state(broadcast)
-        first = broadcast.marginalize()
-        assert assigned_state(broadcast) == before
-        # Still memoised: the second read returns the first result.
-        assert broadcast.marginalize() is first
-
-    def test_reading_a_backend_delegated_array_s_components(self):
-        # The backend-delegated array is the one that materialises on read; an
-        # array built from a literal component list has them from the start.
-        array = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        before = assigned_state(array)
-        first = array.components
-        assert assigned_state(array) == before
-        assert array.components is first
-
-    def test_an_approximate_distribution_concatenates_at_construction(self):
-        # The constructor reads the concatenation, so the memo is filled before
-        # a caller holds the object and no later read assigns anything.
-        from probpipe.inference._approximate_distribution import ApproximateDistribution
-
-        posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
-        before = assigned_state(posterior)
-        first = posterior._concat_chains()
-        assert assigned_state(posterior) == before
-        assert posterior._concat_chains() is first
-
-    def test_a_tfp_product_distribution_builds_its_tfp_view_at_construction(self):
-        # The combined TFP distribution is built once, by the constructor: no
-        # read fills it in later.
-        joint = ProductDistribution(a=Normal("a", 0.0, 1.0), b=Normal("b", 1.0, 2.0), name="j")
-        assert hasattr(joint, "_tfp_dist")
+    def test_a_factored_joint_is_unchanged_by_a_field_view(self):
+        # The view reads the joint's marginal report at the view's construction,
+        # which fills nothing on the joint.
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 1.0, 2.0)
         before = assigned_state(joint)
-        _ = joint.dtypes
+        _ = joint["a"]
         assert assigned_state(joint) == before
 
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
-    def test_conditioning_a_sequential_joint(self):
-        joint = SequentialJointDistribution(
-            z=Normal(loc=0.0, scale=1.0, name="z"),
-            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
-        )
-        conditioned = condition_on(joint, z=jnp.asarray(2.0))
+    def test_conditioning_a_dependent_joint(self):
+        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
+        conditioned = condition_on(joint, {"z": jnp.asarray(2.0)})
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.
         before = assigned_state(conditioned)
-        again = condition_on(joint, z=jnp.asarray(3.0))
+        again = condition_on(joint, {"z": jnp.asarray(3.0)})
         assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
-        assert set(joint.components) == {"z", "x"}
+        assert set(joint.event_spec.components) == {"z", "x"}
 
 
 class TestEveryMemoHolderDropsItsMemoOnACopy:
     """Each memo-holding term, across each way of copying one.
 
-    The mixin's own tests cover the mechanism; these cover the three classes
+    The mixin's own tests cover the mechanism; these cover the classes
     that opt into it, so dropping `_transient_state` from one of them, or
     breaking its rebuild path, fails here rather than passing quietly.
 
@@ -185,41 +154,13 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
     the memo, and it can still rebuild the value.
     """
 
-    @staticmethod
-    def _broadcast():
-        term = BroadcastDistribution(
-            input_samples={"x": jnp.ones((5, 1))},
-            output_samples=jnp.zeros((5, 2)),
-            weights=None,
-            broadcast_args=["x"],
-        )
-        return term, lambda d: d.marginalize()
-
-    @staticmethod
-    def _backend_array():
-        term = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        return term, lambda d: d.components
-
-    @staticmethod
-    def _approximate():
-        from probpipe.inference._approximate_distribution import ApproximateDistribution
-
-        term = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
-        return term, lambda d: d._concat_chains()
-
-    @pytest.fixture(
-        params=[
-            pytest.param("_broadcast", id="broadcast-marginal"),
-            pytest.param("_backend_array", id="backend-array-components"),
-            pytest.param("_approximate", id="approximate-chains"),
-        ]
-    )
+    @pytest.fixture(params=[pytest.param(_pymc_memo_case, id="pymc-density")])
     def case(self, request):
-        return getattr(self, request.param)()
+        return request.param()
 
     @pytest.fixture(
         params=[
-            pytest.param(lambda t: t.with_name("renamed"), id="with_name"),
+            pytest.param(lambda t: t.with_label("renamed"), id="with_label"),
             pytest.param(copy.copy, id="copy"),
             pytest.param(copy.deepcopy, id="deepcopy"),
             pytest.param(lambda t: pickle.loads(pickle.dumps(t)), id="pickle"),
@@ -243,51 +184,3 @@ class TestEveryMemoHolderDropsItsMemoOnACopy:
 
         term, _ = case
         assert "_memo" in declared_state_names(type(term), "_transient_state")
-
-
-class TestACopyDoesNotInheritAMemo:
-    """A memo is per term, because what it holds can be per term.
-
-    ``marginalize`` stamps the distribution's own provenance onto the marginal it
-    builds, so a renamed copy sharing one memo with its original would hand
-    whichever of them asked second the other's lineage — and which that is
-    depends only on query order.
-    """
-
-    @staticmethod
-    def _broadcast() -> BroadcastDistribution:
-        return BroadcastDistribution(
-            input_samples={"x": jnp.ones((5, 1))},
-            output_samples=jnp.zeros((5, 2)),
-            weights=None,
-            broadcast_args=["x"],
-        )
-
-    def test_the_rename_does_not_share_the_original_s_memo(self):
-        original = self._broadcast()
-        renamed = original.with_name("renamed")
-        assert getattr(renamed, "_memo", None) is not getattr(original, "_memo", None)
-
-    def test_lineage_does_not_depend_on_which_is_marginalized_first(self):
-        renamed_first = self._broadcast()
-        renamed = renamed_first.with_name("renamed")
-        from_rename = renamed.marginalize()
-        from_original = renamed_first.marginalize()
-
-        original_first = self._broadcast()
-        also_from_original = original_first.marginalize()
-        also_from_rename = original_first.with_name("renamed").marginalize()
-
-        # The original's marginal carries the original's lineage in both orders,
-        # and the rename's carries the rename's.
-        assert from_original.provenance is None
-        assert also_from_original.provenance is None
-        assert from_rename.provenance.operation == "with_name"
-        assert also_from_rename.provenance.operation == "with_name"
-        assert from_original is not from_rename
-
-    def test_each_still_memoises_its_own(self):
-        original = self._broadcast()
-        renamed = original.with_name("renamed")
-        assert original.marginalize() is original.marginalize()
-        assert renamed.marginalize() is renamed.marginalize()

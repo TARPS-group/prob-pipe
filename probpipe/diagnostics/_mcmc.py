@@ -38,12 +38,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._messages import unknown_names
+from ..core._shapes import NamesLike, _as_names
 from ._utils import _dataset_values
 
 if TYPE_CHECKING:
     import xarray as xr
 
-    from ..inference._approximate_distribution import ApproximateDistribution
+    from ..distributions._empirical import EmpiricalDistribution
 
 __all__ = [
     "add_ess",
@@ -55,6 +57,8 @@ __all__ = [
 
 _RHAT_THRESHOLD: float = 1.01
 _ESS_THRESHOLD: int = 400
+#: The metrics add_mcmc_diagnostics computes, in the order it computes them.
+_MCMC_METRICS: tuple[str, ...] = ("rhat", "ess", "mcse", "divergences")
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +227,7 @@ def _payload_kind(payload: Mapping[str, Any]) -> str:
     try:
         return str(payload["kind"])
     except Exception as exc:
-        raise ValueError("Diagnostic payload is missing required key 'kind'.") from exc
+        raise ValueError("the diagnostic payload is missing required key 'kind'") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +236,7 @@ def _payload_kind(payload: Mapping[str, Any]) -> str:
 
 
 def _compute_rhat_op(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
@@ -244,7 +248,7 @@ def _compute_rhat_op(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         Fitted posterior.
     method : str
         ArviZ R-hat variant: ``"rank"`` by default.
@@ -256,12 +260,13 @@ def _compute_rhat_op(
     dict
         Payload dict with keys ``kind``, ``values``, ``warnings``, and ``attrs``.
     """
+    from ..inference._approximate_distribution import _num_chains
     from ._datatree import NotComputed, to_named_posterior_dataset
 
-    if getattr(posterior, "num_chains", 1) < 2:
+    if _num_chains(posterior) < 2:
         values = {
-            field: NotComputed("R-hat requires at least 2 chains")
-            for field in getattr(posterior, "fields", ())
+            component: NotComputed("R-hat requires at least 2 chains")
+            for component in posterior.event_spec.components
         }
         warns: list[str] = []
 
@@ -305,7 +310,7 @@ def _compute_rhat_op(
 
 
 def _compute_ess_op(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
 ) -> dict[str, Any]:
@@ -316,7 +321,7 @@ def _compute_ess_op(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         Fitted posterior.
     threshold : int
         Warning threshold.
@@ -366,7 +371,7 @@ def _compute_ess_op(
 
 
 def _compute_mcse_op(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
 ) -> dict[str, Any]:
     """Pure MCSE diagnostic operation.
 
@@ -375,7 +380,7 @@ def _compute_mcse_op(
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         Fitted posterior.
 
     Returns
@@ -418,7 +423,7 @@ def _compute_mcse_op(
 
 
 def _write_mcmc_payload(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     payload: Mapping[str, Any],
 ) -> None:
     """Write an MCMC diagnostic payload into ``posterior._annotations``."""
@@ -471,7 +476,9 @@ def _write_mcmc_payload(
             _write_mcmc_payload(posterior, child)
         return None
 
-    raise ValueError(f"Unknown MCMC diagnostic payload kind: {kind!r}")
+    raise ValueError(
+        unknown_names("MCMC diagnostic payload kind", [kind], ["ess", "mcmc", "mcse", "rhat"])
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +487,7 @@ def _write_mcmc_payload(
 
 
 def add_rhat(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
@@ -516,7 +523,7 @@ def add_rhat(
 
 
 def add_ess(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
     force: bool = False,
@@ -550,7 +557,7 @@ def add_ess(
 
 
 def add_mcse(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
     force: bool = False,
 ) -> None:
@@ -579,9 +586,9 @@ def add_mcse(
 
 
 def add_mcmc_diagnostics(
-    posterior: ApproximateDistribution,
+    posterior: EmpiricalDistribution,
     *,
-    metrics: list[str] | None = None,
+    metrics: NamesLike | None = None,
     rhat_method: str = "rank",
     rhat_threshold: float = _RHAT_THRESHOLD,
     ess_threshold: int = _ESS_THRESHOLD,
@@ -589,15 +596,19 @@ def add_mcmc_diagnostics(
 ) -> None:
     """Compute MCMC diagnostics and attach to ``_annotations/diagnostics/mcmc/``.
 
-    Computes R-hat, bulk ESS, tail ESS, and MCSE by default.
-    Skips any metric already present unless ``force=True``.
+    Computes R-hat, bulk ESS, tail ESS, and MCSE by default, and records the
+    number of divergent transitions when the run's sample statistics hold the
+    ArviZ variable ``diverging``, which ``posterior.diagnostics.mcmc.n_divergences``
+    reads. Skips any metric already present unless ``force=True``.
 
     Parameters
     ----------
-    posterior : ApproximateDistribution
+    posterior : EmpiricalDistribution
         The fitted posterior. Mutated in place.
-    metrics : list of str or None
-        Subset to compute. ``None`` computes all: ``["rhat", "ess", "mcse"]``.
+    metrics : str, sequence of str, or None
+        The metrics to compute, among ``"rhat"``, ``"ess"``, ``"mcse"``, and
+        ``"divergences"``. A str names one metric, and ``None`` computes all
+        four.
     rhat_method : str
         ArviZ R-hat variant: ``"rank"`` by default.
     rhat_threshold : float
@@ -606,8 +617,21 @@ def add_mcmc_diagnostics(
         ESS warning threshold.
     force : bool
         Recompute even if metrics are already stored.
+
+    Raises
+    ------
+    TypeError
+        If *metrics* is not a str, a sequence of str, or ``None``.
+    ValueError
+        If *metrics* names an unknown metric.
     """
-    compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse"}
+    if metrics is None:
+        compute = _MCMC_METRICS
+    else:
+        compute = _as_names(metrics, what="add_mcmc_diagnostics metrics")
+        unknown = [name for name in compute if name not in _MCMC_METRICS]
+        if unknown:
+            raise ValueError(unknown_names("metric", unknown, _MCMC_METRICS))
 
     if "rhat" in compute:
         add_rhat(
@@ -630,4 +654,26 @@ def add_mcmc_diagnostics(
             force=force,
         )
 
+    if "divergences" in compute:
+        _record_divergences(posterior)
+
     return None
+
+
+def _record_divergences(posterior: EmpiricalDistribution) -> None:
+    """Record the number of divergent transitions, when the run's sample statistics hold them.
+
+    The count is the sum of the ArviZ variable ``diverging`` over chains and
+    draws. A run whose method records no such variable is left without a
+    count, which the view reports as not recorded.
+    """
+    from ._datatree_store import _add_group, _get_or_create_mcmc_ds
+
+    annotations = getattr(posterior, "_annotations", None)
+    try:
+        diverging = annotations["arviz"]["sample_stats"]["diverging"]
+    except (KeyError, TypeError):
+        return
+    dataset = _get_or_create_mcmc_ds(posterior)
+    dataset.attrs["n_divergences"] = json.dumps(int(np.asarray(diverging.values).sum()))
+    _add_group(posterior, "diagnostics/mcmc", dataset)

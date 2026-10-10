@@ -40,7 +40,7 @@ class TestTheNumericKinds:
         vector = value.to_vector()
         assert vector.shape == (value.vector_size,)
         rebuilt = type(value).from_vector("rebuilt", value.spec, vector)
-        assert rebuilt.name == "rebuilt"
+        assert rebuilt.label == "rebuilt"
         np.testing.assert_array_equal(rebuilt.to_vector(), vector)
 
     def test_an_array_presents_its_shape(self):

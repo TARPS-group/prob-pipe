@@ -23,6 +23,7 @@ ProbPipe registers this method as ``blackjax_elliptical_slice``;
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 import blackjax
@@ -32,20 +33,27 @@ import jax.scipy.linalg as jsl
 import numpy as np
 
 from ..core._dispatch import Feasibility
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ..distributions._distribution import Distribution
-from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import FactoredDistribution
+from ..families import MultivariateNormal, Normal
+from ..operations._condition import InferenceMethod, _UnnormalizedConditional
+from ._approximate_distribution import make_posterior
 from ._inference_utils import (
-    build_likelihood_flat,
+    as_prng_key,
     build_mcmc_datatree,
-    extract_event_spec,
+    described,
     get_init_state,
-    get_prior,
     is_jax_traceable,
-    is_simple_model,
+    likelihood_flat,
+    model_factors,
+    observed_target,
     parallel_chain_map,
+    run_seed,
+    unfactored_model_reason,
 )
-from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
@@ -66,50 +74,35 @@ def _gaussian_prior_params(prior: Distribution) -> tuple[Array, Array] | None:
 
     Recognises:
 
-    * :class:`~probpipe.distributions.MultivariateNormal` — ``(loc, cov)``
-      directly.
-    * :class:`~probpipe.distributions.JointGaussian` — a named multi-field
-      Gaussian *with cross-covariance*. Its ``(mean_vector, covariance)``
-      are already laid out in the order of its components, so they
-      plug straight in; unlike a ``ProductDistribution`` of Gaussians, the
-      off-diagonal cross-field covariance is preserved.
-    * :class:`~probpipe.distributions.Normal` — ``(loc, diag(scale**2))``
-      with the scalar / batch promoted to a length-1 vector.
-    * :class:`~probpipe.distributions.ProductDistribution` whose
-      components are each themselves recognised — block-diagonal
-      assembly preserving the field order (the independent case).
+    * :class:`~probpipe.MultivariateNormal` — ``(loc, cov)`` directly.
+    * :class:`~probpipe.Normal` — ``(loc, diag(scale**2))`` with the scalar
+      promoted to a length-1 vector.
+    * a factored joint whose factors are each themselves recognised, as a
+      :class:`~probpipe.families.FactoredMultivariateGaussian` is —
+      block-diagonal assembly in the order of its components, the factors
+      being independent.
 
     Returns ``None`` for any other distribution: mixtures of Gaussians,
     conditional Gaussians whose covariance depends on other parameters,
     Gamma / Beta / Dirichlet / non-Gaussian priors, and improper
     priors (which have no ``_sample`` to draw the auxiliary from).
     """
-    from ..distributions import (
-        JointGaussian,
-        MultivariateNormal,
-        Normal,
-        ProductDistribution,
-    )
-
     if isinstance(prior, MultivariateNormal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
         cov = jnp.atleast_2d(jnp.asarray(prior.cov))
         return loc, cov
-
-    if isinstance(prior, JointGaussian):
-        mean = jnp.atleast_1d(jnp.asarray(prior.mean_vector))
-        cov = jnp.atleast_2d(jnp.asarray(prior.covariance))
-        return mean, cov
 
     if isinstance(prior, Normal):
         loc = jnp.atleast_1d(jnp.asarray(prior.loc))
         scale = jnp.atleast_1d(jnp.asarray(prior.scale))
         return loc, jnp.diag(scale**2)
 
-    if isinstance(prior, ProductDistribution):
+    if isinstance(prior, FactoredDistribution):
         locs: list[Array] = []
         covs: list[Array] = []
-        for _name, component in prior.components.items():
+        for component in prior.factors:
+            if not isinstance(component, Distribution):
+                return None
             sub = _gaussian_prior_params(component)
             if sub is None:
                 return None
@@ -147,7 +140,7 @@ def _run_ess_chains(
         mean=prior_mean,
         cov=prior_cov,
     )
-    key = jax.random.PRNGKey(random_seed)
+    key = as_prng_key(random_seed)
     chain_keys = jax.random.split(key, num_chains)
 
     def run_one_chain(chain_key):
@@ -186,61 +179,87 @@ def _run_ess_chains(
 
 def elliptical_slice(
     model: Distribution,
-    data: ArrayLike,
+    data: Record | Mapping[str, Any],
     *,
     num_results: int = 1000,
     num_warmup: int = 500,
-    num_chains: int = 1,
+    num_chains: int = 4,
     init: ArrayLike | None = None,
-    random_seed: int = 0,
-) -> ApproximateDistribution:
-    """Elliptical slice sampling for Gaussian-prior ``SimpleModel`` targets.
+) -> EmpiricalDistribution:
+    """Elliptical slice sampling of a joint with a Gaussian prior, at observed fields.
+
+    The joint is a factored one, such as ``likelihood * prior``. The factors that
+    produce the observed fields are the likelihood, and the others are the
+    prior, which must be Gaussian, as :func:`_gaussian_prior_params` recognizes.
+    The run's key is drawn from a workflow-owned random event, so
+    ``workflow_run(seed=...)`` reproduces the chains, and an unscoped call runs
+    fresh ones.
 
     Parameters
     ----------
-    model : SimpleModel
-        Must have a Gaussian prior recognised by
-        :func:`_gaussian_prior_params` (``MultivariateNormal``,
-        ``JointGaussian``, ``Normal``, or a ``ProductDistribution`` over
-        those).
-    data
-        Observed data, passed to ``model.likelihood.log_likelihood``.
-    num_results, num_warmup, num_chains
-        MCMC tuning parameters.
-    init
+    model : Distribution
+        The factored joint, whose factors that produce no observed field form a
+        ``MultivariateNormal``, a ``Normal``, or a factored joint over those.
+    data : Record or Mapping[str, Any]
+        The observed values, keyed by the fields they bind.
+    num_results : int
+        Number of draws each chain keeps.
+    num_warmup : int
+        Number of steps each chain runs before the draws it keeps.
+    num_chains : int
+        Number of chains, which all start at the initial state.
+    init : array-like or None
         Initial chain state in the flat parameter vector. Defaults to
         a sample from the prior.
-    random_seed
-        Seed for chain initialisation and sampling RNG.
 
     Returns
     -------
-    ApproximateDistribution
+    EmpiricalDistribution
         Posterior samples with chain structure and an annotations
         ArviZ-shaped ``DataTree`` carrying per-step ``subiter`` counts
         (the inner shrinkage iterations BlackJAX performed before
         accepting the proposal).
-    """
-    if not is_simple_model(model):
-        raise TypeError(
-            "elliptical_slice requires a SimpleModel "
-            "(bare SupportsUnnormalizedLogProb has no prior/likelihood "
-            "decomposition)"
-        )
-    prior = model._prior
-    likelihood = model._likelihood
-    gp = _gaussian_prior_params(prior)
-    if gp is None:
-        raise TypeError(f"elliptical_slice requires a Gaussian prior; got {type(prior).__name__}")
-    if data is None:
-        raise TypeError("elliptical_slice requires observed data")
 
+    Raises
+    ------
+    TypeError
+        If the joint at *data* has no prior and likelihood factors, or the prior
+        is not Gaussian.
+    """
+    return _elliptical_slice(
+        observed_target(model, data),
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        init=init,
+        random_seed=run_seed("blackjax_ess"),
+    )
+
+
+def _elliptical_slice(
+    target: Any,
+    *,
+    num_results: int,
+    num_warmup: int,
+    num_chains: int,
+    init: ArrayLike | None,
+    random_seed: int,
+) -> EmpiricalDistribution:
+    """Elliptical slice chains on the unnormalized conditional *target* of a factored joint."""
+    factors = model_factors(target)
+    if factors is None:
+        raise TypeError(f"cannot run elliptical_slice: {unfactored_model_reason(target)}")
+    gp = _gaussian_prior_params(factors.prior)
+    if gp is None:
+        raise TypeError(
+            f"cannot run elliptical_slice: the prior must be Gaussian; got {described(factors.prior)}"
+        )
     prior_mean, prior_cov = gp
-    init_state = get_init_state(model, init, random_seed=random_seed)
+    init_state = get_init_state(factors.prior, init, random_seed=random_seed)
 
     # ESS consumes the log-likelihood alone — the prior is folded into
     # the proposal mechanism via the ellipse construction.
-    loglikelihood_fn = build_likelihood_flat(prior, likelihood, data)
+    loglikelihood_fn = likelihood_flat(factors)
 
     chains, warmups, sample_stats = _run_ess_chains(
         loglikelihood_fn,
@@ -254,13 +273,12 @@ def elliptical_slice(
     )
 
     annotations = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
-    event_spec = extract_event_spec(model)
     return make_posterior(
         chains,
-        parents=(prior,),
-        algorithm="elliptical_slice",
+        parents=(target,),
+        method="elliptical_slice",
         annotations=annotations,
-        event_spec=event_spec,
+        event_spec=target.event_spec,
         num_results=num_results,
         num_warmup=num_warmup,
         num_chains=num_chains,
@@ -275,10 +293,11 @@ def elliptical_slice(
 class BlackJAXESSMethod(InferenceMethod):
     """Elliptical slice sampling on top of ``blackjax.elliptical_slice``.
 
-    Registered as ``blackjax_elliptical_slice`` at priority 75. Applies to a
-    ``SimpleModel`` with a Gaussian prior, detected by
-    :func:`_gaussian_prior_params`, observed data, and a JAX-traceable
-    likelihood; ``check()`` enforces that class, not the priority.
+    Registered as ``blackjax_elliptical_slice`` at priority 75. Applies to the
+    unnormalized conditional of a factored joint at observed fields whose other
+    factors form a Gaussian prior, detected by :func:`_gaussian_prior_params`,
+    and whose likelihood is JAX-traceable; ``check()`` enforces that class, not
+    the priority.
 
     Notes
     -----
@@ -286,55 +305,38 @@ class BlackJAXESSMethod(InferenceMethod):
     ranks above ``blackjax_rwmh`` (55) and below the NUTS backends (82–88).
     """
 
+    _method_options = ("init", "num_chains", "num_results", "num_warmup")
+
     @property
     def name(self) -> str:
         return "blackjax_elliptical_slice"
 
     def supported_types(self) -> tuple[type, ...]:
-        return (Distribution,)
+        return (_UnnormalizedConditional,)
 
     @property
     def priority(self) -> int:
         return 75
 
-    def check(self, dist: Any, observed: Any, **kwargs: Any) -> Feasibility:
-        if not is_simple_model(dist):
-            return Feasibility(
-                feasible=False,
-                description=(
-                    "ESS requires a SimpleModel; bare "
-                    "SupportsUnnormalizedLogProb has no prior/likelihood "
-                    "decomposition"
-                ),
-            )
-        prior = get_prior(dist)
-        gp = _gaussian_prior_params(prior)
+    def check(self, target: Any, /, **kwargs: Any) -> Feasibility:
+        """Whether the target is a joint with a Gaussian prior at data, with a traceable likelihood."""
+        factors = model_factors(target)
+        if factors is None:
+            return Feasibility(feasible=False, description=unfactored_model_reason(target))
+        gp = _gaussian_prior_params(factors.prior)
         if gp is None:
             return Feasibility(
                 feasible=False,
-                description=(f"ESS requires a Gaussian prior; got {type(prior).__name__}"),
-            )
-        if observed is None:
-            return Feasibility(
-                feasible=False,
-                description="ESS requires observed data for the likelihood",
-            )
-        if isinstance(observed, dict):
-            return Feasibility(
-                feasible=False,
-                description="Does not support dict-based conditioning",
+                description=f"the prior must be Gaussian; got {described(factors.prior)}",
             )
         # The runner traces the BlackJAX ESS step under ``lax.scan``;
         # there's no eager fallback. Catching non-traceable likelihoods
         # here lets auto-dispatch slide down to RWMH instead.
         try:
-            likelihood = dist._likelihood
-            flat_init = jnp.asarray(gp[0])
-            loglikelihood_fn = build_likelihood_flat(prior, likelihood, observed)
-            if not is_jax_traceable(loglikelihood_fn, flat_init):
+            if not is_jax_traceable(likelihood_flat(factors), jnp.asarray(gp[0])):
                 return Feasibility(
                     feasible=False,
-                    description="Log-likelihood is not JAX-traceable",
+                    description="the log-likelihood is not JAX-traceable",
                 )
         except Exception as e:
             return Feasibility(
@@ -343,13 +345,14 @@ class BlackJAXESSMethod(InferenceMethod):
             )
         return Feasibility(feasible=True)
 
-    def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        return elliptical_slice(
-            dist,
-            observed,
+    def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
+        """Elliptical slice chains on the joint the target conditions, at its data."""
+        self._check_options(kwargs)
+        return _elliptical_slice(
+            target,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),
-            num_chains=kwargs.get("num_chains", 1),
+            num_chains=kwargs.get("num_chains", 4),
             init=kwargs.get("init"),
-            random_seed=kwargs.get("random_seed", 0),
+            random_seed=run_seed(self.name),
         )

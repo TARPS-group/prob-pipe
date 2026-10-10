@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import operator
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
@@ -13,6 +12,8 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ._repr import format_dtype, public_class_name, term_repr, type_name
+from ._shapes import ShapeLike, _as_dim, _as_dim_name, _as_shape
 from .constraints import Constraint
 from .named_tree import NamedTree
 
@@ -56,20 +57,11 @@ class TermSpec(ABC):
         Raises
         ------
         TypeError
-            If a size is not an integer.
+            If a size is not an integer or is a ``bool``.
         ValueError
             If a size is negative.
         """
-        bindings = {}
-        for name, size in sizes.items():
-            try:
-                size = operator.index(size)
-            except TypeError:
-                raise TypeError(f"with_dim_sizes: {name}= must be an integer") from None
-            if size < 0:
-                raise ValueError(f"with_dim_sizes: {name}= must be non-negative")
-            bindings[name] = size
-        return self._substitute_dims(bindings)
+        return self._substitute_dims(_dim_sizes(sizes))
 
     def with_dim_names(self, **names: str) -> Self:
         """Return a spec with symbolic dimensions renamed simultaneously.
@@ -77,9 +69,9 @@ class TermSpec(ABC):
         Parameters
         ----------
         **names : str
-            Old dimension names mapped to non-empty new names. Fixed sizes and
-            unrelated metadata are preserved; unknown old names are ignored.
-            Renaming two symbols to one intentionally joins their scopes.
+            Old dimension names mapped to new names, each a Python identifier.
+            Fixed sizes and unrelated metadata are preserved; unknown old names
+            are ignored. Renaming two symbols to one joins their scopes.
 
         Returns
         -------
@@ -89,11 +81,11 @@ class TermSpec(ABC):
         Raises
         ------
         TypeError
-            If a new name is not a non-empty string.
+            If a new name is not a string.
+        ValueError
+            If a new name is not a Python identifier.
         """
-        if any(not isinstance(name, str) or not name for name in names.values()):
-            raise TypeError("dimension names must be non-empty strings")
-        return self._substitute_dims(names)
+        return self._substitute_dims(_dim_renames(names))
 
     def bind_dims_from_value(self, value: Any) -> Self:
         """Unify against a value and return the resulting spec.
@@ -116,7 +108,7 @@ class TermSpec(ABC):
             If kinds, structure, or repeated dimension sizes disagree.
         """
         bindings: dict[str, int] = {}
-        self._bind_dims_from_value(value, bindings, type(self).__name__)
+        self._bind_dims_from_value(value, bindings, "value")
         return self._substitute_dims(bindings)
 
     def bind_dims_from_spec(self, other: TermSpec) -> Self:
@@ -125,8 +117,9 @@ class TermSpec(ABC):
         Parameters
         ----------
         other : TermSpec
-            An authoritative spec. Dimensions used as sizes must be concrete;
-            dimension names on the two sides are not unified as aliases.
+            The spec to unify with, in one scope: a symbolic dimension on either
+            side binds to the size the other side gives at its axis, and a name
+            both sides declare is one dimension, which may stay free.
 
         Returns
         -------
@@ -138,12 +131,13 @@ class TermSpec(ABC):
         TypeError
             If the argument is not a spec.
         ValueError
-            If kinds, structure, or repeated sizes disagree.
+            If kinds, structure, or repeated sizes disagree, or two different
+            symbolic dimensions meet at one axis, which ``with_dim_names`` resolves.
         """
         if not isinstance(other, TermSpec):
-            raise TypeError("bind_dims_from_spec expects a TermSpec")
+            raise TypeError(f"bind_dims_from_spec() expects a TermSpec, got {type(other).__name__}")
         bindings: dict[str, int] = {}
-        _unify_specs(self, other, bindings, type(self).__name__)
+        _unify_specs(self, other, bindings, "other")
         return self._substitute_dims(bindings)
 
     @property
@@ -194,11 +188,11 @@ class TermSpec(ABC):
         """
         if not self.free_dims:
             if not self.is_valid(value):
-                raise ValueError(f"{path} does not conform to its field spec ({self!r})")
+                raise _kind_mismatch(path, self, value)
             return
         raise ValueError(
-            f"{path} declares {type(self).__name__}, whose dimensions this pass cannot "
-            f"bind from a value; bind them with with_dim_sizes before validating against one"
+            f"cannot check {path} against a {type(self).__name__} with symbolic dimensions "
+            f"{sorted(self.free_dims)}; set their sizes with with_dim_sizes() first"
         )
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
@@ -208,6 +202,15 @@ class TermSpec(ABC):
         validates a declaration against another declaration rather than against a
         live value. Binding follows the same rules: sizes go into the caller's
         *bindings*, a name binds once, and a disagreement raises.
+
+        Parameters
+        ----------
+        actual : TermSpec
+            The spec to bind from, such as a produced term's spec.
+        bindings : dict of str to int
+            The caller's dimension scope, which receives each size bound.
+        path : str
+            The location of this spec, which an error message names.
 
         Returns
         -------
@@ -260,10 +263,12 @@ class NumericSpec(TermSpec):
             the dimensions that must first be made concrete.
         """
         if not self.is_concrete:
-            dimensions = ", ".join(sorted(self.free_dims))
+            free = sorted(self.free_dims)
+            noun = "dimension" if len(free) == 1 else "dimensions"
+            sizes = ", ".join(f"{name}=..." for name in free)
             raise ValueError(
-                f"vector_size is undefined for a polymorphic {type(self).__name__}; "
-                f"unbound dimensions: {dimensions}"
+                f"vector_size needs concrete dimensions, but {type(self).__name__} has symbolic "
+                f"{noun} {', '.join(free)}; set the sizes with with_dim_sizes({sizes})"
             )
         return self._vector_size()
 
@@ -273,19 +278,98 @@ class NumericSpec(TermSpec):
         raise NotImplementedError(f"{type(self).__name__}._vector_size is not implemented")
 
 
+def _dim_sizes(sizes: Mapping[str, Any]) -> dict[str, int]:
+    """The ``with_dim_sizes`` keywords, each size read as a non-negative ``int``.
+
+    Parameters
+    ----------
+    sizes : Mapping of str to Any
+        The sizes by dimension name, as the caller gave them.
+
+    Returns
+    -------
+    dict of str to int
+        Each size as a Python ``int``.
+
+    Raises
+    ------
+    TypeError
+        If a size is not an integer or is a ``bool``.
+    ValueError
+        If a size is negative.
+    """
+    return {
+        name: _as_dim(size, what=f"with_dim_sizes(): the size for {name!r}", symbolic=False)
+        for name, size in sizes.items()
+    }
+
+
+def _dim_renames(names: Mapping[str, Any]) -> dict[str, str]:
+    """The ``with_dim_names`` keywords, each new name checked as a dimension name.
+
+    Parameters
+    ----------
+    names : Mapping of str to Any
+        The new names by old dimension name, as the caller gave them.
+
+    Returns
+    -------
+    dict of str to str
+        Each new name as a Python ``str``.
+
+    Raises
+    ------
+    TypeError
+        If a new name is not a string.
+    ValueError
+        If a new name is not a Python identifier.
+    """
+    renames = {}
+    for old, new in names.items():
+        if not isinstance(new, str):
+            raise TypeError(
+                f"with_dim_names(): the new name for {old!r} must be a str, "
+                f"got {type_name(new)} {new!r}"
+            )
+        renames[old] = _as_dim_name(new, what=f"with_dim_names(): the new name for {old!r}")
+    return renames
+
+
 @dataclass(frozen=True, eq=False, init=False)
 class NumericArraySpec(NumericSpec):
     """A numeric-array value spec: an event ``shape`` plus optional metadata.
 
     ``dtype`` and ``support`` are optional (default ``None``); when unset the
     spec describes its shape only. Each dimension is either a fixed
-    non-negative integer or a non-empty symbolic name. Repeated names must have
-    the same size when a value is validated. ``dtype`` accepts any ``numpy.dtype``
+    non-negative integer or a symbolic dimension name, which is a Python
+    identifier such as ``n_obs``. Repeated names must have the same size when a
+    value is validated. ``dtype`` accepts any ``numpy.dtype``
     spelling (a dtype instance, a scalar type such as ``jnp.float32``, or a
     string such as ``"float32"``) and is normalised to ``numpy.dtype`` at
     construction, so equal dtypes compare and hash equal however they were
     spelled. A spec with ``dtype=None`` is **not** equal to one with a
     concrete dtype. ``support`` must be hashable when set.
+
+    Parameters
+    ----------
+    shape : int, str, or sequence of int or str
+        The event shape, which holds one dimension per axis and is stored as a
+        tuple. A single int or str is one dimension: ``3`` means ``(3,)`` and
+        ``"n"`` means ``("n",)``. A dimension that is an integer of another type,
+        such as ``numpy.int64``, is stored as a Python ``int``.
+    dtype : dtype-like, optional
+        The dtype of the values. Stored as a ``numpy.dtype``.
+    support : Constraint, optional
+        The constraint the entries of a value satisfy.
+
+    Raises
+    ------
+    TypeError
+        If *shape* is not an int, a str, or an iterable of them, or a dimension
+        is a ``bool`` or is neither an integer nor a string.
+    ValueError
+        If a dimension is a negative integer or a name that is not a Python
+        identifier.
     """
 
     shape: tuple[int | str, ...]
@@ -294,23 +378,11 @@ class NumericArraySpec(NumericSpec):
 
     def __init__(
         self,
-        shape: Iterable[int | str],
+        shape: ShapeLike,
         dtype: npt.DTypeLike | None = None,
         support: Constraint | None = None,
     ) -> None:
-        """Store the shape and metadata, normalising *shape* and *dtype*.
-
-        The fields are the *stored* types; the wider parameters here are the
-        accepted spellings, normalised away before assignment.
-        """
-        dimensions = tuple(shape)
-        if not all(
-            (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in dimensions
-        ):
-            raise TypeError(
-                "NumericArraySpec.shape must contain only non-negative ints or non-empty "
-                f"symbolic dimension names, got {shape!r}"
-            )
+        dimensions = _as_shape(shape, what="NumericArraySpec shape")
         if support is not None:
             _require_hashable(support, context="NumericArraySpec.support")
         object.__setattr__(self, "shape", dimensions)
@@ -330,29 +402,23 @@ class NumericArraySpec(NumericSpec):
         """
         actual_shape = _full_array_shape_or_none(value)
         if actual_shape is None:
-            raise ValueError(
-                f"{path} does not conform to its field spec ({self!r}): got {type(value).__name__}"
-            )
+            raise _kind_mismatch(path, self, value)
         _unify_array_shape(self.shape, actual_shape, bindings, path)
         if self.dtype is not None:
             actual_dtype = _numpy_dtype_of(value)
-            if actual_dtype is None or not np.can_cast(
-                actual_dtype, self.dtype, casting="same_kind"
-            ):
-                raise ValueError(f"{path} does not conform to its field spec ({self!r})")
+            if actual_dtype is None:
+                raise _kind_mismatch(path, self, value)
+            if not np.can_cast(actual_dtype, self.dtype, casting="same_kind"):
+                raise _dtype_mismatch(path, actual_dtype, self.dtype)
 
     def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
-        """Bind the symbolic entries of :attr:`shape` from *actual*'s own shape."""
+        """Unify the entries of :attr:`shape` with *actual*'s, symbols on both sides."""
         if not isinstance(actual, NumericArraySpec):
             return False
-        if any(isinstance(entry, str) for entry in actual.shape):
-            raise ValueError(
-                f"{path} has a polymorphic actual template; concrete dimensions are required"
-            )
         _unify_array_shape(self.shape, actual.shape, bindings, path)
         if self.dtype is not None and actual.dtype is not None:
             if not np.can_cast(actual.dtype, self.dtype, casting="same_kind"):
-                raise ValueError(f"{path} dtype {actual.dtype} does not conform to {self.dtype}")
+                raise _dtype_mismatch(path, actual.dtype, self.dtype)
         return True
 
     def _substitute_dims(self, bindings: Mapping[str, int | str]) -> NumericArraySpec:
@@ -388,6 +454,15 @@ class NumericArraySpec(NumericSpec):
     def __hash__(self) -> int:
         return hash((self.shape, self.dtype, self.support))
 
+    def __repr__(self) -> str:
+        """The shape, then the dtype and the support where they are set."""
+        fields = [("shape", repr(self.shape))]
+        if self.dtype is not None:
+            fields.append(("dtype", format_dtype(self.dtype)))
+        if self.support is not None:
+            fields.append(("support", repr(self.support)))
+        return term_repr(public_class_name(type(self)), None, fields)
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a numeric array (or scalar) matching this spec.
 
@@ -412,10 +487,39 @@ class NumericArraySpec(NumericSpec):
         runs under ``jax.jit`` unchanged.
         """
         try:
-            self._bind_dims_from_value(value, {}, type(self).__name__)
+            self._bind_dims_from_value(value, {}, "value")
         except ValueError:
             return False
         return True
+
+
+def _described(value: Any) -> str:
+    """*value* as a message names it: an array by its shape, anything else by its type."""
+    shape = getattr(value, "shape", None)
+    if shape is None or getattr(value, "dtype", None) is None or isinstance(value, TermSpec):
+        return type(value).__name__
+    return f"an array of shape {tuple(shape)}"
+
+
+def _kind_mismatch(path: str, spec: TermSpec, value: Any) -> ValueError:
+    """The error for the value at *path*, which is not of the kind *spec* declares."""
+    return ValueError(f"{path} does not conform to {spec!r}: got {_described(value)}")
+
+
+def _name_mismatch(actual: Iterable[str], declared: Iterable[str]) -> str:
+    """The declared names *actual* lacks and the names in it that are not declared."""
+    actual, declared = list(actual), list(declared)
+    missing = [name for name in declared if name not in actual]
+    unexpected = [name for name in actual if name not in declared]
+    parts = [f"missing {missing}"] if missing else []
+    if unexpected:
+        parts.append(f"unexpected {unexpected}")
+    return ", ".join(parts)
+
+
+def _dtype_mismatch(path: str, actual: np.dtype, declared: np.dtype) -> ValueError:
+    """The error for the array at *path*, whose dtype *actual* cannot stand for *declared*."""
+    return ValueError(f"{path} has dtype {actual}, which cannot be cast to the declared {declared}")
 
 
 def _unify_specs(expected: TermSpec, actual: TermSpec, bindings: dict[str, int], path: str) -> None:
@@ -448,56 +552,126 @@ def _unify_array_shape(
     actual: tuple[int | str, ...],
     bindings: dict[str, int],
     path: str,
-) -> tuple[int, ...]:
-    """Validate fixed dimensions and bind symbols against a concrete shape."""
+) -> tuple[int | str, ...]:
+    """Unify two shapes axis by axis in the caller's shared scope *bindings*.
+
+    A symbolic dimension on either side binds to the size the other side gives
+    at its axis, and a symbol already bound in *bindings* stands for its size.
+    The same symbol on both sides is one dimension and may stay free, while two
+    different symbols at one axis are different quantities until renamed to agree.
+
+    Parameters
+    ----------
+    declared : tuple of int or str
+        The expected shape, which an error message quotes.
+    actual : tuple of int or str
+        The shape found, of a value or of another declaration.
+    bindings : dict of str to int
+        The caller's dimension scope, which receives each size bound.
+    path : str
+        The location of the shape, which an error message names.
+
+    Returns
+    -------
+    tuple of int or str
+        The unified shape, with the dimensions still unbound left symbolic.
+
+    Raises
+    ------
+    ValueError
+        If the ranks differ, two sizes disagree, or two different unbound
+        symbols meet at one axis.
+    """
     if len(declared) != len(actual):
         raise ValueError(
             f"{path} has rank {len(actual)}, expected rank {len(declared)} from shape {declared!r}"
         )
-    concrete: list[int] = []
+    unified: list[int | str] = []
     for declared_dimension, actual_dimension in zip(declared, actual, strict=True):
-        if not isinstance(actual_dimension, int):
-            raise ValueError(f"{path} has non-concrete dimension {actual_dimension!r}")
-        if isinstance(declared_dimension, int):
-            if declared_dimension != actual_dimension:
+        declared_size = (
+            bindings.get(declared_dimension, declared_dimension)
+            if isinstance(declared_dimension, str)
+            else declared_dimension
+        )
+        actual_size = (
+            bindings.get(actual_dimension, actual_dimension)
+            if isinstance(actual_dimension, str)
+            else actual_dimension
+        )
+        if isinstance(declared_size, int) and isinstance(actual_size, int):
+            if declared_size != actual_size:
+                if isinstance(declared_dimension, str):
+                    raise ValueError(
+                        f"{path} binds symbolic dimension {declared_dimension!r} to "
+                        f"{actual_size}, but it is already bound to {declared_size}"
+                    )
+                if isinstance(actual_dimension, str):
+                    raise ValueError(
+                        f"{path} binds symbolic dimension {actual_dimension!r} to "
+                        f"{declared_size}, but it is already bound to {actual_size}"
+                    )
                 raise ValueError(
-                    f"{path} has dimension {actual_dimension}, expected "
-                    f"{declared_dimension} from shape {declared!r}"
+                    f"{path} has dimension {actual_size}, expected "
+                    f"{declared_size} from shape {declared!r}"
                 )
+            unified.append(declared_size)
+        elif isinstance(declared_size, str) and isinstance(actual_size, int):
+            bindings[declared_size] = actual_size
+            unified.append(actual_size)
+        elif isinstance(declared_size, int) and isinstance(actual_size, str):
+            bindings[actual_size] = declared_size
+            unified.append(declared_size)
+        elif declared_size == actual_size:
+            unified.append(declared_size)
         else:
-            previous = bindings.setdefault(declared_dimension, actual_dimension)
-            if previous != actual_dimension:
-                raise ValueError(
-                    f"{path} binds symbolic dimension {declared_dimension!r} to "
-                    f"{actual_dimension}, but it is already bound to {previous}"
-                )
-        concrete.append(actual_dimension)
-    return tuple(concrete)
+            raise ValueError(
+                f"{path} has symbolic dimension {actual_size!r} where {declared_size!r} is "
+                f"expected; rename one with with_dim_names() so they match"
+            )
+    return tuple(unified)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class OpaqueSpec(TermSpec):
     """The fallback value spec, for a value no other spec describes.
 
-    An opaque value carries no exposed structure (a string, a DataFrame, an
-    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
-    must be hashable (or ``None``).
+    An opaque value carries no exposed structure, as a string, a DataFrame, or
+    an arbitrary Python object does.
+
+    Parameters
+    ----------
+    type : type or None
+        The Python type of the values the spec admits, which :meth:`is_valid`
+        checks. ``None`` admits every value that is not a mapping. Construction
+        from a value infers it.
+    meta : Hashable
+        Free-form metadata, such as units or a tag. It is part of the spec's
+        equality and hash, and it is never checked against a value or inferred,
+        so ``None`` unifies with a set ``meta``, as an open ``type`` does with a
+        set one.
+
+    Raises
+    ------
+    TypeError
+        If *type* is neither a class nor ``None``, or *meta* is not hashable.
     """
 
+    type: type | None = None
     meta: Hashable = None
 
     def __post_init__(self) -> None:
+        if self.type is not None and not isinstance(self.type, type):
+            raise TypeError(f"OpaqueSpec type must be a class or None, got {self.type!r}")
         _require_hashable(self.meta, context="OpaqueSpec.meta")
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a valid opaque value — anything but a mapping.
+        """Whether *value* is a valid opaque value: an instance of :attr:`type`, and no mapping.
 
-        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
-        ``Mapping``: a mapping denotes tree structure (a subtree), never a
-        leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`NumericArraySpec`, but
-        an explicitly-opaque field still accepts it. ``meta`` is metadata
-        about the spec and is not checked against the value.
+        A ``Mapping`` denotes tree structure, a subtree rather than a leaf, so no
+        opaque spec admits one. With no type every other value is valid,
+        including a numeric array or scalar, which a :class:`NumericArraySpec`
+        typically describes but an explicitly opaque field still accepts.
+        ``meta`` is not checked against the value.
 
         Notes
         -----
@@ -505,4 +679,79 @@ class OpaqueSpec(TermSpec):
         :class:`~probpipe.Record` construction materialises a mapping field
         value into a nested subtree.
         """
-        return not isinstance(value, Mapping)
+        if isinstance(value, Mapping):
+            return False
+        return self.type is None or isinstance(_opaque_value(value), self.type)
+
+    def _bind_dims_from_spec(self, actual: TermSpec, bindings: dict[str, int], path: str) -> bool:
+        """Check another opaque spec: types and ``meta`` each equal or one of them ``None``.
+
+        Parameters
+        ----------
+        actual : TermSpec
+            The spec to check against this one.
+        bindings : dict of str to int
+            The caller's dimension scope, which an opaque spec leaves unchanged.
+        path : str
+            The location of this spec, which the error message names.
+
+        Returns
+        -------
+        bool
+            Whether *actual* is an opaque spec; ``False`` leaves the caller to compare
+            the two specs instead.
+
+        Raises
+        ------
+        ValueError
+            If the two opaque specs do not unify.
+        """
+        if not isinstance(actual, OpaqueSpec):
+            return False
+        if not _agree(self.type, actual.type) or not _agree(self.meta, actual.meta):
+            raise ValueError(f"{path} spec {actual!r} does not conform to {self!r}")
+        return True
+
+    def __repr__(self) -> str:
+        """The type and the metadata where they are set, so an open spec reads ``OpaqueSpec()``."""
+        return term_repr(public_class_name(type(self)), None, self._repr_arguments())
+
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The type and the metadata where they are set, formatted for a repr."""
+        fields = []
+        if self.type is not None:
+            fields.append(("type", self.type.__qualname__))
+        if self.meta is not None:
+            fields.append(("meta", repr(self.meta)))
+        return fields
+
+
+def _agree(first: Any, second: Any) -> bool:
+    """Whether two opaque attributes unify: equal, or one of them ``None``."""
+    return first is None or second is None or first == second
+
+
+def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
+    """The unification of two opaque specs that unify, which takes the known type and ``meta``."""
+    unified = OpaqueSpec(
+        type=first.type if first.type is not None else second.type,
+        meta=first.meta if first.meta is not None else second.meta,
+    )
+    return first if unified == first else second if unified == second else unified
+
+
+def _opaque_value(value: Any) -> Any:
+    """*value*, or the value it wraps when it is a tracked opaque value, an ``Opaque``."""
+    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(value, "value"):
+        return value.value
+    return value
+
+
+def _opaque_spec_of(values: Iterable[Any]) -> OpaqueSpec:
+    """The opaque spec of *values*: the type they share exactly, or ``None`` when they differ.
+
+    A tracked opaque value counts by the value it wraps, and no values share no
+    type, so their spec admits any value.
+    """
+    types = {type(_opaque_value(value)) for value in values}
+    return OpaqueSpec(type=types.pop() if len(types) == 1 else None)

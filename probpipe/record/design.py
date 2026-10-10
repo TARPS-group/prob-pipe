@@ -21,6 +21,7 @@ import numpy as np
 
 from ..core._array_backend import _is_numeric_dtype
 from ..core._record_batch import RecordBatch
+from ..core._spec_base import OpaqueSpec, _opaque_spec_of
 from ..core._specs import RecordSpec
 
 __all__ = ["Design", "FullFactorialDesign"]
@@ -55,14 +56,15 @@ def _seq_to_column(
     values: Sequence,
     *,
     indices,
-) -> tuple[Any, tuple[int, ...] | None]:
+) -> tuple[Any, tuple[int, ...] | OpaqueSpec]:
     """Materialise ``values[indices]`` as a column array.
 
-    Returns ``(column, leaf_shape)``. For numeric values the column is
-    a ``jnp.ndarray`` and ``leaf_shape`` is ``()`` (scalar leaves) or
-    the trailing shape of the first element. For non-numeric values
+    Returns ``(column, field_spec)``. For numeric values the column is a
+    ``jnp.ndarray`` and ``field_spec`` is the leaf shape: ``()`` for scalar
+    leaves, or the trailing shape of the first element. For non-numeric values
     (strings, Python objects) the column is a ``numpy.ndarray`` with
-    ``dtype=object`` and ``leaf_shape`` is ``None`` (opaque leaf).
+    ``dtype=object`` and ``field_spec`` is the opaque spec of the type the
+    values share, which admits any value when they differ.
     """
     seq = list(values)
     if _is_numeric_sequence(seq):
@@ -70,7 +72,7 @@ def _seq_to_column(
         leaf_shape = tuple(arr.shape[1:])
         return arr[indices], leaf_shape
     obj = np.asarray(seq, dtype=object)
-    return obj[np.asarray(indices)], None
+    return obj[np.asarray(indices)], _opaque_spec_of(seq)
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +123,9 @@ class Design(RecordBatch):
         """A view of a design is a plain batch, not a design.
 
         The marginals are a statement about the whole design; a view over one
-        field holds none of them, so it takes the class that makes no such claim.
-        It keeps the ``design`` level, which is what the sweep layer zips on.
+        field holds none of them, so it takes the class that makes no such claim,
+        which is a ``NumericRecordBatch`` when the view's fields are numeric. It
+        keeps the ``design`` level, which is what the sweep layer zips on.
         """
         return RecordBatch
 
@@ -189,12 +192,12 @@ class FullFactorialDesign(Design):
         fields: dict[str, Any] = {}
         template_spec: dict[str, Any] = {}
         for name, values in zip(names, lists):
-            col, leaf_shape = _seq_to_column(
+            col, field_spec = _seq_to_column(
                 values,
                 indices=flat_indices[name],
             )
             fields[name] = col
-            template_spec[name] = leaf_shape
+            template_spec[name] = field_spec
 
         RecordBatch.__init__(
             self,
@@ -204,5 +207,5 @@ class FullFactorialDesign(Design):
             element_spec=RecordSpec(template_spec),
             axes_per_level=(1,),
         )
-        # The name is derived from the marginals, not user-typed.
+        # The label is derived from the marginals, not user-typed.
         object.__setattr__(self, "_marginals", dict(marginals))

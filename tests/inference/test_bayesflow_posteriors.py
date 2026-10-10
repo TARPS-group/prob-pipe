@@ -19,131 +19,118 @@ import numpy as np
 
 import probpipe as pp
 from probpipe import (
-    ApproximateDistribution,
+    EmpiricalDistribution,
     Normal,
     NumericRecord,
-    ProductDistribution,
+    NumericRecordBatch,
     condition_on,
     learn_amortized_posterior,
+    log_prob,
+    sample,
+    workflow_run,
 )
-from probpipe.modeling import GenerativeLikelihood, Likelihood
+from probpipe.core._dispatch import ResolutionError
+from probpipe.core._specs import NumericArraySpec, OutputSpec
+from probpipe.distributions import ConditionalDistribution
+from probpipe.distributions._capabilities import (
+    SupportsApproximateConditioning,
+    SupportsConditionalLogProb,
+    SupportsConditionalSampling,
+    SupportsLogProb,
+    SupportsSampling,
+    _is_normalized,
+)
+from probpipe.inference._bayesflow_posteriors import _AmortizedPosterior
+from probpipe.operations._condition import condition_on as condition_on_operation
+from tests._posterior import law_draws, method_of
 
-from ._bayesflow_helpers import theta_vec
+from ._bayesflow_helpers import SimulatorKernel, theta_vec
+
+pytestmark = pytest.mark.bayesflow
 
 
-class _ToyLikelihood(Likelihood, GenerativeLikelihood):
+def _toy(params, key):
     """Identifiable 2-parameter model: ``y = [a + b, a - b] + small noise``."""
+    t = theta_vec(params)  # structured record (training) or raw array (direct)
+    a, b = t[0], t[1]
+    return jnp.stack([a + b, a - b]) + 0.1 * jax.random.normal(key, (2,))
 
-    # ``log_likelihood`` is unused by the amortized path (only ``generate_data``
-    # is called); stubbed here just to satisfy the ``Likelihood`` protocol.
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
 
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)  # structured record (training) or raw array (direct)
-        a, b = t[0], t[1]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([a + b, a - b])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+def _toy_simulator():
+    return SimulatorKernel(_prior(), (2,), _toy)
+
+
+class _UniformBelowKernel(ConditionalDistribution, SupportsConditionalSampling):
+    """``x | z ~ Uniform(0, z)``, whose support depends on ``z`` and so is not declared."""
+
+    def __init__(self):
+        spec = NumericArraySpec((), "float32")
+        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+
+    def _condition_on(self, given, /, **options):
+        return pp.Uniform("x", 0.0, given["z"])
+
+    def _conditional_sample(self, given, key, sample_shape=()):
+        return pp.Uniform("x", 0.0, given["z"])._sample(key, sample_shape)
 
 
 def _prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        Normal(loc=0.0, scale=1.0, name="b"),
-    )
+    return Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
 
 
 def _observe(a, b, seed):
-    return _ToyLikelihood().generate_data(jnp.array([a, b]), 1, key=jax.random.PRNGKey(seed))[0]
+    return _toy(jnp.array([a, b]), jax.random.PRNGKey(seed))
 
 
-class _VecLikelihood(Likelihood, GenerativeLikelihood):
+def _vec(params, key):
     """Vector + scalar params [m0, m1, s]; y = [m0 + s, m1 - s] + small noise."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        m0, m1, s = t[0], t[1], t[2]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([m0 + s, m1 - s])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    t = theta_vec(params)
+    m0, m1, s = t[0], t[1], t[2]
+    return jnp.stack([m0 + s, m1 - s]) + 0.1 * jax.random.normal(key, (2,))
 
 
 def _vec_prior():
-    return ProductDistribution(
-        pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="m"),
-        Normal(loc=0.0, scale=1.0, name="s"),
+    return pp.MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2)) * Normal(
+        "s", loc=0.0, scale=1.0
     )
 
 
-class _SingleFieldLikelihood(Likelihood, GenerativeLikelihood):
+def _single_field(params, key):
     """Single (vector) parameter field: ``y = theta + small noise``."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        key = key if key is not None else jax.random.PRNGKey(0)
-        return t[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    return theta_vec(params) + 0.1 * jax.random.normal(key, (2,))
 
 
-class _NonJaxLikelihood(Likelihood, GenerativeLikelihood):
+def _non_jax(params, key):
     """A deliberately non-vmappable simulator: it concretizes the parameters
     (``float(...)``) and draws noise with numpy, so it runs only on the eager
     path (``sim_backend="sequential"``) -- ``jax.vmap`` would raise a tracer error."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = np.asarray(theta_vec(params))
-        a, b = float(t[0]), float(t[1])
-        seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**16))
-        noise = np.random.default_rng(seed).standard_normal((num_observations, 2))
-        return np.array([a + b, a - b]) + 0.1 * noise
+    t = np.asarray(theta_vec(params))
+    a, b = float(t[0]), float(t[1])
+    seed = int(jax.random.randint(key, (), 0, 2**16))
+    noise = np.random.default_rng(seed).standard_normal(2)
+    return np.array([a + b, a - b]) + 0.1 * noise
 
 
-class _ScalarLikelihood(Likelihood, GenerativeLikelihood):
+def _scalar(params, key):
     """One-parameter model: ``y = a + small noise`` (a single scalar param)."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        a = theta_vec(params)[0]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        return a + 0.1 * jax.random.normal(key, (num_observations, 1))
+    return theta_vec(params)[:1] + 0.1 * jax.random.normal(key, (1,))
 
 
-class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
+def _multi_field(params, key):
     """Three-field params (flat ``[a, b0, b1, c]``) -> an 8-d observation built
     from several param combinations, to exercise multiple mixed-shape parameter
     fields and higher-dimensional data."""
-
-    # ``log_likelihood`` is unused by the amortized path (see ``_ToyLikelihood``).
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        a, b0, b1, c = t[0], t[1], t[2], t[3]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, mean.shape[0]))
+    t = theta_vec(params)
+    a, b0, b1, c = t[0], t[1], t[2], t[3]
+    mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
+    return mean + 0.1 * jax.random.normal(key, mean.shape)
 
 
 def _multi_field_prior():
-    return ProductDistribution(
-        Normal(loc=0.0, scale=1.0, name="a"),
-        pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="b"),
-        Normal(loc=0.0, scale=1.0, name="c"),
+    return (
+        Normal("a", loc=0.0, scale=1.0)
+        * pp.MultivariateNormal("b", loc=jnp.zeros(2), cov=jnp.eye(2))
+        * Normal("c", loc=0.0, scale=1.0)
     )
 
 
@@ -151,79 +138,55 @@ def _multi_field_prior():
 _CONJ_SIGMA = 0.5
 
 
-class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
+def _conjugate(params, key):
     """Conjugate model (any dimension): prior ``theta ~ N(0, I)``, ``y = theta +
     sigma * noise``. The posterior is analytic -- ``N(y / (1 + sigma^2), sigma^2 /
     (1 + sigma^2) I)`` -- so the amortized posterior's mean *and* spread can be
     checked against it. The observation dimension follows the parameter dimension,
-    so one likelihood serves both the 2-D and 1-D calibration tests."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        key = key if key is not None else jax.random.PRNGKey(0)
-        t = theta_vec(params)
-        return t[None, :] + _CONJ_SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
+    so one simulator serves both the 2-D and 1-D calibration tests."""
+    t = theta_vec(params)
+    return t + _CONJ_SIGMA * jax.random.normal(key, t.shape)
 
 
-class _NamedFieldLikelihood(Likelihood, GenerativeLikelihood):
+def _conjugate_simulator(prior):
+    return SimulatorKernel(prior, (prior.event_spec.spec.vector_size,), _conjugate)
+
+
+def _named_field(params, key):
     """Accesses params strictly by field name (``params["a"]``), never positionally
-    -- locks the ``GenerativeLikelihood`` contract that training passes the prior's
+    -- locks the contract that training passes the simulator the prior's
     structured per-draw record (a flattened-vector regression raises here)."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        a, b = params["a"], params["b"]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([a + b, a - b])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    a, b = params["a"], params["b"]
+    return jnp.stack([a + b, a - b]) + 0.1 * jax.random.normal(key, (2,))
 
 
-class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
+def _positive(params, key):
     """Simulator for a constrained prior (positive ``r``, real ``m``):
     ``y = [r + m, r - m] + small noise``."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        t = theta_vec(params)
-        r, m = t[0], t[1]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([r + m, r - m])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
+    t = theta_vec(params)
+    r, m = t[0], t[1]
+    return jnp.stack([r + m, r - m]) + 0.1 * jax.random.normal(key, (2,))
 
 
 def _nested_prior():
-    """Nested ``ProductDistribution``: a sub-record ``outer`` (a
+    """Nested joint: a sub-record ``outer`` (a
     positive leaf ``r`` and a real leaf ``m``) plus a top-level real ``c`` --
     leaves ``outer/r``, ``outer/m``, ``c``. The ``Gamma`` leaf exercises a
     per-leaf bijector *under* nesting; ``flatten`` order is ``[r, m, c]``."""
-    return ProductDistribution(
-        name="joint",
-        outer={"r": pp.Gamma("r", 3.0, 1.0), "m": Normal(loc=0.0, scale=1.0, name="m")},
-        c=Normal(loc=0.0, scale=1.0, name="c"),
+    outer = (pp.Gamma("r", 3.0, 1.0) * Normal("m", loc=0.0, scale=1.0)).with_path_names(
+        {"r": "outer/r", "m": "outer/m"}
     )
+    return (outer * Normal("c", loc=0.0, scale=1.0)).with_label("joint")
 
 
-class _NestedLikelihood(Likelihood, GenerativeLikelihood):
+def _nested(params, key):
     """Nested params (``outer={r, m}``, ``c``) -> ``y = [r + c, m - c, r - m]`` +
     small noise. Reads the per-draw record by *leaf path* (``params["outer/r"]``)
     -- the leaf-keyed access the redesigned Record requires -- locking the
     structured-record contract under nesting; a flattened-vector regression
     would raise here."""
-
-    def log_likelihood(self, params, data):
-        return jnp.array(0.0)
-
-    def generate_data(self, params, num_observations, *, key=None):
-        r, m, c = params["outer/r"], params["outer/m"], params["c"]
-        key = key if key is not None else jax.random.PRNGKey(0)
-        mean = jnp.stack([r + c, m - c, r - m])
-        return mean[None, :] + 0.1 * jax.random.normal(key, (num_observations, 3))
+    r, m, c = params["outer/r"], params["outer/m"], params["c"]
+    return jnp.stack([r + c, m - c, r - m]) + 0.1 * jax.random.normal(key, (3,))
 
 
 def _nested_observe(r, m, c, seed):
@@ -231,23 +194,22 @@ def _nested_observe(r, m, c, seed):
     per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
     rec = NumericRecord.from_vector("nr", _nested_prior().event_spec.spec, jnp.array([r, m, c]))
-    return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
+    return _nested(rec, jax.random.PRNGKey(seed))
 
 
 @pytest.fixture(scope="module")
 def npe_model():
     """A briefly-trained NPE estimator, shared across the NPE tests."""
-    return learn_amortized_posterior(
-        _prior(),
-        _ToyLikelihood(),
-        method="npe",
-        num_simulations=3000,
-        epochs=6,
-        batch_size=256,
-        num_results=500,
-        random_seed=0,
-        verbose=0,
-    )
+    with workflow_run(seed=0):
+        return learn_amortized_posterior(
+            _prior(),
+            _toy_simulator(),
+            method="npe",
+            num_simulations=3000,
+            epochs=6,
+            batch_size=256,
+            verbose=0,
+        )
 
 
 class TestBayesFlowNPE:
@@ -255,11 +217,13 @@ class TestBayesFlowNPE:
         """The amortized posterior concentrates near the truth -- in *both*
         parameters. Both truths sit >0.5 from the prior mean (0), so neither
         assertion passes without the model actually learning the parameter."""
-        post = condition_on(npe_model, _observe(0.6, -0.6, seed=7))
-        draws = post.draws()
+        post = condition_on(npe_model, {"observation": _observe(0.6, -0.6, seed=7)})
+        draws = law_draws(post)
         a = float(np.mean(np.asarray(draws["a"])))
         b = float(np.mean(np.asarray(draws["b"])))
         # Loose, calibration-style tolerance (brief training, stochastic).
+        # Observed across four workflow seeds of the training: |a - 0.6|
+        # 0.08-0.17, |b + 0.6| 0.005-0.12.
         assert abs(a - 0.6) < 0.5
         assert abs(b - (-0.6)) < 0.5
 
@@ -268,110 +232,232 @@ class TestBayesFlowNPE:
         posterior means land on the correct side of zero (the defining property
         of amortized inference)."""
         mean_a_hi = float(
-            np.mean(np.asarray(condition_on(npe_model, _observe(1.0, 0.0, 2)).draws()["a"]))
+            np.mean(
+                np.asarray(
+                    law_draws(condition_on(npe_model, {"observation": _observe(1.0, 0.0, 2)}))["a"]
+                )
+            )
         )
         mean_a_lo = float(
-            np.mean(np.asarray(condition_on(npe_model, _observe(-1.0, 0.0, 3)).draws()["a"]))
+            np.mean(
+                np.asarray(
+                    law_draws(condition_on(npe_model, {"observation": _observe(-1.0, 0.0, 3)}))["a"]
+                )
+            )
         )
         assert mean_a_hi > 0 > mean_a_lo
 
     def test_contract(self, npe_model):
-        """``condition_on`` honours ``num_results`` (and its model default) and
-        ignores the MCMC-only kwargs; the result is a named
-        ``ApproximateDistribution``."""
-        post = condition_on.apply(
-            npe_model, _observe(0.0, 0.0, 1), num_results=300, num_warmup=99, num_chains=4
-        )
-        assert isinstance(post, ApproximateDistribution)
-        assert post.algorithm == "bayesflow_npe"
-        draws = post.draws()
-        # Fields named by the prior's declaration, 300 draws, no warmup/chains effect.
+        """``condition_on`` returns the learned law at the observation, which samples
+        the network and whose annotations name the method."""
+        post = condition_on(npe_model, {"observation": _observe(0.0, 0.0, 1)})
+        assert isinstance(post, SupportsSampling)
+        assert not isinstance(post, EmpiricalDistribution)
+        assert method_of(post) == "bayesflow_npe"
+        draws = law_draws(post, 300)
+        # Fields named by the prior's declaration, one row per draw.
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 300
         assert np.isfinite(np.asarray(draws["b"])).all()
-        # Omitting num_results falls back to the model default (500 here).
-        default_post = condition_on(npe_model, _observe(0.0, 0.0, 1))
-        assert np.asarray(default_post.draws()["a"]).reshape(-1).shape[0] == 500
+
+    def test_drawing_prints_no_progress_bar(self, npe_model, capfd):
+        """Drawing from the learned law prints none of BayesFlow's progress bars,
+        and BayesFlow's sampler keeps its own bar afterward."""
+        from bayesflow.approximators.helpers import samplers
+
+        bar = samplers.tqdm
+        post = condition_on(npe_model, {"observation": _observe(0.0, 0.0, 1)})
+        law_draws(post, 50)
+        assert "Sampling" not in capfd.readouterr().err
+        assert samplers.tqdm is bar
+
+    def test_a_coupling_flow_posterior_has_the_flow_density(self, npe_model):
+        """The kernel and its law claim the density, which equals the approximator's
+        own ``log_prob`` for a batch of values and for each value alone."""
+        observation = np.asarray(_observe(0.6, -0.6, seed=7), dtype="float32")
+        law = condition_on(npe_model, {"observation": observation})
+        assert isinstance(npe_model, SupportsConditionalLogProb)
+        assert isinstance(law, SupportsLogProb)
+        with workflow_run(seed=0):
+            draws = sample(law, sample_shape=(5,))
+        a, b = np.asarray(draws["a"]), np.asarray(draws["b"])
+        reference = npe_model._approximator.log_prob(
+            data={
+                "theta_0": a[:, None],
+                "theta_1": b[:, None],
+                "observation": np.tile(observation, (5, 1)),
+            }
+        )
+        scores = np.asarray(log_prob(law, draws))
+        np.testing.assert_allclose(scores, np.ravel(reference), rtol=1e-5, atol=1e-5)
+        one = float(np.asarray(log_prob(law, {"a": a[0], "b": b[0]})))
+        np.testing.assert_allclose(one, scores[0], rtol=1e-5)
+        given = {"observation": observation}
+        conditional = npe_model._conditional_log_prob(given, {"a": a[0], "b": b[0]})
+        np.testing.assert_allclose(float(conditional), one, rtol=1e-6)
+
+    def test_the_density_integrates_to_one(self, npe_model):
+        law = condition_on(npe_model, {"observation": _observe(0.6, -0.6, seed=7)})
+        grid = np.linspace(-3.0, 3.0, 241)
+        a, b = np.meshgrid(grid, grid, indexing="ij")
+        points = NumericRecordBatch(
+            "grid", {"a": jnp.asarray(a.ravel()), "b": jnp.asarray(b.ravel())}, "point"
+        )
+        density = np.exp(np.asarray(log_prob(law, points)))
+        assert density.sum() * (grid[1] - grid[0]) ** 2 == pytest.approx(1.0, abs=0.01)
+
+    def test_an_mcmc_option_is_refused(self, npe_model):
+        """Conditioning the posterior takes no method options and refuses them."""
+        with pytest.raises(
+            TypeError, match=r"takes no method_options; got \['num_chains', 'num_warmup'\]"
+        ):
+            condition_on.with_options(method_options={"num_warmup": 99, "num_chains": 4})(
+                npe_model, {"observation": _observe(0.0, 0.0, 1)}
+            )
 
     def test_observation_dim_mismatch(self, npe_model):
         """Conditioning on wrong-size observed data raises a clear error rather
         than an opaque keras shape failure."""
-        with pytest.raises(ValueError, match="conditioning shape is fixed"):
-            condition_on(npe_model, np.zeros(5, dtype="float32"))
+        with pytest.raises(ValueError, match="observed data has 5 values, but"):
+            condition_on(npe_model, {"observation": np.zeros(5, dtype="float32")})
 
-    @pytest.mark.parametrize("bad", [0, -5])
-    def test_condition_rejects_nonpositive_num_results(self, npe_model, bad):
-        """Sample-time num_results is validated like the train-time one: zero or
-        negative fails fast at the ProbPipe boundary."""
-        with pytest.raises(ValueError, match="positive integer"):
-            condition_on(npe_model, _observe(0.0, 0.0, 2), num_results=bad)
-
-    def test_direct_sampling_not_implemented(self, npe_model):
-        """BayesFlowModel has no direct sampler: ``_sample`` raises
-        NotImplementedError -- the signal Function's dispatch fallback
-        catches -- pointing to condition_on and the prior/simulator components.
-        The properties pass the training inputs through (which remain available
-        for forward simulation by hand)."""
-        with pytest.raises(NotImplementedError, match="condition_on"):
-            npe_model._sample(jax.random.PRNGKey(0))
+    def test_the_model_claims_no_direct_sampling(self, npe_model):
+        """The amortized posterior is a kernel, so it claims SupportsSampling only
+        at an observation; its prior and simulator properties are the joint it
+        was trained on."""
+        assert not isinstance(npe_model, SupportsSampling)
         assert tuple(npe_model.prior.event_spec.components) == ("a", "b")
-        assert isinstance(npe_model.simulator, _ToyLikelihood)
+        assert isinstance(npe_model.simulator, SimulatorKernel)
 
-    def test_condition_random_seed_reproducible(self, npe_model):
-        """The amortized path honours ``random_seed`` at condition time: the same
-        seed reproduces the draws exactly; a different seed changes them."""
-        obs = _observe(0.3, 0.1, 4)
-        d1 = np.asarray(condition_on(npe_model, obs, random_seed=11).draws()["a"]).reshape(-1)
-        d2 = np.asarray(condition_on(npe_model, obs, random_seed=11).draws()["a"]).reshape(-1)
-        d3 = np.asarray(condition_on(npe_model, obs, random_seed=12).draws()["a"]).reshape(-1)
-        np.testing.assert_array_equal(d1, d2)
-        assert not np.array_equal(d1, d3)
+    def test_it_is_a_kernel_from_the_observation_to_the_parameters(self, npe_model):
+        assert isinstance(npe_model, ConditionalDistribution)
+        assert isinstance(npe_model, SupportsApproximateConditioning)
+        assert isinstance(npe_model, SupportsConditionalSampling)
+        assert list(npe_model.given_spec) == ["observation"]
+        assert npe_model.event_spec == npe_model.prior.event_spec
+
+    def test_conditioning_evaluates_it_with_no_inference(self, npe_model):
+        """Conditioning on an observation curries the kernel, which is approximate,
+        and returns a law that samples, so no inference method runs."""
+        observation = {"observation": _observe(0.5, 0.0, 0)}
+        report = condition_on_operation.check(npe_model, observation)
+        assert (report.route, report.method, report.exact) == ("curry", None, False)
+        law = condition_on_operation(npe_model, observation)
+        assert isinstance(law, SupportsSampling)
+        assert _is_normalized(law)
+        assert tuple(law.event_spec.components) == ("a", "b")
+
+    def test_a_parameter_given_with_the_observation_is_conditioned_by_bayes_rule(self, npe_model):
+        """Conditioning a parameter is Bayes' rule on the learned law, which inference
+        normalizes through the coupling flow's density, so the result is the law of
+        the other parameter."""
+        given = {"observation": _observe(0.5, 0.0, 0), "a": 0.5}
+        budgets = {"num_warmup": 200, "num_results": 400}
+        with workflow_run(seed=0):
+            law = condition_on_operation.with_options(method_options=budgets)(npe_model, given)
+        assert isinstance(law, EmpiricalDistribution)
+        assert tuple(law.event_spec.components) == ("b",)
+        # Observed across four workflow seeds: |mean of b| 0.009-0.056.
+        assert abs(float(np.asarray(pp.mean(law)["mean(b)"]).ravel()[0])) < 0.5
+
+    def test_without_a_density_a_given_parameter_is_not_left_free(self, npe_model):
+        """A posterior whose network gives no density has no route for Bayes' rule, so
+        the call raises rather than drop the parameter."""
+        bare = _AmortizedPosterior(
+            npe_model._approximator,
+            npe_model.prior,
+            npe_model.simulator,
+            method="npe",
+            data_dim=2,
+            bijectors=npe_model._bijectors,
+        )
+        given = {"observation": _observe(0.5, 0.0, 0), "a": 0.5}
+        report = condition_on_operation.check(bare, given)
+        assert report.route != "approximate_conditioning"
+        with pytest.raises(ResolutionError):
+            condition_on_operation(bare, given)
+
+    @pytest.mark.parametrize("keys", [("observation", "typo"), ("obsrevation",)])
+    def test_a_key_that_names_no_field_raises(self, npe_model, keys):
+        given = dict.fromkeys(keys, _observe(0.5, 0.0, 0))
+        with pytest.raises(ResolutionError):
+            condition_on_operation(npe_model, given)
+
+    def test_its_conditioning_reads_the_observation_slot_alone(self, npe_model):
+        with pytest.raises(KeyError, match="typo"):
+            npe_model._condition_on({"observation": _observe(0.5, 0.0, 0), "typo": 1.0})
+
+    def test_exact_only_refuses_it(self, npe_model):
+        view = condition_on_operation.with_options(exact_only=True)
+        with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
+            view(npe_model, {"observation": _observe(0.5, 0.0, 0)})
+
+    def test_the_draws_follow_the_workflow_seed(self, npe_model):
+        law = condition_on(npe_model, {"observation": _observe(0.3, 0.1, 4)})
+        with workflow_run(seed=11):
+            first = np.asarray(law_draws(law, 300)["a"]).reshape(-1)
+        with workflow_run(seed=11):
+            second = np.asarray(law_draws(law, 300)["a"]).reshape(-1)
+        with workflow_run(seed=12):
+            third = np.asarray(law_draws(law, 300)["a"]).reshape(-1)
+        assert first.shape == (300,)
+        np.testing.assert_array_equal(first, second)
+        assert not np.array_equal(first, third)
+
+    def test_a_draw_at_an_observation_has_the_parameters_kind(self, npe_model):
+        given = {"observation": _observe(0.5, 0.0, 0)}
+        draws = npe_model._conditional_sample(given, jax.random.PRNGKey(0), (3,))
+        assert {name: np.shape(draws[name]) for name in ("a", "b")} == {"a": (3,), "b": (3,)}
+
+    def test_provenance_names_the_joint_it_was_trained_on(self, npe_model):
+        record = npe_model.provenance
+        parents = [parent.label for parent in record.parents]
+        assert npe_model.prior.label in parents
+        assert npe_model.simulator.label in parents
 
     def test_repr(self, npe_model):
-        """``repr`` surfaces the method and the default draw count."""
+        """``repr`` names the method the posterior was learned with."""
         r = repr(npe_model)
         assert "method='npe'" in r
-        assert "num_results=500" in r
 
 
 class TestBayesFlowMethods:
     @pytest.mark.parametrize("method", ["npe", "fmpe", "cmpe"])
     def test_methods_smoke(self, method):
         """Each amortized method trains and conditions, returning named draws."""
-        model = learn_amortized_posterior(
-            _prior(),
-            _ToyLikelihood(),
-            method=method,
-            num_simulations=1500,
-            epochs=3,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        post = condition_on.apply(model, _observe(0.5, 0.0, 0))
-        assert post.algorithm == f"bayesflow_{method}"
-        draws = post.draws()
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _prior(),
+                _toy_simulator(),
+                method=method,
+                num_simulations=1500,
+                epochs=3,
+                batch_size=256,
+                verbose=0,
+            )
+        post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
+        assert method_of(post) == f"bayesflow_{method}"
+        # Only NPE's coupling flow computes the learned law's density.
+        assert isinstance(model, SupportsConditionalLogProb) == (method == "npe")
+        assert isinstance(post, SupportsLogProb) == (method == "npe")
+        draws = law_draws(post, 200)
         assert np.isfinite(np.asarray(draws["a"])).all()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
 
     def test_vector_valued_field(self):
         """A vector-valued parameter field round-trips through the per-field
         reshape/concatenate and returns named draws of the right shape."""
-        model = learn_amortized_posterior(
-            _vec_prior(),
-            _VecLikelihood(),
-            method="npe",
-            num_simulations=2000,
-            epochs=4,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        obs = _VecLikelihood().generate_data(
-            jnp.array([0.5, -0.5, 0.2]), 1, key=jax.random.PRNGKey(5)
-        )[0]
-        draws = condition_on(model, obs).draws()
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _vec_prior(),
+                SimulatorKernel(_vec_prior(), (2,), _vec),
+                method="npe",
+                num_simulations=2000,
+                epochs=4,
+                batch_size=256,
+                verbose=0,
+            )
+        obs = _vec(jnp.array([0.5, -0.5, 0.2]), jax.random.PRNGKey(5))
+        draws = law_draws(condition_on(model, {"observation": obs}), 200)
         m = np.asarray(draws["m"]).reshape(200, -1)
         s = np.asarray(draws["s"]).reshape(200, -1)
         assert m.shape == (200, 2)  # the (2,)-vector field is preserved
@@ -384,44 +470,41 @@ class TestBayesFlowMethods:
         import bayesflow as bf
 
         net = bf.networks.CouplingFlow()
-        model = learn_amortized_posterior(
-            _prior(),
-            _ToyLikelihood(),
-            method="npe",
-            inference_network=net,
-            num_simulations=1500,
-            epochs=3,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _prior(),
+                _toy_simulator(),
+                method="npe",
+                inference_network=net,
+                num_simulations=1500,
+                epochs=3,
+                batch_size=256,
+                verbose=0,
+            )
         # The exact instance passed in is the one used (not a method default).
         assert model._approximator.inference_network is net
-        post = condition_on(model, _observe(0.5, 0.0, 0))
-        assert np.asarray(post.draws()["a"]).reshape(-1).shape[0] == 200
+        assert isinstance(model, SupportsConditionalLogProb)
+        post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
+        assert np.asarray(law_draws(post, 200)["a"]).reshape(-1).shape[0] == 200
 
     def test_single_field_prior(self):
-        """A single-field prior (not a ProductDistribution) is supported: its
+        """A single-field prior (not a factored joint) is supported: its
         draws are not field-indexable, but the canonical flat layout drives the
         per-field split, so it round-trips end-to-end to named draws."""
 
-        prior = pp.MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="theta")
-        model = learn_amortized_posterior(
-            prior,
-            _SingleFieldLikelihood(),
-            method="npe",
-            num_simulations=1500,
-            epochs=3,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        obs = _SingleFieldLikelihood().generate_data(
-            jnp.array([0.5, -0.5]), 1, key=jax.random.PRNGKey(4)
-        )[0]
-        draws = condition_on(model, obs).draws()
+        prior = pp.MultivariateNormal("theta", loc=jnp.zeros(2), cov=jnp.eye(2))
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                SimulatorKernel(prior, (2,), _single_field),
+                method="npe",
+                num_simulations=1500,
+                epochs=3,
+                batch_size=256,
+                verbose=0,
+            )
+        obs = _single_field(jnp.array([0.5, -0.5]), jax.random.PRNGKey(4))
+        draws = law_draws(condition_on(model, {"observation": obs}), 200)
         assert np.asarray(draws["theta"]).reshape(200, -1).shape == (200, 2)
         assert np.isfinite(np.asarray(draws["theta"])).all()
 
@@ -429,21 +512,20 @@ class TestBayesFlowMethods:
         """A non-vmappable (non-JAX) simulator trains via the eager path
         (``sim_backend="sequential"``) and conditions to named draws -- ``vmap``
         would fail on it, so success proves the eager loop ran."""
-        model = learn_amortized_posterior(
-            _prior(),
-            _NonJaxLikelihood(),
-            method="npe",
-            sim_backend="sequential",
-            num_simulations=800,
-            epochs=2,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        post = condition_on.apply(model, _observe(0.5, 0.0, 0))
-        assert post.algorithm == "bayesflow_npe"
-        draws = post.draws()
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _prior(),
+                SimulatorKernel(_prior(), (2,), _non_jax),
+                method="npe",
+                sim_backend="sequential",
+                num_simulations=800,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
+        post = condition_on(model, {"observation": _observe(0.5, 0.0, 0)})
+        assert method_of(post) == "bayesflow_npe"
+        draws = law_draws(post, 200)
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
 
@@ -451,19 +533,18 @@ class TestBayesFlowMethods:
         """A one-parameter (scalar) prior round-trips with FMPE: the single-field
         split handles ``event_shape=()``, and flow matching (unlike NPE's
         coupling flow) has no >= 2-parameter requirement."""
-        model = learn_amortized_posterior(
-            Normal(loc=0.0, scale=1.0, name="a"),
-            _ScalarLikelihood(),
-            method="fmpe",
-            num_simulations=1500,
-            epochs=3,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        obs = _ScalarLikelihood().generate_data(jnp.array([0.7]), 1, key=jax.random.PRNGKey(4))[0]
-        draws = condition_on(model, obs).draws()
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                Normal("a", loc=0.0, scale=1.0),
+                SimulatorKernel(Normal("a", loc=0.0, scale=1.0), (1,), _scalar),
+                method="fmpe",
+                num_simulations=1500,
+                epochs=3,
+                batch_size=256,
+                verbose=0,
+            )
+        obs = _scalar(jnp.array([0.7]), jax.random.PRNGKey(4))
+        draws = law_draws(condition_on(model, {"observation": obs}), 200)
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
 
@@ -481,33 +562,33 @@ class TestBayesFlowMethods:
         plus cross-platform / library-version drift."""
         import bayesflow as bf
 
-        prior = Normal(loc=0.0, scale=1.0, name="a")  # event_size 1 -> FlowMatching
-        model = learn_amortized_posterior(
-            prior,
-            _ConjugateGaussianLikelihood(),
-            method="npe",
-            num_simulations=5000,
-            epochs=40,
-            batch_size=256,
-            num_results=2000,
-            random_seed=0,
-            verbose=0,
-        )
+        prior = Normal("a", loc=0.0, scale=1.0)  # event_size 1 -> FlowMatching
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="npe",
+                num_simulations=5000,
+                epochs=40,
+                batch_size=256,
+                verbose=0,
+            )
         assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
+        assert not isinstance(model, SupportsConditionalLogProb)
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5  # analytic posterior std
-        sim = _ConjugateGaussianLikelihood()
         mean_errs, std_ratios = [], []
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (1,))
-            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
-            x = np.asarray(condition_on(model, obs).draws()["a"]).reshape(-1)
+            obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
+            x = np.asarray(law_draws(condition_on(model, {"observation": obs}))["a"]).reshape(-1)
             mean_errs.append(abs(float(x.mean()) - float(obs[0]) / (1 + s2)))
             std_ratios.append(float(x.std()) / post_std)
-        # Estimate: mean posterior-mean error under 0.5 posterior-std.
+        # Estimate: mean posterior-mean error under 0.5 posterior-std (observed
+        # 0.07-0.18 across four workflow seeds).
         assert np.mean(mean_errs) < 0.5 * post_std
         # Uncertainty: mean std ratio in [0.7, 1.4] (flow matching at d=1 tends to
-        # slightly under-disperse; band bounds the measured cross-seed spread).
+        # slightly under-disperse; observed 0.89-1.11 across four workflow seeds).
         assert 0.7 < np.mean(std_ratios) < 1.4
 
     def test_multi_field_prior_and_data(self):
@@ -515,32 +596,32 @@ class TestBayesFlowMethods:
         and a higher-dimensional (8-d) observation. Exercises the per-field
         split, adapter routing, and posterior assembly with multiple mixed-shape
         fields and bigger data, and checks the posterior responds to the data."""
-        model = learn_amortized_posterior(
-            _multi_field_prior(),
-            _MultiFieldLikelihood(),
-            method="npe",
-            num_simulations=2500,
-            epochs=5,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        sim = _MultiFieldLikelihood()
-        obs = sim.generate_data(jnp.array([0.5, -0.5, 0.3, -0.2]), 1, key=jax.random.PRNGKey(6))[0]
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _multi_field_prior(),
+                SimulatorKernel(_multi_field_prior(), (8,), _multi_field),
+                method="npe",
+                num_simulations=2500,
+                epochs=5,
+                batch_size=256,
+                verbose=0,
+            )
+        obs = _multi_field(jnp.array([0.5, -0.5, 0.3, -0.2]), jax.random.PRNGKey(6))
         assert obs.shape == (8,)  # higher-dimensional observation
-        draws = condition_on(model, obs).draws()
+        draws = law_draws(condition_on(model, {"observation": obs}), 200)
         assert np.asarray(draws["a"]).reshape(200, -1).shape == (200, 1)
         assert np.asarray(draws["b"]).reshape(200, -1).shape == (200, 2)  # 2-vector field
         assert np.asarray(draws["c"]).reshape(200, -1).shape == (200, 1)
         assert all(np.isfinite(np.asarray(draws[f])).all() for f in ("a", "b", "c"))
         # Amortized response: the posterior mean of `a` tracks the observation.
-        obs_hi = sim.generate_data(jnp.array([1.0, 0.0, 0.0, 0.0]), 1, key=jax.random.PRNGKey(1))[0]
-        obs_lo = sim.generate_data(jnp.array([-1.0, 0.0, 0.0, 0.0]), 1, key=jax.random.PRNGKey(2))[
-            0
-        ]
-        mean_a_hi = float(np.mean(np.asarray(condition_on(model, obs_hi).draws()["a"])))
-        mean_a_lo = float(np.mean(np.asarray(condition_on(model, obs_lo).draws()["a"])))
+        obs_hi = _multi_field(jnp.array([1.0, 0.0, 0.0, 0.0]), jax.random.PRNGKey(1))
+        obs_lo = _multi_field(jnp.array([-1.0, 0.0, 0.0, 0.0]), jax.random.PRNGKey(2))
+        mean_a_hi = float(
+            np.mean(np.asarray(law_draws(condition_on(model, {"observation": obs_hi}))["a"]))
+        )
+        mean_a_lo = float(
+            np.mean(np.asarray(law_draws(condition_on(model, {"observation": obs_lo}))["a"]))
+        )
         assert mean_a_hi > mean_a_lo
 
     def test_calibration_against_conjugate_gaussian(self):
@@ -549,28 +630,24 @@ class TestBayesFlowMethods:
         the analytic mean and its std matches the analytic std (averaged over
         several observations). Trains a bit longer than the smoke tests so the
         estimator is near-converged."""
-        prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=0.0, scale=1.0, name="b")
-        )
-        model = learn_amortized_posterior(
-            prior,
-            _ConjugateGaussianLikelihood(),
-            method="npe",
-            num_simulations=5000,
-            epochs=40,
-            batch_size=256,
-            num_results=4000,
-            random_seed=0,
-            verbose=0,
-        )
+        prior = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="npe",
+                num_simulations=5000,
+                epochs=40,
+                batch_size=256,
+                verbose=0,
+            )
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5  # analytic posterior std
-        sim = _ConjugateGaussianLikelihood()
         mean_errs, std_ratios = [], []
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (2,))
-            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
-            draws = condition_on(model, obs).draws()
+            obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
+            draws = law_draws(condition_on(model, {"observation": obs}))
             for j, f in enumerate(("a", "b")):
                 x = np.asarray(draws[f]).reshape(-1)
                 analytic_mean = float(obs[j]) / (1 + s2)
@@ -578,9 +655,10 @@ class TestBayesFlowMethods:
                 std_ratios.append(float(x.std()) / post_std)
         # Training is seeded (reproducible); the margins absorb cross-platform /
         # library-version numerical drift. Estimate: mean posterior-mean error under
-        # 0.3 posterior-std (observed ~0.03-0.11 across training seeds).
+        # 0.3 posterior-std (observed 0.06-0.09 across four workflow seeds).
         assert np.mean(mean_errs) < 0.3 * post_std
-        # Uncertainty: mean std ratio in [0.8, 1.25] (observed ~1.01-1.03 across seeds).
+        # Uncertainty: mean std ratio in [0.8, 1.25] (observed 0.97-1.02 across four
+        # workflow seeds).
         assert 0.8 < np.mean(std_ratios) < 1.25
 
     def test_nested_prior_end_to_end(self):
@@ -590,18 +668,19 @@ class TestBayesFlowMethods:
         constrained leaf ``outer/r`` is mapped back through its per-leaf bijector
         so every draw lands in the positive support. NPE no longer rejects nested
         priors -- it lifts them via per-leaf bijectors and adapter keying."""
-        model = learn_amortized_posterior(
-            _nested_prior(),
-            _NestedLikelihood(),
-            method="npe",
-            num_simulations=3000,
-            epochs=8,
-            batch_size=256,
-            num_results=400,
-            random_seed=0,
-            verbose=0,
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _nested_prior(),
+                SimulatorKernel(_nested_prior(), (3,), _nested),
+                method="npe",
+                num_simulations=3000,
+                epochs=8,
+                batch_size=256,
+                verbose=0,
+            )
+        draws = law_draws(
+            condition_on(model, {"observation": _nested_observe(2.0, -0.5, 0.4, seed=7)}), 400
         )
-        draws = condition_on(model, _nested_observe(2.0, -0.5, 0.4, seed=7)).draws()
         r = np.asarray(draws["outer/r"]).reshape(-1)
         m = np.asarray(draws["outer/m"]).reshape(-1)
         c = np.asarray(draws["c"]).reshape(-1)
@@ -610,11 +689,21 @@ class TestBayesFlowMethods:
         assert (r > 0).all()  # per-leaf forward bijector (Exp) under nesting
         # Amortized response: the posterior mean of `c` tracks the observation.
         mean_c_hi = float(
-            np.mean(np.asarray(condition_on(model, _nested_observe(2.0, 0.0, 1.0, 2)).draws()["c"]))
+            np.mean(
+                np.asarray(
+                    law_draws(
+                        condition_on(model, {"observation": _nested_observe(2.0, 0.0, 1.0, 2)})
+                    )["c"]
+                )
+            )
         )
         mean_c_lo = float(
             np.mean(
-                np.asarray(condition_on(model, _nested_observe(2.0, 0.0, -1.0, 3)).draws()["c"])
+                np.asarray(
+                    law_draws(
+                        condition_on(model, {"observation": _nested_observe(2.0, 0.0, -1.0, 3)})
+                    )["c"]
+                )
             )
         )
         assert mean_c_hi > mean_c_lo
@@ -626,40 +715,36 @@ class TestBayesFlowMethods:
         in flatten order (``outer/a``, ``outer/b``, ``m``); a mis-ordered column or
         a mis-keyed per-leaf bijector would land a leaf's mass on the wrong
         coordinate and fail here."""
-        prior = ProductDistribution(
-            name="joint",
-            outer={
-                "a": Normal(loc=0.0, scale=1.0, name="a"),
-                "b": Normal(loc=0.0, scale=1.0, name="b"),
-            },
-            m=Normal(loc=0.0, scale=1.0, name="m"),
+        outer = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_path_names(
+            {"a": "outer/a", "b": "outer/b"}
         )
-        model = learn_amortized_posterior(
-            prior,
-            _ConjugateGaussianLikelihood(),
-            method="npe",
-            num_simulations=5000,
-            epochs=40,
-            batch_size=256,
-            num_results=4000,
-            random_seed=0,
-            verbose=0,
-        )
+        prior = (outer * Normal("m", loc=0.0, scale=1.0)).with_label("joint")
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="npe",
+                num_simulations=5000,
+                epochs=40,
+                batch_size=256,
+                verbose=0,
+            )
         s2 = _CONJ_SIGMA**2
         post_std = (s2 / (1 + s2)) ** 0.5
-        sim = _ConjugateGaussianLikelihood()
         leaves = ("outer/a", "outer/b", "m")
         mean_errs, std_ratios = [], []
         for i in range(6):
             theta = jax.random.normal(jax.random.PRNGKey(100 + i), (3,))
-            obs = sim.generate_data(theta, 1, key=jax.random.PRNGKey(900 + i))[0]
-            draws = condition_on(model, obs).draws()
+            obs = _conjugate(theta, jax.random.PRNGKey(900 + i))
+            draws = law_draws(condition_on(model, {"observation": obs}))
             for j, leaf in enumerate(leaves):
                 x = np.asarray(draws[leaf]).reshape(-1)
                 analytic_mean = float(obs[j]) / (1 + s2)
                 mean_errs.append(abs(float(x.mean()) - analytic_mean))
                 std_ratios.append(float(x.std()) / post_std)
         # Same margins as the flat conjugate test (seed-reproducible; absorbs drift).
+        # Observed across four workflow seeds: mean error 0.07-0.16 posterior-std,
+        # mean std ratio 0.99-1.03.
         assert np.mean(mean_errs) < 0.3 * post_std
         assert 0.8 < np.mean(std_ratios) < 1.25
 
@@ -670,48 +755,44 @@ class TestBayesFlowMethods:
         CholeskyOuterProduct chain), and the forward map at sample time returns
         SPD draws under the nested leaf name ``outer/cov`` -- the nested analogue
         of test_wishart_matrix_prior_round_trip."""
-        prior = ProductDistribution(
-            name="joint",
-            outer={
-                "cov": pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"),
-                "m": Normal(loc=0.0, scale=1.0, name="m"),
-            },
-            c=Normal(loc=0.0, scale=1.0, name="c"),
-        )
-        model = learn_amortized_posterior(
-            prior,
-            _ConjugateGaussianLikelihood(),
-            method="fmpe",
-            num_simulations=600,
-            epochs=2,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
+        outer = (
+            pp.Wishart("cov", df=4.0, scale=jnp.eye(2)) * Normal("m", loc=0.0, scale=1.0)
+        ).with_path_names({"cov": "outer/cov", "m": "outer/m"})
+        prior = (outer * Normal("c", loc=0.0, scale=1.0)).with_label("joint")
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="fmpe",
+                num_simulations=600,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
         obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5, 0.0])  # flat (cov 2x2, m, c)
-        cov = np.asarray(condition_on(model, obs).draws()["outer/cov"]).reshape(-1, 2, 2)
+        cov = np.asarray(law_draws(condition_on(model, {"observation": obs}))["outer/cov"]).reshape(
+            -1, 2, 2
+        )
         assert np.isfinite(cov).all()
         np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
         assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
 
     def test_simulator_receives_named_record(self):
-        """generate_data receives the prior's structured per-draw sample (named
-        fields), per the GenerativeLikelihood contract -- the simulator uses
-        params["a"]/["b"] exclusively, so training succeeds only when the
-        structured record is passed."""
-        model = learn_amortized_posterior(
-            _prior(),
-            _NamedFieldLikelihood(),
-            method="npe",
-            num_simulations=800,
-            epochs=2,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        draws = condition_on(model, jnp.array([0.8, 0.2])).draws()
+        """The simulator kernel receives the prior's structured per-draw sample
+        (named fields) as its given values -- the simulator uses params["a"]/["b"]
+        exclusively, so training succeeds only when the structured record is
+        passed."""
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                _prior(),
+                SimulatorKernel(_prior(), (2,), _named_field),
+                method="npe",
+                num_simulations=800,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
+        draws = law_draws(condition_on(model, {"observation": jnp.array([0.8, 0.2])}), 200)
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200
         assert np.isfinite(np.asarray(draws["a"])).all()
 
@@ -719,21 +800,78 @@ class TestBayesFlowMethods:
         """A constrained (positive) prior field is trained in unconstrained space and
         its draws are mapped back through the forward bijector, so they land in the
         support -- here all positive. The accompanying real-valued field is unaffected."""
-        prior = ProductDistribution(pp.Gamma("r", 3.0, 1.0), Normal(loc=0.0, scale=1.0, name="m"))
-        model = learn_amortized_posterior(
-            prior,
-            _PositiveLikelihood(),
-            method="npe",
-            num_simulations=1500,
-            epochs=5,
-            batch_size=256,
-            num_results=400,
-            random_seed=0,
-            verbose=0,
-        )
-        r = np.asarray(condition_on(model, jnp.array([3.0, 1.0])).draws()["r"]).reshape(-1)
+        prior = pp.Gamma("r", 3.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                SimulatorKernel(prior, (2,), _positive),
+                method="npe",
+                num_simulations=1500,
+                epochs=5,
+                batch_size=256,
+                verbose=0,
+            )
+        r = np.asarray(
+            law_draws(condition_on(model, {"observation": jnp.array([3.0, 1.0])}))["r"]
+        ).reshape(-1)
         assert np.isfinite(r).all()
         assert (r > 0).all()  # forward bijector (Exp) keeps every draw in support
+
+    def test_a_positive_leaf_density_changes_variables(self):
+        """A positive leaf trains on its log, so its density is the flow's density at
+        the log less the log-Jacobian of ``exp``, which is the log itself."""
+        prior = pp.Gamma("r", 3.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                SimulatorKernel(prior, (2,), _positive),
+                method="npe",
+                num_simulations=1500,
+                epochs=3,
+                batch_size=256,
+                verbose=0,
+            )
+        observation = np.array([3.0, 1.0], dtype="float32")
+        law = condition_on(model, {"observation": observation})
+        with workflow_run(seed=0):
+            draws = sample(law, sample_shape=(4,))
+        r, m = np.asarray(draws["r"]), np.asarray(draws["m"])
+        unconstrained = model._approximator.log_prob(
+            data={
+                "theta_0": np.log(r)[:, None],
+                "theta_1": m[:, None],
+                "observation": np.tile(observation, (4, 1)),
+            }
+        )
+        np.testing.assert_allclose(
+            np.asarray(log_prob(law, draws)), np.ravel(unconstrained) - np.log(r), atol=1e-4
+        )
+
+    def test_a_simplex_leaf_density_integrates_to_one(self):
+        """A 3-simplex trains on two coordinates, so its coupling flow's density, taken
+        in the simplex's first two coordinates, integrates to one over the triangle."""
+        prior = pp.Dirichlet("p", jnp.ones(3))
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="npe",
+                num_simulations=2000,
+                epochs=4,
+                batch_size=256,
+                verbose=0,
+            )
+        law = condition_on(model, {"observation": jnp.array([0.5, 0.3, 0.2])})
+        assert isinstance(law, SupportsLogProb)
+        cells = 400
+        grid = (np.arange(cells) + 0.5) / cells
+        first, second = np.meshgrid(grid, grid, indexing="ij")
+        inside = first + second < 1
+        points = np.stack(
+            [first[inside], second[inside], 1 - first[inside] - second[inside]], axis=-1
+        )
+        density = np.exp(np.asarray(law._log_prob(jnp.asarray(points, dtype=jnp.float32))))
+        assert density.sum() / cells**2 == pytest.approx(1.0, abs=0.02)
 
     def test_adapter_internal_names_avoid_collisions(self):
         """Theta fields are re-keyed away from BayesFlow adapter internals.
@@ -742,22 +880,22 @@ class TestBayesFlowMethods:
         ``"inference_variables"``) train and condition, with draws returned
         under the user's names.
         """
-        prior = ProductDistribution(
-            Normal(loc=0.0, scale=1.0, name="observation"),
-            Normal(loc=0.0, scale=1.0, name="inference_variables"),
+        prior = Normal("observation", loc=0.0, scale=1.0) * Normal(
+            "inference_variables", loc=0.0, scale=1.0
         )
-        model = learn_amortized_posterior(
-            prior,
-            _ToyLikelihood(),
-            method="npe",
-            num_simulations=800,
-            epochs=2,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
-        draws = condition_on(model, jnp.array([0.5, 0.1])).draws()
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                SimulatorKernel(prior, (2,), _toy, label="y"),
+                method="npe",
+                num_simulations=800,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
+        (slot,) = model.given_spec
+        assert slot == "observation_"
+        draws = law_draws(condition_on(model, {slot: jnp.array([0.5, 0.1])}), 200)
         for f in ("observation", "inference_variables"):
             x = np.asarray(draws[f]).reshape(-1)
             assert x.shape[0] == 200
@@ -767,19 +905,20 @@ class TestBayesFlowMethods:
         """A bounded-interval prior field (Beta, unit-interval support) rounds
         through the Sigmoid bijector: trained unconstrained, every posterior
         draw lands strictly inside (0, 1)."""
-        prior = ProductDistribution(pp.Beta("q", 2.0, 2.0), Normal(loc=0.0, scale=1.0, name="m"))
-        model = learn_amortized_posterior(
-            prior,
-            _ConjugateGaussianLikelihood(),
-            method="npe",
-            num_simulations=800,
-            epochs=2,
-            batch_size=256,
-            num_results=300,
-            random_seed=0,
-            verbose=0,
-        )
-        q = np.asarray(condition_on(model, jnp.array([0.5, 0.0])).draws()["q"]).reshape(-1)
+        prior = pp.Beta("q", 2.0, 2.0) * Normal("m", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="npe",
+                num_simulations=800,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
+        q = np.asarray(
+            law_draws(condition_on(model, {"observation": jnp.array([0.5, 0.0])}))["q"]
+        ).reshape(-1)
         assert np.isfinite(q).all()
         assert ((q > 0) & (q < 1)).all()  # Sigmoid forward keeps draws in (0, 1)
 
@@ -789,22 +928,21 @@ class TestBayesFlowMethods:
         shape at train time -- a flattened input would crash the
         CholeskyOuterProduct chain -- and the forward map at sample time returns
         draws that are symmetric positive definite."""
-        prior = ProductDistribution(
-            pp.Wishart(df=4.0, scale=jnp.eye(2), name="cov"), Normal(loc=0.0, scale=1.0, name="m")
-        )
-        model = learn_amortized_posterior(
-            prior,
-            _ConjugateGaussianLikelihood(),
-            method="fmpe",
-            num_simulations=600,
-            epochs=2,
-            batch_size=256,
-            num_results=200,
-            random_seed=0,
-            verbose=0,
-        )
+        prior = pp.Wishart("cov", df=4.0, scale=jnp.eye(2)) * Normal("m", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                prior,
+                _conjugate_simulator(prior),
+                method="fmpe",
+                num_simulations=600,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
         obs = jnp.array([1.5, 0.3, 0.3, 1.2, 0.5])  # flattened (cov, m) observation
-        cov = np.asarray(condition_on(model, obs).draws()["cov"]).reshape(-1, 2, 2)
+        cov = np.asarray(law_draws(condition_on(model, {"observation": obs}))["cov"]).reshape(
+            -1, 2, 2
+        )
         assert np.isfinite(cov).all()
         np.testing.assert_allclose(cov, np.swapaxes(cov, -1, -2), atol=1e-5)  # symmetric
         assert np.linalg.eigvalsh(cov).min() > 0  # positive definite
@@ -816,19 +954,20 @@ class TestBayesFlowMethods:
         units=0 coupling flow; draws land on the simplex."""
         import bayesflow as bf
 
-        model = learn_amortized_posterior(
-            pp.Dirichlet("p", jnp.ones(2)),
-            _ConjugateGaussianLikelihood(),
-            method="npe",
-            num_simulations=600,
-            epochs=2,
-            batch_size=256,
-            num_results=300,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            model = learn_amortized_posterior(
+                pp.Dirichlet("p", jnp.ones(2)),
+                _conjugate_simulator(pp.Dirichlet("p", jnp.ones(2))),
+                method="npe",
+                num_simulations=600,
+                epochs=2,
+                batch_size=256,
+                verbose=0,
+            )
         assert isinstance(model._approximator.inference_network, bf.networks.FlowMatching)
-        p = np.asarray(condition_on(model, jnp.array([0.7, 0.3])).draws()["p"]).reshape(-1, 2)
+        p = np.asarray(
+            law_draws(condition_on(model, {"observation": jnp.array([0.7, 0.3])}))["p"]
+        ).reshape(-1, 2)
         np.testing.assert_allclose(p.sum(axis=-1), 1.0, atol=1e-5)
         assert ((p > 0) & (p < 1)).all()
 
@@ -840,19 +979,20 @@ class TestBayesFlowMethods:
         def _fit():
             return learn_amortized_posterior(
                 _prior(),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 method="npe",
                 num_simulations=400,
                 epochs=1,
                 batch_size=256,
-                num_results=100,
-                random_seed=0,
                 verbose=0,
             )
 
         obs = _observe(0.4, -0.2, 5)
-        d1 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
-        d2 = np.asarray(condition_on(_fit(), obs).draws()["a"]).reshape(-1)
+        # The scope seeds both the training and the draws, so both scopes give the same draws.
+        with pp.workflow_run(seed=0):
+            d1 = np.asarray(law_draws(condition_on(_fit(), {"observation": obs}))["a"]).reshape(-1)
+        with pp.workflow_run(seed=0):
+            d2 = np.asarray(law_draws(condition_on(_fit(), {"observation": obs}))["a"]).reshape(-1)
         np.testing.assert_array_equal(d1, d2)
 
     def test_global_rng_state_restored(self):
@@ -867,17 +1007,16 @@ class TestBayesFlowMethods:
         expected_py = pyrandom.random()
         np.random.seed(123)
         pyrandom.seed(7)
-        learn_amortized_posterior(
-            _prior(),
-            _ToyLikelihood(),
-            method="fmpe",
-            num_simulations=256,
-            epochs=1,
-            batch_size=256,
-            num_results=50,
-            random_seed=0,
-            verbose=0,
-        )
+        with workflow_run(seed=0):
+            learn_amortized_posterior(
+                _prior(),
+                _toy_simulator(),
+                method="fmpe",
+                num_simulations=256,
+                epochs=1,
+                batch_size=256,
+                verbose=0,
+            )
         assert np.random.random() == expected_np
         assert pyrandom.random() == expected_py
 
@@ -885,13 +1024,22 @@ class TestBayesFlowMethods:
 class TestBayesFlowValidation:
     """Train-time input validation -- each raises before any simulation runs."""
 
+    @pytest.mark.parametrize("keyword", ["random_seed", "seed"])
+    def test_rejects_a_seed_keyword(self, keyword):
+        """The training's seed is a workflow event, so a seed keyword is unexpected,
+        where ``approximator.fit`` would otherwise drop it."""
+        with pytest.raises(TypeError, match=f"unexpected keyword argument '{keyword}'"):
+            learn_amortized_posterior(
+                _prior(), _toy_simulator(), num_simulations=8, epochs=1, **{keyword: 0}
+            )
+
     def test_rejects_non_generative_simulator(self):
-        """A simulator without ``generate_data`` is rejected with a clear TypeError."""
+        """A simulator that is not a sampling kernel is rejected with a clear TypeError."""
 
         class _NoGenerate:
             pass
 
-        with pytest.raises(TypeError, match="generate_data"):
+        with pytest.raises(TypeError, match="ConditionalDistribution that can be sampled"):
             learn_amortized_posterior(_prior(), _NoGenerate(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_that_is_not_numeric(self):
@@ -900,17 +1048,17 @@ class TestBayesFlowValidation:
         with pytest.raises(TypeError, match="requires a numeric prior"):
             learn_amortized_posterior(
                 jnp.zeros(2),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 num_simulations=8,
                 epochs=1,
             )
 
     def test_rejects_unknown_method(self):
         """An unsupported amortized method is rejected up front."""
-        with pytest.raises(ValueError, match="Unknown amortized SBI method"):
+        with pytest.raises(ValueError, match="unknown method"):
             learn_amortized_posterior(
                 _prior(),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 method="bogus",
                 num_simulations=8,
                 epochs=1,
@@ -918,10 +1066,10 @@ class TestBayesFlowValidation:
 
     def test_rejects_unknown_sim_backend(self):
         """An unsupported simulation backend is rejected up front."""
-        with pytest.raises(ValueError, match="Unknown sim_backend"):
+        with pytest.raises(ValueError, match="unknown sim_backend"):
             learn_amortized_posterior(
                 _prior(),
-                _ToyLikelihood(),
+                _toy_simulator(),
                 sim_backend="bogus",
                 num_simulations=8,
                 epochs=1,
@@ -929,17 +1077,17 @@ class TestBayesFlowValidation:
 
     @pytest.mark.parametrize(
         "override",
-        [{"num_simulations": 0}, {"batch_size": 0}, {"epochs": 0}, {"num_results": 0}],
+        [{"num_simulations": 0}, {"batch_size": 0}, {"epochs": 0}],
     )
     def test_rejects_nonpositive_counts(self, override):
-        """num_simulations / batch_size / epochs / num_results must be positive."""
+        """num_simulations / batch_size / epochs must be positive."""
         kwargs = {"num_simulations": 8, "epochs": 1, **override}
         with pytest.raises(ValueError, match="positive integer"):
-            learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
+            learn_amortized_posterior(_prior(), _toy_simulator(), **kwargs)
 
     @pytest.mark.parametrize(
         "override",
-        [{"num_simulations": 100.5}, {"batch_size": "64"}, {"epochs": 2.0}, {"num_results": None}],
+        [{"num_simulations": 100.5}, {"batch_size": "64"}, {"epochs": 2.0}, {"epochs": None}],
     )
     def test_rejects_non_integer_counts(self, override):
         """Count parameters must be integers -- floats (even integral ones),
@@ -947,20 +1095,18 @@ class TestBayesFlowValidation:
         or failing deep inside keras."""
         kwargs = {"num_simulations": 8, "epochs": 1, **override}
         with pytest.raises(TypeError, match="must be an integer"):
-            learn_amortized_posterior(_prior(), _ToyLikelihood(), **kwargs)
+            learn_amortized_posterior(_prior(), _toy_simulator(), **kwargs)
 
     def test_rejects_discrete_prior(self):
         """A discrete prior field has no smooth bijector to R^d and is rejected up
         front with a clear error (here a Poisson count parameter)."""
-        bad_prior = ProductDistribution(pp.Poisson("k", 3.0), Normal(loc=0.0, scale=1.0, name="m"))
+        bad_prior = pp.Poisson("k", 3.0) * Normal("m", loc=0.0, scale=1.0)
         with pytest.raises(ValueError, match="discrete"):
-            learn_amortized_posterior(bad_prior, _ToyLikelihood(), num_simulations=8, epochs=1)
+            learn_amortized_posterior(bad_prior, _toy_simulator(), num_simulations=8, epochs=1)
 
     def test_rejects_a_prior_parameter_whose_support_is_not_declared(self):
         """A support that depends on another parameter is not declared, so no
         bijector to R^d can be chosen for it."""
-        prior = pp.SequentialJointDistribution(
-            z=pp.Exponential("z", 1.0), x=lambda z: pp.Uniform("x", 0.0, z)
-        )
+        prior = _UniformBelowKernel() * pp.Exponential("z", 1.0)
         with pytest.raises(ValueError, match="'x': its support is not declared"):
-            learn_amortized_posterior(prior, _ToyLikelihood(), num_simulations=8, epochs=1)
+            learn_amortized_posterior(prior, _toy_simulator(), num_simulations=8, epochs=1)

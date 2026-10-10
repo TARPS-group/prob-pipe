@@ -1,6 +1,6 @@
 """Unified interface for posterior predictive checks.
 
-Bridges the existing JAX-native engine in
+Bridges the replications and test statistics of
 ``probpipe.validation._predictive_check`` with the diagnostics workflow.
 
 Design
@@ -34,32 +34,29 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from ..core import _workflow_broker, _workflow_context
-from ..custom_types import PRNGKey
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
+from ..functions import _broker, _context
+from ..functions._broker import _PROBPIPE_DISTRIBUTION_PROVIDER_ABI
 from ..validation._predictive_check import (
-    _predictive_check_batched,
-    _predictive_check_loop,
-    _supports_key_arg,
+    _observed_event,
+    _planned_statistics,
+    _predictive_joint,
+    _replicated_statistics,
 )
-from ..validation._workflow_rng import (
-    _require_certified_generative_provider,
-    _validate_positive_int,
-)
+from ..validation._workflow_rng import _validate_positive_int
 from ._datatree import _add_group
 from ._utils import (
     _json_dumps_safe,
-    _resolve_generative_likelihood,
     _safe_float,
 )
-from ._workflow_rng import _resolve_ppc_key
+from ._workflow_rng import _claim_ppc_key
 
 __all__ = [
     "add_ppc",
@@ -94,13 +91,27 @@ def _replicated_data_to_dataset(y_rep: Any, var_name: str = "y") -> xr.Dataset:
 
     - ``(draw,)``
     - ``(draw, obs)``
-    - ``(chain, draw)``
     - ``(chain, draw, obs)``
 
     If no chain dimension is present, a singleton chain dimension is added.
 
-    Important
-    ---------
+    Parameters
+    ----------
+    y_rep : array-like
+        The replicated observations. A two-dimensional array is read as
+        ``(draw, obs)``, and a three-dimensional one as ``(chain, draw, obs)``.
+    var_name : str
+        The name of the dataset's one variable.
+
+    Returns
+    -------
+    xr.Dataset
+        A dataset whose variable has the dims ``chain`` and ``draw``, followed
+        by ``obs`` for a two- or three-dimensional *y_rep*, or by ``obs_dim_0``,
+        ``obs_dim_1``, and so on for one of higher dimension.
+
+    Notes
+    -----
     This function should only be used for actual replicated observations, not
     replicated test statistics.
     """
@@ -204,43 +215,37 @@ def _dataset_from_payload(payload: Mapping[str, Any]) -> xr.Dataset:
 def _ppc_op(
     posterior: Distribution,
     test_fns: Callable | Sequence[Callable],
-    observed_data=None,
+    observed_data: Any | None = None,
     *,
-    num_observations: int | None = None,
-    generative_likelihood=None,
+    kernel: ConditionalDistribution,
     n_replications: int = 500,
-    key: PRNGKey | None = None,
 ) -> dict[str, Any]:
     """Pure PPC operation returning a payload dict.
 
     This function computes one or more posterior/prior predictive checks and
     returns a structured payload dict. It does not mutate ``posterior._annotations``.
+    The replications are draws of the kernel's event from ``kernel * posterior``,
+    and every test statistic is computed on the same replications. They are one
+    workflow-owned random event of the enclosing workflow scope.
 
     Parameters
     ----------
     posterior : Distribution
-        Prior or posterior to sample parameters from.
+        Prior or posterior over the kernel's given slots.
 
     test_fns : callable or sequence of callables
         One or more test statistics mapping data to a scalar.
 
     observed_data : optional
-        If provided, this performs posterior predictive checking. If ``None``,
-        this behaves like prior predictive checking.
+        If provided, the statistics of the observed data and their p-values
+        are computed. It takes the forms
+        :func:`~probpipe.validation.predictive_check` takes.
 
-    num_observations : int, optional
-        Number of observations per replicated dataset. Required when
-        ``observed_data`` is ``None``; otherwise defaults to ``len(observed_data)``.
-
-    generative_likelihood : optional
-        Generative likelihood. If not provided, this is resolved from the
-        posterior when possible.
+    kernel : ConditionalDistribution
+        The law of the observations given the parameters.
 
     n_replications : int
         Number of replicated datasets.
-
-    key : PRNGKey or None
-        JAX PRNG key.
 
     Returns
     -------
@@ -248,98 +253,40 @@ def _ppc_op(
         Diagnostic payload dict containing scalar results, xarray datasets, and
         plotting metadata.
     """
-    _workflow_context._assert_workflow_admission()
-    if callable(test_fns):
-        planned_test_fns = (test_fns,)
-    else:
-        try:
-            planned_test_fns = tuple(test_fns)
-        except TypeError as exc:
-            raise TypeError("test_fns must be a callable or an iterable of callables") from exc
-    if not planned_test_fns:
-        raise ValueError("test_fns must contain at least one callable")
-    planned_tests: list[tuple[Callable, Any]] = []
-    planned_names: set[Any] = set()
-    for index, fn in enumerate(planned_test_fns):
-        if not callable(fn):
-            raise TypeError(f"test_fns[{index}] must be callable; got {type(fn).__name__}")
-        name = getattr(fn, "__name__", None)
-        resolved_name = name if name is not None else repr(fn)
-        if resolved_name in planned_names:
-            raise ValueError(
-                "test_fns must have unique names; duplicate name "
-                f"{resolved_name!r}. Use named functions with distinct names."
-            )
-        planned_names.add(resolved_name)
-        planned_tests.append((fn, resolved_name))
-
-    if num_observations is None:
-        if observed_data is None:
-            raise ValueError("num_observations is required when observed_data is not provided.")
-        num_observations = len(observed_data)
-    n_samples = _validate_positive_int("num_observations", num_observations)
+    _context._assert_workflow_admission()
+    planned_tests = _planned_statistics(test_fns)
     n_replications = _validate_positive_int("n_replications", n_replications)
-
-    if not callable(getattr(posterior, "_sample", None)):
-        raise TypeError(f"{type(posterior).__name__} does not support predictive sampling")
-    gl = _resolve_generative_likelihood(posterior, generative_likelihood)
-    if not callable(getattr(gl, "generate_data", None)):
-        raise TypeError(f"{type(gl).__name__} does not provide callable generate_data")
-    supports_key = _supports_key_arg(gl)
-
-    provider_abi = ""
-    if key is None:
-        provider_abi = _require_certified_generative_provider(gl, "add_ppc")
+    joint = _predictive_joint(kernel, posterior, "add_ppc", "posterior")
+    observed = None if observed_data is None else _observed_event(kernel, observed_data)
 
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    stochastic_scope = (
-        _workflow_broker._managed_stochastic_scope() if key is None else nullcontext()
-    )
-    with stochastic_scope:
-        for source_index, (fn, name) in enumerate(planned_tests):
-            effect_key = _resolve_ppc_key(
-                key,
-                source_index=source_index,
-                n_replications=n_replications,
-                provider_abi=provider_abi,
-            )
+    with _broker._managed_stochastic_scope():
+        # One event draws the replications that every test statistic reads.
+        effect_key = _claim_ppc_key(
+            source_index=0,
+            n_replications=n_replications,
+            provider_abi=_PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
+        )
+        stats_by_name = _replicated_statistics(
+            joint, kernel, planned_tests, n_replications, effect_key
+        )
 
-            if supports_key:
-                stats_array = _predictive_check_batched(
-                    posterior,
-                    gl,
-                    fn,
-                    n_samples,
-                    n_replications,
-                    effect_key,
-                )
-            else:
-                stats_array = _predictive_check_loop(
-                    posterior,
-                    gl,
-                    fn,
-                    n_samples,
-                    n_replications,
-                    effect_key,
-                )
+    for name, fn in planned_tests:
+        stats_array = stats_by_name[name]
+        p_val = None
+        obs_val = None
+        if observed is not None:
+            obs_val = float(fn(observed))
+            p_val = float(np.mean(stats_array >= obs_val))
 
-            p_val = None
-            obs_val = None
-            if observed_data is not None:
-                obs_val = float(fn(observed_data))
-                p_val = float(np.mean(stats_array >= obs_val))
+        results[name] = {
+            "p_value": p_val,
+            "observed": obs_val,
+        }
 
-            results[name] = {
-                "p_value": p_val,
-                "observed": obs_val,
-            }
-
-            replicated_stats_by_fn[name] = np.asarray(stats_array, dtype=np.float64)
-
-            # y_rep_data not available from direct helper calls — skip ArviZ
-            # posterior_predictive population for now.
+        replicated_stats_by_fn[name] = stats_array
 
     # ------------------------------------------------------------------
     # Build optional ArviZ-compatible datasets
@@ -347,8 +294,8 @@ def _ppc_op(
 
     observed_data_dataset = None
 
-    if observed_data is not None:
-        observed_data_dataset = _observed_data_to_dataset(observed_data, var_name="y")
+    if observed is not None:
+        observed_data_dataset = _observed_data_to_dataset(observed, var_name="y")
 
     wrote_observed_data = observed_data_dataset is not None
     plot_ready = False  # replicated observations are not captured here.
@@ -456,52 +403,58 @@ def _write_ppc_payload(posterior: Distribution, payload: Mapping[str, Any]) -> N
 def add_ppc(
     posterior: Distribution,
     test_fns: Callable | Sequence[Callable],
-    observed_data=None,
+    observed_data: Any | None = None,
     *,
-    num_observations: int | None = None,
-    generative_likelihood=None,
+    kernel: ConditionalDistribution,
     n_replications: int = 500,
-    key: PRNGKey | None = None,
 ) -> None:
     """Compute a PPC and write results into ``posterior._annotations``.
 
     This is the in-place wrapper around :func:`_ppc_op`. Calls ``_ppc_op``
     and writes the resulting payload into ``posterior._annotations``,
-    then returns ``None``.
+    then returns ``None``. The replications are draws of the kernel's event
+    from ``kernel * posterior``, as :func:`~probpipe.validation.predictive_check`
+    draws them, and every test statistic is computed on the same replications.
+
+    The replications are one workflow-owned random event of the enclosing
+    workflow scope. A call inside ``workflow_run(seed=...)`` therefore
+    reproduces them, and a call outside every scope draws fresh replications.
 
     Parameters
     ----------
     posterior : Distribution
-        Prior or posterior to sample parameters from.
+        Prior or posterior over the kernel's given slots.
     test_fns : callable or sequence of callables
         One or more test statistics mapping data to a scalar.
     observed_data : optional
-        If provided, performs posterior predictive checking. If ``None``,
-        behaves like prior predictive checking.
-    num_observations : int, optional
-        Number of observations per replicated dataset. Required when
-        ``observed_data`` is ``None``; otherwise defaults to ``len(observed_data)``.
-    generative_likelihood : optional
-        Generative likelihood. Resolved from ``posterior`` if not provided.
+        If provided, the statistics of the observed data and their p-values
+        are computed. It takes the forms
+        :func:`~probpipe.validation.predictive_check` takes.
+    kernel : ConditionalDistribution
+        The law of the observations given the parameters, such as the
+        likelihood of a model ``likelihood * prior``.
     n_replications : int
         Number of replicated datasets.
-    key : PRNGKey or None
-        JAX PRNG key.
 
     Raises
     ------
+    TypeError
+        If *kernel* is not a ``ConditionalDistribution``, *posterior* does not
+        sample, *test_fns* is neither a callable nor an iterable, a test
+        function is not callable, or *n_replications* is not an integer.
     ValueError
-        If two test functions have the same name. Use distinct named functions
-        instead of multiple lambdas so result keys cannot collide.
+        If *posterior* does not produce every given slot of *kernel*, naming
+        the missing slots; if *posterior* produces a component that *kernel*
+        produces; if *test_fns* is empty or holds two test functions of the
+        same name; or if *n_replications* is not positive. Use distinct named
+        functions instead of multiple lambdas so result keys cannot collide.
     """
     payload = _ppc_op(
         posterior,
         test_fns=test_fns,
         observed_data=observed_data,
-        num_observations=num_observations,
-        generative_likelihood=generative_likelihood,
+        kernel=kernel,
         n_replications=n_replications,
-        key=key,
     )
 
     _write_ppc_payload(posterior, payload)
