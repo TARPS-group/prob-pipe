@@ -191,6 +191,7 @@ def conditional_distribution(
     given_spec: InputSpec | Mapping[str, TermSpec] | None = None,
     event_spec: OutputSpec | TermSpec | None = None,
 ) -> ConditionalDistribution | Callable[[Callable[..., Distribution]], ConditionalDistribution]: ...
+    # conditional_distribution(fn) is the kernel of fn; without fn it is a decorator, and
     # @conditional_distribution on a def labels the kernel after the function
 ```
 

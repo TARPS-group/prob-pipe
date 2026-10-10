@@ -172,11 +172,11 @@ def growth(interest, years):
     return (1.0 + interest) ** years
 
 interest = Normal("interest", 0.05, 0.02)
-horizons = NumericArrayBatch(jnp.array([5.0, 10.0, 20.0]), "horizon", label = "years", )
+horizons = NumericArrayBatch(jnp.array([5.0, 10.0, 20.0]), "horizon", label="years")
 
-growth(interest, 10.0)      # a broadcast: an EmpiricalDistribution whose atoms lie on the level growth
+growth(interest, 10.0)      # a broadcast: an EmpiricalDistribution whose atoms lie on the level draw
 growth(0.05, horizons)      # a sweep: a NumericArrayBatch on the level horizon
-growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of laws whose atoms lie on growth
+growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of laws whose atoms lie on draw
 ```
 
 **Including the inputs.** With `include_inputs=True`, the sampling lift returns a joint empirical law over inputs and outputs. Each lifted parameter contributes one component containing its complete draw, named by the parameter. A record draw remains nested even when it has one field. The output contributes exactly the components its `OutputSpec` exposes (II.2); a record exposed under `parameters` remains under that name. Plain inputs contribute no fields, since provenance records them. A collision between parameter and output component names raises at planning when known and at return otherwise. This control selects only routes that produce the joint of inputs and outputs. Grouping determines co-sampling, and the parameters determine the layout.

@@ -126,6 +126,8 @@ class Function(TrackedTerm):
     def notation(self) -> str: ...   # the label and the parameters, as predict(x, y); str() returns it (II.4)
 
 def install_call_engine(engine: Callable[..., Any]) -> None: ...
+    # replaces the call handler, once, at import time; until then calls evaluate plainly.
+    # The engine reads the controls the Function carries and must agree with
     # plain evaluation on concrete values.
 ```
 
