@@ -837,6 +837,7 @@ def _run_call(
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
             output_label=function.output_label,
+            output_component=function._output_component,
             output_expression=_lifted_expression(function, row_values, plan, values, passed=passed),
             output_spec=output_spec,
             workflow_kind=workflow_kind,

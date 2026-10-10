@@ -222,13 +222,15 @@ class _CallableFunctionImplementation:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
 
 
-def _complete_output_spec(output_spec: OutputSpec | TermSpec | None) -> OutputSpec | None:
+def _complete_output_spec(
+    output_spec: OutputSpec | TermSpec | None, *, component: str
+) -> OutputSpec | None:
     if output_spec is None or isinstance(output_spec, OutputSpec):
         return output_spec
     if isinstance(output_spec, RecordSpec):
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
-        raise TypeError("a whole-term output needs a declared component; use OutputSpec(name=spec)")
+        return OutputSpec.default(output_spec, component=component)
     raise TypeError(
         f"output_spec must be an OutputSpec, TermSpec, or None; got {type(output_spec).__name__}"
     )
@@ -754,13 +756,14 @@ class Function(Node, TrackedTerm, Annotated):
         Declared inputs cannot accompany variadic parameters. Defaults and
         construction bindings must satisfy the declaration.
     output_spec : OutputSpec or TermSpec or None
-        Authoritative result declaration. A bare RecordSpec exposes its fields;
-        a whole-term output must use a named OutputSpec component. A
-        named type hole is inferred independently for each call.
+        Optional result declaration. A bare RecordSpec exposes its fields;
+        another bare spec uses the callable's original name (``f`` for a lambda,
+        ``result`` for a nameless callable). Without a declaration, the return
+        type is inferred with the same component rule. Display aliases never
+        change this default component. A named type hole is inferred independently for each call.
     output_label : str or None
         Optional result alias. Without one, managed calls derive an application
-        expression. Components come only from ``output_spec``; aliases never
-        affect mathematical declarations.
+        expression. Aliases never affect mathematical declarations.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -857,6 +860,7 @@ class Function(Node, TrackedTerm, Annotated):
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
     _output_label: str | None
+    _output_component: str
     _options: Mapping[str, Any]
 
     DEFAULT_N_BROADCAST_SAMPLES = 256
@@ -935,7 +939,12 @@ class Function(Node, TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        output_spec = _complete_output_spec(output_spec)
+        component = getattr(metadata_source, "__name__", None)
+        if component == "<lambda>":
+            component = "f"
+        if not isinstance(component, str) or not component.isidentifier():
+            component = "result"
+        output_spec = _complete_output_spec(output_spec, component=component)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
             function_name=label,
@@ -956,6 +965,7 @@ class Function(Node, TrackedTerm, Annotated):
         set_attribute("_signature_info", signature_info)
         set_attribute("_spec", FunctionSpec(input_spec, output_spec))
         set_attribute("_output_label", output_label)
+        set_attribute("_output_component", component)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
         set_attribute("_module", module)

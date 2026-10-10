@@ -120,11 +120,11 @@ The probability of damage at 31°F is a function of the coefficients, which we w
 ```python
 import jax
 
-from probpipe import OutputSpec, function, quantile
+from probpipe import function, quantile
 
 
 # The probability of damage at 31°F, for one pair of coefficients.
-@function(output_spec=OutputSpec(damage_probability=None))
+@function
 def challenger_damage_probability(beta: jax.Array) -> jax.Array:
     return jax.nn.sigmoid(beta[0] + beta[1] * 31.0)
 

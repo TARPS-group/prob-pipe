@@ -933,6 +933,9 @@ def _update_function(
     _update(h, function.input_spec, 1, max_array_bytes, state)
     h.update(b":output_spec=")
     _update_output_declaration(h, function.output_spec, 1, max_array_bytes, state)
+    if function.output_spec is None:
+        h.update(b":output_component=")
+        h.update(function._output_component.encode())
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):

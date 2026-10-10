@@ -110,6 +110,7 @@ def execute_distribution_broadcast(
     require_jax_traceable: Callable[[dict[str, Any], list[FunctionInputRef]], None],
     function_name: str,
     output_label: str | None = None,
+    output_component: str = "result",
     output_expression: Expression | None = None,
     output_spec: OutputSpec | None = None,
     workflow_kind: WorkflowKind,
@@ -163,6 +164,8 @@ def execute_distribution_broadcast(
         The function's label, which provenance metadata records.
     output_label : str or None
         The result's display alias; the function's label by default.
+    output_component : str
+        Default mathematical component, independent of display aliases.
     output_expression : Expression or None
         The result's expression, the function applied to draws of its
         inputs, which gives the result its label; *output_label* labels the
@@ -192,7 +195,7 @@ def execute_distribution_broadcast(
         Atoms on the level ``draw``, one per evaluation. The event declaration is
         the completed output declaration: a declared output completed by the
         returned values, or else an exposed record for an undeclared record return.
-        A whole-term result requires a named output declaration. Under *include_inputs* the
+        An undeclared whole-term result uses the callable's original name. Under *include_inputs* the
         event exposes one field per lifted parameter, holding its complete draw,
         followed by the output's components.
 
@@ -266,6 +269,7 @@ def execute_distribution_broadcast(
         broadcast_args=broadcast_args,
         output_label=output_label or function_name,
         output_spec=output_spec,
+        output_component=output_component,
         include_inputs=include_inputs,
     )
     if output_expression is not None:
@@ -294,6 +298,7 @@ def _lift_result(
     broadcast_args: Sequence[FunctionInputRef],
     output_label: str,
     output_spec: OutputSpec | None,
+    output_component: str,
     include_inputs: bool,
 ) -> EmpiricalDistribution:
     """The empirical law of a lifted call's evaluations, under their weights.
@@ -314,10 +319,12 @@ def _lift_result(
         The references to the lifted arguments, in the order of their fields
         in a joint atom.
     output_label : str
-        The result's label, and the component of an undeclared whole-term output.
+        The result's display alias.
     output_spec : OutputSpec or None
         The function's output declaration with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
+    output_component : str
+        Default mathematical component, independent of display aliases.
     include_inputs : bool
         Whether the law is the joint law of the lifted inputs and the outputs.
 
@@ -333,11 +340,9 @@ def _lift_result(
     ResultSchemaError
         If the outputs do not satisfy the output declaration.
     """
-    atoms, declaration = _output_atoms(draws.outputs, draws.count, output_label, output_spec)
-    if declaration._component_name is None and not declaration.exposes_record:
-        raise ResultSchemaError(
-            "a lifted whole-term output needs a named component; declare output_spec=OutputSpec(name=spec)"
-        )
+    atoms, declaration = _output_atoms(
+        draws.outputs, draws.count, output_label, output_spec, output_component
+    )
     if not include_inputs:
         return EmpiricalDistribution(
             atoms, draws.weights, label=output_label, event_spec=declaration
@@ -347,13 +352,17 @@ def _lift_result(
 
 
 def _output_atoms(
-    outputs: Any, count: int, output_label: str, output_spec: OutputSpec | None
+    outputs: Any,
+    count: int,
+    output_label: str,
+    output_spec: OutputSpec | None,
+    output_component: str,
 ) -> tuple[Batch, OutputSpec]:
     """The outputs as a batch on the level ``draw``, and the declaration they complete.
 
     A declared output completes to its declaration with the shared dimensions
     bound by the outputs and any type hole filled. An undeclared record exposes
-    its fields; an undeclared whole-term output raises ``ResultSchemaError``.
+    its fields; an undeclared whole-term output uses *output_component*.
 
     Parameters
     ----------
@@ -367,6 +376,8 @@ def _output_atoms(
     output_spec : OutputSpec or None
         The function's output declaration with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
+    output_component : str
+        Default mathematical component, independent of display aliases.
 
     Returns
     -------
@@ -406,7 +417,7 @@ def _output_atoms(
                 rows,
                 n=count,
                 level_names=(DRAW_LEVEL,),
-                field_name=output_label,
+                field_name=output_component,
                 label=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),
@@ -419,11 +430,7 @@ def _output_atoms(
             f"argument, which is not supported yet"
         )
     if output_spec is None:
-        if not isinstance(atoms.element_spec, RecordSpec):
-            raise ResultSchemaError(
-                "a lifted whole-term output needs a named component; declare output_spec=OutputSpec(name=None)"
-            )
-        return atoms, OutputSpec(atoms.element_spec)
+        return atoms, OutputSpec.default(atoms.element_spec, component=output_component)
     try:
         _validate_stacked_output(function_name=output_label, output_spec=output_spec, batch=atoms)
     except ValueError as error:

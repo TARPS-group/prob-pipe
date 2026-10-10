@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values (including their batches) require a label; records derive it from fields,
   functions from callable names (`f` for lambdas), and object collections from
   their members. Use `Record(mapping, label=...)` or `Record.from_fields(**fields)`.
-- Function result components must be declared independently with `OutputSpec`;
-  `output_label` supplies only a display alias. Bare non-record output specs are
-  rejected. Unaliased managed calls display their application expression.
+- Function result components default to the original callable name (`f` for
+  lambdas, `result` for nameless callables). Record results expose their fields.
+  `OutputSpec` optionally overrides this declaration; `output_label` supplies
+  only a display alias. Unaliased managed calls display their application expression.
 - JAX-rebuilt numeric terms display `<no description>` until a managed result
   boundary describes them, and remain usable during tracing and direct rebuilding.
 

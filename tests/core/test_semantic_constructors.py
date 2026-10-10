@@ -20,7 +20,6 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordBatch,
-    ResultSchemaError,
     function,
     workflow_run,
 )
@@ -70,8 +69,8 @@ def test_function_defaults_and_explicit_aliases():
 
 
 def test_output_components_are_declared_independently_of_aliases():
-    with pytest.raises(TypeError, match="declared component"):
-        Function(lambda x: x, output_spec=NumericArraySpec(()))
+    inferred = Function(lambda x: x, output_spec=NumericArraySpec(()))
+    assert tuple(inferred.output_spec.components) == ("f",)
     declared = OutputSpec(prediction=NumericArraySpec(()))
     f = Function(lambda x: x + 1, label="predict", output_label="forecast", output_spec=declared)
     g = Function(f.raw(), label="other", output_label="estimate", output_spec=declared)
@@ -132,10 +131,22 @@ def test_relabeling_reuses_compilation_and_managed_results_derive_names():
     assert float(wrapped(first)) == 2.0
 
 
-def test_lifting_requires_components_from_a_declaration_or_record_fields():
+def test_lifting_infers_components_independently_of_display_aliases():
+    def predict(x):
+        return x + 1
+
+    inferred = Function(predict, n_broadcast_samples=5)
+    aliased = Function(predict, label="forecast", output_label="estimate", n_broadcast_samples=5)
+    assert fingerprint(inferred) == fingerprint(aliased)
+    with workflow_run(seed=42):
+        first = inferred(Normal("temperature", 0, 1))
+    with workflow_run(seed=42):
+        second = aliased.with_label("other")(Normal("temperature", 0, 1))
+    assert tuple(first.event_spec.components) == ("predict",)
+    assert tuple(second.event_spec.components) == ("predict",)
+    np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
     unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
-    with pytest.raises(ResultSchemaError, match="needs a named component"):
-        unnamed(Normal("temperature", 0, 1))
+    assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
     exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)
     assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.components) == ("prediction",)
 
