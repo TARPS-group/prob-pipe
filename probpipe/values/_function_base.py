@@ -38,7 +38,7 @@ from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_sp
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
 from ..core.node import Node
-from ..core.tracked import Annotated, TrackedTerm, _callable_label
+from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
     make_signature_info,
@@ -220,6 +220,32 @@ class _CallableFunctionImplementation:
         self, bound_inputs: inspect.BoundArguments, *, context: _FunctionInvocationContext
     ) -> Any:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
+
+
+#: The output component of a Function whose callable has no usable name.
+_NAMELESS_COMPONENT = "result"
+
+
+def _callable_component(fn: Any) -> str:
+    """The default output component of a Function wrapping *fn*.
+
+    It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
+    so a lambda's is ``f``, when that name is a Python identifier, and
+    ``result`` otherwise, as for a ``functools.partial``, a callable instance,
+    or a ``__name__`` such as ``"Model.fit"``. A label never changes it.
+
+    Parameters
+    ----------
+    fn : callable or None
+        The wrapped callable.
+
+    Returns
+    -------
+    str
+        The component, which is a valid component name.
+    """
+    name = _callable_name(fn)
+    return name if name is not None and name.isidentifier() else _NAMELESS_COMPONENT
 
 
 def _complete_output_spec(
@@ -889,7 +915,7 @@ class Function(Node, TrackedTerm, Annotated):
                 fn = value
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
-        label = _callable_label(fn, label)
+        label = _callable_label(fn, label, subject="Function")
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),
@@ -939,11 +965,7 @@ class Function(Node, TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        component = getattr(metadata_source, "__name__", None)
-        if component == "<lambda>":
-            component = "f"
-        if not isinstance(component, str) or not component.isidentifier():
-            component = "result"
+        component = _callable_component(metadata_source)
         output_spec = _complete_output_spec(output_spec, component=component)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(

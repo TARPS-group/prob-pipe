@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import math
+from functools import partial
 from typing import Any
 
 import jax
@@ -541,6 +542,29 @@ class TestExpectation:
 
     def test_an_undeclared_integrand_leaves_the_declaration_to_the_value(self):
         assert expectation.check(Coin("c", 0.5), lambda x: x**2).result is None
+
+    def test_an_undeclared_integrand_gives_one_result_whatever_its_names(self):
+        def square(x):
+            return x**2
+
+        results = [
+            expectation(Coin("c", 0.5), integrand)
+            for integrand in (square, lambda x: x**2, Function(square, label="g"))
+        ]
+        assert [result.label for result in results] == [
+            "E[square(c ~ c)]",
+            "E[f(c ~ c)]",
+            "E[g(c ~ c)]",
+        ]
+        assert len({result.spec for result in results}) == 1
+        assert all(_value(result) == pytest.approx(0.5) for result in results)
+
+    def test_a_nameless_integrand_needs_a_labeled_function(self):
+        integrand = partial(lambda x, k: x**k, k=2)
+        with pytest.raises(TypeError, match="explicit label for a partial"):
+            expectation(Coin("c", 0.5), integrand)
+        labeled = expectation(Coin("c", 0.5), Function(integrand, label="g"))
+        assert labeled.label == "E[g(c ~ c)]"
 
     def test_the_integrand_is_a_callable(self):
         with pytest.raises(ApplicabilityError, match="FunctionSpec"):

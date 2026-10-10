@@ -55,7 +55,7 @@ from ..core.constraints import (
     unit_interval,
 )
 from ..core.record import Record
-from ..core.tracked import TrackedTerm
+from ..core.tracked import TrackedTerm, _callable_label
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -838,13 +838,12 @@ def _integrand_label(f: Any) -> str:
     """The label of an integrand, as ``evaluate`` names its call.
 
     It is a Function's ``output_label``, so ``expectation(d, g)`` and
-    ``mean(g(d))`` are labeled alike, a callable's ``__name__``, and ``f`` for a
-    lambda.
+    ``mean(g(d))`` are labeled alike, and a plain callable's label is the one
+    ``evaluate`` wraps it under: its name, and ``f`` for a lambda.
     """
     if isinstance(f, Function):
         return f.output_label
-    name = getattr(f, "__name__", "f")
-    return "f" if name == "<lambda>" else name
+    return _callable_label(f, subject="Function")
 
 
 def _expectation_expression(d: Any, f: Any) -> Expression:

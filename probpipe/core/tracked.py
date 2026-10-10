@@ -74,15 +74,55 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 _NO_DESCRIPTION = "<no description>"
 
 
-def _callable_label(fn: Any, label: str | None = None) -> str:
-    """The explicit label, callable name, or canonical lambda symbol."""
-    if label is not None:
-        return label
+#: The name a lambda takes, as a label and as an output component.
+_LAMBDA_NAME = "f"
+
+
+def _callable_name(fn: Any) -> str | None:
+    """The name of the callable *fn*: its ``__name__``, ``f`` for a lambda, or ``None`` without one.
+
+    A ``functools.partial`` and a callable instance have no ``__name__``, and
+    an empty or non-string ``__name__`` counts as none.
+    """
     name = getattr(fn, "__name__", None)
     if name == "<lambda>":
-        return "f"
-    if not name:
-        raise TypeError("a callable without a name requires an explicit label=...")
+        return _LAMBDA_NAME
+    return name if isinstance(name, str) and name else None
+
+
+def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = None) -> str:
+    """The label of a term named after the callable *fn*.
+
+    It is *label* when one is given, and otherwise the callable's name by
+    :func:`_callable_name`, so a lambda is labeled ``f``.
+
+    Parameters
+    ----------
+    fn : callable
+        The callable the term is named after.
+    label : str or None
+        The caller's explicit label, which takes precedence.
+    subject : str or None
+        What takes the label, such as ``"Function"``, which the error names.
+
+    Returns
+    -------
+    str
+        The explicit label or the callable's name.
+
+    Raises
+    ------
+    TypeError
+        If *label* is None and *fn* has no name.
+    """
+    if label is not None:
+        return label
+    name = _callable_name(fn)
+    if name is None:
+        raise TypeError(
+            f"{subject or 'a term named after a callable'} needs an explicit label for a "
+            f"{type(fn).__name__}, which has no __name__ to take it from; pass label=..."
+        )
     return name
 
 

@@ -288,35 +288,61 @@ class TestFunctionDeclarations:
                 label="value",
             )
 
-    def test_invalid_default_output_component_reports_its_name(self):
-        with pytest.raises(ValueError, match="got 'group/value'"):
-            Function(
-                lambda: 1,
-                output_spec=OutputSpec(**{"group/value": NumericArraySpec(())}),
-                label="group/value",
-            )
+    @pytest.mark.parametrize("name", ["group/value", "Model.fit", ""])
+    def test_a_non_identifier_name_infers_the_result_component(self, name):
+        def value():
+            return 1.0
+
+        value.__name__ = name
+        wrapped = Function(value, output_spec=NumericArraySpec(()), label="value")
+        assert tuple(wrapped.output_spec.components) == ("result",)
 
     @pytest.mark.parametrize("label", ["Model.fit", "<lambda>"])
-    def test_non_identifier_output_component_is_allowed(self, label):
-        wrapped = Function(
-            lambda: 1,
-            output_spec=OutputSpec(result=NumericArraySpec(())),
-            label=label,
-        )
-        assert tuple(wrapped.output_spec.components) == ("result",)
+    def test_a_non_identifier_label_leaves_the_inferred_component(self, label):
+        wrapped = Function(lambda: 1, output_spec=NumericArraySpec(()), label=label)
+        assert tuple(wrapped.output_spec.components) == ("f",)
         assert wrapped().label == f"{label}()"
 
     def test_decorated_lambda_keeps_its_default_component(self):
-        wrapped = function(
-            output_spec=OutputSpec(
-                test_decorated_lambda_keeps_its_default_component=NumericArraySpec(())
-            )
-        )(lambda: 1)
+        wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
         assert wrapped.label == "f"
-        assert tuple(wrapped.output_spec.components) == (
-            "test_decorated_lambda_keeps_its_default_component",
-        )
+        assert wrapped.output_spec == OutputSpec(f=NumericArraySpec(()))
         assert float(wrapped()) == 1
+
+    @pytest.mark.parametrize("kind", ["partial", "instance"])
+    def test_an_unnamed_callable_infers_the_result_component(self, kind):
+        wrapped = Function(
+            _unnamed_callables()[kind], output_spec=NumericArraySpec(()), label="add1"
+        )
+        assert tuple(wrapped.output_spec.components) == ("result",)
+        assert wrapped._output_component == "result"
+
+    def test_a_bound_method_infers_its_method_name(self):
+        class Model:
+            def fit(self, x):
+                return x + 1.0
+
+        wrapped = Function(Model().fit, output_spec=NumericArraySpec(()))
+        assert wrapped.label == "fit"
+        assert tuple(wrapped.output_spec.components) == ("fit",)
+
+    def test_an_undeclared_output_infers_the_callable_name(self):
+        def score(x):
+            return x + 1.0
+
+        wrapped = Function(score, label="other")
+        assert wrapped.output_spec is None
+        assert wrapped._output_component == "score"
+
+    def test_with_label_leaves_the_inferred_component(self):
+        def score(x):
+            return x
+
+        wrapped = Function(score, output_spec=NumericArraySpec(()))
+        renamed = wrapped.with_label("other")
+        assert renamed.output_spec.components == {"score": NumericArraySpec(())}
+        assert renamed._output_component == "score"
+        assert renamed(4).label == "other(4)"
 
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
@@ -328,8 +354,13 @@ class TestFunctionDeclarations:
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_needs_an_explicit_name(self, kind, with_parentheses):
         decorate = function() if with_parentheses else function
-        with pytest.raises(TypeError, match="explicit label"):
-            decorate(_unnamed_callables()[kind])
+        callable_ = _unnamed_callables()[kind]
+        with pytest.raises(
+            TypeError,
+            match=f"Function needs an explicit label for a {type(callable_).__name__}, which has "
+            "no __name__",
+        ):
+            decorate(callable_)
 
     def test_required_name_and_raw_representation(self):
         def add(x, /, *, y=2):
@@ -363,15 +394,14 @@ class TestFunctionDeclarations:
         assert predict_impl.output_spec.components == {"mean": None}
 
     def test_default_output_name_is_captured_once(self):
-        wrapped = Function(
-            lambda x: x,
-            output_spec=OutputSpec(score=NumericArraySpec(())),
-            label="score",
-        )
+        def score(x):
+            return x
+
+        wrapped = Function(score, output_spec=NumericArraySpec(()), output_label="shown")
         renamed = wrapped.with_label("other")
-        assert renamed.output_label == "other"
+        assert renamed.output_label == "shown"
         assert renamed.output_spec.components == {"score": NumericArraySpec(())}
-        assert renamed(4).label == "other(4)"
+        assert renamed(4).label == "shown"
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
     @pytest.mark.parametrize("lift", ["sweep", "broadcast"])
