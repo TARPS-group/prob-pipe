@@ -65,6 +65,14 @@ class TestNotationMaxDepth:
         ):
             _initial_max_depth()
 
+    def test_construction_and_reset_raise_on_an_invalid_environment_value(self, monkeypatch):
+        config = NotationConfig()
+        monkeypatch.setenv(_NOTATION_MAX_DEPTH_ENV_VAR, "deep")
+        with pytest.raises(ValueError, match="PROBPIPE_NOTATION_MAX_DEPTH must be an integer"):
+            NotationConfig()
+        with pytest.raises(ValueError, match="PROBPIPE_NOTATION_MAX_DEPTH must be an integer"):
+            config.reset()
+
     def test_the_setting_is_settable_and_reset_restores_it(self, monkeypatch):
         import probpipe
 
