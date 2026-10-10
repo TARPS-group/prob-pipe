@@ -433,7 +433,7 @@ class TestPyTree:
         assert nr2.fields == nr.fields
         assert nr2 == nr  # structural equality: template + field values
         np.testing.assert_allclose(np.asarray(nr2["x"]), [1.0, 2.0])
-        assert nr2.label == "<no description>"
+        assert nr2.label == _NO_DESCRIPTION
 
     def test_jit(self):
         nr = NumericRecord(

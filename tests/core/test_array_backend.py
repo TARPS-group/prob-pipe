@@ -32,6 +32,7 @@ from probpipe import (
 )
 from probpipe.core import _array_backend
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 xr = pytest.importorskip("xarray")
 pd = pytest.importorskip("pandas")
@@ -380,7 +381,7 @@ class TestJaxBoundary:
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert type(back) is NumericRecord
         assert isinstance(back.raw("temps"), jnp.ndarray)  # native type does not cross
-        assert back.label == "<no description>"  # the label does not cross either
+        assert back.label == _NO_DESCRIPTION  # the label does not cross either
         assert back.event_template == nr.event_template
 
     def test_tree_map_returns_bare_arrays(self, da):

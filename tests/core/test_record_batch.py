@@ -1839,7 +1839,7 @@ class TestPyTree:
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
         assert rebuilt == batch
         # The label does not cross a transform, so the rebuilt batch takes its class's.
-        assert rebuilt.label == "<no description>"
+        assert rebuilt.label == _NO_DESCRIPTION
 
     def test_batches_that_differ_only_in_label_share_a_treedef(self):
         assert jax.tree_util.tree_structure(

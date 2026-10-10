@@ -948,7 +948,7 @@ class TestNumericArrayIsAPyTree:
 
         assert isinstance(rebuilt, NumericArray)
         # The label does not cross a transform, so the rebuilt value takes its class's.
-        assert rebuilt.label == "<no description>"
+        assert rebuilt.label == _NO_DESCRIPTION
         np.testing.assert_array_equal(np.asarray(rebuilt), np.arange(3.0))
 
     def test_values_that_differ_only_in_label_share_a_treedef_and_a_compilation(self):
@@ -1045,7 +1045,7 @@ class TestNumericArrayIsAPyTree:
         skeleton = jax.tree_util.tree_map(lambda x: None, value)
 
         assert isinstance(skeleton, NumericArray)
-        assert skeleton.label == "<no description>"
+        assert skeleton.label == _NO_DESCRIPTION
 
     def test_a_sentinel_child_rebuilds(self):
         _, treedef = jax.tree_util.tree_flatten(
