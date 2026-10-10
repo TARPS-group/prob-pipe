@@ -91,6 +91,16 @@ nav:
     - "5. Updating forecasts as counts arrive": tutorials/05_updating.ipynb
     - "6. Fitting a model that can only be simulated": tutorials/06_simulating.ipynb
   - User guide:
+    - user_guide/index.md
+    - Terms: user_guide/01_terms.ipynb
+    - Values and records: user_guide/02_values_and_records.ipynb
+    - Distributions: user_guide/03_distributions.ipynb
+    - Joint models and conditional distributions: user_guide/04_joint_models.ipynb
+    - Functions on values and distributions: user_guide/05_functions_and_lifting.ipynb
+    - Conditioning and inference methods: user_guide/06_conditioning_and_inference.ipynb
+    - Checking results: user_guide/07_checking_results.ipynb
+    - Converting and updating distributions: user_guide/08_conversion_and_updating.ipynb
+    - How a result was computed: user_guide/09_how_results_are_computed.ipynb
     - Ray via Prefect: user_guide/ray.md
   - API reference:
     - api/index.md

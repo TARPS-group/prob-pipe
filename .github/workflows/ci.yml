@@ -758,11 +758,11 @@ jobs:
 
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
-    # current codebase. Two parallel legs: `user_guide` (lean — dev+nutpie) and
-    # `tutorials` (the SBI backends — bayesflow+pymc+pyabc). Splitting roughly halves
-    # the wall-clock vs one serial pass (~8 min each, on par with the test
-    # matrix) and spares the User Guide the ~200 MB pymc/bayesflow install.
-    # User Guide notebooks do not import those backends in code. Separate from
+    # current codebase. Two parallel legs: `user_guide` (dev+nutpie+pymc+pyabc,
+    # for the conditioning chapter) and `tutorials` (also bayesflow). Splitting
+    # roughly halves the wall-clock vs one serial pass (~8 min each, on par with
+    # the test matrix) and spares the User Guide the bayesflow install, which no
+    # User Guide notebook imports. Separate from
     # the unit-test matrix either way. Skipped per-leg when no notebook in its
     # dir or probpipe source changes.
     name: notebooks (${{ matrix.group }})
@@ -775,7 +775,7 @@ jobs:
             extras: --extra dev
           - group: user_guide
             dir: docs/user_guide
-            extras: --extra dev --extra nutpie
+            extras: --extra dev --extra nutpie --extra pymc --extra pyabc
           - group: tutorials
             dir: docs/tutorials
             extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
@@ -872,8 +872,8 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # Per-leg extras (matrix.extras): the User Guide leg needs only
-        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc+pyabc.
+        # Per-leg extras (matrix.extras): the User Guide leg needs
+        # dev+nutpie+pymc+pyabc; the tutorials leg adds bayesflow.
         run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 
       - name: Execute affected notebooks
