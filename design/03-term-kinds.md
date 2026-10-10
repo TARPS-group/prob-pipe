@@ -285,7 +285,7 @@ class Record(NamedTree[Any], TrackedTerm):
     # a field's raw value, or a subtree's nested mapping
 
     @classmethod
-    def from_field_values(cls, spec: RecordSpec, values: Sequence[Any], *,
+    def from_field_values(cls, template: RecordSpec, values: Iterable[Any], *,
                           label: str | None = None) -> Record: ...
     # reconstruct from values in the schema's canonical order; ValueError on count/shape mismatch
 
