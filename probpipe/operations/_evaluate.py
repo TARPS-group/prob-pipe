@@ -17,6 +17,7 @@ from .._messages import unknown_names
 from ..core._dispatch import Feasibility
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
+from ..core.tracked import _callable_label
 from ..functions import _plan, _rules, function
 from ..functions._call import ApplicabilityError
 from ..functions._resolution import PointReport
@@ -134,9 +135,33 @@ def _bound_parameter(f: Function, fixed_args: Mapping[str, Any] | None) -> str:
     return open_parameters[0]
 
 
-def _as_function(f: Any) -> Function:
-    """The map as a ``Function``: a plain callable is wrapped under its own name."""
-    return f if isinstance(f, Function) else function(f)
+#: How the caller of an operation that takes no label labels a callable without a name.
+NAMELESS_CALLABLE_FIX = "wrap it as Function(f, label=...)"
+
+
+def _as_function(f: Any, *, subject: str = "evaluate") -> Function:
+    """The map as a ``Function``: a plain callable is wrapped under its own name.
+
+    Parameters
+    ----------
+    f : Function or callable
+        The map, which a ``Function`` gives as it is.
+    subject : str
+        The operation the map is an argument of, which the error names.
+
+    Returns
+    -------
+    Function
+        *f*, or *f* wrapped under its name, ``f`` for a lambda.
+
+    Raises
+    ------
+    TypeError
+        If *f* is a plain callable without a name, such as a ``functools.partial``.
+    """
+    if isinstance(f, Function):
+        return f
+    return function(f, label=_callable_label(f, subject=subject, fix=NAMELESS_CALLABLE_FIX))
 
 
 def _call_values(call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:

@@ -177,7 +177,13 @@ def _callable_name(fn: Any) -> str | None:
     return name if isinstance(name, str) and name else None
 
 
-def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = None) -> str:
+def _callable_label(
+    fn: Any,
+    label: str | None = None,
+    *,
+    subject: str | None = None,
+    fix: str = "pass label=...",
+) -> str:
     """The label of a term named after the callable *fn*.
 
     It is *label* when one is given, and otherwise the callable's name by
@@ -191,6 +197,10 @@ def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = 
         The caller's explicit label, which takes precedence.
     subject : str or None
         What takes the label, such as ``"Function"``, which the error names.
+    fix : str
+        How the caller supplies the label at this call site, which the error
+        ends with. An operation that takes no label, such as ``expectation``,
+        names the labeled ``Function`` to pass instead.
 
     Returns
     -------
@@ -208,7 +218,7 @@ def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = 
     if name is None:
         raise TypeError(
             f"{subject or 'a term named after a callable'} needs an explicit label for a "
-            f"{type(fn).__name__}, which has no __name__ to take it from; pass label=..."
+            f"{type(fn).__name__}, which has no name; {fix}"
         )
     return name
 

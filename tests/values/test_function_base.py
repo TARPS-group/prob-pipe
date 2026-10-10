@@ -365,8 +365,8 @@ class TestFunctionDeclarations:
         callable_ = _unnamed_callables()[kind]
         with pytest.raises(
             TypeError,
-            match=f"Function needs an explicit label for a {type(callable_).__name__}, which has "
-            "no __name__",
+            match=f"^Function needs an explicit label for a {type(callable_).__name__}, which has "
+            r"no name; pass label=\.\.\.$",
         ):
             decorate(callable_)
 

@@ -561,7 +561,11 @@ class TestExpectation:
 
     def test_a_nameless_integrand_needs_a_labeled_function(self):
         integrand = partial(lambda x, k: x**k, k=2)
-        with pytest.raises(TypeError, match="explicit label for a partial"):
+        with pytest.raises(
+            TypeError,
+            match=r"^expectation needs an explicit label for a partial, which has no name; "
+            r"wrap it as Function\(f, label=\.\.\.\)$",
+        ):
             expectation(Coin("c", 0.5), integrand)
         labeled = expectation(Coin("c", 0.5), Function(integrand, label="g"))
         assert labeled.label == "E[g(c ~ c)]"
