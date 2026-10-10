@@ -12,8 +12,9 @@ import numpy as np
 
 from ..values._function_base import Function, FunctionSpec
 from ._kinds import register_kind
-from ._object_batch import _as_object_array, _collection_expression, _ObjectBatch
+from ._object_batch import _ObjectBatch
 from ._shapes import AxisCountsLike, NamesLike
+from ._specs import TermSpec
 from .provenance import Provenance
 
 __all__ = ["FunctionBatch"]
@@ -29,8 +30,11 @@ class FunctionBatch(_ObjectBatch[Callable]):
     level_names : str or sequence of str
         One name per level, outermost first.
     label : str, optional
-        The batch's display alias. Defaults to a bounded description of its
-        members. Empty unnamed collections require an alias.
+        The batch's label. Defaults to a list of its first eight members in
+        row-major order over every batch axis, each as its name and
+        parameters, followed by ``…`` when more remain, as
+        ``[predict(x), f(x)]``. A batch of several axes reads as one flat list,
+        and its repr gives the levels.
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
         specifies a callable and neither of its input/output declarations.
@@ -50,8 +54,8 @@ class FunctionBatch(_ObjectBatch[Callable]):
         If ``element_spec`` is not a :class:`FunctionSpec`; if an element is not
         callable, naming the position that failed; if ``elements`` is a string, a
         mapping, or an array that is not ``dtype=object`` — each iterates into
-        something other than its elements — or is not iterable at all; or an empty
-        collection has no explicit label.
+        something other than its elements — or is not iterable at all; or
+        *label* is omitted and there are no elements.
     ValueError
         If ``elements`` is a zero-dimensional array (one object, with no batch
         axis to count along); if ``axes_per_level`` does not account for every axis
@@ -110,27 +114,45 @@ class FunctionBatch(_ObjectBatch[Callable]):
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        if element_spec is None:
-            element_spec = FunctionSpec()
-        elif not isinstance(element_spec, FunctionSpec):
-            raise TypeError(
-                f"FunctionBatch.element_spec must be a FunctionSpec, "
-                f"got {type(element_spec).__name__}"
-            )
-        elements = _as_object_array(elements, kind=type(self).__name__)
-        expression = _collection_expression(elements) if label is None else None
-        if expression is not None:
-            label = expression.render_label()
         super().__init__(
-            label,
             elements,
             level_names,
+            label=label,
             element_spec=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
-        if expression is not None:
-            self._store_expression(expression)
+
+    def _resolved_element_spec(
+        self, store: np.ndarray, element_spec: TermSpec | None
+    ) -> FunctionSpec:
+        """*element_spec*, which must be a ``FunctionSpec``, or ``FunctionSpec()`` when omitted.
+
+        Parameters
+        ----------
+        store : numpy.ndarray
+            The elements, which the default does not read.
+        element_spec : TermSpec or None
+            The spec the caller supplied, or ``None``.
+
+        Returns
+        -------
+        FunctionSpec
+            The element spec.
+
+        Raises
+        ------
+        TypeError
+            If *element_spec* is not a ``FunctionSpec``.
+        """
+        if element_spec is None:
+            return FunctionSpec()
+        if not isinstance(element_spec, FunctionSpec):
+            raise TypeError(
+                f"FunctionBatch.element_spec must be a FunctionSpec, "
+                f"got {type(element_spec).__name__}"
+            )
+        return element_spec
 
     @property
     def element_spec(self) -> FunctionSpec:
@@ -144,7 +166,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         ----------
         value : callable
             The object stored at the element's position.
-        label : str, optional
+        label : str
             The label of the element view, derived from its position.
 
         Returns

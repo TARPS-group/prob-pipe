@@ -396,9 +396,10 @@ def _factor_graph(
         for component, spec in factor.event_spec.components.items():
             if component in producers:
                 raise ValueError(
-                    f"the field {component!r} is produced by both "
-                    f"{factors[producers[component]].label!r} and {factor.label!r}; rename one "
-                    f"with with_path_names()"
+                    f"the field {component!r} is produced by both factor "
+                    f"{producers[component]} ({factors[producers[component]].label!r}) and "
+                    f"factor {index} ({factor.label!r}); rename one with with_path_names() or "
+                    f"declare its output with OutputSpec"
                 )
             producers[component] = index
             component_specs[component] = spec
@@ -2066,8 +2067,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
         _component: str | None = None,
     ) -> None:
         expression = _product_of(factors) if label is None else None
+        rendering = None
         if expression is not None:
-            label = expression.render_label()
+            rendering = expression.label_rendering()
+            label = rendering[0]
         graph = _factor_graph(factors, _scope)
         if graph.unmet is not None:
             raise ValueError(
@@ -2081,7 +2084,7 @@ class FactoredDistribution(Distribution, SupportsFactors):
         )
         object.__setattr__(self, "_graph", graph)
         if expression is not None:
-            self._store_expression(expression)
+            self._store_expression(expression, rendering)
 
     @property
     def factors(self) -> tuple[Factor, ...]:
@@ -2202,8 +2205,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         _component: str | None = None,
     ) -> None:
         expression = _product_of(factors) if label is None else None
+        rendering = None
         if expression is not None:
-            label = expression.render_label()
+            rendering = expression.label_rendering()
+            label = rendering[0]
         graph = _factor_graph(factors, _scope)
         if graph.unmet is None:
             raise ValueError(
@@ -2217,7 +2222,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
         )
         object.__setattr__(self, "_graph", graph)
         if expression is not None:
-            self._store_expression(expression)
+            self._store_expression(expression, rendering)
 
     @property
     def factors(self) -> tuple[Factor, ...]:

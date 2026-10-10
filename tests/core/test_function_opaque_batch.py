@@ -36,6 +36,16 @@ from probpipe import (
 from probpipe.core.provenance import Provenance
 
 
+def _named(name):
+    """A one-parameter callable whose ``__name__`` is *name*."""
+
+    def member(x):
+        return x
+
+    member.__name__ = name
+    return member
+
+
 @pytest.fixture
 def functions():
     """Three callables under one `variant` level."""
@@ -424,6 +434,18 @@ class TestElements:
         assert [parent.label for parent in view.provenance.parents] == ["f", "alpha"]
         assert element.label == "alpha"
 
+    def test_selecting_never_writes_to_a_stored_function(self):
+        """Not even one labeled as its view would be, which a label check would miss."""
+        stored = [Function(lambda x: x, label="f[variant=0]"), Function(lambda x: 2 * x, label="g")]
+        expressions = [function._expression for function in stored]
+        batch = FunctionBatch(stored, "variant", label="f")
+        views = [batch[0], batch[1], batch.at_levels(variant=0)]
+        assert [view.label for view in views] == ["f[variant=0]", "f[variant=1]", "f[variant=0]"]
+        assert all(view is not function for view in views for function in stored)
+        assert [function.label for function in stored] == ["f[variant=0]", "g"]
+        assert [function._expression for function in stored] == expressions
+        assert all(function.provenance is None for function in stored)
+
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
 
@@ -570,6 +592,62 @@ class TestNaming:
 
     def test_with_name_re_roots_a_view(self, labels):
         assert labels[0:2].with_label("q")[0:1].label == "q[site=0:1]"
+
+
+class TestTheDefaultLabel:
+    """An unlabeled FunctionBatch is labeled by a bounded list of its members."""
+
+    def test_a_member_reads_as_its_name_and_parameters(self):
+        def predict(x, y):
+            return x + y
+
+        assert FunctionBatch([predict, lambda x: x], "model").label == "[predict(x, y), 𝒻(x)]"
+
+    def test_a_callable_without_an_inspectable_signature_reads_as_its_name(self):
+        """``max`` has no signature to inspect, so construction must not need one."""
+        batch = FunctionBatch([max, len], "model")
+        assert batch.label == "[max, len(obj)]"
+
+    def test_a_multi_axis_batch_lists_its_members_in_row_major_order(self):
+        """A 3x3 batch reads as one flat list of its first eight members, then ``…``."""
+        store = np.empty((3, 3), dtype=object)
+        for row in range(3):
+            for column in range(3):
+                store[row, column] = _named(f"g{row}{column}")
+        batch = FunctionBatch(store, ["row", "column"])
+        members = ", ".join(f"g{row}{column}(x)" for row in range(3) for column in range(3))
+        assert batch.label == "[" + members.rsplit(", ", 1)[0] + ", …]"
+
+    def test_eight_members_are_listed_in_full(self):
+        batch = FunctionBatch([_named(f"g{i}") for i in range(8)], "model")
+        assert batch.label == "[" + ", ".join(f"g{i}(x)" for i in range(8)) + "]"
+
+    def test_a_ninth_member_is_left_out_as_an_ellipsis(self):
+        batch = FunctionBatch([_named(f"g{i}") for i in range(9)], "model")
+        assert batch.label == "[" + ", ".join(f"g{i}(x)" for i in range(8)) + ", …]"
+
+    def test_an_empty_batch_without_a_label_is_refused(self):
+        with pytest.raises(
+            TypeError,
+            match=r"^cannot derive a default label for an empty FunctionBatch; pass label=\.\.\.$",
+        ):
+            FunctionBatch([], "model")
+        assert FunctionBatch([], "model", label="none").batch_shape == (0,)
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    """Three positional arguments led by a string are the earlier label-first form."""
+
+    def test_a_label_first_call_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^FunctionBatch takes the elements first and the label as the keyword label, "
+                r"but got the string 'f' as the elements; "
+                r"write FunctionBatch\(elements, level_names, label='f'\)$"
+            ),
+        ):
+            FunctionBatch("f", [abs], "variant")
 
 
 class TestFieldKeys:

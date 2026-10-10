@@ -795,8 +795,9 @@ def _update_distribution(
         _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
         # Generic fallback for other non-TFP distributions. The label, the
-        # default label, and the expression state how the law displays, and
-        # record nothing about what it computes.
+        # default label, the expression, and what the label's rendering left
+        # out state how the law displays, and record nothing about what it
+        # computes.
         _SKIP = frozenset(
             {
                 "_label",
@@ -933,9 +934,6 @@ def _update_function(
     _update(h, function.input_spec, 1, max_array_bytes, state)
     h.update(b":output_spec=")
     _update_output_declaration(h, function.output_spec, 1, max_array_bytes, state)
-    if function.output_spec is None:
-        h.update(b":output_component=")
-        h.update(function._output_component.encode())
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):

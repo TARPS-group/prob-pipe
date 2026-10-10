@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ast
+import copy
 import inspect
 from contextlib import contextmanager, nullcontext
 from functools import partial
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -38,7 +40,13 @@ from probpipe import (
     workflow_method,
     workflow_run,
 )
+from probpipe.core._fingerprint import fingerprint
 from probpipe.core.constraints import positive, real
+from probpipe.core.tracked import _NO_DESCRIPTION
+
+
+def _module_level_add(x, y=1.0):
+    return x + y
 
 
 def _unnamed_callables():
@@ -288,35 +296,61 @@ class TestFunctionDeclarations:
                 label="value",
             )
 
-    def test_invalid_default_output_component_reports_its_name(self):
-        with pytest.raises(ValueError, match="got 'group/value'"):
-            Function(
-                lambda: 1,
-                output_spec=OutputSpec(**{"group/value": NumericArraySpec(())}),
-                label="group/value",
-            )
+    @pytest.mark.parametrize("name", ["group/value", "Model.fit", ""])
+    def test_a_non_identifier_name_infers_the_result_component(self, name):
+        def value():
+            return 1.0
+
+        value.__name__ = name
+        wrapped = Function(value, output_spec=NumericArraySpec(()), label="value")
+        assert tuple(wrapped.output_spec.components) == ("result",)
 
     @pytest.mark.parametrize("label", ["Model.fit", "<lambda>"])
-    def test_non_identifier_output_component_is_allowed(self, label):
-        wrapped = Function(
-            lambda: 1,
-            output_spec=OutputSpec(result=NumericArraySpec(())),
-            label=label,
-        )
-        assert tuple(wrapped.output_spec.components) == ("result",)
+    def test_a_non_identifier_label_leaves_the_inferred_component(self, label):
+        wrapped = Function(lambda: 1, output_spec=NumericArraySpec(()), label=label)
+        assert tuple(wrapped.output_spec.components) == ("f",)
         assert wrapped().label == f"{label}()"
 
     def test_decorated_lambda_keeps_its_default_component(self):
-        wrapped = function(
-            output_spec=OutputSpec(
-                test_decorated_lambda_keeps_its_default_component=NumericArraySpec(())
-            )
-        )(lambda: 1)
+        wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
         assert wrapped.label == "𝒻"
-        assert tuple(wrapped.output_spec.components) == (
-            "test_decorated_lambda_keeps_its_default_component",
-        )
+        assert wrapped.output_spec == OutputSpec(f=NumericArraySpec(()))
         assert float(wrapped()) == 1
+
+    @pytest.mark.parametrize("kind", ["partial", "instance"])
+    def test_an_unnamed_callable_infers_the_result_component(self, kind):
+        wrapped = Function(
+            _unnamed_callables()[kind], output_spec=NumericArraySpec(()), label="add1"
+        )
+        assert tuple(wrapped.output_spec.components) == ("result",)
+        assert wrapped._output_component == "result"
+
+    def test_a_bound_method_infers_its_method_name(self):
+        class Model:
+            def fit(self, x):
+                return x + 1.0
+
+        wrapped = Function(Model().fit, output_spec=NumericArraySpec(()))
+        assert wrapped.label == "fit"
+        assert tuple(wrapped.output_spec.components) == ("fit",)
+
+    def test_an_undeclared_output_infers_the_callable_name(self):
+        def score(x):
+            return x + 1.0
+
+        wrapped = Function(score, label="other")
+        assert wrapped.output_spec is None
+        assert wrapped._output_component == "score"
+
+    def test_with_label_leaves_the_inferred_component(self):
+        def score(x):
+            return x
+
+        wrapped = Function(score, output_spec=NumericArraySpec(()))
+        renamed = wrapped.with_label("other")
+        assert renamed.output_spec.components == {"score": NumericArraySpec(())}
+        assert renamed._output_component == "score"
+        assert renamed(4).label == "other(4)"
 
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_wraps_under_an_explicit_name(self, kind):
@@ -328,8 +362,13 @@ class TestFunctionDeclarations:
     @pytest.mark.parametrize("kind", ["partial", "instance"])
     def test_an_unnamed_callable_needs_an_explicit_name(self, kind, with_parentheses):
         decorate = function() if with_parentheses else function
-        with pytest.raises(TypeError, match="explicit label"):
-            decorate(_unnamed_callables()[kind])
+        callable_ = _unnamed_callables()[kind]
+        with pytest.raises(
+            TypeError,
+            match=f"Function needs an explicit label for a {type(callable_).__name__}, which has "
+            "no __name__",
+        ):
+            decorate(callable_)
 
     def test_required_name_and_raw_representation(self):
         def add(x, /, *, y=2):
@@ -344,6 +383,26 @@ class TestFunctionDeclarations:
         assert wrapped.apply(3) == 5
         assert inspect.signature(wrapped) == inspect.signature(add)
         assert Function(add).label == "add"
+
+    def test_a_label_before_the_callable_names_the_new_form(self):
+        def g(x):
+            return x
+
+        with pytest.raises(
+            TypeError, match=r"got the label 'g' first; write Function\(fn, label='g'\)"
+        ):
+            Function("g", g)
+
+    def test_a_callable_given_as_fn_names_the_positional_form(self):
+        def g(x):
+            return x
+
+        with pytest.raises(TypeError, match=r"not as fn=; write Function\(fn, label=...\)"):
+            Function(fn=g)
+
+    def test_a_function_copies_after_the_argument_check(self):
+        wrapped = Function(_module_level_add, label="add")
+        assert copy.copy(wrapped).label == "add"
 
     def test_names_are_independent(self, full_provenance_mode):
         @function(label="predict", output_label="prediction", output_spec=OutputSpec(mean=None))
@@ -363,15 +422,14 @@ class TestFunctionDeclarations:
         assert predict_impl.output_spec.components == {"mean": None}
 
     def test_default_output_name_is_captured_once(self):
-        wrapped = Function(
-            lambda x: x,
-            output_spec=OutputSpec(score=NumericArraySpec(())),
-            label="score",
-        )
+        def score(x):
+            return x
+
+        wrapped = Function(score, output_spec=NumericArraySpec(()), output_label="shown")
         renamed = wrapped.with_label("other")
-        assert renamed.output_label == "other"
+        assert renamed.output_label == "shown"
         assert renamed.output_spec.components == {"score": NumericArraySpec(())}
-        assert renamed(4).label == "other(4)"
+        assert renamed(4).label == "shown"
 
     @pytest.mark.parametrize("dispatch", ["sequential", "thread", "jax", "auto"])
     @pytest.mark.parametrize("lift", ["sweep", "broadcast"])
@@ -1318,8 +1376,9 @@ class TestModuleReturnInference:
         result = method()
         expected = ordinary()
         assert method.output_spec is None
-        assert method.label == "Example.numbers"
-        assert result.label == method.output_label == "numbers"
+        assert method.label == method.output_label == "Example.numbers"
+        assert method._output_component == "numbers"
+        assert result.label == "Example.numbers()"
         assert type(result) is type(expected)
         assert result.spec == expected.spec
         assert result.value == expected.value == sequence
@@ -1485,3 +1544,73 @@ def test_a_returned_function_is_relabeled_with_its_python_names(full_provenance_
     assert result.output_label == "value"
     assert result.provenance.parents[0].parent is factory
     assert stored.label == stored.__name__ == "inner"
+
+
+class TestFunctionLabels:
+    def test_function_defaults_and_explicit_aliases(self):
+        def predict(temperature):
+            return temperature + 1
+
+        assert Function(predict).notation == "predict(temperature)"
+        assert Function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
+        assert function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
+        assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
+        assert Function(predict, output_label="prediction")(2.0).label == "prediction"
+
+    def test_output_components_are_declared_independently_of_aliases(self):
+        inferred = Function(lambda x: x, output_spec=NumericArraySpec(()))
+        assert tuple(inferred.output_spec.components) == ("f",)
+        declared = OutputSpec(prediction=NumericArraySpec(()))
+        f = Function(
+            lambda x: x + 1, label="predict", output_label="forecast", output_spec=declared
+        )
+        g = Function(f.raw(), label="other", output_label="estimate", output_spec=declared)
+        assert f.output_spec == g.output_spec
+        assert fingerprint(f) == fingerprint(g)
+        with workflow_run(seed=42):
+            first = f(Normal("temperature", 0, 1))
+        with workflow_run(seed=42):
+            second = g(Normal("temperature", 0, 1))
+        assert tuple(first.event_spec.components) == ("prediction",)
+        assert tuple(second.event_spec.components) == ("prediction",)
+        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+
+    @pytest.mark.parametrize("transform", [jax.jit, jax.vmap], ids=["jit", "vmap"])
+    def test_a_function_applies_to_a_rebuilt_array_in_a_transform(self, transform):
+        rebuilt = transform(lambda x: x)(NumericArray(jnp.arange(3.0), label="temperature"))
+        assert rebuilt.label == _NO_DESCRIPTION
+        increment = Function(lambda x: x + 1)
+        np.testing.assert_array_equal(
+            np.asarray(transform(increment)(rebuilt)), jnp.arange(3.0) + 1
+        )
+
+    def test_a_managed_result_derives_its_label_from_a_compiled_callable(self):
+        @jax.jit
+        def compiled(x):
+            return x + 1
+
+        first = NumericArray(1.0, label="temperature")
+        wrapped = Function(compiled, label="increment")
+        assert wrapped(first).label == "increment(temperature)"
+        assert float(wrapped(first)) == 2.0
+
+    def test_lifting_infers_components_independently_of_display_aliases(self):
+        def predict(x):
+            return x + 1
+
+        inferred = Function(predict, n_broadcast_samples=5)
+        aliased = Function(
+            predict, label="forecast", output_label="estimate", n_broadcast_samples=5
+        )
+        assert fingerprint(inferred) == fingerprint(aliased)
+        with workflow_run(seed=42):
+            first = inferred(Normal("temperature", 0, 1))
+        with workflow_run(seed=42):
+            second = aliased.with_label("other")(Normal("temperature", 0, 1))
+        assert tuple(first.event_spec.components) == ("predict",)
+        assert tuple(second.event_spec.components) == ("predict",)
+        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
+        assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
+        exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)
+        assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.components) == ("prediction",)

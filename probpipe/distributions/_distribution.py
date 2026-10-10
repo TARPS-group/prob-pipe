@@ -21,7 +21,8 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
-from ..core._expression import _GENERIC_LAW_SYMBOL, Signature
+from .._messages import label_given_first
+from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -158,10 +159,7 @@ def _label_given_first(owner: str, first: str, value: str) -> str:
     the label as the keyword ``label=``, so a string there is a label passed
     in the earlier form.
     """
-    return (
-        f"{owner} takes the {first} first and the label as the keyword label, but got the "
-        f"string {value!r} as the {first}"
-    )
+    return label_given_first(owner, first, value)
 
 
 def _class_label(term: Any) -> str:
@@ -233,6 +231,19 @@ def _constructor_label(term: Any, label: Any, default: str) -> str:
     return given
 
 
+def _record_default_expression(term: Any) -> None:
+    """Record the expression *term* was just given as its default one, if its label is the default.
+
+    The constructors of a law and of a kernel call this after setting the
+    label. :func:`_constructor_label` has marked a term whose constructor
+    received no label, and :func:`_labeled_by_default` compares the
+    expression the term carries with the one recorded here, so a copy, a
+    pickle, and a rename of the term keep its status.
+    """
+    if getattr(term, "_uses_default_label", False):
+        object.__setattr__(term, "_default_expression", term._expression)
+
+
 #: The message for a selection of field paths that names none.
 _EMPTY_SELECTION = "select at least one field path; got an empty tuple"
 
@@ -288,6 +299,23 @@ def _labeled_by_default(term: Any) -> bool:
     return default is not None and term._expression is getattr(term, "_default_expression", None)
 
 
+def _shows_label(term: Any, constructor: Any) -> bool:
+    """Whether the repr of *term*, as a call of *constructor*'s class, shows the label.
+
+    It shows an alias: a label that a caller gave, which the term's expression
+    holds alone around any paths held fixed, and which differs from the
+    constructor's default. A label that the constructor derives from its
+    arguments, as a product or a mixture does, is left out, since the call
+    derives it again. A term that presents *constructor* under the same label
+    shows it only where *constructor* holds it as an alias too.
+    """
+    if not isinstance(term._expression.core(), Named) or term.label == constructor._default_label:
+        return False
+    if term is constructor or term.label != constructor.label:
+        return True
+    return isinstance(constructor._expression.core(), Named)
+
+
 def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = None) -> str:
     """The repr of the law or kernel *term*: a call of its public constructor, then its fixed paths.
 
@@ -298,8 +326,10 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
     2. *arguments*, the constructor's other arguments in its order;
     3. the component as ``component=`` where the constructor takes it as a
        keyword, as an atoms-based law does;
-    4. the label as ``label=`` where it differs from the constructor's default,
-       which repeats what the class states;
+    4. the label as ``label=`` where a caller gave it and it differs from the
+       constructor's default, which repeats what the class states; a label
+       the constructor derives from its arguments is left out
+       (:func:`_shows_label`);
     5. the event declaration as ``event_spec=`` where it differs from the default
        for the component.
 
@@ -331,7 +361,7 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
         positional.append(repr(component))
     elif component is not None and constructor._repr_component == "keyword":
         keywords.append(("component", repr(component)))
-    if term.label != constructor._default_label:
+    if _shows_label(term, constructor):
         keywords.append(("label", repr(term._displayed_label())))
     if declaration is not None:
         keywords.append(("event_spec", declaration))
@@ -595,7 +625,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
-    ``label=`` where the label differs from the default, as
+    ``label=`` where a caller gave a label other than the default, as
     ``Normal('mu', loc=0.0, scale=1.0, label='prior')``.
 
     Sampling and expectation capabilities are provided by the
@@ -612,9 +642,9 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     ----------
     event_spec : OutputSpec or RecordSpec
         The declaration of one draw, completed as above.
-    label : str
-        The law's label, which must be a non-empty string. A subclass's
-        constructor passes the label its caller gave, or its default.
+    label : str, optional
+        The law's label, a non-empty string, ``p`` by default. A subclass's
+        constructor passes the label its caller gave, or its own default.
     _provenance : Provenance, optional
         The provenance of the law that a reconstruction rebuilds. By default the
         provenance stays unset until ``with_provenance`` attaches one.
@@ -657,6 +687,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         # rebuilt distribution would come back without either. Private, and the
         # reconstruction paths are the only callers.
         self._init_tracked(label, provenance=_provenance)
+        _record_default_expression(self)
         self._init_annotations(_annotations)
         self._init_declaration(event_spec)
 

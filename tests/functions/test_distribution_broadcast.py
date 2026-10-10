@@ -34,6 +34,7 @@ from probpipe.core._specs import OutputSpec
 from probpipe.core.config import WorkflowKind
 from probpipe.distributions import (
     ConditionalDistribution,
+    DistributionSpec,
     FactoredDistribution,
     SupportsConditionalSampling,
 )
@@ -1958,3 +1959,29 @@ class TestARecordReturnLiftsToARecordLaw:
         assert (drawn.batch_shape, drawn.level_names) == ((5,), ("sample",))
         assert list(drawn.event_template) == ["sum", "diff"]
         assert drawn["sum"].shape == drawn["diff"].shape == (5,)
+
+
+class TestALiftOfALawValuedFunction:
+    """A lift of a function declared to return a law holds each law under its component."""
+
+    @staticmethod
+    def _kernel():
+        def kernel(x):
+            return Normal("y", x, 1.0)
+
+        return Function(
+            kernel,
+            output_spec=OutputSpec(DistributionSpec(OutputSpec(y=NumericArraySpec(())))),
+            dispatch="sequential",
+            n_broadcast_samples=6,
+        )
+
+    def test_the_law_of_laws_names_the_callable(self):
+        with workflow_run(seed=0):
+            law = self._kernel()(Normal("x", 0.0, 1.0))
+        assert tuple(law.event_spec.components) == ("kernel",)
+
+    def test_include_inputs_joins_the_draw_and_the_law(self):
+        with workflow_run(seed=0):
+            law = self._kernel().with_options(include_inputs=True)(Normal("x", 0.0, 1.0))
+        assert tuple(law.event_spec.components) == ("x", "kernel")

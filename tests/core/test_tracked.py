@@ -145,7 +145,7 @@ class TestLabelLifecycle:
 
     def test_record_derives_label_from_fields(self):
         assert Record({"a": 1.0}).label == "record(a)"
-        with pytest.raises(TypeError, match="empty record requires label"):
+        with pytest.raises(TypeError, match="Record with no fields; pass label="):
             Record({})
 
     def test_record_keeps_operation_label(self):

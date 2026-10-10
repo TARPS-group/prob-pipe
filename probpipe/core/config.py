@@ -383,17 +383,35 @@ class NotationConfig:
 
         probpipe.notation_config.max_depth = 12
 
+    The setting is global to the process. A term's label is rendered once,
+    when the term is built, at the setting in effect then.
+
     The initial depth can also be set by the ``PROBPIPE_NOTATION_MAX_DEPTH``
     environment variable. The depth is an integer from 1 to 64, the number of
     levels a stored expression keeps, since a rendering of more levels would
     show no more.
+
+    Raises
+    ------
+    ValueError
+        On construction, which reads ``PROBPIPE_NOTATION_MAX_DEPTH``, if the
+        variable is set to anything but an integer from 1 to 64. The module's
+        singleton is constructed when ``probpipe`` is imported, so the import
+        raises.
     """
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        """Restore all settings to defaults (re-reading the env var)."""
+        """Restore all settings to their defaults, reading ``PROBPIPE_NOTATION_MAX_DEPTH`` again.
+
+        Raises
+        ------
+        ValueError
+            If ``PROBPIPE_NOTATION_MAX_DEPTH`` is set to anything but an integer
+            from 1 to 64.
+        """
         self._max_depth: int = _initial_max_depth()
 
     @property
@@ -413,7 +431,8 @@ class NotationConfig:
         then, and the term keeps it. The notation of a law, a kernel, or a
         function is rendered each time it is shown, at the current setting. A
         stored expression keeps at most 64 levels, and a part nested deeper
-        shows as its label or ``…`` at any setting, with the same warning.
+        shows as its label or ``…`` at any setting, with a ``UserWarning`` that
+        says no setting shows it.
 
         Raises
         ------

@@ -31,6 +31,7 @@ from probpipe import (
 )
 from probpipe.core._dispatch import BinaryDispatchMethod, BinaryDispatchRegistry, Feasibility
 from probpipe.functions import _resolution, _rules
+from probpipe.functions._function import _realized_point
 from probpipe.functions._rules import FLOOR_PRIORITY, evaluation_rule_registry
 
 from ._design_helpers import error_of, standard_normal
@@ -454,3 +455,59 @@ class TestNoRouteMessage:
             "condition_on: unknown field 'x'. Routes tried: "
             "a: Normal is not a ConditionalDistribution; b: unknown field 'x'"
         )
+
+
+class _Scaling:
+    """One route that scales the point's ``x`` by its ``k``."""
+
+    label = route_name = "scaling"
+    methods = None
+
+    def probe(self, call: Any, result: Any) -> Feasibility:
+        return Feasibility(True, "applies")
+
+    def run(self, call: Any, result: Any, report: Feasibility) -> Any:
+        return jnp.asarray(call["x"]) * call["k"]
+
+    def exactness(self, report: Feasibility) -> bool:
+        return True
+
+    def method_of(self, report: Feasibility) -> None:
+        return None
+
+
+class _Routed(Function):
+    """A Function realized by one route rather than by its body."""
+
+    def _route_candidates(self, controls: Any) -> tuple[_Scaling, ...]:
+        return (_Scaling(),)
+
+
+def _scale(x, k=2.0):
+    raise AssertionError("the route realizes the call, not the body")
+
+
+class TestARoutedPointShowsOnlyPassedArguments:
+    """A point's result shows the arguments the caller passed, never a default it did not."""
+
+    def test_a_plain_call_omits_the_default(self):
+        result = _Routed(_scale)(3.0)
+        assert result.label == "_scale(3.0)"
+        assert float(result) == 6.0
+
+    @pytest.mark.parametrize("passed", [frozenset({"x"}), frozenset({"x", "k"})])
+    def test_a_lifted_point_shows_what_the_call_passed(self, passed):
+        routed = _Routed(_scale)
+        term = _realized_point(
+            routed,
+            {"x": 3.0, "k": 2.0},
+            routed.options,
+            routed._route_candidates(routed.options),
+            passed=passed,
+        )
+        assert term.label == ("_scale(3.0, 2.0)" if "k" in passed else "_scale(3.0)")
+
+    def test_a_lift_over_a_law_runs_each_point_by_the_route(self):
+        with workflow_run(seed=0):
+            law = _Routed(_scale, n_broadcast_samples=8)(standard_normal())
+        assert tuple(law.event_spec.components) == ("_scale",)

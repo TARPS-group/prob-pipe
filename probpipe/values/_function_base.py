@@ -38,7 +38,7 @@ from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_sp
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
 from ..core.node import Node
-from ..core.tracked import Annotated, TrackedTerm, _callable_label
+from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
     make_signature_info,
@@ -220,6 +220,32 @@ class _CallableFunctionImplementation:
         self, bound_inputs: inspect.BoundArguments, *, context: _FunctionInvocationContext
     ) -> Any:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
+
+
+#: The output component of a Function whose callable has no usable name.
+_NAMELESS_COMPONENT = "result"
+
+
+def _callable_component(fn: Any) -> str:
+    """The default output component of a Function wrapping *fn*.
+
+    It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
+    so a lambda's is ``f``, when that name is a Python identifier, and
+    ``result`` otherwise, as for a ``functools.partial``, a callable instance,
+    or a ``__name__`` such as ``"Model.fit"``. A label never changes it.
+
+    Parameters
+    ----------
+    fn : callable or None
+        The wrapped callable.
+
+    Returns
+    -------
+    str
+        The component, which is a valid component name.
+    """
+    name = _callable_name(fn)
+    return name if name is not None and name.isidentifier() else _NAMELESS_COMPONENT
 
 
 def _complete_output_spec(
@@ -805,7 +831,8 @@ class Function(Node, TrackedTerm, Annotated):
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
         worker-count type, a control of the wrong type, or a keyword that is
-        no control, which the message names.
+        no control, which the message names; for a label given before the
+        callable, as ``Function("g", g)``, or a callable given as ``fn=``.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker or sample counts, conversions for a
@@ -865,6 +892,25 @@ class Function(Node, TrackedTerm, Annotated):
 
     DEFAULT_N_BROADCAST_SAMPLES = 256
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # The constructor's arguments are checked here, before ``__init__`` binds
+        # them, so the two call forms it no longer takes get a message naming the
+        # form it takes rather than Python's count of positional arguments. A
+        # subclass with a constructor of its own takes its own arguments.
+        if cls.__init__ is not Function.__init__:
+            return super().__new__(cls)
+        if len(args) >= 2 and isinstance(args[0], str) and callable(args[1]):
+            raise TypeError(
+                f"Function takes the callable first and the label as a keyword, got the label "
+                f"{args[0]!r} first; write Function(fn, label={args[0]!r})"
+            )
+        if not args and "fn" in kwargs:
+            raise TypeError(
+                "Function takes the callable as its first positional argument, not as fn=; "
+                "write Function(fn, label=...)"
+            )
+        return super().__new__(cls)
+
     def __init__(
         self,
         fn: Callable[..., Any],
@@ -889,7 +935,7 @@ class Function(Node, TrackedTerm, Annotated):
                 fn = value
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
-        label = _callable_label(fn, label)
+        label = _callable_label(fn, label, subject="Function")
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),
@@ -939,11 +985,7 @@ class Function(Node, TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        component = getattr(metadata_source, "__name__", None)
-        if component == "<lambda>":
-            component = "f"
-        if not isinstance(component, str) or not component.isidentifier():
-            component = "result"
+        component = _callable_component(metadata_source)
         output_spec = _complete_output_spec(output_spec, component=component)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(

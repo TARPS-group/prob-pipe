@@ -233,3 +233,26 @@ class TestOpaqueAndItsBatch:
         assert batch[1].value is terms[1].value
         assert batch[1].label == "batch[draw=1]"
         assert terms[1].label == "second"
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    """Two positional arguments led by a string are the earlier label-first form."""
+
+    def test_a_label_and_a_value_name_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^Opaque takes the value first and the label as the keyword label, but got "
+                r"the string 'x' as the value; write Opaque\(value, label='x'\)$"
+            ),
+        ):
+            Opaque("x", _Payload())
+
+    def test_a_string_alone_is_a_value(self):
+        assert Opaque("north", label="site").value == "north"
+
+    def test_a_label_first_batch_names_the_new_form(self):
+        with pytest.raises(
+            TypeError, match=r"write OpaqueBatch\(elements, level_names, label='s'\)$"
+        ):
+            OpaqueBatch("s", ["north"], "site")

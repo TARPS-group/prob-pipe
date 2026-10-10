@@ -28,8 +28,6 @@ ProbPipe streamlines and automates those tasks, so you can:
 
 ## A short example
 
-> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
-
 <!-- --8<-- [start:quick-example] -->
 Consider a Bayesian logistic regression for the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster), which consists of temperatures of 23 shuttle launches and an indicator as to whether an O-ring was damaged.
 In January 1986, the Space Shuttle Challenger broke apart shortly after launch because an O-ring seal in one of its rocket boosters failed during unusually cold weather.

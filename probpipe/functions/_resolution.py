@@ -274,15 +274,23 @@ def _label(candidate: Any, report: Feasibility) -> str:
     return candidate.label if method is None else f"{candidate.route_name}/{method}"
 
 
-def _element_spec(values: Mapping[str, Any], ref: FunctionInputRef) -> TermSpec:
-    """The declaration of one element of the swept argument *ref*."""
-    spec = input_ref_value(values, ref).spec
-    return spec.element_spec if isinstance(spec, BatchSpec) else spec
-
-
 def _draws(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
     """A stand-in for a draw of each law the call broadcasts over, by its reference."""
     return {ref: StandIn(input_ref_value(values, ref).event_spec.spec) for ref in plan.dist_args}
+
+
+def _stand_ins(values: Mapping[str, Any], plan: BroadcastPlan) -> dict[FunctionInputRef, StandIn]:
+    """A stand-in for a draw of each law the call broadcasts over and an element of each batch it sweeps.
+
+    A swept argument that is already one element, as in a row of a sweep,
+    keeps its value.
+    """
+    stand_ins = _draws(values, plan)
+    for ref in plan.array_args:
+        spec = getattr(input_ref_value(values, ref), "spec", None)
+        if isinstance(spec, BatchSpec):
+            stand_ins[ref] = StandIn(spec.element_spec)
+    return stand_ins
 
 
 def _points(
@@ -350,8 +358,7 @@ def check_points(
     declaration and selects no route, since it runs none.
     """
     if plan.array_args and plan.n_sweep == 0:
-        elements = {ref: StandIn(_element_spec(values, ref)) for ref in plan.array_args}
-        point = replace_input_refs(values, {**elements, **_draws(values, plan)})
+        point = replace_input_refs(values, _stand_ins(values, plan))
         return check_point(function, point, controls, candidates, select=False)
     reports: list[tuple[tuple[int, ...], PointReport]] = []
     for cell, point in _points(values, plan):
@@ -365,11 +372,12 @@ def check_points(
 def lifted_declaration(
     function: Any, values: Mapping[str, Any], controls: Mapping[str, Any], plan: BroadcastPlan
 ) -> OutputSpec | None:
-    """The result declaration of one point of a call that lifts laws, as the call's check plans it.
+    """The result declaration of one point of a lifted call, planned from declarations alone.
 
-    The point binds a stand-in for a draw of each law the call lifts, so the law
-    of the evaluations declares the components that one point's result
-    declares, as ``log_prob(mu)`` for a score.
+    The point binds a stand-in for a draw of each law the call lifts and for an
+    element of each batch it sweeps, and it evaluates and samples nothing. The
+    law of the evaluations therefore declares the components that one point's
+    result declares, as ``log_prob(mu)`` for a score.
 
     Parameters
     ----------
@@ -380,7 +388,8 @@ def lifted_declaration(
     controls : Mapping of str to Any
         The call's resolved controls.
     plan : BroadcastPlan
-        The call's broadcast plan, which names the laws the call lifts.
+        The call's broadcast plan, which names the laws the call lifts and the
+        batches it sweeps.
 
     Returns
     -------
@@ -393,7 +402,7 @@ def lifted_declaration(
     ApplicabilityError
         If an applicability condition of the function fails at the point.
     """
-    point = replace_input_refs(values, _draws(values, plan))
+    point = replace_input_refs(values, _stand_ins(values, plan))
     _, result, _ = function._plan_point(point, controls)
     return result
 

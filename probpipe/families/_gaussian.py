@@ -101,8 +101,9 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
     ----------
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
-    label : str
-        The joint's label.
+    label : str, optional
+        The joint's label. By default the label joins the factors' labels with
+        ``·``, as ``a·b``, and the notation reads factor by factor.
     _scope : Mapping[str, int], optional
         The sizes already bound in the joint's dimension scope, by dimension name, which a
         joint rebuilt from its factors passes on.
@@ -137,7 +138,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
             )
             raise TypeError(
-                f"FactoredMultivariateGaussian {label!r} accepts only Normal or "
+                f"FactoredMultivariateGaussian {self.label!r} accepts only Normal or "
                 f"MultivariateNormal factors, or Gaussian joints of them, got {kinds}"
             )
 
@@ -860,13 +861,14 @@ class _IndependentSumGRF(GaussianRandomFunction):
         self._left = left
         self._right = right
         expression = Operator("+", (left._embedded_expression(), right._embedded_expression()))
+        rendering = expression.label_rendering()
         super().__init__(
             _component_of(left),
-            label=expression.render_label(),
+            label=rendering[0],
             output_spec=left._output_spec,
             event_spec=left.event_spec,
         )
-        self._store_expression(expression)
+        self._store_expression(expression, rendering)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``left`` and ``right``."""

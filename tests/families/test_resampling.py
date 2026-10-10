@@ -435,8 +435,14 @@ class TestTheBandwidthRules:
             KDEDistribution(centers, jnp.array([1.0, -1.0]), component="k")
 
     def test_atoms_that_are_not_an_array_raise(self):
-        with pytest.raises(TypeError, match=r"atoms must be an array .* got list"):
-            KDEDistribution([1.0, 2.0, 3.0], component="k")
+        with pytest.raises(TypeError, match=r"atoms must be an array .* got dict"):
+            KDEDistribution({"a": 1.0}, component="k")
+
+    def test_a_list_of_numbers_is_read_as_array_atoms(self):
+        listed = KDEDistribution([0.0, 1.0, 3.0], 0.5, component="k")
+        array = KDEDistribution(jnp.array([0.0, 1.0, 3.0]), 0.5, component="k")
+        assert repr(listed) == repr(array)
+        np.testing.assert_allclose(listed._log_prob(0.5), array._log_prob(0.5))
 
     def test_a_rule_refuses_atoms_without_spread(self):
         with pytest.raises(ValueError, match="atoms do not vary"):

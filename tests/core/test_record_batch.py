@@ -35,6 +35,7 @@ from probpipe.core import _array_backend
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 
 @pytest.fixture
@@ -318,7 +319,7 @@ class TestLeafKeyedFieldColumns:
     def test_a_nested_template_round_trips_through_a_flat_matrix(self):
         template = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
         batch = NumericRecordBatch.from_vector(
-            "post", template, jnp.arange(15.0).reshape(5, 3), level_names="draw"
+            template, jnp.arange(15.0).reshape(5, 3), level_names="draw", label="post"
         )
         assert tuple(batch.event_template.keys()) == ("outer/a", "outer/b", "m")
         assert batch["outer/a"].shape == (5,)
@@ -592,6 +593,39 @@ class TestConstructionRefusals:
                 element_spec=RecordSpec(x=(2, 2)),
                 label="batch",
             )
+
+    def test_a_list_of_columns_is_refused_as_not_a_mapping(self):
+        with pytest.raises(TypeError, match=r"^RecordBatch: fields must be a mapping .* got list"):
+            RecordBatch([jnp.zeros(3)], "draw")
+
+    @pytest.mark.parametrize("label", [None, "draws"], ids=["unlabeled", "labeled"])
+    def test_an_empty_mapping_is_refused_whether_or_not_it_is_labeled(self, label):
+        """One error for both calls: a label does not make an empty mapping admissible."""
+        with pytest.raises(
+            ValueError, match=r"^RecordBatch requires at least one field, got an empty mapping$"
+        ):
+            RecordBatch({}, "draw", label=label)
+
+
+class TestTheDefaultLabel:
+    """An unlabeled batch is labeled by the top-level fields of its element spec."""
+
+    def test_the_label_names_the_top_level_fields_in_canonical_order(self):
+        batch = RecordBatch({"b": jnp.zeros(3), "a": jnp.zeros(3)}, "draw")
+        assert batch.label == "record(b,a)"
+
+    def test_path_keyed_and_nested_columns_give_the_same_label(self):
+        path_keyed = RecordBatch({"y/a": jnp.zeros(3), "y/b": jnp.zeros(3)}, "draw")
+        nested = RecordBatch({"y": {"a": jnp.zeros(3), "b": jnp.zeros(3)}}, "draw")
+        assert path_keyed.label == nested.label == "record(y)"
+
+    def test_the_label_agrees_with_a_record_of_the_same_fields(self):
+        batch = RecordBatch({"y/a": jnp.zeros(3), "z": jnp.zeros(3)}, "draw")
+        record = Record({"y/a": 0.0, "z": 0.0})
+        assert batch.label == record.label == "record(y,z)"
+
+    def test_a_supplied_label_is_kept(self):
+        assert RecordBatch({"x": jnp.zeros(3)}, "draw", label="draws").label == "draws"
 
 
 class TestTheElementSpecIsInferredWhenOmitted:
@@ -1333,20 +1367,44 @@ class TestFlatLayout:
     def test_round_trip_through_a_vector(self):
         batch = nested_batch()
         rebuilt = NumericRecordBatch.from_vector(
-            batch.label, batch.event_template, batch.to_vector(), level_names="draw"
+            batch.event_template, batch.to_vector(), level_names="draw", label=batch.label
         )
         assert rebuilt == batch
 
     def test_from_vector_refuses_an_unbatched_vector(self):
         with pytest.raises(TypeError, match=r"NumericRecord\.from_vector"):
             NumericRecordBatch.from_vector(
-                "v", RecordSpec(x=(2,)), jnp.zeros(2), level_names="draw"
+                RecordSpec(x=(2,)), jnp.zeros(2), level_names="draw", label="v"
             )
 
     def test_from_vector_checks_the_trailing_axis(self):
         with pytest.raises(ValueError, match="the trailing axis is 3, expected 2"):
             NumericRecordBatch.from_vector(
-                "v", RecordSpec(x=(2,)), jnp.zeros((5, 3)), level_names="draw"
+                RecordSpec(x=(2,)), jnp.zeros((5, 3)), level_names="draw", label="v"
+            )
+
+    def test_from_vector_derives_the_label_from_the_top_level_fields(self):
+        template = RecordSpec(outer=RecordSpec(a=(), b=()), m=())
+        batch = NumericRecordBatch.from_vector(template, jnp.zeros((5, 3)), level_names="draw")
+        assert batch.label == "record(outer,m)"
+
+    def test_from_vector_takes_the_label_as_a_keyword(self):
+        batch = NumericRecordBatch.from_vector(
+            spec=RecordSpec(x=()), vec=jnp.zeros((5, 1)), level_names="draw", label="post"
+        )
+        assert batch.label == "post"
+
+    def test_from_vector_in_the_label_first_form_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericRecordBatch\.from_vector takes the spec first and the label as the "
+                r"keyword label, but got the string 'post' as the spec; write "
+                r"NumericRecordBatch\.from_vector\(spec, vec, label='post'\)$"
+            ),
+        ):
+            NumericRecordBatch.from_vector(
+                "post", RecordSpec(x=()), jnp.zeros((5, 1)), level_names="draw"
             )
 
     def test_a_multi_level_batch_keeps_its_levels_as_leading_axes(self):
@@ -1371,7 +1429,7 @@ class TestFlatLayout:
             label="post",
         )
         rebuilt = NumericRecordBatch.from_vector(
-            "post", batch.event_template, batch.to_vector(), level_names=("chain", "draw")
+            batch.event_template, batch.to_vector(), level_names=("chain", "draw"), label="post"
         )
         assert rebuilt == batch
 
@@ -1393,7 +1451,7 @@ class TestFlatLayout:
         )
         assert batch.to_vector().dtype == jnp.float32  # the promotion
         rebuilt = NumericRecordBatch.from_vector(
-            "b", batch.event_template, batch.to_vector(), level_names="draw"
+            batch.event_template, batch.to_vector(), level_names="draw", label="b"
         )
         assert rebuilt["i"].dtype == jnp.int32
         assert rebuilt["f"].dtype == jnp.float32
@@ -1405,7 +1463,7 @@ class TestFlatLayout:
         template = RecordSpec(x=(2,))
 
         batch = NumericRecordBatch.from_vector(
-            "v", template, jnp.zeros((4, 5, 2)), level_names="draw"
+            template, jnp.zeros((4, 5, 2)), level_names="draw", label="v"
         )
 
         assert batch.level_names == ("draw",)
@@ -1416,7 +1474,7 @@ class TestFlatLayout:
         template = RecordSpec(x=(2,))
 
         batch = NumericRecordBatch.from_vector(
-            "v", template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw")
+            template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw"), label="v"
         )
 
         assert batch.axis_groups == ((4,), (5,))
@@ -1425,7 +1483,7 @@ class TestFlatLayout:
         template = RecordSpec(x=(2,))
         with pytest.raises(ValueError, match=r"got batch shape \(4, 5\) but 3 level names"):
             NumericRecordBatch.from_vector(
-                "v", template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw", "extra")
+                template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw", "extra"), label="v"
             )
 
     def test_to_vector_on_an_empty_selection(self):
@@ -1805,7 +1863,7 @@ class TestPyTree:
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
         assert rebuilt == batch
         # The label does not cross a transform, so the rebuilt batch takes its class's.
-        assert rebuilt.label == "<no description>"
+        assert rebuilt.label == _NO_DESCRIPTION
 
     def test_batches_that_differ_only_in_label_share_a_treedef(self):
         assert jax.tree_util.tree_structure(
@@ -2155,3 +2213,25 @@ class TestRankZeroReconstruction:
         element = jax.tree.map(lambda c: c.reshape(()), batch)
         assert isinstance(element, Record)
         assert spec.is_valid(element["f"])
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    def test_a_label_first_call_names_the_new_form(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^RecordBatch takes the fields first and the label as the keyword label, but got "
+                r"the string 'x' as the fields; write RecordBatch\(fields, level_names, label='x'\)$"
+            ),
+        ):
+            RecordBatch("x", {"a": jnp.zeros(3)}, "draw")
+
+
+class TestARebuiltBatchComputes:
+    def test_a_rebuilt_numeric_batch_keeps_its_spec_and_values(self):
+        value = NumericRecordBatch({"temperature": jnp.arange(3.0)}, "draw")
+        rebuilt = jax.jit(lambda x: x)(value)
+        assert rebuilt.label == _NO_DESCRIPTION
+        assert rebuilt.spec == value.spec
+        result = jax.jit(lambda x: x)(rebuilt)
+        np.testing.assert_array_equal(result["temperature"].raw(), value["temperature"].raw())

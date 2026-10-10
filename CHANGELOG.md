@@ -9,22 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- Automatic mathematical notation uses blackboard symbols for distribution
-  summaries and generic laws or kernels. Anonymous functions use script `𝒻`.
-  Explicit labels remain literal. Generated component names remain ASCII,
-  and indexing keys retain their spelling. The notation reference lists all
-  six symbols.
+- Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
+  expectation, generic laws or kernels, quantile, variance, covariance, and
+  anonymous functions. Explicit labels remain literal, and generated component
+  names remain ASCII.
 
-- Value constructors take data first and keyword `label=`. Raw arrays and opaque
-  values (including their batches) require a label; records derive it from fields,
-  functions from callable names (`𝒻` for lambdas), and object collections from
-  their members. Use `Record(mapping, label=...)` or `Record.from_fields(**fields)`.
-- Function result components default to the original callable name (`f` for
-  lambdas, `result` for nameless callables). Record results expose their fields.
-  `OutputSpec` optionally overrides this declaration; `output_label` supplies
-  only a display alias. Unaliased managed calls display their application expression.
-- JAX-rebuilt numeric terms display `<no description>` until a managed result
-  boundary describes them, and remain usable during tracing and direct rebuilding.
+- **A value, a batch, and a function take their data first and the label as
+  the keyword `label=`.** `NumericArray(values, label="x")` replaces
+  `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
+  `Record.from_fields(a=1.0)` replaces `Record("r", a=1.0)`, and
+  `Function(fn, label="g")` replaces `Function("g", fn)`. `from_vector`,
+  `from_field_values`, and `from_dict` take the label as the keyword `label=`
+  after their data, as `NumericArray.from_vector(spec, vec, label="x")`. A raw
+  array, an opaque value, and a batch of either require the label. A record and
+  a record batch derive it from their top-level fields, as `record(a,b)`. A
+  function derives it from its callable's name, with `𝒻` for a lambda, and a
+  batch of functions or laws from its members, at most eight in row-major order
+  and then `…`. A call in the label-first form raises a `TypeError` that shows the new
+  call.
+- **A function's output component comes from its callable, and `output_label`
+  is a display alias.** A result's component defaults to the callable's name,
+  with `f` for a lambda and `result` for a callable without a name or whose
+  name is not a Python identifier, and a record result exposes its fields. An
+  `OutputSpec` overrides that default. `output_label` and `with_label` change
+  only how a result displays, never its components, its fingerprint, or its
+  draws. A result without an alias displays the call, as `predict(ambient)`,
+  with only the arguments the caller passed. A `Module` method's results display
+  the call, as `Example.numbers()`, where they displayed the method's name, and
+  a backend bijector's output component is the backend's name, as `exp`.
+- **A term that JAX rebuilds from its leaves displays `<no description>`** until
+  a managed result boundary describes it, and it stays usable inside `jax.jit`
+  and `jax.vmap`.
+- **A law's repr shows `label=` only for a label the caller gave.** A label the
+  constructor derives, such as a product's `lik·prior` or a mixture's, is left
+  out, so evaluating the repr keeps the derived notation. A `KDEDistribution`'s
+  repr shows its bandwidth, and its constructor takes a list of numbers as its
+  atoms.
+- **The default labels of a mixture, a minibatched law, and the BayesFlow
+  kernels describe them.** A `MixtureDistribution` displays its components, as
+  `mixture([a(x), b(x)])`, and a `MinibatchedDistribution` its construction, as
+  `minibatch(prior(beta), lik(y | beta), batch_size=40)`. `BayesFlowLikelihood`
+  and `BayesFlowRatio` take `label=`, which defaults to the class name, where
+  they were labeled `likelihood` and `ratio`, and their repr and a conversion
+  keep a label the caller gave.
+- **A family pickled by a development build in which its label came first no
+  longer loads.** Rebuild it from its constructor and pickle it again.
 
 - **A law's label is optional, and the component of its event is required.**
   A family takes the component first and the label as the keyword `label=`,
@@ -3244,6 +3273,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A display warns about a part that storage truncated only when its text
+  shows less than the part.** A law selected many times from a posterior
+  displays without a warning, and a warning that meets both a collapsed level
+  and a truncated part names both limits.
+- **Two functions without an output declaration that differ only in their
+  callable's name share a fingerprint.**
+- **A record batch derives its label from its validated top-level fields**, so
+  path-keyed and nested fields read alike, as `record(y)`, and fields that are
+  not a mapping, or no fields, raise one error that says so. `Record.ensure`
+  and a record built from component values derive their labels the same way.
+- **A `FunctionBatch` of builtins, such as `max`, constructs**, and selecting a
+  batch element never relabels the term the batch stores.
+- **A lift of a function declared to return a law holds each law under the
+  function's output component**, with `include_inputs=True` too, where it
+  exposed the inner law's components, and a lift of a function realized by
+  routes shows only the arguments the call passed.
+- **A product names the positions and labels of two factors that produce one
+  field**, and offers an output declaration besides a rename.
+- **A constructor's refusal names the constructor, the value, and the fix** for
+  fields that are not a mapping, an empty record or object batch without a
+  label, `Record.from_fields()` without fields, and a callable without a name,
+  whose type it names.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

@@ -20,8 +20,9 @@ their constructor via :meth:`TrackedTerm._init_tracked`.
 
 from __future__ import annotations
 
+import functools
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
@@ -30,8 +31,9 @@ from collections.abc import Mapping
 # ecosystem (Pydantic, attrs, etc.). If a future Python release renames
 # it, the metaclass would need to switch to whatever new base ``typing``
 # exposes; the conflict-avoidance constraint itself doesn't change.
-from typing import Any, Self, _ProtocolMeta
+from typing import Any, Self, _ProtocolMeta, cast
 
+from .._messages import label_given_first
 from ._expression import (
     _ANONYMOUS_FUNCTION_SYMBOL,
     Collapse,
@@ -64,6 +66,45 @@ def auto_label(label: str | None, default: str) -> str:
     return default if label is None else label
 
 
+def refuses_label_first[**P, R](
+    first: str, *, then: tuple[str, ...] = ()
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Make a classmethod constructor refuse a label passed where *first* goes.
+
+    The constructor once took its label first and takes *first* there now, with
+    the label as the keyword ``label``. The decorated method raises when its
+    first argument after the class is a string, which *first* never is, so a call
+    in the earlier form gets the call to write rather than an error about the
+    number of arguments. Apply it beneath ``@classmethod``.
+
+    Parameters
+    ----------
+    first : str
+        The name of the method's first parameter after the class, such as
+        ``"spec"``.
+    then : tuple of str
+        The names of the positional parameters after *first*, which the
+        rewritten call shows, such as ``("vec",)``.
+
+    Returns
+    -------
+    Callable
+        The decorator, which keeps the method's signature and docstring.
+    """
+
+    def decorate(method: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(method)
+        def checked(*args: P.args, **kwargs: P.kwargs) -> R:
+            if len(args) > 1 and isinstance(args[1], str):
+                owner = f"{cast(type, args[0]).__name__}.{method.__name__}"
+                raise TypeError(label_given_first(owner, first, args[1], then=then))
+            return method(*args, **kwargs)
+
+        return checked
+
+    return decorate
+
+
 def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     """Return a shallow copy of an annotations container.
 
@@ -81,15 +122,57 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 _NO_DESCRIPTION = "<no description>"
 
 
-def _callable_label(fn: Any, label: str | None = None) -> str:
-    """The explicit label, callable name, or canonical lambda symbol."""
-    if label is not None:
-        return label
+#: The ASCII name a lambda takes as an output component.
+_LAMBDA_NAME = "f"
+
+
+def _callable_name(fn: Any) -> str | None:
+    """The name of the callable *fn*: its ``__name__``, ``f`` for a lambda, or ``None`` without one.
+
+    A ``functools.partial`` and a callable instance have no ``__name__``, and
+    an empty or non-string ``__name__`` counts as none.
+    """
     name = getattr(fn, "__name__", None)
     if name == "<lambda>":
+        return _LAMBDA_NAME
+    return name if isinstance(name, str) and name else None
+
+
+def _callable_label(fn: Any, label: str | None = None, *, subject: str | None = None) -> str:
+    """The label of a term named after the callable *fn*.
+
+    It is *label* when one is given, and otherwise the callable's name by
+    :func:`_callable_name`, so a lambda is labeled ``𝒻``.
+
+    Parameters
+    ----------
+    fn : callable
+        The callable the term is named after.
+    label : str or None
+        The caller's explicit label, which takes precedence.
+    subject : str or None
+        What takes the label, such as ``"Function"``, which the error names.
+
+    Returns
+    -------
+    str
+        The explicit label or the callable's name.
+
+    Raises
+    ------
+    TypeError
+        If *label* is None and *fn* has no name.
+    """
+    if label is not None:
+        return label
+    if getattr(fn, "__name__", None) == "<lambda>":
         return _ANONYMOUS_FUNCTION_SYMBOL
-    if not name:
-        raise TypeError("a callable without a name requires an explicit label=...")
+    name = _callable_name(fn)
+    if name is None:
+        raise TypeError(
+            f"{subject or 'a term named after a callable'} needs an explicit label for a "
+            f"{type(fn).__name__}, which has no __name__ to take it from; pass label=..."
+        )
     return name
 
 
@@ -225,12 +308,18 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
         Assigns the expression of *label* alone, the label, and ``_provenance``
         via ``object.__setattr__`` so immutable hosts can call it from their
-        constructor. Performs no validation — the host constructor owns its
-        own ``label`` policy (required vs. auto-derived default).
+        constructor. It performs no validation, since the host constructor
+        decides whether a label is required or has a default, and records any
+        state of its own about that default after this call.
+
+        Parameters
+        ----------
+        label : str
+            The term's label.
+        provenance : Provenance or None, optional
+            The term's provenance, unset by default.
         """
         object.__setattr__(self, "_expression", Named(label))
-        if getattr(self, "_uses_default_label", False):
-            object.__setattr__(self, "_default_expression", self._expression)
         object.__setattr__(self, "_label", label)
         object.__setattr__(self, "_label_collapse", None)
         object.__setattr__(self, "_provenance", provenance)

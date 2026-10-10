@@ -264,6 +264,33 @@ class TestDistributionBatchConstruction:
             )
 
 
+class TestTheDefaultLabel:
+    """An unlabeled batch of laws is labeled by a bounded list of the laws' notations."""
+
+    def test_the_label_lists_the_first_eight_laws_and_an_ellipsis(self):
+        laws = [Normal("tau", 0, 1, label=f"prior{i}") for i in range(20)]
+        batch = DistributionBatch(laws, "model")
+        assert batch.label == "[" + ", ".join(f"prior{i}(tau)" for i in range(8)) + ", …]"
+
+    def test_eight_laws_are_listed_in_full(self):
+        laws = [Normal("tau", 0, 1, label=f"prior{i}") for i in range(8)]
+        batch = DistributionBatch(laws, "model")
+        assert batch.label == "[" + ", ".join(f"prior{i}(tau)" for i in range(8)) + "]"
+
+    def test_an_empty_batch_without_a_label_is_refused(self):
+        spec = Normal("tau", 0, 1).spec
+        with pytest.raises(
+            TypeError,
+            match=r"^cannot derive a default label for an empty DistributionBatch; pass label=",
+        ):
+            DistributionBatch([], "model", element_spec=spec)
+        assert DistributionBatch([], "model", element_spec=spec, label="none").batch_shape == (0,)
+
+    def test_a_kernel_batch_lists_its_kernels(self):
+        batch = ConditionalDistributionBatch(_kernels(2), "dataset")
+        assert batch.label == "[lik(y | mu), lik(y | mu)]"
+
+
 class TestDistributionBatchDeclarations:
     def test_event_spec_is_the_shared_declaration_read_from_spec(self):
         laws = _laws(2)
@@ -352,6 +379,17 @@ class TestIndexing:
         assert element is not laws[1]
         assert element._tfp_dist is laws[1]._tfp_dist
         assert laws[1].label == "x" and laws[1].provenance is None
+
+    def test_selecting_never_writes_to_a_stored_law_that_bears_the_derived_label(self):
+        """A stored law labeled as its view would be is still not the view."""
+        laws = [Normal("x", float(i), 1.0, label=f"laws[law={i}]") for i in range(2)]
+        expressions = [law._expression for law in laws]
+        batch = DistributionBatch(laws, "law", label="laws")
+        element = batch[1]
+        assert element is not laws[1]
+        assert element.label == "laws[law=1]"
+        assert [law._expression for law in laws] == expressions
+        assert laws[1].provenance is None
 
     def test_an_element_records_the_batch_and_the_stored_law(self):
         laws = _laws(3)

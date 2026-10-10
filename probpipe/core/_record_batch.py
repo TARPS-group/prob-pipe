@@ -38,7 +38,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._messages import count, unknown_names
+from .._messages import count, label_given_first, unknown_names
 from ..values._function_base import FunctionSpec
 from ._array_backend import _is_numeric_dtype, _read_only, _to_jax_array
 from ._batch import (
@@ -79,8 +79,8 @@ class RecordBatch(Batch[Record]):
     As a JAX pytree it flattens to its columns, with its spec as the static
     data. The label and the expression do not cross a transform, so two
     batches that differ only in their labels have equal treedefs and share a
-    compilation, and a batch rebuilt from its leaves is marked ``<no description>``,
-    as ``RecordBatch``, until a result boundary labels it.
+    compilation, and a batch rebuilt from its leaves is labeled
+    ``<no description>`` until a result boundary labels it.
 
     Parameters
     ----------
@@ -97,8 +97,9 @@ class RecordBatch(Batch[Record]):
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
         operations can align operands by meaning.
     label : str, optional
-        The batch's display alias. Defaults to a bounded description of its
-        declared fields or members. Empty unnamed collections require an alias.
+        The batch's label. Defaults to ``record(field,...)``, which names the
+        top-level fields of the element spec in canonical order, so path-keyed
+        and nested columns of the same fields give the same label.
     element_spec : RecordSpec, optional
         The schema and kind spec every element satisfies. Defaults to the spec
         the columns imply, as a :class:`~probpipe.Record` infers its spec from
@@ -189,6 +190,12 @@ class RecordBatch(Batch[Record]):
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # Only a call on the base class selects the class, as ``Record.__new__``
         # does. A view allocates with ``object.__new__`` and so does not call this.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            # A string is never a mapping of columns, so one in first place with no
+            # label keyword is a label passed in the earlier label-first form.
+            raise TypeError(
+                label_given_first(cls.__name__, "fields", args[0], then=("level_names",))
+            )
         if cls is RecordBatch and _columns_promote(args, kwargs):
             # Lazy: the numeric module builds on this one.
             from ._numeric_record_batch import NumericRecordBatch
@@ -207,7 +214,6 @@ class RecordBatch(Batch[Record]):
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        label = _derived_record_name(fields) if label is None else label
         kind = type(self).__name__
         names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
@@ -219,6 +225,9 @@ class RecordBatch(Batch[Record]):
             element_spec = _inferred_element_spec(fields, _batch_axis_count(names, axes), kind=kind)
         spec = _record_element_spec(element_spec, kind=kind)
         store = _leaf_keyed_columns(fields, spec, kind=kind)
+        # Derived from the validated spec, so a path-keyed and a nested mapping of
+        # the same columns read alike, as a ``Record``'s top-level fields do.
+        label = _derived_record_name(spec.children) if label is None else label
 
         batch_shape = _batch_shape_of(store, spec, kind=kind)
         groups = _axis_groups_for(batch_shape, names, axes, kind=kind)
@@ -1083,7 +1092,7 @@ def _flat_columns(fields: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
             f"got {type(fields).__name__}"
         )
     if not fields:
-        raise ValueError(f"{kind} requires at least one field")
+        raise ValueError(f"{kind} requires at least one field, got an empty mapping")
     flat: dict[str, Any] = {}
 
     def _flatten(node: Mapping[str, Any], prefix: str) -> None:
@@ -1481,9 +1490,9 @@ def _unflatten_with(cls: type[RecordBatch]):
     """
 
     def _unflatten(spec: BatchSpec, children: list) -> RecordBatch | Record:
-        # The label does not cross a transform, so a rebuilt batch is labeled by
-        # its class, and an element by ``Record``, until a result boundary labels
-        # it (II.4).
+        # The label does not cross a transform, so a rebuilt batch, and a record
+        # rebuilt from it, is labeled ``<no description>`` until a result
+        # boundary labels it (II.4).
         label = _NO_DESCRIPTION
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would

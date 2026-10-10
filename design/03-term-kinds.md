@@ -40,7 +40,7 @@ class NumericArray(TrackedTerm, Numeric):
     def vector_size(self) -> int: ...     # the number of entries
     def to_vector(self) -> Array: ...     # the array raveled in row-major order
     @classmethod
-    def from_vector(cls, label: str, spec: NumericArraySpec, vec: Array) -> NumericArray: ...
+    def from_vector(cls, spec: NumericArraySpec, vec: Array, *, label: str) -> NumericArray: ...
 ```
 
 `NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. An array with leading axes is just an array; the batch form is what carries the level names, the shared spec, and provenance.
@@ -75,7 +75,7 @@ The kind exists so that closure under operations holds for every return value (`
 
 The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. Its `raw()` is the wrapped callable.
 
-A `Function` accepts an optional `output_label` as a result alias. Without an alias, its managed calls display the application expression; named callables default to their Python name and lambdas to `𝒻`. Output components default to the callable's original name (`f` for a lambda, `result` for a nameless callable). Record results expose their fields. An optional `OutputSpec`, such as `OutputSpec(mean=None)`, overrides this default or declares the result's type. A bare term spec uses the same default packaging. Relabeling a function or result never changes these declarations.
+A `Function` accepts an optional `output_label` as a result alias. Without an alias, its managed calls display the application expression; named callables default to their Python name and lambdas to `𝒻`. Output components default to the callable's original name, with `f` for a lambda and `result` for a callable without a name or whose name is not a Python identifier. Record results expose their fields. An optional `OutputSpec`, such as `OutputSpec(mean=None)`, overrides this default or declares the result's type. A bare term spec uses the same default packaging. Relabeling a function or result never changes these declarations.
 
 ```python
 @function(label="predict", output_label="prediction",
@@ -126,6 +126,8 @@ class Function(TrackedTerm):
     def notation(self) -> str: ...   # the label and the parameters, as predict(x, y); str() returns it (II.4)
 
 def install_call_engine(engine: Callable[..., Any]) -> None: ...
+    # replaces the call handler, once, at import time; until then calls evaluate plainly.
+    # The engine reads the controls the Function carries and must agree with
     # plain evaluation on concrete values.
 ```
 
@@ -155,7 +157,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its output declaration names its component; a constructor given only a codomain shape must use a fixed output slot independent of labels, or require a named output declaration (III.3). Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. The operator reads its spaces from these declarations alone. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws takes them as bare arrays. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its output declaration names its component; a constructor given only a codomain shape declares the output as a whole term under the fixed component `result`, the component of a nameless callable, which no label changes (III.3). Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. The operator reads its spaces from these declarations alone. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws takes them as bare arrays. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
 
 Its schemas are always concrete, and construction from a schema with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
@@ -193,7 +195,7 @@ A `LinOp` claims `SupportsInverse` and `SupportsLogDetJacobian` (III.3) with a g
 
 **The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators that defer to their parts: `ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` exchanges the term specs of the two sides: its one input slot accepts the original output's packaging, and its output is the original input, offered whole under that slot's name. Each side keeps its own declaration type, since an `InputSpec` and an `OutputSpec` are different contracts (II.2). Composite operators are tracked terms like any other, with names derived from their operands.
 
-**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape as a whole term under a fixed output slot independent of labels, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VII.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization:
+**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape as a whole term under the fixed component `result`, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VII.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization:
 - `DenseLinOp`: the matrix;
 - `DiagonalLinOp`: the diagonal;
 - `TriangularLinOp`: the triangular matrix, whose flags name the triangle;
@@ -283,7 +285,8 @@ class Record(NamedTree[Any], TrackedTerm):
     # a field's raw value, or a subtree's nested mapping
 
     @classmethod
-    def from_field_values(cls, label: str, spec: RecordSpec, values: Sequence[Any]) -> Record: ...
+    def from_field_values(cls, template: RecordSpec, values: Iterable[Any], *,
+                          label: str | None = None) -> Record: ...
     # reconstruct from values in the schema's canonical order; ValueError on count/shape mismatch
 
     def select(self, *fields: str, **mapping: str) -> dict[str, Any]: ...
@@ -310,7 +313,8 @@ class NumericRecord(Record, Numeric):
     def vector_size(self) -> int: ...
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
+    def from_vector(cls, spec: NumericRecordSpec, vec: Array, *,
+                    label: str | None = None) -> NumericRecord: ...
 ```
 
 **Vector-space arithmetic.** `NumericRecord` implements the `Numeric` interface of II.3, so functions act on it in the two ways stated there. ProbPipe's own operators preserve structure and return tracked terms. They are the vector-space set, which is `+` and `-` between records sharing a schema and scalar `*` and `/`, and `map(f)` for entrywise maps, so `record.map(jnp.cos)` is the tracked form of `jnp.cos(record)`. Array-shaped behavior such as broadcasting and positional indexing stays with arrays, and `__array_ufunc__` is left undefined, so NumPy and JAX functions behave alike on the same object.
@@ -353,9 +357,10 @@ When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a 
 class NumericRecordBatch(RecordBatch):
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array, *,
+    def from_vector(cls, spec: NumericRecordSpec, vec: Array, *,
                     level_names: str | Iterable[str],
-                    axes_per_level: int | Iterable[int] | None = None) -> NumericRecordBatch: ...
+                    axes_per_level: int | Iterable[int] | None = None,
+                    label: str | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 

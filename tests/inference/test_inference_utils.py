@@ -81,7 +81,7 @@ class TestBuildTargetLogProbFlat:
         target_flat, flat_init, event_spec = build_target_log_prob_flat(small_model, None)
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.from_vector("nr", event_spec.spec, flat_init)
+        record_init = NumericRecord.from_vector(event_spec.spec, flat_init, label="nr")
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),

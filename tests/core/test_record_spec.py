@@ -1822,7 +1822,7 @@ class TestNumericSubset:
     def test_projected_layout_reconstructs_values_in_canonical_order(self):
         tpl = RecordSpec(z=(), nested=RecordSpec(label=OpaqueSpec(), x=(2,), empty=(0,)))
         sub = tpl.numeric_subset()
-        record = NumericRecord.from_vector("value", sub, jnp.array([1.0, 2.0, 3.0]))
+        record = NumericRecord.from_vector(sub, jnp.array([1.0, 2.0, 3.0]), label="value")
         assert record.spec == sub
         assert record.keys() == ("z", "nested/x", "nested/empty")
         assert record["nested/empty"].shape == (0,)
@@ -1847,7 +1847,7 @@ class TestToVector:
             {"x": 1.0, "y": jnp.arange(3.0)},
             label="nr",
         )
-        assert NumericRecord.from_vector("nr", nr.event_template, nr.to_vector()) == nr
+        assert NumericRecord.from_vector(nr.event_template, nr.to_vector(), label="nr") == nr
 
     def test_scalar_value(self):
         v = NumericRecord(
@@ -1889,7 +1889,7 @@ class TestToVector:
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
         tpl = RecordSpec(x=(), y=(3,))
         flat = jnp.arange(2 * 5 * tpl.vector_size, dtype=float).reshape(2, 5, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector(tpl, flat, level_names="draw", label="nrb")
         assert isinstance(v, NumericRecordBatch)
         assert v.to_vector().shape == (2, 5, tpl.vector_size)
 
@@ -1898,7 +1898,7 @@ class TestFromVectorRoundTripSingle:
     def test_empty_numeric_subtree_keeps_its_kind(self):
         tpl = NumericRecordSpec(theta=(3,), aux=NumericRecordSpec())
         flat = jnp.arange(3.0)
-        value = NumericRecord.from_vector("value", tpl, flat)
+        value = NumericRecord.from_vector(tpl, flat, label="value")
         assert isinstance(value, NumericRecord)
         assert isinstance(value.at_path("aux"), NumericRecord)
         assert value.event_template == tpl
@@ -1911,7 +1911,7 @@ class TestFromVectorRoundTripSingle:
             label="nr",
         )
         tpl = RecordSpec.infer_from(v)
-        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
+        assert NumericRecord.from_vector(tpl, v.to_vector(), label="nr") == v
 
     def test_vector(self):
         v = NumericRecord(
@@ -1919,7 +1919,7 @@ class TestFromVectorRoundTripSingle:
             label="nr",
         )
         tpl = RecordSpec.infer_from(v)
-        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
+        assert NumericRecord.from_vector(tpl, v.to_vector(), label="nr") == v
 
     def test_multi_field(self):
         v = NumericRecord(
@@ -1927,7 +1927,7 @@ class TestFromVectorRoundTripSingle:
             label="nr",
         )
         tpl = RecordSpec.infer_from(v)
-        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
+        assert NumericRecord.from_vector(tpl, v.to_vector(), label="nr") == v
 
     def test_nested(self):
         v = NumericRecord(
@@ -1942,13 +1942,13 @@ class TestFromVectorRoundTripSingle:
             label="nr",
         )
         tpl = RecordSpec.infer_from(v)
-        round_tripped = NumericRecord.from_vector("nr", tpl, v.to_vector())
+        round_tripped = NumericRecord.from_vector(tpl, v.to_vector(), label="nr")
         assert isinstance(round_tripped, NumericRecord)
         assert round_tripped == v
 
     def test_returns_single_for_1d_vec(self):
         tpl = RecordSpec(x=(), y=(3,))
-        v = NumericRecord.from_vector("nr", tpl, jnp.arange(4.0))
+        v = NumericRecord.from_vector(tpl, jnp.arange(4.0), label="nr")
         assert isinstance(v, NumericRecord)
 
     def test_zero_d_vec_raises_type_error(self):
@@ -1957,14 +1957,14 @@ class TestFromVectorRoundTripSingle:
         # ``vec.shape[-1]``.
         tpl = RecordSpec(x=())
         with pytest.raises(TypeError, match="1-D vector"):
-            NumericRecord.from_vector("nr", tpl, 5.0)
+            NumericRecord.from_vector(tpl, 5.0, label="nr")
 
 
 class TestFromVectorRoundTripBatched:
     def test_empty_numeric_subtree_survives_vector_round_trip(self):
         tpl = NumericRecordSpec(theta=(3,), aux=NumericRecordSpec())
         flat = jnp.arange(6.0).reshape(2, 3)
-        value = NumericRecordBatch.from_vector("values", tpl, flat, level_names="draw")
+        value = NumericRecordBatch.from_vector(tpl, flat, level_names="draw", label="values")
         assert isinstance(value, NumericRecordBatch)
         assert value.batch_shape == (2,)
         assert value.level_names == ("draw",)
@@ -1975,39 +1975,45 @@ class TestFromVectorRoundTripBatched:
     def test_single_batch_axis(self):
         tpl = RecordSpec(x=(), y=(3,))
         flat = jnp.arange(4 * tpl.vector_size, dtype=float).reshape(4, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector(tpl, flat, level_names="draw", label="nrb")
         assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (4,)
-        assert NumericRecordBatch.from_vector("nrb", tpl, v.to_vector(), level_names="draw") == v
+        assert (
+            NumericRecordBatch.from_vector(tpl, v.to_vector(), level_names="draw", label="nrb") == v
+        )
 
     def test_multi_axis_batch_shape(self):
         # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
         tpl = RecordSpec(x=(), y=(3,), z=(2, 2))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector(tpl, flat, level_names="draw", label="nrb")
         assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (2, 3)
         assert jnp.array_equal(v.to_vector(), flat)
-        assert NumericRecordBatch.from_vector("nrb", tpl, v.to_vector(), level_names="draw") == v
+        assert (
+            NumericRecordBatch.from_vector(tpl, v.to_vector(), level_names="draw", label="nrb") == v
+        )
 
     def test_nested_multi_axis_batch_shape(self):
         # Nested numeric subtree + multi-axis batch: from_vector builds a nested
         # NumericRecordBatch as a field of the outer NumericRecordBatch.
         tpl = RecordSpec(x=(), nested=RecordSpec(a=(), b=(2,)), y=(3,))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector(tpl, flat, level_names="draw", label="nrb")
         assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (2, 3)
         assert isinstance(v["nested"], NumericRecordBatch)
         assert v["nested/b"].shape == (2, 3, 2)
-        assert NumericRecordBatch.from_vector("nrb", tpl, v.to_vector(), level_names="draw") == v
+        assert (
+            NumericRecordBatch.from_vector(tpl, v.to_vector(), level_names="draw", label="nrb") == v
+        )
 
 
 class TestFromVectorErrors:
     def test_wrong_trailing_size_raises(self):
         tpl = RecordSpec(x=(), y=(3,))
         with pytest.raises(ValueError, match="vector_size"):
-            NumericRecord.from_vector("nr", tpl, jnp.zeros(5))
+            NumericRecord.from_vector(tpl, jnp.zeros(5), label="nr")
 
 
 # ---------------------------------------------------------------------------

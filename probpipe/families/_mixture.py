@@ -17,7 +17,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import _messages
-from ..core._expression import Applied, Named
+from ..core._expression import Applied
+from ..core._object_batch import _collection_expression
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
@@ -471,7 +472,9 @@ class MixtureDistribution(Distribution):
     weights : Array
         One nonnegative weight per component, summing to one.
     label : str, optional
-        Display alias. Defaults to a bounded description of the component laws.
+        The mixture's label, ``mixture`` by default. The default's notation
+        lists the components, up to eight of them, as
+        ``mixture([a(x), b(x)])``.
 
     Raises
     ------
@@ -504,8 +507,10 @@ class MixtureDistribution(Distribution):
         laws = _components(components)
         expression = None
         if label is None:
-            shown = tuple(law._embedded_expression() for law in laws[:8])
-            expression = Applied("mixture", shown + ((Named("…"),) if len(laws) > 8 else ()))
+            store = np.empty(len(laws), dtype=object)
+            for index, law in enumerate(laws):
+                store[index] = law
+            expression = Applied("mixture", (_collection_expression(store),))
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
         super().__init__(

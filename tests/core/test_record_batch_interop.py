@@ -582,7 +582,7 @@ class TestOpaqueBatchesStack:
             for i in range(3)
         ]
 
-        out = _make_stack(rows, n=3, field_name="demo", level_names=("sweep",))
+        out = _make_stack(rows, n=3, label="demo", level_names=("sweep",))
 
         assert out.level_names == ("sweep", "inner")
         assert out.batch_shape == (3, 2)
@@ -643,7 +643,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
         out = _make_stack(
             [],
             batch_shape=(0,),
-            field_name="fit",
+            label="fit",
             level_names=("design",),
             output_template=RecordSpec(y=()),
         )
@@ -660,7 +660,7 @@ class TestAnEmptySweepIsNotAMissingOutput:
             _make_stack(
                 [],
                 n=3,
-                field_name="fit",
+                label="fit",
                 level_names=("s",),
                 output_template=RecordSpec(y=()),
             )
@@ -792,7 +792,7 @@ class TestFunctionValuedColumnsStack:
             for i in range(3)
         ]
 
-        out = _make_stack(rows, n=3, field_name="demo", level_names=("sweep",))
+        out = _make_stack(rows, n=3, label="demo", level_names=("sweep",))
 
         assert out.level_names == ("sweep", "inner")
         assert isinstance(out["f"], FunctionBatch)
@@ -1022,7 +1022,7 @@ class TestBatchValuedRowAggregation:
             for i in range(1, 4)
         ]
 
-        out = _make_stack(rows, n=3, field_name="f", level_names=("sweep",))
+        out = _make_stack(rows, n=3, label="f", level_names=("sweep",))
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("sweep", "inner"))
         np.testing.assert_allclose(np.asarray(out.values)[2], [3.0, 6.0])

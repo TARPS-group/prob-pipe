@@ -197,7 +197,9 @@ def _nested_observe(r, m, c, seed):
     """Observe ``_NestedLikelihood`` at a given (r, m, c) by building the nested
     per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
-    rec = NumericRecord.from_vector("nr", _nested_prior().event_spec.spec, jnp.array([r, m, c]))
+    rec = NumericRecord.from_vector(
+        _nested_prior().event_spec.spec, jnp.array([r, m, c]), label="nr"
+    )
     return _nested(rec, jax.random.PRNGKey(seed))
 
 

@@ -674,9 +674,11 @@ class TestSpecKinds:
         assert numeric.vector_size == 10
         assert numeric.leaf_shapes == {"x": (4,), "nested/y": (2, 3)}
         with pytest.raises(TypeError, match=r"field 'x' must have a NumericArraySpec"):
-            NumericRecord.from_vector("value", numeric, np.zeros(10))
+            NumericRecord.from_vector(numeric, np.zeros(10), label="value")
         with pytest.raises(TypeError, match=r"field 'x' must have a NumericArraySpec"):
-            NumericRecordBatch.from_vector("values", numeric, np.zeros((2, 10)), level_names="row")
+            NumericRecordBatch.from_vector(
+                numeric, np.zeros((2, 10)), level_names="row", label="values"
+            )
 
 
 class TestDistributionSchemaAvailability:

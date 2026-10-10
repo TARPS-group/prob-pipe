@@ -40,7 +40,7 @@ class TestTheNumericKinds:
             label="r",
         ).spec
         batch = NumericRecordBatch.from_vector(
-            "b", spec=spec, vec=jnp.zeros((3, 2)), level_names="draw"
+            spec=spec, vec=jnp.zeros((3, 2)), level_names="draw", label="b"
         )
         assert batch.batch_shape == (3,)
 
@@ -48,7 +48,7 @@ class TestTheNumericKinds:
     def test_from_vector_inverts_to_vector(self, value):
         vector = value.to_vector()
         assert vector.shape == (value.vector_size,)
-        rebuilt = type(value).from_vector("rebuilt", value.spec, vector)
+        rebuilt = type(value).from_vector(value.spec, vector, label="rebuilt")
         assert rebuilt.label == "rebuilt"
         np.testing.assert_array_equal(rebuilt.to_vector(), vector)
 
@@ -79,7 +79,7 @@ class _Pair(Numeric):
         return self._vector
 
     @classmethod
-    def from_vector(cls, name, spec, vec):
+    def from_vector(cls, spec, vec, *, label=None):
         return cls(vec)
 
 
@@ -97,7 +97,7 @@ class TestTheBase:
                 return 0
 
             @classmethod
-            def from_vector(cls, name, spec, vec):
+            def from_vector(cls, spec, vec, *, label=None):
                 return cls()
 
         with pytest.raises(TypeError, match="abstract"):

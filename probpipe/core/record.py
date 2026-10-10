@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Self
 import jax
 import numpy as np
 
-from .._messages import count
+from .._messages import count, label_given_first
 from ..custom_types import ArrayLike
 from ._array_backend import (
     _metadata_of,
@@ -59,7 +59,7 @@ from ._spec_base import OpaqueSpec, _full_array_shape_or_none
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .provenance import Provenance
-from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm
+from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm, refuses_label_first
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -99,11 +99,35 @@ def _is_numeric_field_value(value: Any) -> bool:
 
 
 def _derived_record_name(field_keys: Iterable[str]) -> str:
-    """The deterministic label an operation derives for a record it produces."""
+    """The default label of a record or a batch of records: ``record(field,...)``.
+
+    Parameters
+    ----------
+    field_keys : iterable of str
+        The top-level field names, in canonical order.
+
+    Returns
+    -------
+    str
+        Such as ``"record(x,y)"``.
+
+    Raises
+    ------
+    TypeError
+        If there are no fields, which leaves nothing to derive the label from.
+    """
     keys = tuple(field_keys)
     if not keys:
-        raise TypeError("an empty record requires label=...")
+        raise TypeError("cannot derive a default label for a Record with no fields; pass label=...")
     return "record(" + ",".join(keys) + ")"
+
+
+def _not_a_field_mapping(kind: str, fields: Any) -> str:
+    """The message for a record constructor given *fields* that are not a mapping."""
+    return (
+        f"{kind} takes a mapping of field names to values, got {type_name(fields)}; "
+        f"pass a dict such as {{'x': value}}"
+    )
 
 
 def _leaf_values_equal(a: Any, b: Any) -> bool:
@@ -162,11 +186,6 @@ def _canonical_dtype_str(leaf: Any) -> str:
 # ---------------------------------------------------------------------------
 # Record
 # ---------------------------------------------------------------------------
-
-#: Constructor keywords that name a construction option rather than a field, so
-#: the keyword form of ``Record(...)`` does not read them as data. The positional
-#: dict form takes a field of any name, including these.
-_RESERVED_INIT_KWARGS = frozenset({"event_template", "_validate_leaves"})
 
 
 class Record(NamedTree[Any], TrackedTerm, Annotated):
@@ -345,7 +364,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         If the field paths conflict or a supplied ``event_template`` disagrees
         with the fields or their values.
     TypeError
-        If a field key is not a string.
+        If *fields* is not a mapping; if it is a string and *label* is omitted,
+        which is the earlier label-first form; if a field key is not a string;
+        or if *fields* is empty and *label* is omitted, which leaves nothing to
+        derive the label from.
 
     Notes
     -----
@@ -395,6 +417,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # template decides directly, and otherwise the raw values are
         # probed with the same predicate template inference uses, so the
         # decision agrees with the template the instance will carry.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            # A string is never a mapping of fields, so one in first place with no
+            # label keyword is a label passed in the earlier label-first form.
+            raise TypeError(label_given_first(cls.__name__, "fields", args[0]))
         if cls is Record:
             from ._numeric_record import NumericRecord
 
@@ -430,7 +456,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         _validate_leaves: bool = True,
     ):
         if not isinstance(fields, Mapping):
-            raise TypeError(f"fields must be a mapping, got {type(fields).__name__}")
+            raise TypeError(_not_a_field_mapping(type(self).__name__, fields))
         field_inputs = _unflatten_paths(fields)
         label = _derived_record_name(field_inputs) if label is None else label
 
@@ -1090,57 +1116,107 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Raises
         ------
         TypeError
-            If no fields were supplied, since an empty record needs an explicit label.
+            If no fields are given, since the label is derived from them.
+        ValueError
+            If a field name contains ``/``.
         """
+        if not fields:
+            raise TypeError(
+                f"{cls.__name__}.from_fields() requires at least one field; "
+                f"build an empty record with {cls.__name__}({{}}, label=...)"
+            )
         for field_name in fields:
             _check_no_path_sep(field_name)
         return cls(fields)
 
     @classmethod
     def ensure(cls, x: Any, *, label: str | None = None) -> Record:
-        """Coerce *x* to Record if it isn't already.
+        """Coerce *x* to a record, returning a record unchanged.
 
-        - ``Record`` → pass through (any *label* is ignored)
-        - ``dict`` → its entries become the fields; a nested ``dict`` value
-          becomes a nested subtree (mappings are never leaves)
-        - anything else → a single-field record keyed ``data``
+        - a ``Record`` is returned as it is, and *label* is ignored;
+        - a mapping becomes a record of its entries, and a nested mapping value
+          becomes a nested record;
+        - any other value becomes a record of one field, ``data``, holding it.
 
-        A freshly wrapped value is labeled *label* when given; otherwise its
-        label is derived from the top-level field keys at construction.
+        Parameters
+        ----------
+        x : Any
+            The value to coerce.
+        label : str, optional
+            The label of a newly built record. A record built from a mapping is
+            labeled ``record(field,...)`` by default, from its top-level fields.
+            A record wrapping a tracked term takes the term's label by default,
+            and any other value has no default.
+
+        Returns
+        -------
+        Record
+            *x* itself when it is a record of this class; otherwise a new record,
+            promoted to ``NumericRecord`` when every field is numeric.
+
+        Raises
+        ------
+        TypeError
+            If *x* is a value other than a mapping or a tracked term and *label*
+            is omitted, or *x* is an empty mapping and *label* is omitted.
+        ValueError
+            If the fields of a mapping *x* are invalid, as the constructor
+            states.
         """
         if isinstance(x, cls):
             return x
         if isinstance(x, Mapping):
-            fields = x
-        else:
-            if label is None:
-                if isinstance(x, TrackedTerm):
-                    label = x.label
-                else:
-                    raise TypeError("wrapping an unnamed value as a record requires label=...")
-            fields = {"data": x}
+            return cls(x, label=label)
         if label is None:
-            return cls(
-                fields,
-                label=_derived_record_name(fields),
-            )
-        return cls(
-            fields,
-            label=label,
-        )
+            if not isinstance(x, TrackedTerm):
+                raise TypeError(
+                    f"Record.ensure() needs a label for a {type_name(x)}, which has none of its "
+                    f"own; pass label=..."
+                )
+            label = x.label
+        return cls({"data": x}, label=label)
 
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, label: str, d: dict[str, ArrayLike | Record]) -> Record:
-        """Construct a Record labeled *label* from a dict of arrays."""
-        return cls(
-            d,
-            label=label,
-        )
+    @refuses_label_first("fields")
+    def from_dict(
+        cls, fields: dict[str, ArrayLike | Record], *, label: str | None = None
+    ) -> Record:
+        """Construct a record from a dict of field values.
+
+        It is the same as ``Record(fields, label=label)``, and remains as the
+        dict-named spelling of that call.
+
+        Parameters
+        ----------
+        fields : dict
+            The field values, keyed by field name.
+        label : str or None
+            Keyword-only. The record's label; ``None``, the default, derives
+            ``record(field,...)`` from the top-level field names.
+
+        Returns
+        -------
+        Record
+            The record, promoted to ``NumericRecord`` when every field is
+            numeric.
+
+        Raises
+        ------
+        TypeError
+            If *label* is omitted and *fields* is empty, or *fields* is a
+            string, which is a label passed first in the earlier form.
+        ValueError
+            If a field name or value is invalid, as the constructor states.
+        """
+        return cls(fields, label=label)
 
     @classmethod
-    def from_field_values(cls, label: str, template: RecordSpec, values: Iterable[Any]) -> Record:
+    @refuses_label_first("template", then=("values",))
+    def from_field_values(
+        cls, template: RecordSpec, values: Iterable[Any], *, label: str | None = None
+    ) -> Record:
         """Reconstruct a value from an ordered sequence of field values.
 
         *values* supplies one object per field, in canonical order (the order
@@ -1148,19 +1224,21 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         come from *template*, which the result carries as its
         **authoritative** :attr:`event_template` (nothing is inferred), so
         the round-trip is faithful:
-        ``Record.from_field_values(r.label, r.event_template, r.values()) == r``.
+        ``Record.from_field_values(r.event_template, r.values(), label=r.label) == r``.
         The export side is just ``list(record.values())``. The result's class
         follows the template's numericness — a :class:`NumericRecordSpec`
         builds a :class:`NumericRecord` via the auto-promotion.
 
         Parameters
         ----------
-        label : str
-            The reconstructed record's label.
         template : RecordSpec
             The authoritative schema supplying names, nesting, and order.
         values : iterable
             One field value per template key, in canonical order.
+        label : str or None
+            Keyword-only. The reconstructed record's label; ``None``, the
+            default, derives ``record(field,...)`` from the template's
+            top-level fields.
 
         Returns
         -------
@@ -1170,6 +1248,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Raises
         ------
+        TypeError
+            If *label* is omitted and *template* has no fields, or *template*
+            is a string, which is a label passed first in the earlier form.
         ValueError
             If the number of *values* is not the number of fields
             (``len(template)``), or a value fails its field spec's structural
@@ -1177,6 +1258,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             dtype (a ``NumericArraySpec``'s ``support`` is descriptive and not
             checked).
         """
+        label = _derived_record_name(template.children) if label is None else label
         values = list(values)
         if len(values) != len(template):
             raise ValueError(
@@ -1208,7 +1290,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # the result's per-leaf specs). See ``NamedTree.map``.
 
     # A record's leaves in canonical order are ``list(record.values())``;
-    # reconstruct via ``Record.from_field_values(label, template, values)``.
+    # reconstruct via ``Record.from_field_values(template, values, label=...)``.
 
     # -- Repr ---------------------------------------------------------------
 
@@ -1389,11 +1471,7 @@ def _pack_fields(
             parts.append(f"unexpected {extra}")
         prefix = f"{owner}: " if owner else ""
         raise TypeError(f"{prefix}expected exactly the fields {tuple(fields)}, {', '.join(parts)}")
-    field_map = {f: field_kwargs[f] for f in fields}
-    return Record(
-        field_map,
-        label=_derived_record_name(field_map),
-    )
+    return Record({f: field_kwargs[f] for f in fields})
 
 
 # ---------------------------------------------------------------------------

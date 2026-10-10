@@ -863,8 +863,9 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     Parameters
     ----------
     atoms : Any
-        The atoms the constructor received: a numeric array whose leading axis indexes
-        them, or a ``NumericRecordBatch``.
+        The atoms the constructor received: a numeric array, or a list or a
+        tuple of numbers, whose leading axis indexes them, or a
+        ``NumericRecordBatch``.
 
     Returns
     -------
@@ -877,10 +878,13 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     Raises
     ------
     TypeError
-        If *atoms* is neither a numeric array nor a ``NumericRecordBatch``.
+        If *atoms* is neither a numeric array, a list or a tuple of numbers, nor
+        a ``NumericRecordBatch``.
     ValueError
         If an array of atoms has no leading axis or holds no atom.
     """
+    if isinstance(atoms, list | tuple):
+        atoms = np.asarray(atoms)
     if isinstance(atoms, NumericRecordBatch):
         spec = atoms.element_spec.map(
             lambda leaf: NumericArraySpec(leaf.shape, _floating(leaf.dtype), real)
@@ -1012,7 +1016,7 @@ class KDEDistribution(
 
     Parameters
     ----------
-    atoms : Array or NumericRecordBatch
+    atoms : array-like or NumericRecordBatch
         The centers of the copies, along a leading axis of atoms.
     bandwidth : ArrayLike, NumericRecord, or str, optional
         The scales of the copies, or the name of a selection rule; ``None``
@@ -1033,7 +1037,7 @@ class KDEDistribution(
     Raises
     ------
     TypeError
-        If *atoms* is neither a numeric array nor a ``NumericRecordBatch``,
+        If *atoms* is neither a numeric array-like nor a ``NumericRecordBatch``,
         *kernel* is not a ``SmoothingKernel`` class, *component* is missing for
         array atoms or given for record atoms, *label* is not a non-empty
         string, *event_spec* is not an ``OutputSpec``, or *event_spec* exposes a
@@ -1092,6 +1096,7 @@ class KDEDistribution(
             _flat_scales(scales, centers, fields, _KDE_NAMES)
         bank = kernel.build_kernels(stored, scales)
         object.__setattr__(self, "_atoms", stored)
+        object.__setattr__(self, "_bandwidth", scales)
         object.__setattr__(self, "_kernel", kernel)
         object.__setattr__(self, "_bank", bank)
         object.__setattr__(self, "_w", atom_weights)
@@ -1238,8 +1243,15 @@ class KDEDistribution(
         return DenseLinOp(weighted_covariance(self._p, centers) + jnp.diag(smoothing))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The atoms, the weights when nonuniform, and the kernel."""
-        fields = [("atoms", format_value(self._atoms))]
+        """The atoms, the bandwidth, the weights when nonuniform, and the kernel.
+
+        The bandwidth shows the scales, which a rule's name selected when it
+        was given in place of them.
+        """
+        fields = [
+            ("atoms", format_value(self._atoms)),
+            ("bandwidth", format_value(self._bandwidth)),
+        ]
         if self._p is not None:
             fields.append(("weights", format_value(self._p)))
         return [*fields, ("kernel", self._kernel.__name__)]

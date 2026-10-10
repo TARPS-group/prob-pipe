@@ -9,6 +9,7 @@ import pytest
 
 from probpipe import NumericArray, NumericArrayBatch, NumericArraySpec
 from probpipe.core.provenance import Provenance
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 
 def _batch(values=None, level_names="draw", label="draws", **kwargs) -> NumericArrayBatch:
@@ -947,7 +948,7 @@ class TestNumericArrayIsAPyTree:
 
         assert isinstance(rebuilt, NumericArray)
         # The label does not cross a transform, so the rebuilt value takes its class's.
-        assert rebuilt.label == "<no description>"
+        assert rebuilt.label == _NO_DESCRIPTION
         np.testing.assert_array_equal(np.asarray(rebuilt), np.arange(3.0))
 
     def test_values_that_differ_only_in_label_share_a_treedef_and_a_compilation(self):
@@ -1044,7 +1045,7 @@ class TestNumericArrayIsAPyTree:
         skeleton = jax.tree_util.tree_map(lambda x: None, value)
 
         assert isinstance(skeleton, NumericArray)
-        assert skeleton.label == "<no description>"
+        assert skeleton.label == _NO_DESCRIPTION
 
     def test_a_sentinel_child_rebuilds(self):
         _, treedef = jax.tree_util.tree_flatten(
@@ -1289,24 +1290,104 @@ class TestTheFlatVector:
             spec=spec,
             label="x",
         )
-        rebuilt = NumericArray.from_vector("y", spec, x.to_vector())
+        rebuilt = NumericArray.from_vector(spec, x.to_vector(), label="y")
         assert rebuilt.label == "y"
         assert rebuilt.spec is spec
         np.testing.assert_array_equal(rebuilt.value, x.value)
 
     def test_from_vector_casts_to_the_declared_dtype(self):
         spec = NumericArraySpec((3,), jnp.int32)
-        rebuilt = NumericArray.from_vector("n", spec, jnp.array([1.0, 2.0, 3.0]))
+        rebuilt = NumericArray.from_vector(spec, jnp.array([1.0, 2.0, 3.0]), label="n")
         assert rebuilt.dtype == np.dtype("int32")
 
     def test_from_vector_refuses_a_batch_of_vectors(self):
         with pytest.raises(TypeError, match="1-D vector"):
-            NumericArray.from_vector("x", NumericArraySpec((2,)), jnp.zeros((4, 2)))
+            NumericArray.from_vector(NumericArraySpec((2,)), jnp.zeros((4, 2)), label="x")
 
     def test_from_vector_refuses_the_wrong_length(self):
         with pytest.raises(ValueError, match="expected vector_size=6"):
-            NumericArray.from_vector("x", NumericArraySpec((2, 3)), jnp.zeros(5))
+            NumericArray.from_vector(NumericArraySpec((2, 3)), jnp.zeros(5), label="x")
 
     def test_from_vector_needs_bound_dimensions(self):
         with pytest.raises(ValueError):
-            NumericArray.from_vector("x", NumericArraySpec(("n",)), jnp.zeros(3))
+            NumericArray.from_vector(NumericArraySpec(("n",)), jnp.zeros(3), label="x")
+
+    def test_from_vector_takes_the_label_as_a_keyword(self):
+        rebuilt = NumericArray.from_vector(spec=NumericArraySpec((2,)), vec=jnp.ones(2), label="w")
+        assert rebuilt.label == "w"
+
+    def test_from_vector_requires_the_label(self):
+        """A raw array's data cannot identify the value, so there is no default."""
+        with pytest.raises(TypeError, match="missing 1 required keyword-only argument: 'label'"):
+            NumericArray.from_vector(NumericArraySpec((2,)), jnp.ones(2))  # type: ignore[call-arg]
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    """A string where the values go is a label passed in the earlier form."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: NumericArray("x", jnp.ones(3)), id="label-and-value"),
+            pytest.param(lambda: NumericArray("x"), id="label-alone"),
+        ],
+    )
+    def test_a_numeric_array(self, build):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericArray takes the value first and the label as the keyword label, but "
+                r"got the string 'x' as the value; write NumericArray\(value, label='x'\)$"
+            ),
+        ):
+            build()
+
+    def test_a_numeric_array_batch(self):
+        with pytest.raises(
+            TypeError,
+            match=r"write NumericArrayBatch\(values, level_names, label='x'\)$",
+        ):
+            NumericArrayBatch("x", jnp.ones(3), "draw")
+
+    def test_from_vector(self):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^NumericArray\.from_vector takes the spec first and the label as the keyword "
+                r"label, but got the string 'x' as the spec; write "
+                r"NumericArray\.from_vector\(spec, vec, label='x'\)$"
+            ),
+        ):
+            NumericArray.from_vector("x", NumericArraySpec((2,)), jnp.ones(2))
+
+
+class TestARebuiltValueComputes:
+    """A value rebuilt from its leaves has no description but computes as before."""
+
+    @pytest.mark.parametrize("transform", [jax.jit, jax.vmap], ids=["jit", "vmap"])
+    def test_a_rebuilt_array_is_undescribed_and_usable_in_a_transform(self, transform):
+        value = NumericArray(jnp.arange(3.0), label="temperature")
+        rebuilt = transform(lambda x: x)(value)
+        assert rebuilt.label == _NO_DESCRIPTION
+        result = transform(lambda x: x + 1)(rebuilt)
+        np.testing.assert_array_equal(np.asarray(result), jnp.arange(3.0) + 1)
+
+    def test_relabeling_shares_a_compilation(self):
+        traces = []
+
+        @jax.jit
+        def compiled(x):
+            traces.append(None)
+            return x + 1
+
+        first = NumericArray(1.0, label="temperature")
+        compiled(first)
+        compiled(first.with_label("pressure"))
+        assert len(traces) == 1
+
+    def test_a_rebuilt_batch_keeps_its_spec_and_values(self):
+        value = NumericArrayBatch(jnp.arange(3.0), "draw", label="temperature")
+        rebuilt = jax.jit(lambda x: x)(value)
+        assert rebuilt.label == _NO_DESCRIPTION
+        assert rebuilt.spec == value.spec
+        np.testing.assert_array_equal(jax.jit(lambda x: x)(rebuilt).raw(), value.raw())

@@ -15,7 +15,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -304,7 +304,9 @@ def _lift_result(
     """The empirical law of a lifted call's evaluations, under their weights.
 
     The atoms are the outputs on the level ``draw``, and the event declaration
-    is the completed output declaration. Under *include_inputs* each atom joins
+    is the completed output declaration. A declaration that exposes a returned
+    law's components holds each law whole under *output_component* instead,
+    since each atom is a law. Under *include_inputs* each atom joins
     the draw of every lifted argument, under its parameter's label, to the
     output's components.
 
@@ -343,6 +345,11 @@ def _lift_result(
     atoms, declaration = _output_atoms(
         draws.outputs, draws.count, output_label, output_spec, output_component
     )
+    if declaration._component_name is None and not declaration.exposes_record:
+        # A law's event is a value, so the law of the evaluations holds each
+        # returned law whole under the default component, as an undeclared
+        # output places its result.
+        declaration = OutputSpec(**{output_component: declaration.spec})
     if not include_inputs:
         return EmpiricalDistribution(
             atoms, draws.weights, label=output_label, event_spec=declaration
@@ -402,12 +409,7 @@ def _output_atoms(
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(
-                outputs.value,
-                DRAW_LEVEL,
-                element_spec=element,
-                label=output_label,
-            )
+            NumericArrayBatch(outputs.value, DRAW_LEVEL, element_spec=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -417,7 +419,6 @@ def _output_atoms(
                 rows,
                 n=count,
                 level_names=(DRAW_LEVEL,),
-                field_name=output_component,
                 label=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),
@@ -447,10 +448,7 @@ def _rows_of(outputs: Any, output_label: str) -> Any:
     stacked array, record, or mapping, which is read as a record of columns.
     """
     if isinstance(outputs, Mapping) and not isinstance(outputs, TrackedTerm):
-        return Record(
-            dict(outputs),
-            label=output_label,
-        )
+        return Record(dict(outputs), label=output_label)
     return outputs
 
 
@@ -518,20 +516,11 @@ def _joint_atoms(
         fields.update(declaration.spec.children)
         columns.update(stored)
     else:
-        component = declaration._component_name
-        if component is None:
-            raise ResultSchemaError(
-                "include_inputs requires a declared whole-term output component"
-            )
+        component = cast(str, declaration._component_name)
         fields[component] = declaration.spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
-    return _batch_class_for(element)(
-        columns,
-        DRAW_LEVEL,
-        element_spec=element,
-        label=output_label,
-    )
+    return _batch_class_for(element)(columns, DRAW_LEVEL, element_spec=element, label=output_label)
 
 
 def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
@@ -656,10 +645,7 @@ def _record_columns(draws: Any, label: str) -> Any:
     if isinstance(draws, NumericArray):
         return draws.raw()
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
-        return Record(
-            _raw_record(draws),
-            label=label,
-        )
+        return Record(_raw_record(draws), label=label)
     return draws
 
 
@@ -1047,17 +1033,11 @@ def _index_sample(s: Any, i: int) -> Any:
     if isinstance(s, RecordBatch):
         # The raw columns, so a field that is not an array reaches the body as
         # the value it holds rather than as a view of its column.
-        return Record(
-            {p: s._raw_column(p)[i] for p in s.event_template},
-            label=s.label,
-        )
+        return Record({p: s._raw_column(p)[i] for p in s.event_template}, label=s.label)
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
-        return Record(
-            {p: s.raw(p)[i] for p in s.event_template},
-            label=s.label,
-        )
+        return Record({p: s.raw(p)[i] for p in s.event_template}, label=s.label)
     return s[i]
 
 

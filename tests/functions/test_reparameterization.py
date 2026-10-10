@@ -64,6 +64,11 @@ class TestTheBijectorIsAFunction:
         assert is_invertible(bijector)
         assert isinstance(bijector, SupportsLogDetJacobian)
 
+    def test_its_output_component_is_the_backend_name(self):
+        bijector = bijector_for(positive)
+        assert (bijector.label, bijector._output_component) == ("exp", "exp")
+        assert bijector.with_label("other")._output_component == "exp"
+
     @pytest.mark.parametrize("constraint", _SUPPORTED, ids=repr)
     def test_it_records_the_support_it_maps_onto(self, constraint):
         assert _image(bijector_for(constraint)) == constraint

@@ -6,8 +6,9 @@ See design III.1.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Self
 
+from .._messages import label_given_first
 from ._array_backend import _read_only
 from ._repr import term_repr, type_name
 from ._spec_base import OpaqueSpec
@@ -68,6 +69,14 @@ class Opaque(TrackedTerm, Annotated):
         "_spec",
         "_value",
     )
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # A string is a valid opaque value, so only a second positional argument
+        # without a label keyword marks it as a label passed in the earlier
+        # label-first form.
+        if len(args) > 1 and isinstance(args[0], str) and "label" not in kwargs:
+            raise TypeError(label_given_first(cls.__name__, "value", args[0]))
+        return object.__new__(cls)
 
     def __init__(
         self,

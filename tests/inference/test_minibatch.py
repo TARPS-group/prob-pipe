@@ -7,6 +7,7 @@ stochastic-gradient MCMC kernels and by tempered SMC.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable
 
 import jax
@@ -182,6 +183,38 @@ class TestConstruction:
                 batch_size=1,
                 label="measure",
             )
+
+
+class TestTheDefaultLabel:
+    def test_the_notation_shows_the_construction_over_its_operands(
+        self, prior, likelihood, response
+    ):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            m = MinibatchedDistribution(prior, likelihood, response, batch_size=40)
+        assert m.label == "minibatch"
+        assert m.notation == "minibatch(MultivariateNormal(beta), p(y | beta), batch_size=40)"
+
+    def test_the_repr_leaves_the_derived_label_out(self, prior, likelihood, response):
+        m = MinibatchedDistribution(prior, likelihood, response, batch_size=40)
+        assert "label=" not in repr(m)
+        named = MinibatchedDistribution(prior, likelihood, response, batch_size=40, label="mb")
+        assert repr(named).endswith("    label='mb',\n)")
+
+    def test_a_prior_without_a_label_requires_one(self, likelihood, response):
+        class _LogDensity:
+            def _log_prob(self, value):
+                return jnp.asarray(0.0)
+
+            def _unnormalized_log_prob(self, value):
+                return jnp.asarray(0.0)
+
+        with pytest.raises(
+            TypeError,
+            match="MinibatchedDistribution cannot take its label from a prior of type "
+            "_LogDensity, which has no label; pass label=",
+        ):
+            MinibatchedDistribution(_LogDensity(), likelihood, response, batch_size=40)
 
 
 # -- Property accessors -------------------------------------------------------
