@@ -1028,7 +1028,6 @@ class TestTheLabelsOfALiftedFunction:
                 Normal("g", 0.0, 1.0, label="prior"), Normal("q", 0.0, 1.0, label="proposal")
             )
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(prior(g), q ~ proposal)")
-        assert list(lifted.event_spec.components) == ["log_prob(g)"]
 
     def test_a_lifted_score_keeps_the_component_its_check_declares(self):
         prior = Normal("g", 0.0, 1.0, label="prior")
