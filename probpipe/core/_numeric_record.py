@@ -146,11 +146,13 @@ class NumericRecord(Record, Numeric):
     Raises
     ------
     TypeError
-        If any leaf is not a numeric array/container, a numeric scalar, or a
-        nested ``NumericRecord``.
+        If any leaf is not a numeric array or container, a numeric scalar, or a
+        nested ``NumericRecord``; or for any reason :class:`Record` states: a
+        *fields* that is not a mapping, a string given where the fields go
+        with *label* omitted, or no fields with *label* omitted.
     ValueError
-        If no fields are given, a field name contains ``/``, or both ``_fields``
-        and keyword fields are passed (inherited from :class:`Record`).
+        If the field paths conflict or a supplied ``event_template`` disagrees
+        with the fields or their values, as for :class:`Record`.
 
     Notes
     -----

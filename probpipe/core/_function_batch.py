@@ -166,7 +166,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
         ----------
         value : callable
             The object stored at the element's position.
-        label : str, optional
+        label : str
             The label of the element view, derived from its position.
 
         Returns

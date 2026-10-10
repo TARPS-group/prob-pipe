@@ -364,7 +364,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         If the field paths conflict or a supplied ``event_template`` disagrees
         with the fields or their values.
     TypeError
-        If a field key is not a string.
+        If *fields* is not a mapping; if it is a string and *label* is omitted,
+        which is the earlier label-first form; if a field key is not a string;
+        or if *fields* is empty and *label* is omitted, which leaves nothing to
+        derive the label from.
 
     Notes
     -----

@@ -69,7 +69,8 @@ class NumericRecordBatch(RecordBatch):
     level_names : str or sequence of str
         One name per level, outermost first; a single string names a single level.
     label : str, optional
-        The batch's label.
+        The batch's label. Defaults to ``record(field,...)``, which names the
+        top-level fields of the element spec, as for :class:`RecordBatch`.
     element_spec : RecordSpec, optional
         The all-numeric schema every element satisfies. Defaults to the spec the
         columns imply.
@@ -241,7 +242,7 @@ class NumericRecordBatch(RecordBatch):
 
         Parameters
         ----------
-        label : str, optional
+        label : str
             The reconstructed batch's label.
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.

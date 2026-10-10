@@ -79,8 +79,8 @@ class RecordBatch(Batch[Record]):
     As a JAX pytree it flattens to its columns, with its spec as the static
     data. The label and the expression do not cross a transform, so two
     batches that differ only in their labels have equal treedefs and share a
-    compilation, and a batch rebuilt from its leaves is marked ``<no description>``,
-    as ``RecordBatch``, until a result boundary labels it.
+    compilation, and a batch rebuilt from its leaves is labeled
+    ``<no description>`` until a result boundary labels it.
 
     Parameters
     ----------
@@ -1490,9 +1490,9 @@ def _unflatten_with(cls: type[RecordBatch]):
     """
 
     def _unflatten(spec: BatchSpec, children: list) -> RecordBatch | Record:
-        # The label does not cross a transform, so a rebuilt batch is labeled by
-        # its class, and an element by ``Record``, until a result boundary labels
-        # it (II.4).
+        # The label does not cross a transform, so a rebuilt batch, and a record
+        # rebuilt from it, is labeled ``<no description>`` until a result
+        # boundary labels it (II.4).
         label = _NO_DESCRIPTION
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
