@@ -707,17 +707,11 @@ def _run_call(
         else None
     )
     if concrete_output_spec is None and candidates is not None and selection is None:
-        # An operation's result rule supplies its computational output interface.
-        # Plan from declared draws/elements, without evaluating or sampling rows.
-        replacements = _resolution._draws(values, broadcast_plan)
-        replacements.update(
-            {
-                ref: _resolution.StandIn(_resolution._element_spec(values, ref))
-                for ref in broadcast_plan.array_args
-            }
+        # A Function realized by routes declares its result at each point, so the
+        # lifted call declares what one point declares.
+        concrete_output_spec = _resolution.lifted_declaration(
+            function, values, controls, broadcast_plan
         )
-        point_values = _binding.replace_input_refs(values, replacements)
-        _, concrete_output_spec, _ = function._plan_point(point_values, controls)
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
@@ -836,9 +830,9 @@ def _run_call(
         route_metadata: Mapping[str, Any] = route.metadata,
     ):
         output_spec, output_template = concrete_output_spec, concrete_output_template
-        if output_spec is None and candidates is not None:
-            # A Function realized by routes declares its result at each point, so the
-            # law of the evaluations declares the components one point declares.
+        if output_spec is None and candidates is not None and row_values is not values:
+            # A row of a sweep binds its element itself, which may declare what the
+            # element's declaration alone left open.
             output_spec = _resolution.lifted_declaration(
                 function, row_values, controls, broadcast_plan
             )
