@@ -576,6 +576,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
 
+    #: The memo of values computed from the law on demand, such as its
+    #: fingerprint, which a copy or a pickle leaves out.
+    _transient_state = ("_memo",)
+
     def __init__(
         self,
         label: str,
