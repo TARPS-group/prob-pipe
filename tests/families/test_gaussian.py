@@ -1245,12 +1245,16 @@ class TestTheFactoredGaussian:
         from probpipe import Gamma
 
         with pytest.raises(
-            TypeError, match=r"accepts only Normal or MultivariateNormal .* \['Gamma'\]"
+            TypeError,
+            match=r"^FactoredMultivariateGaussian 'j' accepts only Normal or MultivariateNormal "
+            r".* \['Gamma'\]$",
         ):
             FactoredMultivariateGaussian(
                 [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)],
                 label="j",
             )
+        with pytest.raises(TypeError, match=r"^FactoredMultivariateGaussian 'Normal·Gamma' "):
+            FactoredMultivariateGaussian([Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
 
     def test_its_moments_are_the_factors_in_closed_form(self):
         joint = _gaussian_joint()
