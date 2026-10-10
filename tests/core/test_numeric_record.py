@@ -7,6 +7,7 @@ import pytest
 
 from probpipe import NumericRecord, Record
 from probpipe.core._specs import RecordSpec
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -473,7 +474,7 @@ class TestSingleFieldCoercion:
 
     The shim is what keeps idiomatic expressions like
     ``float(mean(dist))`` working once ``mean`` returns a
-    ``NumericRecord("nr", result=...)`` under the full output-type contract.
+    ``NumericRecord({"result": ...})`` under the full output-type contract.
     """
 
     def test_float_scalar(self):
@@ -607,3 +608,13 @@ class TestConstructionMessages:
     def test_an_empty_record_without_a_label_is_refused(self):
         with pytest.raises(TypeError, match=r"^cannot derive a default label .* pass label="):
             NumericRecord({})
+
+
+class TestARebuiltRecordComputes:
+    def test_a_rebuilt_record_keeps_its_spec_and_values(self):
+        value = NumericRecord({"temperature": jnp.arange(3.0)})
+        rebuilt = jax.jit(lambda x: x)(value)
+        assert rebuilt.label == _NO_DESCRIPTION
+        assert rebuilt.spec == value.spec
+        result = jax.jit(lambda x: x)(rebuilt)
+        np.testing.assert_array_equal(result["temperature"], value["temperature"])

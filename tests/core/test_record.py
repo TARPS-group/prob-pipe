@@ -1430,7 +1430,7 @@ class TestReprAndEquality:
     # Hash / eq contract: ``a == b`` must imply ``hash(a) == hash(b)``.
     # Regression: ``__hash__`` used to read raw ``.shape`` / ``.dtype`` while
     # ``__eq__`` coerced via ``jnp.asarray``, so
-    # Record("r", a=1.0) == Record("r", a=jnp.asarray(1.0)) but the hashes differed.
+    # Record({"a": 1.0}) == Record({"a": jnp.asarray(1.0)}) but the hashes differed.
 
     def test_hash_eq_contract_scalar_vs_zero_d_array(self):
         r1 = Record(
@@ -2184,3 +2184,24 @@ class TestConstructionMessages:
     def test_from_fields_refuses_a_path_separator_in_a_name(self):
         with pytest.raises(ValueError, match="/"):
             Record.from_fields(**{"a/b": 1.0})
+
+
+class TestFieldNamesAreNotConstructorOptions:
+    """A field may be named like a constructor option, since the fields come as one mapping."""
+
+    def test_fields_named_label_and_name_are_ordinary_fields(self):
+        value = Record({"label": "north", "name": "station"}, label="measurements")
+        assert value.label == "measurements"
+        assert value.raw("label") == "north"
+        assert value.raw("name") == "station"
+
+    def test_from_fields_takes_fields_named_label_and_name(self):
+        numeric = Record.from_fields(label=1.0, name=2.0)
+        assert numeric.label == "record(label,name)"
+        assert tuple(numeric) == ("label", "name")
+
+    def test_a_field_named_label_holding_a_string_is_data_not_a_label(self):
+        record = Record.from_fields(label="fox")
+        assert type(record) is Record
+        assert record.label == "record(label)"
+        assert record.raw("label") == "fox"

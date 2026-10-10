@@ -1,4 +1,7 @@
-"""Semantic constructor names remain independent of numerical declarations."""
+"""Labels of functions and laws stay independent of their numerical declarations.
+
+The value-kind constructor tests live in the files that mirror their modules.
+"""
 
 import jax
 import jax.numpy as jnp
@@ -10,145 +13,87 @@ from probpipe import (
     Function,
     Normal,
     NumericArray,
-    NumericArrayBatch,
     NumericArraySpec,
-    NumericRecord,
-    NumericRecordBatch,
-    Opaque,
     OutputSpec,
-    Record,
-    RecordBatch,
     function,
     workflow_run,
 )
 from probpipe.core._fingerprint import fingerprint
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 
-def test_raw_values_require_names_but_named_structures_derive_them():
-    with pytest.raises(TypeError, match="label"):
-        NumericArray(1.0)
-    with pytest.raises(TypeError, match="label"):
-        Opaque(object())
-    with pytest.raises(TypeError, match="label"):
-        NumericArrayBatch(jnp.ones(3), "draw")
-    assert Record({"temperature": 1.0}).label == "record(temperature)"
-    assert RecordBatch({"temperature": jnp.ones(3)}, "draw").label == "record(temperature)"
-    with pytest.raises(TypeError, match="Record with no fields; pass label="):
-        Record({})
-    assert Record({}, label="empty_measurements").label == "empty_measurements"
+class TestFunctionLabels:
+    def test_function_defaults_and_explicit_aliases(self):
+        def predict(temperature):
+            return temperature + 1
+
+        assert Function(predict).notation == "predict(temperature)"
+        assert Function(lambda temperature: temperature + 1).notation == "f(temperature)"
+        assert function(lambda temperature: temperature + 1).notation == "f(temperature)"
+        assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
+        assert Function(predict, output_label="prediction")(2.0).label == "prediction"
+
+    def test_output_components_are_declared_independently_of_aliases(self):
+        inferred = Function(lambda x: x, output_spec=NumericArraySpec(()))
+        assert tuple(inferred.output_spec.components) == ("f",)
+        declared = OutputSpec(prediction=NumericArraySpec(()))
+        f = Function(
+            lambda x: x + 1, label="predict", output_label="forecast", output_spec=declared
+        )
+        g = Function(f.raw(), label="other", output_label="estimate", output_spec=declared)
+        assert f.output_spec == g.output_spec
+        assert fingerprint(f) == fingerprint(g)
+        with workflow_run(seed=42):
+            first = f(Normal("temperature", 0, 1))
+        with workflow_run(seed=42):
+            second = g(Normal("temperature", 0, 1))
+        assert tuple(first.event_spec.components) == ("prediction",)
+        assert tuple(second.event_spec.components) == ("prediction",)
+        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+
+    @pytest.mark.parametrize("transform", [jax.jit, jax.vmap], ids=["jit", "vmap"])
+    def test_a_function_applies_to_a_rebuilt_array_in_a_transform(self, transform):
+        rebuilt = transform(lambda x: x)(NumericArray(jnp.arange(3.0), label="temperature"))
+        assert rebuilt.label == _NO_DESCRIPTION
+        increment = Function(lambda x: x + 1)
+        np.testing.assert_array_equal(
+            np.asarray(transform(increment)(rebuilt)), jnp.arange(3.0) + 1
+        )
+
+    def test_a_managed_result_derives_its_label_from_a_compiled_callable(self):
+        @jax.jit
+        def compiled(x):
+            return x + 1
+
+        first = NumericArray(1.0, label="temperature")
+        wrapped = Function(compiled, label="increment")
+        assert wrapped(first).label == "increment(temperature)"
+        assert float(wrapped(first)) == 2.0
+
+    def test_lifting_infers_components_independently_of_display_aliases(self):
+        def predict(x):
+            return x + 1
+
+        inferred = Function(predict, n_broadcast_samples=5)
+        aliased = Function(
+            predict, label="forecast", output_label="estimate", n_broadcast_samples=5
+        )
+        assert fingerprint(inferred) == fingerprint(aliased)
+        with workflow_run(seed=42):
+            first = inferred(Normal("temperature", 0, 1))
+        with workflow_run(seed=42):
+            second = aliased.with_label("other")(Normal("temperature", 0, 1))
+        assert tuple(first.event_spec.components) == ("predict",)
+        assert tuple(second.event_spec.components) == ("predict",)
+        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
+        assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
+        exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)
+        assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.components) == ("prediction",)
 
 
-def test_record_controls_and_field_names_have_distinct_namespaces():
-    value = Record({"label": "north", "name": "station"}, label="measurements")
-    assert value.label == "measurements"
-    assert value.raw("label") == "north"
-    assert value.raw("name") == "station"
-    numeric = NumericRecord.from_fields(label=1.0, name=2.0)
-    assert numeric.label == "record(label,name)"
-    assert tuple(numeric) == ("label", "name")
-
-
-def test_coercion_requires_a_semantic_source():
-    with pytest.raises(TypeError, match="needs a label"):
-        Record.ensure(jnp.ones(3))
-    assert Record.ensure(jnp.ones(3), label="temperature").label == "temperature"
-    assert Record.ensure({"temperature": jnp.ones(3)}).label == "record(temperature)"
-
-
-def test_function_defaults_and_explicit_aliases():
-    def predict(temperature):
-        return temperature + 1
-
-    assert Function(predict).notation == "predict(temperature)"
-    assert Function(lambda temperature: temperature + 1).notation == "f(temperature)"
-    assert function(lambda temperature: temperature + 1).notation == "f(temperature)"
-    assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
-    assert Function(predict, output_label="prediction")(2.0).label == "prediction"
-
-
-def test_output_components_are_declared_independently_of_aliases():
-    inferred = Function(lambda x: x, output_spec=NumericArraySpec(()))
-    assert tuple(inferred.output_spec.components) == ("f",)
-    declared = OutputSpec(prediction=NumericArraySpec(()))
-    f = Function(lambda x: x + 1, label="predict", output_label="forecast", output_spec=declared)
-    g = Function(f.raw(), label="other", output_label="estimate", output_spec=declared)
-    assert f.output_spec == g.output_spec
-    assert fingerprint(f) == fingerprint(g)
-    with workflow_run(seed=42):
-        first = f(Normal("temperature", 0, 1))
-    with workflow_run(seed=42):
-        second = g(Normal("temperature", 0, 1))
-    assert tuple(first.event_spec.components) == ("prediction",)
-    assert tuple(second.event_spec.components) == ("prediction",)
-    np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
-
-
-def test_generic_law_default_uses_a_declared_component():
-    law = Distribution(OutputSpec(tau=NumericArraySpec(())))
-    assert law.notation == "p(tau)"
-    assert law.with_label("prior").event_spec == law.event_spec
-
-
-@pytest.mark.parametrize("transform", [jax.jit, jax.vmap])
-def test_reconstructed_terms_remain_usable_in_transforms(transform):
-    value = NumericArray(jnp.arange(3.0), label="temperature")
-    rebuilt = transform(lambda x: x)(value)
-    assert rebuilt.label == "<no description>"
-    result = transform(lambda x: x + 1)(rebuilt)
-    np.testing.assert_array_equal(np.asarray(result), jnp.arange(3.0) + 1)
-    increment = Function(lambda x: x + 1)
-    np.testing.assert_array_equal(np.asarray(transform(increment)(rebuilt)), jnp.arange(3.0) + 1)
-
-
-def test_relabeling_reuses_compilation_and_managed_results_derive_names():
-    traces = []
-
-    @jax.jit
-    def compiled(x):
-        traces.append(None)
-        return x + 1
-
-    first = NumericArray(1.0, label="temperature")
-    compiled(first)
-    compiled(first.with_label("pressure"))
-    assert len(traces) == 1
-    wrapped = Function(compiled, label="increment")
-    assert wrapped(first).label == "increment(temperature)"
-    assert float(wrapped(first)) == 2.0
-
-
-def test_lifting_infers_components_independently_of_display_aliases():
-    def predict(x):
-        return x + 1
-
-    inferred = Function(predict, n_broadcast_samples=5)
-    aliased = Function(predict, label="forecast", output_label="estimate", n_broadcast_samples=5)
-    assert fingerprint(inferred) == fingerprint(aliased)
-    with workflow_run(seed=42):
-        first = inferred(Normal("temperature", 0, 1))
-    with workflow_run(seed=42):
-        second = aliased.with_label("other")(Normal("temperature", 0, 1))
-    assert tuple(first.event_spec.components) == ("predict",)
-    assert tuple(second.event_spec.components) == ("predict",)
-    np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
-    unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
-    assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
-    exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)
-    assert tuple(exposed(Normal("temperature", 0, 1)).event_spec.components) == ("prediction",)
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        NumericRecord({"temperature": jnp.arange(3.0)}),
-        NumericArrayBatch(jnp.arange(3.0), "draw", label="temperature"),
-        NumericRecordBatch({"temperature": jnp.arange(3.0)}, "draw"),
-    ],
-)
-def test_all_numeric_rebuilds_keep_specs_and_work_without_descriptions(value):
-    rebuilt = jax.jit(lambda x: x)(value)
-    assert rebuilt.label == "<no description>"
-    assert rebuilt.spec == value.spec
-    result = jax.jit(lambda x: x)(rebuilt)
-    for actual, expected in zip(jax.tree.leaves(result), jax.tree.leaves(value), strict=True):
-        np.testing.assert_array_equal(actual, expected)
+class TestLawLabels:
+    def test_generic_law_default_uses_a_declared_component(self):
+        law = Distribution(OutputSpec(tau=NumericArraySpec(())))
+        assert law.notation == "p(tau)"
+        assert law.with_label("prior").event_spec == law.event_spec

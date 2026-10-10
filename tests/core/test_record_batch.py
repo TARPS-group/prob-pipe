@@ -35,6 +35,7 @@ from probpipe.core import _array_backend
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 
 @pytest.fixture
@@ -2200,3 +2201,13 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
             ),
         ):
             RecordBatch("x", {"a": jnp.zeros(3)}, "draw")
+
+
+class TestARebuiltBatchComputes:
+    def test_a_rebuilt_numeric_batch_keeps_its_spec_and_values(self):
+        value = NumericRecordBatch({"temperature": jnp.arange(3.0)}, "draw")
+        rebuilt = jax.jit(lambda x: x)(value)
+        assert rebuilt.label == _NO_DESCRIPTION
+        assert rebuilt.spec == value.spec
+        result = jax.jit(lambda x: x)(rebuilt)
+        np.testing.assert_array_equal(result["temperature"].raw(), value["temperature"].raw())
