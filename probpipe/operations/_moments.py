@@ -5,7 +5,12 @@ Each summarizes a distribution by a deterministic value. ``mean``, ``variance``,
 ``closed_form``, and a Monte Carlo fallback, ``monte_carlo``, on the event kinds
 where the required averaging is defined. A capability returns the law's own
 moment, and a numeric fallback returns that moment of the empirical law of its
-draws. A moment of the event's kind keeps the event's packaging and derives its
+draws. ``mean``, ``variance``, and ``quantile`` are computed coordinate by
+coordinate, so they also carry the structural route ``by_component``: for a
+law whose event is a record, it computes each component that has an exact
+route of its own by that route, on the component's view, and the other
+components together by one call, so a dependent joint's root factors keep
+their closed forms. ``cov`` couples components and has no such route. A moment of the event's kind keeps the event's packaging and derives its
 term specs, support included, and it names each component for the moment, so
 the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
@@ -28,6 +33,7 @@ their number is the ``n_broadcast_samples`` control.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from math import prod
 from typing import Any, cast
 
@@ -43,6 +49,7 @@ from ..core._dispatch import (
 from ..core._expression import Applied, Expression, Summary, draw_of
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import RecordSpec
+from ..core._repr import format_names
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import (
@@ -69,6 +76,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
+from ..functions._resolution import PointReport
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
 from ._evaluate import (
@@ -81,7 +89,10 @@ from ._evaluate import (
 )
 from ._operation import (
     BoundCall,
+    RouteSource,
+    _assembled,
     _call_label,
+    _DelegatingRoute,
     _install_expression_rule,
     _subject_name,
     _workflow_draws,
@@ -518,6 +529,219 @@ def _mc_quantile(call: BoundCall, result: OutputSpec | None) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# The summaries component by component
+# ---------------------------------------------------------------------------
+
+
+def _view(d: Distribution, components: tuple[str, ...]) -> Distribution:
+    """The view of *d* at one component, or the selection of several."""
+    return d[components[0]] if len(components) == 1 else d[components]
+
+
+def _block_values(view: Distribution, value: Any, summary: str) -> dict[str, Any]:
+    """The raw *value* of a summary of *view*, keyed by the components of the view's event.
+
+    A view that exposes a record returns the summary keyed by its components'
+    summary names, as ``mean(mu)``, and a view of one whole term returns that
+    term's summary.
+    """
+    declaration = view.event_spec
+    if declaration.exposes_record:
+        return {name: value[_summary_name(summary, [name])] for name in declaration.components}
+    ((name, _),) = declaration.components.items()
+    return {name: value}
+
+
+@dataclass(frozen=True)
+class _Partition:
+    """How ``by_component`` splits a call: the components computed alone and the rest.
+
+    Attributes
+    ----------
+    exact : tuple of str
+        The components whose own call selects an exact route, in event order;
+        each is computed by a call of its own.
+    rest : tuple of str
+        The other components, in event order, computed together by one call.
+    report : Feasibility
+        Whether the split realizes the call, and with what exactness.
+    """
+
+    exact: tuple[str, ...]
+    rest: tuple[str, ...]
+    report: Feasibility
+
+
+class _ByComponent(_DelegatingRoute):
+    """The summary of each component of a record event, by the route that component's view selects.
+
+    ``mean``, ``variance``, and ``quantile`` are computed coordinate by
+    coordinate, so the summary of a law ``d`` whose event exposes a record is
+    the record of the summaries of the views ``d[B]`` over any partition of its
+    components into blocks ``B``. The route forms the partition from the
+    checks of the operation itself on each component's view: a component whose
+    own call selects an exact route is a block of its own, and the other
+    components form one block, whose draws they share. Each block is an
+    ordinary call of the operation, with the call's controls apart from
+    ``method``, which is reset, and ``exact_only``, which is the candidate's.
+
+    The route's exactness is that of its constituent calls: it is exact when
+    every block is, and approximate otherwise. It applies when the event is a
+    record of at least two components and at least one component has an exact
+    route, so a law with no exact component keeps the Monte Carlo fallback.
+    The result's provenance keeps the result of each constituent call as a
+    parent, with the route and exactness that call took.
+
+    Parameters
+    ----------
+    summary : str
+        The summary's name, as each component of its result is named:
+        ``"mean"``, ``"variance"``, or ``"quantile"``.
+    """
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self, summary: str) -> None:
+        super().__init__("by_component")
+        self.summary = summary
+
+    @property
+    def condition(self) -> str:
+        """The route's feasibility condition in words."""
+        return (
+            "the event is a record of several components, at least one of which has an exact "
+            "route of its own, and the rest of which have a route together"
+        )
+
+    def _partition(self, call: BoundCall, exact_only: bool) -> _Partition:
+        """The components computed alone and the rest, with the report of the split.
+
+        Parameters
+        ----------
+        call : BoundCall
+            The call, whose law is ``call.operands["d"]``.
+        exact_only : bool
+            Whether the constituent calls are restricted to exact routes.
+
+        Returns
+        -------
+        _Partition
+            The split, whose report is infeasible when the event is not a
+            record of several components, when no component has an exact
+            route, or when the remaining components have no route together;
+            unresolved when a component's check is; and otherwise feasible,
+            exact exactly when every block's route is.
+        """
+        d = call.operands["d"]
+        if (
+            not isinstance(d, Distribution)
+            or not d.event_spec.exposes_record
+            or len(d.event_spec.components) < 2
+        ):
+            return _Partition(
+                (), (), Feasibility(False, "the event is not a record of several components")
+            )
+        components = tuple(d.event_spec.components)
+        reports = {c: self._check(call, _view(d, (c,)), exact_only) for c in components}
+        unresolved = [report for report in reports.values() if report.feasible is None]
+        if unresolved:
+            pending = tuple(dict.fromkeys(item for report in unresolved for item in report.pending))
+            return _Partition((), (), Feasibility(None, pending=pending))
+        exact = tuple(c for c in components if reports[c].feasible is True and reports[c].exact)
+        rest = tuple(c for c in components if c not in exact)
+        if not exact:
+            return _Partition(
+                exact, rest, Feasibility(False, f"no component has an exact {self.summary}")
+            )
+        if not rest:
+            return _Partition(exact, rest, PointReport(True, exact=True))
+        remaining = self._check(call, _view(d, rest), exact_only)
+        if remaining.feasible is None:
+            return _Partition(exact, rest, Feasibility(None, pending=remaining.pending))
+        if remaining.feasible is False:
+            return _Partition(exact, rest, self._declined(d, exact, rest, remaining, exact_only))
+        return _Partition(exact, rest, PointReport(True, exact=remaining.exact is True))
+
+    def _check(self, call: BoundCall, view: Distribution, exact_only: bool) -> Feasibility:
+        """The report of the operation's check on *view*, an applicability failure being infeasible."""
+        others = [value for name, value in call.operands.items() if name != "d"]
+        try:
+            report = self._constituent(call, exact_only).check(view, *others)
+        except ApplicabilityError as error:
+            return Feasibility(False, str(error))
+        if report.selected is None:
+            return Feasibility(None, pending=report.pending)
+        return report.selected
+
+    def _declined(
+        self,
+        d: Distribution,
+        exact: tuple[str, ...],
+        rest: tuple[str, ...],
+        remaining: Feasibility,
+        exact_only: bool,
+    ) -> Feasibility:
+        """The report when the remaining components have no route together.
+
+        Restricted to exact routes, the report names the components that have
+        none and the views whose summaries are exact, which the caller can
+        compute instead.
+        """
+        if not exact_only:
+            return Feasibility(
+                False, f"the components {format_names(rest)} have no route: {remaining.description}"
+            )
+        views = ", ".join(f"{self.summary}({d.label}[{c!r}])" for c in exact)
+        return Feasibility(
+            False,
+            f"the components {format_names(rest)} have no exact {self.summary}, while "
+            f"{format_names(exact)} do; call {views} for the exact ones",
+            actionable=True,
+        )
+
+    def _constituent(self, call: BoundCall, exact_only: bool) -> Any:
+        """The operation as a constituent call runs it: the call's controls, with ``method`` reset."""
+        return call.operation.with_options(method=None, exact_only=exact_only, raw=False)
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        """The report of the split, restricted to exact routes under *exact_only*."""
+        return self._partition(call, exact_only).report
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        """The summary of each block by its own call, assembled in the event's order.
+
+        Each component computed alone, and then the rest together, is one call
+        of the operation on its view. The values are assembled by component in
+        the order of the event, and each component is named for the summary.
+        """
+        d = call.operands["d"]
+        partition = self._partition(call, exact_only)
+        others = [value for name, value in call.operands.items() if name != "d"]
+        constituent = self._constituent(call, exact_only)
+        blocks = [(c,) for c in partition.exact]
+        if partition.rest:
+            blocks.append(partition.rest)
+        order = tuple(d.event_spec.components)
+        blocks.sort(key=lambda block: order.index(block[0]))
+        values: dict[str, Any] = {}
+        parts = []
+        for block in blocks:
+            view = _view(d, block)
+            part = constituent(view, *others)
+            parts.append(part)
+            values.update(_block_values(view, part.raw(), self.summary))
+        assembled = {c: values[c] for c in order}
+        # A quantile at several levels is a batch of records, which
+        # ``_record_batch`` assembles; any other value passes through it.
+        value = _record_batch(_named_value(assembled, self.summary, d.event_spec), call, result)
+        return _assembled(value, call, result, parts, route=self.name)
+
+
+# ---------------------------------------------------------------------------
 # The operations
 # ---------------------------------------------------------------------------
 
@@ -530,11 +754,20 @@ def mean(d: Distribution):
     function's is its mean function, and a random measure's is the
     marginalized law.
 
+    The routes, in selection order, are the law's closed form,
+    ``closed_form``; ``by_component``, which computes each component of a
+    record event by the route that component's view selects; and the Monte
+    Carlo fallback, ``monte_carlo``. A dependent joint claims no mean, so when
+    one of its components, such as a root factor, has an exact mean, its mean
+    takes ``by_component``: that component's mean is exact, and the result as
+    a whole is approximate.
+
     Parameters
     ----------
     d : Distribution
-        The law, whose ``_mean`` gives the closed form, and whose draws the
-        Monte Carlo fallback averages otherwise.
+        The law, whose ``_mean`` gives the closed form, whose components' views
+        give their own means otherwise, and whose draws the Monte Carlo
+        fallback averages.
 
     Returns
     -------
@@ -545,7 +778,8 @@ def mean(d: Distribution):
     Raises
     ------
     ResolutionError
-        If *d* has no closed-form mean and does not sample.
+        If *d* has no closed-form mean and does not sample, or, under
+        ``exact_only``, if a component of a record event has no exact mean.
     """
 
 
@@ -557,6 +791,7 @@ mean.capability_route(
     exact=True,
     execute=_summary_route("mean", _capability("_mean")),
 )
+mean.register_route(_ByComponent("mean"))
 mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=False)
 
 
@@ -564,11 +799,17 @@ mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=F
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
+    The routes are those of ``mean``: the closed form, ``closed_form``;
+    ``by_component``, which computes each component of a record event by the
+    route that component's view selects; and the Monte Carlo fallback,
+    ``monte_carlo``.
+
     Parameters
     ----------
     d : Distribution
-        The law, whose ``_variance`` gives the closed form, and whose draws the
-        Monte Carlo fallback uses otherwise.
+        The law, whose ``_variance`` gives the closed form, whose components'
+        views give their own variances otherwise, and whose draws the Monte
+        Carlo fallback uses.
 
     Returns
     -------
@@ -582,7 +823,8 @@ def variance(d: Distribution):
         If the event is measure-valued, which has no event-typed variance in
         general.
     ResolutionError
-        If *d* has no closed-form variance and does not sample.
+        If *d* has no closed-form variance and does not sample, or, under
+        ``exact_only``, if a component of a record event has no exact variance.
     """
 
 
@@ -594,6 +836,7 @@ variance.capability_route(
     exact=True,
     execute=_summary_route("variance", _capability("_variance")),
 )
+variance.register_route(_ByComponent("variance"))
 variance.fallback_route(
     "monte_carlo", check=_can_average_squares, execute=_mc_variance, exact=False
 )
@@ -644,9 +887,11 @@ cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=Fals
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
-    The routes are the law's closed form, ``closed_form``, and the Monte Carlo
-    fallback, ``monte_carlo``, which ``with_options(method=...)`` selects
-    between. The fallback's quantile at a level ``q`` is the generalized
+    The routes are the law's closed form, ``closed_form``; ``by_component``,
+    which computes each component of a record event by the route that
+    component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
+    which ``with_options(method=...)`` selects among. The fallback's quantile
+    at a level ``q`` is the generalized
     inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
     an empirical law's is.
 
@@ -671,7 +916,9 @@ def quantile(d: Distribution, q: Any):
     MathematicalDomainError
         If a concrete level lies outside ``[0, 1]``.
     ResolutionError
-        If *d* has no closed-form quantiles and does not sample.
+        If *d* has no closed-form quantiles and does not sample, or, under
+        ``exact_only``, if a component of a record event has no exact
+        quantiles.
     """
 
 
@@ -695,6 +942,7 @@ quantile.capability_route(
     exact=True,
     execute=_closed_form_quantile,
 )
+quantile.register_route(_ByComponent("quantile"))
 quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, exact=False)
 
 
@@ -794,7 +1042,9 @@ class _PushforwardMean(_EvaluationRules):
         fixed = dict(call.operands.get("fixed_args") or {})
         return f, _bound_parameter(f, fixed), call.operands["d"], fixed
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
         """The registry's report for the law's draws."""
         f, parameter, operand, _ = self._values(call)
         if not _lifts(f, parameter, operand):
@@ -803,11 +1053,13 @@ class _PushforwardMean(_EvaluationRules):
                 f"{f.label!r} takes the law itself at {parameter!r}, so it has no draws to "
                 f"integrate",
             )
-        return super().probe(call, method=method, exact_only=exact_only)
+        return super().probe(call, result, method=method, exact_only=exact_only)
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The mean of the pushforward law the selected rule returns."""
-        pushforward = super().run(call, method=method, exact_only=exact_only)
+        pushforward = super().run(call, result, method=method, exact_only=exact_only)
         return mean.with_options(raw=True)(pushforward)
 
 

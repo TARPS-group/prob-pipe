@@ -30,7 +30,16 @@ from probpipe.core._dispatch import (
 )
 from probpipe.core._specs import OutputSpec
 from probpipe.core.constraints import non_negative, real, unit_interval
-from probpipe.distributions._capabilities import SupportsConditionalSampling, SupportsSampling
+from probpipe.distributions._capabilities import (
+    SupportsConditionalSampling,
+    SupportsCovariance,
+    SupportsLogProb,
+    SupportsMarginals,
+    SupportsMean,
+    SupportsQuantile,
+    SupportsSampling,
+    SupportsVariance,
+)
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution
 from probpipe.distributions._empirical import EmpiricalDistribution
@@ -52,27 +61,62 @@ from ._laws import (
     Pair,
     Sampler,
     Vector,
+    normal_draws,
 )
 
 _DRAWS = 4000
 
 
 class _Shift(ConditionalDistribution, SupportsConditionalSampling):
-    """The kernel ``y | mu``, a point mass one above its given, which only samples."""
+    """The kernel ``label | mu``, a point mass *offset* above its given, which only samples."""
 
-    def __init__(self) -> None:
-        super().__init__("y", {"mu": REAL}, OutputSpec(y=REAL))
+    def __init__(self, label: str = "y", offset: float = 1.0) -> None:
+        super().__init__(label, {"mu": REAL}, OutputSpec(**{label: REAL}))
+        self.offset = offset
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         raise NotImplementedError("the moment tests bind no given of the kernel")
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        return jnp.asarray(given["mu"], jnp.float32) + jnp.ones(sample_shape, jnp.float32)
+        return jnp.asarray(given["mu"], jnp.float32) + jnp.full(
+            sample_shape, self.offset, jnp.float32
+        )
 
 
 def _dependent_joint() -> Any:
     """``y = mu + 1`` with ``mu ~ Normal(2, 1)``: a joint that samples and has no moment."""
     return _Shift() * Gaussian("mu", 2.0)
+
+
+class _Coupled(Distribution, SupportsSampling, SupportsMarginals):
+    """``a ~ Normal(1, 1)`` and ``b = -a``: a dependent record that claims no moment.
+
+    Each component's marginal is a normal law with every closed form, which
+    ``_marginal_capabilities`` reports, so each component's view has exact
+    moments.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("coupled", RecordSpec(a=REAL, b=REAL))
+
+    def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
+        a = normal_draws(key, 1.0, 1.0, tuple(sample_shape))
+        return {"a": a, "b": -a}
+
+    def _marginal(self, path: Any) -> Any:
+        return Gaussian(path, 1.0 if path == "a" else -1.0)
+
+    def _marginal_capabilities(self, path: Any) -> frozenset[type]:
+        return frozenset(
+            {
+                SupportsSampling,
+                SupportsLogProb,
+                SupportsMean,
+                SupportsVariance,
+                SupportsCovariance,
+                SupportsQuantile,
+            }
+        )
 
 
 class _Ramp(Distribution, SupportsSampling):
@@ -446,14 +490,18 @@ class TestTheFallbacksOfAJoint:
 
     def test_the_mean_is_the_average_of_each_component(self):
         with workflow_run(seed=7):
-            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+            estimate = mean.with_options(method="monte_carlo", n_broadcast_samples=_DRAWS)(
+                _dependent_joint()
+            )
         assert isinstance(estimate, Record) and estimate.fields == ("mean(y)", "mean(mu)")
         assert abs(_value(estimate["mean(mu)"]) - 2.0) < 0.1
         assert abs(_value(estimate["mean(y)"]) - 3.0) < 0.1
 
     def test_the_variance_is_the_sample_variance_of_each_component(self):
         with workflow_run(seed=8):
-            estimate = variance.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+            estimate = variance.with_options(method="monte_carlo", n_broadcast_samples=_DRAWS)(
+                _dependent_joint()
+            )
         assert isinstance(estimate, Record)
         assert abs(_value(estimate["variance(mu)"]) - 1.0) < 0.15
         assert abs(_value(estimate["variance(y)"]) - 1.0) < 0.15
@@ -466,10 +514,159 @@ class TestTheFallbacksOfAJoint:
     def test_several_quantile_levels_give_a_batch_of_records(self):
         levels = jnp.array([0.25, 0.5])
         with workflow_run(seed=10):
-            estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
+            estimate = quantile.with_options(method="monte_carlo", n_broadcast_samples=_DRAWS)(
+                _dependent_joint(), levels
+            )
         assert (estimate.level_names, estimate.batch_shape) == (("quantile",), (2,))
         assert abs(float(estimate["quantile(mu)"][1]) - 2.0) < 0.1
         assert abs(float(estimate["quantile(y)"][1]) - 3.0) < 0.1
+
+
+class TestByComponent:
+    """A record law's mean, variance, and quantile compute each component by its own route."""
+
+    @staticmethod
+    def _steps(result: Any) -> list[tuple[str, bool]]:
+        """The route and exactness of each constituent call, as the result's provenance records."""
+        (assembled,) = [
+            parent
+            for parent in result.provenance.parents
+            if parent.provenance is not None
+            and parent.provenance.metadata.get("route") == "by_component"
+        ]
+        return [
+            (step.provenance.metadata["route"], step.provenance.metadata["exact"])
+            for step in assembled.provenance.parents
+        ]
+
+    def test_a_dependent_joint_with_an_exact_component_takes_the_route(self):
+        report = mean.check(_dependent_joint())
+        assert (report.route, report.exact) == ("by_component", False)
+
+    def test_the_exact_candidate_names_the_components_without_an_exact_route(self):
+        routes = {info.method_name: info for info in mean.check(_dependent_joint()).routes}
+        declined = routes["by_component (exact)"]
+        assert declined.feasible is False
+        assert "the components ('y',) have no exact mean, while ('mu',) do" in declined.description
+        assert (
+            routes["by_component (approximate)"].feasible,
+            routes["by_component (approximate)"].exact,
+        ) == (True, False)
+
+    @pytest.mark.parametrize(
+        ("moment", "closed_form", "seed"), [(mean, 2.0, 7), (variance, 1.0, 8)]
+    )
+    def test_the_exact_component_is_its_closed_form_and_the_rest_is_estimated(
+        self, moment, closed_form, seed
+    ):
+        """``mu ~ Normal(2, 1)`` and ``y = mu + 1``: ``y`` has mean 3 and variance 1."""
+        with workflow_run(seed=seed):
+            result = moment.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        name = moment.name
+        assert isinstance(result, Record)
+        assert result.fields == (f"{name}(y)", f"{name}(mu)")
+        assert _value(result[f"{name}(mu)"]) == closed_form
+        # Observed across seeds 7, 8, 10, and 11: errors of the estimated
+        # component up to 0.027 for the mean and 0.026 for the variance.
+        assert abs(_value(result[f"{name}(y)"]) - (3.0 if moment is mean else 1.0)) < 0.08
+
+    def test_several_quantile_levels_give_a_batch_of_records(self):
+        levels = jnp.array([0.25, 0.5])
+        with workflow_run(seed=10):
+            result = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
+        assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
+        reference = jax.scipy.special.ndtri(levels)
+        np.testing.assert_array_equal(
+            np.asarray(result["quantile(mu)"]), np.asarray((2.0 + reference).astype(jnp.float32))
+        )
+        # Observed across seeds 7, 8, 10, and 11: errors up to 0.033.
+        np.testing.assert_allclose(np.asarray(result["quantile(y)"]), 3.0 + reference, atol=0.1)
+
+    def test_one_quantile_level_gives_a_record(self):
+        with workflow_run(seed=11):
+            result = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), 0.5)
+        assert isinstance(result, Record)
+        assert _value(result["quantile(mu)"]) == 2.0
+
+    def test_provenance_records_the_route_and_exactness_of_each_constituent_call(self):
+        with workflow_run(seed=7):
+            result = mean(_dependent_joint())
+        assert result.provenance.metadata["route"] == "by_component"
+        assert result.provenance.metadata["exact"] is False
+        assert self._steps(result) == [("monte_carlo", False), ("closed_form", True)]
+
+    def test_the_components_without_an_exact_route_are_estimated_by_one_call(self):
+        """``z = mu - 1`` and ``y = mu + 1`` share one call, and so its draws."""
+        joint = _Shift("z", -1.0) * _Shift("y", 1.0) * Gaussian("mu", 2.0)
+        with workflow_run(seed=7):
+            result = mean(joint)
+        assert self._steps(result) == [("monte_carlo", False), ("closed_form", True)]
+        assert _value(result["mean(mu)"]) == 2.0
+        # One call draws z and y together, so they differ by 2 at every draw.
+        assert _value(result["mean(y)"]) - _value(result["mean(z)"]) == pytest.approx(2.0)
+
+    def test_a_law_whose_components_are_all_exact_takes_the_exact_candidate(self):
+        law = _Coupled()
+        report = mean.check(law)
+        assert (report.route, report.exact) == ("by_component", True)
+        result = mean.with_options(exact_only=True)(law)
+        assert (_value(result["mean(a)"]), _value(result["mean(b)"])) == (1.0, -1.0)
+        assert self._steps(result) == [("closed_form", True), ("closed_form", True)]
+
+    def test_exact_only_names_the_views_whose_summary_is_exact(self):
+        with pytest.raises(ResolutionError, match=r"^mean: the components \('y',\) have no exact"):
+            mean.with_options(exact_only=True)(_dependent_joint())
+
+    def test_naming_the_route_under_exact_only_requires_every_component_exact(self):
+        view = mean.with_options(method="by_component", exact_only=True)
+        assert view.check(_Coupled()).route == "by_component"
+        assert view.check(_dependent_joint()).feasible is False
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="by_component splits the top-level components only, so a record-valued "
+        "component is summarized whole, by its own route",
+    )
+    def test_an_exact_field_inside_a_record_valued_component_is_exact(self):
+        joint = _Shift("y", 1.0) * Gaussian("mu", 2.0) * Gaussian("c", 5.0)
+        nested = joint.with_path_names({"mu": "g/mu", "y": "g/y"})
+        with workflow_run(seed=7):
+            result = mean.with_options(raw=True)(nested)
+        assert float(result["mean(g)"]["mu"]) == 2.0
+
+    def test_an_edge_free_joint_keeps_its_closed_form(self):
+        report = mean.check(Gaussian("a", 1.0) * Gaussian("b", 2.0))
+        assert (report.route, report.exact) == ("closed_form", True)
+
+    def test_a_joint_with_no_exact_component_keeps_the_fallback(self):
+        report = mean.check(_Shift() * Sampler("mu", 2.0))
+        routes = {info.method_name: info for info in report.routes}
+        assert report.route == "monte_carlo"
+        assert routes["by_component (approximate)"].description == "no component has an exact mean"
+
+    def test_a_law_of_one_component_keeps_the_fallback(self):
+        routes = {info.method_name: info for info in mean.check(Sampler("s")).routes}
+        assert routes["by_component (exact)"].description == (
+            "the event is not a record of several components"
+        )
+
+    def test_the_covariance_has_no_route_by_component(self):
+        report = cov.check(_dependent_joint())
+        assert report.route == "monte_carlo"
+        assert all(not info.method_name.startswith("by_component") for info in report.routes)
+
+    def test_a_seeded_workflow_reproduces_the_result(self):
+        results = []
+        for _ in range(2):
+            with workflow_run(seed=12):
+                results.append(_value(mean(_dependent_joint())["mean(y)"]))
+        assert results[0] == results[1]
+
+    def test_the_raw_result_is_the_named_mapping(self):
+        with workflow_run(seed=7):
+            result = mean.with_options(raw=True)(_dependent_joint())
+        assert set(result) == {"mean(y)", "mean(mu)"}
+        assert float(result["mean(mu)"]) == 2.0
 
 
 class TestExpectation:

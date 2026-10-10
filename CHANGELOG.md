@@ -1329,6 +1329,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mean`, `variance`, and `quantile` compute each component of a record
+  law by its own route.** The new route `by_component` computes each component
+  whose view has an exact summary by that view's route, and the other
+  components together by one call, which shares its draws, so the mean of a dependent
+  joint such as `likelihood * prior` holds the exact means of the prior's root
+  factors. The result is approximate when any component is, and its
+  provenance records the route and exactness of each component's call. Under
+  `exact_only=True`, the error names the components that have an exact
+  summary and the calls on their views that compute it. `cov` keeps the
+  Monte Carlo fallback for a dependent joint.
 - **`notation_config.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
@@ -2262,6 +2272,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A dependent joint's mean, variance, and quantiles take `by_component`
+  rather than `monte_carlo`** when one of its components has an exact
+  summary. The check of such a call lists `by_component (exact)` and
+  `by_component (approximate)`, and a seeded estimate of the other components
+  differs from the one `monte_carlo` gave, since they are drawn through their
+  view. `with_options(method="monte_carlo")` keeps the fallback.
 - **A law, a kernel, and a function print as their notation, and a derived
   label groups a product.** `str()` of a law, a kernel, or a function returns
   its new `notation` property: its label followed by its signature, which lists

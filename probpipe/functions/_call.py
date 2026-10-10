@@ -249,7 +249,9 @@ def _route_and_method(label: str) -> tuple[str, str]:
     """A route report's label as its route and its method.
 
     A registry route's label is ``route/method`` for the method it selects and
-    ``route (exact methods)`` for the methods it covers when it selects none.
+    ``route (exact methods)`` for the methods it covers when it selects none,
+    and another delegating route's is ``route (exact)`` or
+    ``route (approximate)`` for the implementations it covers.
     """
     route, _, method = label.partition("/")
     if method:

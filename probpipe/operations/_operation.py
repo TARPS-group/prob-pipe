@@ -17,8 +17,11 @@ which reads three declarations from the operation at its steps:
 3. **Resolution** selects one **route** among the operation's candidates, in
    the order this module ranks them: exact routes before approximate ones, a
    fallback below every other route whatever its exactness, and registration
-   order for the remaining ties. The ``method`` and ``exact_only`` controls
-   restrict the choice, and provenance records the selected route.
+   order for the remaining ties. A route whose exactness is that of the
+   implementations it delegates to, as a registry route's is, is ranked twice:
+   restricted to its exact implementations among the exact routes, and
+   otherwise among the approximate ones. The ``method`` and ``exact_only``
+   controls restrict the choice, and provenance records the selected route.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -35,6 +38,7 @@ import difflib
 import dis
 import inspect
 import textwrap
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -50,10 +54,11 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
 from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec
 from ..core._specs import OutputSpec
+from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
-from ..functions import _broker, _descendants
+from ..functions import _broker, _descendants, _result
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
@@ -165,6 +170,57 @@ def _call_label(call: BoundCall) -> str:
     ``;``, or ``/``.
     """
     return call.operation._derived_label(call.operands)
+
+
+def _assembled(
+    value: Any,
+    call: BoundCall,
+    result: OutputSpec | None,
+    parts: Iterable[TrackedTerm],
+    *,
+    route: str,
+) -> Any:
+    """*value*, which *route* assembled from the results of other calls, as the result of *call*.
+
+    The value becomes the term *result* declares, under the call's label, and
+    its provenance names *route* and keeps *parts*, the results of the calls it
+    was assembled from, as its parents. The call's own record keeps that
+    provenance as a parent, so each constituent step stays recorded with the
+    route and the exactness it took. Under the ``raw`` control the value is
+    returned as it is, since the result is detached.
+
+    Parameters
+    ----------
+    value : Any
+        The assembled raw result, in the form the call's routes return.
+    call : BoundCall
+        The call the route realizes.
+    result : OutputSpec or None
+        The call's result declaration.
+    parts : iterable of TrackedTerm
+        The results of the constituent calls, in the order they were assembled.
+    route : str
+        The name of the route that assembled *value*.
+
+    Returns
+    -------
+    Any
+        The declared term carrying the provenance, or *value* under ``raw``.
+
+    Raises
+    ------
+    ResultKindError
+        If the kind of *value* differs from the kind *result* declares.
+    ResultSchemaError
+        If *value* violates the structure, dtype, or support *result* declares.
+    """
+    if call.controls["raw"]:
+        return value
+    term = _result.declared_term(value, result, _call_label(call))
+    term.with_provenance(
+        Provenance.create(call.operation.name, parents=list(parts), metadata={"route": route})
+    )
+    return term
 
 
 def _spec_of(value: Any) -> TermSpec:
@@ -499,14 +555,65 @@ class _CapabilityRoute(_Route):
         return getattr(subject, self.method)(*others, **options)
 
 
-class _RegistryRoute(_Route):
+class _DelegatingRoute(_Route, ABC):
+    """A route whose exactness is that of the implementations it delegates to.
+
+    The route is ranked twice: once restricted to exact implementations, among
+    the exact routes, and once under the call's own ``exact_only``, among the
+    approximate routes, so ``exact_only`` keeps only the first. A subclass
+    declares its ``source`` and implements :meth:`probe` and :meth:`run`, which
+    receive the restriction of the candidate being ranked.
+
+    Parameters
+    ----------
+    name : str
+        The route's name, by which a ``method`` control selects it.
+
+    Raises
+    ------
+    TypeError
+        If *name* is not a non-empty string.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name, exact=None)
+
+    @abstractmethod
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        """The route's report for *call*, restricted to exact implementations under *exact_only*.
+
+        A feasible report states the exactness of what it selected, as a
+        ``MethodInfo`` or a ``PointReport`` does. *result* is the call's result
+        declaration, as :meth:`check` receives it, and *method* names a method
+        of a registry route's registry, ``None`` for any other route.
+        """
+
+    @abstractmethod
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        """The route's raw result for *call*, under the same restriction as its probe."""
+
+    def check(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
+        """The route's report under the call's ``exact_only``."""
+        return self.probe(call, result, method=None, exact_only=call.controls["exact_only"])
+
+    def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
+        """The route's result under the call's ``exact_only``."""
+        return self.run(call, result, method=None, exact_only=call.controls["exact_only"])
+
+
+class _RegistryRoute(_DelegatingRoute):
     """A route that delegates to a dispatch registry, whose selected method realizes the call.
 
     The registry receives the call's arguments in signature order, or those
     *arguments* returns, with the keyword options *options* returns, or else the
-    call's ``method_options``. Its exactness is that of the
-    method the registry selects, so the route is ranked twice: its exact methods
-    with the exact routes and its approximate methods with the approximate ones.
+    call's ``method_options``. Its exactness is that of the method the registry
+    selects, so the route is ranked twice, as every delegating route is: its
+    exact methods with the exact routes and its approximate methods with the
+    approximate ones.
 
     Parameters
     ----------
@@ -537,7 +644,7 @@ class _RegistryRoute(_Route):
         arguments: Callable[[BoundCall], Iterable[Any]] | None = None,
         options: Callable[[BoundCall], Mapping[str, Any]] | None = None,
     ) -> None:
-        super().__init__(name, exact=None)
+        super().__init__(name)
         if not isinstance(registry, BaseDispatchRegistry):
             raise TypeError(f"route {name!r} needs a dispatch registry; got {registry!r}")
         for supplied in (arguments, options):
@@ -567,25 +674,21 @@ class _RegistryRoute(_Route):
             return dict(self._options(call))
         return self.method_options(call)
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> MethodInfo:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> MethodInfo:
         """The registry's report for *call*, restricted as the controls ask."""
         return self.registry.check(
             *self.arguments(call), method=method, exact_only=exact_only, **self.options(call)
         )
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The result of the registry's selected method, or of *method*."""
         return self.registry.execute(
             *self.arguments(call), method=method, exact_only=exact_only, **self.options(call)
         )
-
-    def check(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """The registry's report under the call's ``exact_only``."""
-        return self.probe(call, method=None, exact_only=call.controls["exact_only"])
-
-    def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
-        """The result of the method the registry selects under the call's ``exact_only``."""
-        return self.run(call, method=None, exact_only=call.controls["exact_only"])
 
 
 def _identity_route(
@@ -634,9 +737,10 @@ def _identity_route(
 class _Candidate:
     """One way a route may realize a call: the route at one exactness.
 
-    A registry route contributes one candidate for its exact methods and one for
-    its approximate ones; ``method`` is the registry method a ``method=`` control
-    names, whose exactness the registry reports. A candidate is what the
+    A delegating route contributes one candidate restricted to its exact
+    implementations and one for the others; for a registry route those are its
+    exact and its approximate methods, and ``method`` is the registry method a
+    ``method=`` control names, whose exactness the registry reports. A candidate is what the
     engine's resolution step probes and runs, through the members
     :mod:`probpipe.functions._resolution` names.
     """
@@ -658,12 +762,20 @@ class _Candidate:
 
     @property
     def label(self) -> str:
-        """The route's name, qualified for a registry route by the methods the candidate covers."""
-        if not isinstance(self.route, _RegistryRoute):
+        """The route's name, qualified for a delegating route by the exactness the candidate covers.
+
+        A registry route's candidate names its method, as ``route/method``, or
+        its exact or approximate methods; another delegating route's names its
+        exact or approximate implementations.
+        """
+        if not isinstance(self.route, _DelegatingRoute):
             return self.route.name
         if self.method is not None:
             return f"{self.route.name}/{self.method}"
-        return f"{self.route.name} ({'exact' if self.exact else 'approximate'} methods)"
+        exactness = "exact" if self.exact else "approximate"
+        if isinstance(self.route, _RegistryRoute):
+            return f"{self.route.name} ({exactness} methods)"
+        return f"{self.route.name} ({exactness})"
 
     @property
     def route_name(self) -> str:
@@ -680,9 +792,10 @@ class _Candidate:
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
         """The candidate's report for *call*, without executing anything."""
         route = self.route
-        if isinstance(route, _RegistryRoute):
+        if isinstance(route, _DelegatingRoute):
             return route.probe(
                 call,
+                result,
                 method=self.method,
                 exact_only=call.controls["exact_only"] or self.exact is True,
             )
@@ -691,10 +804,12 @@ class _Candidate:
     def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
         """The route's raw result for *call*, by the method *report* selected for a registry route."""
         route = self.route
-        if isinstance(route, _RegistryRoute):
+        if isinstance(route, _DelegatingRoute):
+            selected = isinstance(route, _RegistryRoute) and isinstance(report, MethodInfo)
             return route.run(
                 call,
-                method=report.method_name if isinstance(report, MethodInfo) else self.method,
+                result,
+                method=report.method_name if selected else self.method,
                 exact_only=call.controls["exact_only"] or self.exact is True,
             )
         return route.execute(call, result)
@@ -703,8 +818,8 @@ class _Candidate:
         """The exactness of the implementation the candidate selects, as *report* gives it.
 
         A route that delegates its exactness reports that of what its probe
-        selected: a registry route's method, or the route a derived operation's
-        constituent selects. Any other report reads at the exactness of the
+        selected: a registry route's method, the constituent calls a composing
+        route makes, or the route a derived operation's constituent selects. Any other report reads at the exactness of the
         methods the candidate covers.
         """
         if self.route.exact is not None:
@@ -1054,14 +1169,14 @@ class Operation(Function):
     def routes(self) -> tuple[OperationRoute, ...]:
         """The registered routes, in selection order.
 
-        A route whose exactness is delegated is listed where its exact methods
-        rank.
+        A route whose exactness is delegated is listed where its exact
+        implementations rank.
         """
         indexed = list(enumerate(self._route_table.routes))
 
         def key(entry: tuple[int, Any]) -> tuple[int, int, int]:
             index, route = entry
-            exact = route.exact is True or isinstance(route, _RegistryRoute)
+            exact = route.exact is True or isinstance(route, _DelegatingRoute)
             fallback = route.source is RouteSource.FALLBACK
             return (0 if exact else 1, 1 if fallback else 0, index)
 
@@ -1465,8 +1580,8 @@ class Operation(Function):
         -------
         list of _Candidate
             The candidates, sorted by their ``rank``. Without a ``method`` name,
-            each route contributes one, and a registry route two: one for its
-            exact methods and one for its approximate ones.
+            each route contributes one, and a delegating route two: one
+            restricted to its exact implementations and one for the others.
 
         Raises
         ------
@@ -1480,7 +1595,7 @@ class Operation(Function):
         else:
             candidates = []
             for index, route in enumerate(self._route_table.routes):
-                if isinstance(route, _RegistryRoute):
+                if isinstance(route, _DelegatingRoute):
                     candidates += [_Candidate(route, True, index), _Candidate(route, False, index)]
                 else:
                     candidates.append(_Candidate(route, route.exact, index))
@@ -1507,9 +1622,9 @@ class Operation(Function):
         Returns
         -------
         list of _Candidate
-            The candidates the name selects. A registry route that a plain name
-            selects as a route contributes two: one for its exact methods and one
-            for its approximate ones.
+            The candidates the name selects. A delegating route that a plain
+            name selects contributes two: one restricted to its exact
+            implementations and one for the others.
 
         Raises
         ------
@@ -1557,7 +1672,7 @@ class Operation(Function):
             )
         if named:
             index, route = named[0]
-            if isinstance(route, _RegistryRoute):
+            if isinstance(route, _DelegatingRoute):
                 return [_Candidate(route, True, index), _Candidate(route, False, index)]
             if exact_only and route.exact is not True:
                 raise ResolutionError(

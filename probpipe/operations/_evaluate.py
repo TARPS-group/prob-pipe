@@ -192,7 +192,9 @@ class _EvaluationRules(_RegistryRoute):
             "types; an operand the direct call does not lift is applied by the map's body."
         )
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
         """The registry's report for the lifted operand, or the body's for one it does not lift.
 
         A rule named for an operand the direct call does not lift is refused, as
@@ -226,7 +228,9 @@ class _EvaluationRules(_RegistryRoute):
         set_controls = call.operation._options
         return {name: set_controls[name] for name in self._forwarded if name in set_controls}
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The direct call of the map on the operand, by the rule *method* names, if any."""
         f, parameter, operand, fixed = self._values(call)
         forwarded = self._forwarded_controls(call)

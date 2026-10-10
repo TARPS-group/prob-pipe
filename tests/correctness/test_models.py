@@ -513,6 +513,17 @@ class TestFactoredJoints:
             )
         _within_mcse([means["mean(x)"], means["mean(y)"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
 
+    def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
+        """``by_component`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
+        joint = _chain()
+        assert mean.check(joint).route == "by_component"
+        with workflow_run(seed=17):
+            means = mean.with_options(n_broadcast_samples=DRAWS, raw=True)(joint)
+            variances = variance.with_options(n_broadcast_samples=DRAWS, raw=True)(joint)
+        assert float(means["mean(x)"]) == pytest.approx(1.0, abs=1e-6)
+        assert float(variances["variance(x)"]) == pytest.approx(4.0, abs=1e-5)
+        _within_mcse(means["mean(y)"], 3.0, np.sqrt(16.25))
+
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")
         assert float(mean.with_options(raw=True)(marginal_x)) == pytest.approx(1.0)
