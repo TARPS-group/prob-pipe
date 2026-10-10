@@ -143,7 +143,8 @@ class Numeric(ABC):                         # the flat-vector interface of the n
     def to_vector(self) -> Array: ...       # the coordinates: one flat vector, canonical order
     @classmethod
     @abstractmethod
-    def from_vector(cls, label: str, spec: NumericSpec, vec: Array) -> Self: ...  # the inverse of to_vector
+    def from_vector(cls, spec: NumericSpec, vec: Array, *,
+                    label: str | None = None) -> Self: ...  # the inverse of to_vector
 
     # the coordinate protocols: NumPy and JAX read the value as to_vector(),
     # so their functions return bare arrays

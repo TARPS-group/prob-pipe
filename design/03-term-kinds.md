@@ -40,7 +40,7 @@ class NumericArray(TrackedTerm, Numeric):
     def vector_size(self) -> int: ...     # the number of entries
     def to_vector(self) -> Array: ...     # the array raveled in row-major order
     @classmethod
-    def from_vector(cls, label: str, spec: NumericArraySpec, vec: Array) -> NumericArray: ...
+    def from_vector(cls, spec: NumericArraySpec, vec: Array, *, label: str) -> NumericArray: ...
 ```
 
 `NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. An array with leading axes is just an array; the batch form is what carries the level names, the shared spec, and provenance.
@@ -285,7 +285,8 @@ class Record(NamedTree[Any], TrackedTerm):
     # a field's raw value, or a subtree's nested mapping
 
     @classmethod
-    def from_field_values(cls, label: str, spec: RecordSpec, values: Sequence[Any]) -> Record: ...
+    def from_field_values(cls, spec: RecordSpec, values: Sequence[Any], *,
+                          label: str | None = None) -> Record: ...
     # reconstruct from values in the schema's canonical order; ValueError on count/shape mismatch
 
     def select(self, *fields: str, **mapping: str) -> dict[str, Any]: ...
@@ -312,7 +313,8 @@ class NumericRecord(Record, Numeric):
     def vector_size(self) -> int: ...
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
+    def from_vector(cls, spec: NumericRecordSpec, vec: Array, *,
+                    label: str | None = None) -> NumericRecord: ...
 ```
 
 **Vector-space arithmetic.** `NumericRecord` implements the `Numeric` interface of II.3, so functions act on it in the two ways stated there. ProbPipe's own operators preserve structure and return tracked terms. They are the vector-space set, which is `+` and `-` between records sharing a schema and scalar `*` and `/`, and `map(f)` for entrywise maps, so `record.map(jnp.cos)` is the tracked form of `jnp.cos(record)`. Array-shaped behavior such as broadcasting and positional indexing stays with arrays, and `__array_ufunc__` is left undefined, so NumPy and JAX functions behave alike on the same object.
@@ -355,9 +357,10 @@ When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a 
 class NumericRecordBatch(RecordBatch):
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, label: str, spec: NumericRecordSpec, vec: Array, *,
+    def from_vector(cls, spec: NumericRecordSpec, vec: Array, *,
                     level_names: str | Iterable[str],
-                    axes_per_level: int | Iterable[int] | None = None) -> NumericRecordBatch: ...
+                    axes_per_level: int | Iterable[int] | None = None,
+                    label: str | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 
