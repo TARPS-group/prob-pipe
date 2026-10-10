@@ -36,7 +36,7 @@ def test_function_decorator_sets_construction_defaults():
         return x
 
     with workflow_run(seed=0):
-        result = identity(Normal(loc=0.0, scale=1.0, label="x"))
+        result = identity(Normal("x", loc=0.0, scale=1.0))
 
     assert result.num_atoms == 7
 
@@ -199,7 +199,7 @@ def test_with_options_controls_sample_count_and_include_inputs():
         result = wf.with_options(
             n_broadcast_samples=6,
             include_inputs=True,
-        )(Normal(loc=0.0, scale=1.0, label="x"))
+        )(Normal("x", loc=0.0, scale=1.0))
 
     assert isinstance(result, EmpiricalDistribution)
     assert result.num_atoms == 6
@@ -216,7 +216,7 @@ def test_workflow_run_reproduces_one_lifted_call():
         n_broadcast_samples=8,
         dispatch="sequential",
     )
-    normal = Normal(loc=0.0, scale=1.0, label="x")
+    normal = Normal("x", loc=0.0, scale=1.0)
 
     with workflow_run(seed=42):
         first = wf(normal)
@@ -233,7 +233,7 @@ def test_workflow_seed_is_separate_from_user_seed_parameter():
     def add_user_seed(x, seed):
         return x + seed
 
-    normal = Normal(loc=0.0, scale=1.0, label="x")
+    normal = Normal("x", loc=0.0, scale=1.0)
     base = Function(
         label="identity",
         fn=identity,
@@ -287,7 +287,7 @@ def test_var_keyword_receives_workflow_control_names():
         n_broadcast_samples=20,
         dispatch="sequential",
     )
-    normal = Normal(loc=0.0, scale=1.0, label="x")
+    normal = Normal("x", loc=0.0, scale=1.0)
 
     with workflow_run(seed=0):
         result = wf.with_options(n_broadcast_samples=5)(
@@ -319,7 +319,7 @@ def test_unbindable_call_time_control_name_is_rejected():
     )
 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        wf(Normal(loc=0.0, scale=1.0, label="x"), n_broadcast_samples=6)
+        wf(Normal("x", loc=0.0, scale=1.0), n_broadcast_samples=6)
 
 
 def test_bindable_workflow_control_name_does_not_override():
@@ -332,7 +332,7 @@ def test_bindable_workflow_control_name_does_not_override():
         n_broadcast_samples=5,
         dispatch="sequential",
     )
-    normal = Normal(loc=0.0, scale=1.0, label="x")
+    normal = Normal("x", loc=0.0, scale=1.0)
 
     with workflow_run(seed=0):
         result = wf(x=normal, n_broadcast_samples=4)

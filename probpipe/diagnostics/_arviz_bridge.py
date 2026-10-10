@@ -18,6 +18,8 @@ import numpy as np
 
 # Absolute (not relative) so this file stays loadable standalone — the
 # missing-xarray fallback test execs it outside the package.
+from probpipe._messages import unknown_names
+from probpipe.core._shapes import NamesLike, _as_names
 from probpipe.distributions._empirical import EmpiricalDistribution
 
 try:
@@ -86,7 +88,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
 def to_arviz_dataset(
     posterior: Any,
     *,
-    var_names: list[str] | None = None,
+    var_names: NamesLike | None = None,
 ) -> xr.Dataset:
     """Convert a posterior distribution to an xarray.Dataset for ArviZ 1.0.
 
@@ -99,16 +101,27 @@ def to_arviz_dataset(
     ----------
     posterior : Distribution
         Posterior from ``condition_on`` or ``EmpiricalDistribution``.
-    var_names : list[str] or None
-        Subset of variables to include. ``None`` includes all.
+    var_names : str, sequence of str, or None
+        The variables to include, in the order given. A str names one
+        variable, and ``None`` includes all.
 
     Returns
     -------
     xr.Dataset
         Dataset with dims ``(chain, draw, *event_shape)``.
+
+    Raises
+    ------
+    ImportError
+        If xarray is not installed.
+    TypeError
+        If *var_names* is not a str, a sequence of str, or ``None``.
+    ValueError
+        If *var_names* names a variable the posterior does not have.
     """
     if xr is None:
         raise ImportError("xarray is required. Install with: pip install xarray")
+    names = None if var_names is None else _as_names(var_names, what="to_arviz_dataset var_names")
 
     from probpipe.inference._approximate_distribution import _has_chains
 
@@ -117,14 +130,17 @@ def to_arviz_dataset(
         from ._datatree_store import to_named_posterior_dataset
 
         ds = to_named_posterior_dataset(posterior)
-        if var_names is not None:
-            ds = ds[var_names]
+        if names is not None:
+            _check_variables(names, [str(name) for name in ds.data_vars])
+            # A list, since xarray reads a tuple as one variable name.
+            ds = ds[list(names)]
         return ds
 
     # ── Fallback: flat EmpiricalDistribution — no chain structure ─────────────
     draws = extract_draws(posterior)
-    if var_names is not None:
-        draws = {k: v for k, v in draws.items() if k in var_names}
+    if names is not None:
+        _check_variables(names, list(draws))
+        draws = {name: draws[name] for name in names}
 
     data_vars = {}
     for name, arr in draws.items():
@@ -138,3 +154,10 @@ def to_arviz_dataset(
         data_vars[name] = xr.DataArray(arr, dims=dims)
 
     return xr.Dataset(data_vars)
+
+
+def _check_variables(names: tuple[str, ...], available: list[str]) -> None:
+    """Raise ``ValueError`` if a name of *names* is not one of the *available* variables."""
+    unknown = [name for name in names if name not in available]
+    if unknown:
+        raise ValueError(unknown_names("variable", unknown, available))

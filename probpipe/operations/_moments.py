@@ -8,8 +8,13 @@ moment, and a numeric fallback returns that moment of the empirical law of its
 draws. A moment of the event's kind keeps the event's packaging and derives its
 term specs, support included, and it names each component for the moment, so
 the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
+A moment of ``d`` is labeled by the moment of a draw of ``d``, as
+``E[(mu, tau) ~ d]``, ``Var[...]``, ``Cov[...]``, or ``Q[...]``, and the law of a
+function lifted over laws contributes its notation in place of the draw, as
+``E[f(beta ~ model; y)]``.
 
-``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``. It is the derived
+``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``, labeled
+``E[f(mu ~ d)]``. It is the derived
 operation ``mean(evaluate(f, d))``: a law claiming
 :class:`~probpipe.distributions._capabilities.SupportsExpectation` computes it
 in closed form, and otherwise the call takes the routes of ``evaluate``. Its
@@ -35,6 +40,7 @@ from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
 )
+from ..core._expression import Applied, Expression, Summary, draw_of
 from ..core._record_batch import RecordBatch, _batch_class_for
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
@@ -73,7 +79,14 @@ from ._evaluate import (
     _lifts,
     evaluate,
 )
-from ._operation import BoundCall, _call_label, _subject_name, _workflow_draws, operation
+from ._operation import (
+    BoundCall,
+    _call_label,
+    _install_expression_rule,
+    _subject_name,
+    _workflow_draws,
+    operation,
+)
 from ._sample import _record_batch
 
 __all__ = [
@@ -374,6 +387,10 @@ def _monte_carlo_draws(call: BoundCall, operation_kind: str) -> Any:
     )
 
 
+#: The label, the component, and the level of the empirical law of a fallback's draws.
+_DRAWS = "draws"
+
+
 def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     """The empirical law of the draws, whose moments the fallbacks report.
 
@@ -382,21 +399,26 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     declaration calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
     """
-    name = _call_label(call)
+    # The empirical law is internal, so it takes a fixed name, which a derived
+    # label could not be: a label may hold ``~``, a space, ``;``, or ``/``.
+    name = _DRAWS
     event = call.operands["d"].event_spec.spec
-    if isinstance(draws, Batch) or not isinstance(event, RecordSpec):
+    if isinstance(draws, Batch):
+        records = isinstance(draws.element_spec, RecordSpec)
+        return EmpiricalDistribution(draws, component=None if records else name, label=name)
+    if not isinstance(event, RecordSpec):
         return EmpiricalDistribution(
-            name, draws if isinstance(draws, Batch) else jnp.asarray(draws)
+            jnp.asarray(draws), component=name, label=name, level=SAMPLE_LEVEL
         )
     atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
-    return EmpiricalDistribution(name, atoms)
+    return EmpiricalDistribution(atoms, label=name)
 
 
-_mixture_factory: Callable[[str, list[Distribution], Any], Distribution] | None = None
-"""The finite mixture ``(label, components, weights)``, which the mixture family installs."""
+_mixture_factory: Callable[..., Distribution] | None = None
+"""The finite mixture ``(components, weights, *, label)``, which the mixture family installs."""
 
 
-def _install_mixture(factory: Callable[[str, list[Distribution], Any], Distribution]) -> None:
+def _install_mixture(factory: Callable[..., Distribution]) -> None:
     """Install the finite mixture that the Monte Carlo mean of a law over laws returns."""
     global _mixture_factory
     _mixture_factory = factory
@@ -420,7 +442,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     draws = _monte_carlo_draws(call, "mean")
     stored = draws.raw() if isinstance(draws, Batch) else draws
     laws = list(np.asarray(stored, dtype=object).reshape(-1))
-    return _mixture_factory(_call_label(call), laws, jnp.full(len(laws), 1.0 / len(laws)))
+    return _mixture_factory(laws, jnp.full(len(laws), 1.0 / len(laws)), label=_call_label(call))
 
 
 def _mc_variance(call: BoundCall, result: OutputSpec | None) -> Any:
@@ -517,7 +539,8 @@ def mean(d: Distribution):
     Returns
     -------
     TrackedTerm
-        The mean at the law's declared event kind.
+        The mean at the law's declared event kind, labeled ``E[(mu, tau) ~ d]``
+        for a law ``d`` over ``mu`` and ``tau``.
 
     Raises
     ------
@@ -550,7 +573,8 @@ def variance(d: Distribution):
     Returns
     -------
     TrackedTerm
-        The variance at the law's declared event kind, with non-negative leaves.
+        The variance at the law's declared event kind, with non-negative
+        leaves, labeled ``Var[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -588,7 +612,8 @@ def cov(d: Distribution):
     Returns
     -------
     NumericArray
-        The dense covariance over the event's coordinates in canonical order.
+        The dense covariance over the event's coordinates in canonical order,
+        labeled ``Cov[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -636,7 +661,8 @@ def quantile(d: Distribution, q: Any):
     -------
     TrackedTerm
         For one level, a value of the event's kind; for several, the batch of
-        those values on a level named ``quantile``.
+        those values on a level named ``quantile``. It is labeled
+        ``Q[mu ~ d]``.
 
     Raises
     ------
@@ -704,7 +730,9 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     Returns
     -------
     TrackedTerm
-        ``E[f(X)]`` at the kind the integrand's output declaration names.
+        ``E[f(X)]`` at the kind the integrand's output declaration names,
+        labeled ``E[f(mu ~ d)]`` by the integrand's label: a ``Function``'s
+        label, a callable's ``__name__``, and ``f`` for a lambda.
 
     Raises
     ------
@@ -784,3 +812,38 @@ class _PushforwardMean(_EvaluationRules):
 
 
 expectation.register_route(_PushforwardMean())
+
+
+# ---------------------------------------------------------------------------
+# The expressions of the moments
+# ---------------------------------------------------------------------------
+
+
+def _moment_expression(summary: str) -> Callable[[Any], Expression]:
+    """The expression rule of a moment *summary*: the moment of a draw of the law, as ``E[mu ~ d]``."""
+
+    def rule(d: Any) -> Expression:
+        return Summary(summary, draw_of(d))
+
+    rule.__doc__ = f"The expression ``{summary}[draw]`` of the moment of a draw of *d* (II.4)."
+    return rule
+
+
+def _integrand_label(f: Any) -> str:
+    """The label of an integrand: a Function's label, a callable's ``__name__``, and ``f`` for a lambda."""
+    if isinstance(f, Function):
+        return f.label
+    name = getattr(f, "__name__", "f")
+    return "f" if name == "<lambda>" else name
+
+
+def _expectation_expression(d: Any, f: Any) -> Expression:
+    """The expression of ``E[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``E[f(mu ~ d)]``."""
+    return Summary("E", Applied(_integrand_label(f), (draw_of(d),)))
+
+
+_install_expression_rule(mean, _moment_expression("E"))
+_install_expression_rule(variance, _moment_expression("Var"))
+_install_expression_rule(cov, _moment_expression("Cov"))
+_install_expression_rule(quantile, _moment_expression("Q"))
+_install_expression_rule(expectation, _expectation_expression)

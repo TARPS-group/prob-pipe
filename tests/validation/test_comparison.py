@@ -236,6 +236,30 @@ class TestScorePosterior:
         with pytest.raises(ValueError, match=r"unknown metric 'bogus'; available metrics: \['ksd'"):
             score_posterior(approx, ref, metrics=("bogus",))
 
+    def test_a_single_metric_name_is_one_metric(self):
+        approx = _mvn(jax.random.PRNGKey(18), 200, jnp.zeros(2), jnp.eye(2))
+        ref = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
+        single = score_posterior(approx, ref, metrics="std_ratios")
+        tupled = score_posterior(approx, ref, metrics=("std_ratios",))
+        assert list(single) == ["std_ratios"]
+        np.testing.assert_array_equal(single["std_ratios"], tupled["std_ratios"])
+
+    @pytest.mark.parametrize(
+        ("metrics", "match"),
+        [
+            (3, "score_posterior metrics must be a str or a sequence of str, got int 3"),
+            (b"mmd", "got bytes"),
+            ({"mmd": 1}, "got dict"),
+            ({"mmd"}, "got set"),
+            (("mmd", 3), "score_posterior metrics entry must be a str, got int 3"),
+        ],
+    )
+    def test_refuses_metrics_that_are_not_names(self, metrics, match):
+        approx = _mvn(jax.random.PRNGKey(18), 20, jnp.zeros(2), jnp.eye(2))
+        ref = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
+        with pytest.raises(TypeError, match=match):
+            score_posterior(approx, ref, metrics=metrics)
+
     def test_a_moment_metric_names_the_reference_pieces_it_lacks(self):
         approx = _mvn(jax.random.PRNGKey(19), 50, jnp.zeros(2), jnp.eye(2))
         ref = Reference(draws=approx)
@@ -315,7 +339,7 @@ class TestInputHandling:
     def test_accepts_distribution_input(self):
         # An empirical law scores identically to its atoms' flat coordinates.
         draws = _mvn(jax.random.PRNGKey(2), 400, jnp.zeros(2), jnp.eye(2))
-        emp = EmpiricalDistribution("z", draws)
+        emp = EmpiricalDistribution(draws, component="z")
         ref = Reference.from_moments(mean=jnp.array([0.1, -0.2]), cov=jnp.eye(2))
         from_dist = float(standardized_mean_error(emp, ref))
         from_array = float(standardized_mean_error(draws, ref))

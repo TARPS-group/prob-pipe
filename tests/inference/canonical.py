@@ -275,7 +275,7 @@ class ModelTestCase:
             raise ValueError(f"the case {self.name!r} has no Stan program")
         path = Path(directory) / f"{self.name}.stan"
         path.write_text(self.stan_program)
-        return StanModel(self.name, str(path))
+        return StanModel(str(path), label=self.name)
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +328,7 @@ def gaussian_linear(num_features: int = 3, num_observations: int = 40) -> ModelT
                 pm.Normal("y", mu=X64 @ beta, sigma=1.0, observed=y, shape=num_observations)
             return m
 
-        return PyMCModel("gaussian_linear", build)
+        return PyMCModel(build, label="gaussian_linear")
 
     program = """
     data {
@@ -399,7 +399,7 @@ def beta_bernoulli() -> ModelTestCase:
                 pm.Bernoulli("y", p=theta, observed=y, shape=trials)
             return m
 
-        return PyMCModel("beta_bernoulli", build)
+        return PyMCModel(build, label="beta_bernoulli")
 
     program = """
     data {
@@ -460,7 +460,7 @@ def gamma_poisson() -> ModelTestCase:
                 pm.Poisson("y", mu=lam, observed=y, shape=n)
             return m
 
-        return PyMCModel("gamma_poisson", build)
+        return PyMCModel(build, label="gamma_poisson")
 
     program = """
     data {
@@ -538,7 +538,7 @@ def dirichlet_multinomial() -> ModelTestCase:
                 pm.Multinomial("y", n=int(total), p=p, observed=y, shape=(draws, categories))
             return m
 
-        return PyMCModel("dirichlet_multinomial", build)
+        return PyMCModel(build, label="dirichlet_multinomial")
 
     program = """
     data {
@@ -639,7 +639,7 @@ def poisson_regression(num_observations: int = 40) -> ModelTestCase:
                 pm.Poisson("y", mu=pm.math.exp(X64 @ beta), observed=y, shape=num_observations)
             return m
 
-        return PyMCModel("poisson_regression", build)
+        return PyMCModel(build, label="poisson_regression")
 
     program = """
     data {
@@ -848,7 +848,7 @@ def eight_schools() -> ModelTestCase:
                 pm.Normal("y", mu_rv + tau_rv * theta_rv, SCHOOL_ERRORS, observed=y, shape=J)
             return m
 
-        return PyMCModel("eight_schools", build)
+        return PyMCModel(build, label="eight_schools")
 
     program = """
     data {

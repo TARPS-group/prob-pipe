@@ -77,8 +77,10 @@ class _UnitScaleGaussian(GLMFamily):
     canonical_link = GaussianFamily.canonical_link
     has_dispersion = False
 
-    def build(self, label, mean, dispersion=None, *, event_spec=None):
-        return MultivariateNormal(label, mean, cov=jnp.eye(mean.shape[0]), event_spec=event_spec)
+    def build(self, component, mean, dispersion=None, *, label=None, event_spec=None):
+        return MultivariateNormal(
+            component, mean, cov=jnp.eye(mean.shape[0]), label=label, event_spec=event_spec
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +182,11 @@ class TestTheResponseFamilies:
     @pytest.mark.parametrize("family", _FAMILIES)
     def test_event_spec_names_the_component(self, family):
         law = family().build(
-            "y", jnp.array([0.2, 0.5]), _dispersion(family), event_spec=OutputSpec(counts=None)
+            "counts",
+            jnp.array([0.2, 0.5]),
+            _dispersion(family),
+            label="y",
+            event_spec=OutputSpec(counts=None),
         )
         assert law.label == "y"
         assert list(law.event_spec.components) == ["counts"]
@@ -241,7 +247,7 @@ class TestTheDeclarations:
         assert list(likelihood.given_spec) == ["beta"]
 
     def test_event_spec_names_the_response(self, X):
-        likelihood = glm_likelihood("y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=None))
+        likelihood = glm_likelihood("counts", PoissonFamily(), X=X, label="y")
         assert list(likelihood.event_spec.components) == ["counts"]
 
     def test_both_sides_are_numeric(self, X):
@@ -266,14 +272,21 @@ class TestTheDeclarations:
 
     def test_a_declared_response_type_binds_the_observations_on_both_sides(self):
         likelihood = glm_likelihood(
-            "y", PoissonFamily(), event_spec=OutputSpec(counts=NumericArraySpec((5,)))
+            "counts",
+            PoissonFamily(),
+            event_spec=OutputSpec(counts=NumericArraySpec((5,))),
+            label="y",
         )
         assert likelihood.event_spec.spec.shape == (5,)
         assert likelihood.given_spec["X"].shape == (5, "features")
 
     def test_a_declared_response_type_that_agrees_with_X_is_kept(self, X, beta):
         likelihood = glm_likelihood(
-            "y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=NumericArraySpec((4,)))
+            "counts",
+            PoissonFamily(),
+            X=X,
+            event_spec=OutputSpec(counts=NumericArraySpec((4,))),
+            label="y",
         )
         assert likelihood.event_spec.spec.shape == (4,)
         law = likelihood._condition_on({"beta": beta})
@@ -330,7 +343,11 @@ class TestTheConstructionErrors:
     def test_a_declared_response_type_that_disagrees_with_X_raises(self, X):
         with pytest.raises(ValueError, match="X"):
             glm_likelihood(
-                "y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=NumericArraySpec((5,)))
+                "counts",
+                PoissonFamily(),
+                X=X,
+                event_spec=OutputSpec(counts=NumericArraySpec((5,))),
+                label="y",
             )
 
 
@@ -361,7 +378,7 @@ class TestTheLaw:
         )
 
     def test_the_law_carries_the_declared_response(self, X, beta):
-        likelihood = glm_likelihood("y", PoissonFamily(), X=X, event_spec=OutputSpec(counts=None))
+        likelihood = glm_likelihood("counts", PoissonFamily(), X=X, label="y")
         law = likelihood._condition_on({"beta": beta})
         assert list(law.event_spec.components) == ["counts"]
         assert law.event_spec.spec.shape == (4,)
@@ -494,7 +511,7 @@ class TestTheConditionalCapabilities:
 
     def test_a_capability_needs_every_given_slot(self, likelihood, beta):
         with pytest.raises(
-            KeyError, match=r"'y' is missing values for the given slots \['dispersion'\]"
+            KeyError, match=r"'p' is missing values for the given slots \['dispersion'\]"
         ):
             likelihood._conditional_mean({"beta": beta})
 

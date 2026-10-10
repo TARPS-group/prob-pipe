@@ -10,6 +10,7 @@ likelihood on the same model.
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -65,7 +66,7 @@ def _sim(prior):
 
 
 def _prior():
-    return Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
+    return Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
 
 
 _SIM = _sim(_prior())
@@ -75,10 +76,10 @@ def _nested_prior():
     """Nested conjugate prior: a sub-record ``outer={a, b}`` plus a
     top-level ``m`` -- leaves ``outer/a``, ``outer/b``, ``m``, all ``N(0, 1)`` so
     ``_analytic_posterior`` applies per leaf (``flatten`` order ``[a, b, m]``)."""
-    outer = (
-        Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
-    ).with_path_names({"a": "outer/a", "b": "outer/b"})
-    return (outer * Normal(loc=0.0, scale=1.0, label="m")).with_label("joint")
+    outer = (Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)).with_path_names(
+        {"a": "outer/a", "b": "outer/b"}
+    )
+    return (outer * Normal("m", loc=0.0, scale=1.0)).with_label("joint")
 
 
 def _analytic_posterior(y_rows: np.ndarray) -> tuple[np.ndarray, float]:
@@ -242,7 +243,8 @@ class TestSurrogateContract:
     def test_repr(self, nle, nre):
         for kernel, cls in ((nle, "BayesFlowLikelihood"), (nre, "BayesFlowRatio")):
             text = repr(kernel)
-            assert text.startswith(f"{cls}(\n    '{kernel.label}',\n")
+            # The label is the first argument, on one line or on its own line.
+            assert re.match(rf"{cls}\(\s*'{kernel.label}',", text)
             assert "theta_dim=2," in text and "data_dim=2," in text
 
     def test_data_width_guard(self, nle):
@@ -392,7 +394,7 @@ class TestConditioning:
         theta."""
 
         def _gamma_prior():
-            return pp.Gamma("lam", 5.0, 1.0) * Normal(loc=0.0, scale=1.0, label="m")
+            return pp.Gamma("lam", 5.0, 1.0) * Normal("m", loc=0.0, scale=1.0)
 
         y = np.asarray(_rows(jnp.array([5.0, 0.5]), 4, jax.random.PRNGKey(5)))
 

@@ -56,7 +56,7 @@ from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from ._repr import format_levels, format_names, public_class_name, type_name
-from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
@@ -74,6 +74,12 @@ class RecordBatch(Batch[Record]):
     ``NumericRecordSpec``, as ``Record(...)`` returns a
     :class:`~probpipe.NumericRecord` when every field is numeric. A subclass
     constructs its own class.
+
+    As a JAX pytree it flattens to its columns, with its spec as the static
+    data. The label and the expression do not cross a transform, so two
+    batches that differ only in their labels have equal treedefs and share a
+    compilation, and a batch rebuilt from its leaves is labeled by its class,
+    as ``RecordBatch``, until a result boundary labels it.
 
     Parameters
     ----------
@@ -191,14 +197,14 @@ class RecordBatch(Batch[Record]):
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: RecordSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
-        names = _as_level_names(level_names, what=f"{kind} level_names")
+        names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
             if axes_per_level is None
@@ -1416,19 +1422,19 @@ def _check_array_column(column: Any, spec: NumericArraySpec, *, path: str, kind:
 # ---------------------------------------------------------------------------
 
 
-def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, str]]:
+def _record_batch_flatten(batch: RecordBatch) -> tuple[list, BatchSpec]:
     """Flatten for JAX pytree traversal: the columns, keyed by the aux spec.
 
     Children are the columns in the template's canonical order, so they realign
-    with the aux spec on unflatten. The static aux is the
-    ``(spec, label)`` pair, matching ``Record``: the batch's own
-    type and its label survive a round-trip, while provenance does not cross a
-    JAX transform boundary.
+    with the aux spec on unflatten. The static aux is the batch's own type
+    alone, matching ``Record``: the label, the expression, and the provenance
+    do not cross a JAX transform boundary, so two batches that differ only in
+    their labels have equal treedefs and share a compilation (II.4).
     """
     # ``_columns`` is already in the template's canonical order at every
     # construction site, so the order the aux spec expects needs no second walk —
     # this runs at every jit / vmap / grad boundary and every ``tree_map``.
-    return list(batch._columns.values()), (batch._spec, batch._label)
+    return list(batch._columns.values()), batch._spec
 
 
 def _unflatten_with(cls: type[RecordBatch]):
@@ -1469,8 +1475,11 @@ def _unflatten_with(cls: type[RecordBatch]):
     raw columns and building each row explicitly instead.
     """
 
-    def _unflatten(aux: tuple[BatchSpec, str], children: list) -> RecordBatch | Record:
-        spec, label = aux
+    def _unflatten(spec: BatchSpec, children: list) -> RecordBatch | Record:
+        # The label does not cross a transform, so a rebuilt batch is labeled by
+        # its class, and an element by ``Record``, until a result boundary labels
+        # it (II.4).
+        label = public_class_name(cls)
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
         # otherwise truncate the columns silently, leaving a value whose own spec
@@ -1512,7 +1521,7 @@ def _unflatten_with(cls: type[RecordBatch]):
                 for path, column in columns.items()
             }
             return Record(
-                label,
+                "Record",
                 element,
                 event_template=element_spec,
                 _validate_leaves=False,
@@ -1707,21 +1716,22 @@ class _MappedBatchColumns:
 
 
 def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
+    # The label does not cross a transform (II.4); the executor labels the
+    # batch it rebuilds.
     return list(carried.columns.values()), (
         tuple(carried.columns),
         carried.element_spec,
         carried.level_names,
         carried.axis_groups,
-        carried.label,
     )
 
 
 def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
-    paths, element_spec, level_names, axis_groups, label = aux
+    paths, element_spec, level_names, axis_groups = aux
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
     return _MappedBatchColumns(
-        label,
+        "RecordBatch",
         dict(zip(paths, children, strict=True)),
         element_spec=element_spec,
         level_names=level_names,

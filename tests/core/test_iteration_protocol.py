@@ -50,7 +50,7 @@ def _make_transformed():
 
     return BijectorTransformedDistribution(
         "td",
-        Normal(loc=0.0, scale=1.0, label="base"),
+        Normal("base", loc=0.0, scale=1.0),
         tfb.Exp(),
     )
 
@@ -59,19 +59,19 @@ def _make_transformed():
 # the non-iterable rule. A lifted call's result is an EmpiricalDistribution,
 # which is parametrised with the others.
 DISTRIBUTIONS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, label="x"), id="Normal"),
-    pytest.param(lambda: Beta(alpha=1.0, beta=1.0, label="x"), id="Beta"),
-    pytest.param(lambda: Gamma(concentration=2.0, rate=1.0, label="x"), id="Gamma"),
+    pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), id="Normal"),
+    pytest.param(lambda: Beta("x", alpha=1.0, beta=1.0), id="Beta"),
+    pytest.param(lambda: Gamma("x", concentration=2.0, rate=1.0), id="Gamma"),
     pytest.param(
         lambda: MultivariateNormal(
+            "x",
             loc=jnp.zeros(3),
             cov=jnp.eye(3),
-            label="x",
         ),
         id="MultivariateNormal",
     ),
     pytest.param(
-        lambda: Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=0.0, scale=1.0, label="y"),
+        lambda: Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=0.0, scale=1.0),
         id="FactoredDistribution",
     ),
     pytest.param(
@@ -79,27 +79,27 @@ DISTRIBUTIONS = [
         id="BijectorTransformedDistribution",
     ),
     pytest.param(
-        lambda: KDEDistribution("kde", jnp.arange(60.0).reshape(20, 3)),
+        lambda: KDEDistribution(jnp.arange(60.0).reshape(20, 3), component="kde"),
         id="KDEDistribution",
     ),
     pytest.param(
         lambda: EmpiricalDistribution(
-            "theta",
             jnp.zeros((10, 3)),
+            component="theta",
         ),
         id="EmpiricalDistribution",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "obs",
-            EmpiricalDistribution("obs", jnp.zeros((10, 2))),
+            EmpiricalDistribution(jnp.zeros((10, 2)), component="obs"),
         ),
         id="BootstrapReplicateDistribution_empirical",
     ),
     pytest.param(
         lambda: BootstrapReplicateDistribution(
             "boot",
-            Normal(loc=0.0, scale=1.0, label="x"),
+            Normal("x", loc=0.0, scale=1.0),
             replicate_size=5,
         ),
         id="BootstrapReplicateDistribution_sampleable",
@@ -107,7 +107,7 @@ DISTRIBUTIONS = [
     pytest.param(
         lambda: BootstrapDistribution(
             "measure",
-            Normal(loc=0.0, scale=1.0, label="x"),
+            Normal("x", loc=0.0, scale=1.0),
             5,
         ),
         id="BootstrapDistribution",
@@ -125,7 +125,7 @@ def _make_minibatched_distribution():
 
     X = jnp.eye(4)
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
-    prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), label="beta")
+    prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
     lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return MinibatchedDistribution("measure", prior, lik, y, batch_size=2)
 

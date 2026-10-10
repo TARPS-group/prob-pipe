@@ -44,9 +44,19 @@ class TestOneDraw:
     def test_a_measure_draws_a_law(self):
         assert isinstance(sample(Measure("m")), Distribution)
 
-    def test_the_draw_is_labeled_by_the_law(self):
-        assert sample(Gaussian("g")).label == "g"
-        assert sample(Gaussian("g"), sample_shape=(3,)).label == "g"
+    def test_a_draw_lists_a_nested_fixed_path_and_names_no_level_by_it(self):
+        law = Gaussian("g")
+        held = law._with_expression(law._expression.with_fixed(("y/obs",)))
+        draws = sample(held, sample_shape=(3,))
+        assert draws.label == "g ~ g; y/obs"
+        assert draws.level_names == ("sample",)
+        assert draws[0].label == "(g ~ g; y/obs)[sample=0]"
+
+    def test_the_draw_is_labeled_by_its_components_and_the_law(self):
+        assert sample(Gaussian("g")).label == "g ~ g"
+        draws = sample(Gaussian("g"), sample_shape=(3,))
+        assert draws.label == "g ~ g"
+        assert draws[0].label == "(g ~ g)[sample=0]"
 
 
 class TestBatches:

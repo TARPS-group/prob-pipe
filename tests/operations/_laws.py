@@ -50,7 +50,7 @@ class Gaussian(
     """A scalar normal law with every closed form the moment tests read."""
 
     def __init__(self, label: str, loc: float = 0.0, scale: float = 1.0) -> None:
-        super().__init__(label, REAL)
+        super().__init__(label, OutputSpec(**{label: REAL}))
         self.loc, self.scale = float(loc), float(scale)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -88,7 +88,7 @@ class Sampler(Distribution, SupportsSampling):
     """A scalar normal law that only samples, recording each sample shape it is asked for."""
 
     def __init__(self, label: str, loc: float = 0.0, scale: float = 1.0) -> None:
-        super().__init__(label, REAL)
+        super().__init__(label, OutputSpec(**{label: REAL}))
         self.loc, self.scale = float(loc), float(scale)
         self.shapes: list[tuple[int, ...]] = []
 
@@ -101,7 +101,7 @@ class Vector(Distribution, SupportsSampling):
     """A law on R² with independent coordinates of scales 1 and 2, which only samples."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, NumericArraySpec((2,), jnp.float32, real))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec((2,), jnp.float32, real)}))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         draws = jax.random.normal(key, (*sample_shape, 2))
@@ -146,7 +146,7 @@ class Coin(Distribution, SupportsSampling, SupportsMean, SupportsLogProb, Suppor
     """A Bernoulli law on {0, 1}, drawn as int32, with an exact expectation over its atoms."""
 
     def __init__(self, label: str, p: float = 0.25) -> None:
-        super().__init__(label, NumericArraySpec((), jnp.int32, boolean))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec((), jnp.int32, boolean)}))
         self.p = float(p)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -168,7 +168,7 @@ class Unnormalized(Distribution, SupportsUnnormalizedLogProb):
     """A law that knows its log-density only up to the constant ``log 2``."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, REAL)
+        super().__init__(label, OutputSpec(**{label: REAL}))
 
     def _unnormalized_log_prob(self, value: Any) -> Any:
         return jax.scipy.stats.norm.logpdf(jnp.asarray(value)) + jnp.log(2.0)
@@ -178,7 +178,7 @@ class Polymorphic(Distribution, SupportsLogProb):
     """A standard normal law on Rⁿ whose length ``n`` is free."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, NumericArraySpec(("n",), jnp.float32, real))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec(("n",), jnp.float32, real)}))
 
     def _log_prob(self, value: Any) -> Any:
         return jnp.sum(jax.scipy.stats.norm.logpdf(jnp.asarray(value)), axis=-1)
@@ -188,7 +188,7 @@ class CountedVector(Distribution, SupportsLogProb):
     """A standard normal law on R³ that records each value its density is called with."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, NumericArraySpec((3,), jnp.float32, real))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec((3,), jnp.float32, real)}))
         self.calls: list[Any] = []
 
     def _log_prob(self, value: Any) -> Any:
@@ -200,7 +200,7 @@ class Measure(Distribution, SupportsSampling):
     """A random measure whose draws are normal laws with standard-normal locations."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, DistributionSpec(OutputSpec(x=REAL)))
+        super().__init__(label, OutputSpec(**{label: DistributionSpec(OutputSpec(x=REAL))}))
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         shape = tuple(sample_shape)
@@ -217,7 +217,7 @@ class RandomDensity(Distribution, SupportsRandomLogProb, SupportsRandomUnnormali
     """A random measure whose random log-densities are stand-in laws."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, DistributionSpec(OutputSpec(x=REAL)))
+        super().__init__(label, OutputSpec(**{label: DistributionSpec(OutputSpec(x=REAL))}))
 
     def _random_log_prob(self) -> Distribution:
         return Gaussian("log_density", -1.0)
@@ -313,4 +313,4 @@ class Bare(Distribution):
     """A law that claims no capability."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, REAL)
+        super().__init__(label, OutputSpec(**{label: REAL}))

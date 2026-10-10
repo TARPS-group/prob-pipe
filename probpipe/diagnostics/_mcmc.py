@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .._messages import unknown_names
+from ..core._shapes import NamesLike, _as_names
 from ._utils import _dataset_values
 
 if TYPE_CHECKING:
@@ -56,6 +57,8 @@ __all__ = [
 
 _RHAT_THRESHOLD: float = 1.01
 _ESS_THRESHOLD: int = 400
+#: The metrics add_mcmc_diagnostics computes, in the order it computes them.
+_MCMC_METRICS: tuple[str, ...] = ("rhat", "ess", "mcse", "divergences")
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +588,7 @@ def add_mcse(
 def add_mcmc_diagnostics(
     posterior: EmpiricalDistribution,
     *,
-    metrics: list[str] | None = None,
+    metrics: NamesLike | None = None,
     rhat_method: str = "rank",
     rhat_threshold: float = _RHAT_THRESHOLD,
     ess_threshold: int = _ESS_THRESHOLD,
@@ -602,9 +605,10 @@ def add_mcmc_diagnostics(
     ----------
     posterior : EmpiricalDistribution
         The fitted posterior. Mutated in place.
-    metrics : list of str or None
-        Subset to compute. ``None`` computes all:
-        ``["rhat", "ess", "mcse", "divergences"]``.
+    metrics : str, sequence of str, or None
+        The metrics to compute, among ``"rhat"``, ``"ess"``, ``"mcse"``, and
+        ``"divergences"``. A str names one metric, and ``None`` computes all
+        four.
     rhat_method : str
         ArviZ R-hat variant: ``"rank"`` by default.
     rhat_threshold : float
@@ -613,8 +617,21 @@ def add_mcmc_diagnostics(
         ESS warning threshold.
     force : bool
         Recompute even if metrics are already stored.
+
+    Raises
+    ------
+    TypeError
+        If *metrics* is not a str, a sequence of str, or ``None``.
+    ValueError
+        If *metrics* names an unknown metric.
     """
-    compute = set(metrics) if metrics is not None else {"rhat", "ess", "mcse", "divergences"}
+    if metrics is None:
+        compute = _MCMC_METRICS
+    else:
+        compute = _as_names(metrics, what="add_mcmc_diagnostics metrics")
+        unknown = [name for name in compute if name not in _MCMC_METRICS]
+        if unknown:
+            raise ValueError(unknown_names("metric", unknown, _MCMC_METRICS))
 
     if "rhat" in compute:
         add_rhat(

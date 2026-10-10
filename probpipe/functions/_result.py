@@ -20,6 +20,7 @@ import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
 from ..core._batch import Batch, BatchSpec, _ranks_of
+from ..core._expression import Expression, Named
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -39,7 +40,7 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._batches import DistributionBatch
 from ..distributions._distribution import Distribution
-from ..values._function_base import _validate_function_output
+from ..values._function_base import _ResultKindMismatch, _validate_function_output
 
 BroadcastMode = Literal["wrap", "stack", "nested"]
 BROADCAST_WRAP: BroadcastMode = "wrap"
@@ -188,26 +189,50 @@ def _wrap_as_term(value: Any, result_name: str) -> Any:
             return Opaque(result_name, value)
 
 
+#: The expression :func:`_coerce_output` takes to keep a tracked return's own expression.
+KEEP_EXPRESSION: Any = object()
+
+
 def _coerce_output(
     value: Any,
     *,
     broadcast_mode: BroadcastMode,
     provenance: Provenance | None,
     field_name: str,
+    expression: Expression | None = None,
 ) -> Any:
     """Return an independently labeled term with this call's provenance.
 
-    ``field_name`` is the Function's output_label, separate from the function
-    label in provenance and the declared output components. A tracked
-    return is shallow-copied, sharing value data while owning its metadata.
+    ``field_name`` is the call's result label, separate from the function
+    label in provenance and the declared output components, and it labels a
+    wrapped raw return. A tracked return is shallow-copied, sharing value data
+    while owning its metadata. The result carries *expression*, the expression
+    the call gives its result; a label alone keeps the paths a law holds
+    fixed, as ``with_label`` does. :data:`KEEP_EXPRESSION` keeps the
+    expression of a tracked return, as for an operation whose rule leaves the
+    route's expression, and ``None`` relabels the result by ``field_name``.
     """
+    if expression is None:
+        expression = Named(field_name)
     if broadcast_mode == BROADCAST_WRAP and not isinstance(value, TrackedTerm):
         value = _wrap_as_term(value, field_name)
+        if isinstance(value, TrackedTerm) and expression is not KEEP_EXPRESSION:
+            value._store_expression(_prepared(value, expression))
     elif isinstance(value, TrackedTerm):
-        value = value._with_label(field_name)
+        if expression is KEEP_EXPRESSION:
+            value = value._with_expression(value._expression)
+        else:
+            value = value._with_expression(_prepared(value, expression))
     if isinstance(value, TrackedTerm) and provenance is not None:
         value.with_provenance(provenance)
     return value
+
+
+def _prepared(term: Any, expression: Expression) -> Expression:
+    """*expression* as *term* carries it: a label alone keeps the paths a law or kernel holds fixed."""
+    if isinstance(expression, Named) and expression.signature is None:
+        return term._relabeled_expression(expression.label)
+    return expression
 
 
 def _copy_result_term(value: TrackedTerm, *, output_spec: OutputSpec | None = None) -> TrackedTerm:
@@ -1128,7 +1153,13 @@ def _stack_rows(
 # ---------------------------------------------------------------------------
 
 
-def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
+def declared_term(
+    value: Any,
+    declared: OutputSpec | None,
+    label: str,
+    *,
+    kind_error: type[Exception] = ResultKindError,
+) -> Any:
     """*value* validated against *declared* and wrapped at the kind it names.
 
     This is the return step of one point of a call that a route realized
@@ -1146,6 +1177,9 @@ def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
         The call's result label, which names each term built from *value*. A
         tracked *value* keeps its own label unless a batch declaration builds a
         batch from it.
+    kind_error : type of Exception
+        The error raised for a wrong overall kind. Plain evaluation uses the
+        value layer's ValueError subclass; a tracked call uses ResultKindError.
 
     Returns
     -------
@@ -1154,8 +1188,10 @@ def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
 
     Raises
     ------
+    ResultKindError
+        If the overall kind differs from the declaration, using *kind_error*.
     ResultSchemaError
-        If *value* does not satisfy the declaration.
+        If the structure, dimensions, dtype, or support violates the declaration.
     """
     try:
         if declared is not None and isinstance(declared.spec, BatchSpec):
@@ -1165,6 +1201,8 @@ def declared_term(value: Any, declared: OutputSpec | None, label: str) -> Any:
         completed = _validate_function_output(
             function_name=label, output_spec=declared, result=value, bindings={}
         )
+    except _ResultKindMismatch as error:
+        raise kind_error(str(error)) from error
     except ResultSchemaError:
         raise
     except ValueError as error:
@@ -1199,9 +1237,11 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
 
     Raises
     ------
+    _ResultKindMismatch
+        If *value* has no representation as a batch.
     ValueError
         If the leading axes are not the declared batch shape, the element does
-        not unify with the declared element, or *value* has no batch form.
+        not unify with the declared element.
     """
     batch_shape = tuple(spec.batch_shape)
     ranks = _ranks_of(spec.axis_groups)
@@ -1254,7 +1294,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         element = NumericArraySpec(shape[n_axes:], _numpy_dtype_of(value), support)
         _unify_specs(declared, element, {}, f"{label} element")
         return NumericArrayBatch(label, value, levels, element_spec=element, axes_per_level=ranks)
-    raise ValueError(
+    raise _ResultKindMismatch(
         f"{label}: expected a Batch, a Record of stacked columns, or an array for the declared "
         f"batch output; got {type_name(value)}"
     )

@@ -185,7 +185,7 @@ class _Host(Distribution):
         return object.__new__(_capability_subclass(_Host, protocols))
 
     def __init__(self, label: str, protocols: typing.Iterable[type] = ()) -> None:
-        super().__init__(label, NumericArraySpec(()))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec(())}))
 
 
 class _OtherHost(_Host):
@@ -196,7 +196,7 @@ class _TruncatedLaw(Distribution, SupportsMarginals):
     """A law whose marginal guard returns the answer it holds, at every path."""
 
     def __init__(self, label: str, answer: Any = True) -> None:
-        super().__init__(label, NumericArraySpec(()))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec(())}))
         self.answer = answer
 
     def _marginal(self, path: str) -> Any:
@@ -214,7 +214,7 @@ class _BareGuardLaw(Distribution, SupportsMarginals):
     """A law whose marginal guard rejects and has no docstring."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, NumericArraySpec(()))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec(())}))
 
     def _marginal(self, path: str) -> Any:
         return self
@@ -227,7 +227,7 @@ class _GuardedDensityLaw(Distribution, SupportsLogProb):
     """A law whose density guard rejects."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, NumericArraySpec(()))
+        super().__init__(label, OutputSpec(**{label: NumericArraySpec(())}))
 
     def _log_prob(self, value: Any) -> float:
         return 0.0

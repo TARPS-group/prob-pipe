@@ -56,7 +56,7 @@ def logistic_problem():
         jnp.float32
     )
 
-    prior = MultivariateNormal(loc=jnp.zeros(P), cov=jnp.eye(P), label="beta")
+    prior = MultivariateNormal("beta", loc=jnp.zeros(P), cov=jnp.eye(P))
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
     lik = glm_likelihood("y", BernoulliFamily(), X=X)
     return {
@@ -199,14 +199,14 @@ class TestReproducibility:
 class TestCheck:
     def test_rejects_bare_supports_log_prob(self):
         """A target that is no factored joint at data returns ``feasible=False`` with hint."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="x")
+        prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         info = BlackJAXSGLDMethod().check(prior, batch_size=10)
         assert not info.feasible
         assert "likelihood * prior" in info.description
 
     def test_rejects_a_likelihood_that_scores_no_subset(self):
         """A likelihood kernel that cannot score a subset of its observations is rejected."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="x")
+        prior = MultivariateNormal("x", loc=jnp.zeros(2), cov=jnp.eye(2))
         likelihood = ObservationKernel(
             "y",
             {"x": prior.event_spec.spec},

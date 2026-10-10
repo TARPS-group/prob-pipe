@@ -269,7 +269,7 @@ def independent_draws(posterior: Any) -> Any:
         return posterior
     with workflow_run(seed=0):
         draws = sample(posterior, sample_shape=(INDEPENDENT_DRAWS,))
-    return EmpiricalDistribution(posterior.label, draws, event_spec=posterior.event_spec)
+    return EmpiricalDistribution(draws, event_spec=posterior.event_spec, label=posterior.label)
 
 
 def chains_at(posterior: Any, path: str, shape: tuple[int, ...]) -> np.ndarray:

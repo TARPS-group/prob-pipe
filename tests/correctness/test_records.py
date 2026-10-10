@@ -60,7 +60,7 @@ def _law(schema: str, layout: str, *, weighted: bool = False) -> EmpiricalDistri
     weights = None
     if weighted:
         weights = jax.random.uniform(jax.random.PRNGKey(1), atoms.batch_shape, minval=0.2, maxval=2)
-    return EmpiricalDistribution("law", atoms, weights)
+    return EmpiricalDistribution(atoms, weights, label="law")
 
 
 def _node(raw, path, summary=None):
@@ -256,7 +256,7 @@ def _population_atoms() -> EmpiricalDistribution:
         "atom",
         element_spec=RecordSpec(population=_POPULATION),
     )
-    return EmpiricalDistribution("hyper", atoms)
+    return EmpiricalDistribution(atoms, label="hyper")
 
 
 def _theta_given_population():
@@ -351,7 +351,7 @@ class TestRecordValuedFactors:
 def _correlated() -> EmpiricalDistribution:
     """An empirical law over the two-group schema whose coordinates have correlation 0.8."""
     return EmpiricalDistribution(
-        "law", _records.atoms(SCHEMAS["two-groups"], (("atom",), (2000,)), seed=6)
+        _records.atoms(SCHEMAS["two-groups"], (("atom",), (2000,)), seed=6), label="law"
     )
 
 

@@ -47,6 +47,14 @@ except ImportError:
 
 from ..core._batch import Batch
 from ..core._dispatch import MethodInfo, ResolutionError
+from ..core._expression import (
+    Applied,
+    Draw,
+    Expression,
+    Named,
+    constant,
+    draw_of,
+)
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
@@ -55,12 +63,15 @@ from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
+from ..distributions._factored import _labeled_product
+from ..distributions._views import FieldView
 from ..values._function_base import (
     _WARNING_SKIP_PREFIXES,
     Function,
     _bind_function_inputs,
     _FunctionInvocationContext,
     _refuse_unknown_controls,
+    _ResultKindMismatch,
     _validate_function_output,
     install_call_engine,
 )
@@ -313,10 +324,173 @@ def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     """The label of the result of a call of *function* on the arguments *values* (V.10).
 
     A function's result takes its output label, and an operation's result the
-    label its operands give it (II.4).
+    label of the expression its operands give it (II.4). The label names a
+    term built before the result boundary gives it its expression, and it is
+    never a component or a level name.
     """
     derive = getattr(function, "_derived_label", None)
     return function.output_label if derive is None else derive(values)
+
+
+def _result_expression(function: Function, values: Mapping[str, Any]) -> Expression | None:
+    """The expression of the result of a call of *function* on the arguments *values* (II.4).
+
+    A function's result carries its output label, and an operation's result
+    the expression its expression rule builds from the operands'. ``None``
+    leaves the result the expression its route gave it.
+    """
+    derive = getattr(function, "_derived_expression", None)
+    return Named(function.output_label) if derive is None else derive(values)
+
+
+def _lifted_expression(
+    function: Function,
+    values: Mapping[str, Any],
+    plan: _plan.StochasticPlan,
+    call_values: Mapping[str, Any] | None = None,
+) -> Applied:
+    """The expression of the law of *function* lifted over the laws among *values* (II.4).
+
+    It is the function applied to its arguments in parameter order, as
+    ``f(beta ~ model; y)``: a draw of each law the plan lifts, where arguments
+    whose laws the plan draws together from one root share one draw of the
+    root, as ``f((a, b) ~ model)``; each other tracked argument by its
+    expression; and each other value by its value when it is a scalar, as
+    ``2.0``, and by its parameter's name otherwise, as ``X``, except a value
+    left at its parameter's default. A row of a sweep shows each scalar it
+    takes from a swept batch by its value, as ``f(mu ~ prior, 4.0)``.
+
+    Parameters
+    ----------
+    function : Function
+        The function lifted, whose output label names the call.
+    values : Mapping of str to Any
+        The call's arguments, by parameter name, or a row's arguments in a
+        sweep.
+    plan : StochasticPlan
+        The plan of the lift, whose source groups say which arguments are
+        drawn together.
+    call_values : Mapping of str to Any or None, optional
+        The arguments of the sweep *values* is a row of; an argument whose
+        row value is not the call's is a row of a swept batch.
+
+    Returns
+    -------
+    Applied
+        The applied function.
+    """
+    group_of = {
+        consumer.arg_ref: group.index
+        for group in plan.source_groups
+        for consumer in group.consumers
+    }
+    parameters = function.signature.parameters
+    drawn: set[int] = set()
+    arguments: list[Expression] = []
+    for ref in _binding.iter_input_refs(function._signature_info, values):
+        value = _binding.input_ref_value(values, ref)
+        index = group_of.get(ref)
+        if index is not None:
+            if index in drawn:
+                continue
+            drawn.add(index)
+            consumers = plan.source_groups[index].consumers
+            if len(consumers) == 1:
+                arguments.append(draw_of(value))
+                continue
+            laws = [_binding.input_ref_value(values, consumer.arg_ref) for consumer in consumers]
+            components = dict.fromkeys(name for law in laws for name in law.event_spec.components)
+            arguments.append(
+                Draw(
+                    tuple(components),
+                    _drawn_together_from(laws, plan, index)._embedded_expression(),
+                )
+            )
+        elif _is_swept_scalar(value, ref, call_values):
+            arguments.append(constant(value.raw() if isinstance(value, TrackedTerm) else value))
+        elif isinstance(value, TrackedTerm):
+            arguments.append(value._embedded_expression())
+        elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
+            arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
+    return Applied(function.output_label, tuple(arguments))
+
+
+def _swept_expression(
+    function: Function,
+    values: Mapping[str, Any],
+    expression: Expression | None,
+    plan: _plan.StochasticPlan | None,
+) -> Any:
+    """The expression of a sweep's batch: the lifted call for a sweep of broadcasts, as ``f(mu ~ d, tau)``.
+
+    A sweep without a law keeps the call's *expression*, and ``None`` keeps
+    the expression of the aggregate.
+    """
+    if plan is not None:
+        return _lifted_expression(function, values, plan)
+    return _result.KEEP_EXPRESSION if expression is None else expression
+
+
+def _is_swept_scalar(
+    value: Any, ref: _binding.FunctionInputRef, call_values: Mapping[str, Any] | None
+) -> bool:
+    """Whether *value*, a row's argument at *ref*, is a scalar row of a batch the call sweeps."""
+    if call_values is None or not _is_scalar(value):
+        return False
+    return _binding.input_ref_value(call_values, ref) is not value
+
+
+def _is_scalar(value: Any) -> bool:
+    """Whether *value* is a scalar, which an applied function's notation shows by its value."""
+    if isinstance(value, (bool, int, float, complex, str)):
+        return True
+    return getattr(value, "shape", None) == ()
+
+
+def _drawn_together_from(laws: list[Any], plan: _plan.StochasticPlan, index: int) -> Any:
+    """The law that the arguments *laws*, which the plan draws together, are drawn from.
+
+    It is the parent of field views of one law, as ``model`` is for
+    ``model["a"]`` and ``model["b"]``, and the root of the plan's source group
+    *index* otherwise.
+    """
+    parents = {id(law.parent): law.parent for law in laws if isinstance(law, FieldView)}
+    if len(parents) == 1 and all(isinstance(law, FieldView) for law in laws):
+        return next(iter(parents.values()))
+    return plan.runtime_bindings[index].root
+
+
+def _expressed(term: Any, expression: Expression | None) -> Any:
+    """*term*, a point's result, carrying *expression*, on a copy that keeps its provenance.
+
+    A result that is not a tracked term, an expression of ``None``, and a term
+    that carries the expression already are returned as they are, so a term
+    that is also an operand of the call, such as a factor that conditioning
+    returns, keeps its own expression.
+    """
+    if expression is None or not isinstance(term, TrackedTerm):
+        return term
+    expression = _result._prepared(term, expression)
+    if term._expression == expression:
+        return term
+    clone = term._shallow_copy()
+    clone._store_expression(expression)
+    return clone
+
+
+def _recorded_route_result(term: Any, value: TrackedTerm) -> TrackedTerm:
+    """The route's result *value* as the call's record names it among its parents.
+
+    *term* is *value* after the result boundary gave it the call's expression,
+    on a copy that keeps *value*'s record, so the parent reads under the
+    result's label, as ``model`` for a posterior of ``model``, where it read
+    under the label the route chose, such as an inference method's
+    ``posterior``. A *term* that carries another record, or none, leaves
+    *value* as the parent.
+    """
+    if isinstance(term, TrackedTerm) and term.provenance is value.provenance:
+        return term
+    return value
 
 
 def _keeping_route_record(term: Any, value: Any) -> Any:
@@ -342,12 +516,15 @@ def _realized_point(
     values: Mapping[str, Any],
     controls: Mapping[str, Any],
     candidates: tuple[Any, ...],
+    *,
+    kind_error: type[Exception] = _result.ResultKindError,
 ) -> Any:
     """One point of a call realized by the route selected among *candidates*, as a term.
 
     The point is planned, its route selected and run, and the raw result
     validated against the point's declaration, wrapped at the kind it names,
-    and labeled as the call's result is.
+    and given the expression the operation builds for the point, from which
+    it takes its label.
 
     Parameters
     ----------
@@ -359,6 +536,8 @@ def _realized_point(
         The call's resolved controls, which planning and selection read.
     candidates : tuple
         The Function's routes, in selection order.
+    kind_error : type of Exception
+        The error for a wrong overall return kind, passed to ``declared_term``.
 
     Returns
     -------
@@ -372,14 +551,16 @@ def _realized_point(
         If an applicability condition fails.
     ResolutionError
         If no candidate is feasible, or the first one that is not is unresolved.
-    ResultSchemaError
-        If the result does not satisfy the declaration.
+    ResultKindError, ResultSchemaError
+        If the result violates the declaration, using *kind_error* for its kind.
     """
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
     value = candidate.run(point, result, report)
-    term = _result.declared_term(value, result, _result_label(function, values))
-    return _keeping_route_record(term, value)
+    term = _result.declared_term(
+        value, result, _result_label(function, values), kind_error=kind_error
+    )
+    return _expressed(_keeping_route_record(term, value), _result_expression(function, values))
 
 
 def _run_call(
@@ -415,6 +596,7 @@ def _run_call(
         roles=function._roles,
     )
     label = _result_label(function, values)
+    expression = _result_expression(function, values)
     controls = function.options
     candidates = function._route_candidates(controls)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
@@ -490,20 +672,21 @@ def _run_call(
             provenance_inputs[ref.label] = value
 
     # The selected route's result, when it carries a record of its own, which the
-    # call's record keeps as a parent.
+    # call's record keeps as a parent under the call's expression.
     route_records: list[TrackedTerm] = []
 
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
             point, result, candidate, report = selection
             value = candidate.run(point, result, report)
+            term = _expressed(_result.declared_term(value, result, label), expression)
             if (
                 isinstance(value, TrackedTerm)
                 and value.provenance is not None
                 and id(value) not in seen_parent_ids
             ):
-                route_records.append(value)
-            return _result.declared_term(value, result, label)
+                route_records.append(_recorded_route_result(term, value))
+            return term
         if candidates is not None:
             return _realized_point(function, point_values, controls, candidates)
         try:
@@ -528,6 +711,8 @@ def _run_call(
                 result=result,
                 bindings=context.dimension_bindings,
             )
+        except _ResultKindMismatch as error:
+            raise _result.ResultKindError(str(error)) from error
         except ValueError as error:
             raise _result.ResultSchemaError(str(error)) from error
         if point_output_spec is not None:
@@ -536,7 +721,8 @@ def _run_call(
                 function_name=function.output_label,
                 output_spec=point_output_spec,
             )
-        return result
+        # A product the function returns takes its output label as a label (IV.2).
+        return _labeled_product(result)
 
     resolved_dispatch: str | None = None
 
@@ -600,7 +786,10 @@ def _run_call(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
-            output_label=label,
+            # The component of an undeclared output is the function's output
+            # label, which is a name, and the law carries the applied function.
+            output_label=function.output_label,
+            output_expression=_lifted_expression(function, row_values, plan, values),
             output_spec=concrete_output_spec,
             workflow_kind=workflow_kind,
             output_template=concrete_output_template,
@@ -611,7 +800,14 @@ def _run_call(
         )
 
     if route.rule is not None and route.name not in _rules._ENGINE_RULES:
-        return _run_registered_rule(function, route, provenance_parents, provenance_inputs, label)
+        lifted = (
+            expression
+            if stochastic_plan is None
+            else _lifted_expression(function, values, stochastic_plan)
+        )
+        return _run_registered_rule(
+            function, route, provenance_parents, provenance_inputs, label, lifted
+        )
     if broadcast_plan.regime == "distribution":
         if stochastic_plan is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("distribution broadcast is missing its stochastic plan")
@@ -654,6 +850,7 @@ def _run_call(
             distribution_broadcast=distribution_broadcast,
             function_name=function._label,
             output_label=label,
+            output_expression=_swept_expression(function, values, expression, stochastic_plan),
             output_spec=concrete_output_spec,
             include_inputs=function.options["include_inputs"],
             output_template=concrete_output_template,
@@ -699,6 +896,7 @@ def _run_call(
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=label,
+        expression=_result.KEEP_EXPRESSION if expression is None else expression,
     )
 
 
@@ -1248,11 +1446,13 @@ def _run_registered_rule(
     provenance_parents: list[TrackedTerm],
     provenance_inputs: Mapping[str, Any],
     label: str,
+    expression: Expression | None,
 ) -> Any:
     """Execute a registered evaluation rule and give its result the call's identity.
 
     The rule returns the result over raw forms, and the return step wraps it at
-    its kind under the call's result label, with provenance recording the
+    its kind under the call's result label and gives it *expression*, the
+    function applied to draws of its inputs, with provenance recording the
     function, its inputs, and the rule.
     """
     result = route.rule.execute(
@@ -1272,10 +1472,11 @@ def _run_registered_rule(
         diagnostics=diagnostics,
     )
     return _result._coerce_output(
-        result,
+        _labeled_product(result),
         broadcast_mode=_result.BROADCAST_WRAP,
         provenance=provenance,
         field_name=label,
+        expression=expression,
     )
 
 
@@ -1349,7 +1550,9 @@ class _CallEngine:
         )
         token = _call._CHECKING.set(False)
         try:
-            term = _realized_point(function, values, function.options, candidates)
+            term = _realized_point(
+                function, values, function.options, candidates, kind_error=_ResultKindMismatch
+            )
         finally:
             _call._CHECKING.reset(token)
         return _result.raw_form(term)

@@ -30,6 +30,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core._expression import Conditioned
 from probpipe.functions import _replay
 from probpipe.functions._managed import (
     ManagedAttemptState,
@@ -45,7 +46,7 @@ from tests.functions._replay_fixtures import (
 
 def _draw(seed: int = 7):
     with workflow_run(seed=seed):
-        return sample(Normal(loc=0.0, scale=1.0, label="value"))
+        return sample(Normal("value", loc=0.0, scale=1.0))
 
 
 def _lifted_draw(seed: int = 7):
@@ -56,7 +57,7 @@ def _lifted_draw(seed: int = 7):
         n_broadcast_samples=5,
     )
     with workflow_run(seed=seed):
-        return workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+        return workflow(value=Normal("value", loc=0.0, scale=1.0))
 
 
 def _sample_value(result):
@@ -112,9 +113,9 @@ class TestReplayScope:
         assert "signature_and_templates" not in anchor
 
         with replay_run(restored):
-            first = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            first = sample(Normal("value", loc=0.0, scale=1.0))
         with replay_run(first.provenance):
-            second = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            second = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(first), _sample_value(original))
         np.testing.assert_array_equal(_sample_value(second), _sample_value(original))
@@ -137,9 +138,9 @@ class TestReplayScope:
         ) as urandom:
             if explicit_scope:
                 with workflow_run():
-                    original = sample(Normal(loc=0.0, scale=1.0, label="value"))
+                    original = sample(Normal("value", loc=0.0, scale=1.0))
             else:
-                original = sample(Normal(loc=0.0, scale=1.0, label="value"))
+                original = sample(Normal("value", loc=0.0, scale=1.0))
         assert urandom.call_count == 1
 
         with (
@@ -149,7 +150,7 @@ class TestReplayScope:
             ),
             replay_run(original.provenance),
         ):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
@@ -157,7 +158,7 @@ class TestReplayScope:
         captured = []
 
         def outer(value):
-            result = sample(Normal(loc=value, scale=1.0, label="value"))
+            result = sample(Normal("value", loc=value, scale=1.0))
             captured.append(result)
             return result
 
@@ -167,7 +168,7 @@ class TestReplayScope:
         nested = captured[0]
 
         with replay_run(nested.provenance):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(nested))
 
@@ -181,14 +182,14 @@ class TestReplayScope:
             pass
 
         with replay_run(original.provenance):
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
             with pytest.raises(ReplayCompatibilityError, match="second one"):
-                sample(Normal(loc=0.0, scale=1.0, label="value"))
+                sample(Normal("value", loc=0.0, scale=1.0))
 
         with replay_run(original.provenance):
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
             with pytest.raises(ReplayCompatibilityError, match="apply"):
-                sample.apply(Normal(loc=0.0, scale=1.0, label="value"))
+                sample.apply(Normal("value", loc=0.0, scale=1.0))
 
     def test_workflow_run_cannot_replace_the_replay_root(self):
         original = _draw()
@@ -199,7 +200,7 @@ class TestReplayScope:
                 workflow_run(seed=999),
             ):
                 pass
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
 
     def test_replay_scope_rejects_reentry_nesting_and_active_workflow(self):
         original = _draw()
@@ -213,7 +214,7 @@ class TestReplayScope:
                 replay_run(original.provenance),
             ):
                 pass
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
 
         with (
             workflow_run(seed=9),
@@ -231,7 +232,7 @@ class TestReplayScope:
             replay_run(original.provenance),
             pytest.raises(ReplayCompatibilityError, match="expected a call to sample"),
         ):
-            changed(value=Normal(loc=0.0, scale=1.0, label="value"))
+            changed(value=Normal("value", loc=0.0, scale=1.0))
 
 
 class TestReplayOwnership:
@@ -244,11 +245,11 @@ class TestReplayOwnership:
                 future = pool.submit(
                     copied.run,
                     sample,
-                    Normal(loc=0.0, scale=1.0, label="value"),
+                    Normal("value", loc=0.0, scale=1.0),
                 )
                 with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
                     future.result()
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
@@ -259,11 +260,11 @@ class TestReplayOwnership:
             with replay_run(original.provenance):
 
                 async def call_in_child():
-                    return sample(Normal(loc=0.0, scale=1.0, label="value"))
+                    return sample(Normal("value", loc=0.0, scale=1.0))
 
                 with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
                     await asyncio.create_task(call_in_child())
-                return sample(Normal(loc=0.0, scale=1.0, label="value"))
+                return sample(Normal("value", loc=0.0, scale=1.0))
 
         replayed = asyncio.run(run_replay())
 
@@ -345,7 +346,7 @@ class TestReplayAdmission:
             ),
             replay_run(changed),
         ):
-            sample(Normal(loc=0.0, scale=1.0, label="value"))
+            sample(Normal("value", loc=0.0, scale=1.0))
 
     def test_a_sample_shape_drift_names_the_draw(self):
         original = _draw()
@@ -357,7 +358,7 @@ class TestReplayAdmission:
             ),
             replay_run(original.provenance),
         ):
-            sample(Normal(loc=0.0, scale=1.0, label="value"), sample_shape=(3,))
+            sample(Normal("value", loc=0.0, scale=1.0), sample_shape=(3,))
 
     @pytest.mark.parametrize(
         "mapping_path",
@@ -837,7 +838,7 @@ class TestReplayAdmission:
         restored = Provenance.from_dict(payload)
 
         with replay_run(restored):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         assert replayed.provenance.diagnostics["replay"]["source_artifact_drift"] is True
@@ -859,7 +860,7 @@ class TestReplayAdmission:
         payload["diagnostics"]["execution"][0]["future_observation"] = "worker"
 
         with replay_run(Provenance.from_dict(payload)):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
@@ -924,7 +925,7 @@ class TestReplayAdmission:
     def test_unsupported_callable_and_nested_automatic_parent_fail_at_entry(self):
         unsupported = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
         with workflow_run(seed=3):
-            unsupported_result = unsupported(value=Normal(loc=0.0, scale=1.0, label="value"))
+            unsupported_result = unsupported(value=Normal("value", loc=0.0, scale=1.0))
 
         with (
             pytest.raises(ReplayUnsupportedCallableError, match="lambda"),
@@ -934,7 +935,7 @@ class TestReplayAdmission:
 
         inner = Function(
             label="function",
-            fn=lambda value: sample(Normal(loc=value, scale=1.0, label="inner")),
+            fn=lambda value: sample(Normal("inner", loc=value, scale=1.0)),
             dispatch="sequential",
         )
 
@@ -966,12 +967,12 @@ class TestReplayPreflight:
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         payload = original.provenance.to_dict()
         canonical_plan = payload["controls"]["replay"]["plan"]["canonical_fields"]
         _edit_controls_path(canonical_plan, path, replacement)
         changed = Provenance.from_dict(payload)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
@@ -991,7 +992,7 @@ class TestReplayPreflight:
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         changed = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
 
         with (
@@ -1001,16 +1002,16 @@ class TestReplayPreflight:
             ),
             replay_run(original.provenance),
         ):
-            changed(value=Normal(loc=0.0, scale=1.0, label="value"))
+            changed(value=Normal("value", loc=0.0, scale=1.0))
 
     def test_unsupported_current_callable_fails_before_sampling(self):
         workflow = Function(
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         changed = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
@@ -1024,7 +1025,7 @@ class TestReplayPreflight:
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         def changed_identity(value):
             return value + 1
@@ -1037,7 +1038,7 @@ class TestReplayPreflight:
             changed_identity,
         )
         changed = Function(label="changed_identity", fn=changed_identity, n_broadcast_samples=5)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
@@ -1071,7 +1072,7 @@ class TestReplayPreflight:
                 **options,
             )
 
-        law = Normal(loc=0.0, scale=1.0, label="value")
+        law = Normal("value", loc=0.0, scale=1.0)
         with workflow_run(seed=4):
             original = lifted(**before)(value=law)
         with replay_run(original.provenance):
@@ -1079,6 +1080,24 @@ class TestReplayPreflight:
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert list(replayed.event_spec.components) == ["b"]
+
+    def test_an_input_that_differs_only_in_its_expression_replays_to_the_same_draws(self):
+        """Replay omits the expression, as it omits the label, so a relabeled input replays."""
+
+        def lifted():
+            return Function(
+                label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            )
+
+        law = Normal("value", loc=0.0, scale=1.0, label="value")
+        derived = law._with_expression(Conditioned(law._expression, ("y",)))
+        with workflow_run(seed=4):
+            original = lifted()(value=law)
+        with replay_run(original.provenance):
+            replayed = lifted()(value=derived)
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert replayed.notation == "replayable_identity(value ~ value; y)"
 
     @pytest.mark.parametrize("change", ["shape", "kind", "packaging", "declaration"])
     def test_output_contract_drift_fails_before_sampling(self, change):
@@ -1123,11 +1142,11 @@ class TestReplayPreflight:
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=4):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         changed = Function(
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=6
         )
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
@@ -1137,18 +1156,14 @@ class TestReplayPreflight:
             changed(value=candidate)
 
     def test_direct_record_projection_drift_fails_before_key_derivation(self):
-        original_root = Normal(loc=0.0, scale=1.0, label="x") * Normal(
-            loc=2.0, scale=1.0, label="y"
-        )
+        original_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
         with workflow_run(seed=4):
             original = sample(original_root["x"])
         assert original.provenance.controls["replay"]["plan"]["expected_effects"][0][
             "record_path"
         ] == ["x"]
 
-        candidate_root = Normal(loc=0.0, scale=1.0, label="x") * Normal(
-            loc=2.0, scale=1.0, label="y"
-        )
+        candidate_root = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=2.0, scale=1.0)
         with (
             patch.object(type(candidate_root), "_sample", side_effect=AssertionError("sampled")),
             patch(
@@ -1178,10 +1193,10 @@ class TestReplayPreflight:
             max_workers=3,
         )
         with workflow_run(seed=31):
-            original = original_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = original_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         with replay_run(original.provenance):
-            replayed = replay_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = replay_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
@@ -1197,7 +1212,7 @@ class TestReplayPreflight:
         changed = Provenance.from_dict(payload)
 
         with replay_run(changed):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         diagnostics = replayed.provenance.diagnostics["replay"]
@@ -1213,7 +1228,7 @@ class TestReplayPreflight:
         changed = Provenance.from_dict(payload)
 
         with replay_run(changed):
-            replayed = sample(Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = sample(Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         diagnostics = replayed.provenance.diagnostics["replay"]
@@ -1234,7 +1249,7 @@ class TestReplayPreflight:
             label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
         )
         with workflow_run(seed=8):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         monkeypatch.setattr(
             replayable_identity,
@@ -1242,7 +1257,7 @@ class TestReplayPreflight:
             invalid_signature,
             raising=False,
         )
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(
@@ -1260,7 +1275,7 @@ class TestReplayPreflight:
             controls["replay"]["compatibility"]["sampling_abi"] = ["unknown-sampling/v99"]
 
         changed = _mutate_provenance(original.provenance, mutate)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(
@@ -1300,10 +1315,10 @@ class TestReplayPreflight:
             dispatch="sequential",
         )
         with workflow_run(seed=41):
-            original = original_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = original_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         with replay_run(original.provenance):
-            replayed = replay_workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            replayed = replay_workflow(value=Normal("value", loc=0.0, scale=1.0))
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
@@ -1326,7 +1341,7 @@ class TestReplayEventRegistry:
                 )
 
         changed = _mutate_provenance(original.provenance, mutate)
-        candidate = Normal(loc=0.0, scale=1.0, label="value")
+        candidate = Normal("value", loc=0.0, scale=1.0)
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
             pytest.raises(
@@ -1524,7 +1539,7 @@ class TestReplayEventRegistry:
             max_workers=2,
         )
         with workflow_run(seed=71):
-            original = workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         monkeypatch.setattr(
             _replay_fixtures,
             "ENABLE_EXTRA_AUTOMATIC",
@@ -1535,7 +1550,7 @@ class TestReplayEventRegistry:
             pytest.raises(ReplayCompatibilityError, match="matches no draw of the recorded call"),
             replay_run(original.provenance),
         ):
-            workflow(value=Normal(loc=0.0, scale=1.0, label="value"))
+            workflow(value=Normal("value", loc=0.0, scale=1.0))
 
 
 def test_replay_provenance_inputs_are_not_mutated():
@@ -1543,6 +1558,6 @@ def test_replay_provenance_inputs_are_not_mutated():
     before = copy.deepcopy(original.provenance.to_dict())
 
     with replay_run(original.provenance):
-        sample(Normal(loc=jnp.asarray(0.0), scale=1.0, label="value"))
+        sample(Normal("value", loc=jnp.asarray(0.0), scale=1.0))
 
     assert original.provenance.to_dict() == before

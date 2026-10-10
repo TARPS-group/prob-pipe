@@ -55,7 +55,9 @@ class Source(Distribution):
     """A law the converters below read, over a scalar unless given a declaration."""
 
     def __init__(self, label: str = "x", event_spec: OutputSpec | None = None):
-        super().__init__(label, _SCALAR if event_spec is None else event_spec)
+        super().__init__(
+            label, OutputSpec(**{label: _SCALAR}) if event_spec is None else event_spec
+        )
 
 
 class SourceSub(Source):
@@ -66,7 +68,7 @@ class Stranger(Distribution):
     """A law that no converter below reads."""
 
     def __init__(self, label: str = "stranger"):
-        super().__init__(label, _SCALAR)
+        super().__init__(label, OutputSpec(**{label: _SCALAR}))
 
 
 class Target(Distribution):
@@ -449,7 +451,7 @@ class TestKeying:
 
     @pytest.mark.parametrize(
         "target",
-        ["Target", Target("t", _SCALAR), None],
+        ["Target", Target("t", OutputSpec(t=_SCALAR)), None],
         ids=["a-class-name", "an-instance", "None"],
     )
     def test_a_target_that_is_not_a_class_raises_type_error(self, target: Any):
@@ -608,7 +610,10 @@ class TestTargetAdmission:
 
     def test_a_sampling_source_type_admits_a_law_that_samples(self):
         registry = _registry(ToyConverter("from_samplers", sources=(SupportsSampling,)))
-        assert registry.check(Sampled("x", _SCALAR), Target).method_name == "from_samplers"
+        assert (
+            registry.check(Sampled("x", OutputSpec(x=_SCALAR)), Target).method_name
+            == "from_samplers"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -870,7 +875,7 @@ class TestConvert:
 
     def test_a_source_already_of_the_target_class_is_returned_as_it_is(self):
         """The registry tests the source first, so no converter runs for it."""
-        source = Target("x", _SCALAR)
+        source = Target("x", OutputSpec(x=_SCALAR))
         assert ConverterRegistry().convert(source, Target) is source
         copier = ToyConverter("copy", sources=(Target,))
         registry = _registry(copier)
@@ -931,7 +936,7 @@ class TestConvert:
             registry.convert(Source(), Target)
 
     def test_a_result_that_is_not_of_the_target_class_raises_type_error(self):
-        registry = _registry(ToyConverter("m", result=Elsewhere("x", _SCALAR)))
+        registry = _registry(ToyConverter("m", result=Elsewhere("x", OutputSpec(x=_SCALAR))))
         with pytest.raises(TypeError, match="not a Target"):
             registry.convert(Source(), Target)
 

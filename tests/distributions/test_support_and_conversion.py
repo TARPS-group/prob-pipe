@@ -257,7 +257,7 @@ class TestDistributionSupport:
         assert Gamma("g", 3.0, 1.0).support == positive
 
     def test_uniform_support(self):
-        assert Uniform(low=-1.0, high=2.0, label="u").support == interval(-1.0, 2.0)
+        assert Uniform("u", low=-1.0, high=2.0).support == interval(-1.0, 2.0)
 
     # NOTE: A family of "support with array bounds" tests was removed.
     # Each exercised a legacy batched constructor:
@@ -273,16 +273,16 @@ class TestDistributionSupport:
     # type, not of a batched ``Distribution``).
 
     def test_bernoulli_support(self):
-        assert Bernoulli(probs=0.5, label="d").support == boolean
+        assert Bernoulli("d", probs=0.5).support == boolean
 
     def test_poisson_support(self):
-        assert Poisson(rate=3.0, label="p").support == non_negative_integer
+        assert Poisson("p", rate=3.0).support == non_negative_integer
 
     def test_dirichlet_support(self):
         assert Dirichlet("d", [1.0, 2.0]).support == simplex
 
     def test_wishart_support(self):
-        assert Wishart(df=5.0, scale_tril=jnp.eye(3), label="w").support == positive_definite
+        assert Wishart("w", df=5.0, scale_tril=jnp.eye(3)).support == positive_definite
 
     def test_vonmisesfisher_support(self):
         assert VonMisesFisher("v", [1.0, 0.0, 0.0], 5.0).support == sphere
@@ -294,8 +294,8 @@ class TestDistributionSupport:
         atoms = NumericArrayBatch(
             "x", jnp.ones((5, 2)), "atom", element_spec=NumericArraySpec((2,), support=real)
         )
-        assert EmpiricalDistribution("x", atoms).support == real
-        assert EmpiricalDistribution("x", jnp.ones((5, 2))).support is None
+        assert EmpiricalDistribution(atoms, component="x").support == real
+        assert EmpiricalDistribution(jnp.ones((5, 2)), component="x").support is None
 
 
 # ── Section 4: from_distribution tests ────────────────────────────────────────
@@ -306,38 +306,38 @@ class TestConvert:
 
     # -- same-class copy --
     def test_normal_from_normal(self):
-        n = Normal(loc=3.0, scale=2.0, label="n")
+        n = Normal("n", loc=3.0, scale=2.0)
         n2 = convert(n, Normal)
         assert jnp.isclose(n2.loc, 3.0, atol=0.01)
 
     def test_beta_from_beta(self):
-        b = Beta(alpha=2.0, beta=5.0, label="b")
+        b = Beta("b", alpha=2.0, beta=5.0)
         b2 = convert(b, Beta)
         assert jnp.isclose(b2.alpha, 2.0, atol=0.01)
 
     # -- moment-matching --
     def test_normal_from_gamma(self):
         """Gamma -> Normal via moment matching (check_support=False needed)."""
-        g = Gamma(concentration=9.0, rate=1.0, label="g")
+        g = Gamma("g", concentration=9.0, rate=1.0)
         n = converter_registry.convert(g, Normal, check_support=False, num_samples=5000)
         # Gamma(9,1) has mean=9, var=9
         assert jnp.isclose(n.loc, 9.0, atol=1.0)
 
     def test_gamma_from_normal(self):
         """Normal -> Gamma is refused by default, since the fit's support is not the source's."""
-        n = Normal(loc=5.0, scale=1.0, label="n")
+        n = Normal("n", loc=5.0, scale=1.0)
         with pytest.raises(ResolutionError, match="check_support=False"):
             convert(n, Gamma)
 
     def test_gamma_from_normal_override(self):
         """Normal -> Gamma with check_support=False should work."""
-        n = Normal(loc=5.0, scale=1.0, label="n")
+        n = Normal("n", loc=5.0, scale=1.0)
         g = converter_registry.convert(n, Gamma, check_support=False, num_samples=5000)
         assert jnp.isclose(float(g.concentration * 1.0 / g.rate), 5.0, atol=1.0)
 
     def test_beta_from_uniform(self):
         """Uniform(0,1) -> Beta should work (compatible support)."""
-        u = Uniform(low=0.0, high=1.0, label="u")
+        u = Uniform("u", low=0.0, high=1.0)
         b = convert.with_options(method_options={"num_samples": 5000})(u, Beta)
         # Uniform(0,1) has mean=0.5, var=1/12 -> alpha~=beta~=1
         assert float(b.alpha) > 0
@@ -345,23 +345,23 @@ class TestConvert:
 
     # -- discrete --
     def test_bernoulli_from_bernoulli(self):
-        b = Bernoulli(probs=0.7, label="b")
+        b = Bernoulli("b", probs=0.7)
         b2 = convert(b, Bernoulli)
         assert jnp.isclose(b2.probs, 0.7, atol=0.01)
 
     def test_poisson_from_poisson(self):
-        p = Poisson(rate=5.0, label="p")
+        p = Poisson("p", rate=5.0)
         p2 = convert(p, Poisson)
         assert jnp.isclose(p2.rate, 5.0, atol=0.01)
 
     def test_binomial_requires_total_count(self):
         """Binomial.from_distribution from non-Binomial needs total_count."""
-        p = Poisson(rate=3.0, label="p")
+        p = Poisson("p", rate=3.0)
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(p, Binomial, check_support=False)
 
     def test_binomial_from_poisson(self):
-        p = Poisson(rate=3.0, label="p")
+        p = Poisson("p", rate=3.0)
         b = converter_registry.convert(
             p, Binomial, check_support=False, total_count=10, num_samples=5000
         )
@@ -371,18 +371,18 @@ class TestConvert:
     # -- multivariate --
     def test_mvn_from_empirical(self):
         samples = jax.random.normal(jax.random.PRNGKey(42), (100, 3))
-        ed = EmpiricalDistribution("x", samples)
+        ed = EmpiricalDistribution(samples, component="x")
         mvn = convert(ed, MultivariateNormal)
         assert mvn.dim == 3
 
     def test_dirichlet_from_dirichlet(self):
-        d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]), label="d")
+        d = Dirichlet("d", concentration=jnp.array([1.0, 2.0, 3.0]))
         d2 = convert(d, Dirichlet)
         assert jnp.allclose(d2.concentration, d.concentration)
 
     # -- provenance --
     def test_convert_same_class_returns_the_source_under_fresh_identity(self):
-        n = Normal(loc=0.0, scale=1.0, label="n")
+        n = Normal("n", loc=0.0, scale=1.0)
         n2 = convert(n, Normal)
         assert n2 is not n
         assert float(n2._loc) == float(n._loc)
@@ -390,13 +390,13 @@ class TestConvert:
 
     def test_convert_cross_class_provenance(self):
         """Cross-class conversion attaches provenance."""
-        g = Gamma(concentration=3.0, rate=1.0, label="g")
+        g = Gamma("g", concentration=3.0, rate=1.0)
         n = converter_registry.convert(g, Normal, check_support=False)
         assert n.provenance is not None
         assert n.provenance.operation == "convert"
 
     # -- empirical from anything --
     def test_empirical_from_normal(self):
-        n = Normal(loc=0.0, scale=1.0, label="n")
+        n = Normal("n", loc=0.0, scale=1.0)
         ed = convert.with_options(method_options={"num_samples": 100})(n, EmpiricalDistribution)
         assert ed.num_atoms == 100

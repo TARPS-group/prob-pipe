@@ -44,26 +44,26 @@ CENTERED = {"mu": "population/mu", "tau": "population/tau", "theta": "groups/the
 
 
 def _mu() -> Normal:
-    return Normal("mu", 0.0, 5.0)
+    return Normal("mu", 0.0, 5.0, label="mu")
 
 
 def _tau() -> HalfCauchy:
-    return HalfCauchy("tau", 0.0, 5.0)
+    return HalfCauchy("tau", 0.0, 5.0, label="tau")
 
 
 def _non_centered() -> FactoredDistribution:
-    return _mu() * _tau() * Normal("theta_tilde", jnp.zeros(J), 1.0)
+    return _mu() * _tau() * Normal("theta_tilde", jnp.zeros(J), 1.0, label="theta_tilde")
 
 
 def _school_effects(mu, tau) -> Normal:
     """The law ``theta | mu, tau ~ Normal(mu, tau)`` of the eight school effects."""
-    return Normal("theta", mu * jnp.ones(J), tau)
+    return Normal("theta", mu * jnp.ones(J), tau, label="theta")
 
 
 def _centered() -> FactoredDistribution:
     """The centered prior, whose school effects condition on ``mu`` and ``tau``."""
     slots = {"mu": _mu().event_spec.spec, "tau": _tau().event_spec.spec}
-    theta = conditional_distribution("theta", _school_effects, given_spec=slots)
+    theta = conditional_distribution(_school_effects, given_spec=slots, label="theta")
     return theta * _mu() * _tau()
 
 
@@ -213,7 +213,9 @@ class TestTheFactoredRoutes:
         view = prior["groups"]
         assert isinstance(view, SupportsLogProb)
         value = {"theta_tilde": jnp.zeros(J)}
-        expected = Normal("theta_tilde", jnp.zeros(J), 1.0)._log_prob(jnp.zeros(J))
+        expected = Normal("theta_tilde", jnp.zeros(J), 1.0, label="theta_tilde")._log_prob(
+            jnp.zeros(J)
+        )
         np.testing.assert_allclose(view._log_prob(value), expected, rtol=1e-6)
         np.testing.assert_allclose(marginal(prior, "groups")._mean()["theta_tilde"], 0.0)
 
@@ -265,14 +267,14 @@ class TestACycle:
     @staticmethod
     def _chain() -> FactoredDistribution:
         theta = conditional_distribution(
-            "theta",
             lambda tau: Normal("theta", 0.0, tau),
             given_spec={"tau": LogNormal("tau", 0.0, 1.0).event_spec.spec},
+            label="theta",
         )
         tau = conditional_distribution(
-            "tau",
             lambda mu: LogNormal("tau", mu, 1.0),
             given_spec={"mu": Normal("mu", 0.0, 1.0).event_spec.spec},
+            label="tau",
         )
         return theta * tau * Normal("mu", 0.0, 1.0)
 

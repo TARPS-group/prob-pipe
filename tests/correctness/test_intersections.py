@@ -88,7 +88,7 @@ def _from_draws(posterior, target) -> EmpiricalDistribution:
         element_spec=target.event_spec.spec,
         axes_per_level=(1, 1),
     )
-    return EmpiricalDistribution(posterior.label, batch)
+    return EmpiricalDistribution(batch, label=posterior.label)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ class TestDeclarations:
     def test_a_pymc_posterior_declares_its_targets_event(self):
         pytest.importorskip("pymc")
         method = _pymc_method()
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         data = {"y": _NORMAL_DATA}
         target = condition_on.with_options(method="unnormalized")(model, data)
         with workflow_run(seed=0):
@@ -377,7 +377,7 @@ class TestFamiliesWithRecordParameters:
         with workflow_run(seed=0):
             posterior = condition_on.with_options(
                 method=method, method_options=PROFILES[method].method_options
-            )(PyMCModel("normal", _normal_model), {"y": _NORMAL_DATA})
+            )(PyMCModel(_normal_model, label="normal"), {"y": _NORMAL_DATA})
         assert_matches(posterior, _normal_reference(), label=f"{method} on the normal model")
 
     @pytest.mark.usefixtures("_stan_toolchain")
@@ -394,13 +394,13 @@ class TestFamiliesWithRecordParameters:
         with workflow_run(seed=0):
             posterior = condition_on.with_options(
                 method_options=PROFILES["cmdstan_nuts"].method_options
-            )(StanModel("regression", str(path)), data)
+            )(StanModel(str(path), label="regression"), data)
         assert_matches(posterior, _glm_reference(), label="the Stan regression")
 
     def test_an_unnormalized_law_over_a_nested_record_converts_with_its_declaration(self):
         """Conversion through a method returns an empirical law that keeps the nested record."""
         law = distribution(
-            "theta", unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED)
+            unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED), label="theta"
         )
         with workflow_run(seed=0):
             normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
@@ -411,7 +411,7 @@ class TestFamiliesWithRecordParameters:
 
     def test_the_converted_nested_law_has_the_gaussian_moments_at_its_paths(self):
         law = distribution(
-            "theta", unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED)
+            unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED), label="theta"
         )
         with workflow_run(seed=0):
             normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
@@ -422,7 +422,7 @@ class TestFamiliesWithRecordParameters:
     def test_the_views_and_marginals_of_the_converted_nested_law_agree(self):
         """A view and a marginal at a nested path read the converted law's draws at that path."""
         law = distribution(
-            "theta", unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED)
+            unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED), label="theta"
         )
         with workflow_run(seed=0):
             normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(

@@ -59,7 +59,13 @@ from probpipe.core._specs import (
     RecordSpec,
     TermSpec,
 )
-from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
+from probpipe.core.config import (
+    ProvenanceMode,
+    WorkflowKind,
+    notation_config,
+    prefect_config,
+    provenance_config,
+)
 from probpipe.core.constraints import (
     Constraint,
     boolean,
@@ -359,6 +365,7 @@ __all__ = [
     "mixture",
     "non_negative",
     "non_negative_integer",
+    "notation_config",
     "operation_registry",
     "positive",
     "positive_definite",

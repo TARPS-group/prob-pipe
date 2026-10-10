@@ -242,7 +242,7 @@ class TestPyMCModel:
         The mean and variance of ``sigma`` are ``sqrt(2/pi)`` and ``1 - 2/pi``,
         and ``y`` has mean zero and variance ``100 + E[sigma²] = 101``.
         """
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         with workflow_run(seed=12):
             draws = _raw_record(sample(model, sample_shape=(DRAWS,)))
         _within_mcse(np.mean(draws["mu"]), 0.0, 10.0)
@@ -253,7 +253,7 @@ class TestPyMCModel:
 
     def test_the_density_is_pymcs_logp(self):
         """The normalized joint density is PyMC's ``logp`` without the transform's Jacobian."""
-        model = PyMCModel("normal", _normal_model)
+        model = PyMCModel(_normal_model, label="normal")
         expected = _normal_model().compile_logp(jacobian=False)(
             {"mu": 0.3, "sigma_log__": np.log(1.2), "y": 0.5}
         )
@@ -263,7 +263,7 @@ class TestPyMCModel:
         )
 
     def test_a_covariate_is_a_given_slot_and_binding_it_returns_the_joint(self):
-        kernel = PyMCModel("regression", _regression)
+        kernel = PyMCModel(_regression, label="regression")
         assert isinstance(kernel, ConditionalDistribution)
         assert list(kernel.given_spec) == ["x"]
         law = condition_on(kernel, {"x": np.linspace(-1, 1, 6)})
@@ -286,20 +286,20 @@ class TestPyMCModel:
         with workflow_run(seed=0):
             posterior = condition_on.with_options(
                 method=method, method_options=PROFILES[method].method_options
-            )(PyMCModel("regression", _regression), {"x": x, "y": y})
+            )(PyMCModel(_regression, label="regression"), {"x": x, "y": y})
         precision = 1.0 + x @ x
         reference = exact_reference(np.array([x @ y / precision]), np.array([1.0 / precision]))
         assert_matches(posterior, reference, label=f"{method} on the PyMC regression")
 
     def test_a_model_with_a_potential_claims_only_the_unnormalized_density(self):
-        model = PyMCModel("penalized", _with_potential)
+        model = PyMCModel(_with_potential, label="penalized")
         assert isinstance(model, SupportsUnnormalizedLogProb)
         assert not isinstance(model, SupportsLogProb)
         with pytest.raises(ResolutionError):
             log_prob(model, {"mu": 0.4, "y": _POTENTIAL_DATA})
 
     def test_the_unnormalized_density_of_a_model_with_a_potential_is_pymcs_logp(self):
-        model = PyMCModel("penalized", _with_potential)
+        model = PyMCModel(_with_potential, label="penalized")
         expected = _with_potential().compile_logp(jacobian=False)({"mu": 0.4, "y": _POTENTIAL_DATA})
         value = {"mu": 0.4, "y": _POTENTIAL_DATA}
         assert float(unnormalized_log_prob.with_options(raw=True)(model, value)) == pytest.approx(
@@ -320,7 +320,7 @@ class TestPyMCModel:
         with workflow_run(seed=0):
             posterior = condition_on.with_options(
                 method=method, method_options=PROFILES[method].method_options
-            )(PyMCModel("penalized", _with_potential), {"y": _POTENTIAL_DATA})
+            )(PyMCModel(_with_potential, label="penalized"), {"y": _POTENTIAL_DATA})
         precision = 3.0 + _POTENTIAL_DATA.shape[0]
         reference = exact_reference(
             np.array([_POTENTIAL_DATA.sum() / precision]), np.array([1.0 / precision]), path="mu"
@@ -386,9 +386,9 @@ def _gaussian_density(theta):
 
 def _unnormalized() -> Distribution:
     return distribution(
-        "theta",
         unnormalized_log_prob=_gaussian_density,
         event_spec=OutputSpec(theta=NumericArraySpec((2,), jnp.float32)),
+        label="theta",
     )
 
 
@@ -453,9 +453,9 @@ class TestUnnormalizedDensity:
             return -0.5 * mu**2 - 0.5 * (y - mu) ** 2 + 7.0
 
         joint = distribution(
-            "joint",
             unnormalized_log_prob=density,
             event_spec=OutputSpec(RecordSpec(mu=REAL, y=REAL)),
+            label="joint",
         )
         with workflow_run(seed=0):
             posterior = condition_on.with_options(method="blackjax_nuts", method_options=FIT)(

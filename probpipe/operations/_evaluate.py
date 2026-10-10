@@ -21,7 +21,7 @@ from ..functions import _plan, _rules, function
 from ..functions._call import ApplicabilityError
 from ..functions._resolution import PointReport
 from ..values import Function, FunctionSpec
-from ._operation import BoundCall, _RegistryRoute, operation
+from ._operation import BoundCall, _install_expression_rule, _RegistryRoute, operation
 
 __all__ = ["evaluate"]
 
@@ -38,6 +38,15 @@ def _evaluate_result(f: Any, v: Any, fixed_args: Any) -> OutputSpec | None:
 def _map_output_label(f: Any) -> str:
     """The map's output label, which the map's own result takes (V.10)."""
     return f.output_label if isinstance(f, Function) else "evaluate"
+
+
+def _mapped_expression() -> None:
+    """None: the result carries the expression of the map's own call (II.4).
+
+    A value's result is labeled by the map's output label, and the pushforward
+    of a law is the map applied to a draw of the law, as ``f(mu ~ d)``.
+    """
+    return None
 
 
 @operation(
@@ -62,7 +71,9 @@ def evaluate(f: Any, v: Any, fixed_args: Mapping[str, Any] | None = None):
     -------
     TrackedTerm
         ``f(v)`` for a value, the pushforward law for a distribution, and the
-        elementwise result for a batch, labeled by the map's output label.
+        elementwise result for a batch, labeled by the map's output label. The
+        pushforward displays as the map applied to a draw of *v*, as
+        ``f(mu ~ prior)``.
 
     Raises
     ------
@@ -226,3 +237,4 @@ class _EvaluationRules(_RegistryRoute):
 
 
 evaluate.register_route(_EvaluationRules())
+_install_expression_rule(evaluate, _mapped_expression)

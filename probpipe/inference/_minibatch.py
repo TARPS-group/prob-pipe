@@ -233,7 +233,8 @@ class MinibatchedDistribution(
         # declares them.
         self._draw_event_spec = _parameter_declaration(prior, "parameters")
 
-        super().__init__(label, DistributionSpec(self._draw_event_spec))
+        # A draw is one fixed-minibatch target, the measure's one component.
+        super().__init__("target", DistributionSpec(self._draw_event_spec), label=label)
 
     # -- read-only metadata --------------------------------------------------
 
@@ -423,7 +424,7 @@ class _RandomMinibatchLogProb(
 
     def __init__(self, measure: MinibatchedDistribution):
         super().__init__(
-            f"{measure.label}/random_log_prob", OutputSpec(random_log_prob=FunctionSpec())
+            "random_log_prob", FunctionSpec(), label=f"{measure.label}/random_log_prob"
         )
         self._measure = measure
 

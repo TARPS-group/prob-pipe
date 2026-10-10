@@ -40,7 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
-from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
 
@@ -100,14 +100,14 @@ class NumericRecordBatch(RecordBatch):
         label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: RecordSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
-        names = _as_level_names(level_names, what=f"{kind} level_names")
+        names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
             if axes_per_level is None
@@ -234,7 +234,7 @@ class NumericRecordBatch(RecordBatch):
         spec: NumericRecordSpec,
         vec: Array,
         *,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         axes_per_level: AxisCountsLike | None = None,
     ) -> Self:
         """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
@@ -320,7 +320,7 @@ class NumericRecordBatch(RecordBatch):
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size
-        names = _as_level_names(level_names, what=f"{cls.__name__}.from_vector level_names")
+        names = _as_names(level_names, what=f"{cls.__name__}.from_vector level_names")
         if axes_per_level is None and len(names) == 1:
             axes_per_level = (len(batch_shape),)
         return cls(

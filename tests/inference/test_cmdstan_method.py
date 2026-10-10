@@ -86,7 +86,7 @@ def _posterior(tmp_path):
     require_stanc()
     program = tmp_path / "program.stan"
     program.write_text(_PROGRAM)
-    return StanModel("program", str(program), data={"N": 2, "y": [1.0, 2.0]})
+    return StanModel(str(program), data={"N": 2, "y": [1.0, 2.0]}, label="program")
 
 
 @pytest.mark.stan
@@ -125,7 +125,7 @@ def test_condition_on_a_stan_model_returns_its_parameter_record(
     view = condition_on.with_options(
         method_options={"num_results": 3, "num_warmup": 1, "num_chains": 2}
     )
-    posterior = view(StanModel("program", str(program)), {"N": 2, "y": [1.0, 2.0]})
+    posterior = view(StanModel(str(program), label="program"), {"N": 2, "y": [1.0, 2.0]})
     assert tuple(posterior.event_spec.components) == ("mu", "theta")
 
 

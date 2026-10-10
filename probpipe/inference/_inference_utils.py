@@ -51,7 +51,9 @@ from ..distributions._factored import (
     _components_of,
     _event_of,
     _factor_graph,
+    _is_named,
     _law_at_defaults,
+    _with_named,
 )
 from ..families._backend import TFPDistribution
 from ..operations._condition import _unnormalized_conditional, _UnnormalizedConditional
@@ -536,13 +538,18 @@ def unfactored_model_reason(target: Any) -> str:
     )
 
 
-def _joint_of(label: str, factors: list[Any]) -> Any:
-    """The joint of *factors*, the one factor itself when there is one."""
+def _joint_of(joint: Any, factors: list[Any]) -> Any:
+    """The joint of *factors* of *joint* under its label, the one factor itself when there is one.
+
+    A joint of several factors is labeled when *joint* is.
+    """
     if len(factors) == 1:
         return factors[0]
     if _factor_graph(tuple(factors)).unmet is None:
-        return FactoredDistribution(label, factors)
-    return FactoredConditionalDistribution(label, factors)
+        part = FactoredDistribution(joint.label, factors)
+    else:
+        part = FactoredConditionalDistribution(joint.label, factors)
+    return _with_named(part, _is_named(joint))
 
 
 def model_factors(target: Any) -> ModelFactors | None:
@@ -574,8 +581,8 @@ def model_factors(target: Any) -> ModelFactors | None:
             return None
     if not prior_factors or not likelihood_factors:
         return None
-    prior = _law_at_defaults(_joint_of(joint.label, prior_factors), joint.event_spec.components)
-    likelihood = _joint_of(joint.label, likelihood_factors)
+    prior = _law_at_defaults(_joint_of(joint, prior_factors), joint.event_spec.components)
+    likelihood = _joint_of(joint, likelihood_factors)
     if not isinstance(prior, Distribution):
         return None
     slots = (

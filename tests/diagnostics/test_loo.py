@@ -656,9 +656,7 @@ def _gaussian_regression(n_obs: int = 20, n_features: int = 1):
     rng = np.random.default_rng(0)
     x = rng.standard_normal((n_obs, n_features))
     design = jnp.asarray(np.concatenate([np.ones((n_obs, 1)), x], axis=1), dtype=jnp.float32)
-    prior = MultivariateNormal(
-        loc=jnp.zeros(n_features + 1), cov=jnp.eye(n_features + 1), label="beta"
-    )
+    prior = MultivariateNormal("beta", loc=jnp.zeros(n_features + 1), cov=jnp.eye(n_features + 1))
     return glm_likelihood("y", GaussianFamily(), X=design, dispersion=1.0) * prior, design
 
 
@@ -717,7 +715,7 @@ class TestAddLogLikelihood:
 
     def test_a_joint_whose_likelihood_scores_no_observation_raises(self):
         post, _, data = self._setup()
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="beta")
+        prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
         with pytest.raises(
             TypeError, match="cannot compute pointwise log likelihoods: the model must be"
         ):

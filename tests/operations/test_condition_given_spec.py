@@ -10,7 +10,9 @@ from tests._ops import condition_on
 
 def _model():
     likelihood = conditional_distribution(
-        "y", lambda mu: Normal("y", mu * jnp.ones(8), 1.0), given_spec={"mu": NumericArraySpec(())}
+        lambda mu: Normal("y", mu * jnp.ones(8), 1.0),
+        given_spec={"mu": NumericArraySpec(())},
+        label="y",
     )
     return likelihood * Normal("mu", 0.0, 1.0)
 

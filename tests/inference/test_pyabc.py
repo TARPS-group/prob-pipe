@@ -80,7 +80,7 @@ def _observed(*values: float) -> dict:
 
 
 def _product(*names: str):
-    return FactoredDistribution("prior", [Normal(loc=0.0, scale=3.0, label=n) for n in names])
+    return FactoredDistribution("prior", [Normal(n, loc=0.0, scale=3.0) for n in names])
 
 
 def _means(post) -> dict[str, np.ndarray]:
@@ -95,20 +95,20 @@ class TestPyABCCheck:
 
     def test_rejects_non_generative_model(self):
         info = PyABCSMCMethod().check(
-            observed_target(Normal(loc=0.0, scale=1.0, label="x"), jnp.array([0.0]))
+            observed_target(Normal("x", loc=0.0, scale=1.0), jnp.array([0.0]))
         )
         assert not info.feasible
 
     def test_accepts_bare_marginal(self):
         """A bare (non-product) marginal flattens to a length-1 vector, so it's
         feasible — check() and execute() agree (no feasible-then-crash)."""
-        model = _model(Normal(loc=0.0, scale=3.0, label="theta"))
+        model = _model(Normal("theta", loc=0.0, scale=3.0))
         assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
 
     def test_accepts_multivariate_prior(self):
         """A correlated/multivariate prior is feasible — the joint design isn't
         restricted to products of independent scalar marginals."""
-        model = _model(MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, label="m"))
+        model = _model(MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0))
         assert PyABCSMCMethod().check(observed_target(model, _observed(2.0, -1.0))).feasible
 
     def test_rejects_prior_without_usable_density(self, monkeypatch):
@@ -158,7 +158,7 @@ class TestPyABCRecovery:
     def test_recovery_multivariate(self):
         """Recovery with a multivariate prior — draws come back as the named
         vector-valued component."""
-        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, label="m")
+        prior = MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0)
         with workflow_run(seed=0):
             post = condition_on.with_options(
                 method="pyabc_smcabc",
@@ -402,7 +402,7 @@ class TestPyABCDistributionBacking:
         """With off-diagonal covariance the density is genuinely joint — a
         product of marginals would give a different number."""
         cov = jnp.array([[2.0, 1.2], [1.2, 1.5]])
-        prior = MultivariateNormal(loc=jnp.array([0.5, -0.5]), cov=cov, label="m")
+        prior = MultivariateNormal("m", loc=jnp.array([0.5, -0.5]), cov=cov)
         pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
         expected = float(np.exp(np.asarray(prior._log_prob(jnp.array([0.3, -0.2])))))
         assert pd.pdf({"p0": 0.3, "p1": -0.2}) == pytest.approx(expected, rel=1e-5)
@@ -437,9 +437,7 @@ class TestPyABCDistributionBacking:
     def test_supports_non_converter_family(self):
         """Any sampleable marginal with a density works (no fixed family list):
         StudentT, which has no scipy-converter mapping, is feasible."""
-        model = _model(
-            FactoredDistribution("prior", [C.StudentT(df=5.0, loc=0.0, scale=3.0, label="t")])
-        )
+        model = _model(FactoredDistribution("prior", [C.StudentT("t", df=5.0, loc=0.0, scale=3.0)]))
         assert PyABCSMCMethod().check(observed_target(model, _observed(2.0))).feasible
 
 

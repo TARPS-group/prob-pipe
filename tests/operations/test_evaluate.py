@@ -98,7 +98,7 @@ def test_a_batch_is_swept_elementwise():
 
 def _weighted_atoms():
     return EmpiricalDistribution(
-        "e", jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5])
+        jnp.array([0.0, 1.0, 2.0]), weights=jnp.array([0.2, 0.3, 0.5]), component="e"
     )
 
 

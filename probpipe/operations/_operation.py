@@ -44,6 +44,7 @@ from typing import Any, Protocol, runtime_checkable
 from .._messages import unknown_names
 from ..core._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from ..core._dispatch import BaseDispatchRegistry, Feasibility, MethodInfo, ResolutionError
+from ..core._expression import Expression, Named
 from ..core._kinds import _KINDS
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
@@ -156,7 +157,13 @@ class BoundCall:
 
 
 def _call_label(call: BoundCall) -> str:
-    """The label the result of *call* takes, as its operation derives it (II.4)."""
+    """The label the result of *call* takes, as its operation derives it (II.4).
+
+    A route reads it to label a term it builds before the result boundary
+    gives the result its expression. The label names the term and is never a
+    component or a level name, since a derived label may hold ``~``, a space,
+    ``;``, or ``/``.
+    """
     return call.operation._derived_label(call.operands)
 
 
@@ -898,7 +905,8 @@ class Operation(Function):
     label : callable, optional
         The label rule, called with the call's arguments it names and
         returning the result's label. Without it, the result takes the label
-        of the primary operand, the first parameter's argument (II.4).
+        and the expression of the primary operand, the first parameter's
+        argument (II.4).
 
     Raises
     ------
@@ -966,6 +974,7 @@ class Operation(Function):
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
+        set_attribute(self, "_expression_rule", None)
         if derived:
             self.register_route(_identity_route(declaration, self.signature, identity_check))
 
@@ -978,14 +987,53 @@ class Operation(Function):
 
     # -- declarations ------------------------------------------------------
 
+    def _derived_expression(self, values: Mapping[str, Any]) -> Expression | None:
+        """The expression of the result of a call on *values*, the bound arguments by parameter name.
+
+        The operation's private expression rule builds it from its operands'
+        expressions where the operation has one, and
+        :func:`_install_expression_rule` installs it; a rule that returns
+        ``None`` leaves the result the expression its route gave it. An
+        operation with a label rule gives its result that label alone.
+        Otherwise the result takes the expression of the primary operand, the
+        first parameter's argument, and an argument that is not a tracked term
+        leaves the operation's own output label.
+
+        Parameters
+        ----------
+        values : Mapping of str to Any
+            The call's bound arguments, by parameter name.
+
+        Returns
+        -------
+        Expression or None
+            The result's expression, or ``None`` when the route's result keeps
+            its own.
+        """
+        rule = self._expression_rule
+        if rule is not None:
+            return rule(**{name: values.get(name) for name in _parameter_names(rule)})
+        rule = self._label_rule
+        if rule is not None:
+            return Named(rule(**{name: values.get(name) for name in _parameter_names(rule)}))
+        primary = values.get(next(iter(self.signature.parameters), ""))
+        return (
+            primary._embedded_expression()
+            if isinstance(primary, TrackedTerm)
+            else Named(self.output_label)
+        )
+
     def _derived_label(self, values: Mapping[str, Any]) -> str:
         """The label of the result of a call on *values*, the bound arguments by parameter name.
 
-        The label rule derives it where the operation has one. Otherwise the
-        result takes the label of the primary operand, the first parameter's
-        argument, and an argument that is not a tracked term leaves the
-        operation's own output label.
+        It is the label of the expression :meth:`_derived_expression` builds.
+        A result that keeps its route's expression is labeled by the label
+        rule where the operation has one, and otherwise by the primary
+        operand's label (II.4).
         """
+        expression = self._derived_expression(values)
+        if expression is not None:
+            return expression.render_label()
         rule = self._label_rule
         if rule is not None:
             return rule(**{name: values.get(name) for name in _parameter_names(rule)})
@@ -1909,3 +1957,38 @@ def operation(
         return op
 
     return decorate
+
+
+def _install_expression_rule(op: Operation, rule: Callable[..., Expression | None]) -> None:
+    """Install *rule* as *op*'s expression rule, which the result boundary reads (II.4).
+
+    The rule is called with the call's arguments it names, as the label rule
+    is, and returns the expression of the result, built from the operands'
+    expressions, or ``None`` for a result that keeps the expression its route
+    gave it. The result boundary gives each point's result the expression
+    after the route returns, so every route of *op* gives its result the same
+    expression, and the result's label is the expression's label.
+
+    Parameters
+    ----------
+    op : Operation
+        The operation whose results carry the expression.
+    rule : callable
+        The expression rule, whose parameters are parameters of *op*.
+
+    Raises
+    ------
+    TypeError
+        If *rule* is not callable, or it reads a name that *op* does not
+        declare as a parameter.
+    """
+    owner = f"operation {op.label!r}"
+    if not callable(rule):
+        raise TypeError(f"{owner} needs a callable expression rule; got {rule!r}")
+    unknown = set(_parameter_names(rule)) - set(op.signature.parameters)
+    if unknown:
+        raise TypeError(
+            f"{owner}: the expression rule reads {sorted(unknown)}, which the declaration "
+            f"does not declare as parameters"
+        )
+    object.__setattr__(op, "_expression_rule", rule)

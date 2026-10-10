@@ -269,7 +269,7 @@ def with_resampling(
                     out_dist.event_spec.spec,
                 )
                 resampled = EmpiricalDistribution(
-                    out_dist.label, atoms, event_spec=out_dist.event_spec
+                    atoms, label=out_dist.label, event_spec=out_dist.event_spec
                 )
                 resampled.with_provenance(
                     Provenance.create(

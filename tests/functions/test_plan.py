@@ -82,7 +82,7 @@ class TestBroadcastRegime:
         assert plan.n_sweep == 1
 
     def test_distribution_value_selects_distribution_regime(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         plan = _plan({"x": dist})
 
@@ -113,7 +113,7 @@ class TestBroadcastRegime:
     def test_array_and_distribution_values_select_nested_regime(self):
         values = {
             "p": _numeric_record_batch("x", range(4)),
-            "noise": Normal(loc=0.0, scale=1.0, label="noise"),
+            "noise": Normal("noise", loc=0.0, scale=1.0),
         }
 
         plan = _plan(values)
@@ -125,7 +125,7 @@ class TestBroadcastRegime:
 
 class TestHintClassification:
     def test_distribution_hints_skip_scalar_distribution_broadcast(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         concrete = _plan({"x": dist}, {"x": Distribution})
         protocol = _plan({"x": dist}, {"x": SupportsSampling})
@@ -264,8 +264,8 @@ class TestStochasticPlanStructure:
     def test_sampled_singleton_plan_is_frozen_and_tuple_only(self):
         plan = _stochastic_plan(
             {
-                "a": Normal(loc=0.0, scale=1.0, label="a"),
-                "b": Normal(loc=1.0, scale=1.0, label="b"),
+                "a": Normal("a", loc=0.0, scale=1.0),
+                "b": Normal("b", loc=1.0, scale=1.0),
             },
             n_broadcast_samples=12,
         )
@@ -324,7 +324,7 @@ class TestStochasticPlanStructure:
         values = {
             "left": _numeric_record_batch("x", range(2), level_name="left"),
             "right": _numeric_record_batch("y", range(3), level_name="right"),
-            "noise": Normal(loc=0.0, scale=1.0, label="noise"),
+            "noise": Normal("noise", loc=0.0, scale=1.0),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=7)
@@ -353,8 +353,8 @@ class TestStochasticSourceGrouping:
             level_name="draw",
         )
         views = batch.select_all()
-        first = Normal(loc=0.0, scale=1.0, label="same")
-        second = Normal(loc=0.0, scale=1.0, label="same")
+        first = Normal("same", loc=0.0, scale=1.0)
+        second = Normal("same", loc=0.0, scale=1.0)
         values = {
             "x": views["x"],
             "y": views["y"],
@@ -375,12 +375,12 @@ class TestStochasticSourceGrouping:
         assert len(stochastic_plan.random_events) == 6
 
     def test_record_views_share_their_known_parent_group(self):
-        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=1.0, scale=1.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=1.0, scale=1.0)
 
         plan = _stochastic_plan(
             {
                 "x": joint["x"],
-                "independent": Normal(loc=2.0, scale=1.0, label="independent"),
+                "independent": Normal("independent", loc=2.0, scale=1.0),
                 "y": joint["y"],
             }
         )
@@ -404,7 +404,7 @@ class TestStochasticSourceGrouping:
         )
 
     def test_direct_aliases_share_one_root_group(self):
-        shared = Normal(loc=0.0, scale=1.0, label="shared")
+        shared = Normal("shared", loc=0.0, scale=1.0)
 
         plan = _stochastic_plan({"first": shared, "second": shared})
 
@@ -416,8 +416,8 @@ class TestStochasticSourceGrouping:
         )
 
     def test_equal_but_distinct_direct_objects_remain_independent(self):
-        first = Normal(loc=0.0, scale=1.0, label="same")
-        second = Normal(loc=0.0, scale=1.0, label="same")
+        first = Normal("same", loc=0.0, scale=1.0)
+        second = Normal("same", loc=0.0, scale=1.0)
 
         plan = _stochastic_plan({"first": first, "second": second})
 
@@ -430,9 +430,9 @@ class TestStochasticSourceGrouping:
 
     def test_root_sibling_and_transitive_views_share_canonical_paths(self):
         joint = (
-            Normal(loc=0.0, scale=1.0, label="left") * Normal(loc=1.0, scale=1.0, label="right")
+            Normal("left", loc=0.0, scale=1.0) * Normal("right", loc=1.0, scale=1.0)
         ).with_path_names({"left": "nested/left", "right": "nested/right"}) * Normal(
-            loc=2.0, scale=1.0, label="top"
+            "top", loc=2.0, scale=1.0
         )
 
         plan = _stochastic_plan(
@@ -454,8 +454,8 @@ class TestStochasticSourceGrouping:
         assert plan.runtime_bindings[0].root is joint
 
     def test_runtime_bindings_do_not_participate_in_canonical_plan_equality(self):
-        first = _stochastic_plan({"x": Normal(loc=0.0, scale=1.0, label="first")})
-        second = _stochastic_plan({"x": Normal(loc=9.0, scale=3.0, label="second")})
+        first = _stochastic_plan({"x": Normal("first", loc=0.0, scale=1.0)})
+        second = _stochastic_plan({"x": Normal("second", loc=9.0, scale=3.0)})
 
         assert first == second
         assert first.runtime_bindings[0].root is not second.runtime_bindings[0].root
@@ -464,8 +464,8 @@ class TestStochasticSourceGrouping:
 class TestStochasticEvaluationPlanning:
     def test_wholly_exact_empiricals_record_cartesian_order_and_no_events(self):
         values = {
-            "a": EmpiricalDistribution("a", jnp.asarray([1.0, 2.0])),
-            "b": EmpiricalDistribution("b", jnp.asarray([10.0, 20.0, 30.0])),
+            "a": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), component="a"),
+            "b": EmpiricalDistribution(jnp.asarray([10.0, 20.0, 30.0]), component="b"),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=10)
@@ -492,9 +492,9 @@ class TestStochasticEvaluationPlanning:
 
     def test_mixed_plan_preserves_stable_greedy_order_and_actual_sample_shape(self):
         values = {
-            "large_first": EmpiricalDistribution("large_first", jnp.arange(5.0)),
-            "small_second": EmpiricalDistribution("small_second", jnp.arange(2.0)),
-            "sampled": Normal(loc=0.0, scale=1.0, label="sampled"),
+            "large_first": EmpiricalDistribution(jnp.arange(5.0), component="large_first"),
+            "small_second": EmpiricalDistribution(jnp.arange(2.0), component="small_second"),
+            "sampled": Normal("sampled", loc=0.0, scale=1.0),
         }
 
         plan = _stochastic_plan(values, n_broadcast_samples=23)
@@ -516,7 +516,7 @@ class TestStochasticEvaluationPlanning:
 
     def test_over_budget_empirical_is_sampled(self):
         plan = _stochastic_plan(
-            {"x": EmpiricalDistribution("x", jnp.arange(20.0))},
+            {"x": EmpiricalDistribution(jnp.arange(20.0), component="x")},
             n_broadcast_samples=5,
         )
 
@@ -529,9 +529,9 @@ class TestStochasticEvaluationPlanning:
     def test_equal_size_empiricals_keep_first_consumer_order_at_greedy_cutoff(self):
         plan = _stochastic_plan(
             {
-                "first": EmpiricalDistribution("first", jnp.arange(3.0)),
-                "second": EmpiricalDistribution("second", jnp.arange(3.0)),
-                "third": EmpiricalDistribution("third", jnp.arange(3.0)),
+                "first": EmpiricalDistribution(jnp.arange(3.0), component="first"),
+                "second": EmpiricalDistribution(jnp.arange(3.0), component="second"),
+                "third": EmpiricalDistribution(jnp.arange(3.0), component="third"),
             },
             n_broadcast_samples=10,
         )
@@ -549,8 +549,8 @@ class TestStochasticEvaluationPlanning:
     def test_event_count_is_sampled_sources_times_units_not_draw_count(self):
         values = {
             "rows": _numeric_record_batch("x", range(3)),
-            "a": Normal(loc=0.0, scale=1.0, label="a"),
-            "b": Normal(loc=1.0, scale=1.0, label="b"),
+            "a": Normal("a", loc=0.0, scale=1.0),
+            "b": Normal("b", loc=1.0, scale=1.0),
         }
 
         small = _stochastic_plan(values, n_broadcast_samples=5)
@@ -577,7 +577,7 @@ class TestStochasticEvaluationPlanning:
         error,
         message,
     ):
-        values = {"x": Normal(loc=0.0, scale=1.0, label="x")}
+        values = {"x": Normal("x", loc=0.0, scale=1.0)}
 
         with pytest.raises(error, match=message):
             _stochastic_plan(values, n_broadcast_samples=n_broadcast_samples)
@@ -585,7 +585,7 @@ class TestStochasticEvaluationPlanning:
 
 class TestStochasticPlanPurity:
     def test_planner_does_not_read_entropy_claim_keys_or_mutate_inputs(self):
-        source = Normal(loc=0.0, scale=1.0, label="x")
+        source = Normal("x", loc=0.0, scale=1.0)
         values = {"x": source}
 
         with (

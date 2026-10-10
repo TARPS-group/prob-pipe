@@ -39,6 +39,7 @@ from probpipe.distributions import (
     SupportsFactors,
     conditional_distribution,
 )
+from probpipe.distributions._factored import _is_named
 
 SCALAR = NumericArraySpec(())
 VECTOR = NumericArraySpec((3,))
@@ -79,9 +80,7 @@ class NormalKernel(ConditionalDistribution):
         if rest:
             return type(self)(self.name, rest, self.event_spec, loc=self._loc, bound=values)
         (component,) = self.event_spec.components
-        return Normal(
-            self.label, self._loc(values), 1.0, event_spec=OutputSpec(**{component: None})
-        )
+        return Normal(component, self._loc(values), 1.0, label=self.label)
 
 
 class Law(Distribution):
@@ -95,7 +94,7 @@ def _likelihood() -> NormalKernel:
 
 def _prior() -> Normal:
     """A law labeled ``prior`` whose component is ``beta``."""
-    return Normal("prior", 0.0, 1.0, event_spec=OutputSpec(beta=None))
+    return Normal("beta", 0.0, 1.0, label="prior")
 
 
 def _law(label: str, component: str, spec: Any = SCALAR) -> Law:
@@ -141,8 +140,8 @@ class TestRequireRules:
     """``F_A ∩ F_B = ∅`` and ``G_B ∩ F_A = ∅``: each violation raises ValueError naming the fix."""
 
     def test_a_component_both_operands_produce_raises(self):
-        first = Normal("first", 0.0, 1.0, event_spec=OutputSpec(a=None))
-        second = Normal("second", 1.0, 1.0, event_spec=OutputSpec(a=None))
+        first = Normal("a", 0.0, 1.0, label="first")
+        second = Normal("a", 1.0, 1.0, label="second")
         with pytest.raises(
             ValueError, match=_mentions("'a'", "'first'", "'second'", "with_path_names")
         ):
@@ -247,7 +246,7 @@ class TestOptionalSlots:
     @staticmethod
     def _scaled() -> ConditionalDistribution:
         return conditional_distribution(
-            "lik", lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": SCALAR}
+            lambda mu, scale=2.0: Normal("y", mu, scale), given_spec={"mu": SCALAR}, label="lik"
         )
 
     def test_an_unmet_optional_slot_leaves_the_joint_unconditional(self):
@@ -335,7 +334,7 @@ class TestOptionalSlots:
     def test_a_slot_two_factors_hold_optional_is_optional_and_feeds_both(self):
         first = self._scaled()
         second = conditional_distribution(
-            "lik2", lambda nu, scale=2.0: Normal("z", nu, scale), given_spec={"nu": SCALAR}
+            lambda nu, scale=2.0: Normal("z", nu, scale), given_spec={"nu": SCALAR}, label="lik2"
         )
         joint = first * second
         assert joint.given_spec.optional == {"scale"}
@@ -347,7 +346,7 @@ class TestOptionalSlots:
         )
 
     def test_an_edge_free_joint_draws_a_kernel_at_its_defaults(self):
-        kernel = conditional_distribution("lik0", lambda scale=2.0: Normal("y", 0.0, scale))
+        kernel = conditional_distribution(lambda scale=2.0: Normal("y", 0.0, scale), label="lik0")
         joint = kernel * Normal("c", 0.0, 1.0)
         assert isinstance(joint, FactoredDistribution)
         draws = joint._sample(jax.random.PRNGKey(0), (4000,))
@@ -625,6 +624,37 @@ class TestLabels:
         assert (_likelihood() * posterior).label == "lik·(model | y)"
         assert (_likelihood() * _prior().with_label("my prior")).label == "lik·[my prior]"
 
+    def test_a_product_operand_joins_as_it_is(self):
+        """Labels join associatively, so a product's label is never parenthesized in a joint."""
+        assert ((_likelihood() * _prior()) * _law("d", "d")).label == "lik·prior·d"
+        product = _prior().with_label("x·y")
+        assert (_likelihood() * product * _law("d", "d")).label == "lik·x·y·d"
+
+    def test_a_product_inside_another_expression_is_parenthesized_with_it(self):
+        posterior = _prior().with_label("(x·y) | y")
+        assert (_likelihood() * posterior).label == "lik·((x·y) | y)"
+
+
+class TestTheJointIsUnlabeled:
+    """A joint that ``*`` builds is unlabeled, so it reads factor by factor."""
+
+    def test_a_composed_joint_of_either_kind_is_unlabeled(self):
+        assert _is_named(_likelihood() * _prior()) is False
+        assert _is_named(_likelihood() * _law("c", "c")) is False
+
+    def test_a_composed_joint_reads_factor_by_factor(self):
+        assert (_likelihood() * _prior()).notation == "lik(y | beta)·prior(beta)"
+        assert (_likelihood() * _law("c", "c")).notation == "lik(y | beta)·c(c)"
+
+    def test_composing_a_labeled_joint_gives_an_unlabeled_one(self):
+        """The labeled joint is one operand, so it reads by its label in the label and the notation."""
+        model = (_likelihood() * _prior()).with_label("model")
+        joint = model * _law("d", "d")
+        assert _is_named(model) is True
+        assert _is_named(joint) is False
+        assert joint.label == "model·d"
+        assert joint.notation == "model(y, beta)·d(d)"
+
     def test_exchanging_independent_operands_changes_the_label_and_the_order(self):
         a, b = _law("a", "a"), _law("b", "b")
         ab, ba = a * b, b * a
@@ -658,13 +688,13 @@ class TestLabelsNeverDecideStructure:
     """Composition matches component and slot names; a label never meets a given."""
 
     def test_a_label_that_matches_a_given_does_not_meet_it(self):
-        impostor = Normal("beta", 0.0, 1.0, event_spec=OutputSpec(theta=None))
+        impostor = Normal("theta", 0.0, 1.0, label="beta")
         joint = _likelihood() * impostor
         assert isinstance(joint, FactoredConditionalDistribution)
         assert list(joint.given_spec) == ["beta"]
 
     def test_a_component_meets_a_given_whatever_its_label(self):
-        joint = _likelihood() * Normal("anything", 0.0, 1.0, event_spec=OutputSpec(beta=None))
+        joint = _likelihood() * Normal("beta", 0.0, 1.0, label="anything")
         assert isinstance(joint, FactoredDistribution)
 
     def test_a_law_keeps_its_component_after_with_name(self):

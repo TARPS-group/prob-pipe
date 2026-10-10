@@ -12,6 +12,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericArraySpec,
+    OutputSpec,
     condition_on,
     convert,
     mean,
@@ -37,7 +38,7 @@ def simple_model():
 
     x = np.asarray(np.linspace(-1, 1, 20)).astype(np.float32)
     X = jnp.asarray(np.stack([np.ones_like(x), x], axis=1))
-    prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), label="beta")
+    prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=5.0 * jnp.eye(2))
     return glm_likelihood("y", PoissonFamily(), X=X) * prior
 
 
@@ -107,7 +108,7 @@ class TestInferenceMethodRegistry:
 
     def test_a_named_method_runs_on_a_bare_law(self):
         """The registry runs a method on a plain law, whose posterior is the law itself."""
-        prior = Normal(loc=0.0, scale=1.0, label="x")
+        prior = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=0):
             posterior = inference_method_registry.execute(
                 prior, method="tfp_nuts", num_results=50, num_warmup=20
@@ -241,7 +242,7 @@ def _make_unnormalized_distribution():
 
     class UnnormalizedDist(_UnnormalizedTarget, Distribution):
         def __init__(self):
-            super().__init__("unnorm", NumericArraySpec((2,)))
+            super().__init__("unnorm", OutputSpec(unnorm=NumericArraySpec((2,))))
 
     return UnnormalizedDist()
 
@@ -254,7 +255,7 @@ def _make_normalized_distribution():
         # Inheriting SupportsLogProb gives the default
         # _unnormalized_log_prob (delegating to _log_prob) for free.
         def __init__(self):
-            super().__init__("norm", NumericArraySpec((2,)))
+            super().__init__("norm", OutputSpec(norm=NumericArraySpec((2,))))
 
     return NormalizedDist()
 
@@ -360,7 +361,7 @@ class TestUnnormalizedLogProbInference:
 
         class NoDensityDist(Distribution):
             def __init__(self):
-                super().__init__("no_density", NumericArraySpec((2,)))
+                super().__init__("no_density", OutputSpec(no_density=NumericArraySpec((2,))))
 
         dist = NoDensityDist()
         for method in ("tfp_nuts", "blackjax_rwmh"):
@@ -387,7 +388,7 @@ def gaussian_model():
     likelihood + data) pass ``check()`` on this target — so it is the
     canonical case for testing the 85-vs-75 tier ordering.
     """
-    prior = Normal(loc=0.0, scale=1.0, label="mu")
+    prior = Normal("mu", loc=0.0, scale=1.0)
     likelihood = ObservationKernel(
         "y",
         {"mu": prior.event_spec.spec},

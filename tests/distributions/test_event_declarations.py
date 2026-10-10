@@ -161,14 +161,14 @@ def _pymc_model_fn(y=None):
 
 def _pymc_model() -> PyMCModel:
     pytest.importorskip("pymc")
-    return PyMCModel("model", _pymc_model_fn)
+    return PyMCModel(_pymc_model_fn, label="model")
 
 
 def _stan_model() -> _StanPosterior:
     require_stanc()
     stan_file = pathlib.Path(tempfile.mkdtemp()) / "declared.stan"
     stan_file.write_text("parameters { real mu; } model { mu ~ normal(0, 1); }")
-    return StanModel("model", str(stan_file))
+    return StanModel(str(stan_file), label="model")
 
 
 def _stan_view() -> _UnconstrainedStanView:
@@ -218,9 +218,9 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     Multinomial: lambda: Multinomial("x", 4.0, probs=jnp.array([0.2, 0.3, 0.5])),
     Wishart: lambda: Wishart("x", 4.0, scale_tril=jnp.eye(2)),
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
-    KDEDistribution: lambda: KDEDistribution("kde", jnp.arange(6.0).reshape(3, 2)),
+    KDEDistribution: lambda: KDEDistribution(jnp.arange(6.0).reshape(3, 2), component="kde"),
     EmpiricalDistribution: lambda: EmpiricalDistribution(
-        "e", OpaqueBatch("labels", ["a", "b"], "e")
+        OpaqueBatch("labels", ["a", "b"], "e"), component="e"
     ),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
         "b", Normal("x", 0.0, 1.0), replicate_size=3
@@ -249,10 +249,10 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _StanPosterior: _stan_model,
     _UnconstrainedStanView: _stan_view,
     _FunctionLaw: lambda: distribution(
-        "u",
         sample=_standard_normal_draw,
         log_prob=_standard_normal_density,
         event_spec=OutputSpec(x=probpipe.NumericArraySpec((2,))),
+        label="u",
     ),
     FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
@@ -261,12 +261,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     ),
     _LogRatePoisson: lambda: PoissonFamily()._build_canonical("y", jnp.zeros(3)),
     MixtureDistribution: lambda: MixtureDistribution(
-        "m",
         [
-            Normal("a", 0.0, 1.0, event_spec=OutputSpec(x=None)),
-            Normal("b", 1.0, 1.0, event_spec=OutputSpec(x=None)),
+            Normal("x", 0.0, 1.0, label="a"),
+            Normal("x", 1.0, 1.0, label="b"),
         ],
         jnp.array([0.5, 0.5]),
+        label="m",
     ),
     LinearPushforwardDistribution: lambda: LinearPushforwardDistribution(
         "y", MultivariateNormal("x", jnp.zeros(2), cov=jnp.eye(2)), DenseLinOp(jnp.eye(2))
@@ -279,13 +279,13 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
     # A kernel density estimate does not rebuild itself under new paths.
     _RenamedDistribution: lambda: KDEDistribution(
-        "kde",
         NumericRecordBatch(
             "rows",
             {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])},
             "row",
             element_spec=NumericRecordSpec(a=(), b=()),
         ),
+        label="kde",
     ).with_path_names({"a": "g/a"}),
 }
 

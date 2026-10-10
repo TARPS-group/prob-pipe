@@ -12,6 +12,7 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    BatchSpec,
     EmpiricalDistribution,
     FunctionBatch,
     NumericArrayBatch,
@@ -19,6 +20,7 @@ from probpipe import (
     OpaqueSpec,
     Record,
     RecordSpec,
+    ResultKindError,
     ResultSchemaError,
     TrackedTerm,
     workflow_run,
@@ -29,11 +31,12 @@ from probpipe.core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
+from probpipe.core._expression import Conditioned, Named, Summary, draw_of
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
-from probpipe.distributions._distribution import Distribution, DistributionSpec
+from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.operations import (
     BoundCall,
     OperandSummary,
@@ -45,7 +48,7 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import _workflow_draws
+from probpipe.operations._operation import _install_expression_rule, _workflow_draws
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
@@ -901,6 +904,38 @@ def _untracked(tree: Any) -> bool:
 
 
 class TestRawResults:
+    @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
+    @pytest.mark.parametrize("spec", [NumericArraySpec(()), BatchSpec(NumericArraySpec(()), row=2)])
+    def test_a_route_returning_the_wrong_kind_is_refused(self, mode, spec):
+        toy = _toy(result=lambda d: OutputSpec(toy=spec))
+        toy.structural_route(
+            "wrong_kind",
+            check=lambda call, result: True,
+            execute=lambda call, result: "text",
+            exact=True,
+        )
+        invoke = toy.apply if mode == "apply" else toy.with_options(raw=mode == "raw")
+
+        with pytest.raises(ValueError if mode == "apply" else ResultKindError):
+            invoke(Gaussian("g"))
+
+    @pytest.mark.parametrize("error", [TypeError("route failed"), ValueError("route failed")])
+    @pytest.mark.parametrize("mode", ["plain", "apply"])
+    def test_an_exception_from_the_route_is_propagated_unchanged(self, error, mode):
+        def execute(call, result):
+            raise error
+
+        toy = _toy(result=_event)
+        toy.structural_route(
+            "failure", check=lambda call, result: True, execute=execute, exact=True
+        )
+        invoke = toy.apply if mode == "apply" else toy
+
+        with pytest.raises(type(error)) as raised:
+            invoke(Gaussian("g"))
+
+        assert raised.value is error
+
     def test_a_raw_record_is_the_nested_mapping_of_its_raw_leaves(self):
         result = center.with_options(raw=True)(Pair("p"))
         assert type(result) is dict and set(result) == {"a", "b"}
@@ -982,6 +1017,51 @@ class TestResultAndRandomness:
     def test_a_label_rule_reads_only_the_declarations_parameters(self):
         with pytest.raises(TypeError, match="the label rule reads"):
             _toy(label=lambda law: "x")
+
+    def test_an_expression_rule_gives_a_law_result_its_expression(self):
+        returned = Gaussian("g")
+        toy = _toy()
+        toy.structural_route(
+            "law",
+            check=lambda call, result: True,
+            execute=lambda call, result: returned,
+            exact=True,
+        )
+        _install_expression_rule(toy, lambda d: Conditioned(d._embedded_expression(), ("y",)))
+        result = toy(Gaussian("g"))
+        assert _fixed_paths(result) == ("y",)
+        assert (result.label, result.notation) == ("g", "g(g; y)")
+        assert _fixed_paths(returned) == ()
+
+    def test_an_expression_rule_labels_a_value_result(self):
+        toy = _toy()
+        toy.structural_route("value", **_route(True, 1.0), exact=True)
+        _install_expression_rule(toy, lambda d: Summary("E", draw_of(d)))
+        result = toy(Gaussian("g"))
+        assert (float(result), result.label) == (1.0, "E[g ~ g]")
+
+    def test_an_expression_rule_that_returns_none_keeps_the_routes_expression(self):
+        toy = _toy()
+        toy.structural_route(
+            "law",
+            check=lambda call, result: True,
+            execute=lambda call, result: Gaussian("g").with_label("routed"),
+            exact=True,
+        )
+        _install_expression_rule(toy, lambda: None)
+        assert toy(Gaussian("g")).label == "routed"
+
+    def test_an_operation_without_an_expression_rule_carries_its_primary_operands(self):
+        law = Gaussian("g")
+        assert _toy()._derived_expression({"d": law}) == law._embedded_expression()
+        labeled = _toy(label=lambda d: f"{d.label}_toy")
+        assert labeled._derived_expression({"d": law}) == Named("g_toy")
+
+    def test_an_expression_rule_reads_only_the_declarations_parameters(self):
+        with pytest.raises(TypeError, match="the expression rule reads"):
+            _install_expression_rule(_toy(), lambda law: Named("x"))
+        with pytest.raises(TypeError, match="needs a callable expression rule"):
+            _install_expression_rule(_toy(), Named("x"))
 
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
         laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")

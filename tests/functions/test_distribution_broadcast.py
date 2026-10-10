@@ -65,7 +65,7 @@ def _empirical_of_rows(label: str, rows: Record, weights=None) -> EmpiricalDistr
     element = _reshaped_template(rows.event_template, lambda shape: shape[1:])
     columns = {path: rows[path] for path in rows.event_template}
     atoms = _batch_class_for(element)(label, columns, "atom", element_spec=element)
-    return EmpiricalDistribution(label, atoms, weights)
+    return EmpiricalDistribution(atoms, weights, label=label)
 
 
 def _drawn(law: EmpiricalDistribution, path: str) -> np.ndarray:
@@ -128,7 +128,7 @@ class _RecordingNormal(Normal):
         self.sample_calls = sample_calls
         for attribute, value in attributes.items():
             setattr(self, attribute, value)
-        super().__init__(loc=0.0, scale=1.0, label=label)
+        super().__init__(label, loc=0.0, scale=1.0, label=label)
 
     def _sample(self, key, sample_shape=()):
         self.sample_calls.append((key, tuple(sample_shape)))
@@ -219,7 +219,7 @@ class TestExecuteDistributionBroadcast:
 
     def test_root_and_nested_view_use_the_same_sampled_realization(self):
         joint = (
-            Normal(loc=0.0, scale=1.0, label="leaf") * Normal(loc=3.0, scale=1.0, label="other")
+            Normal("leaf", loc=0.0, scale=1.0) * Normal("other", loc=3.0, scale=1.0)
         ).with_path_names({"leaf": "nested/leaf"})
         values = {"root": joint, "leaf": joint["nested/leaf"]}
 
@@ -243,9 +243,9 @@ class TestExecuteDistributionBroadcast:
 
     def test_weighted_empirical_aliases_enumerate_once(self):
         shared = EmpiricalDistribution(
-            "shared",
             jnp.asarray([1.0, 4.0]),
             weights=jnp.asarray([0.2, 0.8]),
+            component="shared",
         )
         values = {"first": shared, "second": shared}
 
@@ -305,7 +305,7 @@ class TestExecuteDistributionBroadcast:
 
     def test_sample_path_uses_execution_request(self, monkeypatch):
         values = {
-            "x": Normal(loc=0.0, scale=1.0, label="x"),
+            "x": Normal("x", loc=0.0, scale=1.0),
             "offset": 2.0,
         }
         execution = _execution_config(mode="thread", max_workers=2, name="shift")
@@ -358,14 +358,14 @@ class TestExecuteDistributionBroadcast:
     def test_empirical_enumeration_preserves_alignment_and_weights(self):
         values = {
             "x": EmpiricalDistribution(
-                "x",
                 jnp.asarray([[1.0], [2.0]]),
                 weights=jnp.asarray([0.25, 0.75]),
+                component="x",
             ),
             "y": EmpiricalDistribution(
-                "y",
                 jnp.asarray([[10.0], [20.0]]),
                 weights=jnp.asarray([0.4, 0.6]),
+                component="y",
             ),
         }
 
@@ -408,7 +408,7 @@ class TestExecuteDistributionBroadcast:
         )
 
     def test_exact_empirical_size_must_match_the_frozen_plan(self):
-        empirical = EmpiricalDistribution("x", jnp.asarray([1.0, 2.0, 3.0]))
+        empirical = EmpiricalDistribution(jnp.asarray([1.0, 2.0, 3.0]), component="x")
         values = {"x": empirical}
         plan = _stochastic_plan(values, 8)
         atoms = NumericArrayBatch(
@@ -433,7 +433,7 @@ class TestExecuteDistributionBroadcast:
             )
 
     def test_jax_path_vectorizes_samples_and_outputs(self):
-        values = {"x": Normal(loc=1.0, scale=0.5, label="x")}
+        values = {"x": Normal("x", loc=1.0, scale=0.5)}
         seen = {"required": False}
 
         def double(x):
@@ -463,7 +463,7 @@ class TestExecuteDistributionBroadcast:
         np.testing.assert_allclose(_drawn(result, "double"), _drawn(result, "x") * 2.0)
 
     def test_jax_prefect_path_requires_prefect(self, monkeypatch):
-        values = {"x": Normal(loc=1.0, scale=0.5, label="x")}
+        values = {"x": Normal("x", loc=1.0, scale=0.5)}
         monkeypatch.setattr(_broadcast, "task", None)
         monkeypatch.setattr(_broadcast, "flow", None)
         plan = _stochastic_plan(values, 6)
@@ -530,7 +530,7 @@ class TestExecuteDistributionBroadcast:
         assert commits == []
 
     def test_same_parent_views_share_parent_sample(self):
-        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
         view_x = joint["x"]
         values = {"a": view_x, "b": view_x}
 
@@ -573,8 +573,8 @@ class TestExecuteDistributionBroadcast:
         sampled_calls = []
         values = {
             "exact": EmpiricalDistribution(
-                "exact",
                 jnp.asarray([1.0, 2.0]),
+                component="exact",
             ),
             "sampled": _RecordingNormal(sampled_calls, label="sampled"),
         }
@@ -617,7 +617,7 @@ class TestExecuteDistributionBroadcast:
         error_type,
         message,
     ):
-        values = {"x": Normal(loc=0.0, scale=1.0, label="x")}
+        values = {"x": Normal("x", loc=0.0, scale=1.0)}
         invalid_plan = replace(
             _stochastic_plan(values, 5),
             n_broadcast_samples=n_broadcast_samples,
@@ -640,7 +640,7 @@ class TestExecuteDistributionBroadcast:
             )
 
     def test_low_n_broadcast_samples_warns(self):
-        values = {"x": Normal(loc=0.0, scale=1.0, label="x")}
+        values = {"x": Normal("x", loc=0.0, scale=1.0)}
         plan = _stochastic_plan(values, 3)
         with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
             result = _broadcast.execute_distribution_broadcast(
@@ -676,7 +676,7 @@ class TestCoSamplingGroups:
 
     @staticmethod
     def _joint():
-        return Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
+        return Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
 
     @staticmethod
     def _sample(values, names, *, n=8, seed=3):
@@ -694,7 +694,7 @@ class TestCoSamplingGroups:
 
     def test_the_same_distribution_passed_twice_is_drawn_once(self):
         """The alias case: two references to one law denote one random variable."""
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         sampled = self._sample({"a": dist, "b": dist}, ("a", "b"))
 
         np.testing.assert_array_equal(sampled[_ref("a")], sampled[_ref("b")])
@@ -727,8 +727,8 @@ class TestCoSamplingGroups:
 
     def test_arguments_with_no_common_root_are_drawn_independently(self):
         """Separate groups sample the product law through distinct planned events."""
-        first = Normal(loc=0.0, scale=1.0, label="x")
-        second = Normal(loc=0.0, scale=1.0, label="y")
+        first = Normal("x", loc=0.0, scale=1.0)
+        second = Normal("y", loc=0.0, scale=1.0)
         values = {"a": first, "b": second}
         plan = _stochastic_plan(values, 8)
         assert plan is not None
@@ -775,14 +775,14 @@ class TestCoSamplingThroughACall:
         execution paths share: a divergence here would mean one backend silently
         answering a different question from another.
         """
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         result = self._run(self._difference(dispatch=dispatch), dist, dist)
 
         np.testing.assert_array_equal(np.asarray(result.atoms), np.zeros(8))
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_include_inputs_reports_one_realization_under_both_names(self, dispatch):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         result = self._run(
             self._difference(dispatch=dispatch, include_inputs=True),
             dist,
@@ -800,8 +800,8 @@ class TestCoSamplingThroughACall:
         their parameters and names, so they sample the product; only a shared
         object is one variable.
         """
-        first = Normal(loc=0.0, scale=1.0, label="x")
-        second = Normal(loc=0.0, scale=1.0, label="x")
+        first = Normal("x", loc=0.0, scale=1.0)
+        second = Normal("x", loc=0.0, scale=1.0)
 
         assert not np.allclose(
             np.asarray(self._run(self._difference(), first, second).atoms),
@@ -816,8 +816,8 @@ class TestCoSamplingThroughACall:
         """The complementary case: independence must survive the fix."""
         result = self._run(
             self._difference(),
-            Normal(loc=0.0, scale=1.0, label="x"),
-            Normal(loc=0.0, scale=1.0, label="y"),
+            Normal("x", loc=0.0, scale=1.0),
+            Normal("y", loc=0.0, scale=1.0),
         )
 
         assert not np.allclose(np.asarray(result.atoms), 0.0)
@@ -830,7 +830,7 @@ class TestCoSamplingThroughACall:
         differently as ``n_broadcast_samples`` fell below the product size —
         enumerating both, then enumerating one and sampling the other.
         """
-        empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="e")
         result = self._run(
             self._difference(n_broadcast_samples=n_broadcast_samples),
             empirical,
@@ -847,7 +847,7 @@ class TestCoSamplingThroughACall:
         Its ``len`` is the field count and its ``shape`` raises, so the row count
         had to come from somewhere that means one thing for every batched value.
         """
-        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
         lifted = Function(
             label="function", fn=lambda a: a["x"], dispatch="sequential", n_broadcast_samples=8
         )
@@ -856,7 +856,7 @@ class TestCoSamplingThroughACall:
 
     def test_a_parent_and_its_own_view_lift_together(self):
         """The remaining IV.2 case, end to end: ``f(d, d["x"])`` is one draw."""
-        joint = Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y")
+        joint = Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0)
         lifted = Function(
             label="function",
             fn=lambda a, b: a["x"] - b,
@@ -1019,7 +1019,7 @@ class TestCoSamplingThroughACall:
     def test_a_sampled_nested_record_valued_law_lifts_rowwise(self, dispatch):
         """Nested records are supported up to the row-wise dispatch boundary."""
         nested = (
-            (Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y"))
+            (Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0))
             .with_path_names({"x": "group/x", "y": "group/y"})
             .with_label("nested")
         )
@@ -1035,7 +1035,7 @@ class TestCoSamplingThroughACall:
     def test_a_sampled_nested_record_valued_law_matches_sequential_under_jax(self):
         """The draw supplies nested record structure before either body is mapped."""
         nested = (
-            (Normal(loc=0.0, scale=1.0, label="x") * Normal(loc=10.0, scale=1.0, label="y"))
+            (Normal("x", loc=0.0, scale=1.0) * Normal("y", loc=10.0, scale=1.0))
             .with_path_names({"x": "group/x", "y": "group/y"})
             .with_label("nested")
         )
@@ -1076,7 +1076,7 @@ class TestCoSamplingThroughACall:
 
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
-        empirical = EmpiricalDistribution("e", jnp.array([1.0, 2.0, 3.0]))
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="e")
         result = self._run(self._difference(include_inputs=True), empirical, empirical)
 
         np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
@@ -1091,7 +1091,7 @@ class TestTheDrawsOfALargeEmpiricalLaw:
             return x
 
         with workflow_run(seed=0):
-            result = identity(EmpiricalDistribution("x", jnp.arange(1000.0)))
+            result = identity(EmpiricalDistribution(jnp.arange(1000.0), component="x"))
         values = np.asarray(result.atoms).ravel()
         assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
         assert len(np.unique(values)) == result.num_atoms
@@ -1105,8 +1105,8 @@ class TestTheDrawsOfALargeEmpiricalLaw:
 
         with workflow_run(seed=0):
             result = pair(
-                EmpiricalDistribution("a", jnp.arange(20.0)),
-                EmpiricalDistribution("b", 100.0 + jnp.arange(20.0)),
+                EmpiricalDistribution(jnp.arange(20.0), component="a"),
+                EmpiricalDistribution(100.0 + jnp.arange(20.0), component="b"),
             )
         sampled = np.asarray(result.atoms)[:, 1]
         assert result.num_atoms == 240
@@ -1122,7 +1122,9 @@ class TestTheDrawsOfALargeEmpiricalLaw:
         weights = jax.random.uniform(jax.random.PRNGKey(1), (1000,))
         weights = weights / weights.sum()
         with workflow_run(seed=0):
-            result = identity(EmpiricalDistribution("w", jnp.arange(1000.0), weights=weights))
+            result = identity(
+                EmpiricalDistribution(jnp.arange(1000.0), weights=weights, component="w")
+            )
         drawn = np.bincount(np.asarray(result.atoms).ravel().astype(int), minlength=1000)
         expected = result.num_atoms * np.asarray(weights)
         assert np.all(np.abs(drawn - expected) < 2.0)
@@ -1221,7 +1223,7 @@ class TestTheProbeModelsItsExecutorsTransform:
     )
     def test_a_batch_returning_body_falls_back_rather_than_failing_in_the_executor(self):
         """The regression: this raised the pytree rank error out of ``vmap``."""
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         result = self._run(self._returns_a_batch(), dist)
 
@@ -1232,7 +1234,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         raises=NotImplementedError,
     )
     def test_the_fallback_is_what_ran(self, caplog):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
             self._run(self._returns_a_batch(), dist)
@@ -1245,7 +1247,7 @@ class TestTheProbeModelsItsExecutorsTransform:
     )
     def test_the_fallback_agrees_with_explicit_sequential(self):
         """Falling back costs speed, never the answer."""
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         fell_back = self._run(self._returns_a_batch(dispatch="auto"), dist)
         sequential = self._run(self._returns_a_batch(dispatch="sequential"), dist)
@@ -1254,14 +1256,14 @@ class TestTheProbeModelsItsExecutorsTransform:
 
     def test_requesting_jax_reports_the_dispatch_rather_than_the_pytree(self):
         """The refusal names the choice the caller made and can change."""
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
             self._run(self._returns_a_batch(dispatch="jax"), dist)
 
     def test_a_body_that_survives_the_transform_still_takes_jax(self, caplog):
         """The probe gained a transform, not a blanket refusal."""
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         doubles = Function(label="function", fn=lambda x: x * 2.0, n_broadcast_samples=8)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
@@ -1289,8 +1291,8 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         broadcast = Function(label="body", fn=body, n_broadcast_samples=8)
         sequential = Function(label="body", fn=body, dispatch="sequential", n_broadcast_samples=8)
-        first = Normal(loc=0.0, scale=1.0, label="x")
-        second = Normal(loc=3.0, scale=1.0, label="y")
+        first = Normal("x", loc=0.0, scale=1.0)
+        second = Normal("y", loc=3.0, scale=1.0)
 
         np.testing.assert_array_equal(
             np.asarray(self._run(broadcast, first, second).atoms),
@@ -1304,7 +1306,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         of the wrong shape silently leaves the JAX path — so staying on it is
         the assertion.
         """
-        vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="v")
+        vector = MultivariateNormal("v", loc=jnp.zeros(3), cov=jnp.eye(3))
         third = Function(label="function", fn=lambda v: v[2], n_broadcast_samples=8)
         sequential = Function(
             label="function", fn=lambda v: v[2], dispatch="sequential", n_broadcast_samples=8
@@ -1326,7 +1328,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         The probe's independent dummy per reference must not be mistaken for
         the executor's grouping.
         """
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         difference = Function(label="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
 
         np.testing.assert_array_equal(
@@ -1336,7 +1338,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
     def test_the_views_of_a_dependent_joint_are_probed(self, caplog):
         """The root's resolved component metadata supplies the probe dtypes."""
-        joint = _ShiftKernel() * Normal(loc=0.0, scale=1.0, label="z")
+        joint = _ShiftKernel() * Normal("z", loc=0.0, scale=1.0)
         difference = Function(label="function", fn=lambda a, b: a - b, n_broadcast_samples=8)
         sequential = Function(
             label="function", fn=lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=8
@@ -1356,7 +1358,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         Kept because the draw-based probe must not narrow what it accepts.
         """
-        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=1.0, scale=1.0, label="b")
+        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=1.0, scale=1.0)
         totals = Function(label="function", fn=lambda r: r["a"] + r["b"], n_broadcast_samples=8)
         sequential = Function(
             label="function",
@@ -1419,7 +1421,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         nested = Function(label="body", fn=body, n_broadcast_samples=8)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
-            result = self._run(nested, rows, Normal(loc=0.0, scale=1.0, label="x"))
+            result = self._run(nested, rows, Normal("x", loc=0.0, scale=1.0))
 
         assert result is not None
         assert any("not JAX-traceable" in record.message for record in caplog.records)
@@ -1431,7 +1433,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         and the row-wise paths index the same record. A body that reads the field
         therefore runs under both, and the mapped executor still vectorizes it.
         """
-        law = FactoredDistribution("law", [Normal(loc=0.0, scale=1.0, label="x")])
+        law = FactoredDistribution("law", [Normal("x", loc=0.0, scale=1.0)])
         kinds = []
 
         def double(x):
@@ -1468,7 +1470,9 @@ class TestAnEnumerationRunsInOneMappedCall:
 
     @staticmethod
     def _arrays(n: int, weights=None) -> EmpiricalDistribution:
-        return EmpiricalDistribution("theta", jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights)
+        return EmpiricalDistribution(
+            jnp.linspace(0.5, 1.5, 2 * n).reshape(n, 2), weights, component="theta"
+        )
 
     @staticmethod
     def _rate(theta) -> jax.Array:
@@ -1510,7 +1514,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         """Two weighted laws enumerate their product, each combination weighted by both atoms."""
         theta = getattr(self, make)(4, jnp.array([0.1, 0.2, 0.3, 0.4]))
         scale = EmpiricalDistribution(
-            "scale", jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2])
+            jnp.array([1.0, 2.0, 3.0]), jnp.array([0.5, 0.3, 0.2]), component="scale"
         )
         mapped_calls: list = []
         sequential_calls: list = []
@@ -1555,7 +1559,7 @@ class TestAnEnumerationRunsInOneMappedCall:
     def test_a_plan_that_also_samples_maps_with_the_same_draws(self):
         """An empirical law enumerated beside a sampled law maps with the loop's draws."""
         theta = self._arrays(3)
-        noise = Normal(loc=0.0, scale=1.0, label="noise")
+        noise = Normal("noise", loc=0.0, scale=1.0)
         laws = {}
         counts = {}
         for dispatch in ("auto", "sequential"):
@@ -1628,9 +1632,11 @@ class TestAnEnumerationRunsInOneMappedCall:
     @staticmethod
     def _object_atoms(kind: str) -> EmpiricalDistribution:
         if kind == "opaque":
-            return EmpiricalDistribution("s", OpaqueBatch("labels", ["a", "bb", "ccc"], "atom"))
-        laws = [Normal(loc=float(loc), scale=1.0, label="x") for loc in range(3)]
-        return EmpiricalDistribution("laws", DistributionBatch("laws", laws, "law"))
+            return EmpiricalDistribution(
+                OpaqueBatch("labels", ["a", "bb", "ccc"], "atom"), component="s"
+            )
+        laws = [Normal("x", loc=float(loc), scale=1.0) for loc in range(3)]
+        return EmpiricalDistribution(DistributionBatch("laws", laws, "law"), component="laws")
 
     @pytest.mark.parametrize("kind", ["opaque", "laws"])
     def test_object_atoms_enumerate_by_the_loop(self, kind):
@@ -1715,8 +1721,8 @@ class TestARecordReturnLiftsToARecordLaw:
     @staticmethod
     def _laws():
         return {
-            "x": Normal(loc=1.0, scale=0.1, label="x"),
-            "y": Normal(loc=2.0, scale=0.1, label="y"),
+            "x": Normal("x", loc=1.0, scale=0.1),
+            "y": Normal("y", loc=2.0, scale=0.1),
         }
 
     def test_the_result_is_an_empirical_law_over_the_record(self, transform):

@@ -28,8 +28,9 @@ import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._expression import Applied, Expression
 from ._repr import type_name
-from ._shapes import AxisCountsLike, LevelNamesLike, _as_axis_counts, _as_level_names
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
 from .provenance import Provenance
 from .tracked import TrackedTerm
@@ -112,7 +113,7 @@ class _ObjectBatch[E](Batch[E]):
         label: str,
         elements: np.ndarray | Iterable[E],
         /,
-        level_names: LevelNamesLike,
+        level_names: NamesLike,
         *,
         element_spec: TermSpec,
         axes_per_level: AxisCountsLike | None = None,
@@ -120,7 +121,7 @@ class _ObjectBatch[E](Batch[E]):
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
         kind = type(self).__name__
-        names = _as_level_names(level_names, what=f"{kind} level_names")
+        names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
             if axes_per_level is None
@@ -208,6 +209,12 @@ class _ObjectBatch[E](Batch[E]):
             object.__setattr__(view, "_provenance", None)
             return view.with_provenance(provenance)
         return self._wrap_element(stored, label).with_provenance(provenance)
+
+    def _element_call(self, index: tuple[int, ...]) -> Expression | None:
+        """The call the stored law at *index* carries when a function lifted over laws gave it, else ``None``."""
+        stored = self._store[index]
+        expression = stored._expression if isinstance(stored, TrackedTerm) else None
+        return expression if isinstance(expression, Applied) else None
 
     def _wrap_element(self, value: Any, label: str) -> Any:
         """The term of this batch's element kind holding the raw *value*, labeled *label*.

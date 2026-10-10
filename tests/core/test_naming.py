@@ -7,11 +7,14 @@ and accessed views receive their labels when constructed, across every kind.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    EmpiricalDistribution,
     Function,
     FunctionBatch,
     Normal,
@@ -27,17 +30,27 @@ from probpipe import (
     RecordBatch,
     RecordSpec,
     condition_on,
+    conditional_distribution,
     convert,
+    cov,
+    expectation,
+    factor,
+    function,
     log_prob,
+    marginal,
     mean,
     prob,
+    quantile,
     sample,
     unnormalized_log_prob,
     unnormalized_prob,
     variance,
+    workflow_run,
 )
+from probpipe.core._expression import Signature
 from probpipe.core._specs import NumericRecordSpec
 from probpipe.distributions import FactoredDistribution
+from probpipe.distributions._batches import DistributionBatch
 from probpipe.functions._call import ApplicabilityError
 
 KEY = jax.random.PRNGKey(0)
@@ -56,7 +69,7 @@ def _labeled(kind):
         ),
         "Opaque": lambda: Opaque("given", object()),
         "Function": lambda: Function(fn=lambda: 1, label="given"),
-        "Normal": lambda: Normal("given", 0.0, 1.0),
+        "Normal": lambda: Normal("x", 0.0, 1.0, label="given"),
         "RecordBatch": lambda: RecordBatch(
             "given",
             COLUMNS,
@@ -201,44 +214,48 @@ class TestADerivedLabelSaysSo:
 
 
 class TestAnOperationLabelsItsResultByItsLaw:
-    """An operation's result takes the label of its primary operand, the law."""
+    """A value computed from a law is labeled by that value over the law (II.4).
 
-    LAW = Normal("height", 0.0, 1.0)
+    The law here is a prior over ``height``, so a draw reads ``height ~ prior``.
+    """
+
+    LAW = Normal("height", 0.0, 1.0, label="prior")
 
     @pytest.mark.parametrize(
-        "compute",
+        ("compute", "label"),
         [
-            lambda d: mean(d),
-            lambda d: variance(d),
-            lambda d: log_prob(d, jnp.asarray(0.0)),
+            (lambda d: mean(d), "E[height ~ prior]"),
+            (lambda d: variance(d), "Var[height ~ prior]"),
+            (lambda d: log_prob(d, jnp.asarray(0.0)), "log prior(height)"),
         ],
         ids=["mean", "variance", "log_prob"],
     )
-    def test_a_scalar_law_result_takes_the_laws_label(self, compute):
-        assert compute(self.LAW).label == "height"
+    def test_a_scalar_law_result_is_labeled_over_the_law(self, compute, label):
+        assert compute(self.LAW).label == label
 
-    def test_a_record_law_draw_takes_the_laws_label(self):
+    def test_a_record_law_draw_is_labeled_by_its_components_and_the_law(self):
         joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
 
-        assert sample(joint).label == "joint"
+        assert sample(joint).label == "a ~ joint"
 
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
-    def test_draws_take_the_laws_label(self, sample_shape):
+    def test_draws_are_labeled_as_one_draw(self, sample_shape):
         """Both a single draw and a batch cross the same result boundary."""
-        given = sample(Normal("height", 0.0, 1.0), sample_shape=sample_shape)
+        given = sample(Normal("height", 0.0, 1.0, label="prior"), sample_shape=sample_shape)
 
-        assert given.label == "height"
+        assert given.label == "height ~ prior"
 
     @staticmethod
     def _params():
-        return (Normal("x", 0.0, 1.0) * Normal("y", 2.0, 3.0)).with_label("params")
+        prior_x = Normal("x", 0.0, 1.0, label="prior_x")
+        return (prior_x * Normal("y", 2.0, 3.0, label="prior_y")).with_label("params")
 
-    def test_a_record_mean_takes_the_laws_label_and_names_its_components(
+    def test_a_record_mean_is_labeled_over_the_law_and_names_its_components(
         self, full_provenance_mode
     ):
         law = self._params()
         result = mean(law)
-        assert result.label == "params"
+        assert result.label == "E[(x, y) ~ params]"
         assert list(result.keys()) == ["mean(x)", "mean(y)"]
         assert float(result["mean(x)"]) == 0.0
         assert float(result["mean(y)"]) == 2.0
@@ -251,7 +268,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
         """Fixing the whole event of a factor leaves the other factor (VI.6)."""
         law = self._params()
         result = condition_on(law, {"x": 1.0})
-        assert result.label == "y"
+        assert result.label == "prior_y"
         assert tuple(result.event_spec.components) == ("y",)
         assert tuple(law.event_spec.components) == ("x", "y")
         assert float(mean(result)) == 2.0
@@ -260,10 +277,10 @@ class TestAnOperationLabelsItsResultByItsLaw:
         assert result.provenance.parents[1].parent is law
 
     def test_a_converted_law_keeps_its_label(self, full_provenance_mode):
-        law = Normal("theta", 2.0, 3.0)
+        law = Normal("theta", 2.0, 3.0, label="prior")
         result = convert(law, Normal)
         assert result is not law
-        assert result.label == "theta"
+        assert result.label == "prior"
         assert tuple(result.event_spec.components) == ("theta",)
         assert float(mean(result)) == 2.0
         assert float(variance(result)) == 9.0
@@ -308,24 +325,30 @@ class TestLevelsAreNamedForWhatMintsThem:
         assert drawn.level_names == ("sample",)
 
     @pytest.mark.parametrize(
-        ("atoms", "expected"),
+        ("atoms", "component", "expected"),
         [
-            pytest.param(jnp.linspace(0.0, 1.0, 5), "NumericArrayBatch", id="numeric-atoms"),
+            pytest.param(
+                jnp.linspace(0.0, 1.0, 5), "atoms", "NumericArrayBatch", id="numeric-atoms"
+            ),
             pytest.param(
                 NumericRecordBatch(
                     "rows", {"u": jnp.arange(4.0)}, "row", element_spec=RecordSpec(u=())
                 ),
+                None,
                 "NumericRecordBatch",
                 id="record-atoms",
             ),
             pytest.param(
                 OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                "atoms",
                 "OpaqueBatch",
                 id="opaque-atoms",
             ),
         ],
     )
-    def test_a_law_that_assembles_its_own_draws_still_gets_the_level(self, atoms, expected):
+    def test_a_law_that_assembles_its_own_draws_still_gets_the_level(
+        self, atoms, component, expected
+    ):
         """The boundary mints the level for every kind of draw.
 
         These laws lay the draws out themselves, in the batch form of their atoms,
@@ -333,7 +356,7 @@ class TestLevelsAreNamedForWhatMintsThem:
         """
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution("atoms", atoms), sample_shape=(3,))
+        drawn = sample(EmpiricalDistribution(atoms, component=component), sample_shape=(3,))
 
         assert type(drawn).__name__ == expected
         assert (drawn.batch_shape, drawn.level_names) == ((3,), ("sample",))
@@ -342,21 +365,23 @@ class TestLevelsAreNamedForWhatMintsThem:
         """No sample_shape, no level to mint."""
         from probpipe import EmpiricalDistribution
 
-        drawn = sample(EmpiricalDistribution("atoms", jnp.linspace(0.0, 1.0, 5)))
+        drawn = sample(EmpiricalDistribution(jnp.linspace(0.0, 1.0, 5), component="atoms"))
 
         assert not isinstance(drawn, NumericArrayBatch)
 
-    def test_the_draws_take_the_laws_label(self):
+    def test_the_draws_take_the_label_of_one_draw(self):
         from probpipe import EmpiricalDistribution
 
         drawn = sample(
             EmpiricalDistribution(
-                "atoms", OpaqueBatch("objects", [object() for _ in range(3)], "atom")
+                OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                component="atoms",
+                label="empirical",
             ),
             sample_shape=(3,),
         )
 
-        assert drawn.label == "atoms"
+        assert drawn.label == "atoms ~ empirical"
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
@@ -373,7 +398,7 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     one op and as one wide value under another.
     """
 
-    LAW = Normal("height", 0.0, 1.0)
+    LAW = Normal("height", 0.0, 1.0, label="prior")
 
     @pytest.fixture(
         params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.label
@@ -388,10 +413,14 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
 
         assert (scored.batch_shape, scored.level_names) == ((3,), ("sample",))
 
-    def test_the_result_takes_the_laws_label(self, density_op):
+    def test_the_result_is_labeled_over_the_law(self, density_op):
+        """A score reads ``log`` and the law's notation, and a density the notation."""
         drawn = sample(self.LAW, sample_shape=(3,))
 
-        assert density_op(self.LAW, drawn).label == "height"
+        expected = (
+            "prior(height)" if density_op in (prob, unnormalized_prob) else "log prior(height)"
+        )
+        assert density_op(self.LAW, drawn).label == expected
 
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
@@ -550,3 +579,353 @@ class TestNoKindInventsALabel:
         edited = batch.without("b")
 
         assert edited.label == "derived"
+
+
+# ---------------------------------------------------------------------------
+# The labels of results and of values computed from a law (design II.4)
+# ---------------------------------------------------------------------------
+
+
+def _prior() -> Normal:
+    """A law ``prior`` over ``mu``."""
+    return Normal("mu", 0.0, 1.0, label="prior")
+
+
+def _likelihood() -> Any:
+    """A kernel ``lik`` over ``y`` given ``mu``."""
+    return conditional_distribution(
+        lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec(())}, label="lik"
+    )
+
+
+def _model() -> Any:
+    """The joint ``model`` over ``y`` and ``mu``."""
+    return (_likelihood() * _prior()).with_label("model")
+
+
+def _empirical_model() -> Any:
+    """``model`` over ``y`` and ``mu`` whose prior is empirical, so conditioning on ``y`` is exact."""
+    atoms = jnp.linspace(-2.0, 2.0, 41)
+    prior = EmpiricalDistribution(atoms, event_spec=OutputSpec(mu=None), label="prior")
+    return (_likelihood() * prior).with_label("model")
+
+
+def _glm(*slots: str) -> Any:
+    """A kernel ``glm`` over ``y`` given *slots*."""
+
+    def location(**given: Any) -> Normal:
+        return Normal("y", sum(given.values()), 1.0)
+
+    def body(beta, sigma):
+        return location(beta=beta, sigma=sigma)
+
+    spec = {slot: NumericArraySpec(()) for slot in slots}
+    if slots == ("beta",):
+        return conditional_distribution(
+            lambda beta: location(beta=beta), given_spec=spec, label="glm"
+        )
+    return conditional_distribution(body, given_spec=spec, label="glm")
+
+
+class TestTheLabelsOfResults:
+    """A law derived from a law keeps its label, and its signature is its own (II.4)."""
+
+    @pytest.mark.parametrize(
+        ("compute", "notation"),
+        [
+            pytest.param(lambda: _model()["y"], "model(y)", id="view"),
+            pytest.param(lambda: marginal(_model(), "mu"), "prior(mu)", id="marginal-at-a-factor"),
+            pytest.param(lambda: _model()["mu"], "prior(mu)", id="view-at-a-factor"),
+            pytest.param(lambda: factor(_model(), "mu"), "prior(mu)", id="factor"),
+            pytest.param(
+                lambda: condition_on(_empirical_model(), {"y": 0.5}), "model(mu; y)", id="posterior"
+            ),
+            pytest.param(
+                lambda: condition_on(_model(), {"mu": 0.5}), "lik(y; mu)", id="factor-left"
+            ),
+            pytest.param(
+                lambda: condition_on(_glm("beta"), {"beta": 1.0}), "glm(y; beta)", id="kernel"
+            ),
+            pytest.param(
+                lambda: condition_on(_glm("beta", "sigma"), {"beta": 1.0}),
+                "glm(y | sigma; beta)",
+                id="kernel-at-some-slots",
+            ),
+        ],
+    )
+    def test_a_derived_law_displays_by_the_issue_table(self, compute, notation):
+        with workflow_run(seed=0):
+            assert compute().notation == notation
+
+    def test_the_prior_predictive_keeps_the_models_label(self):
+        """``marginal(model, "y")`` integrates ``mu`` out, which no route of this model does."""
+        expression = marginal._derived_expression({"d": _model(), "field": "y"})
+        assert expression.render_notation(Signature(("y",))) == "model(y)"
+
+
+#: A default that is not a scalar, which a signature shows as ``…``.
+_OFFSETS = jnp.zeros(3)
+
+
+def _counts() -> Any:
+    """A kernel over ``y`` given ``K`` and ``r``, with the slot ``n0`` defaulting to 50.0."""
+
+    def counts(K: jax.Array, r: jax.Array, n0: float = 50.0) -> Normal:
+        return Normal("y", K * r * n0, 1.0)
+
+    return conditional_distribution(
+        counts, given_spec={"K": NumericArraySpec(()), "r": NumericArraySpec(())}
+    )
+
+
+class TestADefaultedSlotShowsItsDefault:
+    """A given slot or a parameter with a default reads ``name=value`` until a given binds it."""
+
+    def test_a_kernel_shows_its_defaulted_slot(self):
+        assert str(_counts()) == "counts(y | K, r, n0=50.0)"
+
+    def test_a_law_left_at_a_default_keeps_the_slot_as_given(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
+        assert at.notation == "counts(y | n0=50.0; K, r)"
+        assert not hasattr(at, "given_spec")
+
+    def test_a_curried_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
+        assert str(condition_on(_counts(), {"K": 300.0})) == "counts(y | r, n0=50.0; K)"
+
+    def test_binding_the_defaulted_slot_moves_it_to_the_fixed_paths(self):
+        bound = condition_on(_counts(), {"K": 300.0, "r": 0.4, "n0": 10.0})
+        assert bound.notation == "counts(y; K, r, n0)"
+        assert str(condition_on(_counts(), {"n0": 10.0})) == "counts(y | K, r; n0)"
+
+    def test_a_factor_left_by_conditioning_a_joint_keeps_the_defaulted_slot(self):
+        prior = (Normal("K", 300.0, 10.0) * Normal("r", 0.4, 0.1)).with_label("prior")
+        model = _counts() * prior
+        assert str(model) == "counts(y | K, r, n0=50.0)·prior(K, r)"
+        assert condition_on(model, {"K": 300.0, "r": 0.4}).notation == ("counts(y | n0=50.0; K, r)")
+
+    def test_a_relabeled_law_keeps_the_defaulted_slot(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
+        assert at.notation == "at_values(y | n0=50.0; K, r)"
+
+    def test_a_relabeled_law_keeps_the_defaulted_slot_inside_another_term(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4}).with_label("at_values")
+        assert log_prob(at, 1.0).label == "log at_values(y | n0=50.0; K, r)"
+        assert str(at * Normal("z", 0.0, 1.0)) == "at_values(y | n0=50.0; K, r)·Normal(z)"
+
+    def test_a_value_computed_from_the_law_reads_its_notation(self):
+        at = condition_on(_counts(), {"K": 300.0, "r": 0.4})
+        assert log_prob(at, 1.0).label == "log counts(y | n0=50.0; K, r)"
+        with workflow_run(seed=0):
+            assert sample(at).label == "y ~ counts; K, r"
+
+    def test_a_non_scalar_default_shows_an_ellipsis(self):
+        def shifted(mu: jax.Array, offsets: jax.Array = _OFFSETS) -> Normal:
+            return Normal("y", mu + offsets, 1.0)
+
+        kernel = conditional_distribution(shifted, given_spec={"mu": NumericArraySpec(())})
+        assert str(kernel) == "shifted(y | mu, offsets=…)"
+
+    def test_a_function_shows_its_parameters_defaults(self):
+        @function
+        def predict(x: jax.Array, scale: float = 1.0) -> jax.Array:
+            return x * scale
+
+        assert str(predict) == "predict(x, scale=1.0)"
+
+
+class TestTheLabelsOfValuesComputedFromALaw:
+    """A value computed from a law is labeled by the value over the law, in probability notation."""
+
+    @pytest.mark.parametrize(
+        ("operation", "arguments", "label", "components"),
+        [
+            pytest.param(sample, lambda: (_prior(),), "mu ~ prior", ("mu",), id="draw"),
+            pytest.param(sample, lambda: (_prior(), (3,)), "mu ~ prior", ("mu",), id="draws"),
+            pytest.param(sample, lambda: (_model(),), "(y, mu) ~ model", ("y", "mu"), id="joint"),
+            pytest.param(
+                log_prob, lambda: (_prior(), 0.3), "log prior(mu)", ("log_prob(mu)",), id="score"
+            ),
+            pytest.param(
+                log_prob,
+                lambda: (_model(), {"y": 0.1, "mu": 0.3}),
+                "log model(y, mu)",
+                ("log_prob(y, mu)",),
+                id="joint-score",
+            ),
+            pytest.param(
+                unnormalized_log_prob,
+                lambda: (_prior(), 0.3),
+                "log prior(mu)",
+                ("unnormalized_log_prob(mu)",),
+                id="unnormalized-score",
+            ),
+            pytest.param(prob, lambda: (_prior(), 0.3), "prior(mu)", ("prob(mu)",), id="density"),
+            pytest.param(
+                mean, lambda: (_model(),), "E[(y, mu) ~ model]", ("mean(y)", "mean(mu)"), id="mean"
+            ),
+            pytest.param(
+                variance,
+                lambda: (_model(),),
+                "Var[(y, mu) ~ model]",
+                ("variance(y)", "variance(mu)"),
+                id="variance",
+            ),
+            pytest.param(
+                cov, lambda: (_model(),), "Cov[(y, mu) ~ model]", ("cov(y, mu)",), id="cov"
+            ),
+            pytest.param(
+                quantile, lambda: (_prior(), 0.5), "Q[mu ~ prior]", ("quantile(mu)",), id="quantile"
+            ),
+            pytest.param(
+                mean, lambda: (_model()["y"],), "E[y ~ model]", ("mean(y)",), id="mean-of-a-view"
+            ),
+        ],
+    )
+    def test_a_value_is_labeled_by_the_issue_table(self, operation, arguments, label, components):
+        with workflow_run(seed=0):
+            result = operation(*arguments())
+        assert result.label == label
+        assert tuple(operation.check(*arguments()).result.components) == components
+
+    def test_an_expectation_is_labeled_by_its_integrand_at_a_draw(self):
+        def square(x: jax.Array) -> jax.Array:
+            return x**2
+
+        with workflow_run(seed=0):
+            assert expectation(_prior(), square).label == "E[square(mu ~ prior)]"
+            assert expectation(_prior(), lambda x: x).label == "E[f(mu ~ prior)]"
+
+    def test_a_draw_and_a_score_of_a_posterior_list_its_fixed_paths(self):
+        with workflow_run(seed=0):
+            posterior = condition_on(_empirical_model(), {"y": 0.5})
+            assert sample(posterior).label == "mu ~ model; y"
+            assert log_prob(_prior()._with_expression(posterior._expression), 0.1).label == (
+                "log model(mu; y)"
+            )
+
+    def test_an_element_of_a_batch_of_draws_groups_the_draw(self):
+        with workflow_run(seed=0):
+            draws = sample(_prior(), sample_shape=(3,))
+            scores = log_prob(_prior(), draws)
+        assert draws[0].label == "(mu ~ prior)[sample=0]"
+        assert scores.label == "log prior(mu)"
+        assert scores[0].label == "(log prior(mu))[sample=0]"
+
+    def test_a_batch_of_laws_reads_as_one_law_under_its_label(self):
+        laws = DistributionBatch(
+            "schools", [Normal("effect", float(i), 1.0) for i in range(3)], "school"
+        )
+        with workflow_run(seed=0):
+            assert sample(laws).label == "effect ~ schools"
+            assert mean(laws).label == "E[effect ~ schools]"
+            scores = log_prob(laws, 0.0)
+        assert scores.label == "log schools(effect)"
+        assert scores[1].label == "(log schools(effect))[school=1]"
+        assert laws[1].notation == "schools[school=1](effect)"
+        assert str(laws) == "schools(effect) over school"
+
+    def test_a_field_of_a_draw_takes_its_key(self):
+        with workflow_run(seed=0):
+            assert sample(_model())["y"].label == "y"
+
+    def test_an_operator_on_values_is_labeled_by_its_expression(self):
+        effect = NumericArray("effect", jnp.asarray(1.0))
+        assert (2 * effect).label == "2 * effect"
+        assert (-(effect + 1.0)).label == "-(effect + 1.0)"
+        with workflow_run(seed=0):
+            assert (2 * mean(_prior())).label == "2 * E[mu ~ prior]"
+
+
+class TestTheLabelsOfALiftedFunction:
+    """A function lifted over laws is the function applied to draws of its inputs (II.4)."""
+
+    def test_its_law_reads_as_the_function_at_a_draw_of_a_posterior(self):
+        @function
+        def challenger_damage_probability(beta: jax.Array) -> jax.Array:
+            return jax.nn.sigmoid(beta * 31.0)
+
+        with workflow_run(seed=2):
+            posterior = condition_on(
+                _empirical_model().with_label("oring_model").with_path_names(y="damage", mu="beta"),
+                {"damage": 0.5},
+            )
+            damage_prob = challenger_damage_probability(posterior["beta"])
+            summary = mean(damage_prob)
+        notation = "challenger_damage_probability(beta ~ oring_model; damage)"
+        assert (damage_prob.label, damage_prob.notation) == (
+            "challenger_damage_probability",
+            notation,
+        )
+        assert summary.label == f"E[{notation}]"
+
+    def test_inputs_drawn_together_share_one_draw(self):
+        @function
+        def f(a: jax.Array, b: jax.Array) -> jax.Array:
+            return a + b
+
+        model = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)).with_label("model")
+        with workflow_run(seed=0):
+            assert f(model["a"], model["b"]).notation == "f((a, b) ~ model)"
+            assert f(model["a"], 2.0).notation == "f(a ~ Normal, 2.0)"
+            prior = Normal("x", 0.0, 1.0, label="prior")
+            assert f(prior, NumericArray("c", 1.0)).notation == "f(x ~ prior, c)"
+
+    def test_an_array_argument_appears_by_its_parameters_name(self):
+        @function
+        def g(a: jax.Array, X: jax.Array) -> jax.Array:
+            return a
+
+        with workflow_run(seed=0):
+            prior = Normal("a", 0.0, 1.0, label="prior")
+            assert g(prior, jnp.ones((5, 2))).notation == "g(a ~ prior, X)"
+
+    def test_a_sweep_of_broadcasts_carries_the_lifted_call(self):
+        @function
+        def shifted(mu: jax.Array, tau: jax.Array) -> jax.Array:
+            return mu + tau
+
+        taus = NumericArrayBatch("tau", jnp.array([0.0, 1.0]), "tau")
+        with workflow_run(seed=0):
+            laws = shifted.with_options(n_broadcast_samples=8)(
+                Normal("mu", 0.0, 1.0, label="prior"), taus
+            )
+            means = mean(laws)
+        assert laws.label == "shifted"
+        assert laws[1].label == "shifted[tau=1]"
+        assert means.label == "E[shifted(mu ~ prior, tau)]"
+        assert means[1].label == "E[shifted(mu ~ prior, tau)][tau=1]"
+
+    def test_a_lifted_batch_displays_its_call_and_its_element_its_rows_call(self):
+        @function
+        def effect_of(mu: jax.Array, tau: jax.Array) -> jax.Array:
+            return mu + tau
+
+        taus = NumericArrayBatch("tau", jnp.arange(1.0, 6.0), "tau")
+        with workflow_run(seed=0):
+            laws = effect_of.with_options(n_broadcast_samples=8)(
+                Normal("mu", 0.0, 1.0, label="prior"), taus
+            )
+            element = laws[3]
+            assert mean(element).label == "E[effect_of(mu ~ prior, 4.0)]"
+            assert sample(element).label == "effect_of(mu ~ prior, 4.0)"
+        assert str(laws) == "effect_of(mu ~ prior, tau) over tau"
+        # The element keeps the label of its position, and displays as its row's call.
+        assert (element.label, str(element)) == ("effect_of[tau=3]", "effect_of(mu ~ prior, 4.0)")
+        selection = laws[1:3]
+        assert selection.label == "effect_of[tau=1:3]"
+        assert str(selection) == "effect_of(mu ~ prior, tau)[tau=1:3] over tau"
+
+    def test_a_law_passed_to_a_lifted_call_displays_by_its_notation(self):
+        with workflow_run(seed=0):
+            lifted = log_prob(
+                Normal("g", 0.0, 1.0, label="prior"), Normal("q", 0.0, 1.0, label="proposal")
+            )
+        assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(prior(g), q ~ proposal)")
+        assert list(lifted.event_spec.components) == ["log_prob"]
+
+    def test_a_function_called_on_values_takes_its_output_label(self):
+        @function
+        def f(a: jax.Array) -> jax.Array:
+            return a + 1
+
+        assert f(NumericArray("x", jnp.asarray(1.0))).label == "f"

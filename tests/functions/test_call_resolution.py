@@ -47,7 +47,7 @@ def kwargs_recorder():
 
 @pytest.fixture
 def normal_dist():
-    return Normal(loc=0.0, scale=1.0, label="x")
+    return Normal("x", loc=0.0, scale=1.0)
 
 
 @pytest.fixture

@@ -23,6 +23,7 @@ from probpipe import (
     MultivariateNormal,
     NumericArraySpec,
     NumericDistribution,
+    OutputSpec,
     workflow_run,
 )
 from probpipe.distributions._capabilities import SupportsLogProb
@@ -56,16 +57,16 @@ pytestmark = pytest.mark.filterwarnings(
 @pytest.fixture(scope="module")
 def iso_gaussian():
     """A 2-D isotropic standard normal ``N(0, I)`` — analytic stds [1, 1]."""
-    return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), label="z")
+    return MultivariateNormal("z", loc=jnp.zeros(2), cov=jnp.eye(2))
 
 
 @pytest.fixture(scope="module")
 def aniso_gaussian():
     """A 2-D anisotropic ``N(0, diag(1, 4))`` — analytic stds [1, 2]."""
     return MultivariateNormal(
+        "z",
         loc=jnp.zeros(2),
         cov=jnp.diag(jnp.array([1.0, 4.0])),
-        label="z",
     )
 
 
@@ -275,9 +276,9 @@ class TestAdaptiveWarmup:
         # [0.10, 0.65] — small enough to mix, large enough not to stick.
         # Observed across four workflow seeds: accept 0.30-0.32.
         dist = MultivariateNormal(
+            "z",
             loc=jnp.zeros(5),
             cov=jnp.eye(5),
-            label="z",
         )
         with workflow_run(seed=3):
             result = rwmh(
@@ -408,7 +409,7 @@ class TestNumWarmupZeroWarning:
 
         class NoDensityDist(Distribution):
             def __init__(self):
-                super().__init__("no_density", NumericArraySpec((2,)))
+                super().__init__("no_density", OutputSpec(no_density=NumericArraySpec((2,))))
 
         with pytest.raises(TypeError, match="SupportsUnnormalizedLogProb"):
             rwmh(dist=NoDensityDist(), num_results=10, num_warmup=10)
@@ -499,9 +500,9 @@ class TestWindowedWarmup:
         # 5-D with a 30x stretch in the last dim.
         true_stds = jnp.array([1.0, 1.0, 1.0, 1.0, 30.0])
         dist = MultivariateNormal(
+            "z",
             loc=jnp.zeros(5),
             cov=jnp.diag(true_stds**2),
-            label="z",
         )
         with workflow_run(seed=11):
             result = rwmh(
@@ -607,7 +608,7 @@ class TestProposalNeverCollapses:
         """At ``d = 20`` the first 33-step window accepts far fewer than 20
         proposals, so its covariance estimate is singular; the default warmup
         still moves every chain."""
-        dist = MultivariateNormal(loc=jnp.zeros(20), cov=jnp.eye(20), label="z")
+        dist = MultivariateNormal("z", loc=jnp.zeros(20), cov=jnp.eye(20))
         # Observed across four workflow seeds: per-chain accept 0.39-0.49,
         # per-chain min std 0.40.
         with workflow_run(seed=0):
@@ -640,7 +641,9 @@ class _NumpyLogProbDist(NumericDistribution, SupportsLogProb):
     precision = (1.0, 1.0)
 
     def __init__(self, label):
-        super().__init__(label, NumericArraySpec((len(self.precision),), "float32"))
+        super().__init__(
+            label, OutputSpec(**{label: NumericArraySpec((len(self.precision),), "float32")})
+        )
 
     def _log_prob(self, value):
         v = np.asarray(value)

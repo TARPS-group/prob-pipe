@@ -215,7 +215,7 @@ class TestExecuteSweep:
     def test_nested_sweep_stacks_the_law_each_row_lifts(self):
         values = {
             "p": _numeric_record_batch("x", range(2)),
-            "noise": Normal(loc=0.0, scale=1.0, label="noise"),
+            "noise": Normal("noise", loc=0.0, scale=1.0),
         }
         plan = _plan(values)
         stochastic_plan = _stochastic_plan(values, 7)
@@ -239,7 +239,7 @@ class TestExecuteSweep:
                     "include_inputs": include_inputs,
                 }
             )
-            return Normal(loc=float(row_values["p"]["x"]), scale=1.0, label="row")
+            return Normal("row", loc=float(row_values["p"]["x"]), scale=1.0)
 
         result = _sweep.execute_sweep(
             func=lambda p, noise: p["x"] + noise,
@@ -944,7 +944,7 @@ class TestARecordedDtypeIsTheStoredDtype:
             dispatch=dispatch,
             n_broadcast_samples=5,
         )
-        result = wrapped(EmpiricalDistribution("x", jnp.arange(3.0)))
+        result = wrapped(EmpiricalDistribution(jnp.arange(3.0), component="x"))
         assert np.asarray(result.atoms.values).dtype == np.float32
         assert result.atoms.element_spec.dtype == np.float32
         assert result.event_spec.components["f"].dtype == np.float32

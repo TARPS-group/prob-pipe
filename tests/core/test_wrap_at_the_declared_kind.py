@@ -117,21 +117,21 @@ class TestTheKindsAreOrderedNotDisjoint:
 
 class TestTheOperationsReturnTheirDeclaredKind:
     def test_log_prob_is_a_numeric_array(self):
-        law = Normal(loc=0.0, scale=1.0, label="x")
+        law = Normal("x", loc=0.0, scale=1.0)
 
         assert isinstance(log_prob(law, 0.0), NumericArray)
 
     def test_mean_of_a_scalar_law_is_a_numeric_array(self):
-        assert isinstance(mean(Normal(loc=2.0, scale=1.0, label="x")), NumericArray)
+        assert isinstance(mean(Normal("x", loc=2.0, scale=1.0)), NumericArray)
 
     def test_a_scalar_draw_is_a_numeric_array(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"))
+        drawn = sample(Normal("x", loc=0.0, scale=1.0))
 
         assert isinstance(drawn, NumericArray)
 
     def test_a_numeric_array_result_still_computes(self):
         """A result computes directly, which is what the array surface is for."""
-        law = Normal(loc=0.0, scale=1.0, label="x")
+        law = Normal("x", loc=0.0, scale=1.0)
 
         assert float(log_prob(law, 0.0) * 2) == pytest.approx(
             float(np.asarray(log_prob(law, 0.0))) * 2
@@ -142,7 +142,7 @@ class TestASampleShapeGetsADrawLevel:
     """Design V.2: the leading dimensions go on a level named `draw`."""
 
     def test_no_sample_shape_is_one_value(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"))
+        drawn = sample(Normal("x", loc=0.0, scale=1.0))
 
         assert isinstance(drawn, NumericArray)
 
@@ -150,7 +150,7 @@ class TestASampleShapeGetsADrawLevel:
     def test_draws_land_on_one_draw_level(self, sample_shape):
         from probpipe import NumericArrayBatch
 
-        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=sample_shape)
+        drawn = sample(Normal("x", loc=0.0, scale=1.0), sample_shape=sample_shape)
 
         assert isinstance(drawn, NumericArrayBatch)
         assert drawn.batch_shape == sample_shape
@@ -160,7 +160,7 @@ class TestASampleShapeGetsADrawLevel:
         """A vector law draws vectors, so its event axes stay with the element."""
         from probpipe import MultivariateNormal, NumericArrayBatch
 
-        law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="v")
+        law = MultivariateNormal("v", loc=jnp.zeros(3), cov=jnp.eye(3))
 
         drawn = sample(law, sample_shape=(5,))
 
@@ -170,7 +170,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.shape == (5, 3)
 
     def test_an_element_is_one_draw(self):
-        drawn = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(5,))
+        drawn = sample(Normal("x", loc=0.0, scale=1.0), sample_shape=(5,))
 
         assert isinstance(drawn[2], NumericArray)
         assert drawn[2].shape == ()
@@ -179,7 +179,7 @@ class TestASampleShapeGetsADrawLevel:
         """A law whose draws are a mapping of columns draws the batch its declaration names."""
         from probpipe import NumericRecordBatch
 
-        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
+        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
 
         drawn = sample(law, sample_shape=(4,))
 
@@ -188,7 +188,7 @@ class TestASampleShapeGetsADrawLevel:
         assert drawn.element_spec == law.event_spec.spec
 
     def test_one_draw_of_a_joint_is_a_record_under_its_declaration(self):
-        law = Normal(loc=0.0, scale=1.0, label="a") * Normal(loc=0.0, scale=1.0, label="b")
+        law = Normal("a", loc=0.0, scale=1.0) * Normal("b", loc=0.0, scale=1.0)
 
         drawn = sample(law)
 

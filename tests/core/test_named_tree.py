@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import NumericRecord, OutputSpec, Record, RecordBatch, RecordSpec
+from probpipe.core._expression import Draw, Named, Summary
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, TermSpec
 from probpipe.core.named_tree import NamedTree
@@ -369,14 +370,18 @@ class TestPytreeAuxSplit:
         leaves, treedef = jax.tree_util.tree_flatten(r)
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert back.event_template["a"] == spec  # explicit template threaded, not re-inferred
-        assert back.label == "mine"
+        # The label does not cross a transform, so the rebuilt record takes its class's.
+        assert back.label == "Record"
 
-    def test_derived_name_survives_roundtrip(self):
+    def test_records_that_differ_only_in_label_share_a_treedef(self):
+        """A label never enters the static data, so it never splits a compilation (II.4)."""
         import jax
 
-        r = Record("record(a)", {"a": jnp.array(1.0)})  # operation-derived (auto)
-        back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
-        assert back.label == r.label
+        first = Record("first", {"a": jnp.array(1.0)})
+        derived = Record("first", {"a": jnp.array(2.0)})._with_expression(
+            Summary("E", Draw(("a",), Named("model")))
+        )
+        assert jax.tree_util.tree_structure(first) == jax.tree_util.tree_structure(derived)
 
     def test_provenance_and_annotations_do_not_cross(self):
         import jax

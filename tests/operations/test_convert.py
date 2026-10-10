@@ -40,7 +40,7 @@ class _Source(Distribution):
     """A law that the suite's converters read."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, REAL)
+        super().__init__(label, OutputSpec(**{label: REAL}))
 
 
 class _Target(Distribution):
@@ -176,7 +176,7 @@ class TestConvert:
 
 def _tau() -> Gamma:
     """A law on the positive half-line with mean 100 / 10 = 10 and variance 100 / 10**2 = 1."""
-    return Gamma("tau", concentration=100.0, rate=10.0)
+    return Gamma("tau", concentration=100.0, rate=10.0, label="tau")
 
 
 class TestTheSupportCheck:
@@ -215,7 +215,7 @@ class TestTheSupportCheck:
         )
 
     def test_an_empirical_law_whose_atoms_leave_the_support_converts_under_the_override(self):
-        source = EmpiricalDistribution("x", jnp.array([0.0, 1.0, 2.0, 3.0]))
+        source = EmpiricalDistribution(jnp.array([0.0, 1.0, 2.0, 3.0]), component="x")
         with pytest.raises(ValueError, match="its atoms lie outside that support"):
             convert(source, Exponential)
         fitted = convert.with_options(method_options={"check_support": False})(source, Exponential)

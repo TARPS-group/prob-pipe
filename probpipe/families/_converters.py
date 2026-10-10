@@ -248,14 +248,23 @@ def _tfp_law(source: tfd.Distribution, declared: OutputSpec | None) -> TFPDistri
     A backend distribution with a family enters as that family at its
     parameters, and any other enters through the bare backend adapter. The law
     is labeled by the backend's name, and *declared*, when given, names its
-    component.
+    component, which is otherwise the backend's name.
     """
     name = source.name or type(source).__name__
+    component = _backend_component(name, declared)
     entry = _TFP_FAMILIES.get(type(source))
     if entry is None:
-        return TFPDistribution(name, source, event_spec=declared)
+        return TFPDistribution(component, source, label=name, event_spec=declared)
     family, arguments = entry
-    return family(label=name, **arguments(source), event_spec=declared)
+    return family(component, **arguments(source), label=name, event_spec=declared)
+
+
+def _backend_component(name: str, declared: OutputSpec | None) -> str:
+    """The component of a backend distribution's law: the one *declared* names, or *name*."""
+    if declared is None or declared.exposes_record:
+        return name
+    (component,) = declared.components
+    return component
 
 
 def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
@@ -315,7 +324,10 @@ def _scipy_law(source: Any, declared: OutputSpec | None) -> TFPDistribution | No
     if entry is None:
         return None
     family, arguments = entry
-    return family(label=source.dist.name, **arguments(source), event_spec=declared)
+    name = source.dist.name
+    return family(
+        _backend_component(name, declared), **arguments(source), label=name, event_spec=declared
+    )
 
 
 def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
@@ -1032,9 +1044,9 @@ class _MomentMatching(Converter):
         draws = _draws(source, law, _sample_count(options)) if planned.samples else None
         (component,) = planned.declaration.components
         result = target_type(
-            label=planned.label,
+            component,
             **planned.parameters(_Statistics(law, draws), options),
-            event_spec=OutputSpec(**{component: None}),
+            label=planned.label,
         )
         if options.get("check_support", True):
             _check_support(result, law)
@@ -1167,7 +1179,7 @@ class _EmpiricalDraws(Converter):
         law, declaration = sampled
         name = _label(source, law, declaration)
         atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.spec)
-        return EmpiricalDistribution(name, atoms, event_spec=declaration)
+        return EmpiricalDistribution(atoms, label=name, event_spec=declaration)
 
 
 def _smoothed_atoms(label: str, values: Any, spec: Any) -> Any:
@@ -1296,15 +1308,15 @@ class _KDESmoothing(Converter):
         bandwidth = options.get("bandwidth")
         if not samples:
             return KDEDistribution(
-                name,
                 _smoothed_atoms(name, law._rows, declaration.spec),
                 bandwidth,
                 law.weights,
+                label=name,
                 event_spec=declaration,
             )
         draws = _draws(source, law, _sample_count(options))
         atoms = _smoothed_atoms(name, draws, declaration.spec)
-        return KDEDistribution(name, atoms, bandwidth, event_spec=declaration)
+        return KDEDistribution(atoms, bandwidth, label=name, event_spec=declaration)
 
 
 converter_registry.register(_TFPConverter())

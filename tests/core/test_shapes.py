@@ -1,4 +1,4 @@
-"""The reading of shape, level-name, and axis-count arguments in ``core/_shapes.py``."""
+"""The reading of shape, name-list, and axis-count arguments in ``core/_shapes.py``."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import pytest
 from probpipe.core._shapes import (
     _as_axis_counts,
     _as_dim,
-    _as_level_names,
     _as_levels,
+    _as_names,
     _as_shape,
 )
 
@@ -112,7 +112,7 @@ class TestShape:
             _as_dim(1.5, what="NumericArraySpec shape entry")
 
 
-class TestLevelNames:
+class TestNames:
     """A bare ``str`` is one name."""
 
     @pytest.mark.parametrize(
@@ -125,20 +125,23 @@ class TestLevelNames:
         ],
     )
     def test_reads_each_form_as_a_tuple_of_python_strs(self, arg, expected):
-        names = _as_level_names(arg, what="level_names")
+        names = _as_names(arg, what="level_names")
 
         assert names == expected
         assert all(type(name) is str for name in names)
 
-    def test_leaves_the_name_rule_to_the_spec(self):
-        assert _as_level_names("", what="level_names") == ("",)
+    def test_leaves_the_name_rule_to_the_caller(self):
+        assert _as_names("", what="level_names") == ("",)
+
+    def test_an_empty_sequence_is_no_names(self):
+        assert _as_names([], what="metrics") == ()
 
     @pytest.mark.parametrize(("arg", "type_shown"), _NOT_SEQUENCES)
     def test_refuses_an_iterable_that_is_not_a_sequence(self, arg, type_shown):
         with pytest.raises(
             TypeError, match=f"level_names must be a str or a sequence of str, got {type_shown}"
         ):
-            _as_level_names(arg, what="level_names")
+            _as_names(arg, what="level_names")
 
     @pytest.mark.parametrize(
         ("arg", "match"),
@@ -149,7 +152,7 @@ class TestLevelNames:
     )
     def test_refuses_what_is_not_names(self, arg, match):
         with pytest.raises(TypeError, match=match):
-            _as_level_names(arg, what="level_names")
+            _as_names(arg, what="level_names")
 
 
 class TestAxisCounts:

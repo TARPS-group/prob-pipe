@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import pickle
 import pkgutil
 from typing import Any
 
@@ -69,9 +70,10 @@ from probpipe import (
 )
 from probpipe.core._batch import BatchSpec
 from probpipe.core._opaque import OpaqueSpec
-from probpipe.core._specs import NumericArraySpec
+from probpipe.core._specs import NumericArraySpec, TermSpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions._capabilities import SupportsMean
+from probpipe.distributions._distribution import _detached_term, _fixed_paths
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
 from tests._posterior import posterior_of
@@ -82,7 +84,7 @@ def _make_transformed():
 
     return BijectorTransformedDistribution(
         "transformed",
-        Normal(loc=0.0, scale=1.0, label="x"),
+        Normal("x", loc=0.0, scale=1.0),
         tfb.Exp(),
     )
 
@@ -93,19 +95,19 @@ def _make_transformed():
 # distinct subclasses (BijectorTransformedDistribution / KDEDistribution /
 # EmpiricalDistribution).
 _NO_BATCH_SHAPE_DISTS = [
-    pytest.param(lambda: Normal(loc=0.0, scale=1.0, label="x"), id="Normal"),
-    pytest.param(lambda: Gamma(concentration=3.0, rate=1.0, label="g"), id="Gamma"),
+    pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), id="Normal"),
+    pytest.param(lambda: Gamma("g", concentration=3.0, rate=1.0), id="Gamma"),
     pytest.param(
-        lambda: MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="z"),
+        lambda: MultivariateNormal("z", loc=jnp.zeros(3), cov=jnp.eye(3)),
         id="MultivariateNormal",
     ),
     pytest.param(_make_transformed, id="BijectorTransformedDistribution"),
     pytest.param(
-        lambda: KDEDistribution("kde", jnp.arange(60.0).reshape(20, 3)),
+        lambda: KDEDistribution(jnp.arange(60.0).reshape(20, 3), component="kde"),
         id="KDEDistribution",
     ),
     pytest.param(
-        lambda: EmpiricalDistribution("x", jnp.zeros((10, 3))),
+        lambda: EmpiricalDistribution(jnp.zeros((10, 3)), component="x"),
         id="EmpiricalDistribution",
     ),
 ]
@@ -115,19 +117,19 @@ class TestWithLabelBasics:
     """Distribution.with_label() returns a new object with a new label."""
 
     def test_returns_new_object(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert n is not n2
         assert n.label == "x"  # original unchanged
         assert n2.label == "y"
 
     def test_is_same_type(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         assert type(n.with_label("y")) is type(n)
 
     def test_is_shallow_copy(self):
         """Underlying parameters are shared (not deep-copied)."""
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         n2 = n.with_label("y")
         assert n2._loc is n._loc  # shared array
         assert n2._scale is n._scale
@@ -137,26 +139,26 @@ class TestWithLabelProvenance:
     """with_label() attaches a 'with_label' Provenance pointing to the original."""
 
     def test_provenance_operation(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         n2 = n.with_label("y")
         assert n2.provenance is not None
         assert n2.provenance.operation == "with_label"
 
     def test_provenance_parents(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert len(n2.provenance.parents) == 1
         assert n2.provenance.parents[0].label == "x"
 
     def test_provenance_metadata(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0, label="x")
         n2 = n.with_label("y")
         assert n2.provenance.metadata["old_label"] == "x"
         assert n2.provenance.metadata["new_label"] == "y"
 
     def test_relabel_chain_preserves_ancestry(self, full_provenance_mode):
         """a.with_label("b").with_label("c") keeps a in the ancestor DAG."""
-        a = Normal(loc=0.0, scale=1.0, label="a")
+        a = Normal("a", loc=0.0, scale=1.0)
         b = a.with_label("b")
         c = b.with_label("c")
         ancestors = provenance_ancestors(c)
@@ -165,7 +167,7 @@ class TestWithLabelProvenance:
 
     def test_original_provenance_not_mutated(self):
         """Relabeling does not alter the original's source."""
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         n.with_provenance(Provenance("construction", parents=()))
         n.with_label("y")
         assert n.provenance.operation == "construction"
@@ -175,7 +177,7 @@ class TestWithLabelSampling:
     """Relabeled copies behave identically under sampling/log_prob."""
 
     def test_sample_statistics_match(self):
-        n = Normal(loc=2.0, scale=0.5, label="x")
+        n = Normal("x", loc=2.0, scale=0.5)
         n2 = n.with_label("mu")
         key = jax.random.PRNGKey(0)
         s1 = n._sample(key, (2000,))
@@ -184,7 +186,7 @@ class TestWithLabelSampling:
         np.testing.assert_allclose(np.asarray(s1), np.asarray(s2), atol=1e-6)
 
     def test_log_prob_matches(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         n2 = n.with_label("z")
         x = jnp.asarray(1.23)
         np.testing.assert_allclose(
@@ -194,7 +196,7 @@ class TestWithLabelSampling:
         )
 
     def test_event_shape_matches(self):
-        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="a")
+        mvn = MultivariateNormal("a", loc=jnp.zeros(3), cov=jnp.eye(3))
         renamed = mvn.with_label("b")
         assert renamed.event_shape == mvn.event_shape
 
@@ -203,14 +205,14 @@ class TestWithLabelRecordSpec:
     """with_label() changes the label and keeps the event component (III.7)."""
 
     def test_template_field_stays_the_component(self):
-        n = Normal(loc=0.0, scale=1.0, label="x")
+        n = Normal("x", loc=0.0, scale=1.0)
         n2 = n.with_label("growth_rate")
         assert n2.label == "growth_rate"
         assert n2.event_spec is n.event_spec
         assert tuple(n2.event_spec.components) == ("x",)
 
     def test_template_shape_preserved(self):
-        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), label="a")
+        mvn = MultivariateNormal("a", loc=jnp.zeros(3), cov=jnp.eye(3))
         b = mvn.with_label("b")
         assert tuple(b.event_spec.components) == ("a",)
         assert b.event_spec.spec.shape == mvn.event_spec.spec.shape == (3,)
@@ -242,20 +244,20 @@ class TestNoBatchShape:
 
 class TestAnnotationsDiagnosticsAccessor:
     def test_annotations_defaults_to_none(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         assert dist.annotations is None
         assert dist.diagnostics is None
 
     def test_diagnostics_none_when_annotations_has_no_diagnostics_group(self):
         import xarray as xr
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         object.__setattr__(dist, "_annotations", xr.DataTree.from_dict({"arviz": xr.Dataset()}))
         assert dist.annotations is dist._annotations
         assert dist.diagnostics is None
 
     def test_diagnostics_none_when_annotations_has_no_children_attr(self):
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         object.__setattr__(dist, "_annotations", object())
 
         assert dist.diagnostics is None
@@ -265,7 +267,7 @@ class TestAnnotationsDiagnosticsAccessor:
 
         from probpipe.diagnostics.views import DiagnosticsView
 
-        dist = Normal(loc=0.0, scale=1.0, label="x")
+        dist = Normal("x", loc=0.0, scale=1.0)
         object.__setattr__(
             dist,
             "_annotations",
@@ -283,21 +285,99 @@ class TestDistributionRepr:
 
         class _NamedDist(Distribution):
             def __init__(self):
-                super().__init__("x", OpaqueSpec())
+                super().__init__("x", OutputSpec(x=OpaqueSpec()))
 
-        assert repr(_NamedDist()) == "Distribution('x')"
+        assert repr(_NamedDist()) == "Distribution('x', component='x')"
 
-    def test_a_declaration_that_is_not_the_default_is_shown(self):
+    def test_a_whole_term_event_shows_its_component(self):
         from probpipe import Distribution
 
         class Named(Distribution):
             def __init__(self):
                 super().__init__("x", OutputSpec(beta=OpaqueSpec()))
 
-        assert repr(Named()) == "Named('x', event_spec=OutputSpec(beta=OpaqueSpec()))"
-        assert repr(Named().with_label("y")) == (
-            "Named('y', event_spec=OutputSpec(beta=OpaqueSpec()))"
+        assert repr(Named()) == "Named('x', component='beta')"
+        assert repr(Named().with_label("y")) == "Named('y', component='beta')"
+
+
+def _with_fixed_paths(term: Any, *paths: str) -> Any:
+    """*term* holding *paths* fixed, as conditioning on them records."""
+    term._store_expression(term._expression.with_fixed(paths))
+    return term
+
+
+class TestNotation:
+    """A law reads as its label followed by its signature, which ``str()`` returns."""
+
+    def test_a_family_reads_by_its_label_and_its_component(self):
+        prior = Normal("mu", 0.0, 1.0, label="prior")
+        assert prior.notation == "prior(mu)"
+        assert Normal("x", 0.0, 1.0).notation == "Normal(x)"
+
+    def test_a_law_over_a_record_lists_its_components_in_order(self):
+        law = _DeclaredLaw("model", OutputSpec(RecordSpec(y=(), mu=())))
+        assert law.notation == "model(y, mu)"
+
+    def test_a_whole_record_term_reads_by_its_one_component(self):
+        law = _DeclaredLaw("model", OutputSpec(theta=RecordSpec(y=(), mu=())))
+        assert law.notation == "model(theta)"
+
+    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+        prior = Normal("mu", 0.0, 1.0, label="prior")
+        assert str(prior) == f"{prior}" == "prior(mu)"
+        assert repr(prior).startswith("Normal('prior', component='mu',")
+
+    def test_a_label_of_several_words_is_grouped(self):
+        law = Normal("x", 0.0, 1.0).with_label("my prior")
+        assert law.notation == "[my prior](x)"
+
+    def test_fixed_paths_follow_the_components(self):
+        posterior = _with_fixed_paths(
+            _DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y"
         )
+        assert posterior.notation == "model(mu; y)"
+        two = _with_fixed_paths(
+            _DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y", "x"
+        )
+        assert two.notation == "model(mu; y, x)"
+
+    def test_a_relabeled_law_reads_by_its_new_label_and_its_own_component(self):
+        assert Normal("x", 0.0, 1.0).with_label("prior").notation == "prior(x)"
+
+
+class TestFixedPaths:
+    """A law holds no path fixed by default, and each copy of a law keeps the paths it holds."""
+
+    def test_a_law_holds_no_path_fixed_by_default(self):
+        assert _fixed_paths(Normal("x", 0.0, 1.0)) == ()
+
+    def test_detaching_keeps_the_fixed_paths(self):
+        law = _with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(())), "y")
+        assert _fixed_paths(law.raw()) == _fixed_paths(_detached_term(law)) == ("y",)
+
+    @pytest.mark.parametrize(
+        "copy",
+        [
+            pytest.param(lambda law: law.with_label("posterior"), id="with_label"),
+            pytest.param(lambda law: law.with_dim_sizes(n=3), id="with_dim_sizes"),
+            pytest.param(lambda law: law.with_dim_names(n="m"), id="with_dim_names"),
+            pytest.param(lambda law: law.with_path_names(x="z"), id="with_path_names"),
+        ],
+    )
+    def test_a_copy_keeps_the_fixed_paths(self, copy):
+        law = _with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(("n",))), "y")
+        assert _fixed_paths(copy(law)) == ("y",)
+        assert copy(law).notation.endswith("; y)")
+
+    def test_a_rename_that_holds_its_law_keeps_the_fixed_paths(self):
+        law = _with_fixed_paths(_DeclaredLaw("model", OutputSpec(RecordSpec(a=(), b=()))), "y")
+        renamed = law.with_path_names({"a": "g/a"})
+        assert type(renamed) is not type(law)
+        assert renamed.notation == "model(b, g; y)"
+
+    def test_copies_pickle_with_their_fixed_paths(self):
+        law = _with_fixed_paths(Normal("x", 0.0, 1.0), "y")
+        assert _fixed_paths(pickle.loads(pickle.dumps(law))) == ("y",)
 
 
 class TestConstructorLabelCheck:
@@ -309,9 +389,9 @@ class TestConstructorLabelCheck:
 
         class _Dist(Distribution):
             def __init__(self, label):
-                super().__init__(label, OpaqueSpec())
+                super().__init__(label, OutputSpec(x=OpaqueSpec()))
 
-        with pytest.raises(TypeError, match="requires a non-empty label"):
+        with pytest.raises(TypeError, match="_Dist: label must be a non-empty string"):
             _Dist(label)
 
 
@@ -369,7 +449,7 @@ class TestMetaclassEnforcement:
             def __init__(self):
                 # Skip super().__init__ deliberately.
                 self._label = "direct"
-                self._init_declaration(OpaqueSpec())
+                self._init_declaration(OutputSpec(direct=OpaqueSpec()))
 
         dist = _DirectLabelDist()
         assert dist.label == "direct"
@@ -399,7 +479,7 @@ class TestWithLabelTemplateRoundtrip:
         untouched."""
         from probpipe import Normal
 
-        original = Normal(loc=0.0, scale=1.0, label="x")
+        original = Normal("x", loc=0.0, scale=1.0, label="x")
         clone = original.with_label("y")
         assert clone.label == "y"
         assert tuple(clone.event_spec.components) == ("x",)
@@ -430,7 +510,7 @@ class TestWithLabelTemplateRoundtrip:
             "row",
             element_spec=RecordSpec(labels=OpaqueSpec(), ids=()),
         )
-        law = EmpiricalDistribution("rows", rows)
+        law = EmpiricalDistribution(rows, label="rows")
         original_fields = tuple(law.event_spec.components)
         clone = law.with_label("renamed")
         assert tuple(clone.event_spec.components) == original_fields == ("labels", "ids")
@@ -438,16 +518,16 @@ class TestWithLabelTemplateRoundtrip:
 
 class TestDistributionSpecIsValid:
     def test_matching_distribution_valid(self):
-        dist = Normal(label="x", loc=0.0, scale=1.0)
+        dist = Normal("x", loc=0.0, scale=1.0)
         assert DistributionSpec(dist.event_spec).is_valid(dist)
 
     def test_packaging_mismatch_invalid(self):
         # A whole term x and a one-field record exposing x are different draws.
-        dist = Normal(label="x", loc=0.0, scale=1.0)
+        dist = Normal("x", loc=0.0, scale=1.0)
         assert not DistributionSpec(RecordSpec(x=())).is_valid(dist)
 
     def test_template_mismatch_invalid(self):
-        dist = Normal(label="x", loc=0.0, scale=1.0)
+        dist = Normal("x", loc=0.0, scale=1.0)
         assert not DistributionSpec(event_spec=RecordSpec(y=())).is_valid(dist)
 
     def test_non_distribution_invalid(self):
@@ -512,41 +592,78 @@ _PUBLIC_CLASSES = _public_distribution_classes()
 _CONSTRUCTED_BY_INDEXING = {"FieldView"}
 
 
-class TestLabelFirstSignature:
-    """Every public distribution constructor takes ``label`` first, required."""
+# Laws that combine or wrap other laws, which take their label first, required.
+_LABEL_FIRST = {
+    "NumericDistribution",
+    "FactoredDistribution",
+    "FactoredNumericDistribution",
+    "FactoredMultivariateGaussian",
+    "MinibatchedDistribution",
+}
+
+
+def _parameters(cls: type) -> list[inspect.Parameter]:
+    """The parameters of *cls*'s constructor, without ``self``."""
+    parameters = list(inspect.signature(cls.__init__).parameters.values())
+    return parameters[1:] if parameters and parameters[0].name == "self" else parameters
+
+
+class TestLabelSignature:
+    """A constructor takes ``label`` first and required, or as an optional keyword."""
 
     @pytest.mark.parametrize(
         "cls",
-        [cls for cls in _PUBLIC_CLASSES if cls.__name__ not in _CONSTRUCTED_BY_INDEXING],
+        [cls for cls in _PUBLIC_CLASSES if cls.__name__ in _LABEL_FIRST],
         ids=lambda cls: cls.__name__,
     )
     def test_label_is_the_required_first_parameter(self, cls):
-        first = next(iter(inspect.signature(cls.__init__).parameters.values()))
-        if first.name == "self":
-            first = list(inspect.signature(cls.__init__).parameters.values())[1]
+        first = _parameters(cls)[0]
         assert first.name == "label"
         assert first.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
         assert first.default is inspect.Parameter.empty
 
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            cls
+            for cls in _PUBLIC_CLASSES
+            if cls.__name__ not in _CONSTRUCTED_BY_INDEXING | _LABEL_FIRST
+        ],
+        ids=lambda cls: cls.__name__,
+    )
+    def test_label_is_an_optional_keyword(self, cls):
+        (label,) = [parameter for parameter in _parameters(cls) if parameter.name == "label"]
+        assert label.kind is inspect.Parameter.KEYWORD_ONLY
+        assert label.default is None
+
 
 class TestLabelBinding:
-    def test_positional_label_binds(self):
-        assert Normal("x", 0.0, 1.0).label == "x"
+    def test_a_family_defaults_its_label_to_the_class_name(self):
+        law = Normal("x", 0.0, 1.0)
+        assert law.label == "Normal"
+        assert tuple(law.event_spec.components) == ("x",)
 
     def test_keyword_label_binds(self):
-        assert Normal(loc=0.0, scale=1.0, label="x").label == "x"
+        law = Normal("x", loc=0.0, scale=1.0, label="prior")
+        assert law.label == "prior"
+        assert tuple(law.event_spec.components) == ("x",)
 
-    def test_label_given_both_ways_raises(self):
-        with pytest.raises(TypeError, match="multiple values for argument 'label'"):
-            Normal("x", 0.0, 1.0, label="y")
+    def test_component_given_both_ways_raises(self):
+        with pytest.raises(TypeError, match="multiple values for argument 'component'"):
+            Normal("x", 0.0, 1.0, component="y")
 
     # The empirical law chooses its capabilities from its atoms, which it reads by
     # keyword as well as by position.
     @pytest.mark.parametrize(
         "make",
         [
-            pytest.param(lambda s: EmpiricalDistribution(label="x", atoms=s), id="all-keywords"),
-            pytest.param(lambda s: EmpiricalDistribution("x", atoms=s), id="atoms-keyword"),
+            pytest.param(
+                lambda s: EmpiricalDistribution(atoms=s, component="x", label="x"),
+                id="all-keywords",
+            ),
+            pytest.param(
+                lambda s: EmpiricalDistribution(s, component="x", label="x"), id="atoms-positional"
+            ),
         ],
     )
     def test_keyword_atoms_reach_the_numeric_capabilities(self, make):
@@ -555,49 +672,59 @@ class TestLabelBinding:
         assert law.label == "x"
 
     def test_a_keyword_source_reaches_the_bootstrap(self):
-        source = EmpiricalDistribution("r", jnp.arange(4.0))
-        law = BootstrapReplicateDistribution("b", source=source)
+        source = EmpiricalDistribution(jnp.arange(4.0), component="r")
+        law = BootstrapReplicateDistribution("b", source=source, label="rep")
         assert law.replicate_size == 4
-        assert law.label == "b"
+        assert law.label == "rep"
+        assert tuple(law.event_spec.components) == ("b",)
 
 
 class TestDerivedLabels:
-    """An expectation's result takes the label of its law."""
+    """An expectation is labeled by the expectation of its integrand at a draw of its law."""
 
     @pytest.mark.parametrize(
-        ("make_operand", "f"),
+        ("make_operand", "f", "label"),
         [
-            pytest.param(lambda: Normal("law", 0.0, 1.0), lambda x: x, id="monte-carlo"),
+            pytest.param(
+                lambda: Normal("law", 0.0, 1.0),
+                lambda x: x,
+                "E[f(law ~ Normal)]",
+                id="monte-carlo",
+            ),
             pytest.param(
                 lambda: EmpiricalDistribution(
-                    "law", OpaqueBatch("labels", ["a", "b", "c", "d"], "atom")
+                    OpaqueBatch("labels", ["a", "b", "c", "d"], "atom"), component="law"
                 ),
                 lambda x: jnp.asarray(1.0),
+                "E[f(law ~ p)]",
                 id="generic-empirical",
             ),
             pytest.param(
-                lambda: EmpiricalDistribution("law", jnp.arange(10.0)),
+                lambda: EmpiricalDistribution(jnp.arange(10.0), component="law"),
                 lambda x: x,
+                "E[f(law ~ p)]",
                 id="array-empirical",
             ),
             pytest.param(
                 lambda: BootstrapReplicateDistribution(
-                    "law", EmpiricalDistribution("data", jnp.arange(5.0))
+                    "law", EmpiricalDistribution(jnp.arange(5.0), component="data")
                 ),
                 jnp.mean,
+                "E[mean(law ~ BootstrapReplicateDistribution)]",
                 id="bootstrap-replicate",
             ),
             pytest.param(
                 lambda: (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"],
                 lambda x: x,
+                "E[f(a ~ Normal)]",
                 id="field-view",
             ),
         ],
     )
-    def test_an_expectation_takes_the_laws_label(self, make_operand, f):
+    def test_an_expectation_is_labeled_over_its_law(self, make_operand, f, label):
         law = make_operand()
         result = expectation.with_options(n_broadcast_samples=3)(law, f)
-        assert result.label == law.label
+        assert result.label == label
 
 
 class TestPublicImportPaths:
@@ -617,16 +744,29 @@ class TestPublicImportPaths:
 
 
 class _DeclaredLaw(Distribution):
-    """A test-only law that declares whatever event it is given."""
+    """A test-only law that declares whatever event it is given.
+
+    A term type that is not a record is declared as a whole term under the label.
+    """
 
     def __init__(self, label, event_spec):
+        if isinstance(event_spec, TermSpec) and not isinstance(event_spec, RecordSpec):
+            event_spec = OutputSpec(**{label: event_spec})
         super().__init__(label, event_spec)
 
 
 class TestEventDeclaration:
     """A law stores one declaration, completed from what its constructor supplies."""
 
-    def test_a_bare_array_spec_is_a_whole_term_under_the_label(self):
+    def test_a_bare_array_spec_needs_a_component(self):
+        class _Bare(Distribution):
+            def __init__(self):
+                super().__init__("x", NumericArraySpec((3,)))
+
+        with pytest.raises(TypeError, match="needs a component"):
+            _Bare()
+
+    def test_the_event_spec_is_a_view_of_the_stored_spec(self):
         law = _DeclaredLaw("x", NumericArraySpec((3,)))
         assert law.event_spec == OutputSpec(x=NumericArraySpec((3,)))
         assert law.event_spec is law.spec.event_spec
@@ -646,7 +786,7 @@ class TestEventDeclaration:
             _DeclaredLaw("x", OutputSpec(x=None))
 
     def test_a_value_that_is_not_a_spec_raises(self):
-        with pytest.raises(TypeError, match="must be an OutputSpec or a TermSpec"):
+        with pytest.raises(TypeError, match="must be an OutputSpec or a RecordSpec"):
             _DeclaredLaw("x", (3,))
 
     def test_with_label_keeps_the_component(self):
@@ -712,7 +852,7 @@ class TestNumericMembership:
     def test_a_class_claiming_the_marker_must_declare_a_numeric_event(self):
         class _Claims(NumericDistribution):
             def __init__(self, label, event_spec):
-                super().__init__(label, event_spec)
+                super().__init__(label, OutputSpec(**{label: event_spec}))
 
         assert issubclass(_Claims, NumericDistribution)
         assert isinstance(_Claims("x", NumericArraySpec(())), NumericDistribution)
@@ -726,7 +866,7 @@ class TestNumericMembership:
                 return object.__new__(_Claiming if cls is _Factory else cls)
 
             def __init__(self, label, event_spec):
-                super().__init__(label, event_spec)
+                super().__init__(label, OutputSpec(**{label: event_spec}))
 
         class _Claiming(_Factory, NumericDistribution):
             pass
@@ -828,7 +968,7 @@ class TestSchemaViews:
                 raise AttributeError("the property's own message")
 
         with pytest.raises(AttributeError, match="the property's own message"):
-            _ = _Raising("x", NumericArraySpec(())).broken
+            _ = _Raising("x", OutputSpec(x=NumericArraySpec(()))).broken
 
 
 # One construction per TFP family, which passes its keywords to the family, with
@@ -959,7 +1099,7 @@ _FAMILY_SCHEMAS = [
 
 
 class TestFamilyDeclarations:
-    """A TFP family declares one draw as a whole-term array whose component defaults to its label."""
+    """A TFP family declares one draw as a whole-term array under the component it takes first."""
 
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_the_schema_views_read_the_declaration(self, make, shape, dtype, support):
@@ -977,29 +1117,40 @@ class TestFamilyDeclarations:
 
     @pytest.mark.parametrize(("make", "shape", "dtype", "support"), _FAMILY_SCHEMAS)
     def test_event_spec_names_the_component(self, make, shape, dtype, support):
-        law = make(event_spec=OutputSpec(theta=None))
+        law = make(event_spec=OutputSpec(x=None))
         dtype = np.dtype(dtype) if dtype is not None else jnp.asarray(0.0).dtype
-        assert law.label == "x"
-        assert law.event_spec == OutputSpec(theta=NumericArraySpec(shape, dtype, support))
-        assert law["theta"] is law
-        with pytest.raises(KeyError):
-            law["x"]
+        assert law.label == type(law).__name__
+        assert law.event_spec == OutputSpec(x=NumericArraySpec(shape, dtype, support))
+        assert law["x"] is law
+        with pytest.raises(ValueError, match=r"has the component 'x', but its event_spec names"):
+            make(event_spec=OutputSpec(theta=None))
 
     def test_a_declared_type_is_checked_against_the_draw(self):
         dtype = jnp.asarray(0.0).dtype
         law = MultivariateNormal(
-            "x", jnp.zeros(3), cov=jnp.eye(3), event_spec=OutputSpec(theta=NumericArraySpec(("d",)))
+            "theta",
+            jnp.zeros(3),
+            cov=jnp.eye(3),
+            event_spec=OutputSpec(theta=NumericArraySpec(("d",))),
+            label="x",
         )
         assert law.event_spec == OutputSpec(theta=NumericArraySpec((3,), dtype, real))
         with pytest.raises(ValueError, match="has dimension 3, expected 2"):
             MultivariateNormal(
-                "x",
+                "theta",
                 jnp.zeros(3),
                 cov=jnp.eye(3),
                 event_spec=OutputSpec(theta=NumericArraySpec((2,))),
+                label="x",
             )
         with pytest.raises(ValueError, match="cannot be cast to the declared int32"):
-            Normal("x", 0.0, 1.0, event_spec=OutputSpec(theta=NumericArraySpec((), "int32")))
+            Normal(
+                "theta",
+                0.0,
+                1.0,
+                event_spec=OutputSpec(theta=NumericArraySpec((), "int32")),
+                label="x",
+            )
 
     def test_event_spec_declares_a_whole_array(self):
         record = OutputSpec(RecordSpec(theta=NumericArraySpec(())))
@@ -1030,7 +1181,7 @@ class TestJointDeclarations:
     def test_a_declared_component_is_keyed_by_the_joint(self):
         from probpipe.distributions import FactoredDistribution
 
-        growth = Normal("x", 0.0, 1.0, event_spec=OutputSpec(growth=None))
+        growth = Normal("growth", 0.0, 1.0, label="x")
         joint = FactoredDistribution("p", [growth])
         assert tuple(joint.event_spec.components) == ("growth",)
 
@@ -1050,7 +1201,7 @@ class TestJointDeclarations:
             "row",
             element_spec=RecordSpec(labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)),
         )
-        joint = EmpiricalDistribution("rows", rows)
+        joint = EmpiricalDistribution(rows, label="rows")
         assert joint.event_spec.spec == RecordSpec(
             labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)
         )
@@ -1084,11 +1235,11 @@ class TestEmpiricalDeclarations:
         assert set(spec.element_spec.children["a"].children) == {"b", "c"}
 
     def test_opaque_atoms_are_a_whole_term(self):
-        law = EmpiricalDistribution("law", OpaqueBatch("labels", ["a", "b"], "atom"))
+        law = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b"], "atom"), component="law")
         assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
     def test_array_atoms_are_a_whole_term(self):
-        law = EmpiricalDistribution("x", jnp.zeros((5, 2)))
+        law = EmpiricalDistribution(jnp.zeros((5, 2)), component="x")
         dtype = jnp.asarray(0.0).dtype
         assert law.event_spec == OutputSpec(x=NumericArraySpec((2,), dtype))
         assert law.dtypes == {"x": dtype}
@@ -1102,13 +1253,13 @@ class TestEmpiricalDeclarations:
             "atom",
             element_spec=NumericRecordSpec(a=(), b=NumericRecordSpec(c=(3,))),
         )
-        law = EmpiricalDistribution("r", atoms)
+        law = EmpiricalDistribution(atoms, label="r")
         assert set(law.dtypes) == {"a", "b/c"}
         assert law.event_spec.spec["b/c"].shape == (3,)
 
     def test_a_replicate_of_an_empirical_law_is_a_batch_on_its_level(self):
         law = BootstrapReplicateDistribution(
-            "x", EmpiricalDistribution("x", jnp.zeros((5, 2))), replicate_size=3
+            "x", EmpiricalDistribution(jnp.zeros((5, 2)), component="x"), replicate_size=3
         )
         spec = law.event_spec.spec
         assert (spec.batch_shape, spec.level_names) == ((3,), ("x",))
@@ -1144,7 +1295,7 @@ class TestEmpiricalDeclarations:
                 u=NumericArraySpec((2,), None, real), v=NumericArraySpec((), None, real)
             ),
         )
-        law = EmpiricalDistribution("rows", atoms)
+        law = EmpiricalDistribution(atoms, label="rows")
         assert law.supports == {"u": real, "v": real}
         assert law.event_spec.spec["u"].shape == (2,)
 
@@ -1161,7 +1312,7 @@ class TestDerivedDeclarations:
             t=NumericArraySpec((), jnp.asarray(0.0).dtype, positive)
         )
         over_atoms = BijectorTransformedDistribution(
-            "u", EmpiricalDistribution("e", jnp.ones((4, 2))), tfb.Exp()
+            "u", EmpiricalDistribution(jnp.ones((4, 2)), component="e"), tfb.Exp()
         )
         assert over_atoms.event_shape == (2,)
 
@@ -1169,11 +1320,11 @@ class TestDerivedDeclarations:
         from probpipe import FunctionSpec, LinearBasisFunction
 
         weights = MultivariateNormal("w", loc=jnp.zeros(2), cov=jnp.eye(2))
-        f = LinearBasisFunction("f", lambda X: jnp.concatenate([X, X**2], -1), weights)
+        f = LinearBasisFunction("f", lambda X: jnp.concatenate([X, X**2], -1), weights, label="f")
         assert f.event_spec == OutputSpec(f=FunctionSpec(output_spec=OutputSpec(f=None)))
-        # A derived function keeps its base's component; its label is not one.
+        # A derived function keeps its base's component and its label.
         shifted = f + 1.0
-        assert shifted.label == "shift(f)"
+        assert shifted.label == "f"
         assert shifted.event_spec is f.event_spec
 
     def test_a_minibatched_measure_draws_laws_over_the_prior_parameters(self):
@@ -1189,7 +1340,7 @@ class TestDerivedDeclarations:
             jnp.array([1.0, 0.0, 1.0, 0.0]),
             batch_size=2,
         )
-        assert measure.event_spec == OutputSpec(measure=DistributionSpec(prior.event_spec))
+        assert measure.event_spec == OutputSpec(target=DistributionSpec(prior.event_spec))
         draw = measure._draw_one(jax.random.PRNGKey(0))
         assert draw.event_spec is prior.event_spec
         assert measure.event_spec.spec.is_valid(draw)

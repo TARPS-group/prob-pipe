@@ -32,9 +32,9 @@ from probpipe.diagnostics._views import DiagnosticsView, PPCView
 def _kernel(posterior, n: int = 50):
     """``y ~ Normal(alpha, 1)``, iid over *n* observations, given the posterior's slots."""
     return conditional_distribution(
-        "y_given_alpha",
         lambda alpha, beta: Normal("y", alpha * jnp.ones(n), 1.0),
         given_spec=posterior.event_spec.components,
+        label="y_given_alpha",
     )
 
 
@@ -278,12 +278,12 @@ class TestAddPpc:
 
     def test_a_posterior_that_misses_a_given_slot_raises_naming_it(self, posterior):
         kernel = conditional_distribution(
-            "y_given_alpha_gamma",
             lambda alpha, gamma: Normal("y", alpha * jnp.ones(5), 1.0),
             given_spec={
                 "alpha": posterior.event_spec.components["alpha"],
                 "gamma": posterior.event_spec.components["alpha"],
             },
+            label="y_given_alpha_gamma",
         )
         with pytest.raises(
             ValueError, match=r"add_ppc: posterior '.*' does not produce \['gamma'\]"

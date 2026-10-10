@@ -66,7 +66,7 @@ class Kernel(ConditionalDistribution):
 
 def _laws(count: int, label: str = "x") -> list[Normal]:
     """``count`` normal laws over one declaration, the law at position ``i`` with mean ``i``."""
-    return [Normal(label, float(i), 1.0) for i in range(count)]
+    return [Normal(label, float(i), 1.0, label=label) for i in range(count)]
 
 
 def _kernels(count: int, given=None, event=None) -> list[Kernel]:
@@ -97,7 +97,7 @@ def _record_law(location: float) -> EmpiricalDistribution:
     x = jnp.full((8,), float(location))
     spec = NumericRecordSpec(x=NumericArraySpec((), x.dtype), y=NumericArraySpec((), x.dtype))
     return EmpiricalDistribution(
-        "xy", NumericRecordBatch("atoms", {"x": x, "y": -x}, "atom", element_spec=spec)
+        NumericRecordBatch("atoms", {"x": x, "y": -x}, "atom", element_spec=spec), label="xy"
     )
 
 

@@ -55,7 +55,7 @@ def conjugate_linear_model() -> ConjugateLinearModel:
     beta_star = jax.random.normal(k_beta, (p,)) * jnp.sqrt(tau2)
     y = x @ beta_star + jax.random.normal(k_y, (n,))
     likelihood = glm_likelihood("y", GaussianFamily(), X=x, dispersion=1.0)
-    model = likelihood * MultivariateNormal(loc=jnp.zeros(p), cov=tau2 * jnp.eye(p), label="beta")
+    model = likelihood * MultivariateNormal("beta", loc=jnp.zeros(p), cov=tau2 * jnp.eye(p))
     cov = jnp.linalg.inv(jnp.eye(p) / tau2 + x.T @ x)
     mean = cov @ (x.T @ y)
     return ConjugateLinearModel(

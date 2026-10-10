@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xarray import DataTree
 
-    from ..core._spec_base import TermSpec
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,6 +16,8 @@ from .._weights import Weights
 from ..core._numeric_array_batch import NumericArrayBatch
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._opaque import OpaqueSpec
+from ..core._repr import format_components
+from ..core._spec_base import TermSpec
 from ..core._specs import (
     NumericArraySpec,
     NumericRecordSpec,
@@ -364,6 +365,17 @@ def _flat_chains(law: EmpiricalDistribution) -> Array:
 # ---------------------------------------------------------------------------
 
 
+#: The component of a posterior whose target declares no event, or a bare type.
+_UNDECLARED = "posterior"
+
+
+def _posterior_declaration(event_spec: OutputSpec | TermSpec) -> OutputSpec:
+    """The target's declaration *event_spec*, a bare type other than a record under ``posterior``."""
+    if isinstance(event_spec, TermSpec) and not isinstance(event_spec, RecordSpec):
+        event_spec = OutputSpec(**{_UNDECLARED: event_spec})
+    return _complete_event_spec(event_spec)
+
+
 def make_posterior(
     chains: list[Array],
     parents: tuple[Distribution, ...],
@@ -379,7 +391,8 @@ def make_posterior(
     """The empirical law of an inference run's draws, with its record of the run.
 
     The result is an :class:`~probpipe.EmpiricalDistribution` labeled *label*,
-    whose atoms are the draws on the levels ``chain`` and ``draw``. Its event declaration is the target's: a whole-term target stays
+    whose atoms are the draws on the levels ``chain`` and ``draw``, labeled by
+    the law's components, as ``beta`` or ``(K, r, phi)``. Its event declaration is the target's: a whole-term target stays
     whole, and a record target keeps its fields' supports, scalar shapes, and
     nested groups. Its provenance names the method and the target. Its
     annotations are a ``DataTree`` whose root attribute ``method`` is *method*,
@@ -405,7 +418,8 @@ def make_posterior(
     event_spec : OutputSpec, TermSpec, or None
         The target's declaration, usually the prior's ``event_spec``, which the
         result declares as its event. A bare ``RecordSpec`` exposes its fields,
-        and any other term is a whole term. ``None`` makes each draw one array.
+        and any other term is a whole term under the component ``posterior``.
+        ``None`` makes each draw one array under that component.
     field_order : list of str or None
         The field each contiguous column block of *chains* belongs to, in the
         order the blocks appear, for a backend whose columns follow another
@@ -415,15 +429,15 @@ def make_posterior(
         Per-draw importance weights across all chains in chain order, as SMC-ABC
         returns them.
     label : str
-        The result's label, which is also the component of a whole-term event
-        that *event_spec* leaves unnamed.
+        The result's label.
     **meta
         Further metadata recorded in the provenance.
 
     Returns
     -------
     EmpiricalDistribution
-        The posterior, with its atoms on the levels ``chain`` and ``draw``.
+        The posterior, with its atoms on the levels ``chain`` and ``draw``,
+        labeled by its components.
 
     Raises
     ------
@@ -436,7 +450,7 @@ def make_posterior(
     """
     if not chains:
         raise ValueError("chains must hold at least one chain; got none")
-    declaration = None if event_spec is None else _complete_event_spec(event_spec, label)
+    declaration = None if event_spec is None else _posterior_declaration(event_spec)
     flat_chains = [jnp.asarray(chain) for chain in chains]
 
     # When the chain columns follow another field order than the target's, as for
@@ -458,8 +472,11 @@ def make_posterior(
     lengths = sorted({int(chain.shape[0]) for chain in flat_chains})
     if len(lengths) > 1:
         raise ValueError(f"all chains must have the same length; got lengths {lengths}")
-    atoms = _chain_atoms(label, jnp.stack(flat_chains), declaration)
-    result = EmpiricalDistribution(label, atoms, weights, event_spec=declaration)
+    components = (_UNDECLARED,) if declaration is None else declaration.components
+    atoms = _chain_atoms(format_components(components), jnp.stack(flat_chains), declaration)
+    if declaration is None:
+        declaration = OutputSpec(**{_UNDECLARED: atoms.element_spec})
+    result = EmpiricalDistribution(atoms, weights, label=label, event_spec=declaration)
     if annotations is not None:
         annotations = _named_draw_groups(annotations, result)
     return _record_run(result, parents, method, annotations=annotations, **meta)

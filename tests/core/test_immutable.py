@@ -413,7 +413,7 @@ class TestTheConstructionWindow:
 
         # Different instances rather than one nested in itself: the factors
         # are built first, and the joint's own window is unaffected by theirs.
-        joint = FactoredDistribution("j", [Normal("a", 0.0, 1.0)])
+        joint = FactoredDistribution("j", [Normal("x", 0.0, 1.0, label="a")])
         assert joint.label == "j"
         assert joint.factors[0].label == "a"
         with pytest.raises(AttributeError, match="is immutable"):

@@ -23,7 +23,7 @@ from tests._posterior import posterior_of
 
 
 def test_extract_draws_reads_an_empirical_law_and_refuses_others():
-    empirical = EmpiricalDistribution("x", jnp.array([4.0, 5.0]))
+    empirical = EmpiricalDistribution(jnp.array([4.0, 5.0]), component="x")
     np.testing.assert_array_equal(extract_draws(empirical)["x"], [4.0, 5.0])
 
     with pytest.raises(TypeError, match="cannot extract draws"):
@@ -37,7 +37,7 @@ def test_extract_draws_supports_record_atoms():
         "row",
         element_spec=RecordSpec(alpha=(), beta=()),
     )
-    post = EmpiricalDistribution("post", atoms)
+    post = EmpiricalDistribution(atoms, label="post")
 
     draws = extract_draws(post)
 
@@ -52,7 +52,7 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
         "row",
         element_spec=RecordSpec(alpha=(), beta=(2,)),
     )
-    post = EmpiricalDistribution("post", atoms)
+    post = EmpiricalDistribution(atoms, label="post")
     ds = to_arviz_dataset(post, var_names=["alpha"])
     assert isinstance(ds, xr.Dataset)
     assert set(ds.data_vars) == {"alpha"}
@@ -60,9 +60,59 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
     assert ds["alpha"].shape == (1, 3)
 
 
+def _flat_posterior_of(**columns) -> EmpiricalDistribution:
+    atoms = NumericRecordBatch(
+        "rows",
+        {name: jnp.asarray(column) for name, column in columns.items()},
+        "row",
+        element_spec=RecordSpec(**{name: () for name in columns}),
+    )
+    return EmpiricalDistribution(atoms, label="post")
+
+
+def test_to_arviz_dataset_reads_a_single_variable_name_as_one():
+    post = _flat_posterior_of(mu=[1.0, 2.0], mu_x=[3.0, 4.0])
+
+    single = to_arviz_dataset(post, var_names="mu_x")
+
+    assert isinstance(single, xr.Dataset)
+    assert list(single.data_vars) == ["mu_x"]
+    xr.testing.assert_identical(single, to_arviz_dataset(post, var_names=("mu_x",)))
+
+
+def test_to_arviz_dataset_keeps_the_order_of_var_names():
+    post = _flat_posterior_of(alpha=[1.0, 2.0], beta=[3.0, 4.0])
+
+    assert list(to_arviz_dataset(post, var_names=["beta", "alpha"]).data_vars) == ["beta", "alpha"]
+
+
+def test_to_arviz_dataset_refuses_an_unknown_variable():
+    post = _flat_posterior_of(alpha=[1.0, 2.0])
+
+    with pytest.raises(
+        ValueError, match=r"unknown variable 'gamma'; available variables: \['alpha'\]"
+    ):
+        to_arviz_dataset(post, var_names=["alpha", "gamma"])
+
+
+@pytest.mark.parametrize(
+    ("var_names", "match"),
+    [
+        (3, "to_arviz_dataset var_names must be a str or a sequence of str, got int 3"),
+        (b"alpha", "got bytes"),
+        ({"alpha": 1}, "got dict"),
+        ({"alpha"}, "got set"),
+        (("alpha", 3), "to_arviz_dataset var_names entry must be a str, got int 3"),
+    ],
+)
+def test_to_arviz_dataset_refuses_var_names_that_are_not_names(var_names, match):
+    with pytest.raises(TypeError, match=match):
+        to_arviz_dataset(_flat_posterior_of(alpha=[1.0, 2.0]), var_names=var_names)
+
+
 def test_to_arviz_dataset_prepends_chain_for_matrix_valued_params():
     omega = np.arange(24.0).reshape(4, 2, 3)
-    post = EmpiricalDistribution("omega", jnp.asarray(omega))
+    post = EmpiricalDistribution(jnp.asarray(omega), component="omega")
 
     ds = to_arviz_dataset(post)
 
@@ -95,13 +145,18 @@ def test_to_arviz_dataset_delegates_for_an_inference_result(monkeypatch):
     ds = to_arviz_dataset(result, var_names=["beta"])
 
     assert list(ds.data_vars) == ["beta"]
+    single = to_arviz_dataset(result, var_names="beta")
+    assert isinstance(single, xr.Dataset)
+    xr.testing.assert_identical(single, ds)
+    with pytest.raises(ValueError, match=r"unknown variable 'gamma'; available variables"):
+        to_arviz_dataset(result, var_names="gamma")
 
 
 def test_to_arviz_dataset_requires_xarray(monkeypatch):
     monkeypatch.setattr(arviz_bridge, "xr", None)
 
     with pytest.raises(ImportError, match="xarray is required"):
-        to_arviz_dataset(EmpiricalDistribution("x", jnp.array([1.0])))
+        to_arviz_dataset(EmpiricalDistribution(jnp.array([1.0]), component="x"))
 
 
 def test_check_arviz_installed_reports_missing_dependencies(monkeypatch):
