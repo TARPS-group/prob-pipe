@@ -58,6 +58,7 @@ from ._distribution import (
     _label_given_first,
     _law_repr,
     _no_free_dims,
+    _record_default_expression,
     _unify_declarations,
 )
 
@@ -542,6 +543,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         label = _constructor_label(self, label, "p") if label is None else label
         _given_label(label, owner=public_class_name(type(self)))
         self._init_tracked(label, provenance=_provenance)
+        _record_default_expression(self)
         self._init_annotations(_annotations)
         self._init_declaration(given_spec, event_spec)
 

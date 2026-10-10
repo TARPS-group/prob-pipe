@@ -233,6 +233,19 @@ def _constructor_label(term: Any, label: Any, default: str) -> str:
     return given
 
 
+def _record_default_expression(term: Any) -> None:
+    """Record the expression *term* was just given as its default one, if its label is the default.
+
+    The constructors of a law and of a kernel call this after setting the
+    label. :func:`_constructor_label` has marked a term whose constructor
+    received no label, and :func:`_labeled_by_default` compares the
+    expression the term carries with the one recorded here, so a copy, a
+    pickle, and a rename of the term keep its status.
+    """
+    if getattr(term, "_uses_default_label", False):
+        object.__setattr__(term, "_default_expression", term._expression)
+
+
 #: The message for a selection of field paths that names none.
 _EMPTY_SELECTION = "select at least one field path; got an empty tuple"
 
@@ -657,6 +670,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         # rebuilt distribution would come back without either. Private, and the
         # reconstruction paths are the only callers.
         self._init_tracked(label, provenance=_provenance)
+        _record_default_expression(self)
         self._init_annotations(_annotations)
         self._init_declaration(event_spec)
 

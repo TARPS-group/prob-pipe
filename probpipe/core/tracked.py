@@ -218,12 +218,18 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
         Assigns the expression of *label* alone, the label, and ``_provenance``
         via ``object.__setattr__`` so immutable hosts can call it from their
-        constructor. Performs no validation — the host constructor owns its
-        own ``label`` policy (required vs. auto-derived default).
+        constructor. It performs no validation, since the host constructor
+        decides whether a label is required or has a default, and records any
+        state of its own about that default after this call.
+
+        Parameters
+        ----------
+        label : str
+            The term's label.
+        provenance : Provenance or None, optional
+            The term's provenance, unset by default.
         """
         object.__setattr__(self, "_expression", Named(label))
-        if getattr(self, "_uses_default_label", False):
-            object.__setattr__(self, "_default_expression", self._expression)
         object.__setattr__(self, "_label", label)
         object.__setattr__(self, "_label_collapse", None)
         object.__setattr__(self, "_provenance", provenance)
