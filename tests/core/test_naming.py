@@ -309,7 +309,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
 
 
 class TestTheOutputBoundaryLabelsEveryKindAlike:
-    """Whatever kind a body returns, the result takes the function's label."""
+    """Whatever kind a body returns, the result is labeled by the function's call."""
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -323,7 +323,7 @@ class TestTheOutputBoundaryLabelsEveryKindAlike:
             ("empty sequence", lambda: []),
         ],
     )
-    def test_the_result_takes_the_functions_label(self, label, body):
+    def test_the_result_is_labeled_by_the_call(self, label, body):
         result = Function(body, label="myfunc")()
 
         assert result.label == "myfunc()"
@@ -512,7 +512,8 @@ class TestEveryAggregateIsLabeledForItsFunction:
     """The labeling table, widened across the axes that had diverged.
 
     A sweep's aggregate is built by the boundary, not by a caller, so its label is
-    the producing function's. Three paths disagreed: the
+    the producing function's call on the swept batch, as ``double(rows)``. Three
+    paths disagreed: the
     undeclared record aggregate took `stack`'s class-name default, and the scalar,
     opaque, and declared paths marked a derived label as user-given — which would
     stop a later operation relabeling it.
@@ -542,7 +543,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
             ("sequence", lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])]),
         ],
     )
-    def test_an_undeclared_aggregate_is_labeled_for_the_function(self, label, body):
+    def test_an_undeclared_aggregate_is_labeled_by_the_call(self, label, body):
         result = self._swept(body)
 
         assert result.label == "double(rows)"
@@ -1041,7 +1042,7 @@ class TestTheLabelsOfALiftedFunction:
             assert lift(prior, scale=scale).notation == "scaled(mu ~ prior, 2.0)"
             assert lift(prior, scale).notation == "scaled(mu ~ prior, 2.0)"
 
-    def test_a_function_called_on_values_takes_its_output_label(self):
+    def test_a_function_called_on_values_is_labeled_by_the_call(self):
         @function
         def f(a: jax.Array) -> jax.Array:
             return a + 1
