@@ -572,6 +572,21 @@ class TestNaming:
         assert labels[0:2].with_label("q")[0:1].label == "q[site=0:1]"
 
 
+class TestTheDefaultLabel:
+    """An unlabeled FunctionBatch is labeled by a bounded list of its members."""
+
+    def test_a_member_reads_as_its_name_and_parameters(self):
+        def predict(x, y):
+            return x + y
+
+        assert FunctionBatch([predict, lambda x: x], "model").label == "[predict(x, y), f(x)]"
+
+    def test_a_callable_without_an_inspectable_signature_reads_as_its_name(self):
+        """``max`` has no signature to inspect, so construction must not need one."""
+        batch = FunctionBatch([max, len], "model")
+        assert batch.label == "[max, len(obj)]"
+
+
 class TestFieldKeys:
     def test_these_elements_have_no_fields(self, functions):
         with pytest.raises(TypeError, match="its elements have no named fields"):

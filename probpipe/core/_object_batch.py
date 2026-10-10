@@ -42,13 +42,24 @@ def _collection_expression(store: np.ndarray) -> Expression:
     if not store.size:
         raise TypeError("an empty collection requires label=...")
     members = tuple(store.flat[i] for i in range(min(store.size, 8)))
-    expressions = tuple(
-        member._embedded_expression()
-        if isinstance(member, TrackedTerm)
-        else Named(_callable_label(member), Signature(tuple(inspect.signature(member).parameters)))
-        for member in members
-    )
+    expressions = tuple(_member_expression(member) for member in members)
     return Collection(expressions, omitted=store.size > len(members))
+
+
+def _member_expression(member: Any) -> Expression:
+    """The description of one stored *member* in its batch's default label.
+
+    A tracked term reads as it reads inside any expression, and a callable as
+    its name and parameters, as ``predict(x)``. A callable whose signature
+    cannot be inspected, as for some builtins, reads as its name alone.
+    """
+    if isinstance(member, TrackedTerm):
+        return member._embedded_expression()
+    try:
+        parameters = tuple(inspect.signature(member).parameters)
+    except (TypeError, ValueError):
+        return Named(_callable_label(member))
+    return Named(_callable_label(member), Signature(parameters))
 
 
 class _ObjectBatch[E](Batch[E]):
