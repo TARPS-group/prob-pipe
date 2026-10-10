@@ -45,6 +45,7 @@ import jax
 import jax.numpy as jnp
 
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
+from ..core.tracked import TrackedTerm
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
     SupportsLogProb,
@@ -169,8 +170,6 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
-    label : str
-        Distribution label.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.
@@ -185,6 +184,9 @@ class MinibatchedDistribution(
         along its leading axis, of length ``>= batch_size``.
     batch_size : int
         Minibatch size :math:`b`. Must be ``1 <= b <= len(data)``.
+    label : str, optional
+        Display alias. Defaults to the minibatch construction over the prior and
+        likelihood; an undescribed prior requires an explicit alias.
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
@@ -194,7 +196,7 @@ class MinibatchedDistribution(
     TypeError
         If ``prior`` is not :class:`~probpipe.SupportsLogProb`, or
         ``likelihood`` is not a kernel that scores a subset of its
-        observations.
+        observations, or an undescribed prior has no explicit label.
     ValueError
         If ``data`` has no leading axis, or ``batch_size`` is not in
         ``[1, len(data)]``.
@@ -202,12 +204,12 @@ class MinibatchedDistribution(
 
     def __init__(
         self,
-        label: str,
         prior: SupportsLogProb,
         likelihood: ConditionalDistribution,
         data: ArrayLike,
         batch_size: int,
         *,
+        label: str | None = None,
         with_replacement: bool = False,
     ):
         if not isinstance(prior, SupportsLogProb):
@@ -221,6 +223,11 @@ class MinibatchedDistribution(
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
             raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}")
+
+        if label is None:
+            if not isinstance(prior, TrackedTerm):
+                raise TypeError("an undescribed prior requires label=... for a minibatched law")
+            label = f"minibatch({prior.notation}, {likelihood.notation}; batch_size={batch_size})"
 
         self._prior = prior
         self._likelihood = likelihood
@@ -356,7 +363,10 @@ class _FixedMinibatchDistribution(
             label = "fixed_minibatch_distribution"
         if event_spec is None:
             event_spec = _parameter_declaration(prior, "parameters")
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
         self._prior = prior
         self._likelihood = likelihood
         self._data = data
@@ -484,7 +494,10 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
         # A draw is one scalar log-density value.
-        super().__init__(f"{measure.label}@theta", OutputSpec(log_prob=NumericArraySpec(())))
+        super().__init__(
+            OutputSpec(log_prob=NumericArraySpec(())),
+            label=f"{measure.label}@theta",
+        )
         self._measure = measure
         self._theta = theta
 

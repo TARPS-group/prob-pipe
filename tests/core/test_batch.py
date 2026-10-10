@@ -1902,7 +1902,7 @@ class TestSymbolicMultiplicity:
 #: The six classes whose constructors take the label first. Five are batches;
 #: ``NumericArray`` is the single value that shares the rule, since it too has no
 #: fields to describe it and so nothing to derive a label from.
-LABEL_FIRST = [
+NAMED_CONSTRUCTORS = [
     "NumericArray",
     "NumericArrayBatch",
     "RecordBatch",
@@ -1934,7 +1934,7 @@ class TestTheConstructorSignatureContract:
     exercising the rule. A signature cannot pass for that reason.
     """
 
-    @pytest.fixture(params=LABEL_FIRST)
+    @pytest.fixture(params=NAMED_CONSTRUCTORS)
     def kind(self, request):
         return request.param
 
@@ -1948,26 +1948,24 @@ class TestTheConstructorSignatureContract:
     def _own_params(cls):
         return list(inspect.signature(cls.__init__).parameters.values())[1:]
 
-    def test_the_label_is_first_positional_only_and_has_no_default(self, cls):
-        """A default is what the whole change removes, so its absence is asserted
-        rather than inferred from a refusal."""
-        first = self._own_params(cls)[0]
+    def test_the_label_is_keyword_only_and_required_only_for_raw_values(self, cls, kind):
+        parameters = inspect.signature(cls.__init__).parameters
+        label = parameters["label"]
+        assert label.kind is inspect.Parameter.KEYWORD_ONLY
+        if kind in {"NumericArray", "NumericArrayBatch", "OpaqueBatch"}:
+            assert label.default is inspect.Parameter.empty
+        else:
+            assert label.default is None
 
-        assert first.name == "label"
+    def test_the_data_is_first_positional_only_and_has_no_default(self, cls):
+        first = self._own_params(cls)[0]
+        assert first.name in {"value", "values", "fields", "elements"}
         assert first.kind is inspect.Parameter.POSITIONAL_ONLY
         assert first.default is inspect.Parameter.empty
 
-    def test_the_data_is_second_positional_only_and_has_no_default(self, cls):
-        second = self._own_params(cls)[1]
-
-        assert second.kind is inspect.Parameter.POSITIONAL_ONLY
-        assert second.default is inspect.Parameter.empty
-
-    def test_the_label_cannot_be_passed_by_keyword(self, cls, kind):
+    def test_the_label_is_passed_by_keyword(self, cls, kind):
         args, kwargs = _args_for(kind, shape=(2,), levels="draw")
-
-        with pytest.raises(TypeError, match="positional-only"):
-            cls(*args, label="b", **kwargs)
+        assert cls(*args, label="b", **kwargs).label == "b"
 
     def test_the_removed_axis_groups_keyword_is_refused(self, cls, kind):
         if kind == "NumericArray":
@@ -1975,7 +1973,7 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2,), levels="draw")
 
         with pytest.raises(TypeError, match="axis_groups"):
-            cls("b", *args, axis_groups=((2,),), **kwargs)
+            cls(*args, label="b", axis_groups=((2,),), **kwargs)
 
     def test_a_level_may_hold_several_axes(self, cls, kind):
         """The partition is the argument; the sizes come back off the data."""
@@ -1983,7 +1981,7 @@ class TestTheConstructorSignatureContract:
             pytest.skip("carries no levels")
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
-        batch = cls("b", *args, axes_per_level=(2,), **kwargs)
+        batch = cls(*args, label="b", axes_per_level=(2,), **kwargs)
 
         assert (batch.level_names, batch.axis_groups) == (("draw",), ((2, 3),))
 
@@ -2004,17 +2002,17 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
         with pytest.raises(exc, match=match):
-            cls("b", *args, axes_per_level=(count,), **kwargs)
+            cls(*args, label="b", axes_per_level=(count,), **kwargs)
 
     def test_a_single_axis_count_is_one_level(self, cls, kind):
         if kind == "NumericArray":
             pytest.skip("carries no levels")
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
-        batch = cls("b", *args, axes_per_level=2, **kwargs)
+        batch = cls(*args, label="b", axes_per_level=2, **kwargs)
 
         assert batch.axis_groups == ((2, 3),)
-        assert batch.spec == cls("b", *args, axes_per_level=(2,), **kwargs).spec
+        assert batch.spec == cls(*args, label="b", axes_per_level=(2,), **kwargs).spec
 
     def test_a_single_level_name_is_one_level(self, cls, kind):
         if kind == "NumericArray":
@@ -2022,7 +2020,7 @@ class TestTheConstructorSignatureContract:
         bare, _ = _args_for(kind, shape=(2,), levels="draw")
         tupled, kwargs = _args_for(kind, shape=(2,), levels=("draw",))
 
-        assert cls("b", *bare, **kwargs).spec == cls("b", *tupled, **kwargs).spec
+        assert cls(*bare, label="b", **kwargs).spec == cls(*tupled, label="b", **kwargs).spec
 
     @pytest.mark.parametrize(
         ("levels", "match"),
@@ -2038,7 +2036,7 @@ class TestTheConstructorSignatureContract:
         args, kwargs = _args_for(kind, shape=(2,), levels=levels)
 
         with pytest.raises(TypeError, match=match):
-            cls("b", *args, **kwargs)
+            cls(*args, label="b", **kwargs)
 
     @pytest.mark.parametrize("count", [np.int64(2), np.uint8(2)], ids=["int64", "uint8"])
     def test_an_integer_like_count_is_accepted(self, cls, kind, count):
@@ -2048,7 +2046,7 @@ class TestTheConstructorSignatureContract:
             pytest.skip("carries no levels")
         args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
 
-        batch = cls("b", *args, axes_per_level=(count,), **kwargs)
+        batch = cls(*args, label="b", axes_per_level=(count,), **kwargs)
 
         assert batch.axis_groups == ((2, 3),)
 

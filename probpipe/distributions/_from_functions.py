@@ -210,7 +210,10 @@ class _FunctionLaw(Distribution):
         sampler_traces: bool,
         density_traces: bool,
     ) -> None:
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
         self._sampler = sample
         self._log_density = log_prob
         self._unnormalized_log_density = unnormalized_log_prob

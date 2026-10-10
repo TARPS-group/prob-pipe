@@ -28,6 +28,8 @@ ProbPipe streamlines and automates those tasks, so you can:
 
 ## A short example
 
+> **AI-generated section.** An AI assistant changed this section after the page was reviewed, and no maintainer has reviewed the change yet.
+
 <!-- --8<-- [start:quick-example] -->
 Consider a Bayesian logistic regression for the [Challenger O-ring data](https://en.wikipedia.org/wiki/Space_Shuttle_Challenger_disaster), which consists of temperatures of 23 shuttle launches and an indicator as to whether an O-ring was damaged.
 In January 1986, the Space Shuttle Challenger broke apart shortly after launch because an O-ring seal in one of its rocket boosters failed during unusually cold weather.
@@ -118,11 +120,11 @@ The probability of damage at 31°F is a function of the coefficients, which we w
 ```python
 import jax
 
-from probpipe import function, quantile
+from probpipe import OutputSpec, function, quantile
 
 
 # The probability of damage at 31°F, for one pair of coefficients.
-@function
+@function(output_spec=OutputSpec(damage_probability=None))
 def challenger_damage_probability(beta: jax.Array) -> jax.Array:
     return jax.nn.sigmoid(beta[0] + beta[1] * 31.0)
 

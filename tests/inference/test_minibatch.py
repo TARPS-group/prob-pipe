@@ -65,7 +65,13 @@ def response(regression_data):
 
 @pytest.fixture
 def measure(prior, likelihood, response):
-    return MinibatchedDistribution("measure", prior, likelihood, response, batch_size=40)
+    return MinibatchedDistribution(
+        prior,
+        likelihood,
+        response,
+        batch_size=40,
+        label="measure",
+    )
 
 
 def _log_density(prior, X, y, theta, rows=None, rescale=1.0):
@@ -81,7 +87,13 @@ def _log_density(prior, X, y, theta, rows=None, rescale=1.0):
 
 class TestConstruction:
     def test_construction_basic(self, prior, likelihood, response):
-        m = MinibatchedDistribution("m", prior, likelihood, response, batch_size=32)
+        m = MinibatchedDistribution(
+            prior,
+            likelihood,
+            response,
+            batch_size=32,
+            label="m",
+        )
         assert isinstance(m, MinibatchedDistribution)
         assert m.dataset_size == 200
         assert m.batch_size == 32
@@ -93,7 +105,13 @@ class TestConstruction:
             pass
 
         with pytest.raises(TypeError, match="SupportsLogProb"):
-            MinibatchedDistribution("measure", _BarePrior(), likelihood, response, batch_size=32)
+            MinibatchedDistribution(
+                _BarePrior(),
+                likelihood,
+                response,
+                batch_size=32,
+                label="measure",
+            )
 
     def test_the_parameters_of_a_prior_that_is_no_distribution_are_opaque(
         self, likelihood, response
@@ -107,7 +125,13 @@ class TestConstruction:
             def _unnormalized_log_prob(self, value):
                 return jnp.asarray(0.0)
 
-        m = MinibatchedDistribution("measure", _LogDensity(), likelihood, response, batch_size=40)
+        m = MinibatchedDistribution(
+            _LogDensity(),
+            likelihood,
+            response,
+            batch_size=40,
+            label="measure",
+        )
         draw = m._draw_one(jax.random.PRNGKey(0))
         assert m.event_spec.spec.event_spec == draw.event_spec
         assert draw.event_spec == OutputSpec(parameters=OpaqueSpec())
@@ -121,19 +145,43 @@ class TestConstruction:
             lambda beta: tfd.Independent(tfd.Normal(jnp.zeros(200) + beta[0], 1.0), 1),
         )
         with pytest.raises(TypeError, match="score a subset of its observations"):
-            MinibatchedDistribution("measure", prior, whole, response, batch_size=32)
+            MinibatchedDistribution(
+                prior,
+                whole,
+                response,
+                batch_size=32,
+                label="measure",
+            )
 
     def test_construction_validates_batch_size_too_small(self, prior, likelihood, response):
         with pytest.raises(ValueError, match="batch_size must be in"):
-            MinibatchedDistribution("measure", prior, likelihood, response, batch_size=0)
+            MinibatchedDistribution(
+                prior,
+                likelihood,
+                response,
+                batch_size=0,
+                label="measure",
+            )
 
     def test_construction_validates_batch_size_too_large(self, prior, likelihood, response):
         with pytest.raises(ValueError, match="batch_size must be in"):
-            MinibatchedDistribution("measure", prior, likelihood, response, batch_size=999)
+            MinibatchedDistribution(
+                prior,
+                likelihood,
+                response,
+                batch_size=999,
+                label="measure",
+            )
 
     def test_construction_rejects_data_without_a_leading_axis(self, prior, likelihood):
         with pytest.raises(ValueError, match="leading axis"):
-            MinibatchedDistribution("measure", prior, likelihood, jnp.asarray(1.0), batch_size=1)
+            MinibatchedDistribution(
+                prior,
+                likelihood,
+                jnp.asarray(1.0),
+                batch_size=1,
+                label="measure",
+            )
 
 
 # -- Property accessors -------------------------------------------------------
@@ -144,12 +192,12 @@ class TestAccessors:
 
     def test_properties_match_constructor_args(self, prior, likelihood, response):
         m = MinibatchedDistribution(
-            "custom_name",
             prior,
             likelihood,
             response,
             batch_size=25,
             with_replacement=True,
+            label="custom_name",
         )
         assert m.dataset_size == 200
         assert m.batch_size == 25
@@ -199,7 +247,13 @@ class TestInnerDraw:
 
     def test_batch_size_one(self, prior, likelihood, response):
         """A minibatch of one observation."""
-        m = MinibatchedDistribution("m", prior, likelihood, response, batch_size=1)
+        m = MinibatchedDistribution(
+            prior,
+            likelihood,
+            response,
+            batch_size=1,
+            label="m",
+        )
         inner = m._draw_one(jax.random.PRNGKey(0))
         assert inner.rows.shape == (1,)
         lp = inner._unnormalized_log_prob(jnp.zeros(2))
@@ -218,12 +272,12 @@ class TestInnerDraw:
     def test_with_replacement_flag(self, prior, likelihood, response):
         """``with_replacement=True`` allows repeated indices."""
         m_wr = MinibatchedDistribution(
-            "m_wr",
             prior,
             likelihood,
             response,
             batch_size=5,
             with_replacement=True,
+            label="m_wr",
         )
         # Stress test: with batch_size=5 and replacement, over many draws
         # we should see at least one repeat (probability ~ 1 for many draws).
@@ -248,12 +302,12 @@ class TestInnerDraw:
         X, y = regression_data
         N = X.shape[0]
         m_full = MinibatchedDistribution(
-            "m_full",
             prior,
             likelihood,
             response,
             batch_size=N,
             with_replacement=False,
+            label="m_full",
         )
         inner = m_full._draw_one(jax.random.PRNGKey(11))
         assert inner.rescale_factor == 1.0

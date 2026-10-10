@@ -40,7 +40,10 @@ class _Located(Distribution):
     """A scalar law outside the backend families, which the fingerprint hashes by its attributes."""
 
     def __init__(self, label: str, loc: float) -> None:
-        super().__init__(label, OutputSpec(**{label: NumericArraySpec(())}))
+        super().__init__(
+            OutputSpec(**{label: NumericArraySpec(())}),
+            label=label,
+        )
         self.loc = loc
 
 
@@ -129,7 +132,10 @@ class TestFingerprintStrength:
             def implementation(value):
                 return value if captured is None else captured
 
-            return Function(label="implementation", fn=implementation)
+            return Function(
+                implementation,
+                label="implementation",
+            )
 
         assert _fingerprint_with_strength(build(1))[1] is False
         assert _fingerprint_with_strength(build(object()))[1] is True
@@ -309,33 +315,69 @@ class TestDepthGuard:
 
 class TestRecordHashing:
     def test_same_record_stable(self):
-        r1 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
-        r2 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
+        r1 = Record(
+            {"x": jnp.array(1.0), "y": jnp.array(2.0)},
+            label="r",
+        )
+        r2 = Record(
+            {"x": jnp.array(1.0), "y": jnp.array(2.0)},
+            label="r",
+        )
         assert fingerprint(r1) == fingerprint(r2)
 
     def test_different_values_differ(self):
-        r1 = Record("r", x=jnp.array(1.0))
-        r2 = Record("r", x=jnp.array(9.0))
+        r1 = Record(
+            {"x": jnp.array(1.0)},
+            label="r",
+        )
+        r2 = Record(
+            {"x": jnp.array(9.0)},
+            label="r",
+        )
         assert fingerprint(r1) != fingerprint(r2)
 
     def test_different_fields_differ(self):
-        r1 = Record("r", x=jnp.array(1.0))
-        r2 = Record("r", y=jnp.array(1.0))
+        r1 = Record(
+            {"x": jnp.array(1.0)},
+            label="r",
+        )
+        r2 = Record(
+            {"y": jnp.array(1.0)},
+            label="r",
+        )
         assert fingerprint(r1) != fingerprint(r2)
 
     def test_extra_field_differs(self):
-        r1 = Record("r", x=jnp.array(1.0))
-        r2 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
+        r1 = Record(
+            {"x": jnp.array(1.0)},
+            label="r",
+        )
+        r2 = Record(
+            {"x": jnp.array(1.0), "y": jnp.array(2.0)},
+            label="r",
+        )
         assert fingerprint(r1) != fingerprint(r2)
 
     def test_multi_field_stable(self):
-        r1 = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
-        r2 = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
+        r1 = Record(
+            {"a": jnp.array([1.0, 2.0]), "b": jnp.array(3.0), "c": "label"},
+            label="r",
+        )
+        r2 = Record(
+            {"a": jnp.array([1.0, 2.0]), "b": jnp.array(3.0), "c": "label"},
+            label="r",
+        )
         assert fingerprint(r1) == fingerprint(r2)
 
     def test_string_field_differs(self):
-        r1 = Record("r", label="a")
-        r2 = Record("r", label="b")
+        r1 = Record(
+            {"label": "a"},
+            label="r",
+        )
+        r2 = Record(
+            {"label": "b"},
+            label="r",
+        )
         assert fingerprint(r1) != fingerprint(r2)
 
 
@@ -465,7 +507,7 @@ class TestBootstrapSourceFingerprint:
 
 class TestFunctionHashing:
     def _make_wf(self, func):
-        return Function(label="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(func, label="func", dispatch="sequential", n_broadcast_samples=10)
 
     def test_legacy_content_marker_is_preserved(self):
         """A pure API rename must not invalidate existing cache identities."""
@@ -496,8 +538,8 @@ class TestFunctionHashing:
 
         def build(*, input_shape=(), output_shape=()):
             return Function(
+                identity,
                 label="identity",
-                fn=identity,
                 input_spec=InputSpec(RecordSpec(x=input_shape).children),
                 output_spec=RecordSpec(y=output_shape),
             )
@@ -533,7 +575,7 @@ class TestFunctionHashing:
             return x
 
         def build(output_spec, label="identity", **options):
-            return Function(label=label, fn=identity, output_spec=output_spec, **options)
+            return Function(identity, label=label, output_spec=output_spec, **options)
 
         baseline = fingerprint(build(before))
         assert fingerprint(build(after)) == baseline
@@ -542,17 +584,27 @@ class TestFunctionHashing:
 
     @pytest.mark.parametrize(
         "declaration",
-        [None, OutputSpec(value=NumericArraySpec(())), NumericArraySpec(())],
-        ids=["undeclared", "explicit-component", "default-component"],
+        [None, OutputSpec(value=NumericArraySpec(())), OutputSpec(result=NumericArraySpec(()))],
+        ids=["undeclared", "value-component", "result-component"],
     )
     def test_an_output_label_changes_no_identity(self, declaration):
-        """A component that defaults to the output label is a name, so it changes no value."""
+        """Display aliases leave computational declarations and identity unchanged."""
 
         def identity(value):
             return value
 
-        first = Function("identity", identity, output_label="first", output_spec=declaration)
-        second = Function("identity", identity, output_label="second", output_spec=declaration)
+        first = Function(
+            identity,
+            output_label="first",
+            output_spec=declaration,
+            label="identity",
+        )
+        second = Function(
+            identity,
+            output_label="second",
+            output_spec=declaration,
+            label="identity",
+        )
         assert fingerprint(first) == fingerprint(second)
         assert fingerprint(first) == fingerprint(first.with_label("display"))
 
@@ -562,7 +614,12 @@ class TestFunctionHashing:
             return value
 
         declaration = OutputSpec(bundle=RecordSpec(field=()))
-        baseline = Function("identity", identity, output_label="result", output_spec=declaration)
+        baseline = Function(
+            identity,
+            output_label="result",
+            output_spec=declaration,
+            label="identity",
+        )
         declarations = {
             "shape": OutputSpec(bundle=RecordSpec(field=(2,))),
             "kind": OutputSpec(bundle=OpaqueSpec()),
@@ -570,7 +627,10 @@ class TestFunctionHashing:
             "declaration": None,
         }
         changed = Function(
-            "identity", identity, output_label="result", output_spec=declarations[change]
+            identity,
+            output_label="result",
+            output_spec=declarations[change],
+            label="identity",
         )
         assert fingerprint(baseline) != fingerprint(changed)
         assert fingerprint(baseline) == fingerprint(baseline.with_label("display"))
@@ -659,9 +719,9 @@ class TestFunctionHashing:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = Function("f", f, dispatch="sequential", n_broadcast_samples=10)
+            wf = Function(f, dispatch="sequential", n_broadcast_samples=10, label = "f", )
             print(fingerprint(wf))
-        """)
+""")
         site = str(next(p for p in sys.path if "site-packages" in p))
         run = lambda: subprocess.check_output(  # noqa: E731
             [sys.executable, "-c", script, site], text=True
@@ -755,7 +815,7 @@ class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return Function(label="func", fn=func, dispatch="sequential", n_broadcast_samples=10)
+        return Function(func, label="func", dispatch="sequential", n_broadcast_samples=10)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
@@ -838,13 +898,49 @@ class TestFloatCanonicalization:
 
 class TestNestedRecordHashing:
     def test_nested_record_stable(self):
-        r1 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
-        r2 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
+        r1 = Record(
+            {
+                "outer": Record(
+                    {"a": 1.0, "b": 2.0},
+                    label="r",
+                ),
+                "m": 3.0,
+            },
+            label="r",
+        )
+        r2 = Record(
+            {
+                "outer": Record(
+                    {"a": 1.0, "b": 2.0},
+                    label="r",
+                ),
+                "m": 3.0,
+            },
+            label="r",
+        )
         assert fingerprint(r1) == fingerprint(r2)
 
     def test_nested_leaf_change_differs(self):
-        r1 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
-        r2 = Record("r", outer=Record("r", a=1.0, b=9.0), m=3.0)
+        r1 = Record(
+            {
+                "outer": Record(
+                    {"a": 1.0, "b": 2.0},
+                    label="r",
+                ),
+                "m": 3.0,
+            },
+            label="r",
+        )
+        r2 = Record(
+            {
+                "outer": Record(
+                    {"a": 1.0, "b": 9.0},
+                    label="r",
+                ),
+                "m": 3.0,
+            },
+            label="r",
+        )
         assert fingerprint(r1) != fingerprint(r2)
 
 
@@ -855,7 +951,14 @@ class TestEmpiricalAtoms:
     def _opaque(labels, level="site"):
         from probpipe import EmpiricalDistribution, OpaqueBatch
 
-        return EmpiricalDistribution(OpaqueBatch("o", list(labels), level), component="o")
+        return EmpiricalDistribution(
+            OpaqueBatch(
+                list(labels),
+                level,
+                label="o",
+            ),
+            component="o",
+        )
 
     def test_equal_opaque_atoms_give_equal_strong_digests(self):
         first, second = self._opaque(["north", "south"]), self._opaque(["north", "south"])
@@ -884,7 +987,12 @@ class TestEmpiricalAtoms:
         def law(shape):
             values = jnp.arange(6.0).reshape(shape)
             spec = NumericArraySpec((), jnp.float32)
-            atoms = NumericArrayBatch("x", values, ("chain", "draw"), element_spec=spec)
+            atoms = NumericArrayBatch(
+                values,
+                ("chain", "draw"),
+                element_spec=spec,
+                label="x",
+            )
             return EmpiricalDistribution(atoms, component="x")
 
         assert fingerprint(law((2, 3))) != fingerprint(law((3, 2)))
@@ -1053,8 +1161,8 @@ class TestNumericContainerHashing:
             from probpipe import Record
             from probpipe.core._fingerprint import fingerprint
             da = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"], coords={"t": [10, 20, 30]})
-            print(fingerprint(Record("r", counts=da)))
-        """)
+            print(fingerprint(Record({'counts': da}, label = "r", )))
+""")
         site = str(next(p for p in sys.path if "site-packages" in p))
 
         def run():

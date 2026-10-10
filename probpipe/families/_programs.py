@@ -735,7 +735,10 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     _transient_state = ("_memo",)
 
     def __init__(self, label: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
-        super().__init__(label, OutputSpec(program.parameter_record(data)))
+        super().__init__(
+            OutputSpec(program.parameter_record(data)),
+            label=label,
+        )
         self._program = program
         self._data = dict(data)
 
@@ -827,8 +830,8 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
         self._posterior = posterior
         self._blocks = _param_blocks(posterior._bridgestan_model().param_unc_names())
         super().__init__(
-            f"{posterior.label}_unconstrained",
             OutputSpec(NumericRecordSpec({b.name: b.shape for b in self._blocks})),
+            label=f"{posterior.label}_unconstrained",
         )
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
@@ -927,9 +930,9 @@ class StanModel(
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            _constructor_label(self, label, "StanModel"),
             program.given_spec(bound),
             OutputSpec(program.parameter_record(bound)),
+            label=_constructor_label(self, label, "StanModel"),
         )
         object.__setattr__(self, "_program", program)
         object.__setattr__(self, "_data", bound)
@@ -1245,7 +1248,10 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
         fields[name] = (
             values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
         )
-    return Record(self.label, fields)
+    return Record(
+        fields,
+        label=self.label,
+    )
 
 
 class _PyMCModelMeta(type(Distribution)):
@@ -1319,8 +1325,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
             ) from e
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         super().__init__(
-            _constructor_label(self, label, "PyMCModel"),
             OutputSpec(program.event_record(symbolic=False)),
+            label=_constructor_label(self, label, "PyMCModel"),
         )
         self._program = program
 
@@ -1514,9 +1520,9 @@ class _PyMCKernel(ConditionalDistribution):
 
     def __init__(self, label: str, program: _PyMCProgram) -> None:
         super().__init__(
-            label,
             {slot: OpaqueSpec() for slot in program.given},
             OutputSpec(program.event_record(symbolic=True)),
+            label=label,
         )
         object.__setattr__(self, "_program", program)
 

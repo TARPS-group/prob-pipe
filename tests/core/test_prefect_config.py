@@ -227,7 +227,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self, prefect_available):
@@ -240,8 +240,8 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
+            noop,
             label="noop",
-            fn=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -258,8 +258,8 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
+            noop,
             label="noop",
-            fn=noop,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
@@ -277,8 +277,8 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
+            noop,
             label="noop",
-            fn=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -300,7 +300,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -313,7 +313,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
 
         assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -324,7 +324,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
         prefect_config.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -335,7 +335,10 @@ class TestEffectiveWorkflowKind:
     def test_a_view_resolves_its_own_control(self, prefect_available):
         from probpipe import Function
 
-        wf = Function("noop", lambda x: x)
+        wf = Function(
+            lambda x: x,
+            label="noop",
+        )
         configured = wf.with_options(workflow_kind=WorkflowKind.TASK)
 
         assert configured.effective_workflow_kind is WorkflowKind.TASK
@@ -351,7 +354,13 @@ class TestEffectiveWorkflowKind:
         from probpipe import Function
 
         prefect_config.workflow_kind = WorkflowKind.DEFAULT
-        assert Function("noop", lambda x: x).effective_workflow_kind is WorkflowKind.OFF
+        assert (
+            Function(
+                lambda x: x,
+                label="noop",
+            ).effective_workflow_kind
+            is WorkflowKind.OFF
+        )
 
     def test_a_call_runs_under_the_mode_the_property_reports(self, monkeypatch):
         from probpipe import Function
@@ -363,7 +372,11 @@ class TestEffectiveWorkflowKind:
             return WorkflowKind.OFF
 
         monkeypatch.setattr(Function, "effective_workflow_kind", property(resolve))
-        wf = Function("increment", lambda x: x + 1, dispatch="sequential")
+        wf = Function(
+            lambda x: x + 1,
+            dispatch="sequential",
+            label="increment",
+        )
         assert float(wf(2)) == 3
         assert calls and all(instance is wf for instance in calls)
 
@@ -384,8 +397,8 @@ class TestWorkflowKindConstructorValidation:
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
             Function(
+                noop,
                 label="noop",
-                fn=noop,
                 workflow_kind="task",
                 dispatch="sequential",
             )
@@ -398,8 +411,8 @@ class TestWorkflowKindConstructorValidation:
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
             Function(
+                noop,
                 label="noop",
-                fn=noop,
                 workflow_kind=None,
                 dispatch="sequential",
             )

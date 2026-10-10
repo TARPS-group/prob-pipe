@@ -301,7 +301,16 @@ class TestDiscreteMoments:
         d = Poisson("x", rate=5.0)
         k = jnp.array([0, 1, 5, 10])
         np.testing.assert_allclose(
-            np.asarray(log_prob(d, NumericArrayBatch("k", k, "point"))),
+            np.asarray(
+                log_prob(
+                    d,
+                    NumericArrayBatch(
+                        k,
+                        "point",
+                        label="k",
+                    ),
+                )
+            ),
             scipy.stats.poisson.logpmf(np.asarray(k), 5.0),
             rtol=1e-5,
         )
@@ -311,7 +320,16 @@ class TestDiscreteMoments:
         d = Binomial("x", total_count=10, probs=0.3)
         k = jnp.array([0, 3, 5, 10])
         np.testing.assert_allclose(
-            np.asarray(log_prob(d, NumericArrayBatch("k", k, "point"))),
+            np.asarray(
+                log_prob(
+                    d,
+                    NumericArrayBatch(
+                        k,
+                        "point",
+                        label="k",
+                    ),
+                )
+            ),
             scipy.stats.binom.logpmf(np.asarray(k), 10, 0.3),
             rtol=1e-5,
         )

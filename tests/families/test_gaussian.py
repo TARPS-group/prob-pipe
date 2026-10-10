@@ -1209,7 +1209,10 @@ class TestTheFactoredGaussian:
     def test_constructing_the_factored_law_refines_to_it(self):
         from probpipe.distributions import FactoredDistribution
 
-        joint = FactoredDistribution("j", [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)])
+        joint = FactoredDistribution(
+            [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)],
+            label="j",
+        )
         assert isinstance(joint, FactoredMultivariateGaussian)
 
     def test_a_factor_that_is_not_gaussian_keeps_the_factored_law(self):
@@ -1226,7 +1229,10 @@ class TestTheFactoredGaussian:
         with pytest.raises(
             TypeError, match=r"accepts only Normal or MultivariateNormal .* \['Gamma'\]"
         ):
-            FactoredMultivariateGaussian("j", [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
+            FactoredMultivariateGaussian(
+                [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)],
+                label="j",
+            )
 
     def test_its_moments_are_the_factors_in_closed_form(self):
         joint = _gaussian_joint()

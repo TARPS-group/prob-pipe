@@ -41,7 +41,13 @@ def _plan(values, n_broadcast_samples=8):
 
 def _record_batch():
     return NumericRecordBatch.stack(
-        [NumericRecord("row", x=float(value)) for value in range(4)],
+        [
+            NumericRecord(
+                {"x": float(value)},
+                label="row",
+            )
+            for value in range(4)
+        ],
         level_name="draw",
     )
 
@@ -176,9 +182,9 @@ class TestExecutionContract:
 
 class TestJaxWorkflowGuards:
     def test_auto_falls_back_for_omitted_key_effect_without_shifting_results(self):
-        auto = Function(label="_add_automatic_noise", fn=_add_automatic_noise, dispatch="auto")
+        auto = Function(_add_automatic_noise, label="_add_automatic_noise", dispatch="auto")
         rowwise = Function(
-            label="_add_automatic_noise", fn=_add_automatic_noise, dispatch="sequential"
+            _add_automatic_noise, label="_add_automatic_noise", dispatch="sequential"
         )
 
         with workflow_run(seed=19):
@@ -189,7 +195,7 @@ class TestJaxWorkflowGuards:
         np.testing.assert_array_equal(auto_result, rowwise_result)
 
     def test_explicit_jax_rejects_omitted_key_before_entropy(self):
-        workflow = Function(label="_add_automatic_noise", fn=_add_automatic_noise, dispatch="jax")
+        workflow = Function(_add_automatic_noise, label="_add_automatic_noise", dispatch="jax")
 
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,

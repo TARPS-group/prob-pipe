@@ -40,14 +40,20 @@ class _Source(Distribution):
     """A law that the suite's converters read."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: REAL}))
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
 
 
 class _Target(Distribution):
     """A representation that an exact and an approximate converter produce."""
 
     def __init__(self, label: str, component: str | None = None) -> None:
-        super().__init__(label, OutputSpec(**{component or label: REAL}))
+        super().__init__(
+            OutputSpec(**{component or label: REAL}),
+            label=label,
+        )
 
 
 class _RoughTarget(_Target):

@@ -255,11 +255,16 @@ def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
         If *spec* has no batch form.
     """
     if isinstance(spec, RecordSpec):
-        return _batch_class_for(spec)(label, _raw_record(raw), level, element_spec=spec)
+        return _batch_class_for(spec)(
+            _raw_record(raw),
+            level,
+            element_spec=spec,
+            label=label,
+        )
     batch_class = batch_class_for_spec(spec)
     if batch_class is None:
         raise TypeError(f"cannot store values declared as {type(spec).__name__} as atoms")
-    return batch_class(label, raw, level, element_spec=spec)
+    return batch_class(raw, level, element_spec=spec, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -576,8 +581,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                 f"with_level_names"
             )
         super().__init__(
-            _constructor_label(self, label, DEFAULT_LABEL),
             _atoms_declaration(atom_spec, component, event_spec),
+            label=_constructor_label(self, label, DEFAULT_LABEL),
         )
         if isinstance(atoms, Batch):
             stored = atoms
@@ -586,7 +591,12 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             # and names their level.
             name = _whole_term_component(self.event_spec)
             on_level = name if level is None else level
-            stored = NumericArrayBatch(name, atoms, on_level, element_spec=atom_spec)
+            stored = NumericArrayBatch(
+                atoms,
+                on_level,
+                element_spec=atom_spec,
+                label=name,
+            )
         atom_weights = _atom_weights(weights, stored)
         object.__setattr__(self, "_atoms", stored)
         object.__setattr__(self, "_w", atom_weights)
@@ -835,11 +845,11 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             atoms._expression, repr(tuple(requested for requested, _, _ in selected))
         )
         batch = batch_class(
-            expression.render_label(),
             columns,
             atoms.level_names,
             element_spec=element,
             axes_per_level=_ranks(atoms),
+            label=expression.render_label(),
         )
         batch._store_expression(expression)
         return batch

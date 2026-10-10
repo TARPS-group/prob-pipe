@@ -223,7 +223,10 @@ def _simulator_given(simulator: ConditionalDistribution, params: Any) -> Any:
     slots = tuple(simulator.given_spec)
     if set(slots) == set(params.fields):
         return params
-    return Record("given", {slot: params[slot] for slot in slots})
+    return Record(
+        {slot: params[slot] for slot in slots},
+        label="given",
+    )
 
 
 def _leaf_draws(draws: Any, leaf: str) -> Any:

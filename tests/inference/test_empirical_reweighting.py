@@ -60,7 +60,11 @@ class _NumpyKernel(ConditionalDistribution, SupportsConditionalLogProb):
     """``y ~ Normal(mu, 1)`` whose density converts its given value to a Python float, so it does not trace."""
 
     def __init__(self) -> None:
-        super().__init__("y", {"mu": REAL}, OutputSpec(y=NumericArraySpec((3,))))
+        super().__init__(
+            {"mu": REAL},
+            OutputSpec(y=NumericArraySpec((3,))),
+            label="y",
+        )
 
     def _condition_on(self, given: Any, /, **options: Any) -> Any:
         return Normal("y", float(given["mu"]) * jnp.ones(3), 1.0)
@@ -119,13 +123,13 @@ class TestThePosterior:
     def test_a_record_prior_keeps_its_fields(self):
         rng = np.random.default_rng(0)
         atoms = NumericRecordBatch(
-            "particles",
             {
                 "phi": jnp.asarray(rng.uniform(0.4, 0.8, 200), jnp.float32),
                 "N": jnp.asarray(rng.uniform(300.0, 500.0, 200), jnp.float32),
             },
             ("particle",),
             axes_per_level=(1,),
+            label="particles",
         )
         particles = EmpiricalDistribution(atoms, label="particles")
         observe = conditional_distribution(
@@ -199,7 +203,11 @@ class TestWhenItApplies:
     def test_a_likelihood_without_a_density_does_not_apply(self):
         class _SamplingOnly(ConditionalDistribution):
             def __init__(self) -> None:
-                super().__init__("y", {"mu": REAL}, OutputSpec(y=NumericArraySpec((3,))))
+                super().__init__(
+                    {"mu": REAL},
+                    OutputSpec(y=NumericArraySpec((3,))),
+                    label="y",
+                )
 
             def _condition_on(self, given: Any, /, **options: Any) -> Any:
                 return Normal("y", float(given["mu"]) * jnp.ones(3), 1.0)

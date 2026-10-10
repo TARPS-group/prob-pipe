@@ -61,7 +61,8 @@ from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
-from .record import Record, _is_numeric_field_value
+from .record import Record, _derived_record_name, _is_numeric_field_value
+from .tracked import _NO_DESCRIPTION
 
 __all__ = ["RecordBatch"]
 
@@ -78,15 +79,11 @@ class RecordBatch(Batch[Record]):
     As a JAX pytree it flattens to its columns, with its spec as the static
     data. The label and the expression do not cross a transform, so two
     batches that differ only in their labels have equal treedefs and share a
-    compilation, and a batch rebuilt from its leaves is labeled by its class,
+    compilation, and a batch rebuilt from its leaves is marked ``<no description>``,
     as ``RecordBatch``, until a result boundary labels it.
 
     Parameters
     ----------
-    label : str
-        The batch's label. Required, as it is for every batch: a batch is a value a
-        caller holds, and a label derived from its class says nothing about what it
-        holds.
     fields : Mapping of str to array
         The field columns, keyed by **leaf path** (``"outer/a"``) or given as a
         nested mapping, which is flattened to leaf paths. Each column holds one
@@ -99,6 +96,9 @@ class RecordBatch(Batch[Record]):
         level. There is no default, for the reason
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
         operations can align operands by meaning.
+    label : str, optional
+        The batch's display alias. Defaults to a bounded description of its
+        declared fields or members. Empty unnamed collections require an alias.
     element_spec : RecordSpec, optional
         The schema and kind spec every element satisfies. Defaults to the spec
         the columns imply, as a :class:`~probpipe.Record` infers its spec from
@@ -168,8 +168,12 @@ class RecordBatch(Batch[Record]):
     --------
     >>> import jax.numpy as jnp
     >>> from probpipe import RecordSpec
-    >>> batch = RecordBatch("draws", {"x": jnp.zeros((3, 2))}, "draw",
-    ...                     element_spec=RecordSpec(x=(2,)))
+    >>> batch = RecordBatch(
+    ...     {"x": jnp.zeros((3, 2))},
+    ...     "draw",
+    ...     element_spec=RecordSpec(x=(2,)),
+    ...     label="draws",
+    ... )
     >>> batch.batch_shape
     (3,)
     >>> batch["x"].shape
@@ -194,15 +198,16 @@ class RecordBatch(Batch[Record]):
 
     def __init__(
         self,
-        label: str,
         fields: Mapping[str, Any],
         /,
         level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: RecordSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
+        label = _derived_record_name(fields) if label is None else label
         kind = type(self).__name__
         names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
@@ -322,13 +327,13 @@ class RecordBatch(Batch[Record]):
         row = {path: column[index] for path, column in self._columns.items()}
         return self._inherit_provenance(
             Record(
-                label,
                 row,
                 event_template=self.element_spec,
                 # The columns were checked against the element spec at
                 # construction, so re-checking each row's leaves repeats work that
                 # iteration pays per element.
                 _validate_leaves=False,
+                label=label,
             )
         )
 
@@ -802,11 +807,11 @@ class RecordBatch(Batch[Record]):
         transform.
         """
         return _batch_class_for(template)(
-            self.label,
             dict(columns),
             self.level_names,
             element_spec=template,
             axes_per_level=_ranks_of(self.axis_groups),
+            label=self.label,
         )
 
     # -- construction from elements -----------------------------------------
@@ -881,10 +886,10 @@ class RecordBatch(Batch[Record]):
             for key in fields
         }
         return cls(
-            label if label is not None else records[0].label,
             columns,
             (level_name,),
             element_spec=spec,
+            label=label if label is not None else records[0].label,
         )
 
     # -- equality -----------------------------------------------------------
@@ -969,9 +974,9 @@ def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
         Whether the call's columns are all numeric and its element spec, if
         given, is a ``NumericRecordSpec``.
     """
-    if len(args) < 2 or (len(args) < 3 and "level_names" not in kwargs):
+    if not args or (len(args) < 2 and "level_names" not in kwargs):
         return False
-    fields = args[1]
+    fields = args[0]
     if not isinstance(fields, Mapping) or not fields:
         return False
     element_spec = kwargs.get("element_spec")
@@ -1479,7 +1484,7 @@ def _unflatten_with(cls: type[RecordBatch]):
         # The label does not cross a transform, so a rebuilt batch is labeled by
         # its class, and an element by ``Record``, until a result boundary labels
         # it (II.4).
-        label = public_class_name(cls)
+        label = _NO_DESCRIPTION
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
         # otherwise truncate the columns silently, leaving a value whose own spec
@@ -1521,10 +1526,10 @@ def _unflatten_with(cls: type[RecordBatch]):
                 for path, column in columns.items()
             }
             return Record(
-                "Record",
                 element,
                 event_template=element_spec,
                 _validate_leaves=False,
+                label=_NO_DESCRIPTION,
             )
         surviving = _surviving_batch_shape(columns, rank, refused=refused)
         if surviving != spec.batch_shape:

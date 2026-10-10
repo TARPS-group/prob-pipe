@@ -187,10 +187,16 @@ Every tracked term carries four things through the one mixin `TrackedTerm`:
 3. a **provenance**: how it was produced;
 4. **annotations**: free-form auxiliary information supplied by the user or an algorithm.
 
-A tracked term's label is supplied by the user at explicit construction or takes its kind's default label, and it is derived deterministically from the inputs when an operation produces the object. A value's constructor takes the label first, as `NumericArray("x", 1.0)` and `Record("x", ...)` do. A law's or a kernel's constructor takes its mathematical parts, such as the component of a whole-term event and the parameters, and the label as the optional keyword `label=` (III.7, III.9). The **default label** is:
-1. a catalog family's class name, as `Normal` for `Normal("mu", 0.0, 1.0)` (VII);
-2. for a function that `@function` decorates, and for the kernel that `conditional_distribution` builds from a function, the function's `__name__`, with `p` for the kernel of a lambda (III.3, IV.4);
-3. `p` for any other law or kernel, as `distribution(...)`, `EmpiricalDistribution(...)`, and `glm_likelihood(...)` build. The result of a user-defined function called on values is labeled by that function's `output_label` (III.3), as is a law its body returns. An operation's result carries the expression that the operation's rule builds from its operands' expressions, and an operation without a rule gives its result the expression of its primary operand, the first in its signature, so a converted law keeps its label. Composition (IV.2), `condition_on` (VI.6), and `marginal` and `factor` (VI.8) return a part or a conditional of a law, so their rules label the result by what it is: a product of factors joins the factors' labels, and a conditional keeps the label of the law it conditions and records the paths it fixes, as `condition_on(schools, data)` is labeled `schools` and displays as `schools(theta; y)`.
+Every normally constructed term has a semantic description. Constructors take mathematical data first and presentation metadata as keyword `label=`. A label is required when the data cannot identify what the value represents: raw `NumericArray`, `Opaque`, `NumericArrayBatch`, and `OpaqueBatch` values. Otherwise, construction derives a description from declared structure or described operands:
+
+1. records and record batches use their ordered field names; an empty record requires a label;
+2. functions use the callable's name, with `f` for a lambda; lambda kernels use `p`;
+3. catalog laws use their family name and declared components; generic laws and kernels use `p` and their declarations;
+4. products, mixtures, and minibatched laws describe their operands; object batches describe their ordered members, showing at most eight members, and empty object batches require a label.
+
+A managed function call derives an application expression from the function and arguments unless an explicit `output_label` supplies an alias. Unnamed array arguments appear by their parameter names. An operation derives its result's expression from its operands as its own rule specifies. Computational names belong to declarations: labels never supply components, fields, levels, fingerprints, or random-stream identity.
+
+JAX pytree rebuilding carries numerical leaves and the specs needed to interpret them, without descriptions or provenance. A rebuilt term displays `<no description>` and remains fully usable, including inside `jit` and `vmap`; the managed result boundary supplies its result expression. The marker is diagnostic, not a validation failure.
 
 A label is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the label it had, and only `with_label` replaces it. No lookup resolves an object by its label, and derived labels need no escaping scheme. A derived label may hold `~`, a space, `;`, or `/`, so no operation uses a label as a component name or a level name: a law an operation builds for its own computation takes a fixed name or its operand's components.
 

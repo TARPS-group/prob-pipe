@@ -110,10 +110,10 @@ calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec`
 are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
-wrapping, and Function-first provenance. Results use `output_label`, which
-defaults to the function's label at construction and survives `with_label`. A
-raw implementation's own label survives `apply`, while a normal call labels its
-independent result.
+wrapping, and Function-first provenance. Results derive an application expression;
+explicit `output_label` supplies a display alias. Declare whole-term output
+components with `OutputSpec`, independently of labels. A raw implementation's
+own label survives `apply`, while a normal call describes its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a

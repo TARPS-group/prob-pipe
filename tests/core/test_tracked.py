@@ -34,7 +34,11 @@ from probpipe.distributions import FactoredDistribution
 
 def _normals(label: str, count: int) -> DistributionBatch:
     """A batch of *count* standard normal laws on a level named ``law``."""
-    return DistributionBatch(label, [Normal("x", 0.0, 1.0) for _ in range(count)], "law")
+    return DistributionBatch(
+        [Normal("x", 0.0, 1.0) for _ in range(count)],
+        "law",
+        label=label,
+    )
 
 
 # ===========================================================================
@@ -49,22 +53,28 @@ class TestMixinMembership:
         assert isinstance(n, Annotated)
 
     def test_record_is_tracked_and_annotated(self):
-        r = Record("r", a=1.0)
+        r = Record(
+            {"a": 1.0},
+            label="r",
+        )
         assert isinstance(r, TrackedTerm)
         assert isinstance(r, Annotated)
 
     def test_numeric_record_is_tracked_and_annotated(self):
-        nr = NumericRecord("nr", a=jnp.array(1.0))
+        nr = NumericRecord(
+            {"a": jnp.array(1.0)},
+            label="nr",
+        )
         assert isinstance(nr, TrackedTerm)
         assert isinstance(nr, Annotated)
 
     def test_record_batch_is_tracked(self):
         ra = RecordBatch(
-            "batch",
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
+            label="batch",
         )
         assert isinstance(ra, TrackedTerm)
 
@@ -105,9 +115,12 @@ class TestLabelEnforcement:
         with pytest.raises(
             TypeError, match=r"Record requires a non-empty label, got \{'x': 1.0\}, which is not"
         ):
-            Record({"x": 1.0})
+            Record({}, label={"x": 1.0})
         with pytest.raises(TypeError, match=r"Record requires a non-empty label, got ''$"):
-            Record("", x=1.0)
+            Record(
+                {"x": 1.0},
+                label="",
+            )
 
 
 class TestAutoLabelHelper:
@@ -124,37 +137,40 @@ class TestLabelLifecycle:
         assert n.label == "prior"
 
     def test_record_keeps_explicit_label(self):
-        r = Record("mine", a=1.0)
+        r = Record(
+            {"a": 1.0},
+            label="mine",
+        )
         assert r.label == "mine"
 
-    def test_constructor_requires_label(self):
-        # The label guard fires in ``Record.__new__`` before promotion picks a
-        # class, so a call without a label reports ``Record`` and its custom message
-        # — not the promoted ``NumericRecord`` nor the bare Python "missing
-        # positional argument" a reverted guard would leave.
-        with pytest.raises(TypeError, match="Record requires its label"):
-            Record(a=1.0)
+    def test_record_derives_label_from_fields(self):
+        assert Record({"a": 1.0}).label == "record(a)"
+        with pytest.raises(TypeError, match="empty record requires label"):
+            Record({})
 
     def test_record_keeps_operation_label(self):
-        r = Record("sample", {"a": 1.0, "b": 2.0})
+        r = Record(
+            {"a": 1.0, "b": 2.0},
+            label="sample",
+        )
         assert r.label == "sample"
 
     def test_batch_keeps_its_construction_label(self):
         """A caller that derives a label says so; there is no unlabeled batch."""
         ra = RecordBatch(
-            "derived",
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
+            label="derived",
         )
         assert ra.label == "derived"
         named = RecordBatch(
-            "mine",
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
+            label="mine",
         )
         assert named.label == "mine"
 
@@ -164,7 +180,10 @@ class TestLabelLifecycle:
         assert str(joint) == "Normal(mu)·Normal(sigma)"
 
     def test_composite_distribution_keeps_explicit_label(self):
-        joint = FactoredDistribution("my_joint", [Normal("mu", loc=0.0, scale=1.0)])
+        joint = FactoredDistribution(
+            [Normal("mu", loc=0.0, scale=1.0)],
+            label="my_joint",
+        )
         assert joint.label == "my_joint"
 
     @pytest.mark.parametrize("name", [None, "mine"], ids=["derived", "supplied"])
@@ -175,7 +194,12 @@ class TestLabelLifecycle:
             pytest.param(lambda r: r.map(lambda x: x + 1), {"a": 2.0, "b": 3.0}, id="map"),
             pytest.param(lambda r: r.replace(a=3.0), {"a": 3.0, "b": 2.0}, id="replace"),
             pytest.param(
-                lambda r: r.merge(Record("other", c=3.0)),
+                lambda r: r.merge(
+                    Record(
+                        {"c": 3.0},
+                        label="other",
+                    )
+                ),
                 {"a": 1.0, "b": 2.0, "c": 3.0},
                 id="merge",
             ),
@@ -197,16 +221,27 @@ class TestLabelLifecycle:
         # The derived label uses top-level field keys (not full leaf paths),
         # so every transform agrees regardless of nesting depth.
         nested = Record(
-            "record(a)",
-            {"a": Record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)})},
+            {
+                "a": Record(
+                    {"b": jnp.array(1.0), "c": jnp.array(2.0)},
+                    label="a",
+                )
+            },
+            label="record(a)",
         )
         assert nested.label == "record(a)"
         assert nested.with_path_names({"a/b": "z"}).label == "record(a)"
         assert nested.map(lambda x: x).label == "record(a)"
 
     def test_record_labels_survive_pickle(self):
-        auto = Record("record(a)", {"a": 1.0})
-        named = Record("mine", a=1.0)
+        auto = Record(
+            {"a": 1.0},
+            label="record(a)",
+        )
+        named = Record(
+            {"a": 1.0},
+            label="mine",
+        )
         assert pickle.loads(pickle.dumps(auto)).label == auto.label
         assert pickle.loads(pickle.dumps(named)).label == named.label
 
@@ -225,7 +260,10 @@ class TestWithLabel:
         assert n.label == "x"
 
     def test_with_label_replaces_a_derived_label(self):
-        r = Record("record(a)", {"a": 1.0})  # operation-derived (auto) label
+        r = Record(
+            {"a": 1.0},
+            label="record(a)",
+        )  # operation-derived (auto) label
         r2 = r.with_label("mine")
         assert r2.label == "mine"
 
@@ -238,7 +276,10 @@ class TestWithLabel:
         assert m.provenance.parents[0].label == "x"
 
     def test_with_label_on_immutable_record(self):
-        r = Record("orig", a=jnp.array(1.0), b=jnp.array(2.0))
+        r = Record(
+            {"a": jnp.array(1.0), "b": jnp.array(2.0)},
+            label="orig",
+        )
         r2 = r.with_label("new")
         assert r2.label == "new"
         # shallow copy: field data is shared, not copied
@@ -295,11 +336,11 @@ class TestWithLabelOnBatchTypes:
 
     def test_record_batch(self):
         ra = RecordBatch(
-            "derived",
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
+            label="derived",
         )
         ra2 = ra.with_label("mine")
         assert ra2 is not ra
@@ -310,11 +351,11 @@ class TestWithLabelOnBatchTypes:
 
     def test_numeric_record_batch(self):
         nrb = NumericRecordBatch(
-            "orig",
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
+            label="orig",
         )
         nra2 = nrb.with_label("new")
         assert nra2.label == "new"
@@ -356,7 +397,14 @@ class TestWithLabelOnCustomNewHosts:
         assert renamed.label == "mu_view"
 
     def test_empirical_capability_subclass(self):
-        emp = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b", "c"], "emp"), component="emp")
+        emp = EmpiricalDistribution(
+            OpaqueBatch(
+                ["a", "b", "c"],
+                "emp",
+                label="labels",
+            ),
+            component="emp",
+        )
         renamed = emp.with_label("labels")
         assert renamed.label == "labels"
 
@@ -378,7 +426,13 @@ class TestLabelPreservation:
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
         lik = glm_likelihood("y", BernoulliFamily(), X=X)
-        named = MinibatchedDistribution("mine", prior, lik, y, batch_size=2)
+        named = MinibatchedDistribution(
+            prior,
+            lik,
+            y,
+            batch_size=2,
+            label="mine",
+        )
         assert named.label == "mine"
 
     def test_joint_conditioning_preserves_labels(self):
@@ -412,17 +466,29 @@ class TestLabelPreservation:
 
 class TestWithProvenance:
     def test_returns_self_for_chaining(self):
-        r = Record("r", a=1.0)
+        r = Record(
+            {"a": 1.0},
+            label="r",
+        )
         assert r.with_provenance(Provenance("op")) is r
         assert r.provenance.operation == "op"
 
     def test_none_is_noop(self):
-        r = Record("r", a=1.0)
+        r = Record(
+            {"a": 1.0},
+            label="r",
+        )
         assert r.with_provenance(None) is r
         assert r.provenance is None
 
     def test_write_once_raises(self):
-        for obj in (Record("r", a=1.0), Normal("x", loc=0.0, scale=1.0)):
+        for obj in (
+            Record(
+                {"a": 1.0},
+                label="r",
+            ),
+            Normal("x", loc=0.0, scale=1.0),
+        ):
             obj.with_provenance(Provenance("first"))
             with pytest.raises(RuntimeError, match="set only once"):
                 obj.with_provenance(Provenance("second"))
@@ -435,7 +501,13 @@ class TestWithProvenance:
 
 class TestAnnotated:
     def test_annotations_default_none(self):
-        assert Record("r", a=1.0).annotations is None
+        assert (
+            Record(
+                {"a": 1.0},
+                label="r",
+            ).annotations
+            is None
+        )
         assert Normal("x", loc=0.0, scale=1.0).annotations is None
 
     def test_annotations_accepts_plain_mapping(self):
@@ -452,7 +524,10 @@ class TestAnnotated:
     def test_annotations_on_record_via_object_setattr(self):
         # Record is immutable; the annotations channel is written by
         # framework code via object.__setattr__.
-        r = Record("r", a=1.0)
+        r = Record(
+            {"a": 1.0},
+            label="r",
+        )
         object.__setattr__(r, "_annotations", {"k": 1})
         assert r.annotations == {"k": 1}
 
@@ -469,7 +544,10 @@ class TestJointPickleRoundTrip:
         assert back.label == joint.label
 
     def test_user_labeled_joint_keeps_identity_and_provenance(self):
-        joint = FactoredDistribution("my_joint", [Normal("mu", loc=0.0, scale=1.0)])
+        joint = FactoredDistribution(
+            [Normal("mu", loc=0.0, scale=1.0)],
+            label="my_joint",
+        )
         joint.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(joint))
         assert back.label == "my_joint"
@@ -479,11 +557,11 @@ class TestJointPickleRoundTrip:
 class TestBatchPickleRoundTrip:
     def test_numeric_record_batch_pickle_preserves_identity(self):
         nrb = NumericRecordBatch(
-            "mine",
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axes_per_level=(1,),
             element_spec=RecordSpec(a=()),
+            label="mine",
         )
         nrb.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(nrb))

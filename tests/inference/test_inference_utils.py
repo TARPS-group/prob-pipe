@@ -135,7 +135,10 @@ class _FlatTarget(Distribution):
     """A law over a flat array that has no flat-vector view of its own."""
 
     def __init__(self):
-        super().__init__("target", OutputSpec(target=NumericArraySpec((2,))))
+        super().__init__(
+            OutputSpec(target=NumericArraySpec((2,))),
+            label="target",
+        )
 
     def _log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -278,7 +281,10 @@ class TestModelFactors:
 
     @pytest.fixture
     def gaussian_target(self):
-        prior = FactoredDistribution("prior", [Normal("mu", loc=0.0, scale=1.0)])
+        prior = FactoredDistribution(
+            [Normal("mu", loc=0.0, scale=1.0)],
+            label="prior",
+        )
         return observed_target(
             _gaussian_mean(prior, 3, scale=2.0), {"y": jnp.array([1.0, -1.0, 0.5])}
         )
@@ -384,7 +390,10 @@ class _EventShapeOnlyDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__("event_shape_only", OutputSpec(event_shape_only=NumericArraySpec((3,))))
+        super().__init__(
+            OutputSpec(event_shape_only=NumericArraySpec((3,))),
+            label="event_shape_only",
+        )
 
     def _unnormalized_log_prob(self, value):
         return -0.5 * jnp.sum(jnp.asarray(value) ** 2)
@@ -396,7 +405,10 @@ class _NoInitHeuristicDist(Distribution):
     """
 
     def __init__(self):
-        super().__init__("no_init_heuristic", OutputSpec(no_init_heuristic=OpaqueSpec()))
+        super().__init__(
+            OutputSpec(no_init_heuristic=OpaqueSpec()),
+            label="no_init_heuristic",
+        )
 
     def _unnormalized_log_prob(self, value):
         return jnp.asarray(0.0)
@@ -406,7 +418,10 @@ class _MappingDrawDist(Distribution):
     """A law over the record ``(a, b)`` whose draw is a mapping keyed ``b`` first."""
 
     def __init__(self):
-        super().__init__("mapping_draw", NumericRecordSpec(a=(), b=(2,)))
+        super().__init__(
+            NumericRecordSpec(a=(), b=(2,)),
+            label="mapping_draw",
+        )
 
     def _sample(self, key, sample_shape=()):
         return {"b": jnp.array([3.0, 4.0]), "a": jnp.asarray(1.0)}

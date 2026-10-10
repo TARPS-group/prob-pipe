@@ -52,7 +52,10 @@ from probpipe.linalg import DenseLinOp, DiagonalLinOp
 def _schools() -> RecordBatch:
     return RecordBatch.stack(
         [
-            Record("school", {"data": {"effect": float(y), "se": 1.0}, "label": label})
+            Record(
+                {"data": {"effect": float(y), "se": 1.0}, "label": label},
+                label="school",
+            )
             for y, label in zip(range(8), "ABCDEFGH", strict=True)
         ],
         level_name="school",
@@ -63,26 +66,48 @@ def _schools() -> RecordBatch:
 def _two_fields() -> NumericRecordBatch:
     """Two record atoms over the fields ``a`` and ``b``."""
     columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
-    return NumericRecordBatch("rows", columns, "row")
+    return NumericRecordBatch(
+        columns,
+        "row",
+        label="rows",
+    )
 
 
 class TestValuesAndBatches:
     def test_an_array_reads_by_its_label_shape_and_dtype(self):
-        assert repr(NumericArray("x", jnp.zeros(3))) == (
-            "NumericArray('x', shape=(3,), dtype=float32)"
-        )
+        assert repr(
+            NumericArray(
+                jnp.zeros(3),
+                label="x",
+            )
+        ) == ("NumericArray('x', shape=(3,), dtype=float32)")
 
     def test_a_declared_support_is_shown(self):
         spec = NumericArraySpec((), jnp.float32, positive)
-        assert repr(NumericArray("tau", jnp.asarray(1.0), spec=spec)) == (
-            "NumericArray('tau', shape=(), dtype=float32, support=positive)"
-        )
+        assert repr(
+            NumericArray(
+                jnp.asarray(1.0),
+                spec=spec,
+                label="tau",
+            )
+        ) == ("NumericArray('tau', shape=(), dtype=float32, support=positive)")
 
     def test_an_opaque_value_reads_by_its_type(self):
-        assert repr(Opaque("note", "Rubin")) == "Opaque('note', type=str)"
+        assert (
+            repr(
+                Opaque(
+                    "Rubin",
+                    label="note",
+                )
+            )
+            == "Opaque('note', type=str)"
+        )
 
     def test_a_record_reads_by_its_field_paths(self):
-        school = Record("school", {"data": {"effect": 28.0, "se": 15.0}, "label": "A"})
+        school = Record(
+            {"data": {"effect": 28.0, "se": 15.0}, "label": "A"},
+            label="school",
+        )
         assert repr(school) == "Record('school', fields=('data/effect', 'data/se', 'label'))"
 
     def test_a_batch_of_records_reads_by_its_levels_and_field_paths(self):
@@ -92,7 +117,11 @@ class TestValuesAndBatches:
         )
 
     def test_a_batch_of_laws_reads_by_its_element_spec(self):
-        laws = DistributionBatch("laws", [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)], "law")
+        laws = DistributionBatch(
+            [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)],
+            "law",
+            label="laws",
+        )
         assert repr(laws) == (
             "DistributionBatch(\n"
             "    'laws',\n"
@@ -307,9 +336,12 @@ class TestFunctionsAndOperators:
         def predict(theta, x):
             return x * theta
 
-        assert repr(Function("predict", predict)) == (
-            "Function('predict', parameters=('theta', 'x'))"
-        )
+        assert repr(
+            Function(
+                predict,
+                label="predict",
+            )
+        ) == ("Function('predict', parameters=('theta', 'x'))")
 
     def test_a_composite_operator_shows_its_operands(self):
         product = DenseLinOp(jnp.eye(2)) @ DiagonalLinOp(jnp.array([1.0, 2.0]))

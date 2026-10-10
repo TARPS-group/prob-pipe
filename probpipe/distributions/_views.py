@@ -323,8 +323,8 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
             if single:
                 return nodes[0]
             return Record(
-                value.label,
                 {component: _raw_record(node) for component, node in zip(components, nodes)},
+                label=value.label,
             )
         raw = _raw_record(value)
         nodes = [_extract(raw, each) for each in segments]
@@ -1307,9 +1307,9 @@ def _moved_value(value: Any, moves: Mapping[str, str] | None) -> Any:
     if isinstance(value, Record):
         template = value.event_template
         return Record(
-            value.label,
             {new: value[old] for new, old in moves.items()},
             event_template=RecordSpec({new: template[old] for new, old in moves.items()}),
+            label=value.label,
         )
     if isinstance(value, Mapping):
         fields = _fields_of(value)
@@ -1943,11 +1943,11 @@ class _RenamedDistribution(Distribution):
         if any(self._event.original(path) is None for path, _ in items):
             return None
         return Record(
-            "given",
             {
                 self._event.original(path): self._event.undraw_at(path, value)
                 for path, value in items
             },
+            label="given",
         )
 
     def _originals(self, paths: Sequence[str]) -> list[str]:
@@ -2175,7 +2175,7 @@ def _renamed_through_factors(
             else FactoredDistribution
         )
         renamed = _derived_product(
-            kind(joint.label, factors, _scope=graph.scope, **packaging), joint
+            kind(factors, label=joint.label, _scope=graph.scope, **packaging), joint
         )
     except (KeyError, ValueError):
         return None
@@ -2369,7 +2369,7 @@ def _regrouped(
                 else FactoredConditionalDistribution
             )
             label = _joined_label(part.label for part in parts)
-            unit = kind(label, parts, _scope=graph.scope, _component=node)
+            unit = kind(parts, label=label, _scope=graph.scope, _component=node)
             units.append((indices[0], _with_named(unit, _is_named(joint))))
     except (KeyError, TypeError, ValueError):
         return None
@@ -2383,7 +2383,9 @@ def _regrouped(
         else FactoredDistribution
     )
     try:
-        result = kind(joint.label, [units[position][1] for position in order], _scope=graph.scope)
+        result = kind(
+            [units[position][1] for position in order], label=joint.label, _scope=graph.scope
+        )
     except (KeyError, TypeError, ValueError):
         return None
     if _leaf_specs(result.event_spec) != _leaf_specs(event_spec):
@@ -2489,7 +2491,10 @@ def _slot_value(slot: str, spec: TermSpec, leaves: Mapping[str, Any]) -> Any:
     """The value of the slot *slot*, declared by *spec*, from the values at its leaves."""
     if not isinstance(spec, RecordSpec):
         return leaves[slot]
-    return Record(slot, {leaf[len(slot) + 1 :]: value for leaf, value in leaves.items()})
+    return Record(
+        {leaf[len(slot) + 1 :]: value for leaf, value in leaves.items()},
+        label=slot,
+    )
 
 
 def _renamed_conditional_sample(

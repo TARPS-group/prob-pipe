@@ -99,10 +99,10 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
+    label : str
+        The joint's label.
     _scope : Mapping[str, int], optional
         The sizes already bound in the joint's dimension scope, by dimension name, which a
         joint rebuilt from its factors passes on.
@@ -120,13 +120,18 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Distribution | ConditionalDistribution],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
-        super().__init__(label, factors, _scope=_scope, _component=_component)
+        super().__init__(
+            factors,
+            _scope=_scope,
+            _component=_component,
+            label=label,
+        )
         if not _jointly_gaussian(self.factors):
             kinds = sorted(
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
@@ -170,7 +175,13 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         ]
         if not kept:
             raise ValueError(self._every_component())
-        law = _derived_product(FactoredDistribution(self.label, kept), self)
+        law = _derived_product(
+            FactoredDistribution(
+                kept,
+                label=self.label,
+            ),
+            self,
+        )
         return law.with_provenance(
             Provenance.create(
                 "condition_on", parents=[self], metadata={"conditioned": sorted(conditioned)}

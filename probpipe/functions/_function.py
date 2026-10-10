@@ -49,6 +49,7 @@ from ..core._batch import Batch
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._expression import (
     Applied,
+    AppliedValue,
     Draw,
     Expression,
     Named,
@@ -152,7 +153,12 @@ def function(
         def differences(c: pd.Series) -> jax.Array:
             return jnp.asarray(c.diff().dropna().to_numpy())
 
-        differences(Record("r", c=pd.Series([1.0, 2.0, 4.0]))["c"])
+        differences(
+            Record(
+                {"c": pd.Series([1.0, 2.0, 4.0])},
+                label="r",
+            )["c"]
+        )
 
     Parameters
     ----------
@@ -160,14 +166,14 @@ def function(
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
     label : str or None
-        The function label, defaulting to the decorated callable's ``__name__``.
+        The function label, defaulting to the callable's name, or ``f`` for a lambda.
         A callable with none, such as a ``functools.partial``, needs it.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         The authoritative input slots, as :class:`Function` takes them.
     output_spec : OutputSpec or TermSpec or None
         The authoritative result declaration, as :class:`Function` takes it.
     output_label : str or None
-        The result label, defaulting to the function label.
+        Optional result alias; otherwise the result describes the application.
     differentiable : NumericSpec or None
         The differentiability claim, as :class:`Function` takes it.
     bind : Mapping or None
@@ -194,14 +200,7 @@ def function(
     _refuse_unknown_controls(controls)
 
     def decorator(func: Callable[..., Any]) -> Function:
-        resolved = getattr(func, "__name__", None) if label is None else label
-        if resolved is None:
-            raise TypeError(
-                f"function() needs an explicit label for a {type(func).__name__}, which has no "
-                f"__name__ to take it from; pass label=..."
-            )
         return Function(
-            resolved,
             func,
             input_spec=input_spec,
             output_spec=output_spec,
@@ -210,6 +209,7 @@ def function(
             bind=bind,
             module=module,
             **controls,
+            label=label,
         )
 
     if _func is not None:
@@ -323,24 +323,43 @@ def _call_function_in_context(
 def _result_label(function: Function, values: Mapping[str, Any]) -> str:
     """The label of the result of a call of *function* on the arguments *values* (V.10).
 
-    A function's result takes its output label, and an operation's result the
+    A function's result takes its explicit alias or application expression, and an operation's result the
     label of the expression its operands give it (II.4). The label names a
     term built before the result boundary gives it its expression, and it is
     never a component or a level name.
     """
     derive = getattr(function, "_derived_label", None)
-    return function.output_label if derive is None else derive(values)
+    if derive is not None:
+        return derive(values)
+    return _result_expression(function, values).render_label()
 
 
 def _result_expression(function: Function, values: Mapping[str, Any]) -> Expression | None:
     """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
-    A function's result carries its output label, and an operation's result
+    A function's result carries its explicit alias or application expression, and an operation's result
     the expression its expression rule builds from the operands'. ``None``
     leaves the result the expression its route gave it.
     """
     derive = getattr(function, "_derived_expression", None)
-    return Named(function.output_label) if derive is None else derive(values)
+    if derive is not None:
+        return derive(values)
+    if function._output_label is not None:
+        return Named(function.output_label)
+    return AppliedValue(function.label, _value_arguments(function, values))
+
+
+def _value_arguments(function: Function, values: Mapping[str, Any]) -> tuple[Expression, ...]:
+    """Arguments in parameter order, using declared slot names for unnamed arrays."""
+    parameters = function.signature.parameters
+    arguments = []
+    for ref in _binding.iter_input_refs(function._signature_info, values):
+        value = _binding.input_ref_value(values, ref)
+        if isinstance(value, TrackedTerm):
+            arguments.append(value._embedded_expression())
+        elif ref.subscript is not None or value is not parameters[ref.parameter_name].default:
+            arguments.append(constant(value) if _is_scalar(value) else Named(ref.label))
+    return tuple(arguments)
 
 
 def _lifted_expression(
@@ -657,6 +676,18 @@ def _run_call(
         if function.output_spec is not None
         else None
     )
+    if concrete_output_spec is None and candidates is not None and selection is None:
+        # An operation's result rule supplies its computational output interface.
+        # Plan from declared draws/elements, without evaluating or sampling rows.
+        replacements = _resolution._draws(values, broadcast_plan)
+        replacements.update(
+            {
+                ref: _resolution.StandIn(_resolution._element_spec(values, ref))
+                for ref in broadcast_plan.array_args
+            }
+        )
+        point_values = _binding.replace_input_refs(values, replacements)
+        _, concrete_output_spec, _ = function._plan_point(point_values, controls)
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
@@ -786,8 +817,6 @@ def _run_call(
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
             function_name=function._label,
-            # The component of an undeclared output is the function's output
-            # label, which is a name, and the law carries the applied function.
             output_label=function.output_label,
             output_expression=_lifted_expression(function, row_values, plan, values),
             output_spec=concrete_output_spec,
@@ -1014,11 +1043,11 @@ def _jax_traceability_error(
                     # names, as the law's own draws are.
                     if root.event_spec.exposes_record:
                         root_probe = NumericRecordBatch(
-                            root.label,
                             columns,
                             "draw",
                             element_spec=components,
                             axes_per_level=(1,),
+                            label=root.label,
                         )
                     else:
                         root_probe = next(iter(columns.values()))

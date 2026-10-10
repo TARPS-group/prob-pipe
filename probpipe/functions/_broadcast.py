@@ -162,8 +162,7 @@ def execute_distribution_broadcast(
     function_name : str
         The function's label, which provenance metadata records.
     output_label : str or None
-        The result's label, and the component of an undeclared whole-term
-        output; the function's label by default.
+        The result's display alias; the function's label by default.
     output_expression : Expression or None
         The result's expression, the function applied to draws of its
         inputs, which gives the result its label; *output_label* labels the
@@ -192,8 +191,8 @@ def execute_distribution_broadcast(
     EmpiricalDistribution
         Atoms on the level ``draw``, one per evaluation. The event declaration is
         the completed output declaration: a declared output completed by the
-        returned values, or else an exposed record for a record return and a
-        whole term under *output_label* for any other. Under *include_inputs* the
+        returned values, or else an exposed record for an undeclared record return.
+        A whole-term result requires a named output declaration. Under *include_inputs* the
         event exposes one field per lifted parameter, holding its complete draw,
         followed by the output's components.
 
@@ -336,9 +335,9 @@ def _lift_result(
     """
     atoms, declaration = _output_atoms(draws.outputs, draws.count, output_label, output_spec)
     if declaration._component_name is None and not declaration.exposes_record:
-        # A law's event is a value, so an exposed law is one value under the
-        # output label, as a function that declares no output places its result.
-        declaration = OutputSpec(**{output_label: declaration.spec})
+        raise ResultSchemaError(
+            "a lifted whole-term output needs a named component; declare output_spec=OutputSpec(name=spec)"
+        )
     if not include_inputs:
         return EmpiricalDistribution(
             atoms, draws.weights, label=output_label, event_spec=declaration
@@ -353,8 +352,8 @@ def _output_atoms(
     """The outputs as a batch on the level ``draw``, and the declaration they complete.
 
     A declared output completes to its declaration with the shared dimensions
-    bound by the outputs and any type hole filled; an undeclared one completes to
-    ``OutputSpec.default`` of the outputs' spec under *output_label*.
+    bound by the outputs and any type hole filled. An undeclared record exposes
+    its fields; an undeclared whole-term output raises ``ResultSchemaError``.
 
     Parameters
     ----------
@@ -364,7 +363,7 @@ def _output_atoms(
     count : int
         The number of evaluations.
     output_label : str
-        The batch's label, and the component of an undeclared output.
+        The batch's display alias, independent of its output components.
     output_spec : OutputSpec or None
         The function's output declaration with the call's shared dimensions
         bound, or ``None`` when the function declares no output.
@@ -392,7 +391,12 @@ def _output_atoms(
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(output_label, outputs.value, DRAW_LEVEL, element_spec=element)
+            NumericArrayBatch(
+                outputs.value,
+                DRAW_LEVEL,
+                element_spec=element,
+                label=output_label,
+            )
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -415,7 +419,11 @@ def _output_atoms(
             f"argument, which is not supported yet"
         )
     if output_spec is None:
-        return atoms, OutputSpec.default(atoms.element_spec, component=output_label)
+        if not isinstance(atoms.element_spec, RecordSpec):
+            raise ResultSchemaError(
+                "a lifted whole-term output needs a named component; declare output_spec=OutputSpec(name=None)"
+            )
+        return atoms, OutputSpec(atoms.element_spec)
     try:
         _validate_stacked_output(function_name=output_label, output_spec=output_spec, batch=atoms)
     except ValueError as error:
@@ -432,7 +440,10 @@ def _rows_of(outputs: Any, output_label: str) -> Any:
     stacked array, record, or mapping, which is read as a record of columns.
     """
     if isinstance(outputs, Mapping) and not isinstance(outputs, TrackedTerm):
-        return Record(output_label, dict(outputs))
+        return Record(
+            dict(outputs),
+            label=output_label,
+        )
     return outputs
 
 
@@ -500,11 +511,20 @@ def _joint_atoms(
         fields.update(declaration.spec.children)
         columns.update(stored)
     else:
-        component = declaration._component_name or output_label
+        component = declaration._component_name
+        if component is None:
+            raise ResultSchemaError(
+                "include_inputs requires a declared whole-term output component"
+            )
         fields[component] = declaration.spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
-    return _batch_class_for(element)(output_label, columns, DRAW_LEVEL, element_spec=element)
+    return _batch_class_for(element)(
+        columns,
+        DRAW_LEVEL,
+        element_spec=element,
+        label=output_label,
+    )
 
 
 def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
@@ -613,7 +633,9 @@ def _sample_planned_source_groups(
         binding = stochastic_plan.runtime_bindings[group.index]
         root_sample = _record_columns(binding.sample_root(key, sample_shape), binding.root.label)
         for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators):
-            sampled[consumer.arg_ref] = evaluate(root_sample)
+            sampled[consumer.arg_ref] = _record_columns(
+                evaluate(root_sample), consumer.arg_ref.label
+            )
     return sampled
 
 
@@ -624,8 +646,13 @@ def _record_columns(draws: Any, label: str) -> Any:
     the lift reads each row of a record argument as a ``Record``. Any other
     draws are returned as they are.
     """
+    if isinstance(draws, NumericArray):
+        return draws.raw()
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
-        return Record(label, _raw_record(draws))
+        return Record(
+            _raw_record(draws),
+            label=label,
+        )
     return draws
 
 
@@ -816,7 +843,10 @@ def _broadcast_enumerate(
         exact_entries.append(
             (
                 stochastic_plan.source_groups[group_index],
-                tuple(evaluate(atoms) for evaluate in binding.consumer_evaluators),
+                tuple(
+                    _record_columns(evaluate(atoms), root.label)
+                    for evaluate in binding.consumer_evaluators
+                ),
             )
         )
     sample_arg_refs = [ref for group in sampled_groups for ref in group.arg_refs]
@@ -921,7 +951,7 @@ def _enumerated_inputs(
         binding = stochastic_plan.runtime_bindings[group_index]
         atoms = _record_columns(root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label)
         for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators, strict=True):
-            inputs[consumer.arg_ref] = evaluate(atoms)
+            inputs[consumer.arg_ref] = _record_columns(evaluate(atoms), consumer.arg_ref.label)
     return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
 
 
@@ -1010,11 +1040,17 @@ def _index_sample(s: Any, i: int) -> Any:
     if isinstance(s, RecordBatch):
         # The raw columns, so a field that is not an array reaches the body as
         # the value it holds rather than as a view of its column.
-        return Record(s.label, {p: s._raw_column(p)[i] for p in s.event_template})
+        return Record(
+            {p: s._raw_column(p)[i] for p in s.event_template},
+            label=s.label,
+        )
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
-        return Record(s.label, {p: s.raw(p)[i] for p in s.event_template})
+        return Record(
+            {p: s.raw(p)[i] for p in s.event_template},
+            label=s.label,
+        )
     return s[i]
 
 

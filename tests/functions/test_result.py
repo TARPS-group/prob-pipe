@@ -66,7 +66,13 @@ class TestMakeStack:
         from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.functions._result import _make_stack
 
-        records = [NumericRecord("nr", a=float(i), b=float(i) * 2) for i in range(5)]
+        records = [
+            NumericRecord(
+                {"a": float(i), "b": float(i) * 2},
+                label="nr",
+            )
+            for i in range(5)
+        ]
         out = _make_stack(records, n=5, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (5,)
@@ -81,7 +87,13 @@ class TestMakeStack:
         from probpipe import NumericRecordBatch, Record, RecordBatch
         from probpipe.functions._result import _make_stack
 
-        records = [Record("r", a=float(i), label=f"row{i}") for i in range(3)]
+        records = [
+            Record(
+                {"a": float(i), "label": f"row{i}"},
+                label="r",
+            )
+            for i in range(3)
+        ]
         out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, RecordBatch)
         assert not isinstance(out, NumericRecordBatch)
@@ -97,7 +109,13 @@ class TestMakeStack:
         from probpipe.core._specs import NumericArraySpec
         from probpipe.functions._result import _make_stack
 
-        records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
+        records = [
+            Record(
+                {"x": jnp.ones(2, dtype=jnp.bfloat16), "label": f"r{i}"},
+                label="r",
+            )
+            for i in range(3)
+        ]
         out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, RecordBatch)
         assert out["x"].dtype == jnp.bfloat16
@@ -131,7 +149,14 @@ class TestMakeStack:
 
         inner = [
             NumericRecordBatch.stack(
-                [NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)], level_name="draw"
+                [
+                    NumericRecord(
+                        {"x": float(i * 10 + j)},
+                        label="nr",
+                    )
+                    for j in range(4)
+                ],
+                level_name="draw",
             )
             for i in range(3)
         ]
@@ -215,7 +240,10 @@ class TestMakeStack:
         from probpipe import NumericRecordBatch, Record
         from probpipe.functions._result import _make_stack
 
-        rec = Record("r", x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
+        rec = Record(
+            {"x": jnp.arange(5.0), "y": jnp.arange(5.0) + 10},
+            label="r",
+        )
         out = _make_stack(rec, n=5, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (5,)
@@ -277,7 +305,14 @@ class TestCoerceOutput:
         from probpipe.functions._result import _coerce_output
 
         ra = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i)) for i in range(3)], level_name="draw"
+            [
+                NumericRecord(
+                    {"x": float(i)},
+                    label="nr",
+                )
+                for i in range(3)
+            ],
+            level_name="draw",
         )
         assert ra.provenance is None
         prov = Provenance("sweep", parents=())
@@ -313,7 +348,10 @@ class TestCoerceOutput:
         from probpipe import NumericRecord
         from probpipe.functions._result import _coerce_output
 
-        nr = NumericRecord("nr", x=1.0).with_provenance(Provenance("inner", parents=()))
+        nr = NumericRecord(
+            {"x": 1.0},
+            label="nr",
+        ).with_provenance(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.
         _coerce_output(

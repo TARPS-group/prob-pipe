@@ -410,7 +410,12 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         return EmpiricalDistribution(
             jnp.asarray(draws), component=name, label=name, level=SAMPLE_LEVEL
         )
-    atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
+    atoms = _batch_class_for(event)(
+        _raw_record(draws),
+        SAMPLE_LEVEL,
+        element_spec=event,
+        label=name,
+    )
     return EmpiricalDistribution(atoms, label=name)
 
 
@@ -791,6 +796,11 @@ class _PushforwardMean(_EvaluationRules):
     def _values(self, call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
         """The integrand, the parameter a draw binds, the law, and the fixed arguments."""
         f = _as_function(call.operands["f"])
+        if f.output_spec is None:
+            # The temporary pushforward names one integrand, independently of
+            # its display alias. The caller's Function remains undeclared.
+            f = f._shallow_copy()
+            object.__setattr__(f, "_spec", FunctionSpec(f.input_spec, OutputSpec(integrand=None)))
         fixed = dict(call.operands.get("fixed_args") or {})
         return f, _bound_parameter(f, fixed), call.operands["d"], fixed
 

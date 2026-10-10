@@ -209,7 +209,13 @@ def _array_atoms(label: str, stacked: Array, term: NumericArraySpec) -> NumericA
         term = NumericArraySpec(tuple(stacked.shape[2:]), term.dtype, term.support)
     if term.dtype is not None:
         values = values.astype(term.dtype)
-    return NumericArrayBatch(label, values, _CHAIN_LEVELS, element_spec=term, axes_per_level=(1, 1))
+    return NumericArrayBatch(
+        values,
+        _CHAIN_LEVELS,
+        element_spec=term,
+        axes_per_level=(1, 1),
+        label=label,
+    )
 
 
 def _record_atoms(label: str, stacked: Array, record: RecordSpec) -> NumericRecordBatch:
@@ -257,7 +263,11 @@ def _record_atoms(label: str, stacked: Array, record: RecordSpec) -> NumericReco
         columns[path] = column if spec.dtype is None else column.astype(spec.dtype)
         offset += width
     return NumericRecordBatch(
-        label, columns, _CHAIN_LEVELS, element_spec=record, axes_per_level=(1, 1)
+        columns,
+        _CHAIN_LEVELS,
+        element_spec=record,
+        axes_per_level=(1, 1),
+        label=label,
     )
 
 
@@ -269,7 +279,11 @@ def _chain_atoms(label: str, stacked: Array, declaration: OutputSpec | None) -> 
     if declaration is None:
         element = NumericArraySpec(tuple(stacked.shape[2:]), stacked.dtype)
         return NumericArrayBatch(
-            label, stacked, _CHAIN_LEVELS, element_spec=element, axes_per_level=(1, 1)
+            stacked,
+            _CHAIN_LEVELS,
+            element_spec=element,
+            axes_per_level=(1, 1),
+            label=label,
         )
     term = declaration.spec
     if isinstance(term, RecordSpec):

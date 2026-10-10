@@ -16,6 +16,7 @@ from probpipe import (
     Normal,
     NumericArray,
     NumericArraySpec,
+    OutputSpec,
     Record,
     RecordBatch,
     conditional_distribution,
@@ -306,7 +307,10 @@ class TestDepth:
         assert pickle.loads(pickle.dumps(deep)) == deep
 
     def test_a_term_derived_in_a_long_loop_pickles(self):
-        value = NumericArray("x", jnp.asarray(1.0))
+        value = NumericArray(
+            jnp.asarray(1.0),
+            label="x",
+        )
         for _ in range(300):
             value = value + 1.0
         restored = pickle.loads(pickle.dumps(value))
@@ -350,7 +354,7 @@ class TestTheWarningFiresWhenATermIsShown:
         assert caught[0].filename == __file__
 
     def test_the_str_and_notation_of_a_collapsed_law_warn(self):
-        @function
+        @function(output_spec=OutputSpec(f=None))
         def f(mu: jax.Array) -> jax.Array:
             return mu + 1.0
 
@@ -377,7 +381,10 @@ class TestTheLabelIsTheExpressionsLabel:
             given_spec={"beta": NumericArraySpec(())},
             label="glm",
         )
-        record = Record("r", {"a": 1.0, "b": 2.0})
+        record = Record(
+            {"a": 1.0, "b": 2.0},
+            label="r",
+        )
         batch = RecordBatch.stack([record, record], level_name="row", label="rows")
         joint = kernel * prior.with_path_names(mu="beta")
         return [
@@ -393,8 +400,15 @@ class TestTheLabelIsTheExpressionsLabel:
             batch,
             batch[0],
             batch[0:1],
-            NumericArray("x", jnp.zeros(2)) * 2.0,
-            Function("predict", lambda x: x),
+            NumericArray(
+                jnp.zeros(2),
+                label="x",
+            )
+            * 2.0,
+            Function(
+                lambda x: x,
+                label="predict",
+            ),
         ]
 
     def test_every_term_carries_the_label_of_its_expression(self):

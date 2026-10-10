@@ -929,7 +929,10 @@ class Operation(Function):
     ) -> None:
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
-        super().__init__(declaration.__name__, declaration)
+        super().__init__(
+            declaration,
+            label=declaration.__name__,
+        )
         object.__setattr__(self, "_declaration_name", declaration.__name__)
         owner = f"operation {self.label!r}"
         if not callable(result):

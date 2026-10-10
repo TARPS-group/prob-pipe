@@ -249,7 +249,10 @@ class TestStanPosteriorDensity:
 
     def test_the_density_matches_the_closed_form(self, conjugate_model):
         for mu in [-1.0, 0.0, 0.5, 2.0]:
-            value = Record("value", {"mu": jnp.asarray(mu)})
+            value = Record(
+                {"mu": jnp.asarray(mu)},
+                label="value",
+            )
             lp = float(conjugate_model._unnormalized_log_prob(value))
             np.testing.assert_allclose(lp, self._expected(mu), atol=1e-5)
 
@@ -304,7 +307,14 @@ class TestStanPosteriorBlocks:
             p=jnp.array([0.25, 0.25, 0.5]),
         )
         lp_kw = float(jnp.asarray(unnormalized_log_prob(structured_model, kw)))
-        lp_record = float(structured_model._unnormalized_log_prob(Record("value", kw)))
+        lp_record = float(
+            structured_model._unnormalized_log_prob(
+                Record(
+                    kw,
+                    label="value",
+                )
+            )
+        )
         np.testing.assert_allclose(lp_kw, lp_record, atol=1e-6)
 
 

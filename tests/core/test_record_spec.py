@@ -126,9 +126,12 @@ class TestOpaqueSpecTypeAndMeta:
 
     def test_a_function_returning_an_opaque_value_keeps_the_declared_meta(self):
         tagged = Function(
-            "tagged",
-            lambda: Opaque("unit", "m"),
+            lambda: Opaque(
+                "m",
+                label="unit",
+            ),
             output_spec=OutputSpec(unit=OpaqueSpec(meta="units")),
+            label="tagged",
         )
 
         assert tagged().spec == OpaqueSpec(type=str, meta="units")
@@ -142,14 +145,33 @@ class TestOpaqueSpecTypeAndMeta:
         )
 
     def test_a_record_built_from_values_infers_its_opaque_leaves(self):
-        assert Record("r", {"label": "north", "x": 1.0}).event_template["label"] == OpaqueSpec(
-            type=str
-        )
+        assert Record(
+            {"label": "north", "x": 1.0},
+            label="r",
+        ).event_template["label"] == OpaqueSpec(type=str)
 
     def test_an_opaque_batch_infers_the_type_its_elements_share(self):
-        assert OpaqueBatch("b", ["north", "south"], "site").element_spec == OpaqueSpec(type=str)
-        assert OpaqueBatch("b", ["north", 3], "site").element_spec == OpaqueSpec()
-        assert OpaqueBatch("b", [], "site").element_spec == OpaqueSpec()
+        assert OpaqueBatch(
+            ["north", "south"],
+            "site",
+            label="b",
+        ).element_spec == OpaqueSpec(type=str)
+        assert (
+            OpaqueBatch(
+                ["north", 3],
+                "site",
+                label="b",
+            ).element_spec
+            == OpaqueSpec()
+        )
+        assert (
+            OpaqueBatch(
+                [],
+                "site",
+                label="b",
+            ).element_spec
+            == OpaqueSpec()
+        )
 
 
 class TestFrozenDataclassSpecs:
@@ -483,9 +505,14 @@ class TestKeys:
     def test_order_matches_flatten_and_to_vector(self):
         # The canonical leaf order is the order flatten() / to_vector() use.
         v = NumericRecord(
-            "nr",
-            x=jnp.array([1.0, 2.0]),
-            nested=NumericRecord("nr", a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
+            {
+                "x": jnp.array([1.0, 2.0]),
+                "nested": NumericRecord(
+                    {"a": jnp.array(3.0), "b": jnp.array([4.0, 5.0])},
+                    label="nr",
+                ),
+            },
+            label="nr",
         )
         tpl = RecordSpec.infer_from(v)
         assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
@@ -696,7 +723,10 @@ class TestEqualityAndHashing:
 
 class TestInferFrom:
     def test_scalar_fields(self):
-        r = Record("r", a=1.0, b=2.0)
+        r = Record(
+            {"a": 1.0, "b": 2.0},
+            label="r",
+        )
         tpl = RecordSpec.infer_from(r)
         assert tpl.fields == ("a", "b")
         assert tpl["a"] == NumericArraySpec(())
@@ -714,7 +744,14 @@ class TestInferFrom:
         # The non-Record branch: a bare mapping is inferred field by field
         # (a nested Record contributes its own event_template).
         tpl = RecordSpec.infer_from(
-            {"a": 1.0, "x": jnp.zeros(3), "params": Record("r", m=jnp.zeros(2))}
+            {
+                "a": 1.0,
+                "x": jnp.zeros(3),
+                "params": Record(
+                    {"m": jnp.zeros(2)},
+                    label="r",
+                ),
+            }
         )
         assert tuple(tpl.children) == ("a", "x", "params")
         assert tpl["a"] == NumericArraySpec(())
@@ -726,14 +763,23 @@ class TestInferFrom:
         assert len(RecordSpec.infer_from({})) == 0
 
     def test_array_fields(self):
-        r = Record("r", x=jnp.zeros(5), y=jnp.zeros((2, 3)))
+        r = Record(
+            {"x": jnp.zeros(5), "y": jnp.zeros((2, 3))},
+            label="r",
+        )
         tpl = RecordSpec.infer_from(r)
         assert tpl["x"] == NumericArraySpec((5,))
         assert tpl["y"] == NumericArraySpec((2, 3))
 
     def test_nested_record(self):
-        inner = Record("r", x=1.0, y=jnp.zeros(3))
-        outer = Record("r", params=inner, z=2.0)
+        inner = Record(
+            {"x": 1.0, "y": jnp.zeros(3)},
+            label="r",
+        )
+        outer = Record(
+            {"params": inner, "z": 2.0},
+            label="r",
+        )
         tpl = RecordSpec.infer_from(outer)
         assert isinstance(tpl.at_path("params"), RecordSpec)
         assert tpl["params/x"] == NumericArraySpec(())
@@ -743,7 +789,10 @@ class TestInferFrom:
     def test_roundtrip_vector_size(self):
         from probpipe.core._numeric_record import NumericRecord
 
-        r = NumericRecord("nr", a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
+        r = NumericRecord(
+            {"a": 1.0, "b": jnp.zeros(4), "c": jnp.zeros((2, 3))},
+            label="nr",
+        )
         tpl = RecordSpec.infer_from(r)
         # Auto-promoted to NumericRecordSpec because the input was a
         # NumericRecord, so ``vector_size`` is reachable.
@@ -758,7 +807,10 @@ class TestInferFrom:
         to name the subclass explicitly."""
         from probpipe.core._numeric_record import NumericRecord
 
-        r = NumericRecord("nr", a=1.0, b=jnp.zeros(2))
+        r = NumericRecord(
+            {"a": 1.0, "b": jnp.zeros(2)},
+            label="nr",
+        )
         tpl = RecordSpec.infer_from(r)
         assert isinstance(tpl, NumericRecordSpec)
 
@@ -766,7 +818,10 @@ class TestInferFrom:
         """A plain ``Record`` with a non-numeric leaf can't be promoted —
         the result is a plain :class:`RecordSpec` with an opaque
         slot."""
-        r = Record("r", x=1.0, label="tag")
+        r = Record(
+            {"x": 1.0, "label": "tag"},
+            label="r",
+        )
         tpl = RecordSpec.infer_from(r)
         assert type(tpl) is RecordSpec
         assert tpl["label"] == OpaqueSpec(type=str)
@@ -777,7 +832,10 @@ class TestInferFrom:
         Users should wrap lists in np.asarray/jnp.asarray for a numeric
         template entry — this test pins down that behavior so the
         documented guidance stays in sync with the implementation."""
-        r = Record("r", xs=[1.0, 2.0, 3.0])
+        r = Record(
+            {"xs": [1.0, 2.0, 3.0]},
+            label="r",
+        )
         tpl = RecordSpec.infer_from(r)
         assert tpl["xs"] == OpaqueSpec(type=list)
 
@@ -785,7 +843,10 @@ class TestInferFrom:
         """The opposite end of the list-leaf story: wrapping the list
         in ``np.asarray`` produces a numeric template entry."""
 
-        r = Record("r", xs=np.asarray([1.0, 2.0, 3.0]))
+        r = Record(
+            {"xs": np.asarray([1.0, 2.0, 3.0])},
+            label="r",
+        )
         tpl = RecordSpec.infer_from(r)
         assert tpl["xs"] == NumericArraySpec((3,))
 
@@ -1305,7 +1366,10 @@ class TestOpaqueSpecIsValid:
         # The record layer honours the same rule as the spec: a mapping value
         # denotes tree structure, so it is materialised into a subtree rather
         # than stored as an opaque leaf.
-        r = Record("r", x={"a": 1})
+        r = Record(
+            {"x": {"a": 1}},
+            label="r",
+        )
         assert tuple(r.keys()) == ("x/a",)
 
     def test_meta_not_checked(self):
@@ -1779,23 +1843,35 @@ class TestToVector:
         # on the value type).
         assert not hasattr(NumericRecordSpec, "to_vector")
         assert not hasattr(NumericRecordSpec, "from_vector")
-        nr = NumericRecord("nr", x=1.0, y=jnp.arange(3.0))
+        nr = NumericRecord(
+            {"x": 1.0, "y": jnp.arange(3.0)},
+            label="nr",
+        )
         assert NumericRecord.from_vector("nr", nr.event_template, nr.to_vector()) == nr
 
     def test_scalar_value(self):
-        v = NumericRecord("nr", x=1.5)
+        v = NumericRecord(
+            {"x": 1.5},
+            label="nr",
+        )
         vec = v.to_vector()
         assert vec.shape == (1,)
         assert jnp.array_equal(vec, jnp.asarray([1.5]))
 
     def test_vector_value(self):
-        v = NumericRecord("nr", y=jnp.arange(3.0))
+        v = NumericRecord(
+            {"y": jnp.arange(3.0)},
+            label="nr",
+        )
         vec = v.to_vector()
         assert vec.shape == (3,)
         assert jnp.array_equal(vec, jnp.arange(3.0))
 
     def test_multi_field_value(self):
-        v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
+        v = NumericRecord(
+            {"x": 1.0, "y": jnp.arange(3.0), "z": jnp.ones((2, 4))},
+            label="nr",
+        )
         vec = v.to_vector()
         assert vec.shape == (1 + 3 + 8,)
         # Exact concatenation in canonical field order (x, y, z) — also pins
@@ -1804,7 +1880,10 @@ class TestToVector:
 
     def test_to_vector_shape_is_vector_size(self):
         tpl = RecordSpec(x=(), y=(3,), z=(2, 4))
-        v = NumericRecord("nr", x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
+        v = NumericRecord(
+            {"x": 0.0, "y": jnp.zeros(3), "z": jnp.zeros((2, 4))},
+            label="nr",
+        )
         assert v.to_vector().shape == (tpl.vector_size,)
 
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
@@ -1827,23 +1906,40 @@ class TestFromVectorRoundTripSingle:
         np.testing.assert_array_equal(value.to_vector(), flat)
 
     def test_scalar(self):
-        v = NumericRecord("nr", x=1.5)
+        v = NumericRecord(
+            {"x": 1.5},
+            label="nr",
+        )
         tpl = RecordSpec.infer_from(v)
         assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_vector(self):
-        v = NumericRecord("nr", y=jnp.arange(3.0))
+        v = NumericRecord(
+            {"y": jnp.arange(3.0)},
+            label="nr",
+        )
         tpl = RecordSpec.infer_from(v)
         assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_multi_field(self):
-        v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
+        v = NumericRecord(
+            {"x": 1.0, "y": jnp.arange(3.0), "z": jnp.arange(8.0).reshape(2, 4)},
+            label="nr",
+        )
         tpl = RecordSpec.infer_from(v)
         assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_nested(self):
         v = NumericRecord(
-            "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
+            {
+                "x": 1.0,
+                "y": jnp.arange(3.0),
+                "nested": NumericRecord(
+                    {"a": 2.0, "b": jnp.arange(2.0)},
+                    label="nr",
+                ),
+            },
+            label="nr",
         )
         tpl = RecordSpec.infer_from(v)
         round_tripped = NumericRecord.from_vector("nr", tpl, v.to_vector())
@@ -2059,11 +2155,19 @@ class TestRecordSpec:
 
     def test_is_valid_accepts_matching_record_only(self):
 
-        rec = Record("r", x=jnp.asarray(1.0))
+        rec = Record(
+            {"x": jnp.asarray(1.0)},
+            label="r",
+        )
         spec = RecordSpec(rec.event_template)
         assert spec.is_valid(rec)
         assert not spec.is_valid(jnp.asarray(1.0))  # not a Record
-        assert not spec.is_valid(Record("r", y=jnp.asarray(1.0)))  # wrong template
+        assert not spec.is_valid(
+            Record(
+                {"y": jnp.asarray(1.0)},
+                label="r",
+            )
+        )  # wrong template
 
     def test_is_valid_false_when_fields_cannot_be_read(self):
         class _Unreadable(Record):
@@ -2071,7 +2175,10 @@ class TestRecordSpec:
             def children(self):
                 raise TypeError("fields unavailable")
 
-        rec = _Unreadable("r", x=jnp.asarray(1.0))
+        rec = _Unreadable(
+            {"x": jnp.asarray(1.0)},
+            label="r",
+        )
         assert not RecordSpec(x=()).is_valid(rec)
 
     def test_is_valid_propagates_an_unexpected_error(self):
@@ -2080,7 +2187,10 @@ class TestRecordSpec:
             def children(self):
                 raise RuntimeError("malfunctioning record")
 
-        rec = _Broken("r", x=jnp.asarray(1.0))
+        rec = _Broken(
+            {"x": jnp.asarray(1.0)},
+            label="r",
+        )
         with pytest.raises(RuntimeError, match="malfunctioning record"):
             RecordSpec(x=()).is_valid(rec)
 
@@ -2281,19 +2391,27 @@ class TestBindingAFunctionSpec:
         """It declares nothing, so there is nothing to bind from — and no refusal."""
         declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
 
-        record = Record("r", f=lambda x: x, event_template=declared)
+        record = Record(
+            {"f": lambda x: x},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template["f"].input_spec["x"].shape == ("obs",)
 
     def test_the_input_side_binds_from_the_callable_declaration(self):
         declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
         typed = Function(
-            fn=lambda x: x,
+            lambda x: x,
             label="g",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(7,))).children),
         )
 
-        record = Record("r", f=typed, event_template=declared)
+        record = Record(
+            {"f": typed},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template["f"].input_spec["x"].shape == (7,)
 
@@ -2302,12 +2420,16 @@ class TestBindingAFunctionSpec:
             f=FunctionSpec(None, OutputSpec(RecordSpec(y=NumericArraySpec(("m",)))))
         )
         typed = Function(
-            fn=lambda x: x,
+            lambda x: x,
             label="g",
             output_spec=RecordSpec(y=NumericArraySpec(shape=(5,))),
         )
 
-        record = Record("r", f=typed, event_template=declared)
+        record = Record(
+            {"f": typed},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template["f"].output_spec.spec["y"].shape == (5,)
 
@@ -2315,7 +2437,11 @@ class TestBindingAFunctionSpec:
         declared = RecordSpec(f=FunctionSpec(InputSpec(self._sym().children), None))
 
         with pytest.raises(ValueError, match="does not conform"):
-            Record("r", f=3, event_template=declared)
+            Record(
+                {"f": 3},
+                event_template=declared,
+                label="r",
+            )
 
 
 class TestInferenceThroughTermSpecs:
@@ -2336,7 +2462,11 @@ class TestInferenceThroughTermSpecs:
 
     def test_a_distribution_binds_the_declared_dimension(self):
         sym = OutputSpec(x=NumericArraySpec(shape=("obs",)))
-        record = Record("r", law=self._law(3), event_template=RecordSpec(law=DistributionSpec(sym)))
+        record = Record(
+            {"law": self._law(3)},
+            event_template=RecordSpec(law=DistributionSpec(sym)),
+            label="r",
+        )
 
         assert record.event_template.is_concrete
         assert record.event_template["law"].event_spec.spec.shape == (3,)
@@ -2346,7 +2476,11 @@ class TestInferenceThroughTermSpecs:
             data=NumericArraySpec(shape=("obs",)),
             law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=("obs",)))),
         )
-        record = Record("r", data=jnp.zeros(3), law=self._law(3), event_template=declared)
+        record = Record(
+            {"data": jnp.zeros(3), "law": self._law(3)},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template["data"].shape == (3,)
         assert record.event_template["law"].event_spec.spec.shape == (3,)
@@ -2367,7 +2501,11 @@ class TestInferenceThroughTermSpecs:
         with pytest.raises(
             ValueError, match=r"/data binds symbolic dimension 'obs' to 5, .*already bound to 3"
         ):
-            Record("r", law=self._law(3), data=jnp.zeros(5), event_template=declared)
+            Record(
+                {"law": self._law(3), "data": jnp.zeros(5)},
+                event_template=declared,
+                label="r",
+            )
 
     def test_field_order_does_not_change_the_outcome(self):
         """The same declaration either way round: one scope, one answer."""
@@ -2381,7 +2519,11 @@ class TestInferenceThroughTermSpecs:
         )
 
         for declared in (term_first, array_first):
-            record = Record("r", law=self._law(3), data=jnp.zeros(3), event_template=declared)
+            record = Record(
+                {"law": self._law(3), "data": jnp.zeros(3)},
+                event_template=declared,
+                label="r",
+            )
             assert record.event_template.is_concrete
             assert record.event_template["data"].shape == (3,)
 
@@ -2395,7 +2537,11 @@ class TestInferenceThroughTermSpecs:
         with pytest.raises(
             ValueError, match=r"/law/x binds symbolic dimension 'obs' to 3, .*already bound to 5"
         ):
-            Record("r", data=jnp.zeros(5), law=self._law(3), event_template=declared)
+            Record(
+                {"data": jnp.zeros(5), "law": self._law(3)},
+                event_template=declared,
+                label="r",
+            )
 
     @pytest.mark.parametrize(
         ("spec_type", "message"),
@@ -2421,7 +2567,14 @@ class TestInferenceThroughTermSpecs:
         """
         sym = RecordSpec(x=NumericArraySpec(shape=("obs",)))
         declared = spec_type(sym)
-        value = self._law(3) if spec_type is RecordSpec else Record("w", x=jnp.zeros(3))
+        value = (
+            self._law(3)
+            if spec_type is RecordSpec
+            else Record(
+                {"x": jnp.zeros(3)},
+                label="w",
+            )
+        )
         with pytest.raises(ValueError, match=rf"^v/field .*{message}"):
             _unify_record_spec_with_value(RecordSpec(field=declared), {"field": value}, context="v")
 
@@ -2439,7 +2592,11 @@ class TestInferenceThroughTermSpecs:
         declared = RecordSpec(law=DistributionSpec(OutputSpec(x=NumericArraySpec(shape=(4,)))))
 
         with pytest.raises(ValueError, match="does not match event_template"):
-            Record("r", law=self._law(3), event_template=declared)
+            Record(
+                {"law": self._law(3)},
+                event_template=declared,
+                label="r",
+            )
 
 
 class TestAFunctionOutputBindsWhateverItDeclares:
@@ -2455,7 +2612,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
     @staticmethod
     def _function(input_size=3, output_size=5, *, record=False):
         return Function(
-            fn=lambda x: jnp.zeros(output_size),
+            lambda x: jnp.zeros(output_size),
             label="f",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(input_size,))).children),
             output_spec=(
@@ -2480,7 +2637,11 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         """`n` on both sides binds once when the two agree."""
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
-        record = Record("r", f=self._function(4, 4), event_template=declared)
+        record = Record(
+            {"f": self._function(4, 4)},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template.is_concrete
         assert record.event_template["f"].output_spec.spec.shape == (4,)
@@ -2495,19 +2656,27 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
-            Record("r", f=self._function(3, 5), event_template=declared)
+            Record(
+                {"f": self._function(3, 5)},
+                event_template=declared,
+                label="r",
+            )
 
     def test_a_record_output_that_disagrees_raises_the_same_way(self):
         """The route that already worked, asserted beside the one that did not."""
         declared = self._declared(RecordSpec(out=NumericArraySpec(shape=("n",))))
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
-            Record("r", f=self._function(3, 5, record=True), event_template=declared)
+            Record(
+                {"f": self._function(3, 5, record=True)},
+                event_template=declared,
+                label="r",
+            )
 
     def test_one_declared_output_value_does_not_match_several_fields(self):
         """A single value declaration meets a single field, so two is a mismatch."""
         function = Function(
-            fn=lambda x: x,
+            lambda x: x,
             label="f",
             input_spec=InputSpec(RecordSpec(x=NumericArraySpec(shape=(3,))).children),
             output_spec=RecordSpec(a=NumericArraySpec(shape=(3,)), b=NumericArraySpec(shape=(4,))),
@@ -2515,7 +2684,11 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         declared = self._declared(NumericArraySpec(shape=("n",)))
 
         with pytest.raises(ValueError, match="incompatible output components"):
-            Record("r", f=function, event_template=declared)
+            Record(
+                {"f": function},
+                event_template=declared,
+                label="r",
+            )
 
     @pytest.mark.parametrize(
         "template",
@@ -2523,7 +2696,7 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         ids=["nested_leaf", "empty_sibling"],
     )
     def test_one_array_output_does_not_flatten_record_structure(self, template):
-        function = Function(label="function", fn=lambda: None, output_spec=template)
+        function = Function(lambda: None, label="function", output_spec=template)
         for size in (3, "n"):
             spec = FunctionSpec(output_spec=OutputSpec(result=NumericArraySpec((size,))))
             with pytest.raises(ValueError):
@@ -2537,7 +2710,11 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         """No declaration to read, so the output stays free rather than raising."""
         declared = self._declared(NumericArraySpec(shape=("k",)))
 
-        record = Record("r", f=lambda x: x, event_template=declared)
+        record = Record(
+            {"f": lambda x: x},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template.free_dims == frozenset({"n", "k"})
 
@@ -2556,9 +2733,9 @@ class TestMultiplicityBindsFromAValue:
     @staticmethod
     def _batch(size=3, level="item"):
         return OpaqueBatch(
-            "batch",
             [object() for _ in range(size)],
             level,
+            label="batch",
         )
 
     @staticmethod
@@ -2568,10 +2745,10 @@ class TestMultiplicityBindsFromAValue:
         for index in np.ndindex(shape):
             store[index] = object()
         return OpaqueBatch(
-            "batch",
             store,
             level_names,
             axes_per_level=axes_per_level or (len(shape),),
+            label="batch",
         )
 
     @staticmethod
@@ -2584,7 +2761,11 @@ class TestMultiplicityBindsFromAValue:
 
     def test_an_axis_size_is_inferred_from_the_batch(self):
         """How many elements there are is read off the batch."""
-        record = Record("r", b=self._batch(3), event_template=self._declared())
+        record = Record(
+            {"b": self._batch(3)},
+            event_template=self._declared(),
+            label="r",
+        )
 
         assert record.event_template.is_concrete
         assert record.event_template["b"].axis_groups == ((3,),)
@@ -2593,7 +2774,9 @@ class TestMultiplicityBindsFromAValue:
     def test_an_axis_and_a_field_share_one_dimension(self):
         """`("n",)` of elements beside an array of shape `("n",)` binds `n` once."""
         record = Record(
-            "r", data=jnp.zeros(3), b=self._batch(3), event_template=self._declared(field="n")
+            {"data": jnp.zeros(3), "b": self._batch(3)},
+            event_template=self._declared(field="n"),
+            label="r",
         )
 
         assert record.event_template.is_concrete
@@ -2616,7 +2799,11 @@ class TestMultiplicityBindsFromAValue:
         )
 
         for declared in (array_first, batch_first):
-            record = Record("r", data=jnp.zeros(3), b=self._batch(3), event_template=declared)
+            record = Record(
+                {"data": jnp.zeros(3), "b": self._batch(3)},
+                event_template=declared,
+                label="r",
+            )
             assert record.event_template.is_concrete
             assert record.event_template["data"].shape == (3,)
             assert record.event_template["b"].axis_groups == ((3,),)
@@ -2627,7 +2814,9 @@ class TestMultiplicityBindsFromAValue:
             ValueError, match=r"binds symbolic dimension 'n' to 3, .*already bound to 5"
         ):
             Record(
-                "r", data=jnp.zeros(5), b=self._batch(3), event_template=self._declared(field="n")
+                {"data": jnp.zeros(5), "b": self._batch(3)},
+                event_template=self._declared(field="n"),
+                label="r",
             )
 
     def test_the_disagreement_raises_in_either_order(self):
@@ -2639,15 +2828,23 @@ class TestMultiplicityBindsFromAValue:
         with pytest.raises(
             ValueError, match=r"/data binds symbolic dimension 'n' to 5, .*already bound to 3"
         ):
-            Record("r", b=self._batch(3), data=jnp.zeros(5), event_template=declared)
+            Record(
+                {"b": self._batch(3), "data": jnp.zeros(5)},
+                event_template=declared,
+                label="r",
+            )
 
     def test_a_bound_declaration_equals_the_concrete_one(self):
         """Binding is inference, not a second dialect: the two declarations agree."""
-        inferred = Record("r", b=self._batch(3), event_template=self._declared())
+        inferred = Record(
+            {"b": self._batch(3)},
+            event_template=self._declared(),
+            label="r",
+        )
         concrete = Record(
-            "r",
-            b=self._batch(3),
+            {"b": self._batch(3)},
             event_template=RecordSpec(b=BatchSpec(OpaqueSpec(), item=3)),
+            label="r",
         )
 
         assert inferred.event_template == concrete.event_template
@@ -2661,27 +2858,43 @@ class TestMultiplicityBindsFromAValue:
             ValueError,
             match=r"value at 'b' does not match event_template: expected .*item=4\)",
         ):
-            Record("r", b=self._batch(3), event_template=declared)
+            Record(
+                {"b": self._batch(3)},
+                event_template=declared,
+                label="r",
+            )
 
     def test_a_value_carrying_no_multiplicity_says_so(self):
         """A raw value is not a batch, so there is nothing to bind an axis from."""
         with pytest.raises(
             ValueError, match=r"'r'/b must be a batch matching BatchSpec.*, got jax.Array"
         ):
-            Record("r", b=jnp.zeros(3), event_template=self._declared())
+            Record(
+                {"b": jnp.zeros(3)},
+                event_template=self._declared(),
+                label="r",
+            )
 
     def test_a_level_name_mismatch_is_refused_rather_than_bound(self):
         """The tiling is structure, so it is checked rather than inferred."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), draw="n"))
 
         with pytest.raises(ValueError, match=r"has levels \['item'\], expected \['draw'\]"):
-            Record("r", b=self._batch(3), event_template=declared)
+            Record(
+                {"b": self._batch(3)},
+                event_template=declared,
+                label="r",
+            )
 
     def test_one_level_may_hold_several_symbolic_axes(self):
         """A level holding two axes binds each in turn."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("rows", "cols")))
 
-        record = Record("r", b=self._grid((3, 4)), event_template=declared)
+        record = Record(
+            {"b": self._grid((3, 4))},
+            event_template=declared,
+            label="r",
+        )
 
         assert record.event_template["b"].axis_groups == ((3, 4),)
 
@@ -2689,20 +2902,28 @@ class TestMultiplicityBindsFromAValue:
         """`("n", "n")` binds once and demands both axes agree."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("n", "n")))
 
-        record = Record("r", b=self._grid((3, 3)), event_template=declared)
+        record = Record(
+            {"b": self._grid((3, 3))},
+            event_template=declared,
+            label="r",
+        )
         assert record.event_template["b"].axis_groups == ((3, 3),)
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 4, .*already bound to 3"):
-            Record("r", b=self._grid((3, 4)), event_template=declared)
+            Record(
+                {"b": self._grid((3, 4))},
+                event_template=declared,
+                label="r",
+            )
 
     def test_levels_bind_independently(self):
         """Two levels, two dimensions, each read off its own axis."""
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), chain="c", draw="d"))
 
         record = Record(
-            "r",
-            b=self._grid((2, 4), ["chain", "draw"], (1, 1)),
+            {"b": self._grid((2, 4), ["chain", "draw"], (1, 1))},
             event_template=declared,
+            label="r",
         )
 
         assert record.event_template["b"].axis_groups == ((2,), (4,))
@@ -2712,7 +2933,11 @@ class TestMultiplicityBindsFromAValue:
         declared = RecordSpec(b=BatchSpec(OpaqueSpec(), grid=("a", "b")))
 
         with pytest.raises(ValueError, match=r"has \[1\] axes per level, expected \[2\]"):
-            Record("r", b=self._batch(3, level="grid"), event_template=declared)
+            Record(
+                {"b": self._batch(3, level="grid")},
+                event_template=declared,
+                label="r",
+            )
 
     def test_a_partially_bindable_template_binds_what_it_can(self):
         """Binding is a refinement, so an unbindable name is left free.
@@ -2726,7 +2951,11 @@ class TestMultiplicityBindsFromAValue:
             b=BatchSpec(OpaqueSpec(), item="n"),
         )
 
-        record = Record("r", f=lambda x: x, b=self._batch(3), event_template=declared)
+        record = Record(
+            {"f": lambda x: x, "b": self._batch(3)},
+            event_template=declared,
+            label="r",
+        )
 
         assert not record.event_template.is_concrete
         assert record.event_template.free_dims == frozenset({"k"})

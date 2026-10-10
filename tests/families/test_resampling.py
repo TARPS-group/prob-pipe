@@ -61,10 +61,10 @@ def centers():
 @pytest.fixture
 def record_centers(centers):
     return NumericRecordBatch(
-        "atoms",
         {"a": centers[:, 0], "b": centers[:, 1]},
         "atom",
         element_spec=NumericRecordSpec(a=(), b=()),
+        label="atoms",
     )
 
 
@@ -97,7 +97,10 @@ class TestTheUniformConstructor:
     def test_record_centers_and_scales_flatten_to_their_coordinates(
         self, kernel, centers, record_centers
     ):
-        scales = NumericRecord("h", {"a": 0.5, "b": 1.5})
+        scales = NumericRecord(
+            {"a": 0.5, "b": 1.5},
+            label="h",
+        )
         from_records = kernel.build_kernels(record_centers, scales)
         from_arrays = kernel.build_kernels(centers, jnp.array([0.5, 1.5]))
         x = jnp.array([1.0, 0.0])
@@ -108,7 +111,10 @@ class TestTheUniformConstructor:
     @pytest.mark.parametrize("kernel", _KERNELS)
     def test_record_scales_match_the_centers_fields_by_path(self, kernel, centers, record_centers):
         # The point is inside the first copy only when the scales are matched by field.
-        scales = NumericRecord("h", {"b": 0.8, "a": 2.5})
+        scales = NumericRecord(
+            {"b": 0.8, "a": 2.5},
+            label="h",
+        )
         from_records = kernel.build_kernels(record_centers, scales)
         from_arrays = kernel.build_kernels(centers, jnp.array([2.5, 0.8]))
         x = jnp.array([1.0, 0.5])
@@ -121,12 +127,15 @@ class TestTheUniformConstructor:
     def test_nested_record_scales_match_the_centers_leaf_paths(self, kernel):
         points = jnp.array([[0.0, 1.0, -1.0, 2.0], [2.0, 0.5, 0.0, -1.0]])
         batch = NumericRecordBatch(
-            "atoms",
             {"x/p": points[:, 0], "x/q": points[:, 1:3], "y": points[:, 3]},
             "atom",
             element_spec=NumericRecordSpec(x=NumericRecordSpec(p=(), q=(2,)), y=()),
+            label="atoms",
         )
-        scales = NumericRecord("h", {"y": 3.0, "x": {"q": jnp.array([2.0, 1.5]), "p": 1.2}})
+        scales = NumericRecord(
+            {"y": 3.0, "x": {"q": jnp.array([2.0, 1.5]), "p": 1.2}},
+            label="h",
+        )
         from_records = kernel.build_kernels(batch, scales)
         from_arrays = kernel.build_kernels(points, jnp.array([1.2, 2.0, 1.5, 3.0]))
         x = jnp.array([0.5, 0.0, -0.5, 1.0])
@@ -138,12 +147,18 @@ class TestTheUniformConstructor:
     def test_a_fields_scale_broadcasts_over_the_fields_coordinates(self, kernel):
         points = jnp.array([[0.0, 1.0, -1.0], [2.0, 0.5, 0.0]])
         batch = NumericRecordBatch(
-            "atoms",
             {"a": points[:, 0], "b": points[:, 1:]},
             "atom",
             element_spec=NumericRecordSpec(a=(), b=(2,)),
+            label="atoms",
         )
-        from_records = kernel.build_kernels(batch, NumericRecord("h", {"b": 2.0, "a": 0.5}))
+        from_records = kernel.build_kernels(
+            batch,
+            NumericRecord(
+                {"b": 2.0, "a": 0.5},
+                label="h",
+            ),
+        )
         from_arrays = kernel.build_kernels(points, jnp.array([0.5, 2.0, 2.0]))
         x = jnp.array([0.2, 1.5, -0.5])
         np.testing.assert_allclose(
@@ -158,20 +173,35 @@ class TestTheUniformConstructor:
     )
     def test_record_scales_over_other_fields_raise(self, kernel, record_centers, fields):
         with pytest.raises(ValueError, match="fields"):
-            kernel.build_kernels(record_centers, NumericRecord("h", fields))
+            kernel.build_kernels(
+                record_centers,
+                NumericRecord(
+                    fields,
+                    label="h",
+                ),
+            )
 
     @pytest.mark.parametrize("kernel", _KERNELS)
     def test_a_fields_scale_that_does_not_broadcast_over_the_field_raises(
         self, kernel, record_centers
     ):
-        scales = NumericRecord("h", {"a": 0.5, "b": jnp.array([1.0, 2.0])})
+        scales = NumericRecord(
+            {"a": 0.5, "b": jnp.array([1.0, 2.0])},
+            label="h",
+        )
         with pytest.raises(ValueError, match="'b'"):
             kernel.build_kernels(record_centers, scales)
 
     @pytest.mark.parametrize("kernel", _KERNELS)
     def test_record_scales_for_array_centers_raise(self, kernel, centers):
         with pytest.raises(ValueError, match="record"):
-            kernel.build_kernels(centers, NumericRecord("h", {"a": 0.5, "b": 1.5}))
+            kernel.build_kernels(
+                centers,
+                NumericRecord(
+                    {"a": 0.5, "b": 1.5},
+                    label="h",
+                ),
+            )
 
     @pytest.mark.parametrize("kernel", _KERNELS)
     def test_scales_that_do_not_broadcast_raise(self, kernel, centers):
@@ -452,10 +482,10 @@ class TestTheKDEDeclaration:
 
     def test_a_declared_support_of_the_atoms_is_widened_to_the_real_line(self):
         atoms = NumericRecordBatch(
-            "atoms",
             {"s": jnp.array([1.0, 2.0, 3.0])},
             "atom",
             element_spec=NumericRecordSpec(s=NumericArraySpec((), jnp.float32, positive)),
+            label="atoms",
         )
         kde = KDEDistribution(atoms, 0.5, label="post")
         assert kde.event_spec.spec["s"].support is real
@@ -463,7 +493,13 @@ class TestTheKDEDeclaration:
     @pytest.mark.parametrize(
         "atoms",
         [
-            pytest.param(Record("r", a=jnp.zeros(3)), id="one-record"),
+            pytest.param(
+                Record(
+                    {"a": jnp.zeros(3)},
+                    label="r",
+                ),
+                id="one-record",
+            ),
             pytest.param(["a", "b"], id="list"),
             pytest.param(np.array(["a", "b"], dtype=object), id="object-array"),
         ],
@@ -490,38 +526,59 @@ class TestARecordKDE:
 
     def test_the_density_reads_a_record_and_a_batch_of_records(self, centers, record_centers):
         kde = KDEDistribution(
-            record_centers, NumericRecord("h", {"a": 0.5, "b": 1.5}), label="post"
+            record_centers,
+            NumericRecord(
+                {"a": 0.5, "b": 1.5},
+                label="h",
+            ),
+            label="post",
         )
         flat = KDEDistribution(centers, jnp.array([0.5, 1.5]), component="flat")
-        point = NumericRecord("v", {"a": 0.5, "b": -0.3})
+        point = NumericRecord(
+            {"a": 0.5, "b": -0.3},
+            label="v",
+        )
         np.testing.assert_allclose(kde._log_prob(point), flat._log_prob(jnp.array([0.5, -0.3])))
         np.testing.assert_allclose(kde._log_prob({"a": 0.5, "b": -0.3}), kde._log_prob(point))
         batch = NumericRecordBatch(
-            "values",
             {"a": jnp.array([0.5, 0.6, 0.7]), "b": jnp.array([-0.3, -0.4, -0.5])},
             "value",
             element_spec=NumericRecordSpec(a=(), b=()),
+            label="values",
         )
         expected = flat._log_prob(jnp.array([[0.5, -0.3], [0.6, -0.4], [0.7, -0.5]]))
         np.testing.assert_allclose(kde._log_prob(batch), expected, rtol=1e-6)
 
     def test_a_batch_of_records_is_read_by_the_kdes_leaf_paths(self):
         atoms = NumericRecordBatch(
-            "atoms",
             {
                 "a": jnp.array([[0.0, 1.0], [2.0, -1.0], [4.0, 0.5]]),
                 "b": jnp.array([1.0, 3.0, 2.0]),
             },
             "atom",
             element_spec=NumericRecordSpec(a=(2,), b=()),
+            label="atoms",
         )
-        kde = KDEDistribution(atoms, NumericRecord("h", {"a": 0.5, "b": 1.5}), label="post")
+        kde = KDEDistribution(
+            atoms,
+            NumericRecord(
+                {"a": 0.5, "b": 1.5},
+                label="h",
+            ),
+            label="post",
+        )
         a, b = jnp.array([[0.5, 0.2], [2.5, -0.5]]), jnp.array([1.2, 2.8])
         in_order = NumericRecordBatch(
-            "values", {"a": a, "b": b}, "value", element_spec=NumericRecordSpec(a=(2,), b=())
+            {"a": a, "b": b},
+            "value",
+            element_spec=NumericRecordSpec(a=(2,), b=()),
+            label="values",
         )
         reordered = NumericRecordBatch(
-            "values", {"b": b, "a": a}, "value", element_spec=NumericRecordSpec(b=(), a=(2,))
+            {"b": b, "a": a},
+            "value",
+            element_spec=NumericRecordSpec(b=(), a=(2,)),
+            label="values",
         )
         expected = kde._log_prob({"a": a, "b": b})
         np.testing.assert_allclose(kde._log_prob(in_order), expected, rtol=1e-6)
@@ -547,10 +604,10 @@ class TestARecordKDE:
 
 def _rows() -> NumericRecordBatch:
     return NumericRecordBatch(
-        "xy",
         {"x": jnp.arange(4.0), "y": 10.0 * jnp.arange(4.0)},
         "row",
         element_spec=NumericRecordSpec(x=(), y=()),
+        label="xy",
     )
 
 
@@ -582,7 +639,16 @@ class TestTheBootstrapReplicate:
         with pytest.raises(error, match="replicate_size"):
             BootstrapReplicateDistribution("b", Normal("x", 0.0, 1.0), size)
 
-    @pytest.mark.parametrize("source", [jnp.arange(3.0), Record("r", a=jnp.zeros(3))])
+    @pytest.mark.parametrize(
+        "source",
+        [
+            jnp.arange(3.0),
+            Record(
+                {"a": jnp.zeros(3)},
+                label="r",
+            ),
+        ],
+    )
     def test_the_source_is_a_law_that_samples(self, source):
         with pytest.raises(TypeError, match="must be a Distribution that supports sampling"):
             BootstrapReplicateDistribution("b", source, 3)
@@ -656,9 +722,9 @@ class TestTheBootstrapReplicate:
         data = jax.random.normal(jax.random.PRNGKey(9), (200,))
         replicate = BootstrapReplicateDistribution("b", EmpiricalDistribution(data, component="y"))
         with workflow_run(seed=4):
-            means = Function("stat", lambda b: jnp.mean(b)).with_options(n_broadcast_samples=400)(
-                b=replicate
-            )
+            means = Function(
+                lambda b: jnp.mean(b), label="stat", output_spec=OutputSpec(stat=None)
+            ).with_options(n_broadcast_samples=400)(b=replicate)
         np.testing.assert_allclose(means._mean(), jnp.mean(data), atol=0.03)
         np.testing.assert_allclose(
             jnp.sqrt(means._variance()), jnp.std(data) / jnp.sqrt(200.0), rtol=0.2
@@ -676,7 +742,10 @@ class TestTheReplicateLevel:
 
     def test_a_source_with_several_levels_takes_its_component(self):
         atoms = NumericArrayBatch(
-            "draws", jnp.zeros((2, 3)), ("chain", "draw"), element_spec=NumericArraySpec(())
+            jnp.zeros((2, 3)),
+            ("chain", "draw"),
+            element_spec=NumericArraySpec(()),
+            label="draws",
         )
         replicate = BootstrapReplicateDistribution(
             "b", EmpiricalDistribution(atoms, component="theta")
@@ -685,11 +754,11 @@ class TestTheReplicateLevel:
 
     def test_it_is_required_for_a_source_exposing_several_components(self):
         atoms = NumericRecordBatch(
-            "draws",
             {"x": jnp.zeros((2, 3)), "y": jnp.zeros((2, 3))},
             ("chain", "draw"),
             element_spec=NumericRecordSpec(x=(), y=()),
             axes_per_level=(1, 1),
+            label="draws",
         )
         source = EmpiricalDistribution(atoms, label="post")
         with pytest.raises(ValueError, match=r"level is required .* \['x', 'y'\]; pass level="):

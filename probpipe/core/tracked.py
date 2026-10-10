@@ -74,6 +74,22 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     return decoupled_container(annotations)
 
 
+#: Presentation of a term reconstructed without its semantic metadata.
+_NO_DESCRIPTION = "<no description>"
+
+
+def _callable_label(fn: Any, label: str | None = None) -> str:
+    """The explicit label, callable name, or canonical lambda symbol."""
+    if label is not None:
+        return label
+    name = getattr(fn, "__name__", None)
+    if name == "<lambda>":
+        return "f"
+    if not name:
+        raise TypeError("a callable without a name requires an explicit label=...")
+    return name
+
+
 #: The label of an instance whose ``__init__`` stored none.
 _UNSET = object()
 

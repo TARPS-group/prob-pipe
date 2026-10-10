@@ -43,11 +43,20 @@ def _identity(x):
 
 
 def _rows() -> NumericArrayBatch:
-    return NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=SCALAR)
+    return NumericArrayBatch(
+        jnp.arange(3.0),
+        "row",
+        element_spec=SCALAR,
+        label="rows",
+    )
 
 
 def _normals() -> DistributionBatch:
-    return DistributionBatch("normals", [Normal("x", 0.0, 1.0), Normal("x", 0.0, 1.0)], "law")
+    return DistributionBatch(
+        [Normal("x", 0.0, 1.0), Normal("x", 0.0, 1.0)],
+        "law",
+        label="normals",
+    )
 
 
 def _recording(annotation: Any) -> tuple[Function, list[Any]]:
@@ -60,7 +69,13 @@ def _recording(annotation: Any) -> tuple[Function, list[Any]]:
 
     if annotation is not None:
         body.__annotations__ = {"x": annotation}
-    return Function("body", body, n_broadcast_samples=6, dispatch="sequential"), seen
+    return Function(
+        body,
+        n_broadcast_samples=6,
+        dispatch="sequential",
+        label="body",
+        output_spec=OutputSpec(result=None),
+    ), seen
 
 
 class _Unsampled(Distribution):
@@ -71,7 +86,10 @@ class _UnsampledView(Distribution):
     """A view that cannot sample itself, over the law it views."""
 
     def __init__(self, parent: Distribution) -> None:
-        super().__init__("view", OutputSpec(view=SCALAR))
+        super().__init__(
+            OutputSpec(view=SCALAR),
+            label="view",
+        )
         object.__setattr__(self, "_viewed", parent)
 
     @property
@@ -114,7 +132,10 @@ class TestTheRegistry:
         assert isinstance(evaluation_rule_registry, BinaryDispatchRegistry)
 
     def test_the_sampling_lift_is_the_floor_on_a_law_that_samples(self):
-        wrapped = Function("identity", _identity)
+        wrapped = Function(
+            _identity,
+            label="identity",
+        )
 
         info = evaluation_rule_registry.check(wrapped, standard_normal(), parameter="x")
 
@@ -123,8 +144,16 @@ class TestTheRegistry:
         assert info.exact is False
 
     def test_the_elementwise_sweep_is_the_floor_on_a_batch(self):
-        wrapped = Function("identity", _identity)
-        rows = NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=SCALAR)
+        wrapped = Function(
+            _identity,
+            label="identity",
+        )
+        rows = NumericArrayBatch(
+            jnp.arange(3.0),
+            "row",
+            element_spec=SCALAR,
+            label="rows",
+        )
 
         info = evaluation_rule_registry.check(wrapped, rows, parameter="x")
 
@@ -133,10 +162,18 @@ class TestTheRegistry:
         assert info.exact is True
 
     def test_the_sampling_lift_declines_a_law_that_cannot_sample(self):
-        wrapped = Function("identity", _identity)
+        wrapped = Function(
+            _identity,
+            label="identity",
+        )
 
         info = evaluation_rule_registry.check(
-            wrapped, _Unsampled("bare", OutputSpec(bare=SCALAR)), parameter="x"
+            wrapped,
+            _Unsampled(
+                OutputSpec(bare=SCALAR),
+                label="bare",
+            ),
+            parameter="x",
         )
 
         assert info.feasible is False
@@ -147,7 +184,12 @@ class TestTheRegistry:
             return 0.0
 
         info = evaluation_rule_registry.check(
-            Function("consume", consume), standard_normal(), parameter="x"
+            Function(
+                consume,
+                label="consume",
+            ),
+            standard_normal(),
+            parameter="x",
         )
 
         assert info.feasible is False
@@ -155,16 +197,35 @@ class TestTheRegistry:
     def test_a_view_samples_through_its_parent(self):
         view = _UnsampledView(standard_normal())
 
-        info = evaluation_rule_registry.check(Function("identity", _identity), view, parameter="x")
+        info = evaluation_rule_registry.check(
+            Function(
+                _identity,
+                label="identity",
+            ),
+            view,
+            parameter="x",
+        )
 
         assert not isinstance(view, SupportsSampling)
         assert info.feasible is True
         assert info.method_name == "sampling_lift"
 
     def test_a_view_over_a_law_that_cannot_sample_is_declined(self):
-        view = _UnsampledView(_Unsampled("bare", OutputSpec(bare=SCALAR)))
+        view = _UnsampledView(
+            _Unsampled(
+                OutputSpec(bare=SCALAR),
+                label="bare",
+            )
+        )
 
-        info = evaluation_rule_registry.check(Function("identity", _identity), view, parameter="x")
+        info = evaluation_rule_registry.check(
+            Function(
+                _identity,
+                label="identity",
+            ),
+            view,
+            parameter="x",
+        )
 
         assert info.feasible is False
         assert "SupportsSampling" in info.description
@@ -186,7 +247,14 @@ class TestTheFloorTier:
         rule_operand = Batch if isinstance(value, Batch) else Distribution
         registry.register(_ClosedForm(exact=False, priority=priority, operand=rule_operand))
 
-        info = registry.check(Function("identity", _identity), value, parameter="x")
+        info = registry.check(
+            Function(
+                _identity,
+                label="identity",
+            ),
+            value,
+            parameter="x",
+        )
 
         assert info.method_name == "closed_form"
         assert registry.list_methods() == ["closed_form", floor]
@@ -197,13 +265,25 @@ class TestTheFloorTier:
         registry.register(_ClosedForm(exact=False, priority=0, operand=Batch))
 
         registry.set_priorities(elementwise_sweep=10**6)
-        info = registry.check(Function("identity", _identity), _rows(), parameter="x")
+        info = registry.check(
+            Function(
+                _identity,
+                label="identity",
+            ),
+            _rows(),
+            parameter="x",
+        )
 
         assert info.method_name == "closed_form"
 
     def test_the_exact_floor_ranks_first_on_the_domain_the_floors_share(self):
         info = evaluation_rule_registry.check(
-            Function("identity", _identity), _normals(), parameter="x"
+            Function(
+                _identity,
+                label="identity",
+            ),
+            _normals(),
+            parameter="x",
         )
 
         assert info.method_name == "elementwise_sweep"
@@ -319,13 +399,24 @@ class TestTheDirectCall:
         def identity(x):
             return x
 
-        error = error_of(lambda: identity(_Unsampled("bare", OutputSpec(bare=SCALAR))))
+        error = error_of(
+            lambda: identity(
+                _Unsampled(
+                    OutputSpec(bare=SCALAR),
+                    label="bare",
+                )
+            )
+        )
 
         assert isinstance(error, ResolutionError)
         assert "SupportsSampling" in str(error)
 
     def test_the_selected_route_is_recorded_in_provenance(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(
+            n_broadcast_samples=6,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 

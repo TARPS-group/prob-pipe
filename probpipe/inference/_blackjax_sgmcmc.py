@@ -170,12 +170,12 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         # The minibatched random measure supplies the stochastic gradients from
         # the prior and likelihood factors ``check()`` validated.
         measure = MinibatchedDistribution(
-            "measure",
             factors.prior,
             factors.likelihood,
             factors.observed,
             batch_size=batch_size,
             with_replacement=with_replacement,
+            label="measure",
         )
 
         # The chain moves in the prior's flat coordinates.

@@ -38,7 +38,7 @@ from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_sp
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
 from ..core.node import Node
-from ..core.tracked import Annotated, TrackedTerm
+from ..core.tracked import Annotated, TrackedTerm, _callable_label
 from ._binding import (
     FunctionSignatureInfo,
     make_signature_info,
@@ -222,15 +222,13 @@ class _CallableFunctionImplementation:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
 
 
-def _complete_output_spec(
-    output_spec: OutputSpec | TermSpec | None, output_label: str
-) -> OutputSpec | None:
+def _complete_output_spec(output_spec: OutputSpec | TermSpec | None) -> OutputSpec | None:
     if output_spec is None or isinstance(output_spec, OutputSpec):
         return output_spec
     if isinstance(output_spec, RecordSpec):
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
-        return OutputSpec(**{output_label: output_spec})
+        raise TypeError("a whole-term output needs a declared component; use OutputSpec(name=spec)")
     raise TypeError(
         f"output_spec must be an OutputSpec, TermSpec, or None; got {type(output_spec).__name__}"
     )
@@ -680,7 +678,7 @@ _DEFAULTED_BY_NONE = frozenset(
 #: aliases ``fn``, and the rest are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {
-        "func": "Function(func=...) is deprecated; use fn=...",
+        "func": "Function(func=...) is deprecated; pass the callable positionally",
         "input_template": (
             "Function(input_template=...) is no longer supported and is ignored; use input_spec=..."
         ),
@@ -746,24 +744,23 @@ class Function(Node, TrackedTerm, Annotated):
 
     Parameters
     ----------
-    label : str
-        Required non-empty function label, independent of its output interface.
     fn : Callable
         The wrapped Python callable. Its signature is captured at construction.
+    label : str, optional
+        Optional non-empty display alias. Defaults to the callable name, or ``f``
+        for a lambda; a callable without a name requires an explicit label.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         Authoritative input slots matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
         construction bindings must satisfy the declaration.
     output_spec : OutputSpec or TermSpec or None
         Authoritative result declaration. A bare RecordSpec exposes its fields;
-        any other bare term spec declares a whole term under output_label. A
+        a whole-term output must use a named OutputSpec component. A
         named type hole is inferred independently for each call.
     output_label : str or None
-        Result label. Defaults to the initial label and survives with_label.
-        Whole-term components default to this label, which must then be
-        non-empty and contain no ``/``, so a label such as ``Model.fit`` or
-        ``<lambda>`` serves; an explicit OutputSpec can supply a different
-        component.
+        Optional result alias. Without one, managed calls derive an application
+        expression. Components come only from ``output_spec``; aliases never
+        affect mathematical declarations.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -828,14 +825,15 @@ class Function(Node, TrackedTerm, Annotated):
     Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
     ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
-    wrapped callable's seed parameter. ``label`` and ``fn`` remain required.
+    wrapped callable's seed parameter. ``fn`` is required; the callable name
+    supplies an omitted ``label``.
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 
     ``spec`` contains only input/output declarations. ``with_label`` changes the
-    function label and callable metadata; output_label and component names are
-    preserved. ``str(f)`` returns :attr:`notation`, the label followed by the
-    parameters, as ``predict(x, y)``, and the repr keeps the label first.
+    function label and callable metadata; explicit output aliases and component
+    names are preserved. ``str(f)`` returns :attr:`notation`, the label followed
+    by the parameters, as ``predict(x, y)``, and the repr keeps the label first.
     ``with_options`` returns a shallow copy with revised controls. A Function
     stores only the controls set on it, so ``options`` reads every other
     control's default when it is read.
@@ -858,16 +856,17 @@ class Function(Node, TrackedTerm, Annotated):
     _module: Any | None
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
-    _output_label: str
+    _output_label: str | None
     _options: Mapping[str, Any]
 
     DEFAULT_N_BROADCAST_SAMPLES = 256
 
     def __init__(
         self,
-        label: str,
         fn: Callable[..., Any],
+        /,
         *,
+        label: str | None = None,
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_label: str | None = None,
@@ -886,6 +885,7 @@ class Function(Node, TrackedTerm, Annotated):
                 fn = value
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
+        label = _callable_label(fn, label)
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),
@@ -924,9 +924,7 @@ class Function(Node, TrackedTerm, Annotated):
             )
         if not isinstance(label, str) or not label:
             raise TypeError(f"Function requires a non-empty label, got {label!r}")
-        if output_label is None:
-            output_label = label
-        if not isinstance(output_label, str) or not output_label:
+        if output_label is not None and (not isinstance(output_label, str) or not output_label):
             raise TypeError(
                 f"Function output_label must be a non-empty string; got {output_label!r}"
             )
@@ -937,7 +935,7 @@ class Function(Node, TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        output_spec = _complete_output_spec(output_spec, output_label)
+        output_spec = _complete_output_spec(output_spec)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
             function_name=label,
@@ -1011,8 +1009,8 @@ class Function(Node, TrackedTerm, Annotated):
 
     @property
     def output_label(self) -> str:
-        """The result label captured at construction."""
-        return self._output_label
+        """The explicit result alias, or the function's name for a derived application."""
+        return self._output_label if self._output_label is not None else self.label
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -1298,7 +1296,7 @@ class Function(Node, TrackedTerm, Annotated):
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the repr shows after the label, each by name and formatted value."""
         fields = [("parameters", format_names(self.signature.parameters))]
-        if self.output_label != self.label:
+        if self._output_label is not None:
             fields.append(("output_label", repr(self.output_label)))
         for side, declaration in (
             ("input_spec", self.input_spec),

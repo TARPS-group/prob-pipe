@@ -51,6 +51,7 @@ from ._distribution import (
     _check_marker_claims,
     _complete_event_spec,
     _compose_operands,
+    _constructor_label,
     _detached_term,
     _event_repr_fields,
     _no_free_dims,
@@ -495,13 +496,13 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     Parameters
     ----------
-    label : str
-        The kernel's label, which must be a non-empty string.
     given_spec : InputSpec or Mapping[str, TermSpec]
         The named slots the kernel conditions on, at least one; the keys are
         Python identifiers.
     event_spec : OutputSpec or RecordSpec
         The declaration of one produced draw, completed as above.
+    label : str
+        The kernel's label, which must be a non-empty string.
     _provenance : Provenance, optional
         The provenance of the kernel that a reconstruction rebuilds. By default the
         provenance stays unset until ``with_provenance`` attaches one.
@@ -526,13 +527,14 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     def __init__(
         self,
-        label: str,
         given_spec: InputSpec | Mapping[str, TermSpec],
         event_spec: OutputSpec | TermSpec,
         *,
+        label: str | None = None,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
+        label = _constructor_label(self, label, "p") if label is None else label
         if not isinstance(label, str) or not label:
             raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
         self._init_tracked(label, provenance=_provenance)
@@ -956,7 +958,14 @@ def _argument(spec: TermSpec, slot: str, value: Any) -> Any:
     function's body receives a draw; a value of another kind is passed as it is.
     """
     if isinstance(spec, RecordSpec):
-        return value if isinstance(value, Record) else Record(slot, value)
+        return (
+            value
+            if isinstance(value, Record)
+            else Record(
+                value,
+                label=slot,
+            )
+        )
     if isinstance(spec, NumericArraySpec):
         return jnp.asarray(value)
     return value
@@ -1048,7 +1057,11 @@ class _FunctionKernel(ConditionalDistribution):
         event_spec: OutputSpec,
         guards: Mapping[str, Feasibility],
     ) -> None:
-        super().__init__(label, given_spec, event_spec)
+        super().__init__(
+            given_spec,
+            event_spec,
+            label=label,
+        )
         object.__setattr__(self, "_fn", fn)
         object.__setattr__(self, "_slots", given_spec)
         object.__setattr__(self, "_bound", {})
@@ -1411,10 +1424,15 @@ def _agreed_event_spec(label: str, declared: OutputSpec | TermSpec, law: OutputS
     """
     if isinstance(declared, OutputSpec):
         declaration = declared
-    elif isinstance(declared, RecordSpec) or law.exposes_record or len(law.components) != 1:
-        declaration = OutputSpec.default(declared, component=label)
-    else:
+    elif isinstance(declared, RecordSpec):
+        declaration = OutputSpec(declared)
+    elif not law.exposes_record and len(law.components) == 1:
         declaration = OutputSpec.default(declared, component=next(iter(law.components)))
+    else:
+        raise ValueError(
+            f"event_spec of {label!r} needs an explicit OutputSpec for the law's components "
+            f"{list(law.components)}"
+        )
     if declaration.exposes_record != law.exposes_record or tuple(declaration.components) != tuple(
         law.components
     ):

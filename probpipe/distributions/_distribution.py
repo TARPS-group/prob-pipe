@@ -551,11 +551,11 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     Parameters
     ----------
+    event_spec : OutputSpec or RecordSpec
+        The declaration of one draw, completed as above.
     label : str
         The law's label, which must be a non-empty string. A subclass's
         constructor passes the label its caller gave, or its default.
-    event_spec : OutputSpec or RecordSpec
-        The declaration of one draw, completed as above.
     _provenance : Provenance, optional
         The provenance of the law that a reconstruction rebuilds. By default the
         provenance stays unset until ``with_provenance`` attaches one.
@@ -578,12 +578,13 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     def __init__(
         self,
-        label: str,
         event_spec: OutputSpec | TermSpec,
         *,
+        label: str | None = None,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
+        label = _constructor_label(self, label, "p") if label is None else label
         if not isinstance(label, str) or not label:
             raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
         # ``_provenance`` and ``_annotations`` carry state a reconstruction

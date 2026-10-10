@@ -21,6 +21,7 @@ from probpipe import (
     Function,
     MultivariateNormal,
     Normal,
+    OutputSpec,
     UnmanagedConcurrentWorkflowEntryError,
     condition_on,
     conditional_distribution,
@@ -487,7 +488,10 @@ class TestAutomaticKeyOwnership:
 
 class TestFunctionBrokerScope:
     def test_deterministic_apply_does_not_materialize_entropy(self):
-        deterministic = Function(label="function", fn=lambda value: value + 1)
+        deterministic = Function(
+            lambda value: value + 1,
+            label="function",
+        )
 
         with patch("probpipe.functions._context._os_urandom") as urandom:
             assert deterministic.apply(2) == 3
@@ -495,7 +499,10 @@ class TestFunctionBrokerScope:
         urandom.assert_not_called()
 
     def test_deterministic_apply_commits_no_occurrence_of_the_scope(self):
-        deterministic = Function(label="function", fn=lambda value: value + 1)
+        deterministic = Function(
+            lambda value: value + 1,
+            label="function",
+        )
 
         with workflow_run(seed=7):
             scope = context_mod._ACTIVE_WORKFLOW_FRAME.get()
@@ -521,7 +528,10 @@ class TestFunctionBrokerScope:
             workflow_run(seed=7),
         ):
             scope = context_mod._ACTIVE_WORKFLOW_FRAME.get()
-            first, second = Function(label="function", fn=_two_draws).apply(0)
+            first, second = Function(
+                _two_draws,
+                label="function",
+            ).apply(0)
             committed = scope.ledger.next_ordinal
 
         assert _key_words(first) != _key_words(second)
@@ -538,17 +548,21 @@ class TestFunctionBrokerScope:
                 pytest.raises(context_mod._StochasticProbeSignal),
                 context_mod._workflow_probe(),
             ):
-                Function(label="function", fn=_two_draws).apply(0)
+                Function(
+                    _two_draws,
+                    label="function",
+                ).apply(0)
             committed = scope.ledger.next_ordinal
 
         assert committed == 0
 
     def test_lifting_uses_the_active_function_broker(self):
         identity = Function(
+            lambda value: value,
             label="function",
-            fn=lambda value: value,
             n_broadcast_samples=8,
             dispatch="sequential",
+            output_spec=OutputSpec(function=None),
         )
 
         with (
@@ -635,7 +649,12 @@ class TestCallerJaxTrace:
         assert not rng_mod._JAX_KEY_ADAPTER_STATE.certified
 
     def test_a_lifted_call_inside_the_callers_jit_raises(self):
-        lifted = Function("affine", lambda z: 2.0 * z, n_broadcast_samples=8, dispatch="auto")
+        lifted = Function(
+            lambda z: 2.0 * z,
+            n_broadcast_samples=8,
+            dispatch="auto",
+            label="affine",
+        )
 
         def body(loc):
             return lifted(Normal("z", loc, 1.0))
@@ -644,7 +663,13 @@ class TestCallerJaxTrace:
             jax.jit(body)(0.0)
 
     def test_a_jax_dispatched_function_over_a_law_draws(self):
-        lifted = Function("affine", lambda z: 2.0 * z, n_broadcast_samples=8, dispatch="jax")
+        lifted = Function(
+            lambda z: 2.0 * z,
+            n_broadcast_samples=8,
+            dispatch="jax",
+            label="affine",
+            output_spec=OutputSpec(affine=None),
+        )
 
         with workflow_run(seed=3):
             first = lifted(Normal("z", 0.0, 1.0))

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Value constructors take data first and keyword `label=`. Raw arrays and opaque
+  values (including their batches) require a label; records derive it from fields,
+  functions from callable names (`f` for lambdas), and object collections from
+  their members. Use `Record(mapping, label=...)` or `Record.from_fields(**fields)`.
+- Function result components must be declared independently with `OutputSpec`;
+  `output_label` supplies only a display alias. Bare non-record output specs are
+  rejected. Unaliased managed calls display their application expression.
+- JAX-rebuilt numeric terms display `<no description>` until a managed result
+  boundary describes them, and remain usable during tracing and direct rebuilding.
+
 - **A law's label is optional, and the component of its event is required.**
   A family takes the component first and the label as the keyword `label=`,
   which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps

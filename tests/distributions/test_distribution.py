@@ -285,7 +285,10 @@ class TestDistributionRepr:
 
         class _NamedDist(Distribution):
             def __init__(self):
-                super().__init__("x", OutputSpec(x=OpaqueSpec()))
+                super().__init__(
+                    OutputSpec(x=OpaqueSpec()),
+                    label="x",
+                )
 
         assert repr(_NamedDist()) == "Distribution('x', component='x')"
 
@@ -294,7 +297,10 @@ class TestDistributionRepr:
 
         class Named(Distribution):
             def __init__(self):
-                super().__init__("x", OutputSpec(beta=OpaqueSpec()))
+                super().__init__(
+                    OutputSpec(beta=OpaqueSpec()),
+                    label="x",
+                )
 
         assert repr(Named()) == "Named('x', component='beta')"
         assert repr(Named().with_label("y")) == "Named('y', component='beta')"
@@ -383,13 +389,16 @@ class TestFixedPaths:
 class TestConstructorLabelCheck:
     """``Distribution.__init__`` rejects a label that is not a non-empty string."""
 
-    @pytest.mark.parametrize("label", ["", 123, None])
+    @pytest.mark.parametrize("label", ["", 123])
     def test_invalid_label_raises(self, label):
         from probpipe import Distribution
 
         class _Dist(Distribution):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(x=OpaqueSpec()))
+                super().__init__(
+                    OutputSpec(x=OpaqueSpec()),
+                    label=label,
+                )
 
         with pytest.raises(TypeError, match="_Dist: label must be a non-empty string"):
             _Dist(label)
@@ -505,10 +514,10 @@ class TestWithLabelTemplateRoundtrip:
         import numpy as np
 
         rows = RecordBatch(
-            "rows",
             {"labels": np.array(["a", "b", "c"], dtype=object), "ids": np.array([0, 1, 2])},
             "row",
             element_spec=RecordSpec(labels=OpaqueSpec(), ids=()),
+            label="rows",
         )
         law = EmpiricalDistribution(rows, label="rows")
         original_fields = tuple(law.event_spec.components)
@@ -616,11 +625,10 @@ class TestLabelSignature:
         [cls for cls in _PUBLIC_CLASSES if cls.__name__ in _LABEL_FIRST],
         ids=lambda cls: cls.__name__,
     )
-    def test_label_is_the_required_first_parameter(self, cls):
-        first = _parameters(cls)[0]
-        assert first.name == "label"
-        assert first.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
-        assert first.default is inspect.Parameter.empty
+    def test_label_is_an_optional_keyword_for_base_and_derived_laws(self, cls):
+        label = inspect.signature(cls.__init__).parameters["label"]
+        assert label.kind is inspect.Parameter.KEYWORD_ONLY
+        assert label.default is None
 
     @pytest.mark.parametrize(
         "cls",
@@ -693,7 +701,12 @@ class TestDerivedLabels:
             ),
             pytest.param(
                 lambda: EmpiricalDistribution(
-                    OpaqueBatch("labels", ["a", "b", "c", "d"], "atom"), component="law"
+                    OpaqueBatch(
+                        ["a", "b", "c", "d"],
+                        "atom",
+                        label="labels",
+                    ),
+                    component="law",
                 ),
                 lambda x: jnp.asarray(1.0),
                 "E[f(law ~ p)]",
@@ -752,7 +765,10 @@ class _DeclaredLaw(Distribution):
     def __init__(self, label, event_spec):
         if isinstance(event_spec, TermSpec) and not isinstance(event_spec, RecordSpec):
             event_spec = OutputSpec(**{label: event_spec})
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
 
 
 class TestEventDeclaration:
@@ -761,7 +777,10 @@ class TestEventDeclaration:
     def test_a_bare_array_spec_needs_a_component(self):
         class _Bare(Distribution):
             def __init__(self):
-                super().__init__("x", NumericArraySpec((3,)))
+                super().__init__(
+                    NumericArraySpec((3,)),
+                    label="x",
+                )
 
         with pytest.raises(TypeError, match="needs a component"):
             _Bare()
@@ -852,7 +871,10 @@ class TestNumericMembership:
     def test_a_class_claiming_the_marker_must_declare_a_numeric_event(self):
         class _Claims(NumericDistribution):
             def __init__(self, label, event_spec):
-                super().__init__(label, OutputSpec(**{label: event_spec}))
+                super().__init__(
+                    OutputSpec(**{label: event_spec}),
+                    label=label,
+                )
 
         assert issubclass(_Claims, NumericDistribution)
         assert isinstance(_Claims("x", NumericArraySpec(())), NumericDistribution)
@@ -866,7 +888,10 @@ class TestNumericMembership:
                 return object.__new__(_Claiming if cls is _Factory else cls)
 
             def __init__(self, label, event_spec):
-                super().__init__(label, OutputSpec(**{label: event_spec}))
+                super().__init__(
+                    OutputSpec(**{label: event_spec}),
+                    label=label,
+                )
 
         class _Claiming(_Factory, NumericDistribution):
             pass
@@ -968,7 +993,10 @@ class TestSchemaViews:
                 raise AttributeError("the property's own message")
 
         with pytest.raises(AttributeError, match="the property's own message"):
-            _ = _Raising("x", OutputSpec(x=NumericArraySpec(()))).broken
+            _ = _Raising(
+                OutputSpec(x=NumericArraySpec(())),
+                label="x",
+            ).broken
 
 
 # One construction per TFP family, which passes its keywords to the family, with
@@ -1182,7 +1210,10 @@ class TestJointDeclarations:
         from probpipe.distributions import FactoredDistribution
 
         growth = Normal("growth", 0.0, 1.0, label="x")
-        joint = FactoredDistribution("p", [growth])
+        joint = FactoredDistribution(
+            [growth],
+            label="p",
+        )
         assert tuple(joint.event_spec.components) == ("growth",)
 
     def test_a_gaussian_joint_declares_its_blocks(self):
@@ -1196,10 +1227,10 @@ class TestJointDeclarations:
 
     def test_an_empirical_law_over_records_declares_each_row(self):
         rows = RecordBatch(
-            "rows",
             {"labels": np.array(["a", "b"], dtype=object), "ids": np.array([0, 1], dtype=np.int32)},
             "row",
             element_spec=RecordSpec(labels=OpaqueSpec(), ids=NumericArraySpec((), np.int32)),
+            label="rows",
         )
         joint = EmpiricalDistribution(rows, label="rows")
         assert joint.event_spec.spec == RecordSpec(
@@ -1235,7 +1266,14 @@ class TestEmpiricalDeclarations:
         assert set(spec.element_spec.children["a"].children) == {"b", "c"}
 
     def test_opaque_atoms_are_a_whole_term(self):
-        law = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b"], "atom"), component="law")
+        law = EmpiricalDistribution(
+            OpaqueBatch(
+                ["a", "b"],
+                "atom",
+                label="labels",
+            ),
+            component="law",
+        )
         assert law.event_spec == OutputSpec(law=OpaqueSpec(type=str))
 
     def test_array_atoms_are_a_whole_term(self):
@@ -1248,10 +1286,10 @@ class TestEmpiricalDeclarations:
 
     def test_record_atoms_expose_their_leaves(self):
         atoms = NumericRecordBatch(
-            "r",
             {"a": jnp.zeros(4), "b/c": jnp.zeros((4, 3))},
             "atom",
             element_spec=NumericRecordSpec(a=(), b=NumericRecordSpec(c=(3,))),
+            label="r",
         )
         law = EmpiricalDistribution(atoms, label="r")
         assert set(law.dtypes) == {"a", "b/c"}
@@ -1288,12 +1326,12 @@ class TestEmpiricalDeclarations:
 
     def test_a_numeric_record_empirical_declares_its_atoms(self):
         atoms = NumericRecordBatch(
-            "rows",
             {"u": jnp.ones((4, 2)), "v": jnp.zeros(4)},
             "row",
             element_spec=NumericRecordSpec(
                 u=NumericArraySpec((2,), None, real), v=NumericArraySpec((), None, real)
             ),
+            label="rows",
         )
         law = EmpiricalDistribution(atoms, label="rows")
         assert law.supports == {"u": real, "v": real}
@@ -1334,11 +1372,11 @@ class TestDerivedDeclarations:
         X = jnp.eye(4)
         prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
         measure = MinibatchedDistribution(
-            "measure",
             prior,
             glm_likelihood("y", BernoulliFamily(), X=X),
             jnp.array([1.0, 0.0, 1.0, 0.0]),
             batch_size=2,
+            label="measure",
         )
         assert measure.event_spec == OutputSpec(target=DistributionSpec(prior.event_spec))
         draw = measure._draw_one(jax.random.PRNGKey(0))
@@ -1354,7 +1392,7 @@ class TestViewAndWrapperDeclarations:
     def test_a_variadic_input_label_names_its_marginal(self):
         from probpipe import function
 
-        @function
+        @function(output_spec=OutputSpec(double=None))
         def double(*args):
             return args[0] * 2.0
 

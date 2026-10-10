@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import _messages
+from ..core._expression import Applied, Named
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
@@ -463,7 +464,7 @@ class MixtureDistribution(Distribution):
     weights : Array
         One nonnegative weight per component, summing to one.
     label : str, optional
-        The mixture's label, ``MixtureDistribution`` by default.
+        Display alias. Defaults to a bounded description of the component laws.
 
     Raises
     ------
@@ -491,9 +492,18 @@ class MixtureDistribution(Distribution):
         self, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
     ) -> None:
         laws = _components(components)
+        expression = None
+        if label is None:
+            shown = tuple(law._embedded_expression() for law in laws[:8])
+            expression = Applied("mixture", shown + ((Named("…"),) if len(laws) > 8 else ()))
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
-        super().__init__(_constructor_label(self, label, _class_label(self)), _declaration(laws))
+        super().__init__(
+            _declaration(laws),
+            label=_constructor_label(self, label, _class_label(self)),
+        )
+        if expression is not None:
+            self._store_expression(expression)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The components, by their count when there are more than four, and the weights."""

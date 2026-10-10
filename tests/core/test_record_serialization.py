@@ -51,7 +51,10 @@ def cloudpickle_roundtrip(obj):
 
 
 def test_record_pickle_roundtrip():
-    r = Record("myrecord", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
+    r = Record(
+        {"x": jnp.array(1.0), "y": jnp.array([2.0, 3.0])},
+        label="myrecord",
+    )
     r2 = roundtrip(r)
     assert r2.label == "myrecord"
     assert r2.fields == ("x", "y")
@@ -60,7 +63,10 @@ def test_record_pickle_roundtrip():
 
 
 def test_record_pickle_auto_name():
-    r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
+    r = Record(
+        {"a": jnp.array(1.0), "b": jnp.array(2.0)},
+        label="r",
+    )
     r2 = roundtrip(r)
     assert r2.label == r.label
     pass
@@ -68,7 +74,10 @@ def test_record_pickle_auto_name():
 
 
 def test_record_immutability_after_unpickle():
-    r = Record("r", x=jnp.array(1.0))
+    r = Record(
+        {"x": jnp.array(1.0)},
+        label="r",
+    )
     r2 = roundtrip(r)
     with pytest.raises(AttributeError, match="immutable"):
         r2.x = jnp.array(99.0)
@@ -77,7 +86,10 @@ def test_record_immutability_after_unpickle():
 def test_record_provenance_preserved():
     from probpipe.core.provenance import Provenance
 
-    r = Record("r", x=jnp.array(1.0))
+    r = Record(
+        {"x": jnp.array(1.0)},
+        label="r",
+    )
     r.with_provenance(Provenance(operation="test_op", metadata={"k": "v"}))
     assert r._provenance is not None
 
@@ -88,7 +100,10 @@ def test_record_provenance_preserved():
 
 
 def test_record_no_provenance_roundtrip():
-    r = Record("r", x=jnp.array(1.0))
+    r = Record(
+        {"x": jnp.array(1.0)},
+        label="r",
+    )
     assert r._provenance is None
     r2 = roundtrip(r)
     assert r2._provenance is None
@@ -123,7 +138,10 @@ def test_numeric_event_template_pickle_roundtrip():
 
 
 def test_numeric_record_pickle_roundtrip():
-    nr = NumericRecord("nr", r=jnp.array(1.8), K=jnp.array(70.0), phi=jnp.array(10.0))
+    nr = NumericRecord(
+        {"r": jnp.array(1.8), "K": jnp.array(70.0), "phi": jnp.array(10.0)},
+        label="nr",
+    )
     nr2 = roundtrip(nr)
     assert nr2.fields == ("r", "K", "phi")
     assert float(nr2["r"]) == pytest.approx(1.8)
@@ -131,14 +149,20 @@ def test_numeric_record_pickle_roundtrip():
 
 
 def test_numeric_record_vector_size_recomputed():
-    nr = NumericRecord("nr", a=jnp.ones((2, 3)))
+    nr = NumericRecord(
+        {"a": jnp.ones((2, 3))},
+        label="nr",
+    )
     assert nr.vector_size == 6
     nr2 = roundtrip(nr)
     assert nr2.vector_size == 6
 
 
 def test_numeric_record_cloudpickle_roundtrip():
-    nr = NumericRecord("nr", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
+    nr = NumericRecord(
+        {"x": jnp.array(1.0), "y": jnp.array([2.0, 3.0])},
+        label="nr",
+    )
     nr2 = cloudpickle_roundtrip(nr)
     assert nr2.fields == ("x", "y")
     assert float(nr2["x"]) == pytest.approx(1.0)
@@ -152,11 +176,11 @@ def test_numeric_record_cloudpickle_roundtrip():
 def test_record_batch_pickle_roundtrip():
     template = RecordSpec(x=(), y=(3,))
     ra = RecordBatch(
-        "batch",
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
         level_names="draw",
         axes_per_level=(1,),
         element_spec=template,
+        label="batch",
     )
     ra2 = roundtrip(ra)
     assert ra2.batch_shape == (2,)
@@ -167,11 +191,11 @@ def test_record_batch_pickle_roundtrip():
 def test_record_batch_template_preserved():
     template = RecordSpec(x=(), y=(3,))
     ra = RecordBatch(
-        "batch",
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
         level_names="draw",
         axes_per_level=(1,),
         element_spec=template,
+        label="batch",
     )
     ra2 = roundtrip(ra)
     assert ra2.event_template == template
@@ -185,11 +209,11 @@ def test_record_batch_template_preserved():
 def test_numeric_record_batch_pickle_roundtrip():
     template = RecordSpec(x=(), y=(2,))
     nrb = NumericRecordBatch(
-        "batch",
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
         level_names="draw",
         axes_per_level=(1,),
         element_spec=template,
+        label="batch",
     )
     nra2 = roundtrip(nrb)
     assert type(nra2) is NumericRecordBatch
@@ -200,11 +224,11 @@ def test_numeric_record_batch_pickle_roundtrip():
 def test_numeric_record_batch_cloudpickle_roundtrip():
     template = RecordSpec(x=())
     nrb = NumericRecordBatch(
-        "batch",
         {"x": jnp.array([1.0, 2.0])},
         level_names="draw",
         axes_per_level=(1,),
         element_spec=template,
+        label="batch",
     )
     nra2 = cloudpickle_roundtrip(nrb)
     assert type(nra2) is NumericRecordBatch
@@ -260,7 +284,10 @@ class TestNumericRecordNativePickle:
     """
 
     def test_pickle_preserves_top_level_xarray_native(self, xr_da):
-        nr = NumericRecord("nr", temps=xr_da, extra=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": xr_da, "extra": jnp.array(1.0)},
+            label="nr",
+        )
         restored = roundtrip(nr)
         # Native leaves pickle themselves: the restored field IS a DataArray.
         assert restored.raw("temps").dims == ("t",)
@@ -270,21 +297,39 @@ class TestNumericRecordNativePickle:
 
     def test_pickle_preserves_nested_xarray_native(self, xr_da):
         # A nested native leaf pickles through the nested record verbatim.
-        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=xr_da))
+        outer = NumericRecord(
+            {
+                "grp": NumericRecord(
+                    {"temps": xr_da},
+                    label="grp",
+                )
+            },
+            label="outer",
+        )
         back = roundtrip(outer)
         assert back.raw("grp/temps").dims == ("t",)
         assert _coord_ints(back.raw("grp/temps")) == [10, 20, 30]
 
     def test_cloudpickle_preserves_xarray_native(self, xr_da):
         # Ray ships task arguments via cloudpickle.
-        back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da))
+        back = cloudpickle_roundtrip(
+            NumericRecord(
+                {"temps": xr_da},
+                label="nr",
+            )
+        )
         assert back.raw("temps").dims == ("t",)
         assert _coord_ints(back.raw("temps")) == [10, 20, 30]
 
     def test_pickle_preserves_pandas_series_native(self):
         pd = pytest.importorskip("pandas")
         s = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"], name="obs")
-        back = roundtrip(NumericRecord("nr", vals=s))
+        back = roundtrip(
+            NumericRecord(
+                {"vals": s},
+                label="nr",
+            )
+        )
         restored = back.raw("vals")
         assert isinstance(restored, pd.Series)
         assert list(restored.index) == ["a", "b", "c"]
@@ -295,7 +340,12 @@ class TestNumericRecordNativePickle:
     def test_pickle_preserves_pandas_dataframe_native(self):
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
-        back = roundtrip(NumericRecord("nr", table=df))
+        back = roundtrip(
+            NumericRecord(
+                {"table": df},
+                label="nr",
+            )
+        )
         restored = back.raw("table")
         assert isinstance(restored, pd.DataFrame)
         assert list(restored.columns) == ["x", "y"]
@@ -305,7 +355,12 @@ class TestNumericRecordNativePickle:
     def test_cloudpickle_preserves_pandas_series_native(self):
         pd = pytest.importorskip("pandas")
         s = pd.Series([4.0, 5.0], index=["p", "q"], name="w")
-        back = cloudpickle_roundtrip(NumericRecord("nr", vals=s))
+        back = cloudpickle_roundtrip(
+            NumericRecord(
+                {"vals": s},
+                label="nr",
+            )
+        )
         assert list(back.raw("vals").index) == ["p", "q"]
         assert back.raw("vals").name == "w"
 
@@ -328,7 +383,11 @@ class TestPicklePreservesTemplate:
         tpl = RecordSpec(
             x=NumericArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units")
         )
-        r = Record("r", {"x": jnp.ones(3), "tag": "meters"}, event_template=tpl)
+        r = Record(
+            {"x": jnp.ones(3), "tag": "meters"},
+            event_template=tpl,
+            label="r",
+        )
         assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
         back = roundtrip(r)
         assert back.event_template == r.event_template
@@ -336,7 +395,11 @@ class TestPicklePreservesTemplate:
 
     def test_an_opaque_type_survives(self):
         tpl = RecordSpec(tag=OpaqueSpec(type=str, meta="units"))
-        r = Record("r", {"tag": "meters"}, event_template=tpl)
+        r = Record(
+            {"tag": "meters"},
+            event_template=tpl,
+            label="r",
+        )
         back = roundtrip(r)
         assert back.event_template["tag"] == OpaqueSpec(type=str, meta="units")
         assert back == r
@@ -345,7 +408,11 @@ class TestPicklePreservesTemplate:
         from probpipe.core.constraints import positive
 
         tpl = RecordSpec(x=NumericArraySpec(shape=(3,), support=positive))
-        nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
+        nr = NumericRecord(
+            {"x": jnp.ones(3)},
+            event_template=tpl,
+            label="nr",
+        )
         back = roundtrip(nr)
         assert back.event_template == nr.event_template
         assert back == nr
@@ -354,7 +421,11 @@ class TestPicklePreservesTemplate:
         from probpipe.core.constraints import positive
 
         tpl = RecordSpec(x=NumericArraySpec(shape=(3,), support=positive))
-        nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
+        nr = NumericRecord(
+            {"x": jnp.ones(3)},
+            event_template=tpl,
+            label="nr",
+        )
         assert cloudpickle_roundtrip(nr).event_template == nr.event_template
 
     def test_aux_native_path_template_survives(self):
@@ -363,7 +434,11 @@ class TestPicklePreservesTemplate:
 
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
         tpl = RecordSpec(x=NumericArraySpec(shape=(3,), support=positive))
-        nr = NumericRecord("nr", {"x": da}, event_template=tpl)
+        nr = NumericRecord(
+            {"x": da},
+            event_template=tpl,
+            label="nr",
+        )
         back = roundtrip(nr)
         assert back.event_template == nr.event_template  # explicit template survived
         assert back.raw("x").dims == ("t",)  # the native leaf survived verbatim
@@ -371,7 +446,10 @@ class TestPicklePreservesTemplate:
     def test_pickle_bare_array_record(self):
         # Bare jax leaves are their own native form; the single pickle path
         # round-trips them directly.
-        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
+        nr = NumericRecord(
+            {"x": jnp.array([1.0, 2.0]), "y": jnp.array(3.0)},
+            label="nr",
+        )
         back = roundtrip(nr)
         assert [float(v) for v in back["x"]] == [1.0, 2.0]
         assert float(back["y"]) == pytest.approx(3.0)
@@ -394,10 +472,25 @@ class TestRoundTripPreservesAnnotations:
         params=[
             # An opaque leaf keeps this one a plain ``Record`` rather than
             # promoting it, so both classes in the family are covered.
-            pytest.param(lambda: Record("r", {"x": jnp.ones(3), "tag": "meters"}), id="record"),
-            pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(3)}), id="numeric-record"),
             pytest.param(
-                lambda: FactoredDistribution("joint", [Normal("value", 0.0, 1.0)]),
+                lambda: Record(
+                    {"x": jnp.ones(3), "tag": "meters"},
+                    label="r",
+                ),
+                id="record",
+            ),
+            pytest.param(
+                lambda: NumericRecord(
+                    {"x": jnp.ones(3)},
+                    label="nr",
+                ),
+                id="numeric-record",
+            ),
+            pytest.param(
+                lambda: FactoredDistribution(
+                    [Normal("value", 0.0, 1.0)],
+                    label="joint",
+                ),
                 id="factored-distribution",
             ),
         ]
@@ -427,7 +520,15 @@ class TestRoundTripPreservesAnnotations:
         assert "added" not in term.annotations
 
     def test_unannotated_term_stays_unannotated(self):
-        assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
+        assert (
+            roundtrip(
+                Record(
+                    {"x": jnp.ones(3)},
+                    label="r",
+                )
+            ).annotations
+            is None
+        )
         assert roundtrip(Normal("v", 0.0, 1.0) * Normal("w", 0.0, 1.0)).annotations is None
 
     def test_the_reconstruction_has_the_same_type(self, term):

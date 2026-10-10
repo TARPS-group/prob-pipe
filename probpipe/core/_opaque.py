@@ -30,13 +30,13 @@ class Opaque(TrackedTerm, Annotated):
 
     Parameters
     ----------
-    label : str
-        The value's label, required and first as a :class:`~probpipe.Record`
-        takes it: the label is what says which opaque value this is.
     value : Any
         The value this term holds, stored as given. Any non-mapping value; the value
         layer reads a mapping as a subtree. A NumPy array is marked read-only in
         place.
+    label : str
+        The required semantic description, passed by keyword: an opaque value
+        has no fields or callable name from which to derive one.
     spec : OpaqueSpec, optional
         What this value satisfies, carrying any opaque ``meta``. Defaults to the
         :class:`~probpipe.OpaqueSpec` of the value's type.
@@ -51,7 +51,10 @@ class Opaque(TrackedTerm, Annotated):
 
     Examples
     --------
-    >>> fitted = Opaque("sklearn_model", object())
+    >>> fitted = Opaque(
+    ...     object(),
+    ...     label="sklearn_model",
+    ... )
     >>> fitted.label
     'sklearn_model'
     """
@@ -67,10 +70,10 @@ class Opaque(TrackedTerm, Annotated):
 
     def __init__(
         self,
-        label: str,
         value: Any,
         /,
         *,
+        label: str,
         spec: OpaqueSpec | None = None,
         provenance: Provenance | None = None,
     ) -> None:

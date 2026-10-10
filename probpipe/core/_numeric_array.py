@@ -27,7 +27,7 @@ from ._numeric import Numeric
 from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
-from .tracked import Annotated, TrackedTerm
+from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm
 
 __all__ = ["NumericArray"]
 
@@ -43,11 +43,6 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     Parameters
     ----------
-    label : str
-        The value's label, **required**, as a :class:`~probpipe.Record`'s and an
-        :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
-        so the label is what says which one it is; a class-name default would label
-        every array in a pipeline alike.
     value : array-like
         The array this term holds, stored verbatim in its native form: a bare array,
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
@@ -56,6 +51,10 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         their native form and dtype. A NumPy array is marked read-only in place,
         so a write through the caller's handle or through :meth:`raw` raises
         ``ValueError``.
+    label : str
+        The value's required semantic name. A value carries no fields to describe it,
+        so the label is what says which one it is; a class-name default would label
+        every array in a pipeline alike.
     spec : NumericArraySpec, optional
         What this value satisfies. Derived from the array's shape and dtype when
         omitted, with an unconstrained support.
@@ -96,12 +95,15 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     data. The label and the expression do not cross a transform, so two values
     that differ only in their labels have equal treedefs and share a
     compilation, and a value rebuilt from its leaves is labeled
-    ``NumericArray`` until a result boundary labels it.
+    ``<no description>`` until a result boundary labels it.
 
     Examples
     --------
     >>> import jax.numpy as jnp
-    >>> value = NumericArray("draw", jnp.arange(3.0))
+    >>> value = NumericArray(
+    ...     jnp.arange(3.0),
+    ...     label="draw",
+    ... )
     >>> value.shape
     (3,)
     >>> value + 1
@@ -123,10 +125,10 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
 
     def __init__(
         self,
-        label: str,
         value: Any,
         /,
         *,
+        label: str,
         spec: NumericArraySpec | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -287,7 +289,11 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         value = jnp.reshape(vec, spec.shape)
         if spec.dtype is not None:
             value = value.astype(spec.dtype)
-        return cls(label, value, spec=spec)
+        return cls(
+            value,
+            spec=spec,
+            label=label,
+        )
 
     def __len__(self) -> int:
         return len(self._value)
@@ -406,10 +412,10 @@ def _tracked_result(
     )
     dtype = _numpy_dtype_of(value) if declared else None
     result = NumericArray(
-        expression.render_label(),
         value,
         spec=NumericArraySpec(_event_shape_of(value), dtype),
         provenance=Provenance.create(operator_name, parents=parents),
+        label=expression.render_label(),
     )
     result._store_expression(expression)
     return result
@@ -501,7 +507,7 @@ def _numeric_array_flatten(value: NumericArray) -> tuple[list, NumericArraySpec]
 
 
 def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericArray:
-    """Rebuild without converting or validating the child, labeled by its class.
+    """Rebuild without converting or validating the child, marked ``<no description>``.
 
     JAX unflattens with whatever it carries, and a skeleton from
     ``tree_map(lambda x: None, value)`` or an internal sentinel is not an array
@@ -509,7 +515,7 @@ def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericA
     on this path. A transform may also have resized the value, which is why the
     spec a rebuilt value carries is the one it was declared with rather than one
     read off the child: on this path a shape is transform-relative. The label
-    does not cross a transform, so the rebuilt value is labeled ``NumericArray``
+    does not cross a transform, so the rebuilt value is labeled ``<no description>``
     until a result boundary labels it.
     """
     (array,) = children
@@ -521,7 +527,7 @@ def _numeric_array_unflatten(spec: NumericArraySpec, children: list) -> NumericA
 
 
 #: The label of a value rebuilt from its leaves, which carry no label (II.4).
-_REBUILT_LABEL = "NumericArray"
+_REBUILT_LABEL = _NO_DESCRIPTION
 
 
 jax.tree_util.register_pytree_node(NumericArray, _numeric_array_flatten, _numeric_array_unflatten)

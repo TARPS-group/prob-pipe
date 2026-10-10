@@ -126,7 +126,10 @@ class RandomFunction(Distribution):
     ) -> None:
         owner = _class_label(self)
         declaration = _event_of_kind(component, event_spec, FunctionSpec, FunctionSpec(), owner)
-        super().__init__(_constructor_label(self, label, owner), declaration)
+        super().__init__(
+            declaration,
+            label=_constructor_label(self, label, owner),
+        )
 
     @abstractmethod
     def __call__(self, x: Any) -> Distribution:
@@ -181,4 +184,7 @@ class RandomMeasure(Distribution):
             )
         opaque_law = DistributionSpec(OutputSpec(**{component: OpaqueSpec()}))
         declaration = _event_of_kind(component, event_spec, DistributionSpec, opaque_law, owner)
-        super().__init__(_constructor_label(self, label, owner), declaration)
+        super().__init__(
+            declaration,
+            label=_constructor_label(self, label, owner),
+        )

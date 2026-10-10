@@ -21,6 +21,7 @@ See design II.4, II.5, and III.1.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Self
 
@@ -28,12 +29,26 @@ import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
-from ._expression import Applied, Expression
+from ._expression import Applied, Collection, Expression, Named, Signature
 from ._repr import type_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
 from .provenance import Provenance
-from .tracked import TrackedTerm
+from .tracked import TrackedTerm, _callable_label
+
+
+def _collection_expression(store: np.ndarray) -> Expression:
+    """Describe up to eight members without copying or traversing the full store."""
+    if not store.size:
+        raise TypeError("an empty collection requires label=...")
+    members = tuple(store.flat[i] for i in range(min(store.size, 8)))
+    expressions = tuple(
+        member._embedded_expression()
+        if isinstance(member, TrackedTerm)
+        else Named(_callable_label(member), Signature(tuple(inspect.signature(member).parameters)))
+        for member in members
+    )
+    return Collection(expressions, omitted=store.size > len(members))
 
 
 class _ObjectBatch[E](Batch[E]):
@@ -42,9 +57,7 @@ class _ObjectBatch[E](Batch[E]):
     Parameters
     ----------
     label : str
-        The batch's label. Required, as it is for every batch: a batch is a value a
-        caller holds, and a label derived from its class says nothing about what it
-        holds.
+        The batch's description, supplied or derived by the public constructor.
     elements : numpy.ndarray or iterable
         The elements, as an object array of any shape or a flat iterable. A
         nested sequence is not unpacked: build the array to state a shape of
@@ -94,7 +107,7 @@ class _ObjectBatch[E](Batch[E]):
     suffixing. The caller that mints a level knows what it means.
 
     Construction admits no elements, as selection always did: ``batch[0:0]`` and
-    ``OpaqueBatch("draws", [], "draw")`` are both a batch of nothing. Zero is a count the
+    ``OpaqueBatch([], "draw", label="draws")`` are both a batch of nothing. Zero is a count the
     level can carry, and an object array of no elements still reports the shape
     ``(0,)`` to read it from. What is refused is a missing *axis*: a
     zero-dimensional store is one object, with no level to count along.

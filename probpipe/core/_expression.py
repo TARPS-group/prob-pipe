@@ -474,6 +474,33 @@ class Product(Expression):
 
 
 @dataclass(frozen=True, slots=True)
+class Collection(Expression):
+    """A bounded presentation of an ordered collection of described terms."""
+
+    elements: tuple[Expression, ...]
+    omitted: bool = False
+    depth: int = _depth_field()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "elements", _kept_all(self.elements))
+        self._set_depth()
+
+    def _children(self) -> tuple[Expression, ...]:
+        return self.elements
+
+    def _collapsed(self) -> str:
+        return "[…]"
+
+    def _label(self, rendering: _Rendering, level: int) -> str:
+        if rendering.beyond(level):
+            return rendering.collapse(self)
+        parts = [child._notation(rendering, level + 1, None) for child in self.elements]
+        if self.omitted:
+            parts.append("…")
+        return "[" + ", ".join(parts) + "]"
+
+
+@dataclass(frozen=True, slots=True)
 class Conditioned(_Signed):
     """A law or a kernel at given values of some paths.
 
@@ -669,6 +696,14 @@ class Applied(Expression):
         if isinstance(argument, _Signed) and argument.signature is not None:
             return argument._notation(rendering, level, None)
         return argument._label(rendering, level)
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedValue(Applied):
+    """A deterministic value described by a full function application."""
+
+    def _label(self, rendering: _Rendering, level: int) -> str:
+        return self._notation(rendering, level, None)
 
 
 #: The summaries a :class:`Summary` node writes as ``kind[argument]``.

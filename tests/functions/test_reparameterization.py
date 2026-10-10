@@ -187,7 +187,13 @@ class TestUnsupported:
             def check(self, value):
                 return jnp.asarray(value) > 0
 
-        register_bijector(_Unmapped, lambda c: Function("exp", jnp.exp))
+        register_bijector(
+            _Unmapped,
+            lambda c: Function(
+                jnp.exp,
+                label="exp",
+            ),
+        )
         with pytest.raises(ResolutionError, match="SupportsInverse"):
             bijector_for(_Unmapped())
 
@@ -234,7 +240,10 @@ class TestCustomization:
     def test_a_factory_may_return_a_function(self, registry_snapshot):
         class _Doubled(Function):
             def __init__(self) -> None:
-                super().__init__("double", lambda x: 2.0 * x)
+                super().__init__(
+                    lambda x: 2.0 * x,
+                    label="double",
+                )
 
             def _inverse(self, y):
                 return y / 2.0

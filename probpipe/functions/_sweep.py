@@ -368,8 +368,15 @@ def _mapped_row(batch: Batch, label: str, row: Any) -> NumericArray | Record:
     batch's element spec, and a batch of records a record of the row's fields.
     """
     if isinstance(batch, NumericArrayBatch):
-        return NumericArray(label, row, spec=batch.element_spec)
-    return Record(label, row)
+        return NumericArray(
+            row,
+            spec=batch.element_spec,
+            label=label,
+        )
+    return Record(
+        row,
+        label=label,
+    )
 
 
 def mapped_row_body(

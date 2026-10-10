@@ -312,7 +312,10 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
             tuple(backend_dist.event_shape), backend_dist.dtype, self._event_support()
         )
         declaration = _whole_term_event(component, produced, event_spec, owner)
-        super().__init__(_constructor_label(self, label, default), declaration)
+        super().__init__(
+            declaration,
+            label=_constructor_label(self, label, default),
+        )
 
     def _reinterpreted(self, backend: tfd.Distribution) -> tfd.Distribution:
         """*backend* with its batch axes leading the event's, over independent coordinates or rows."""

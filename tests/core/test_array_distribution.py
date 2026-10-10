@@ -53,7 +53,10 @@ class TestDistributionBase:
         class StubDist(Distribution):
             pass
 
-        d = StubDist("stub", OutputSpec(stub=NumericArraySpec(())))
+        d = StubDist(
+            OutputSpec(stub=NumericArraySpec(())),
+            label="stub",
+        )
         with pytest.raises(ResolutionError, match="does not implement SupportsLogProb"):
             log_prob(d, jnp.array(0.0))
 
@@ -120,7 +123,10 @@ class _Declared(NumericDistribution):
     """A numeric law that only declares its event, for the declaration's views."""
 
     def __init__(self, label, spec):
-        super().__init__(label, spec)
+        super().__init__(
+            spec,
+            label=label,
+        )
 
 
 def _leaf(shape=(), dtype="float32", support=real):

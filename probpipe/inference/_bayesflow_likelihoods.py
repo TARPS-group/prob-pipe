@@ -75,7 +75,10 @@ class _LearnedLaw(Distribution):
     """The law a learned kernel yields at a value of every parameter, over datasets of rows."""
 
     def __init__(self, kernel: _BayesFlowLikelihoodBase, values: Mapping[str, Any]) -> None:
-        super().__init__(kernel.label, kernel.event_spec)
+        super().__init__(
+            kernel.event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._values = dict(values)
 
@@ -138,9 +141,9 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         label: str,
     ):
         super().__init__(
-            label,
             dict(prior.event_spec.components),
             OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
+            label=label,
         )
         attributes = {
             "_approximator": approximator,
@@ -176,7 +179,14 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         ``event_size`` (static under jit: shapes are concrete at trace time).
         """
         components = tuple(self._prior.event_spec.components)
-        t = Record("params", {name: values[name] for name in components}).to_numeric().to_vector()
+        t = (
+            Record(
+                {name: values[name] for name in components},
+                label="params",
+            )
+            .to_numeric()
+            .to_vector()
+        )
         t = jnp.ravel(jnp.asarray(t))
         if t.shape[0] != self._theta_dim:
             raise ValueError(
@@ -303,9 +313,16 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
+        label: str | None = None,
         dequantized: bool = False,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="likelihood")
+        super().__init__(
+            approximator,
+            prior,
+            simulator,
+            data_dim=data_dim,
+            label="BayesFlowLikelihood" if label is None else label,
+        )
         object.__setattr__(self, "_dequantized", dequantized)
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedDensity:
@@ -369,8 +386,15 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
+        label: str | None = None,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="ratio")
+        super().__init__(
+            approximator,
+            prior,
+            simulator,
+            data_dim=data_dim,
+            label="BayesFlowRatio" if label is None else label,
+        )
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedRatioLaw:
         return _LearnedRatioLaw(self, values)

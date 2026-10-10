@@ -32,10 +32,10 @@ def test_extract_draws_reads_an_empirical_law_and_refuses_others():
 
 def test_extract_draws_supports_record_atoms():
     atoms = NumericRecordBatch(
-        "rows",
         {"alpha": jnp.array([1.0, 2.0]), "beta": jnp.array([3.0, 4.0])},
         "row",
         element_spec=RecordSpec(alpha=(), beta=()),
+        label="rows",
     )
     post = EmpiricalDistribution(atoms, label="post")
 
@@ -47,10 +47,10 @@ def test_extract_draws_supports_record_atoms():
 
 def test_to_arviz_dataset_flat_empirical_and_filtering():
     atoms = NumericRecordBatch(
-        "rows",
         {"alpha": jnp.array([1.0, 2.0, 3.0]), "beta": jnp.ones((3, 2))},
         "row",
         element_spec=RecordSpec(alpha=(), beta=(2,)),
+        label="rows",
     )
     post = EmpiricalDistribution(atoms, label="post")
     ds = to_arviz_dataset(post, var_names=["alpha"])
@@ -62,10 +62,10 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
 
 def _flat_posterior_of(**columns) -> EmpiricalDistribution:
     atoms = NumericRecordBatch(
-        "rows",
         {name: jnp.asarray(column) for name, column in columns.items()},
         "row",
         element_spec=RecordSpec(**{name: () for name in columns}),
+        label="rows",
     )
     return EmpiricalDistribution(atoms, label="post")
 

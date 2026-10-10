@@ -184,10 +184,11 @@ class TestFieldViews:
     def test_a_function_of_a_parent_and_its_view_reads_one_parent_draw(self, dispatch):
         root = _joint()
         workflow = Function(
-            "difference",
             lambda joint, x: joint["x"] - x,
             dispatch=dispatch,
             n_broadcast_samples=16,
+            label="difference",
+            output_spec=OutputSpec(difference=None),
         )
 
         with workflow_run(seed=31):
@@ -199,7 +200,11 @@ class TestFieldViews:
     def test_two_views_of_one_path_co_sample(self):
         root = _joint()
         workflow = Function(
-            "difference", lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=16
+            lambda a, b: a - b,
+            dispatch="sequential",
+            n_broadcast_samples=16,
+            label="difference",
+            output_spec=OutputSpec(difference=None),
         )
 
         with workflow_run(seed=33):
@@ -212,13 +217,23 @@ class TestFieldViews:
 
 
 def _difference():
-    return Function("difference", lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=16)
+    return Function(
+        lambda a, b: a - b,
+        dispatch="sequential",
+        n_broadcast_samples=16,
+        label="difference",
+        output_spec=OutputSpec(difference=None),
+    )
 
 
 class TestBatchElements:
     def test_an_element_captures_its_stored_law_as_root(self):
         root = _joint()
-        batch = DistributionBatch("laws", [root, _joint()], "law")
+        batch = DistributionBatch(
+            [root, _joint()],
+            "law",
+            label="laws",
+        )
 
         captured = _descendants.capture_stochastic_consumer(batch[0])
 
@@ -228,7 +243,11 @@ class TestBatchElements:
 
     def test_views_of_two_accesses_of_one_element_form_one_plan_group(self):
         root = _joint()
-        batch = DistributionBatch("laws", [root, _joint()], "law")
+        batch = DistributionBatch(
+            [root, _joint()],
+            "law",
+            label="laws",
+        )
 
         plan = _stochastic_plan({"root": root, "x": batch[0]["x"], "y": batch[0]["y"]})
 
@@ -241,7 +260,11 @@ class TestBatchElements:
         )
 
     def test_two_accesses_of_one_element_co_sample(self):
-        batch = DistributionBatch("laws", [_joint(), _joint()], "law")
+        batch = DistributionBatch(
+            [_joint(), _joint()],
+            "law",
+            label="laws",
+        )
 
         with workflow_run(seed=35):
             result = _difference()(batch[0]["x"], batch[0]["x"])
@@ -250,7 +273,11 @@ class TestBatchElements:
 
     def test_an_element_co_samples_with_its_stored_law(self):
         root = _joint()
-        batch = DistributionBatch("laws", [root], "law")
+        batch = DistributionBatch(
+            [root],
+            "law",
+            label="laws",
+        )
 
         with workflow_run(seed=36):
             result = _difference()(root["x"], batch[0]["x"])
@@ -266,7 +293,11 @@ class TestBatchElements:
         np.testing.assert_allclose(_raw_variance(result), 0.0, atol=1e-6)
 
     def test_cyclic_element_graphs_fail_closed(self):
-        element = DistributionBatch("laws", [_joint()], "law")[0]
+        element = DistributionBatch(
+            [_joint()],
+            "law",
+            label="laws",
+        )[0]
         object.__setattr__(element, "_element_source", element)
 
         with pytest.raises(TypeError, match="Cyclic batch element"):
@@ -283,7 +314,12 @@ def _posterior():
     """Twelve weighted record atoms over ``mu`` and ``tau``."""
     columns = {"mu": jnp.arange(12.0), "tau": jnp.arange(12.0) + 100.0}
     spec = NumericRecordSpec(mu=(), tau=())
-    atoms = NumericRecordBatch("draws", columns, "draw", element_spec=spec)
+    atoms = NumericRecordBatch(
+        columns,
+        "draw",
+        element_spec=spec,
+        label="draws",
+    )
     return EmpiricalDistribution(atoms, jnp.arange(1.0, 13.0), label="posterior")
 
 
@@ -294,7 +330,14 @@ def _normal():
 def _kde():
     """A kernel density estimate over ``a`` and ``b``, which renames at its boundary."""
     columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
-    return KDEDistribution(NumericRecordBatch("rows", columns, "row"), label="kde")
+    return KDEDistribution(
+        NumericRecordBatch(
+            columns,
+            "row",
+            label="rows",
+        ),
+        label="kde",
+    )
 
 
 #: A law, a rename that copies it or rebuilds it as a factored joint, the class of
@@ -345,7 +388,11 @@ def _renamed_view():
 
 def _renamed_element():
     root = Normal("n", 0.0, 1.0)
-    batch = DistributionBatch("laws", [root, Normal("n", 5.0, 1.0)], "law")
+    batch = DistributionBatch(
+        [root, Normal("n", 5.0, 1.0)],
+        "law",
+        label="laws",
+    )
     return batch[0].with_path_names(n="m"), root
 
 
@@ -387,10 +434,11 @@ class TestRenamedLaws:
         """Twelve atoms exceed the eight samples, so the lift samples the root."""
         root = _posterior()
         workflow = Function(
-            "difference",
             lambda a, b: a["mu"] - b.at_path("population")["mu"],
             dispatch="sequential",
             n_broadcast_samples=8,
+            label="difference",
+            output_spec=OutputSpec(difference=None),
         )
 
         renamed = root.with_path_names(_GROUPING)
@@ -418,7 +466,13 @@ class TestRenamedLaws:
         self, make, rename, kind, difference
     ):
         law = make()
-        workflow = Function("difference", difference, dispatch="sequential", n_broadcast_samples=8)
+        workflow = Function(
+            difference,
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            label="difference",
+            output_spec=OutputSpec(difference=None),
+        )
 
         with workflow_run(seed=39):
             result = workflow(law, rename(law))
@@ -463,7 +517,10 @@ class _FreeNormal(Distribution, SupportsSampling):
 
     def __init__(self, label="x", spec=_FREE):
         event_spec = spec if isinstance(spec, RecordSpec) else OutputSpec(**{label: spec})
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
 
     def _sample(self, key, sample_shape=()):
         return jax.random.normal(key, (*sample_shape, 3))
@@ -500,7 +557,12 @@ class TestCopies:
     @pytest.mark.parametrize("copy", _COPIES)
     def test_a_copy_co_samples_with_its_law(self, copy):
         law = _FreeNormal()
-        workflow = Function("difference", lambda a, b: a - b, n_broadcast_samples=8)
+        workflow = Function(
+            lambda a, b: a - b,
+            n_broadcast_samples=8,
+            label="difference",
+            output_spec=OutputSpec(difference=None),
+        )
         copied = copy(law)
 
         assert workflow.check(law, copied).selected.method_name == "sampling_lift"
@@ -538,7 +600,10 @@ class TestCopies:
     @pytest.mark.parametrize("stored_label", ["x", "mu"])
     def test_a_law_read_from_a_record_field_co_samples_with_the_stored_law(self, stored_label):
         stored = Normal(stored_label, 0.0, 1.0)
-        record = Record("laws", x=stored)
+        record = Record(
+            {"x": stored},
+            label="laws",
+        )
 
         assert _descendants.capture_stochastic_consumer(record["x"]).root is stored
         with workflow_run(seed=42):
@@ -762,12 +827,13 @@ class TestLifts:
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         shifted = BijectorTransformedDistribution("shifted", root, tfb.Shift(2.0))
         workflow = Function(
-            "function",
             lambda base, exp_base, shifted_base: jnp.stack(
                 (exp_base - jnp.exp(base), shifted_base - (base + 2.0))
             ),
             dispatch=dispatch,
             n_broadcast_samples=16,
+            label="function",
+            output_spec=OutputSpec(function=None),
         )
 
         with workflow_run(seed=37):
@@ -782,7 +848,11 @@ class TestLifts:
         root = _RecordingNormal(calls)
         descendant = BijectorTransformedDistribution("descendant", root, tfb.Exp())
         workflow = Function(
-            "function", lambda value: value, dispatch="sequential", n_broadcast_samples=14
+            lambda value: value,
+            dispatch="sequential",
+            n_broadcast_samples=14,
+            label="function",
+            output_spec=OutputSpec(function=None),
         )
 
         with workflow_run(seed=39):
@@ -795,10 +865,11 @@ class TestLifts:
             root = Normal("base", 0.0, 1.0)
             exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
             workflow = Function(
-                "difference",
                 lambda base, exp_base: exp_base - jnp.exp(base),
                 dispatch=dispatch,
                 n_broadcast_samples=16,
+                label="difference",
+                output_spec=OutputSpec(difference=None),
             )
             with workflow_run(seed=41):
                 return workflow(root, exponentiated)
@@ -812,10 +883,11 @@ class TestLifts:
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
-            "function",
             lambda base, exp_base: exp_base - jnp.exp(base),
             dispatch="sequential",
             n_broadcast_samples=16,
+            label="function",
+            output_spec=OutputSpec(function=None),
         )
 
         with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
@@ -829,10 +901,11 @@ class TestLifts:
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
-            "function",
             lambda exp_base, base: exp_base - jnp.exp(base),
             dispatch="sequential",
             n_broadcast_samples=16,
+            label="function",
+            output_spec=OutputSpec(function=None),
         )
 
         with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
@@ -844,10 +917,10 @@ class TestLifts:
     def test_an_exact_record_projection_then_transform_stays_diagonal(self):
         root = EmpiricalDistribution(
             NumericRecordBatch(
-                "draws",
                 {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
                 "draw",
                 element_spec=NumericRecordSpec(x=(), y=()),
+                label="draws",
             ),
             weights=jnp.asarray([0.3, 0.7]),
             label="joint",
@@ -855,12 +928,13 @@ class TestLifts:
         x = root["x"]
         exponentiated_x = BijectorTransformedDistribution("exponentiated_x", x, tfb.Exp())
         workflow = Function(
-            "function",
             lambda joint, x_value, exp_x: jnp.stack(
                 (joint["x"] - x_value, exp_x - jnp.exp(x_value))
             ),
             dispatch="sequential",
             n_broadcast_samples=16,
+            label="function",
+            output_spec=OutputSpec(function=None),
         )
 
         result = workflow(root, x, exponentiated_x)
@@ -870,17 +944,24 @@ class TestLifts:
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_a_nested_sweep_samples_a_shared_root_once_per_cell(self, dispatch):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", offset=float(index)) for index in range(3)],
+            [
+                NumericRecord(
+                    {"offset": float(index)},
+                    label="row",
+                )
+                for index in range(3)
+            ],
             level_name="draw",
         )
         calls = []
         root = _RecordingNormal(calls)
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
-            "function",
             lambda row, base, exp_base: exp_base - jnp.exp(base),
             dispatch=dispatch,
             n_broadcast_samples=12,
+            label="function",
+            output_spec=OutputSpec(function=None),
         )
 
         with workflow_run(seed=47):
@@ -898,10 +979,11 @@ class TestEmpiricalRootWeights:
         base = Normal("a", 0.0, 1.0)
         transformed = BijectorTransformedDistribution("b", base, tfb.Exp())
         workflow = Function(
-            "difference",
             lambda a, b: b - jnp.exp(a),
             dispatch="sequential",
             n_broadcast_samples=64,
+            label="difference",
+            output_spec=OutputSpec(difference=None),
         )
 
         with workflow_run(seed=53):
@@ -917,11 +999,12 @@ class TestEmpiricalRootWeights:
         )
         exponentiated = BijectorTransformedDistribution("exponentiated", root, tfb.Exp())
         workflow = Function(
+            lambda base, exp_base: exp_base - jnp.exp(base),
             label="function",
-            fn=lambda base, exp_base: exp_base - jnp.exp(base),
             dispatch="sequential",
             n_broadcast_samples=16,
             include_inputs=True,
+            output_spec=OutputSpec(function=None),
         )
 
         with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
@@ -939,10 +1022,10 @@ class TestEmpiricalRootWeights:
     def test_exact_record_projection_then_transform_keeps_the_root_weights(self):
         root = EmpiricalDistribution(
             NumericRecordBatch(
-                "draws",
                 {"x": jnp.asarray([1.0, 4.0]), "y": jnp.asarray([10.0, 40.0])},
                 "draw",
                 element_spec=NumericRecordSpec(x=(), y=()),
+                label="draws",
             ),
             weights=jnp.asarray([0.3, 0.7]),
             label="joint",
@@ -950,13 +1033,14 @@ class TestEmpiricalRootWeights:
         x = root["x"]
         exponentiated_x = BijectorTransformedDistribution("exponentiated_x", x, tfb.Exp())
         workflow = Function(
-            label="function",
-            fn=lambda joint, x_value, exp_x: jnp.stack(
+            lambda joint, x_value, exp_x: jnp.stack(
                 (joint["x"] - x_value, exp_x - jnp.exp(x_value))
             ),
+            label="function",
             dispatch="sequential",
             n_broadcast_samples=16,
             include_inputs=True,
+            output_spec=OutputSpec(function=None),
         )
 
         result = workflow(root, x, exponentiated_x)
@@ -975,11 +1059,12 @@ class TestEmpiricalRootWeights:
         sampled_calls = []
         sampled = _RecordingNormal(sampled_calls, label="sampled")
         workflow = Function(
+            lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
             label="function",
-            fn=lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
             dispatch="sequential",
             n_broadcast_samples=12,
             include_inputs=True,
+            output_spec=OutputSpec(function=None),
         )
 
         with workflow_run(seed=45):

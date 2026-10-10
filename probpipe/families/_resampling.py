@@ -308,8 +308,8 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
         term = _replicate_spec(law, size, on_level)
         owner = _class_label(self)
         super().__init__(
-            _constructor_label(self, label, owner),
             _whole_term_event(component, term, event_spec, owner),
+            label=_constructor_label(self, label, owner),
         )
         self._source = law
         self._replicate_size = size
@@ -1070,7 +1070,10 @@ class KDEDistribution(
         stored, atom_spec = _kde_atoms(atoms)
         owner = _class_label(self)
         declared = _atoms_declaration(atom_spec, component, event_spec, owner)
-        super().__init__(_constructor_label(self, label, owner), declared)
+        super().__init__(
+            declared,
+            label=_constructor_label(self, label, owner),
+        )
         centers = _flat_centers(stored, _KDE_NAMES)
         atom_weights = _kde_weights(weights, centers.shape[0])
         if bandwidth is None or isinstance(bandwidth, str):

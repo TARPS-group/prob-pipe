@@ -63,13 +63,13 @@ class NumericRecordBatch(RecordBatch):
 
     Parameters
     ----------
-    label : str
-        The batch's label.
     fields : Mapping of str to array
         The numeric columns, keyed by leaf path or given as a nested mapping, each
         shaped ``(*batch_shape, *event_shape)``.
     level_names : str or sequence of str
         One name per level, outermost first; a single string names a single level.
+    label : str, optional
+        The batch's label.
     element_spec : RecordSpec, optional
         The all-numeric schema every element satisfies. Defaults to the spec the
         columns imply.
@@ -97,11 +97,11 @@ class NumericRecordBatch(RecordBatch):
 
     def __init__(
         self,
-        label: str,
         fields: Mapping[str, Any],
         /,
         level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: RecordSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
@@ -129,12 +129,12 @@ class NumericRecordBatch(RecordBatch):
                 f"use RecordBatch for fields that are not numeric arrays"
             )
         super().__init__(
-            label,
             fields,
             names,
             element_spec=element_spec,
             axes_per_level=axes,
             provenance=provenance,
+            label=label,
         )
 
     # ``element_spec`` is not overridden: it already reports the stored
@@ -241,7 +241,7 @@ class NumericRecordBatch(RecordBatch):
 
         Parameters
         ----------
-        label : str
+        label : str, optional
             The reconstructed batch's label.
         spec : NumericRecordSpec
             The flat layout: field names, event shapes, and canonical order.
@@ -282,8 +282,12 @@ class NumericRecordBatch(RecordBatch):
         >>> import jax.numpy as jnp
         >>> from probpipe import RecordSpec
         >>> spec = RecordSpec(x=(2,))
-        >>> batch = NumericRecordBatch("post", {"x": jnp.zeros((4, 5, 2))},
-        ...                            ("chain", "draw"), element_spec=spec)
+        >>> batch = NumericRecordBatch(
+        ...     {"x": jnp.zeros((4, 5, 2))},
+        ...     ("chain", "draw"),
+        ...     element_spec=spec,
+        ...     label="post",
+        ... )
         >>> rebuilt = NumericRecordBatch.from_vector(
         ...     "post", spec, batch.to_vector(), level_names=("chain", "draw"))
         >>> rebuilt.batch_shape
@@ -324,11 +328,11 @@ class NumericRecordBatch(RecordBatch):
         if axes_per_level is None and len(names) == 1:
             axes_per_level = (len(batch_shape),)
         return cls(
-            label,
             columns,
             names,
             element_spec=spec,
             axes_per_level=axes_per_level,
+            label=label,
         )
 
 

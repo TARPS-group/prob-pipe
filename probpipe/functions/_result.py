@@ -81,18 +81,33 @@ def _wrap_declared_function_output(
     if isinstance(result, TrackedTerm):
         return _copy_result_term(result, output_spec=output_spec)
     if isinstance(spec, RecordSpec):
-        return Record(function_name, result, event_template=spec)
+        return Record(
+            result,
+            event_template=spec,
+            label=function_name,
+        )
     if isinstance(spec, NumericArraySpec):
         from ..core._numeric_array import NumericArray
 
-        return NumericArray(function_name, result, spec=spec)
+        return NumericArray(
+            result,
+            spec=spec,
+            label=function_name,
+        )
     if isinstance(spec, OpaqueSpec):
-        return Opaque(function_name, result, spec=spec)
+        return Opaque(
+            result,
+            spec=spec,
+            label=function_name,
+        )
     from ..values import Function, FunctionSpec
 
     if isinstance(spec, FunctionSpec):
         return Function(
-            function_name, result, input_spec=spec.input_spec, output_spec=spec.output_spec
+            result,
+            input_spec=spec.input_spec,
+            output_spec=spec.output_spec,
+            label=function_name,
         )
     return _wrap_as_term(result, function_name)
 
@@ -174,19 +189,31 @@ def _wrap_as_term(value: Any, result_name: str) -> Any:
         case TrackedTerm():
             return value
         case Mapping():
-            return Record(result_name, dict(value))
+            return Record(
+                dict(value),
+                label=result_name,
+            )
         case _ if _is_numeric_leaf(value):
             from ..core._numeric_array import NumericArray
 
-            return NumericArray(result_name, value)
+            return NumericArray(
+                value,
+                label=result_name,
+            )
         case _ if callable(value):
             from ..values import Function
 
-            return Function(result_name, value)
+            return Function(
+                value,
+                label=result_name,
+            )
         case _:
             from ..core._opaque import Opaque
 
-            return Opaque(result_name, value)
+            return Opaque(
+                value,
+                label=result_name,
+            )
 
 
 #: The expression :func:`_coerce_output` takes to keep a tracked return's own expression.
@@ -360,11 +387,11 @@ def _stack_declared_columns(
 
     cls = _batch_class_for(template)
     return cls(
-        label,
         columns,
         level_names,
         element_spec=template,
         axes_per_level=axes_per_level,
+        label=label,
     )
 
 
@@ -394,11 +421,11 @@ def _empty_declared_stack(
             columns[path] = np.empty(batch_shape, dtype=object)
     cls = _batch_class_for(template)
     return cls(
-        label,
         columns,
         level_names,
         element_spec=template,
         axes_per_level=axes_per_level,
+        label=label,
     )
 
 
@@ -450,11 +477,11 @@ def _batch_over_swept_columns(
     parallel.
     """
     return _batch_class_for(element_spec)(
-        label,
         {path: column.reshape(batch_shape + column.shape[1:]) for path, column in columns.items()},
         (*sweep_level_names, *inner_level_names),
         element_spec=element_spec,
         axes_per_level=_ranks_of((*sweep_groups, *inner_axis_groups)),
+        label=label,
     )
 
 
@@ -524,9 +551,15 @@ def _row_at_its_kind(row: Any, field_name: str) -> Any:
       stacking the sequence's items as an event axis.
     """
     if isinstance(row, Mapping):
-        return Record(field_name, dict(row))
+        return Record(
+            dict(row),
+            label=field_name,
+        )
     if isinstance(row, _SEQUENCES):
-        return Opaque(field_name, row)
+        return Opaque(
+            row,
+            label=field_name,
+        )
     return row
 
 
@@ -772,11 +805,11 @@ def _stack_rows(
         # the transform produced, and the levels are the sweep's then the rows'.
         store = inner_outputs.store
         return NumericArrayBatch(
-            result_name,
             store.reshape(batch_shape + store.shape[1:]),
             (*level_names, *inner_outputs.level_names),
             element_spec=inner_outputs.element_spec,
             axes_per_level=_ranks_of((*sweep_groups, *inner_outputs.axis_groups)),
+            label=result_name,
         )
     if isinstance(inner_outputs, _MappedBatchColumns):
         return _batch_over_swept_columns(
@@ -802,22 +835,22 @@ def _stack_rows(
         if isinstance(spec, NumericArraySpec):
             dtype = spec.dtype if spec.dtype is not None else jnp.zeros(()).dtype
             return NumericArrayBatch(
-                result_name,
                 jnp.empty((*batch_shape, *spec.shape), dtype=dtype),
                 level_names,
                 element_spec=spec,
                 axes_per_level=_ranks_of(sweep_groups),
+                label=result_name,
             )
         if not isinstance(spec, RecordSpec):
             batch_class = batch_class_for_spec(spec)
             if batch_class is None:
                 raise ValueError(f"An empty sweep has no batch form for {spec!r}")
             return batch_class(
-                result_name,
                 np.empty(batch_shape, dtype=object),
                 level_names,
                 element_spec=spec,
                 axes_per_level=_ranks_of(sweep_groups),
+                label=result_name,
             )
 
     # --- List-of-X path (Python-loop execution) -------------------------
@@ -874,11 +907,11 @@ def _stack_rows(
                 # object array over the sweep's axes then the rows' own.
                 store = np.stack([o._store for o in outs], axis=0)
                 return type(first)(
-                    result_name,
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
                     element_spec=first.element_spec,
                     axes_per_level=_ranks_of((*sweep_groups, *first.axis_groups)),
+                    label=result_name,
                 )
             if isinstance(first, NumericArrayBatch):
                 # One store rather than columns, so the rows stack directly. Each
@@ -887,11 +920,11 @@ def _stack_rows(
                 # traced conversions within their transform.
                 store = jnp.stack([o.as_jax() for o in outs], axis=0)
                 return NumericArrayBatch(
-                    result_name,
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
                     element_spec=first.element_spec,
                     axes_per_level=_ranks_of((*sweep_groups, *first.axis_groups)),
+                    label=result_name,
                 )
             # Columns are leaf-keyed, so a nested element needs no special
             # case — and they are read raw: a field that is not an array
@@ -941,7 +974,6 @@ def _stack_rows(
                 # produced the rows.
                 n_cur = len(flat.batch_shape)
                 return NumericRecordBatch(
-                    result_name,
                     {
                         path: flat._raw_column(path).reshape(
                             batch_shape + flat._raw_column(path).shape[n_cur:]
@@ -951,6 +983,7 @@ def _stack_rows(
                     level_names,
                     element_spec=flat.element_spec,
                     axes_per_level=_ranks_of(sweep_groups),
+                    label=result_name,
                 )
             # No declared template, so the element structure is inferred from the
             # rows. ``RecordBatch.stack`` is what infers it: columns are keyed by
@@ -968,21 +1001,21 @@ def _stack_rows(
                 for path, column in flat._raw_columns().items()
             }
             return _batch_class_for(flat.element_spec)(
-                result_name,
                 columns,
                 level_names,
                 element_spec=flat.element_spec,
                 axes_per_level=_ranks_of(sweep_groups),
+                label=result_name,
             )
 
         # All Distributions → a DistributionBatch over the sweep's levels, whose
         # rows share the first row's declaration.
         if outs and all(isinstance(o, Distribution) for o in outs):
             return DistributionBatch(
-                result_name,
                 _from_iterable(outs, kind="_make_stack").reshape(batch_shape),
                 level_names,
                 axes_per_level=_ranks_of(sweep_groups),
+                label=result_name,
             )
 
         # Numeric scalars / arrays → the batch form of their own kind, with the
@@ -1027,11 +1060,11 @@ def _stack_rows(
                         dtype = jnp.result_type(*dtypes)
                 element_spec = replace(element_spec, dtype=dtype)
             return NumericArrayBatch(
-                result_name,
                 stacked.reshape(batch_shape + event_shape),
                 level_names,
                 element_spec=element_spec,
                 axes_per_level=_ranks_of(sweep_groups),
+                label=result_name,
             )
 
         # Numeric rows that do not stack disagree on their shape, and an object
@@ -1058,8 +1091,19 @@ def _stack_rows(
             # ``outs`` first: every row of none is vacuously callable, and no row
             # is a reason to claim the function kind over the fallback.
             if outs and all(callable(o) for o in outs):
-                return FunctionBatch(result_name, object_array, level_names, **shared)
-            return OpaqueBatch(result_name, object_array, level_names, **shared)
+                return FunctionBatch(
+                    object_array,
+                    level_names,
+                    **shared,
+                    label=result_name,
+                )
+            raw_objects = [o.raw() if isinstance(o, Opaque) else o for o in outs]
+            return OpaqueBatch(
+                _from_iterable(raw_objects, kind="_make_stack").reshape(batch_shape),
+                level_names,
+                **shared,
+                label=result_name,
+            )
         except (TypeError, ValueError) as exc:
             types_seen = sorted({type_name(o) for o in outs})
             raise TypeError(
@@ -1086,8 +1130,8 @@ def _stack_rows(
                 )
             output_field = next(iter(output_template.keys()))
             batched_record = Record(
-                result_name,
                 {output_field: inner_outputs},
+                label=result_name,
             )
             return _stack_declared_columns(
                 result_name,
@@ -1098,11 +1142,11 @@ def _stack_rows(
                 template=output_template,
             )
         return NumericArrayBatch(
-            result_name,
             inner_outputs.reshape(batch_shape + event_shape),
             level_names,
             element_spec=NumericArraySpec(event_shape, dtype=inner_outputs.dtype),
             axes_per_level=_ranks_of(sweep_groups),
+            label=result_name,
         )
 
     # vmap of a Record-returning function produces a Record with batched leaves
@@ -1135,9 +1179,19 @@ def _stack_rows(
                 "axes_per_level": _ranks_of(sweep_groups),
             }
             try:
-                return NumericRecordBatch(result_name, columns, level_names, **shared)
+                return NumericRecordBatch(
+                    columns,
+                    level_names,
+                    **shared,
+                    label=result_name,
+                )
             except (TypeError, ValueError):
-                return RecordBatch(result_name, columns, level_names, **shared)
+                return RecordBatch(
+                    columns,
+                    level_names,
+                    **shared,
+                    label=result_name,
+                )
 
     # Fallback — shouldn't reach here with well-formed vmap output; if
     # we do, raise with the type info.
@@ -1260,7 +1314,10 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         return value
     if isinstance(value, Mapping) and not isinstance(value, Record):
         # A record-valued route returns the nested mapping of its stacked columns.
-        value = Record(label, **value)
+        value = Record(
+            {**value},
+            label=label,
+        )
     if isinstance(value, Record):
         template = value.event_template
         columns = {path: value.raw(path) for path in template}
@@ -1269,14 +1326,18 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         element = _reshaped_template(template, lambda shape: shape[n_axes:])
         _unify_specs(spec.element_spec, element, {}, f"{label} element")
         return _batch_class_for(element)(
-            label, columns, levels, element_spec=element, axes_per_level=ranks
+            columns,
+            levels,
+            element_spec=element,
+            axes_per_level=ranks,
+            label=label,
         )
     if _is_object_array(value):
         require_leading(value.shape)
         batch_class = batch_class_for_spec(spec.element_spec)
         if batch_class is not None and batch_class is not NumericArrayBatch:
             return batch_class(
-                label, value, levels, element_spec=spec.element_spec, axes_per_level=ranks
+                value, levels, element_spec=spec.element_spec, axes_per_level=ranks, label=label
             )
         return _make_stack(
             list(value.reshape((prod(batch_shape), *value.shape[n_axes:]))),
@@ -1293,7 +1354,13 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         support = declared.support if isinstance(declared, NumericArraySpec) else None
         element = NumericArraySpec(shape[n_axes:], _numpy_dtype_of(value), support)
         _unify_specs(declared, element, {}, f"{label} element")
-        return NumericArrayBatch(label, value, levels, element_spec=element, axes_per_level=ranks)
+        return NumericArrayBatch(
+            value,
+            levels,
+            element_spec=element,
+            axes_per_level=ranks,
+            label=label,
+        )
     raise _ResultKindMismatch(
         f"{label}: expected a Batch, a Record of stacked columns, or an array for the declared "
         f"batch output; got {type_name(value)}"

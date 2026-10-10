@@ -315,7 +315,11 @@ class TestVectorParameters:
         assert not hasattr(law, "batch_shape")
 
     def test_a_batch_of_separate_laws_is_a_distribution_batch(self):
-        batch = DistributionBatch("x", [F.Normal("x", float(i), 1.0) for i in range(5)], "x")
+        batch = DistributionBatch(
+            [F.Normal("x", float(i), 1.0) for i in range(5)],
+            "x",
+            label="x",
+        )
         assert batch.batch_shape == (5,)
         assert batch[0].label == "x[x=0]"
         assert batch[0].event_shape == ()

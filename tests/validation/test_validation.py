@@ -377,7 +377,14 @@ class TestCalibration:
         assert float(result["p_value"]) == pytest.approx(exact, abs=0.03)
         with workflow_run(seed=5):
             as_record = predictive_check(
-                kernel, prior, contrast, Record("observed", **observed), num_replications=4000
+                kernel,
+                prior,
+                contrast,
+                Record(
+                    {**observed},
+                    label="observed",
+                ),
+                num_replications=4000,
             )
         assert float(as_record["p_value"]) == float(result["p_value"])
 
@@ -418,7 +425,10 @@ class TestForms:
         draws = jnp.asarray(np.random.default_rng(0).normal(size=200), jnp.float32)
         record, _ = _posteriors_of(draws, NumericArraySpec((), jnp.float32))
         kernel = _location_kernel(record)
-        rows = NumericRecord("posterior", mu=np.asarray(draws))
+        rows = NumericRecord(
+            {"mu": np.asarray(draws)},
+            label="posterior",
+        )
         with workflow_run(seed=0):
             result = predictive_check(kernel, rows, sample_mean, observed_data, num_replications=40)
         with workflow_run(seed=0):

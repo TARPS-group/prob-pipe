@@ -65,7 +65,11 @@ class _UniformBelowKernel(ConditionalDistribution, SupportsConditionalSampling):
 
     def __init__(self):
         spec = NumericArraySpec((), "float32")
-        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+        super().__init__(
+            {"z": spec},
+            OutputSpec(x=spec),
+            label="x",
+        )
 
     def _condition_on(self, given, /, **options):
         return pp.Uniform("x", 0.0, given["z"])
@@ -300,7 +304,9 @@ class TestBayesFlowNPE:
         grid = np.linspace(-3.0, 3.0, 241)
         a, b = np.meshgrid(grid, grid, indexing="ij")
         points = NumericRecordBatch(
-            "grid", {"a": jnp.asarray(a.ravel()), "b": jnp.asarray(b.ravel())}, "point"
+            {"a": jnp.asarray(a.ravel()), "b": jnp.asarray(b.ravel())},
+            "point",
+            label="grid",
         )
         density = np.exp(np.asarray(log_prob(law, points)))
         assert density.sum() * (grid[1] - grid[0]) ** 2 == pytest.approx(1.0, abs=0.01)

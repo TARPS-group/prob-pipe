@@ -61,42 +61,51 @@ COLUMNS = {"a": jnp.arange(4.0)}
 def _labeled(kind):
     """One instance of *kind* built with an explicit label."""
     return {
-        "Record": lambda: Record("given", a=1.0),
-        "NumericRecord": lambda: NumericRecord("given", a=1.0),
-        "NumericArray": lambda: NumericArray(
-            "given",
-            jnp.arange(3.0),
+        "Record": lambda: Record(
+            {"a": 1.0},
+            label="given",
         ),
-        "Opaque": lambda: Opaque("given", object()),
-        "Function": lambda: Function(fn=lambda: 1, label="given"),
+        "NumericRecord": lambda: NumericRecord(
+            {"a": 1.0},
+            label="given",
+        ),
+        "NumericArray": lambda: NumericArray(
+            jnp.arange(3.0),
+            label="given",
+        ),
+        "Opaque": lambda: Opaque(
+            object(),
+            label="given",
+        ),
+        "Function": lambda: Function(lambda: 1, label="given"),
         "Normal": lambda: Normal("x", 0.0, 1.0, label="given"),
         "RecordBatch": lambda: RecordBatch(
-            "given",
             COLUMNS,
             "lvl",
             element_spec=ELEMENT,
+            label="given",
         ),
         "NumericRecordBatch": lambda: NumericRecordBatch(
-            "given",
             COLUMNS,
             "lvl",
             element_spec=ELEMENT,
+            label="given",
         ),
         "NumericArrayBatch": lambda: NumericArrayBatch(
-            "given",
             jnp.arange(4.0),
             "lvl",
             element_spec=NumericArraySpec(shape=()),
+            label="given",
         ),
         "OpaqueBatch": lambda: OpaqueBatch(
-            "given",
             [1, 2],
             "lvl",
+            label="given",
         ),
         "FunctionBatch": lambda: FunctionBatch(
-            "given",
             [lambda: 1],
             "lvl",
+            label="given",
         ),
     }[kind]()
 
@@ -135,7 +144,7 @@ class TestLabelsAreKept:
 
     @pytest.mark.parametrize("kind", [Record, NumericRecord])
     def test_former_metadata_keyword_is_an_ordinary_record_field(self, kind):
-        record = kind("flags", name_is_auto=True)
+        record = kind({"name_is_auto": True}, label="flags")
         assert tuple(record) == ("name_is_auto",)
         assert bool(record["name_is_auto"])
         assert record.label == "flags"
@@ -154,10 +163,12 @@ class TestWhichKindsRequireALabel:
         [
             pytest.param(lambda: Record(), id="Record"),
             pytest.param(lambda: NumericRecord(), id="NumericRecord"),
-            pytest.param(lambda: Opaque(object()), id="Opaque"),
+            pytest.param(lambda: Opaque(label=object()), id="Opaque"),
             pytest.param(
                 lambda: NumericArrayBatch(
-                    jnp.arange(4.0), "lvl", element_spec=NumericArraySpec(shape=())
+                    "lvl",
+                    element_spec=NumericArraySpec(shape=()),
+                    label=jnp.arange(4.0),
                 ),
                 id="NumericArrayBatch",
             ),
@@ -171,19 +182,25 @@ class TestWhichKindsRequireALabel:
         """It carries no fields to describe it, so a class-name default would
         label every array in a pipeline alike."""
         with pytest.raises(TypeError, match="label"):
-            NumericArray()
+            NumericArray(1.0)
 
     def test_a_lone_value_is_not_enough_for_a_numeric_array(self):
         """The label comes first, so a single argument is the label and the value
         is what the refusal asks for."""
         with pytest.raises(TypeError, match="value"):
-            NumericArray(jnp.arange(3.0))
+            NumericArray(label=jnp.arange(3.0))
 
     def test_a_function_takes_its_callables_name(self):
         def predict():
             return 1.0
 
-        assert Function(label="predict", fn=predict).label == "predict"
+        assert (
+            Function(
+                predict,
+                label="predict",
+            ).label
+            == "predict"
+        )
 
 
 class TestADerivedLabelSaysSo:
@@ -192,10 +209,10 @@ class TestADerivedLabelSaysSo:
     @staticmethod
     def _batch():
         return NumericArrayBatch(
-            "posterior",
             jnp.arange(12.0).reshape(4, 3),
             "draw",
             element_spec=NumericArraySpec(shape=(3,)),
+            label="posterior",
         )
 
     def test_an_element_is_labeled_for_its_position(self):
@@ -234,7 +251,10 @@ class TestAnOperationLabelsItsResultByItsLaw:
         assert compute(self.LAW).label == label
 
     def test_a_record_law_draw_is_labeled_by_its_components_and_the_law(self):
-        joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
+        joint = FactoredDistribution(
+            [Normal("a", 0.0, 1.0)],
+            label="joint",
+        )
 
         assert sample(joint).label == "a ~ joint"
 
@@ -304,9 +324,9 @@ class TestTheOutputBoundaryLabelsEveryKindAlike:
         ],
     )
     def test_the_result_takes_the_functions_label(self, label, body):
-        result = Function(fn=body, label="myfunc")()
+        result = Function(body, label="myfunc")()
 
-        assert result.label == "myfunc"
+        assert result.label == "myfunc()"
 
 
 class TestLevelsAreNamedForWhatMintsThem:
@@ -318,7 +338,10 @@ class TestLevelsAreNamedForWhatMintsThem:
         assert drawn.level_names == ("sample",)
 
     def test_a_record_drawing_law_mints_the_same_level(self):
-        joint = FactoredDistribution("joint", [Normal("a", 0.0, 1.0)])
+        joint = FactoredDistribution(
+            [Normal("a", 0.0, 1.0)],
+            label="joint",
+        )
 
         drawn = sample(joint, sample_shape=(5,))
 
@@ -332,14 +355,21 @@ class TestLevelsAreNamedForWhatMintsThem:
             ),
             pytest.param(
                 NumericRecordBatch(
-                    "rows", {"u": jnp.arange(4.0)}, "row", element_spec=RecordSpec(u=())
+                    {"u": jnp.arange(4.0)},
+                    "row",
+                    element_spec=RecordSpec(u=()),
+                    label="rows",
                 ),
                 None,
                 "NumericRecordBatch",
                 id="record-atoms",
             ),
             pytest.param(
-                OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                OpaqueBatch(
+                    [object() for _ in range(3)],
+                    "atom",
+                    label="objects",
+                ),
                 "atoms",
                 "OpaqueBatch",
                 id="opaque-atoms",
@@ -374,7 +404,11 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         drawn = sample(
             EmpiricalDistribution(
-                OpaqueBatch("objects", [object() for _ in range(3)], "atom"),
+                OpaqueBatch(
+                    [object() for _ in range(3)],
+                    "atom",
+                    label="objects",
+                ),
                 component="atoms",
                 label="empirical",
             ),
@@ -425,11 +459,11 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
         drawn = NumericArrayBatch(
-            "draws",
             jnp.zeros((2, 3)),
             ("chain", "draw"),
             element_spec=NumericArraySpec(()),
             axes_per_level=(1, 1),
+            label="draws",
         )
 
         scored = density_op(self.LAW, drawn)
@@ -460,7 +494,12 @@ class TestRawDrawLabeling:
     def test_a_declared_function_result_takes_the_requested_label(
         self, value, declaration, completed
     ):
-        wrapped = Function("producer", lambda: value, output_spec=declaration, output_label="law")
+        wrapped = Function(
+            lambda: value,
+            output_spec=declaration,
+            output_label="law",
+            label="producer",
+        )
         result = wrapped()
         assert wrapped.apply() is value
         assert result.label == "law"
@@ -484,14 +523,14 @@ class TestEveryAggregateIsLabeledForItsFunction:
         from probpipe.core._specs import NumericRecordSpec
 
         return NumericRecordBatch(
-            "rows",
             {"x": jnp.arange(float(n))},
             "row",
             element_spec=NumericRecordSpec(x=()),
+            label="rows",
         )
 
     def _swept(self, body, **controls):
-        return Function(fn=body, label="double", dispatch="sequential", **controls)(v=self._rows())
+        return Function(body, label="double", dispatch="sequential", **controls)(v=self._rows())
 
     @pytest.mark.parametrize(
         ("label", "body"),
@@ -506,14 +545,14 @@ class TestEveryAggregateIsLabeledForItsFunction:
     def test_an_undeclared_aggregate_is_labeled_for_the_function(self, label, body):
         result = self._swept(body)
 
-        assert result.label == "double"
+        assert result.label == "double(rows)"
 
     def test_a_declared_aggregate_is_labeled_the_same_way(self):
         from probpipe import RecordSpec
 
         result = self._swept(lambda v: {"y": jnp.asarray(v["x"])}, output_spec=RecordSpec(y=()))
 
-        assert result.label == "double"
+        assert result.label == "double(rows)"
 
     def test_a_multi_axis_sweep_is_labeled_the_same_way(self):
         """The re-cut to the sweep's own geometry is a separate construction, and
@@ -521,17 +560,17 @@ class TestEveryAggregateIsLabeledForItsFunction:
         from probpipe.core._specs import NumericRecordSpec
 
         grid = NumericRecordBatch(
-            "grid",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("a", "b"),
             element_spec=NumericRecordSpec(x=()),
+            label="grid",
         )
 
         result = Function(
-            fn=lambda v: {"y": jnp.asarray(v["x"])}, label="double", dispatch="sequential"
+            lambda v: {"y": jnp.asarray(v["x"])}, label="double", dispatch="sequential"
         )(v=grid)
 
-        assert result.label == "double"
+        assert result.label == "double(grid)"
         assert result.level_names == ("a", "b")
 
 
@@ -553,14 +592,26 @@ class TestNoKindInventsALabel:
     def test_stack_derives_its_label_from_what_it_stacks(self):
         """Derived from real content, so no call site has to invent one: a batch
         of `draw` records is about `draw`."""
-        rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
+        rows = [
+            NumericRecord(
+                {"a": float(i)},
+                label="draw",
+            )
+            for i in range(3)
+        ]
 
         batch = NumericRecordBatch.stack(rows, level_name="row")
 
         assert batch.label == "draw"
 
     def test_stack_takes_a_better_label_when_offered(self):
-        rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
+        rows = [
+            NumericRecord(
+                {"a": float(i)},
+                label="draw",
+            )
+            for i in range(3)
+        ]
 
         batch = NumericRecordBatch.stack(rows, level_name="row", label="posterior")
 
@@ -570,10 +621,10 @@ class TestNoKindInventsALabel:
         """There is no class-name default to re-derive from, and an auto name is
         something derived rather than a placeholder."""
         batch = NumericRecordBatch(
-            "derived",
             {"a": jnp.zeros(3), "b": jnp.zeros(3)},
             "lvl",
             element_spec=NumericRecordSpec(a=(), b=()),
+            label="derived",
         )
 
         edited = batch.without("b")
@@ -813,7 +864,9 @@ class TestTheLabelsOfValuesComputedFromALaw:
 
     def test_a_batch_of_laws_reads_as_one_law_under_its_label(self):
         laws = DistributionBatch(
-            "schools", [Normal("effect", float(i), 1.0) for i in range(3)], "school"
+            [Normal("effect", float(i), 1.0) for i in range(3)],
+            "school",
+            label="schools",
         )
         with workflow_run(seed=0):
             assert sample(laws).label == "effect ~ schools"
@@ -829,7 +882,10 @@ class TestTheLabelsOfValuesComputedFromALaw:
             assert sample(_model())["y"].label == "y"
 
     def test_an_operator_on_values_is_labeled_by_its_expression(self):
-        effect = NumericArray("effect", jnp.asarray(1.0))
+        effect = NumericArray(
+            jnp.asarray(1.0),
+            label="effect",
+        )
         assert (2 * effect).label == "2 * effect"
         assert (-(effect + 1.0)).label == "-(effect + 1.0)"
         with workflow_run(seed=0):
@@ -840,7 +896,7 @@ class TestTheLabelsOfALiftedFunction:
     """A function lifted over laws is the function applied to draws of its inputs (II.4)."""
 
     def test_its_law_reads_as_the_function_at_a_draw_of_a_posterior(self):
-        @function
+        @function(output_spec=OutputSpec(damage_probability=None))
         def challenger_damage_probability(beta: jax.Array) -> jax.Array:
             return jax.nn.sigmoid(beta * 31.0)
 
@@ -859,7 +915,7 @@ class TestTheLabelsOfALiftedFunction:
         assert summary.label == f"E[{notation}]"
 
     def test_inputs_drawn_together_share_one_draw(self):
-        @function
+        @function(output_spec=OutputSpec(f=None))
         def f(a: jax.Array, b: jax.Array) -> jax.Array:
             return a + b
 
@@ -868,10 +924,19 @@ class TestTheLabelsOfALiftedFunction:
             assert f(model["a"], model["b"]).notation == "f((a, b) ~ model)"
             assert f(model["a"], 2.0).notation == "f(a ~ Normal, 2.0)"
             prior = Normal("x", 0.0, 1.0, label="prior")
-            assert f(prior, NumericArray("c", 1.0)).notation == "f(x ~ prior, c)"
+            assert (
+                f(
+                    prior,
+                    NumericArray(
+                        1.0,
+                        label="c",
+                    ),
+                ).notation
+                == "f(x ~ prior, c)"
+            )
 
     def test_an_array_argument_appears_by_its_parameters_name(self):
-        @function
+        @function(output_spec=OutputSpec(g=None))
         def g(a: jax.Array, X: jax.Array) -> jax.Array:
             return a
 
@@ -880,11 +945,15 @@ class TestTheLabelsOfALiftedFunction:
             assert g(prior, jnp.ones((5, 2))).notation == "g(a ~ prior, X)"
 
     def test_a_sweep_of_broadcasts_carries_the_lifted_call(self):
-        @function
+        @function(output_spec=OutputSpec(shifted=None))
         def shifted(mu: jax.Array, tau: jax.Array) -> jax.Array:
             return mu + tau
 
-        taus = NumericArrayBatch("tau", jnp.array([0.0, 1.0]), "tau")
+        taus = NumericArrayBatch(
+            jnp.array([0.0, 1.0]),
+            "tau",
+            label="tau",
+        )
         with workflow_run(seed=0):
             laws = shifted.with_options(n_broadcast_samples=8)(
                 Normal("mu", 0.0, 1.0, label="prior"), taus
@@ -896,11 +965,15 @@ class TestTheLabelsOfALiftedFunction:
         assert means[1].label == "E[shifted(mu ~ prior, tau)][tau=1]"
 
     def test_a_lifted_batch_displays_its_call_and_its_element_its_rows_call(self):
-        @function
+        @function(output_spec=OutputSpec(effect_of=None))
         def effect_of(mu: jax.Array, tau: jax.Array) -> jax.Array:
             return mu + tau
 
-        taus = NumericArrayBatch("tau", jnp.arange(1.0, 6.0), "tau")
+        taus = NumericArrayBatch(
+            jnp.arange(1.0, 6.0),
+            "tau",
+            label="tau",
+        )
         with workflow_run(seed=0):
             laws = effect_of.with_options(n_broadcast_samples=8)(
                 Normal("mu", 0.0, 1.0, label="prior"), taus
@@ -921,11 +994,19 @@ class TestTheLabelsOfALiftedFunction:
                 Normal("g", 0.0, 1.0, label="prior"), Normal("q", 0.0, 1.0, label="proposal")
             )
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(prior(g), q ~ proposal)")
-        assert list(lifted.event_spec.components) == ["log_prob"]
+        assert list(lifted.event_spec.components) == ["log_prob(g)"]
 
     def test_a_function_called_on_values_takes_its_output_label(self):
         @function
         def f(a: jax.Array) -> jax.Array:
             return a + 1
 
-        assert f(NumericArray("x", jnp.asarray(1.0))).label == "f"
+        assert (
+            f(
+                NumericArray(
+                    jnp.asarray(1.0),
+                    label="x",
+                )
+            ).label
+            == "f(x)"
+        )

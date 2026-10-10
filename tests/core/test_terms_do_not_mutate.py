@@ -60,7 +60,11 @@ class _ShiftKernel(ConditionalDistribution, SupportsConditionalSampling):
 
     def __init__(self):
         spec = NumericArraySpec(())
-        super().__init__("x", {"z": spec}, OutputSpec(x=spec))
+        super().__init__(
+            {"z": spec},
+            OutputSpec(x=spec),
+            label="x",
+        )
 
     def _condition_on(self, given, /, **options):
         return Normal("x", given["z"], 0.5)

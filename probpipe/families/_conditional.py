@@ -124,7 +124,10 @@ class _Link(Function, SupportsInverse):
     def __init__(
         self, label: str, forward: Callable[[Array], Array], inverse: Callable[[Array], Array]
     ) -> None:
-        super().__init__(label, forward)
+        super().__init__(
+            forward,
+            label=label,
+        )
         object.__setattr__(self, "_inverse_map", inverse)
 
     def _inverse(self, y: Array) -> Array:
@@ -588,7 +591,9 @@ class _GLMLikelihood(
         object.__setattr__(self, "_canonical", link is family.canonical_link)
         object.__setattr__(self, "_fixed", {})
         super().__init__(
-            _constructor_label(self, label, DEFAULT_LABEL), InputSpec(slots), declaration
+            InputSpec(slots),
+            declaration,
+            label=_constructor_label(self, label, DEFAULT_LABEL),
         )
         fixed: dict[str, Array] = {}
         if X is not None:

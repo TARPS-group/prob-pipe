@@ -138,7 +138,10 @@ class _BackendBijector(Function, SupportsInverse, SupportsLogDetJacobian):
     """
 
     def __init__(self, bijector: tfb.Bijector, image: Constraint | None = None) -> None:
-        super().__init__(bijector.name, _ForwardMap(bijector))
+        super().__init__(
+            _ForwardMap(bijector),
+            label=bijector.name,
+        )
         object.__setattr__(self, "_bijector", bijector)
         object.__setattr__(self, "_image", image)
         object.__setattr__(self, "_affine", _backend_is_affine(bijector))

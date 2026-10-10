@@ -230,7 +230,12 @@ class TestARecordSource:
     def _posterior() -> EmpiricalDistribution:
         lam = jnp.array([2.2, 2.5, 2.7, 2.4])
         spec = NumericRecordSpec(lam=NumericArraySpec((), lam.dtype))
-        atoms = NumericRecordBatch("atoms", {"lam": lam}, "draw", element_spec=spec)
+        atoms = NumericRecordBatch(
+            {"lam": lam},
+            "draw",
+            element_spec=spec,
+            label="atoms",
+        )
         return EmpiricalDistribution(atoms, label="posterior")
 
     def test_a_record_law_does_not_convert_to_a_family(self):
@@ -882,13 +887,13 @@ class TestProtocolConversion:
         """An empirical law over a record converts to a KDE over its atoms."""
         n = 200
         rows = NumericRecordBatch(
-            "r",
             {
                 "mu": jax.random.normal(jax.random.PRNGKey(2), (n,)),
                 "log_sigma": jax.random.normal(jax.random.PRNGKey(3), (n,)),
             },
             "row",
             element_spec=NumericRecordSpec(mu=(), log_sigma=()),
+            label="r",
         )
         emp = EmpiricalDistribution(rows, label="emp")
         result = converter_registry.convert(emp, SupportsLogProb)
@@ -921,7 +926,14 @@ class TestProtocolConversion:
 
     def test_object_array_empirical_to_kde_rejected(self):
         """An empirical law over opaque atoms does not convert to a KDE, which smooths numbers."""
-        emp = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b", "c"], "site"), component="emp")
+        emp = EmpiricalDistribution(
+            OpaqueBatch(
+                ["a", "b", "c"],
+                "site",
+                label="labels",
+            ),
+            component="emp",
+        )
         with pytest.raises(ResolutionError, match="numeric"):
             converter_registry.convert(emp, KDEDistribution)
 
@@ -991,13 +1003,13 @@ class TestProtocolConversion:
         """An empirical law over a record converts to a KDE over that record's fields."""
         n = 200
         rows = NumericRecordBatch(
-            "r",
             {
                 "intercept": jax.random.normal(jax.random.PRNGKey(0), (n,)),
                 "slope": jax.random.normal(jax.random.PRNGKey(1), (n,)),
             },
             "row",
             element_spec=NumericRecordSpec(intercept=(), slope=()),
+            label="r",
         )
         emp = EmpiricalDistribution(rows, label="emp")
         result = converter_registry.convert(emp, SupportsLogProb)

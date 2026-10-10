@@ -63,7 +63,10 @@ class _VectorSource(Distribution):
     """A law over a vector with a closed-form mean and no closed-form covariance."""
 
     def __init__(self, calls):
-        super().__init__("x", OutputSpec(x=NumericArraySpec((2,))))
+        super().__init__(
+            OutputSpec(x=NumericArraySpec((2,))),
+            label="x",
+        )
         self.calls = calls
 
     def _mean(self):

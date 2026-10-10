@@ -566,7 +566,10 @@ class TestDistributionCoverageGaps:
 
         class Scalar(NumericDistribution):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(**{label: NumericArraySpec((), "float32")}))
+                super().__init__(
+                    OutputSpec(**{label: NumericArraySpec((), "float32")}),
+                    label=label,
+                )
 
         s = Scalar("s")
         assert tuple(s.event_spec.components) == ("s",)

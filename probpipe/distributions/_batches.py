@@ -15,7 +15,7 @@ import numpy as np
 
 from ..core._expression import Signature
 from ..core._kinds import register_kind
-from ..core._object_batch import _as_object_array, _ObjectBatch
+from ..core._object_batch import _as_object_array, _collection_expression, _ObjectBatch
 from ..core._shapes import AxisCountsLike, NamesLike
 from ..core._specs import InputSpec, OutputSpec
 from ..core.provenance import Provenance
@@ -79,12 +79,13 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     Parameters
     ----------
-    label : str
-        The batch's label.
     elements : numpy.ndarray or iterable of Distribution
         The laws, as an object array of any shape or a flat iterable.
     level_names : str or sequence of str
         One name per level, outermost first.
+    label : str, optional
+        Display alias. Defaults to a bounded description of the member laws;
+        an empty collection requires an explicit alias.
     element_spec : DistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec, so
         the elements share its event declaration.
@@ -98,7 +99,8 @@ class DistributionBatch(_ObjectBatch[Distribution]):
     ------
     TypeError
         If *element_spec* is not a ``DistributionSpec``, or an element is not a
-        ``Distribution`` whose declaration unifies with it, naming the position.
+        ``Distribution`` whose declaration unifies with it, naming the position;
+        or an empty collection has no explicit label.
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
         level names disagree as for every batch.
@@ -117,11 +119,11 @@ class DistributionBatch(_ObjectBatch[Distribution]):
 
     def __init__(
         self,
-        label: str,
         elements: np.ndarray | Iterable[Distribution],
         /,
         level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: DistributionSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
@@ -138,6 +140,10 @@ class DistributionBatch(_ObjectBatch[Distribution]):
                 f"got {type(element_spec).__name__}"
             )
         _check_declarations(elements, element_spec)
+        elements = _as_object_array(elements, kind=type(self).__name__)
+        expression = _collection_expression(elements) if label is None else None
+        if expression is not None:
+            label = expression.render_label()
         super().__init__(
             label,
             elements,
@@ -146,6 +152,8 @@ class DistributionBatch(_ObjectBatch[Distribution]):
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
+        if expression is not None:
+            self._store_expression(expression)
 
     @property
     def element_spec(self) -> DistributionSpec:
@@ -242,12 +250,13 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     Parameters
     ----------
-    label : str
-        The batch's label.
     elements : numpy.ndarray or iterable of ConditionalDistribution
         The kernels, as an object array of any shape or a flat iterable.
     level_names : str or sequence of str
         One name per level, outermost first.
+    label : str, optional
+        Display alias. Defaults to a bounded description of the member laws;
+        an empty collection requires an explicit alias.
     element_spec : ConditionalDistributionSpec, optional
         What every element satisfies. Defaults to the first element's spec.
     axes_per_level : int or sequence of int, optional
@@ -260,7 +269,8 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
     ------
     TypeError
         If *element_spec* is not a ``ConditionalDistributionSpec``, or an element
-        does not satisfy it, naming the position.
+        does not satisfy it, naming the position; or an empty collection has no
+        explicit label.
     ValueError
         If *elements* is empty and *element_spec* is omitted, or the axes and
         level names disagree as for every batch.
@@ -279,11 +289,11 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
 
     def __init__(
         self,
-        label: str,
         elements: np.ndarray | Iterable[ConditionalDistribution],
         /,
         level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: ConditionalDistributionSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
@@ -301,6 +311,10 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
                 f"ConditionalDistributionBatch.element_spec must be a "
                 f"ConditionalDistributionSpec; got {type(element_spec).__name__}"
             )
+        elements = _as_object_array(elements, kind=type(self).__name__)
+        expression = _collection_expression(elements) if label is None else None
+        if expression is not None:
+            label = expression.render_label()
         super().__init__(
             label,
             elements,
@@ -309,6 +323,8 @@ class ConditionalDistributionBatch(_ObjectBatch[ConditionalDistribution]):
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
+        if expression is not None:
+            self._store_expression(expression)
 
     @property
     def element_spec(self) -> ConditionalDistributionSpec:

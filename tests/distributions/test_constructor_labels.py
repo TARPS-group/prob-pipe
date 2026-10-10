@@ -57,7 +57,11 @@ class TestAnEmpiricalLaw:
             EmpiricalDistribution(jnp.arange(3.0))
 
     def test_record_atoms_refuse_a_component(self):
-        atoms = NumericRecordBatch("atoms", {"a": jnp.arange(3.0)}, "draw")
+        atoms = NumericRecordBatch(
+            {"a": jnp.arange(3.0)},
+            "draw",
+            label="atoms",
+        )
         with pytest.raises(TypeError, match="takes no component"):
             EmpiricalDistribution(atoms, component="a")
         assert list(EmpiricalDistribution(atoms).event_spec.components) == ["a"]
@@ -117,5 +121,5 @@ class TestAKernel:
 
 def test_a_mixture_takes_its_label_as_a_keyword():
     laws = [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)]
-    assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "MixtureDistribution"
+    assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "mixture"
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5]), label="mix").label == "mix"

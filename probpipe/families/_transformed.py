@@ -319,7 +319,10 @@ class BijectorTransformedDistribution(Distribution):
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
         image_spec = NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector))
-        super().__init__(label, _whole_term_event(component, image_spec, None, owner))
+        super().__init__(
+            _whole_term_event(component, image_spec, None, owner),
+            label=label,
+        )
         self.with_provenance(
             Provenance.create("transform", parents=[base], metadata={"bijector": bijector.label})
         )
