@@ -206,6 +206,11 @@ class Expression:
 
     __slots__ = ()
 
+    #: The fields every subclass stores, as the class docstring states.
+    depth: int
+    holds_loss: bool
+    truncation: Truncated | None
+
     def _children(self) -> tuple[Expression, ...]:
         """The child nodes, in rendering order."""
         return ()
