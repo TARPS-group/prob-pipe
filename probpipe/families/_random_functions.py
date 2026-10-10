@@ -21,6 +21,7 @@ from ..core._specs import OpaqueSpec, OutputSpec
 from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
+    _check_component,
     _class_label,
     _constructor_label,
     _whole_term_event,
@@ -174,11 +175,7 @@ class RandomMeasure(Distribution):
         label: str | None = None,
     ) -> None:
         owner = _class_label(self)
-        if not isinstance(component, str):
-            raise TypeError(
-                f"{owner} takes the component of its event as its first argument, a string; got "
-                f"{type(component).__name__}"
-            )
+        _check_component(component, owner)
         opaque_law = DistributionSpec(OutputSpec(**{component: OpaqueSpec()}))
         declaration = _event_of_kind(component, event_spec, DistributionSpec, opaque_law, owner)
         super().__init__(_constructor_label(self, label, owner), declaration)

@@ -391,7 +391,7 @@ class TestConstructorLabelCheck:
             def __init__(self, label):
                 super().__init__(label, OutputSpec(x=OpaqueSpec()))
 
-        with pytest.raises(TypeError, match="_Dist: label must be a non-empty string"):
+        with pytest.raises(TypeError, match="Distribution: label must be a non-empty string, got"):
             _Dist(label)
 
 

@@ -53,6 +53,8 @@ from ._distribution import (
     _compose_operands,
     _detached_term,
     _event_repr_fields,
+    _given_label,
+    _label_given_first,
     _no_free_dims,
     _ordered_fields,
     _repr_label,
@@ -533,8 +535,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
-        if not isinstance(label, str) or not label:
-            raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
+        _given_label(label, owner=public_class_name(type(self)))
         self._init_tracked(label, provenance=_provenance)
         self._init_annotations(_annotations)
         self._init_declaration(given_spec, event_spec)
@@ -1557,14 +1558,9 @@ def conditional_distribution(
         If *event_spec* departs from the declaration of the returned law.
     """
     if isinstance(fn, str):
-        raise TypeError(
-            f"conditional_distribution takes the function first and the label as the keyword "
-            f"label; got the string {fn!r} as the function"
-        )
-    if label is not None and (not isinstance(label, str) or not label):
-        raise TypeError(
-            f"conditional_distribution: label must be a non-empty string; got {label!r}"
-        )
+        raise TypeError(_label_given_first("conditional_distribution", "function", fn))
+    if label is not None:
+        _given_label(label, owner="conditional_distribution")
     if fn is not None:
         return _function_kernel(label, fn, given_spec, event_spec)
 

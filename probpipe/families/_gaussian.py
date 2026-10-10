@@ -46,7 +46,7 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution, _class_label
+from ..distributions._distribution import Distribution, _check_component, _class_label
 from ..distributions._factored import (
     FactoredDistribution,
     FactoredNumericDistribution,
@@ -358,11 +358,7 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        if not isinstance(component, str):
-            raise TypeError(
-                f"{_class_label(self)} takes the component of its event as its first argument, "
-                f"a string; got {type(component).__name__}"
-            )
+        _check_component(component, _class_label(self))
         output, event = _declarations(component, output_spec, event_spec)
         self._output_spec = output
         super().__init__(component, event, label=label)

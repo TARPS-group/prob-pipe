@@ -52,6 +52,7 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     _constructor_label,
+    _label_given_first,
     _shared_final_names,
     _whole_term_component,
     _whole_term_event,
@@ -566,13 +567,15 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         level: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
+        if isinstance(atoms, str):
+            raise TypeError(_label_given_first("EmpiricalDistribution", "atoms", atoms))
         atom_spec = _atom_spec(atoms)
         if level is not None and not isinstance(level, str):
-            raise TypeError(f"level must be a string; got {type(level).__name__}")
+            raise TypeError(f"level must be a string, got {type(level).__name__}")
         if level is not None and isinstance(atoms, Batch):
             raise TypeError(
                 f"level applies only to atoms given as an array, but the batch {atoms.label!r} "
-                f"already has the levels {list(atoms.level_names)}; rename them with "
+                f"already has the levels {list(atoms.level_names)}. Rename them with "
                 f"with_level_names"
             )
         super().__init__(

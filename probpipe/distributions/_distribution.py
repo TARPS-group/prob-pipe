@@ -25,7 +25,7 @@ from ..core._expression import (
     Signature,
 )
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -118,11 +118,7 @@ def _whole_term_event(
         another component, or *event_spec* declares a type that does not unify
         with *term*.
     """
-    if not isinstance(component, str):
-        raise TypeError(
-            f"{owner} takes the component of its event as its first argument, a string such "
-            f"as 'mu'; got {type(component).__name__}"
-        )
+    _check_component(component, owner)
     if event_spec is None:
         return OutputSpec.default(term, component=component)
     if not isinstance(event_spec, OutputSpec):
@@ -130,9 +126,44 @@ def _whole_term_event(
     if not event_spec.exposes_record and tuple(event_spec.components) != (component,):
         raise ValueError(
             f"{owner} has the component {component!r}, but its event_spec names "
-            f"{list(event_spec.components)}; name the component once"
+            f"{list(event_spec.components)}. Name the component once"
         )
     return event_spec.with_spec(term)
+
+
+def _check_component(component: Any, owner: str) -> None:
+    """Raise ``TypeError`` unless *component*, the first argument of *owner*'s constructor, is a string.
+
+    Parameters
+    ----------
+    component : Any
+        The component of the event that the constructor received first.
+    owner : str
+        The constructor, as the message names it, such as ``"Normal"``.
+
+    Raises
+    ------
+    TypeError
+        If *component* is not a string.
+    """
+    if not isinstance(component, str):
+        raise TypeError(
+            f"{owner} takes the component of its event as its first argument, a string such "
+            f"as 'mu', but got {type_name(component)}"
+        )
+
+
+def _label_given_first(owner: str, first: str, value: str) -> str:
+    """The message that *owner* got the string *value* as its first argument *first*.
+
+    A constructor that once took its label first takes *first* there now and
+    the label as the keyword ``label=``, so a string there is a label passed
+    in the earlier form.
+    """
+    return (
+        f"{owner} takes the {first} first and the label as the keyword label, but got the "
+        f"string {value!r} as the {first}"
+    )
 
 
 def _class_label(term: Any) -> str:
@@ -140,15 +171,18 @@ def _class_label(term: Any) -> str:
     return public_class_name(type(term))
 
 
-def _given_label(label: Any, default: str) -> str:
-    """*label*, or *default* when it is ``None``.
+def _given_label(label: Any, default: str | None = None, *, owner: str | None = None) -> str:
+    """*label*, or *default* when *label* is ``None`` and the constructor has a default.
 
     Parameters
     ----------
     label : Any
         The label a constructor received.
-    default : str
-        The constructor's default label.
+    default : str or None, optional
+        The constructor's default label, or ``None`` for a constructor that
+        requires a label.
+    owner : str or None, optional
+        The constructor the message names, such as ``"conditional_distribution"``.
 
     Returns
     -------
@@ -158,12 +192,14 @@ def _given_label(label: Any, default: str) -> str:
     Raises
     ------
     TypeError
-        If *label* is neither ``None`` nor a non-empty string.
+        If *label* is not a non-empty string, and it is not ``None`` with a
+        default to replace it.
     """
-    if label is None:
+    if label is None and default is not None:
         return default
     if not isinstance(label, str) or not label:
-        raise TypeError(f"label must be a non-empty string; got {label!r}")
+        prefix = "" if owner is None else f"{owner}: "
+        raise TypeError(f"{prefix}label must be a non-empty string, got {label!r}")
     return label
 
 
@@ -192,7 +228,7 @@ def _constructor_label(term: Any, label: Any, default: str) -> str:
     TypeError
         If *label* is neither ``None`` nor a non-empty string.
     """
-    given = _given_label(label, default)
+    given = _given_label(label, default, owner=public_class_name(type(term)))
     object.__setattr__(term, "_default_label", default)
     return given
 
@@ -567,8 +603,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
-        if not isinstance(label, str) or not label:
-            raise TypeError(f"{type(self).__name__}: label must be a non-empty string")
+        _given_label(label, owner=public_class_name(type(self)))
         # ``_provenance`` and ``_annotations`` carry state a reconstruction
         # already holds and that construction cannot otherwise reach: provenance
         # is write-once, and annotations are written after construction, so a
