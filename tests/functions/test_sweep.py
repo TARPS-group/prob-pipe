@@ -20,12 +20,14 @@ from probpipe import (
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueBatch,
     OutputSpec,
     Record,
     RecordBatch,
     RecordSpec,
     log_prob,
     mean,
+    workflow_run,
 )
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core.constraints import positive
@@ -293,6 +295,145 @@ class TestExecuteSweep:
         ]
         assert result.provenance.operation == "workflow.nested"
         assert result.provenance.metadata["k"] == 7
+
+
+class TestPairedNumericSweeps:
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @pytest.mark.parametrize("shape", [(12,), (2, 3)])
+    @pytest.mark.parametrize("record", [False, True])
+    def test_paired_inputs_vectorize_and_match_sequential(self, dispatch, shape, record):
+        a = NumericArrayBatch(
+            jnp.arange(np.prod(shape)).reshape(shape),
+            "row",
+            label="a",
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(len(shape),),
+        )
+        b = NumericArrayBatch(
+            2 * a.as_jax(),
+            "row",
+            label="b",
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(len(shape),),
+        )
+        if record:
+            b = NumericRecordBatch(
+                {"x": b.as_jax()},
+                "row",
+                label="b",
+                element_spec=RecordSpec(x=()),
+                axes_per_level=(len(shape),),
+            )
+        calls = []
+
+        def body(a, b):
+            calls.append(1)
+            return a + (b["x"] if record else b)
+
+        mapped = Function(body, label="sum", dispatch=dispatch)(a, b)
+        assert len(calls) == 2
+        sequential = Function(body, label="sum", dispatch="sequential")(a, b)
+        np.testing.assert_array_equal(np.asarray(mapped), 3 * a.as_jax())
+        np.testing.assert_array_equal(np.asarray(mapped), np.asarray(sequential))
+        assert mapped.element_spec == sequential.element_spec
+        assert mapped.level_names == sequential.level_names == ("row",)
+        assert mapped.axis_groups == sequential.axis_groups == (shape,)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_outer_product_remains_rowwise_or_is_refused(self, dispatch):
+        a = NumericArrayBatch(jnp.arange(3.0), "a", label="a")
+        b = NumericArrayBatch(jnp.arange(2.0), "b", label="b")
+        wrapped = Function(lambda a, b: a + b, label="sum", dispatch=dispatch)
+        if dispatch == "jax":
+            with pytest.raises(ValueError, match="same levels"):
+                wrapped(a, b)
+        else:
+            np.testing.assert_array_equal(
+                np.asarray(wrapped(a, b)), np.arange(3.0)[:, None] + np.arange(2.0)
+            )
+
+
+class TestNestedSweepProbes:
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_numeric_sweep_probes_once_and_keeps_per_cell_draws(self, monkeypatch, dispatch):
+        from probpipe.functions import _function
+
+        probes = []
+        original = _function._jax_traceability_error
+
+        def probe(*args, **kwargs):
+            probes.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(_function, "_jax_traceability_error", probe)
+        rows = NumericArrayBatch(jnp.arange(4.0), "row", label="shift")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(
+            lambda shift, noise: shift + noise,
+            label="shift",
+            dispatch=dispatch,
+            n_broadcast_samples=7,
+        )
+        with workflow_run(seed=12):
+            mapped = wrapped(rows, law)
+        assert probes == [1]
+        with workflow_run(seed=12):
+            sequential = wrapped.with_options(dispatch="sequential")(rows, law)
+        for index in range(4):
+            np.testing.assert_array_equal(
+                np.asarray(mapped[index].atoms), np.asarray(sequential[index].atoms)
+            )
+        assert not np.array_equal(np.asarray(mapped[0].atoms), np.asarray(mapped[1].atoms) - 1)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_fixed_numeric_branch_retains_per_cell_dispatch(self, dispatch):
+        def body(shift, noise):
+            return noise + shift if float(shift) > 0 else noise - shift
+
+        rows = NumericArrayBatch(jnp.array([-1.0, 1.0]), "row", label="shift")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        with workflow_run(seed=12):
+            actual = wrapped(rows, law)
+        with workflow_run(seed=12):
+            expected = wrapped.with_options(dispatch="sequential")(rows, law)
+        for index in range(2):
+            np.testing.assert_array_equal(
+                np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
+            )
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_object_cells_keep_their_own_traceability_check(self, monkeypatch, dispatch):
+        from probpipe.functions import _function
+
+        probes = []
+        original = _function._jax_traceability_error
+
+        def probe(*args, **kwargs):
+            probes.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(_function, "_jax_traceability_error", probe)
+
+        def body(mode, noise):
+            return float(noise) if mode.value == "python" else noise + 1
+
+        rows = OpaqueBatch(["mapped", "python"], "row", label="mode")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        if dispatch == "jax":
+            with pytest.raises(ValueError, match="failed while tracing"):
+                wrapped(rows, law)
+        else:
+            with workflow_run(seed=12):
+                actual = wrapped(rows, law)
+            with workflow_run(seed=12):
+                expected = wrapped.with_options(dispatch="sequential")(rows, law)
+            for index in range(2):
+                np.testing.assert_array_equal(
+                    np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
+                )
+        assert probes == [1, 1]
 
 
 class TestASweptBodyThatReturnsABatch:

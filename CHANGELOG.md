@@ -3290,6 +3290,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields that are not a mapping, an empty record or object batch without a
   label, `Record.from_fields()` without fields, and a callable without a name,
   whose type it names.
+- Sweeps over numeric batches with the same levels vectorize under `auto` and
+  `jax` dispatch, including several paired arguments. Nested numeric sweeps
+  share one JAX traceability check when swept values can be traced as dynamic
+  inputs. Calls that need fixed swept values and sweeps over stored objects
+  retain a check for each cell.
+
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

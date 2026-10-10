@@ -249,9 +249,7 @@ def execute_sweep_rows(
     has_object_batch = any(
         isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
-    jax_structure_supported = not (
-        has_object_batch or len(plan.array_groups) > 1 or len(array_args) > 1
-    )
+    jax_structure_supported = not (has_object_batch or len(plan.array_groups) > 1)
     jax_contract = _execution_contract.make_execution_contract(
         evaluator="jax_vmap",
         transport=_execution_contract.transport_for_workflow_kind(workflow_kind),
@@ -264,7 +262,7 @@ def execute_sweep_rows(
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' can only sweep over a single Batch of records or arrays; use "
+            "dispatch='jax' can only sweep over batches of records or arrays with the same levels; use "
             "dispatch='auto', 'sequential', or 'thread' for this call"
         )
 
@@ -435,7 +433,7 @@ def execute_sweep_rows_jax(
     output_is_declared: bool = False,
     output_label: str,
 ) -> Any:
-    """Execute the limited single-batch sweep through ``jax.vmap``."""
+    """Execute paired numeric sweep arguments through ``jax.vmap``."""
     single_call = mapped_row_body(
         func=func,
         values=values,
