@@ -76,6 +76,7 @@ from probpipe.distributions._capabilities import SupportsMean
 from probpipe.distributions._distribution import _detached_term, _fixed_paths
 from probpipe.families import BijectorTransformedDistribution
 from probpipe.functions._normalization import DISTRIBUTION_HINT_PROTOCOLS
+from tests._fixed_paths import with_fixed_paths
 from tests._posterior import posterior_of
 
 
@@ -300,12 +301,6 @@ class TestDistributionRepr:
         assert repr(Named().with_label("y")) == "Named('y', component='beta')"
 
 
-def _with_fixed_paths(term: Any, *paths: str) -> Any:
-    """*term* holding *paths* fixed, as conditioning on them records."""
-    term._store_expression(term._expression.with_fixed(paths))
-    return term
-
-
 class TestNotation:
     """A law reads as its label followed by its signature, which ``str()`` returns."""
 
@@ -332,13 +327,11 @@ class TestNotation:
         assert law.notation == "[my prior](x)"
 
     def test_fixed_paths_follow_the_components(self):
-        posterior = _with_fixed_paths(
+        posterior = with_fixed_paths(
             _DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y"
         )
         assert posterior.notation == "model(mu; y)"
-        two = _with_fixed_paths(
-            _DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y", "x"
-        )
+        two = with_fixed_paths(_DeclaredLaw("model", OutputSpec(mu=NumericArraySpec(()))), "y", "x")
         assert two.notation == "model(mu; y, x)"
 
     def test_a_relabeled_law_reads_by_its_new_label_and_its_own_component(self):
@@ -352,7 +345,7 @@ class TestFixedPaths:
         assert _fixed_paths(Normal("x", 0.0, 1.0)) == ()
 
     def test_detaching_keeps_the_fixed_paths(self):
-        law = _with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(())), "y")
+        law = with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(())), "y")
         assert _fixed_paths(law.raw()) == _fixed_paths(_detached_term(law)) == ("y",)
 
     @pytest.mark.parametrize(
@@ -365,18 +358,18 @@ class TestFixedPaths:
         ],
     )
     def test_a_copy_keeps_the_fixed_paths(self, copy):
-        law = _with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(("n",))), "y")
+        law = with_fixed_paths(_DeclaredLaw("x", NumericArraySpec(("n",))), "y")
         assert _fixed_paths(copy(law)) == ("y",)
         assert copy(law).notation.endswith("; y)")
 
     def test_a_rename_that_holds_its_law_keeps_the_fixed_paths(self):
-        law = _with_fixed_paths(_DeclaredLaw("model", OutputSpec(RecordSpec(a=(), b=()))), "y")
+        law = with_fixed_paths(_DeclaredLaw("model", OutputSpec(RecordSpec(a=(), b=()))), "y")
         renamed = law.with_path_names({"a": "g/a"})
         assert type(renamed) is not type(law)
         assert renamed.notation == "model(b, g; y)"
 
     def test_copies_pickle_with_their_fixed_paths(self):
-        law = _with_fixed_paths(Normal("x", 0.0, 1.0), "y")
+        law = with_fixed_paths(Normal("x", 0.0, 1.0), "y")
         assert _fixed_paths(pickle.loads(pickle.dumps(law))) == ("y",)
 
 

@@ -37,6 +37,7 @@ from probpipe.distributions import (
     NumericDistribution,
 )
 from probpipe.distributions._distribution import _detached_term, _fixed_paths
+from tests._fixed_paths import with_fixed_paths
 
 SCALAR = NumericArraySpec(())
 LABEL = OpaqueSpec()
@@ -643,12 +644,6 @@ class TestWithPathNames:
             rename(_kernel())
 
 
-def _with_fixed_paths(term, *paths: str):
-    """*term* holding *paths* fixed, as applying a kernel at given values records."""
-    term._store_expression(term._expression.with_fixed(paths))
-    return term
-
-
 class TestNotation:
     """A kernel reads as its label, its components, ``|``, and its given slots."""
 
@@ -670,7 +665,7 @@ class TestNotation:
         assert repr(glm).startswith("Kernel('glm', component='y', given=('beta',)")
 
     def test_fixed_paths_follow_the_given_slots(self):
-        glm = _with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
+        glm = with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
         assert glm.notation == "glm(y | sigma; beta)"
 
     def test_a_kernel_holds_no_path_fixed_by_default(self):
@@ -690,7 +685,7 @@ class TestNotation:
     )
     def test_a_copy_keeps_the_fixed_paths(self, copy):
         kernel = _kernel(given={"sigma": _array("n")}, event=OutputSpec(y=_array("n")))
-        assert _fixed_paths(copy(_with_fixed_paths(kernel, "beta"))) == ("beta",)
+        assert _fixed_paths(copy(with_fixed_paths(kernel, "beta"))) == ("beta",)
 
 
 class TestConditionOnOperation:
