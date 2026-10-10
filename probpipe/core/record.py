@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any, Self
 import jax
 import numpy as np
 
-from .._messages import count, label_given_first
+from .._messages import count
 from ..custom_types import ArrayLike
 from ._array_backend import (
     _metadata_of,
@@ -59,7 +59,13 @@ from ._spec_base import OpaqueSpec, _full_array_shape_or_none
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .provenance import Provenance
-from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm, refuses_label_first
+from .tracked import (
+    _NO_DESCRIPTION,
+    Annotated,
+    TrackedTerm,
+    refuse_label_first,
+    refuses_label_first,
+)
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -409,6 +415,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     )
 
     def __new__(cls, *args: Any, **kwargs: Any):
+        refuse_label_first(cls.__name__, args, kwargs, ("fields",))
         # Only auto-promote when invoked directly on the base class —
         # explicit ``NumericRecord(...)`` calls run their own strict
         # validation, and the subclasses (batch types, views) own their
@@ -417,10 +424,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # template decides directly, and otherwise the raw values are
         # probed with the same predicate template inference uses, so the
         # decision agrees with the template the instance will carry.
-        if args and isinstance(args[0], str) and "label" not in kwargs:
-            # A string is never a mapping of fields, so one in first place with no
-            # label keyword is a label passed in the earlier label-first form.
-            raise TypeError(label_given_first(cls.__name__, "fields", args[0]))
         if cls is Record:
             from ._numeric_record import NumericRecord
 
@@ -1213,7 +1216,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         return cls(fields, label=label)
 
     @classmethod
-    @refuses_label_first("template", then=("values",))
+    @refuses_label_first("template", "values")
     def from_field_values(
         cls, template: RecordSpec, values: Iterable[Any], *, label: str | None = None
     ) -> Record:

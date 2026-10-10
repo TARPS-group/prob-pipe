@@ -38,7 +38,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._messages import count, label_given_first, unknown_names
+from .._messages import count, unknown_names
 from ..values._function_base import FunctionSpec
 from ._array_backend import _is_numeric_dtype, _read_only, _to_jax_array
 from ._batch import (
@@ -62,7 +62,7 @@ from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
 from .record import Record, _derived_record_name, _is_numeric_field_value
-from .tracked import _NO_DESCRIPTION
+from .tracked import _NO_DESCRIPTION, refuse_label_first
 
 __all__ = ["RecordBatch"]
 
@@ -188,14 +188,9 @@ class RecordBatch(Batch[Record]):
     __slots__ = ("_columns",)
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        refuse_label_first(cls.__name__, args, kwargs, ("fields", "level_names"))
         # Only a call on the base class selects the class, as ``Record.__new__``
         # does. A view allocates with ``object.__new__`` and so does not call this.
-        if args and isinstance(args[0], str) and "label" not in kwargs:
-            # A string is never a mapping of columns, so one in first place with no
-            # label keyword is a label passed in the earlier label-first form.
-            raise TypeError(
-                label_given_first(cls.__name__, "fields", args[0], then=("level_names",))
-            )
         if cls is RecordBatch and _columns_promote(args, kwargs):
             # Lazy: the numeric module builds on this one.
             from ._numeric_record_batch import NumericRecordBatch

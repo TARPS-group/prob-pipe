@@ -28,14 +28,13 @@ from typing import Any, Self
 import jax
 import numpy as np
 
-from .._messages import label_given_first
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._expression import Applied, Collection, Expression, Named, Signature
 from ._repr import type_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
 from .provenance import Provenance
-from .tracked import TrackedTerm, _callable_label
+from .tracked import TrackedTerm, _callable_label, refuse_label_first
 
 #: How many members the default label of an object batch lists before ``…``.
 _DESCRIBED_MEMBERS = 8
@@ -168,13 +167,9 @@ class _ObjectBatch[E](Batch[E]):
     _element_rule = "match element_spec"
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
-        # Three positional arguments led by a string, with no label keyword, are
-        # the earlier ``(label, elements, level_names)`` form. With fewer, a
-        # string is the elements, which the constructor refuses on its own terms.
-        if len(args) > 2 and isinstance(args[0], str) and "label" not in kwargs:
-            raise TypeError(
-                label_given_first(cls.__name__, "elements", args[0], then=("level_names",))
-            )
+        refuse_label_first(
+            cls.__name__, args, kwargs, ("elements", "level_names"), takes_strings=True
+        )
         return object.__new__(cls)
 
     def __init__(

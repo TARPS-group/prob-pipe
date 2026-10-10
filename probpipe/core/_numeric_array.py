@@ -13,7 +13,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._messages import label_given_first
 from ._array_backend import (
     _event_shape_of,
     _is_numeric_leaf,
@@ -28,7 +27,13 @@ from ._numeric import Numeric
 from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
-from .tracked import _NO_DESCRIPTION, Annotated, TrackedTerm, refuses_label_first
+from .tracked import (
+    _NO_DESCRIPTION,
+    Annotated,
+    TrackedTerm,
+    refuse_label_first,
+    refuses_label_first,
+)
 
 __all__ = ["NumericArray"]
 
@@ -126,10 +131,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     _transient_state = ("_jax_cache",)
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
-        # A string is never a numeric value, so one in first place with no label
-        # keyword is a label passed in the earlier label-first form.
-        if args and isinstance(args[0], str) and "label" not in kwargs:
-            raise TypeError(label_given_first(cls.__name__, "value", args[0]))
+        refuse_label_first(cls.__name__, args, kwargs, ("value",))
         return object.__new__(cls)
 
     def __init__(
@@ -251,7 +253,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return jnp.reshape(self.as_jax(), -1)
 
     @classmethod
-    @refuses_label_first("spec", then=("vec",))
+    @refuses_label_first("spec", "vec")
     def from_vector(cls, spec: NumericArraySpec, vec: Any, *, label: str) -> NumericArray:
         """Reconstruct a single array from its dense 1-D vector.
 

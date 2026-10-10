@@ -10,7 +10,7 @@ from typing import Any, Self, cast
 import jax
 import numpy as np
 
-from .._messages import count, label_given_first
+from .._messages import count
 from ._array_backend import (
     _event_shape_of,
     _is_numeric_leaf,
@@ -35,7 +35,7 @@ from ._numeric_array import NumericArray
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
-from .tracked import _NO_DESCRIPTION
+from .tracked import _NO_DESCRIPTION, refuse_label_first
 
 __all__ = ["NumericArrayBatch"]
 
@@ -120,12 +120,7 @@ class NumericArrayBatch(Batch[NumericArray]):
     _transient_state = ("_jax_cache",)
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
-        # A string is never a numeric value, so one in first place with no label
-        # keyword is a label passed in the earlier label-first form.
-        if args and isinstance(args[0], str) and "label" not in kwargs:
-            raise TypeError(
-                label_given_first(cls.__name__, "values", args[0], then=("level_names",))
-            )
+        refuse_label_first(cls.__name__, args, kwargs, ("values", "level_names"))
         return object.__new__(cls)
 
     def __init__(

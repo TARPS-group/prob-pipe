@@ -19,10 +19,12 @@ import pytest
 from probpipe import (
     Batch,
     BatchSpec,
+    DistributionBatch,
     Function,
     FunctionBatch,
     FunctionSpec,
     InputSpec,
+    Normal,
     NumericArraySpec,
     Opaque,
     OpaqueBatch,
@@ -636,18 +638,44 @@ class TestTheDefaultLabel:
 
 
 class TestTheLabelFirstFormIsRefusedWithAHint:
-    """Three positional arguments led by a string are the earlier label-first form."""
+    """A string with the elements after it, and no label keyword, is the earlier label-first form."""
 
     def test_a_label_first_call_names_the_new_form(self):
         with pytest.raises(
             TypeError,
             match=(
-                r"^FunctionBatch takes the elements first and the label as the keyword label, "
-                r"but got the string 'f' as the elements; "
-                r"write FunctionBatch\(elements, level_names, label='f'\)$"
+                r"^FunctionBatch got the string 'f' as its elements; pass the label by keyword: "
+                r"FunctionBatch\(elements, level_names, label='f'\)$"
             ),
         ):
             FunctionBatch("f", [abs], "variant")
+
+    @pytest.mark.parametrize(
+        ("cls", "elements"),
+        [
+            pytest.param(FunctionBatch, [abs, len], id="FunctionBatch"),
+            pytest.param(OpaqueBatch, [object(), object()], id="OpaqueBatch"),
+            pytest.param(
+                DistributionBatch,
+                [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)],
+                id="DistributionBatch",
+            ),
+        ],
+    )
+    def test_level_names_by_keyword_names_the_new_form(self, cls, elements):
+        with pytest.raises(
+            TypeError,
+            match=(
+                rf"^{cls.__name__} got the string 'fs' as its elements; pass the label by "
+                rf"keyword: {cls.__name__}\(elements, level_names, label='fs'\)$"
+            ),
+        ):
+            cls("fs", elements, level_names="m")
+
+    def test_a_string_of_elements_is_refused_on_its_own_terms(self):
+        """A string and the level names alone match the new form, so the elements are refused."""
+        with pytest.raises(TypeError, match=r"^FunctionBatch: elements must be a sequence"):
+            FunctionBatch("ab", "m")
 
 
 class TestFieldKeys:

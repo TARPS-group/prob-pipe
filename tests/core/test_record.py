@@ -2163,14 +2163,19 @@ class TestConstructionMessages:
         [
             pytest.param(lambda: Record("r", {"a": 1.0}), id="label-and-fields"),
             pytest.param(lambda: Record("r"), id="label-alone"),
+            pytest.param(lambda: Record("r", a=1.0), id="label-and-fields-by-keyword"),
+            pytest.param(
+                lambda: Record("r", {"a": 1.0}, event_template=RecordSpec(a=())),
+                id="label-and-a-later-keyword",
+            ),
         ],
     )
     def test_the_label_first_form_names_the_new_form(self, build):
         with pytest.raises(
             TypeError,
             match=(
-                r"^Record takes the fields first and the label as the keyword label, but got "
-                r"the string 'r' as the fields; write Record\(fields, label='r'\)$"
+                r"^Record got the string 'r' as its fields; pass the label by keyword: "
+                r"Record\(fields, label='r'\)$"
             ),
         ):
             build()
@@ -2179,9 +2184,8 @@ class TestConstructionMessages:
         with pytest.raises(
             TypeError,
             match=(
-                r"^Record\.from_dict takes the fields first and the label as the keyword label, "
-                r"but got the string 'r' as the fields; write Record\.from_dict\(fields, "
-                r"label='r'\)$"
+                r"^Record\.from_dict got the string 'r' as its fields; pass the label by "
+                r"keyword: Record\.from_dict\(fields, label='r'\)$"
             ),
         ):
             Record.from_dict("r", {"a": 1.0})
@@ -2190,9 +2194,8 @@ class TestConstructionMessages:
         with pytest.raises(
             TypeError,
             match=(
-                r"^Record\.from_field_values takes the template first and the label as the "
-                r"keyword label, but got the string 'r' as the template; write "
-                r"Record\.from_field_values\(template, values, label='r'\)$"
+                r"^Record\.from_field_values got the string 'r' as its template; pass the "
+                r"label by keyword: Record\.from_field_values\(template, values, label='r'\)$"
             ),
         ):
             Record.from_field_values("r", RecordSpec(a=()), [1.0])

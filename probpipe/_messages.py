@@ -82,12 +82,11 @@ def label_given_first(owner: str, first: str, value: str, *, then: tuple[str, ..
     Returns
     -------
     str
-        Such as ``"NumericArray takes the value first and the label as the
-        keyword label, but got the string 'x' as the value; write
-        NumericArray(value, label='x')"``.
+        Such as ``"NumericArray got the string 'x' as its value; pass the label
+        by keyword: NumericArray(value, label='x')"``.
     """
     arguments = ", ".join((first, *then))
     return (
-        f"{owner} takes the {first} first and the label as the keyword label, but got the "
-        f"string {value!r} as the {first}; write {owner}({arguments}, label={value!r})"
+        f"{owner} got the string {value!r} as its {first}; pass the label by keyword: "
+        f"{owner}({arguments}, label={value!r})"
     )

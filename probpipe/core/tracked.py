@@ -59,25 +59,71 @@ def auto_label(label: str | None, default: str) -> str:
     return default if label is None else label
 
 
-def refuses_label_first[**P, R](
-    first: str, *, then: tuple[str, ...] = ()
-) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    """Make a classmethod constructor refuse a label passed where *first* goes.
+def refuse_label_first(
+    owner: str,
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+    parameters: tuple[str, ...],
+    *,
+    takes_strings: bool = False,
+) -> None:
+    """Refuse a call to *owner* that passes its label first, in the form it once took.
 
-    The constructor once took its label first and takes *first* there now, with
-    the label as the keyword ``label``. The decorated method raises when its
-    first argument after the class is a string, which *first* never is, so a call
-    in the earlier form gets the call to write rather than an error about the
-    number of arguments. Apply it beneath ``@classmethod``.
+    *owner* takes *parameters* positionally, and its label as the keyword
+    ``label``. A call is in the earlier form when its first positional argument
+    is a string and it passes no ``label`` keyword. For an owner whose first
+    parameter also takes a string, the call must show the earlier form in one
+    more way: it passes more positional arguments than *parameters*, or it
+    passes by keyword a parameter that its positional arguments fill.
 
     Parameters
     ----------
-    first : str
-        The name of the method's first parameter after the class, such as
-        ``"spec"``.
-    then : tuple of str
-        The names of the positional parameters after *first*, which the
-        rewritten call shows, such as ``("vec",)``.
+    owner : str
+        The constructor, such as ``"FunctionBatch"`` or
+        ``"NumericArray.from_vector"``.
+    args : tuple
+        The positional arguments of the call, without the class.
+    kwargs : Mapping
+        The keyword arguments of the call.
+    parameters : tuple of str
+        The names of the parameters *owner* takes positionally, in order, such
+        as ``("elements", "level_names")``.
+    takes_strings : bool
+        Whether the first of *parameters* takes a string, as an opaque value
+        does, or refuses one with its own message, as the elements of an object
+        batch do.
+
+    Raises
+    ------
+    TypeError
+        If the call is in the earlier form, with the call to write.
+    """
+    if not args or not isinstance(args[0], str) or "label" in kwargs:
+        return
+    if takes_strings:
+        filled = parameters[: len(args)]
+        if len(args) <= len(parameters) and not any(name in kwargs for name in filled):
+            return
+    raise TypeError(label_given_first(owner, parameters[0], args[0], then=parameters[1:]))
+
+
+def refuses_label_first[**P, R](
+    *parameters: str,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Make a classmethod constructor refuse a label passed where its first parameter goes.
+
+    The constructor once took its label first and takes *parameters* there now,
+    with the label as the keyword ``label``. The decorated method raises when
+    its first argument after the class is a string, which the first of
+    *parameters* never takes, so a call in the earlier form gets the call to
+    write rather than an error about the number of arguments. Apply it beneath
+    ``@classmethod``.
+
+    Parameters
+    ----------
+    *parameters : str
+        The names of the parameters the method takes positionally after the
+        class, in order, such as ``"spec", "vec"``.
 
     Returns
     -------
@@ -88,9 +134,9 @@ def refuses_label_first[**P, R](
     def decorate(method: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(method)
         def checked(*args: P.args, **kwargs: P.kwargs) -> R:
-            if len(args) > 1 and isinstance(args[1], str):
+            if args:
                 owner = f"{cast(type, args[0]).__name__}.{method.__name__}"
-                raise TypeError(label_given_first(owner, first, args[1], then=then))
+                refuse_label_first(owner, args[1:], kwargs, parameters)
             return method(*args, **kwargs)
 
         return checked
