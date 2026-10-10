@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._array_utils import _is_numeric_array
+from .._messages import label_given_first
 from .._weights import (
     Weights,
     weighted_choice,
@@ -52,7 +53,6 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     _constructor_label,
-    _label_given_first,
     _shared_final_names,
     _whole_term_component,
     _whole_term_event,
@@ -576,7 +576,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         event_spec: OutputSpec | None = None,
     ) -> None:
         if isinstance(atoms, str):
-            raise TypeError(_label_given_first("EmpiricalDistribution", "atoms", atoms))
+            raise TypeError(label_given_first("EmpiricalDistribution", "atoms", atoms))
         atom_spec = _atom_spec(atoms)
         if level is not None and not isinstance(level, str):
             raise TypeError(f"level must be a string, got {type(level).__name__}")

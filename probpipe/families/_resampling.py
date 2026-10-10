@@ -33,7 +33,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from .._weights import Weights, weighted_choice, weighted_covariance, weighted_mean
 from ..core._batch import BatchSpec
 from ..core._numeric_record import NumericRecord
@@ -56,7 +56,6 @@ from ..distributions._distribution import (
     DistributionSpec,
     _class_label,
     _constructor_label,
-    _label_given_first,
     _whole_term_event,
 )
 from ..distributions._empirical import EmpiricalDistribution, _atoms_declaration, _batch_form
@@ -1073,7 +1072,7 @@ class KDEDistribution(
         event_spec: OutputSpec | None = None,
     ) -> None:
         if isinstance(atoms, str):
-            raise TypeError(_label_given_first("KDEDistribution", "atoms", atoms))
+            raise TypeError(label_given_first("KDEDistribution", "atoms", atoms))
         if not (isinstance(kernel, type) and issubclass(kernel, SmoothingKernel)):
             raise TypeError(
                 f"kernel must be a SmoothingKernel subclass such as GaussianKernel, got {kernel!r}"

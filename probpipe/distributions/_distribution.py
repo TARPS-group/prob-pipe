@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
-from .._messages import label_given_first
 from ..core._expression import Named, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
@@ -150,16 +149,6 @@ def _check_component(component: Any, owner: str) -> None:
             f"{owner} takes the component of its event as its first argument, a string such "
             f"as 'mu', but got {type_name(component)}"
         )
-
-
-def _label_given_first(owner: str, first: str, value: str) -> str:
-    """The message that *owner* got the string *value* as its first argument *first*.
-
-    A constructor that once took its label first takes *first* there now and
-    the label as the keyword ``label=``, so a string there is a label passed
-    in the earlier form.
-    """
-    return label_given_first(owner, first, value)
 
 
 def _class_label(term: Any) -> str:

@@ -38,7 +38,6 @@ from ..distributions._conversion import _event_difference, _term_difference
 from ..distributions._distribution import (
     Distribution,
     _constructor_label,
-    _label_given_first,
     _record_default_expression,
 )
 from ..distributions._factored import _raw_record
@@ -300,7 +299,11 @@ def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
         If there is no component, or two components declare different events.
     """
     if isinstance(components, str):
-        raise TypeError(_label_given_first("MixtureDistribution", "components", components))
+        raise TypeError(
+            _messages.label_given_first(
+                "MixtureDistribution", "components", components, then=("weights",)
+            )
+        )
     laws = tuple(components)
     if not laws:
         raise ValueError("MixtureDistribution needs at least one component")

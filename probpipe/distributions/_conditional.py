@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 import jax
 import jax.numpy as jnp
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from ..core._dispatch import Feasibility
 from ..core._expression import ELLIPSIS, Signature
 from ..core._record_spec import RecordSpec
@@ -55,7 +55,6 @@ from ._distribution import (
     _detached_term,
     _event_repr_parts,
     _given_label,
-    _label_given_first,
     _law_repr,
     _no_free_dims,
     _record_default_expression,
@@ -1592,7 +1591,7 @@ def conditional_distribution(
         returned law, or if its type does not unify with the law's.
     """
     if isinstance(fn, str):
-        raise TypeError(_label_given_first("conditional_distribution", "function", fn))
+        raise TypeError(label_given_first("conditional_distribution", "function", fn))
     if label is not None:
         _given_label(label, owner="conditional_distribution")
     if fn is not None:
