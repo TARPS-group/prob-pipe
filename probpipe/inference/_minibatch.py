@@ -331,6 +331,10 @@ class MinibatchedDistribution(
 
     # -- repr ----------------------------------------------------------------
 
+    def _derived_label(self) -> str | None:
+        """The label the constructor gives when it is given none: ``minibatch``, for a prior that has a label."""
+        return "minibatch" if isinstance(self._prior, TrackedTerm) else None
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The prior, the likelihood, the dataset size, and the minibatch size."""
         return [

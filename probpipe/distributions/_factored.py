@@ -2095,6 +2095,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
         """The factors, in conditional-first order."""
         return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
 
+    def _derived_label(self) -> str:
+        """The label the constructor gives the factors the repr shows: their labels joined with ``·``."""
+        return _product_of(self.factors).render_label()
+
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
 
@@ -2232,6 +2236,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The factors, in conditional-first order."""
         return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
+
+    def _derived_label(self) -> str:
+        """The label the constructor gives the factors the repr shows: their labels joined with ``·``."""
+        return _product_of(self.factors).render_label()
 
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.

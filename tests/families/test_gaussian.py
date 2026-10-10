@@ -766,6 +766,20 @@ class TestAlgebraNames:
         total = _named_weight_grf("f") + _named_weight_grf("g")
         assert total.notation == "(f + g)(f)"
 
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda f, g: jnp.eye(3) @ f, id="linear-map"),
+            pytest.param(lambda f, g: f + 1.0, id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, id="scale"),
+            pytest.param(lambda f, g: f + g, id="sum"),
+        ],
+    )
+    def test_the_repr_leaves_out_the_label_of_the_operation_and_shows_another(self, build):
+        result = build(_named_weight_grf("f"), _named_weight_grf("g"))
+        assert f"label={result.label!r}" not in repr(result)
+        assert repr(result.with_label("h")).endswith("    label='h',\n)")
+
 
 # ---------------------------------------------------------------------------
 # Ground truth

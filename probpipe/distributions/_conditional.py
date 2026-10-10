@@ -827,6 +827,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The first public class in this kernel's method-resolution order, which the repr names."""
         return public_class_name(type(self))
 
+    def _derived_label(self) -> str | None:
+        """The label this kernel's constructor gives it when it is given no label, as for a law."""
+        return self._default_label
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The family parameters the repr shows, each by name and formatted value; none here."""
         return []

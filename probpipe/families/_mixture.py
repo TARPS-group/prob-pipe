@@ -37,9 +37,9 @@ from ..distributions._capabilities import (
 from ..distributions._conversion import _event_difference, _term_difference
 from ..distributions._distribution import (
     Distribution,
-    _class_label,
     _constructor_label,
     _label_given_first,
+    _record_default_expression,
 )
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
@@ -505,20 +505,20 @@ class MixtureDistribution(Distribution):
         self, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
     ) -> None:
         laws = _components(components)
-        expression = None
-        if label is None:
-            store = np.empty(len(laws), dtype=object)
-            for index, law in enumerate(laws):
-                store[index] = law
-            expression = Applied("mixture", (_collection_expression(store),))
+        store = np.empty(len(laws), dtype=object)
+        for index, law in enumerate(laws):
+            store[index] = law
+        expression = Applied("mixture", (_collection_expression(store),))
+        rendering = expression.label_rendering()
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
         super().__init__(
             _declaration(laws),
-            label=_constructor_label(self, label, _class_label(self)),
+            label=_constructor_label(self, label, rendering[0]),
         )
-        if expression is not None:
-            self._store_expression(expression)
+        if label is None:
+            self._store_expression(expression, rendering)
+            _record_default_expression(self)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The components, by their count when there are more than four, and the weights."""

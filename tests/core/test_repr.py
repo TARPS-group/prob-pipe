@@ -31,6 +31,7 @@ from probpipe import (
     TFPDistribution,
     condition_on,
     conditional_distribution,
+    convert,
     distribution,
     positive,
     workflow_run,
@@ -435,6 +436,66 @@ class TestADerivedLabel:
         assert repr(law).endswith("    label='model',\n)")
         rebuilt = eval(repr(law), _namespace())
         assert (rebuilt.label, rebuilt.notation) == ("model", law.notation)
+
+    def test_a_label_the_mixture_does_not_derive_is_shown(self):
+        law = MixtureDistribution(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)],
+            jnp.array([0.25, 0.75]),
+            label="MixtureDistribution",
+        )
+        assert repr(law).endswith("    label='MixtureDistribution',\n)")
+        assert eval(repr(law), _namespace()).label == "MixtureDistribution"
+
+    def test_the_label_the_mixture_derives_is_left_out_however_it_was_given(self):
+        law = _mixture()
+        given = MixtureDistribution(
+            [Normal("x", 0.0, 1.0, label="a"), Normal("x", 1.0, 2.0, label="b")],
+            jnp.array([0.25, 0.75]),
+            label="mixture",
+        )
+        assert repr(given) == repr(law)
+        assert eval(repr(given), _namespace()).label == given.label
+
+    def test_a_marginal_of_one_factor_leaves_the_label_of_that_factor_out(self):
+        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
+        marginal = joint._marginal(("a",))
+        assert repr(marginal) == (
+            "FactoredMultivariateGaussian(factors=(Normal('a', loc=0.0, scale=1.0, label='a'),))"
+        )
+        assert eval(repr(marginal), _namespace()).label == marginal.label
+
+
+class TestACarriedLabel:
+    """A label that an operation carries over to another class is shown, so the rebuilt law has it."""
+
+    def test_a_law_converted_from_a_mixture_shows_the_mixtures_label(self):
+        law = convert(_mixture(), Normal)
+        assert law.label == "mixture"
+        assert repr(law).endswith(", label='mixture')")
+        assert eval(repr(law), _namespace()).label == "mixture"
+
+    @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
+    def test_a_law_converted_from_a_product_shows_the_products_label(self, target):
+        product = Normal("x", 0.0, 1.0, label="a") * Normal("y", 1.0, 2.0, label="b")
+        with workflow_run(seed=0):
+            law = convert(product, target)
+        assert law.label == "a·b"
+        assert "    label='a·b',\n" in repr(law)
+
+    def test_a_posterior_of_a_product_shows_the_products_label(self):
+        likelihood = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
+        )
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
+        with workflow_run(seed=0):
+            posterior = condition_on(likelihood * prior, {"y": 0.5})
+        assert posterior.label == "lik·prior"
+        assert repr(posterior).endswith("    label='lik·prior',\n    fixed=('y',),\n)")
+
+    def test_a_law_converted_from_a_law_under_its_default_label_leaves_the_label_out(self):
+        law = convert(probpipe.Laplace("x", 0.0, 1.0), Normal)
+        assert law.label == "Normal"
+        assert "label=" not in repr(law)
 
 
 class TestFunctionsAndOperators:

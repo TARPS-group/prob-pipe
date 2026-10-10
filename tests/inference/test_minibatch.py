@@ -201,6 +201,12 @@ class TestTheDefaultLabel:
         named = MinibatchedDistribution(prior, likelihood, response, batch_size=40, label="mb")
         assert repr(named).endswith("    label='mb',\n)")
 
+    def test_the_repr_shows_a_label_that_names_the_class(self, prior, likelihood, response):
+        m = MinibatchedDistribution(
+            prior, likelihood, response, batch_size=40, label="MinibatchedDistribution"
+        )
+        assert repr(m).endswith("    label='MinibatchedDistribution',\n)")
+
     def test_a_prior_without_a_label_requires_one(self, likelihood, response):
         class _LogDensity:
             def _log_prob(self, value):
