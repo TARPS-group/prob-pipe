@@ -29,6 +29,7 @@ from probpipe import (
     sample,
 )
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._expression import Named
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.provenance import Provenance
 from probpipe.core.tracked import TrackedTerm
@@ -196,13 +197,12 @@ class _ViewBatch(Batch[_Leaf]):
 
 
 class _StoringBatch(Batch[_Leaf]):
-    """A batch that hands back the very element the caller put in.
+    """A batch whose element hook returns the very object the caller put in.
 
-    The elements are stored, not built, so ``batch[i]`` is the caller's own
-    object: it keeps the label and the provenance it arrived with, and nothing is
-    copied. This is the storing side of the identity rule, which the doubles above
-    cannot exercise — each of them builds a fresh element per index, so they would
-    keep passing if the ABC ever relabeled or re-attributed a borrowed object.
+    The elements are stored, not built, and the hook returns the stored object
+    itself rather than a view of it. The doubles above build a fresh element per
+    index, so they would keep passing if the ABC ever wrote the selection's label
+    or expression onto the object the hook returned; this one exposes that.
     """
 
     __slots__ = ("_store",)
@@ -213,8 +213,6 @@ class _StoringBatch(Batch[_Leaf]):
 
     def raw(self):
         return self._store
-
-    _borrows_elements = True
 
     def _element_at(self, index, *, label):
         return self._store[index[0]]
@@ -1696,11 +1694,10 @@ class TestAViewOverSharedStorageBehavesLikeAnyBatch:
 
 
 class TestAStoredElementKeepsItsOwnIdentity:
-    """A batch that stores its elements hands one back exactly as it arrived.
+    """Selecting an element never writes to the object the element hook returned.
 
-    The other doubles build an element per index, so they say nothing about this:
-    the ABC could start relabeling or re-attributing a borrowed object and every one
-    of them would still pass.
+    The hook here returns the stored object itself, so any label or expression the
+    ABC wrote onto it would show on the caller's own object.
     """
 
     @pytest.fixture
@@ -1713,29 +1710,35 @@ class TestAStoredElementKeepsItsOwnIdentity:
         ]
         return _StoringBatch(self.leaves, _spec([(3,)], ["draw"]), label="b")
 
-    def test_the_element_is_the_object_that_was_stored(self, stored):
-        assert stored[1] is self.leaves[1]
+    def test_the_element_is_a_copy_of_the_stored_object(self, stored):
+        element = stored[1]
+        assert element is not self.leaves[1]
+        assert element.value == self.leaves[1].value
 
-    def test_the_element_keeps_the_label_it_arrived_with(self, stored):
-        """Not ``b[draw=1]``: relabeling it would mean returning a copy."""
-        assert stored[1].label == "given1"
-        assert stored.at_levels(draw=2).label == "given2"
+    def test_the_element_takes_the_derived_label(self, stored):
+        assert stored[1].label == "b[draw=1]"
+        assert stored.at_levels(draw=2).label == "b[draw=2]"
 
-    def test_the_element_keeps_the_provenance_it_arrived_with(self, stored):
-        assert stored[1].provenance.operation == "author"
+    def test_the_stored_object_keeps_its_label(self, stored):
+        stored[1]
+        stored.at_levels(draw=2)
+        assert [leaf.label for leaf in self.leaves] == ["given0", "given1", "given2"]
+        assert self.leaves[1]._expression == Named("given1")
+
+    def test_the_element_keeps_the_provenance_the_hook_gave_it(self, stored):
         assert stored[1].provenance is self.leaves[1].provenance
 
-    def test_selecting_twice_does_not_accumulate_anything(self, stored):
-        """The borrowed object is not written to, so reading it again is the same."""
+    def test_selecting_twice_gives_equal_labels_and_leaves_the_stored_object_alone(self, stored):
         once, twice = stored[1], stored[1]
-        assert once is twice
-        assert once.label == twice.label == "given1"
-        assert once.provenance is twice.provenance
+        assert once is not twice
+        assert once.label == twice.label == "b[draw=1]"
+        assert self.leaves[1].label == "given1"
 
-    def test_a_sub_batch_still_takes_a_derived_label(self, stored):
+    def test_a_sub_batch_takes_a_derived_label(self, stored):
         """The view is the batch's own, so it is labeled by what it selects."""
         assert stored[0:2].label == "b[draw=0:2]"
-        assert stored[0:2][0] is self.leaves[0]
+        assert stored[0:2][0].label == "b[draw=0]"
+        assert self.leaves[0].label == "given0"
 
 
 class TestSymbolicMultiplicity:

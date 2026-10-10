@@ -910,9 +910,6 @@ class Batch[E](TrackedTerm, ABC):
 
     # -- the concrete-storage seam ------------------------------------------
 
-    #: A subclass returning borrowed elements sets this so selection never writes to them.
-    _borrows_elements = False
-
     @abstractmethod
     def _element_at(self, index: tuple[int, ...], *, label: str) -> E:
         """The single element at a fully-integer positional *index*, as a view labeled *label*.
@@ -924,13 +921,14 @@ class Batch[E](TrackedTerm, ABC):
         its elements returns a view of the stored object under *label*: a copy of
         a stored tracked term that shares its representation, or the stored
         value wrapped as a term of the element kind. That view's provenance
-        records this batch and the stored term, and the stored object keeps its
-        own label and provenance, since the caller may still hold it.
+        records this batch and the stored term.
 
         Provenance is this hook's own, because only it knows whether the element
-        was built or borrowed. An element built under *label* alone then
-        carries the expression of the selection, as ``(mu ~ prior)[sample=0]``,
-        and a stored object returned as it is keeps its own.
+        was built or borrowed. The selection then gives a shallow copy of the
+        returned term the expression of the selection, as
+        ``(mu ~ prior)[sample=0]``, and returns the copy. The object this hook
+        returns is never written to, so a hook that returns a stored object as
+        it is leaves that object's label and provenance unchanged.
         """
 
     def _element_call(self, index: tuple[int, ...]) -> Expression | None:
@@ -1055,10 +1053,13 @@ class Batch[E](TrackedTerm, ABC):
             if call is not None and isinstance(expression, Indexed):
                 expression = replace(expression, element=call)
             element = self._element_at(dropped, label=label)
-            if isinstance(element, TrackedTerm) and not self._borrows_elements:
-                # An element built under the derived label carries the selection,
-                # and a stored law keeps the paths it holds fixed, after the batch's.
+            if isinstance(element, TrackedTerm):
+                # The element carries the selection, and a stored law keeps the paths
+                # it holds fixed, after the batch's. The expression goes on a copy:
+                # the hook may return an object a caller still holds, such as a
+                # stored term, and that object must keep its own label.
                 held = expression.with_fixed(element._expression.fixed_paths())
+                element = element._shallow_copy()
                 _assign_expression(element, held, (label, collapse))
             return element
 

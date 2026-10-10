@@ -424,6 +424,18 @@ class TestElements:
         assert [parent.label for parent in view.provenance.parents] == ["f", "alpha"]
         assert element.label == "alpha"
 
+    def test_selecting_never_writes_to_a_stored_function(self):
+        """Not even one labeled as its view would be, which a label check would miss."""
+        stored = [Function(lambda x: x, label="f[variant=0]"), Function(lambda x: 2 * x, label="g")]
+        expressions = [function._expression for function in stored]
+        batch = FunctionBatch(stored, "variant", label="f")
+        views = [batch[0], batch[1], batch.at_levels(variant=0)]
+        assert [view.label for view in views] == ["f[variant=0]", "f[variant=1]", "f[variant=0]"]
+        assert all(view is not function for view in views for function in stored)
+        assert [function.label for function in stored] == ["f[variant=0]", "g"]
+        assert [function._expression for function in stored] == expressions
+        assert all(function.provenance is None for function in stored)
+
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
 

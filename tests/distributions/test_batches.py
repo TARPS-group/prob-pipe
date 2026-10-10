@@ -353,6 +353,17 @@ class TestIndexing:
         assert element._tfp_dist is laws[1]._tfp_dist
         assert laws[1].label == "x" and laws[1].provenance is None
 
+    def test_selecting_never_writes_to_a_stored_law_that_bears_the_derived_label(self):
+        """A stored law labeled as its view would be is still not the view."""
+        laws = [Normal("x", float(i), 1.0, label=f"laws[law={i}]") for i in range(2)]
+        expressions = [law._expression for law in laws]
+        batch = DistributionBatch(laws, "law", label="laws")
+        element = batch[1]
+        assert element is not laws[1]
+        assert element.label == "laws[law=1]"
+        assert [law._expression for law in laws] == expressions
+        assert laws[1].provenance is None
+
     def test_an_element_records_the_batch_and_the_stored_law(self):
         laws = _laws(3)
         batch = DistributionBatch(
