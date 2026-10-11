@@ -566,7 +566,9 @@ class TestSingletonAlignment:
         def add(x, y):
             return x + y
 
-        left = NumericArrayBatch("left", jnp.array([[1.0], [2.0]]), "grid", axes_per_level=(2,))
+        left = NumericArrayBatch(
+            jnp.array([[1.0], [2.0]]), "grid", axes_per_level=(2,), label="left"
+        )
         right = _batch([10.0, 20.0, 30.0], "grid")
         result = add(left, right)
 
@@ -582,10 +584,12 @@ class TestSingletonAlignment:
             return x + y
 
         left = NumericArrayBatch(
-            "left", jnp.array([[1.0], [2.0]]), ("chain", "draw"), axes_per_level=(1, 1)
+            jnp.array([[1.0], [2.0]]), ("chain", "draw"), axes_per_level=(1, 1), label="left"
         )
         right_values = jnp.arange(12.0).reshape(1, 2, 2, 3)
-        right = NumericArrayBatch("right", right_values, ("chain", "draw"), axes_per_level=(2, 2))
+        right = NumericArrayBatch(
+            right_values, ("chain", "draw"), axes_per_level=(2, 2), label="right"
+        )
         result = add(left, right)
 
         assert result.level_names == ("chain", "draw")
@@ -602,7 +606,7 @@ class TestSingletonAlignment:
         def add(record, x):
             return record["offset"] + x
 
-        records = RecordBatch.stack([Record("offsets", offset=1.0)], level_name="row")
+        records = RecordBatch.stack([Record({"offset": 1.0}, label="offsets")], level_name="row")
         result = add(records, _batch([10.0, 20.0]))
 
         assert result.axis_groups == ((2,),)
@@ -613,7 +617,7 @@ class TestSingletonAlignment:
         def add(law: Distribution, x):
             return mean(law) + x
 
-        laws = DistributionBatch("laws", [Normal("z", 1.0, 1.0)], "row")
+        laws = DistributionBatch([Normal("z", 1.0, 1.0)], "row", label="laws")
         result = add(laws, _batch([10.0, 20.0]))
 
         assert result.axis_groups == ((2,),)
