@@ -28,6 +28,7 @@ from probpipe import (
     ApplicabilityError,
     Batch,
     Distribution,
+    EmpiricalDistribution,
     Function,
     Normal,
     NumericArray,
@@ -35,8 +36,10 @@ from probpipe import (
     NumericArraySpec,
     OutputSpec,
     Record,
+    RecordBatch,
     ResolutionError,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.distributions import DistributionBatch
@@ -530,12 +533,140 @@ class TestAlignment:
         assert isinstance(error, ApplicabilityError)
         assert "row" in str(error)
 
-    @pytest.mark.pending(reason="a level of size one broadcasts", raises=AssertionError)
     def test_a_level_of_size_one_broadcasts(self):
         @function(dispatch="sequential")
         def add(x, y):
             return x + y
 
-        result = error_of(lambda: add(_batch([1.0]), _batch([10.0, 20.0])))
+        result = add(_batch([1.0]), _batch([10.0, 20.0]))
 
-        assert result is None
+        assert result.level_names == ("row",)
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+
+
+@pytest.fixture(params=["auto", "sequential", "thread"])
+def alignment_dispatch(request):
+    return request.param
+
+
+class TestSingletonAlignment:
+    def test_a_later_singleton_and_three_operands_broadcast(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(x, y, z):
+            return x + y + z
+
+        result = add(_batch([10.0, 20.0]), _batch([1.0]), _batch([100.0]))
+
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [111.0, 121.0], atol=0, rtol=0)
+
+    def test_multi_axis_levels_broadcast_from_the_right(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(x, y):
+            return x + y
+
+        left = NumericArrayBatch("left", jnp.array([[1.0], [2.0]]), "grid", axes_per_level=(2,))
+        right = _batch([10.0, 20.0, 30.0], "grid")
+        result = add(left, right)
+
+        assert result.level_names == ("grid",)
+        assert result.axis_groups == ((2, 3),)
+        np.testing.assert_allclose(
+            result.values, [[11.0, 21.0, 31.0], [12.0, 22.0, 32.0]], atol=0, rtol=0
+        )
+
+    def test_each_level_broadcasts_without_crossing_its_boundary(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(x, y):
+            return x + y
+
+        left = NumericArrayBatch(
+            "left", jnp.array([[1.0], [2.0]]), ("chain", "draw"), axes_per_level=(1, 1)
+        )
+        right_values = jnp.arange(12.0).reshape(1, 2, 2, 3)
+        right = NumericArrayBatch("right", right_values, ("chain", "draw"), axes_per_level=(2, 2))
+        result = add(left, right)
+
+        assert result.level_names == ("chain", "draw")
+        assert result.axis_groups == ((1, 2), (2, 3))
+        np.testing.assert_allclose(
+            result.values,
+            np.asarray(right_values) + np.array([1.0, 2.0]).reshape(1, 2, 1, 1),
+            atol=0,
+            rtol=0,
+        )
+
+    def test_a_singleton_record_broadcasts_with_an_array(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(record, x):
+            return record["offset"] + x
+
+        records = RecordBatch.stack([Record("offsets", offset=1.0)], level_name="row")
+        result = add(records, _batch([10.0, 20.0]))
+
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+
+    def test_a_singleton_batch_of_laws_broadcasts_with_an_array(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(law: Distribution, x):
+            return mean(law) + x
+
+        laws = DistributionBatch("laws", [Normal("z", 1.0, 1.0)], "row")
+        result = add(laws, _batch([10.0, 20.0]))
+
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+
+    def test_an_empty_level_broadcasts_with_one_without_running_the_body(self, alignment_dispatch):
+        calls = []
+
+        @function(dispatch=alignment_dispatch, output_spec=OutputSpec(total=SCALAR))
+        def add(x, y):
+            calls.append((x, y))
+            return x + y
+
+        result = add(_batch([1.0]), _batch([]))
+
+        assert calls == []
+        assert result.axis_groups == ((0,),)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.shape == ()
+
+    def test_a_singleton_does_not_hide_a_later_incompatible_size(self):
+        @function(dispatch="sequential")
+        def add(x, y, z):
+            return x + y + z
+
+        with pytest.raises(ApplicabilityError, match=r"level 'row'.*incompatible shapes"):
+            add(_batch([1.0]), _batch([10.0, 20.0]), _batch([1.0, 2.0, 3.0]))
+
+    def test_a_singleton_does_not_align_differently_named_levels(self):
+        @function(dispatch="sequential")
+        def add(x, y):
+            return x + y
+
+        result = add(_batch([1.0], "left"), _batch([10.0, 20.0], "right"))
+
+        assert result.level_names == ("left", "right")
+        assert result.axis_groups == ((1,), (2,))
+        np.testing.assert_allclose(result.values, [[11.0, 21.0]], atol=0, rtol=0)
+
+    def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self):
+        @function(n_broadcast_samples=6, dispatch="sequential")
+        def add(x, y, z):
+            return x + y + z
+
+        law = EmpiricalDistribution(jnp.array([0.0, 2.0]), component="z")
+        with workflow_run(seed=7):
+            result = add(_batch([1.0]), _batch([10.0, 20.0]), law)
+
+        assert isinstance(result, DistributionBatch)
+        assert result.axis_groups == ((2,),)
+        for index in range(2):
+            leaves = atom_leaves(result[index])
+            assert len(leaves) == 1
+            np.testing.assert_allclose(
+                leaves[0], [11.0 + 10.0 * index, 13.0 + 10.0 * index], atol=0, rtol=0
+            )

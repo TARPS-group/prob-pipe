@@ -19,6 +19,8 @@ from math import prod
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
+import numpy as np
+
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
 from ..distributions._distribution import Distribution
@@ -499,9 +501,11 @@ def build_array_zip_groups(
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build the zip groups of the swept batches.
 
-    Every batch in a group is read along the same axes, so they must agree on
-    what those axes are; a disagreement is a mistake about which multiplicity is
-    which rather than a product to be formed silently.
+    Batches with the same level names broadcast each level's shape separately,
+    using trailing-axis alignment and size-one expansion within that level.
+    Level boundaries never align with axes from another level. The group's
+    shape concatenates the broadcast shapes in level order; each input is read
+    at zero along its singleton axes.
 
     Parameters
     ----------
@@ -518,32 +522,38 @@ def build_array_zip_groups(
     Raises
     ------
     ApplicabilityError
-        If two batches carry the same levels on different axes, or two groups
+        If matching levels have shapes that cannot broadcast, or two groups
         share a level without sharing all their levels, naming the level.
     """
     groups: list[ArrayBroadcastGroup] = []
     for first, arg_refs in group_by_alignment(values=values, refs=refs):
+        axis_groups = tuple(first.axis_groups)
         for ref in arg_refs[1:]:
             other = _binding.input_ref_value(values, ref)
-            # Two operands naming the same levels claim the same axes, group by
-            # group: agreeing on the flat shape alone would zip a ((2,), (3, 4))
-            # partition with a ((2, 3), (4,)) one and hand the output whichever
-            # arrived first.
-            if tuple(other.axis_groups) != tuple(first.axis_groups):
-                raise ApplicabilityError(
-                    f"{arg_refs[0].label!r} and {ref.label!r} have the same levels "
-                    f"{tuple(first.level_names)} but different shapes per level: "
-                    f"{tuple(first.axis_groups)} vs {tuple(other.axis_groups)}. Arguments that "
-                    f"share level names must have the same shape for each level."
-                )
-        batch_shape = tuple(first.batch_shape)
+            broadcast_groups = []
+            for name, shape, other_shape in zip(
+                first.level_names, axis_groups, other.axis_groups, strict=True
+            ):
+                try:
+                    broadcast_groups.append(np.broadcast_shapes(shape, other_shape))
+                except ValueError as error:
+                    raise ApplicabilityError(
+                        f"Arguments {tuple(arg.label for arg in arg_refs)} have the same levels "
+                        f"{tuple(first.level_names)} but different shapes per level: "
+                        f"level {name!r} has incompatible shapes {shape} (combined so far) "
+                        f"and {other_shape} (argument {ref.label!r}). "
+                        f"Arguments that share level names must have broadcast-compatible "
+                        f"shapes for each level."
+                    ) from error
+            axis_groups = tuple(broadcast_groups)
+        batch_shape = tuple(axis for shape in axis_groups for axis in shape)
         groups.append(
             ArrayBroadcastGroup(
                 arg_refs=tuple(arg_refs),
                 batch_shape=batch_shape,
                 size=prod(batch_shape),
                 level_names=tuple(first.level_names),
-                axis_groups=tuple(first.axis_groups),
+                axis_groups=axis_groups,
             )
         )
     # A level name in two groups is one multiplicity read at two geometries:

@@ -198,7 +198,12 @@ def slice_sweep_values(
     index: int,
     array_groups: tuple[_plan.ArrayBroadcastGroup, ...],
 ) -> dict[str, Any]:
-    """Materialize one row-major sweep cell under the zip groups."""
+    """Read one row-major sweep cell, expanding singleton axes within each level.
+
+    Each input uses zero on a size-one axis and the cell's coordinate otherwise.
+    Shapes align from the right within each named level, so a missing leading
+    axis consumes no index in that input. The inputs' data are not expanded.
+    """
     out = dict(values)
     rem = index
     # Highest-index group varies fastest under row-major flattening of
@@ -206,15 +211,28 @@ def slice_sweep_values(
     for group in reversed(array_groups):
         idx = rem % group.size
         rem = rem // group.size
-        # A batch spanning several axes addresses its element by position, one
-        # indexer per axis; a flat index would read the leading axis alone and
-        # run off its end.
-        position: Any = idx
-        if len(group.batch_shape) > 1:
-            position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
+        coordinates = (
+            (idx,)
+            if len(group.batch_shape) == 1
+            else tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
+        )
         replacements: dict[_binding.FunctionInputRef, Any] = {}
         for ref in group.arg_refs:
-            replacements[ref] = _binding.input_ref_value(values, ref)[position]
+            batch = _binding.input_ref_value(values, ref)
+            if batch.axis_groups == group.axis_groups:
+                replacements[ref] = batch[coordinates]
+                continue
+            position = []
+            offset = 0
+            for shape, target_shape in zip(batch.axis_groups, group.axis_groups, strict=True):
+                # Shapes align within each named level, never across its
+                # boundary. An omitted leading axis broadcasts like size one.
+                start = offset + len(target_shape) - len(shape)
+                position.extend(
+                    0 if size == 1 else coordinates[start + axis] for axis, size in enumerate(shape)
+                )
+                offset += len(target_shape)
+            replacements[ref] = batch[tuple(position)]
         out = _binding.replace_input_refs(out, replacements)
     return out
 
