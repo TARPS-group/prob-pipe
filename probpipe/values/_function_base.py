@@ -38,7 +38,6 @@ from ..core._repr import format_default, format_names, public_class_name, term_r
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
-from ..core.node import Node
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -765,7 +764,7 @@ def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
         raise _unknown_controls(unknown, construction=True)
 
 
-class Function(Node, TrackedTerm, Annotated):
+class Function(TrackedTerm, Annotated):
     """An immutable callable with a frozen signature and optional declarations.
 
     ``apply`` binds arguments and validates one raw evaluation, returning the
@@ -802,8 +801,6 @@ class Function(Node, TrackedTerm, Annotated):
         by call arguments, and the only way to bind an argument at construction.
         An entry keyed by a name the signature lacks goes to its variadic keyword
         parameter.
-    module : object or None
-        Experimental shared-input container consulted for missing arguments.
     **controls : Any
         The engine's controls, which ``with_options`` revises:
 
@@ -889,7 +886,6 @@ class Function(Node, TrackedTerm, Annotated):
 
     _signature_info: FunctionSignatureInfo
     _bind: Mapping[str, Any]
-    _module: Any | None
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
     _output_label: str | None
@@ -933,7 +929,6 @@ class Function(Node, TrackedTerm, Annotated):
         output_label: str | None = None,
         differentiable: NumericSpec | None = None,
         bind: Mapping[str, Any] | None = None,
-        module: Any | None = None,
         **controls: Any,
     ) -> None:
         _refuse_unknown_controls(controls)
@@ -955,7 +950,6 @@ class Function(Node, TrackedTerm, Annotated):
             differentiable=differentiable,
             metadata_source=fn,
             bind=bind,
-            module=module,
             **controls,
         )
 
@@ -971,7 +965,6 @@ class Function(Node, TrackedTerm, Annotated):
         differentiable: NumericSpec | None = None,
         metadata_source: Any = None,
         bind: Mapping[str, Any] | None = None,
-        module: Any = None,
         **controls: Any,
     ) -> None:
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
@@ -1019,7 +1012,6 @@ class Function(Node, TrackedTerm, Annotated):
         set_attribute("_output_component", component)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
-        set_attribute("_module", module)
         set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
         set_attribute("__name__", label)
         set_attribute("__qualname__", getattr(metadata_source, "__qualname__", label))
@@ -1027,7 +1019,6 @@ class Function(Node, TrackedTerm, Annotated):
             "__module__", getattr(metadata_source, "__module__", None) or type(self).__module__
         )
         set_attribute("__signature__", signature_info.signature)
-        Node.__init__(self)
 
     @staticmethod
     def _from_implementation(
@@ -1230,8 +1221,6 @@ class Function(Node, TrackedTerm, Annotated):
                 self._signature_info,
                 dict(bound.arguments),
                 bind=self._bind,
-                module=self._module,
-                dependency_type=Node,
                 function_name=self.label,
             )
             _, bindings = _bind_function_inputs(

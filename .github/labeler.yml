@@ -42,7 +42,6 @@
 "area:workflow":
   - changed-files:
       - any-glob-to-any-file:
-          - "probpipe/core/node.py"
           - "probpipe/core/_workflow_*.py"
           - "probpipe/core/_broadcast_distributions.py"
           - "probpipe/core/ops.py"

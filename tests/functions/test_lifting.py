@@ -126,9 +126,6 @@ class TestTheTrigger:
 
         assert seen == [law]
 
-    @pytest.mark.pending(
-        reason="a parameter annotated Function expects a value and lifts a law", raises=TypeError
-    )
     def test_a_parameter_annotated_function_expects_a_value(self):
         assert isinstance(_kind_of(Function, standard_normal()), Distribution)
 
