@@ -21,6 +21,7 @@ from probpipe import (
     prob,
     sample,
     variance,
+    workflow_run,
 )
 
 # ---------------------------------------------------------------------------
@@ -148,11 +149,14 @@ class TestMultivariateNormal:
             atol=0.05,
         )
 
-    def test_marginal_ks(self, gaussian, loc, cov_matrix, key):
+    @pytest.mark.parametrize("seed", range(4))
+    def test_marginal_ks(self, gaussian, loc, cov_matrix, seed):
         """Each MVN marginal X_i ~ N(loc_i, cov_ii): KS test on 50k samples."""
         import scipy.stats
 
-        draws = np.asarray(sample(gaussian, sample_shape=(50_000,)))
+        with workflow_run(seed=seed):
+            draws = np.asarray(sample(gaussian, sample_shape=(50_000,)))
+        # Seeds 0-3 gave marginal KS statistics 0.0022-0.0058, with p >= 0.074.
         for i in range(draws.shape[1]):
             marginal = scipy.stats.norm(loc=float(loc[i]), scale=float(jnp.sqrt(cov_matrix[i, i])))
             _, p = scipy.stats.kstest(draws[:, i], marginal.cdf)
@@ -173,9 +177,9 @@ class TestMultivariateNormal:
         assert repr(gaussian) == (
             "MultivariateNormal(\n"
             "    'test_gaussian',\n"
-            "    component='test_gaussian',\n"
             "    loc=[0.0, 1.0, 2.0],\n"
             "    cov=array(shape=(3, 3), dtype=float32),\n"
+            "    label='test_gaussian',\n"
             ")"
         )
 
@@ -562,7 +566,10 @@ class TestDistributionCoverageGaps:
 
         class Scalar(NumericDistribution):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(**{label: NumericArraySpec((), "float32")}))
+                super().__init__(
+                    OutputSpec(**{label: NumericArraySpec((), "float32")}),
+                    label=label,
+                )
 
         s = Scalar("s")
         assert tuple(s.event_spec.components) == ("s",)

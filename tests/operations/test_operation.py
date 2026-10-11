@@ -12,6 +12,7 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    BatchSpec,
     EmpiricalDistribution,
     FunctionBatch,
     NumericArrayBatch,
@@ -19,6 +20,7 @@ from probpipe import (
     OpaqueSpec,
     Record,
     RecordSpec,
+    ResultKindError,
     ResultSchemaError,
     TrackedTerm,
     workflow_run,
@@ -29,12 +31,13 @@ from probpipe.core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from probpipe.core._expression import Conditioned, Named, Summary, draw_of, embedded
+from probpipe.core._expression import Conditioned, Named, Summary, draw_of
 from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
+from probpipe.functions._resolution import PointReport
 from probpipe.operations import (
     BoundCall,
     OperandSummary,
@@ -46,7 +49,11 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import _install_expression_rule, _workflow_draws
+from probpipe.operations._operation import (
+    _DelegatingRoute,
+    _install_expression_rule,
+    _workflow_draws,
+)
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
@@ -282,7 +289,10 @@ class TestRoles:
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
         seen: list[Any] = []
 
-        @operation(result=_open, registry=OperationRegistry())
+        def shifted_result(value: TermSpec) -> OutputSpec:
+            return OutputSpec(shifted=value)
+
+        @operation(result=shifted_result, registry=OperationRegistry())
         def shifted(d: Distribution, value):
             """The value shifted by one."""
 
@@ -313,12 +323,20 @@ class TestRoles:
             """A function, consumed as an object."""
 
         applied.structural_route("any", exact=True, **_route(True, 0.0))
-        functions = FunctionBatch("fs", [lambda x: x, lambda x: 2 * x], "fs")
+        functions = FunctionBatch(
+            [lambda x: x, lambda x: 2 * x],
+            "fs",
+            label="fs",
+        )
         with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
             applied(functions)
 
     def test_apply_lifts_nothing(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "laws",
+            label="laws",
+        )
         with pytest.raises(ApplicabilityError, match="'d' accepts DistributionSpec"):
             center.apply(laws)
 
@@ -701,6 +719,103 @@ class TestRegistryRoutes:
         assert "precise, rough" in routes["methods"].condition
 
 
+class _Delegate(_DelegatingRoute):
+    """A structural route that returns 2 by an exact implementation, where it has one, and 3 otherwise.
+
+    It records the ``exact_only`` restriction of each probe and run.
+    """
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self, *, exact_available: bool) -> None:
+        super().__init__("delegate")
+        self.exact_available = exact_available
+        self.probes: list[bool] = []
+        self.runs: list[bool] = []
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        self.probes.append(exact_only)
+        if exact_only and not self.exact_available:
+            return Feasibility(False, "no exact implementation")
+        return PointReport(True, exact=self.exact_available)
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        self.runs.append(exact_only)
+        return jnp.float32(2.0 if self.exact_available else 3.0)
+
+
+class TestDelegatingRoutes:
+    """A route whose exactness is delegated is ranked twice, as a registry route is."""
+
+    def _operation(self, delegate: _Delegate) -> Any:
+        toy = _toy()
+        toy.structural_route("stand_in", exact=False, **_route(True, 1.0))
+        toy.register_route(delegate)
+        return toy
+
+    def test_its_exact_candidate_outranks_an_approximate_route_registered_before_it(self):
+        delegate = _Delegate(exact_available=True)
+        toy = self._operation(delegate)
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.method, report.exact) == ("delegate", None, True)
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+        assert delegate.runs == [True]
+
+    def test_its_approximate_candidate_ranks_by_registration_order(self):
+        delegate = _Delegate(exact_available=False)
+        report = self._operation(delegate).check(Gaussian("g"))
+        assert report.route == "stand_in"
+        assert [info.method_name for info in report.routes] == ["delegate (exact)", "stand_in"]
+
+    def test_it_runs_approximately_when_no_route_ranks_above_it(self):
+        delegate = _Delegate(exact_available=False)
+        toy = _toy()
+        toy.register_route(delegate)
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
+        assert delegate.runs == [False]
+
+    def test_exact_only_keeps_only_its_exact_candidate(self):
+        toy = self._operation(_Delegate(exact_available=False)).with_options(exact_only=True)
+        with pytest.raises(ResolutionError, match=r"delegate \(exact\): no exact implementation"):
+            toy(Gaussian("g"))
+        exact = self._operation(_Delegate(exact_available=True)).with_options(exact_only=True)
+        assert float(jnp.asarray(exact(Gaussian("g")))) == 2.0
+
+    def test_naming_it_offers_both_candidates(self):
+        toy = self._operation(_Delegate(exact_available=False)).with_options(method="delegate")
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
+
+    def test_provenance_records_the_exactness_its_probe_reported(self):
+        metadata = self._operation(_Delegate(exact_available=True))(
+            Gaussian("g")
+        ).provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("delegate", True)
+
+    def test_it_is_listed_with_the_exact_routes_and_its_exactness_delegated(self):
+        toy = self._operation(_Delegate(exact_available=True))
+        assert [route.name for route in toy.routes] == ["delegate", "stand_in"]
+        routes = {route.name: route for route in toy.summary().routes}
+        assert (routes["delegate"].source, routes["delegate"].exact) == (
+            RouteSource.STRUCTURAL,
+            None,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Controls
 # ---------------------------------------------------------------------------
@@ -822,7 +937,11 @@ class TestControls:
 
 
 def _laws(*laws: Distribution) -> DistributionBatch:
-    return DistributionBatch("laws", list(laws), "laws")
+    return DistributionBatch(
+        list(laws),
+        "laws",
+        label="laws",
+    )
 
 
 class TestLiftedChecks:
@@ -848,7 +967,12 @@ class TestLiftedChecks:
         assert (report.feasible, report.route, report.exact) == (True, None, False)
 
     def test_an_element_kind_the_role_refuses_raises_as_the_call_does(self):
-        values = NumericArrayBatch("values", jnp.zeros(3), "values", element_spec=REAL)
+        values = NumericArrayBatch(
+            jnp.zeros(3),
+            "values",
+            element_spec=REAL,
+            label="values",
+        )
         with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
             center.check(values)
         with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
@@ -856,7 +980,10 @@ class TestLiftedChecks:
 
     def test_an_empty_sweep_is_planned_at_its_element_kind_and_selects_no_route(self):
         empty = DistributionBatch(
-            "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
+            np.empty(0, object),
+            "laws",
+            element_spec=Gaussian("g").spec,
+            label="laws",
         )
         report = center.check(empty)
         assert (report.feasible, report.route, report.lifted) == (True, None, ("d",))
@@ -902,6 +1029,38 @@ def _untracked(tree: Any) -> bool:
 
 
 class TestRawResults:
+    @pytest.mark.parametrize("mode", ["plain", "raw", "apply"])
+    @pytest.mark.parametrize("spec", [NumericArraySpec(()), BatchSpec(NumericArraySpec(()), row=2)])
+    def test_a_route_returning_the_wrong_kind_is_refused(self, mode, spec):
+        toy = _toy(result=lambda d: OutputSpec(toy=spec))
+        toy.structural_route(
+            "wrong_kind",
+            check=lambda call, result: True,
+            execute=lambda call, result: "text",
+            exact=True,
+        )
+        invoke = toy.apply if mode == "apply" else toy.with_options(raw=mode == "raw")
+
+        with pytest.raises(ValueError if mode == "apply" else ResultKindError):
+            invoke(Gaussian("g"))
+
+    @pytest.mark.parametrize("error", [TypeError("route failed"), ValueError("route failed")])
+    @pytest.mark.parametrize("mode", ["plain", "apply"])
+    def test_an_exception_from_the_route_is_propagated_unchanged(self, error, mode):
+        def execute(call, result):
+            raise error
+
+        toy = _toy(result=_event)
+        toy.structural_route(
+            "failure", check=lambda call, result: True, execute=execute, exact=True
+        )
+        invoke = toy.apply if mode == "apply" else toy
+
+        with pytest.raises(type(error)) as raised:
+            invoke(Gaussian("g"))
+
+        assert raised.value is error
+
     def test_a_raw_record_is_the_nested_mapping_of_its_raw_leaves(self):
         result = center.with_options(raw=True)(Pair("p"))
         assert type(result) is dict and set(result) == {"a", "b"}
@@ -993,7 +1152,7 @@ class TestResultAndRandomness:
             execute=lambda call, result: returned,
             exact=True,
         )
-        _install_expression_rule(toy, lambda d: Conditioned(embedded(d), ("y",)))
+        _install_expression_rule(toy, lambda d: Conditioned(d._embedded_expression(), ("y",)))
         result = toy(Gaussian("g"))
         assert _fixed_paths(result) == ("y",)
         assert (result.label, result.notation) == ("g", "g(g; y)")
@@ -1019,7 +1178,7 @@ class TestResultAndRandomness:
 
     def test_an_operation_without_an_expression_rule_carries_its_primary_operands(self):
         law = Gaussian("g")
-        assert _toy()._derived_expression({"d": law}) == embedded(law)
+        assert _toy()._derived_expression({"d": law}) == law._embedded_expression()
         labeled = _toy(label=lambda d: f"{d.label}_toy")
         assert labeled._derived_expression({"d": law}) == Named("g_toy")
 
@@ -1030,7 +1189,11 @@ class TestResultAndRandomness:
             _install_expression_rule(_toy(), Named("x"))
 
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "law",
+            label="laws",
+        )
         centers = center(laws)
         assert centers.label == "laws"
         assert centers[0].label == "laws[law=0]"
@@ -1118,7 +1281,12 @@ class TestRegistry:
 
     def test_only_an_operation_registers(self):
         with pytest.raises(TypeError, match="only an operation"):
-            OperationRegistry().register(Function("plain", lambda x: x))
+            OperationRegistry().register(
+                Function(
+                    lambda x: x,
+                    label="plain",
+                )
+            )
 
     def test_an_unknown_name_raises_key_error(self):
         with pytest.raises(KeyError, match="unknown operation 'absent'"):

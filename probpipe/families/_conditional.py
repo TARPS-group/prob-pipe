@@ -43,7 +43,7 @@ from ..distributions._capabilities import (
     SupportsConditionalVariance,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import DEFAULT_LABEL, _given_label, _whole_term_event
+from ..distributions._distribution import DEFAULT_LABEL, _constructor_label, _whole_term_event
 from ..linalg import LinOp
 from ..values import Function, SupportsInverse
 from ._backend import TFPDistribution
@@ -124,7 +124,10 @@ class _Link(Function, SupportsInverse):
     def __init__(
         self, label: str, forward: Callable[[Array], Array], inverse: Callable[[Array], Array]
     ) -> None:
-        super().__init__(label, forward)
+        super().__init__(
+            forward,
+            label=label,
+        )
         object.__setattr__(self, "_inverse_map", inverse)
 
     def _inverse(self, y: Array) -> Array:
@@ -587,7 +590,11 @@ class _GLMLikelihood(
         object.__setattr__(self, "_link", link)
         object.__setattr__(self, "_canonical", link is family.canonical_link)
         object.__setattr__(self, "_fixed", {})
-        super().__init__(_given_label(label, DEFAULT_LABEL), InputSpec(slots), declaration)
+        super().__init__(
+            InputSpec(slots),
+            declaration,
+            label=_constructor_label(self, label, DEFAULT_LABEL),
+        )
         fixed: dict[str, Array] = {}
         if X is not None:
             fixed["X"] = jnp.asarray(X)

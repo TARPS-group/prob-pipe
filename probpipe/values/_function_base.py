@@ -29,15 +29,16 @@ import jax.numpy as jnp
 from .._messages import unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
-from ..core._expression import Expression, Signature, expression_of, notation_of
+from ..core._expression import Collapse, Expression, Signature
+from ..core._kinds import term_class_for_spec
 from ..core._numeric_array import _inferred_spec
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_names, public_class_name, term_repr
+from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
-from ..core._specs import InputSpec, OutputSpec
+from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
 from ..core.node import Node
-from ..core.tracked import Annotated, TrackedTerm
+from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
     make_signature_info,
@@ -221,15 +222,41 @@ class _CallableFunctionImplementation:
         return self.callable(*bound_inputs.args, **bound_inputs.kwargs)
 
 
+#: The output component of a Function whose callable has no usable name.
+_NAMELESS_COMPONENT = "result"
+
+
+def _callable_component(fn: Any) -> str:
+    """The default output component of a Function wrapping *fn*.
+
+    It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
+    so a lambda's is ``f``, when that name is a Python identifier, and
+    ``result`` otherwise, as for a ``functools.partial``, a callable instance,
+    or a ``__name__`` such as ``"Model.fit"``. A label never changes it.
+
+    Parameters
+    ----------
+    fn : callable or None
+        The wrapped callable.
+
+    Returns
+    -------
+    str
+        The component, which is a valid component name.
+    """
+    name = _callable_name(fn)
+    return name if name is not None and name.isidentifier() else _NAMELESS_COMPONENT
+
+
 def _complete_output_spec(
-    output_spec: OutputSpec | TermSpec | None, output_label: str
+    output_spec: OutputSpec | TermSpec | None, *, component: str
 ) -> OutputSpec | None:
     if output_spec is None or isinstance(output_spec, OutputSpec):
         return output_spec
     if isinstance(output_spec, RecordSpec):
         return OutputSpec(output_spec)
     if isinstance(output_spec, TermSpec):
-        return OutputSpec(**{output_label: output_spec})
+        return OutputSpec.default(output_spec, component=component)
     raise TypeError(
         f"output_spec must be an OutputSpec, TermSpec, or None; got {type(output_spec).__name__}"
     )
@@ -255,6 +282,77 @@ def _bind_function_inputs(
             values[name], resolved, f"Function {function_name!r} input/{name}"
         )
     return input_spec.with_dim_sizes(**resolved), resolved
+
+
+class _ResultKindMismatch(ValueError):
+    """A returned term's overall kind differs from its output declaration."""
+
+
+def _validate_return_kind(spec: TermSpec, result: Any, path: str) -> None:
+    """Check the overall return kind, accepting the declaration's raw representations.
+
+    Array hosts and mappings satisfy array and record declarations. An
+    explicitly opaque raw value may be any non-mapping value. Tracked terms
+    retain their kind. Field structure and array metadata are checked by the
+    subsequent schema validation.
+
+    Parameters
+    ----------
+    spec : TermSpec
+        The declared output kind.
+    result : Any
+        The returned tracked term or raw value.
+    path : str
+        The output's location, included in the error message.
+
+    Raises
+    ------
+    _ResultKindMismatch
+        If the result has another overall kind than *spec* declares.
+    """
+    from ..core._batch import Batch, BatchSpec
+    from ..core.record import Record
+
+    if isinstance(spec, RecordSpec):
+        kind = Record
+    elif isinstance(spec, FunctionSpec):
+        kind = Function
+    elif isinstance(spec, BatchSpec):
+        kind = Batch
+    else:
+        kind = term_class_for_spec(spec)
+    if kind is None:
+        return
+    if isinstance(result, TrackedTerm):
+        accepted = isinstance(result, kind)
+    elif isinstance(spec, NumericArraySpec):
+        accepted = _is_numeric_leaf(result)
+    elif isinstance(spec, RecordSpec):
+        accepted = isinstance(result, Mapping)
+    elif isinstance(spec, FunctionSpec):
+        accepted = callable(result)
+    elif isinstance(spec, OpaqueSpec):
+        accepted = not isinstance(result, Mapping)
+    else:
+        accepted = isinstance(result, kind)
+    if not accepted:
+        raise _ResultKindMismatch(
+            f"{path} is declared {spec!r}, so it must be {_kind_description(spec, kind)}, "
+            f"but got {type_name(result)!r} instead"
+        )
+
+
+def _kind_description(spec: TermSpec, kind: type) -> str:
+    """The kind a declaration asks a result to be, as an error message states it."""
+    if isinstance(spec, RecordSpec):
+        return "a record or a mapping of fields"
+    if isinstance(spec, NumericArraySpec):
+        return "a numeric array"
+    if isinstance(spec, FunctionSpec):
+        return "a callable"
+    if isinstance(spec, OpaqueSpec):
+        return "a value other than a mapping"
+    return f"a {public_class_name(kind)}"
 
 
 def _validate_function_output(
@@ -284,6 +382,8 @@ def _validate_function_output(
 
     Raises
     ------
+    _ResultKindMismatch
+        If the result's overall kind differs from the declaration.
     ValueError
         If the result's structure, dimensions, dtype, or support does not
         conform to the declaration.
@@ -297,6 +397,7 @@ def _validate_function_output(
     path = f"Function {function_name!r} output"
     if output_spec._component_name is not None:
         path += f"/{output_spec._component_name}"
+    _validate_return_kind(spec, result, path)
     actual_spec = getattr(result, "spec", None)
     if isinstance(actual_spec, TermSpec):
         _unify_specs(spec, actual_spec, resolved, path)
@@ -364,9 +465,8 @@ def _complete_output_metadata(expected: TermSpec, actual: TermSpec) -> TermSpec:
             }
         )
     if isinstance(expected, BatchSpec) and isinstance(actual, BatchSpec):
-        return replace(
-            expected,
-            element_spec=_complete_output_metadata(expected.element_spec, actual.element_spec),
+        return expected._replace(
+            element_spec=_complete_output_metadata(expected.element_spec, actual.element_spec)
         )
     return expected
 
@@ -606,7 +706,7 @@ _DEFAULTED_BY_NONE = frozenset(
 #: aliases ``fn``, and the rest are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {
-        "func": "Function(func=...) is deprecated; use fn=...",
+        "func": "Function(func=...) is deprecated; pass the callable positionally",
         "input_template": (
             "Function(input_template=...) is no longer supported and is ignored; use input_spec=..."
         ),
@@ -672,24 +772,24 @@ class Function(Node, TrackedTerm, Annotated):
 
     Parameters
     ----------
-    label : str
-        Required non-empty function label, independent of its output interface.
     fn : Callable
         The wrapped Python callable. Its signature is captured at construction.
+    label : str, optional
+        Optional non-empty display alias. Defaults to the callable name, or ``f``
+        for a lambda; a callable without a name requires an explicit label.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         Authoritative input slots matching fixed signature parameters by name.
         Declared inputs cannot accompany variadic parameters. Defaults and
         construction bindings must satisfy the declaration.
     output_spec : OutputSpec or TermSpec or None
-        Authoritative result declaration. A bare RecordSpec exposes its fields;
-        any other bare term spec declares a whole term under output_label. A
-        named type hole is inferred independently for each call.
+        Optional result declaration. A bare RecordSpec exposes its fields;
+        another bare spec uses the callable's original name (``f`` for a lambda,
+        ``result`` for a nameless callable). Without a declaration, the return
+        type is inferred with the same component rule. Display aliases never
+        change this default component. A named type hole is inferred independently for each call.
     output_label : str or None
-        Result label. Defaults to the initial label and survives with_label.
-        Whole-term components default to this label, which must then be
-        non-empty and contain no ``/``, so a label such as ``Model.fit`` or
-        ``<lambda>`` serves; an explicit OutputSpec can supply a different
-        component.
+        Optional result alias. Without one, managed calls derive an application
+        expression. Aliases never affect mathematical declarations.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -731,7 +831,8 @@ class Function(Node, TrackedTerm, Annotated):
     TypeError
         For an invalid name, callable, declaration type, workflow kind, or
         worker-count type, a control of the wrong type, or a keyword that is
-        no control, which the message names.
+        no control, which the message names; for a label given before the
+        callable, as ``Function("g", g)``, or a callable given as ``fn=``.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker or sample counts, conversions for a
@@ -754,14 +855,15 @@ class Function(Node, TrackedTerm, Annotated):
     Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
     ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
-    wrapped callable's seed parameter. ``label`` and ``fn`` remain required.
+    wrapped callable's seed parameter. ``fn`` is required; the callable name
+    supplies an omitted ``label``.
     Only the engine's controls are admitted, since a registered method declares
     no controls of its own: its budgets are entries of ``method_options``.
 
     ``spec`` contains only input/output declarations. ``with_label`` changes the
-    function label and callable metadata; output_label and component names are
-    preserved. ``str(f)`` returns :attr:`notation`, the label followed by the
-    parameters, as ``predict(x, y)``, and the repr keeps the label first.
+    function label and callable metadata; explicit output aliases and component
+    names are preserved. ``str(f)`` returns :attr:`notation`, the label followed
+    by the parameters, as ``predict(x, y)``, and the repr keeps the label first.
     ``with_options`` returns a shallow copy with revised controls. A Function
     stores only the controls set on it, so ``options`` reads every other
     control's default when it is read.
@@ -784,16 +886,37 @@ class Function(Node, TrackedTerm, Annotated):
     _module: Any | None
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
-    _output_label: str
+    _output_label: str | None
+    _output_component: str
     _options: Mapping[str, Any]
 
     DEFAULT_N_BROADCAST_SAMPLES = 256
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # The constructor's arguments are checked here, before ``__init__`` binds
+        # them, so the two call forms it no longer takes get a message naming the
+        # form it takes rather than Python's count of positional arguments. A
+        # subclass with a constructor of its own takes its own arguments.
+        if cls.__init__ is not Function.__init__:
+            return super().__new__(cls)
+        if len(args) >= 2 and isinstance(args[0], str) and callable(args[1]):
+            raise TypeError(
+                f"Function takes the callable first and the label as a keyword, got the label "
+                f"{args[0]!r} first; write Function(fn, label={args[0]!r})"
+            )
+        if not args and "fn" in kwargs:
+            raise TypeError(
+                "Function takes the callable as its first positional argument, not as fn=; "
+                "write Function(fn, label=...)"
+            )
+        return super().__new__(cls)
+
     def __init__(
         self,
-        label: str,
         fn: Callable[..., Any],
+        /,
         *,
+        label: str | None = None,
         input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
         output_spec: OutputSpec | TermSpec | None = None,
         output_label: str | None = None,
@@ -812,6 +935,7 @@ class Function(Node, TrackedTerm, Annotated):
                 fn = value
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
+        label = _callable_label(fn, label, subject="Function")
         self._initialize(
             _CallableFunctionImplementation(fn),
             make_signature_info(fn),
@@ -850,9 +974,7 @@ class Function(Node, TrackedTerm, Annotated):
             )
         if not isinstance(label, str) or not label:
             raise TypeError(f"Function requires a non-empty label, got {label!r}")
-        if output_label is None:
-            output_label = label
-        if not isinstance(output_label, str) or not output_label:
+        if output_label is not None and (not isinstance(output_label, str) or not output_label):
             raise TypeError(
                 f"Function output_label must be a non-empty string; got {output_label!r}"
             )
@@ -863,7 +985,8 @@ class Function(Node, TrackedTerm, Annotated):
                     f"got {type(input_spec).__name__}"
                 )
             input_spec = InputSpec(input_spec)
-        output_spec = _complete_output_spec(output_spec, output_label)
+        component = _callable_component(metadata_source)
+        output_spec = _complete_output_spec(output_spec, component=component)
         construction_bindings = dict(bind or {})
         _validate_function_declarations(
             function_name=label,
@@ -884,6 +1007,7 @@ class Function(Node, TrackedTerm, Annotated):
         set_attribute("_signature_info", signature_info)
         set_attribute("_spec", FunctionSpec(input_spec, output_spec))
         set_attribute("_output_label", output_label)
+        set_attribute("_output_component", component)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
         set_attribute("_module", module)
@@ -937,8 +1061,8 @@ class Function(Node, TrackedTerm, Annotated):
 
     @property
     def output_label(self) -> str:
-        """The result label captured at construction."""
-        return self._output_label
+        """The explicit result alias, or the function's name for a derived application."""
+        return self._output_label if self._output_label is not None else self.label
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -1050,12 +1174,21 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _check_engine(self, *args, **kwargs)
 
-    def _store_expression(self, expression: Expression) -> None:
+    def _store_expression(
+        self, expression: Expression, rendering: tuple[str, Collapse | None] | None = None
+    ) -> None:
         """Store *expression* and its label, which the function's Python names follow.
 
-        The output label and its declaration are kept.
+        Explicit output aliases and the output declaration are kept.
+
+        Parameters
+        ----------
+        expression : Expression
+            The function's expression.
+        rendering : tuple of (str, Collapse or None), optional
+            The label and what it left out, for a caller that rendered it already.
         """
-        super()._store_expression(expression)
+        super()._store_expression(expression, rendering)
         object.__setattr__(self, "__name__", self._label)
         object.__setattr__(self, "__qualname__", self._label)
 
@@ -1069,7 +1202,8 @@ class Function(Node, TrackedTerm, Annotated):
         """Evaluate one point, validating declarations and returning the raw result.
 
         Python binding errors raise TypeError. Input or output declaration
-        violations raise ValueError. Dimension bindings are local to this call.
+        violations raise ValueError, including a returned kind that differs
+        from the output declaration. Dimension bindings are local to this call.
         Existing returned objects retain their identity and metadata. A Function
         realized by routes admits each argument by its role, with no lifting,
         raising ``ApplicabilityError`` for a kind its role refuses; runs the
@@ -1168,8 +1302,9 @@ class Function(Node, TrackedTerm, Annotated):
         Returns
         -------
         TrackedTerm or Any
-            The result at the kind its declaration names, labeled by
-            ``output_label`` and carrying the call's provenance. A broadcast
+            The result at the kind its declaration names, described by the
+            application or an explicit ``output_label``, with the call's
+            provenance. A broadcast
             returns the law of the results, and a sweep the batch of them on
             the swept levels. Under the ``raw`` control the result is its raw
             form, as its ``raw()`` gives it.
@@ -1193,13 +1328,23 @@ class Function(Node, TrackedTerm, Annotated):
         """The function's label followed by its parameters, as ``predict(x, y)``, which ``str()`` returns.
 
         The parameters are the names of :attr:`signature`, in order, joined by
-        ``", "``. No operation reads the notation.
+        ``", "``. A parameter with a default reads ``name=value``, as
+        ``predict(x, scale=1.0)``, when the default is a number, a string,
+        ``None``, or an array of no axes, and ``name=…`` for any other default.
+        The notation is rendered each time it is shown, at the current
+        ``notation_config.max_depth``. No operation reads the notation.
         """
-        return notation_of(expression_of(self), self._own_signature())
+        return self._expression.render_notation(self._own_signature(), warn=True)
 
     def _own_signature(self) -> Signature:
-        """The signature: the names of the parameters, in order."""
-        return Signature(tuple(self.signature.parameters))
+        """The signature: the names of the parameters, in order, each default as ``name=value``."""
+        parameters = self.signature.parameters
+        defaults = tuple(
+            (name, format_default(parameter.default))
+            for name, parameter in parameters.items()
+            if parameter.default is not parameter.empty
+        )
+        return Signature(tuple(parameters), defaults=defaults)
 
     def __str__(self) -> str:
         """The function's :attr:`notation`, as ``predict(x, y)``."""
@@ -1208,14 +1353,16 @@ class Function(Node, TrackedTerm, Annotated):
     def __repr__(self) -> str:
         """The public class, the label, the parameters, and the declarations set on the function.
 
-        The result label is shown where it differs from the function's own.
+        An explicit result alias is shown when one was supplied.
         """
-        return term_repr(public_class_name(type(self)), self.label, self._repr_arguments())
+        return term_repr(
+            public_class_name(type(self)), self._displayed_label(), self._repr_arguments()
+        )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the repr shows after the label, each by name and formatted value."""
         fields = [("parameters", format_names(self.signature.parameters))]
-        if self.output_label != self.label:
+        if self._output_label is not None:
             fields.append(("output_label", repr(self.output_label)))
         for side, declaration in (
             ("input_spec", self.input_spec),

@@ -135,7 +135,13 @@ def _measure() -> MinibatchedDistribution:
     y = (X[:, 0] > 0).astype(jnp.float32)
     prior = MultivariateNormal("beta", loc=jnp.zeros(2), cov=jnp.eye(2))
     likelihood = glm_likelihood("y", BernoulliFamily(), X=X)
-    return MinibatchedDistribution("measure", prior, likelihood, y, batch_size=5)
+    return MinibatchedDistribution(
+        prior,
+        likelihood,
+        y,
+        batch_size=5,
+        label="measure",
+    )
 
 
 class _ZeroNetwork:
@@ -220,7 +226,12 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     VonMisesFisher: lambda: VonMisesFisher("x", jnp.array([0.0, 1.0]), 2.0),
     KDEDistribution: lambda: KDEDistribution(jnp.arange(6.0).reshape(3, 2), component="kde"),
     EmpiricalDistribution: lambda: EmpiricalDistribution(
-        OpaqueBatch("labels", ["a", "b"], "e"), component="e"
+        OpaqueBatch(
+            ["a", "b"],
+            "e",
+            label="labels",
+        ),
+        component="e",
     ),
     BootstrapReplicateDistribution: lambda: BootstrapReplicateDistribution(
         "b", Normal("x", 0.0, 1.0), replicate_size=3
@@ -257,7 +268,11 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     FieldView: lambda: FieldView(Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), "a"),
     FactoredDistribution: lambda: Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0),
     _UnnormalizedConditional: lambda: _unnormalized_conditional(
-        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0), Record("given", {"a": 0.0})
+        Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
+        Record(
+            {"a": 0.0},
+            label="given",
+        ),
     ),
     _LogRatePoisson: lambda: PoissonFamily()._build_canonical("y", jnp.zeros(3)),
     MixtureDistribution: lambda: MixtureDistribution(
@@ -276,14 +291,19 @@ _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
     ),
     FactoredMultivariateGaussian: lambda: Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0),
     GaussianProcess: lambda: GaussianProcess("f", _zero_mean, _squared_exponential),
-    _SoleField: lambda: _SoleField(FactoredDistribution("record", [Normal("beta", 0.0, 1.0)])),
+    _SoleField: lambda: _SoleField(
+        FactoredDistribution(
+            [Normal("beta", 0.0, 1.0)],
+            label="record",
+        )
+    ),
     # A kernel density estimate does not rebuild itself under new paths.
     _RenamedDistribution: lambda: KDEDistribution(
         NumericRecordBatch(
-            "rows",
             {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])},
             "row",
             element_spec=NumericRecordSpec(a=(), b=()),
+            label="rows",
         ),
         label="kde",
     ).with_path_names({"a": "g/a"}),

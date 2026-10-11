@@ -20,7 +20,15 @@ import numpy as np
 import pytest
 
 import probpipe.functions._broker as broker_mod
-from probpipe import EmpiricalDistribution, Function, Normal, WorkflowKind, sample, workflow_run
+from probpipe import (
+    EmpiricalDistribution,
+    Function,
+    Normal,
+    OutputSpec,
+    WorkflowKind,
+    sample,
+    workflow_run,
+)
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
 prefect_test_harness = prefect_testing.prefect_test_harness
@@ -74,7 +82,7 @@ def _draw_standard_normal():
 
 
 _THREADED_DRAW = Function(
-    fn=_draw_standard_normal,
+    _draw_standard_normal,
     dispatch="thread",
     max_workers=1,
     label="threaded_draw",
@@ -119,83 +127,91 @@ class TestPrefectRngConformance:
         workflows = (
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="sequential",
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="jax",
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.OFF,
                     dispatch="thread",
                     max_workers=2,
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="sequential",
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="jax",
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="thread",
                     max_workers=2,
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 True,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="sequential",
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
             (
                 Function(
+                    add_one,
                     label="add_one",
-                    fn=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="jax",
                     n_broadcast_samples=6,
+                    output_spec=OutputSpec(add_one=None),
                 ),
                 False,
             ),
@@ -217,14 +233,14 @@ class TestPrefectRngConformance:
 
     def test_nested_seed_matches_local_and_real_prefect_for_any_outer_seed(self):
         local = Function(
+            _draw_under_nested_seed,
             label="_draw_under_nested_seed",
-            fn=_draw_under_nested_seed,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
         remote = Function(
+            _draw_under_nested_seed,
             label="_draw_under_nested_seed",
-            fn=_draw_under_nested_seed,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -244,13 +260,13 @@ class TestPrefectRngConformance:
 
     def test_rootless_task_coordinates_nested_managed_thread(self):
         local = Function(
-            fn=_call_threaded_draw,
+            _call_threaded_draw,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
             label="nested_thread_owner",
         )
         remote = Function(
-            fn=_call_threaded_draw,
+            _call_threaded_draw,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             label="nested_thread_owner",
@@ -283,8 +299,8 @@ class TestPrefectRngConformance:
     def test_real_prefect_retry_reuses_key_and_commits_one_effect(self):
         _PREFECT_RETRY_KEY_WORDS.clear()
         workflow = Function(
+            _claim_key_and_fail_once,
             label="_claim_key_and_fail_once",
-            fn=_claim_key_and_fail_once,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -317,11 +333,12 @@ class TestPrefectTaskRowWise:
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=0):
             result = wf(x=normal_dist)
@@ -330,11 +347,12 @@ class TestPrefectTaskRowWise:
 
     def test_output_values_correct(self, normal_dist):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=200,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=1):
             result = wf(x=normal_dist)
@@ -347,11 +365,12 @@ class TestPrefectTaskRowWise:
 
     def test_multiple_broadcast_args(self, normal_dist):
         wf = Function(
+            sum_xy,
             label="sum_xy",
-            fn=sum_xy,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
+            output_spec=OutputSpec(sum_xy=None),
         )
         d2 = Normal("y", loc=2.0, scale=0.3)
         with workflow_run(seed=2):
@@ -370,11 +389,12 @@ class TestPrefectFlowRowWise:
 
     def test_returns_empirical_distribution(self, normal_dist):
         wf = Function(
+            double_it,
             label="double_it",
-            fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=25,
+            output_spec=OutputSpec(double_it=None),
         )
         with workflow_run(seed=10):
             result = wf(x=normal_dist)
@@ -383,11 +403,12 @@ class TestPrefectFlowRowWise:
 
     def test_output_values_correct(self, normal_dist):
         wf = Function(
+            double_it,
             label="double_it",
-            fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=200,
+            output_spec=OutputSpec(double_it=None),
         )
         with workflow_run(seed=11):
             result = wf(x=normal_dist)
@@ -409,11 +430,12 @@ class TestPrefectProvenance:
 
     def test_task_provenance(self, normal_dist):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=20,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=40):
             result = wf(x=normal_dist)
@@ -424,11 +446,12 @@ class TestPrefectProvenance:
 
     def test_flow_provenance(self, normal_dist):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=20,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=41):
             result = wf(x=normal_dist)
@@ -437,11 +460,12 @@ class TestPrefectProvenance:
 
     def test_no_orchestration_provenance(self, normal_dist):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
             n_broadcast_samples=20,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=42):
             result = wf(x=normal_dist)
@@ -459,10 +483,11 @@ class TestPrefectNonBroadcast:
 
     def test_task_no_broadcast(self):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
+            output_spec=OutputSpec(add_one=None),
         )
         # Pass concrete value, not a distribution — no broadcasting
         result = wf(x=jnp.array(5.0))
@@ -470,10 +495,11 @@ class TestPrefectNonBroadcast:
 
     def test_flow_no_broadcast(self):
         wf = Function(
+            double_it,
             label="double_it",
-            fn=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
+            output_spec=OutputSpec(double_it=None),
         )
         result = wf(x=jnp.array(3.0))
         np.testing.assert_allclose(float(result), 6.0)
@@ -494,11 +520,12 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=10,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=60), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
@@ -511,11 +538,12 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=10,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=61), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
@@ -528,11 +556,12 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "flow", None)
 
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=10,
+            output_spec=OutputSpec(add_one=None),
         )
         with workflow_run(seed=62), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)

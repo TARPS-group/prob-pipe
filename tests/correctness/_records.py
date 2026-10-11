@@ -114,7 +114,11 @@ def atoms(
         expanded = jnp.reshape(latent, (*sizes, *([1] * len(shape))))
         flat[path] = (index + expanded + 0.5 * noise).astype(jnp.float32)
     return NumericRecordBatch(
-        "atoms", _nest(flat), names, element_spec=spec, axes_per_level=(1,) * len(names)
+        _nest(flat),
+        names,
+        element_spec=spec,
+        axes_per_level=(1,) * len(names),
+        label="atoms",
     )
 
 

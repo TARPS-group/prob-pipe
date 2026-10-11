@@ -47,49 +47,86 @@ class TestTheContract:
 class TestValues:
     def test_an_array_is_its_stored_array(self):
         stored = jnp.arange(3.0)
-        assert NumericArray("x", stored).raw() is stored
+        assert (
+            NumericArray(
+                stored,
+                label="x",
+            ).raw()
+            is stored
+        )
 
     def test_an_opaque_value_is_the_wrapped_value(self):
         wrapped = ("Rubin (1981)", "SAT points")
-        assert Opaque("source", wrapped).raw() is wrapped
+        assert (
+            Opaque(
+                wrapped,
+                label="source",
+            ).raw()
+            is wrapped
+        )
 
     def test_a_record_is_the_nested_mapping_of_its_raw_leaves(self):
         effect = jnp.asarray(28.0)
-        school = Record("school", {"data": {"effect": effect, "se": 15.0}, "label": "A"})
+        school = Record(
+            {"data": {"effect": effect, "se": 15.0}, "label": "A"},
+            label="school",
+        )
         raw = school.raw()
         assert type(raw) is dict and list(raw) == ["data", "label"]
         assert raw["data"]["effect"] is effect and raw["label"] == "A"
 
     def test_a_record_path_is_one_node(self):
         effect = jnp.asarray(28.0)
-        school = Record("school", {"data": {"effect": effect, "se": 15.0}, "label": "A"})
+        school = Record(
+            {"data": {"effect": effect, "se": 15.0}, "label": "A"},
+            label="school",
+        )
         assert school.raw("data/effect") is effect
         assert school.raw(("data", "effect")) is effect
         assert list(school.raw("data")) == ["effect", "se"]
 
     def test_a_record_path_that_is_not_one_raises_key_error(self):
         with pytest.raises(KeyError):
-            Record("r", x=1.0).raw("y")
+            Record(
+                {"x": 1.0},
+                label="r",
+            ).raw("y")
 
     def test_a_law_held_as_a_leaf_is_detached(self):
         law = Normal("theta", 0.0, 1.0)
-        record = Record("r", law=law, x=1.0)
+        record = Record(
+            {"law": law, "x": 1.0},
+            label="r",
+        )
         assert isinstance(record.raw("law"), tfd.Normal)
 
 
 class TestBatches:
     def test_an_array_batch_is_its_stored_array(self):
         stored = jnp.zeros((4, 2))
-        batch = NumericArrayBatch("x", stored, "draw", element_spec=NumericArraySpec((2,)))
+        batch = NumericArrayBatch(
+            stored,
+            "draw",
+            element_spec=NumericArraySpec((2,)),
+            label="x",
+        )
         assert batch.raw() is stored
 
     def test_a_record_batch_is_the_nested_mapping_of_its_columns(self):
         effects = jnp.arange(3.0)
         batch = RecordBatch(
-            "schools",
             {"data/effect": effects, "label": np.array(["A", "B", "C"], dtype=object)},
             "school",
-            element_spec=RecordSpec({"data/effect": (), "label": Opaque("l", "A").spec}),
+            element_spec=RecordSpec(
+                {
+                    "data/effect": (),
+                    "label": Opaque(
+                        "A",
+                        label="l",
+                    ).spec,
+                }
+            ),
+            label="schools",
         )
         raw = batch.raw()
         assert list(raw) == ["data", "label"]
@@ -97,7 +134,11 @@ class TestBatches:
         assert raw["label"].dtype == object and list(raw["label"]) == ["A", "B", "C"]
 
     def test_an_object_batch_is_its_frozen_object_array(self):
-        batch = OpaqueBatch("labels", ["north", "south"], "site")
+        batch = OpaqueBatch(
+            ["north", "south"],
+            "site",
+            label="labels",
+        )
         raw = batch.raw()
         assert raw.dtype == object and list(raw) == ["north", "south"]
         assert not raw.flags.writeable
@@ -106,16 +147,32 @@ class TestBatches:
         def double(x):
             return 2 * x
 
-        assert FunctionBatch("f", [double], "variant").raw()[0] is double
+        assert (
+            FunctionBatch(
+                [double],
+                "variant",
+                label="f",
+            ).raw()[0]
+            is double
+        )
 
     def test_a_batch_of_laws_is_the_object_array_of_the_stored_laws(self):
         law = Gaussian("g", 1.0)
-        raw = DistributionBatch("laws", [law, Gaussian("g", 2.0)], "law").raw()
+        raw = DistributionBatch(
+            [law, Gaussian("g", 2.0)],
+            "law",
+            label="laws",
+        ).raw()
         assert raw.dtype == object and raw[0] is law
 
     def test_a_sub_batch_is_a_view_of_the_same_store(self):
         stored = jnp.arange(6.0)
-        batch = NumericArrayBatch("x", stored, "draw", element_spec=NumericArraySpec(()))
+        batch = NumericArrayBatch(
+            stored,
+            "draw",
+            element_spec=NumericArraySpec(()),
+            label="x",
+        )
         np.testing.assert_array_equal(batch[2:4].raw(), stored[2:4])
 
 
@@ -124,7 +181,13 @@ class TestFunctions:
         def add(x, y):
             return x + y
 
-        assert Function("add", add).raw() is add
+        assert (
+            Function(
+                add,
+                label="add",
+            ).raw()
+            is add
+        )
 
 
 class TestDistributions:
@@ -138,7 +201,11 @@ class TestDistributions:
         assert detached.loc == 1.0
 
     def test_a_batch_element_drops_its_container(self):
-        element = DistributionBatch("laws", [Gaussian("g"), Gaussian("g", 2.0)], "law")[1]
+        element = DistributionBatch(
+            [Gaussian("g"), Gaussian("g", 2.0)],
+            "law",
+            label="laws",
+        )[1]
         assert _element_source(element) is not None
         assert _element_source(element.raw()) is None
 

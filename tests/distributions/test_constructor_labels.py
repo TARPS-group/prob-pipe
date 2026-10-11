@@ -57,7 +57,11 @@ class TestAnEmpiricalLaw:
             EmpiricalDistribution(jnp.arange(3.0))
 
     def test_record_atoms_refuse_a_component(self):
-        atoms = NumericRecordBatch("atoms", {"a": jnp.arange(3.0)}, "draw")
+        atoms = NumericRecordBatch(
+            {"a": jnp.arange(3.0)},
+            "draw",
+            label="atoms",
+        )
         with pytest.raises(TypeError, match="takes no component"):
             EmpiricalDistribution(atoms, component="a")
         assert list(EmpiricalDistribution(atoms).event_spec.components) == ["a"]
@@ -65,6 +69,11 @@ class TestAnEmpiricalLaw:
     def test_an_event_spec_names_the_component_in_place_of_component(self):
         law = EmpiricalDistribution(jnp.arange(3.0), event_spec=OutputSpec(theta=None))
         assert list(law.event_spec.components) == ["theta"]
+
+    @pytest.mark.parametrize("constructor", [EmpiricalDistribution, KDEDistribution])
+    def test_a_label_passed_first_raises_naming_the_keyword(self, constructor):
+        with pytest.raises(TypeError, match="takes the atoms first and the label as the keyword"):
+            constructor("theta", jnp.arange(3.0))
 
     def test_a_kde_follows_the_empirical_law(self):
         kde = KDEDistribution(jnp.array([0.0, 1.0, 3.0]), 0.5, component="x")
@@ -117,5 +126,26 @@ class TestAKernel:
 
 def test_a_mixture_takes_its_label_as_a_keyword():
     laws = [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)]
-    assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "MixtureDistribution"
+    assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "mixture"
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5]), label="mix").label == "mix"
+    with pytest.raises(TypeError, match="takes the components first and the label as the"):
+        MixtureDistribution("mix", laws)
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Normal("mu", 0.0, 1.0, label=3),
+        lambda: EmpiricalDistribution(jnp.arange(3.0), component="mu", label=3),
+        lambda: distribution(
+            sample=lambda key: jax.random.normal(key), event_spec=_SCALAR, component="z", label=3
+        ),
+        lambda: conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), given_spec={"mu": _SCALAR}, label=3
+        ),
+    ],
+    ids=["family", "empirical", "distribution", "conditional_distribution"],
+)
+def test_every_label_check_names_the_bad_value(build):
+    with pytest.raises(TypeError, match="label must be a non-empty string, got 3"):
+        build()

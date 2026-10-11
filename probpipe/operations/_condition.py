@@ -73,7 +73,7 @@ from ..core._dispatch import (
     UnaryDispatchMethod,
     UnaryDispatchRegistry,
 )
-from ..core._expression import Expression, embedded, with_fixed
+from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
@@ -432,7 +432,7 @@ def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
 def _joint_value(value: Any, given: Record) -> Record:
     """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
     fields = value.children if isinstance(value, Record) else value
-    return Record("value", {**dict(fields), **dict(given.children)})
+    return Record({**dict(fields), **dict(given.children)}, label="value")
 
 
 def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
@@ -487,7 +487,10 @@ class _UnnormalizedConditional(Distribution):
     def __init__(
         self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
     ) -> None:
-        super().__init__(joint.label, event_spec)
+        super().__init__(
+            event_spec,
+            label=joint.label,
+        )
         self._joint = joint
         self._given = given
         self._keyed = keyed
@@ -564,7 +567,11 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     def __init__(
         self, kernel: ConditionalDistribution, given: Record, event_spec: OutputSpec
     ) -> None:
-        super().__init__(kernel.label, kernel.given_spec, event_spec)
+        super().__init__(
+            kernel.given_spec,
+            event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._given = given
 
@@ -608,7 +615,7 @@ def _unnormalized_conditional(law: Any, given: Record) -> Any:
 
 def _joined(first: Record, second: Record) -> Record:
     """The given values of *first* and *second* in one record."""
-    return Record("given", {**dict(first.children), **dict(second.children)})
+    return Record({**dict(first.children), **dict(second.children)}, label="given")
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +783,11 @@ class _PerValueNormalization(ConditionalDistribution):
         return object.__new__(_capability_subclass(_PerValueNormalization, claimed))
 
     def __init__(self, kernel: ConditionalDistribution, normalization: _Normalization) -> None:
-        super().__init__(kernel.label, kernel.given_spec, kernel.event_spec)
+        super().__init__(
+            kernel.given_spec,
+            kernel.event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._normalization = normalization
 
@@ -1017,7 +1028,10 @@ def _bayes(call: BoundCall) -> Any:
     bound = {key: value for key, value in values.items() if _head(key) in slots}
     law = _curried(evaluated, bound) if bound else evaluated
     produced = {key: value for key, value in values.items() if key not in bound}
-    return _unnormalized_conditional(law, Record("given", produced))
+    return _unnormalized_conditional(
+        law,
+        Record(produced, label="given"),
+    )
 
 
 def _bayes_is_exact(call: BoundCall) -> bool:
@@ -1192,7 +1206,11 @@ def _slice(call: BoundCall) -> Any:
         _law_at_defaults(factors[0], ())
         if len(factors) == 1
         else _with_named(
-            FactoredDistribution(_joined_label(f.label for f in factors), factors), False
+            FactoredDistribution(
+                factors,
+                label=_joined_label(f.label for f in factors),
+            ),
+            False,
         )
     )
     if law.provenance is None:
@@ -1365,7 +1383,9 @@ class _NormalizingRoute(_RegistryRoute):
             self.registry, method, exact_only, MappingProxyType(self.method_options(call))
         )
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
         """The exact stage's report, then the normalization's, under the controls.
 
         A probe runs no method. A check computes the exact stage's result only
@@ -1384,7 +1404,7 @@ class _NormalizingRoute(_RegistryRoute):
                 "binding the given slots runs approximate conditioning "
                 "(SupportsApproximateConditioning), which exact_only excludes",
             )
-        result = None
+        conditional = None
         normalized = self._stage.normalized(call)
         if normalized is None:
             if checking():
@@ -1395,8 +1415,8 @@ class _NormalizingRoute(_RegistryRoute):
                         f"whether its laws are normalized, which only a call can tell",
                     ),
                 )
-            result = self._stage.compute(call)
-            normalized = not _needs_normalization(result)
+            conditional = self._stage.compute(call)
+            normalized = not _needs_normalization(conditional)
         if normalized:
             if method is not None:
                 return Feasibility(
@@ -1412,7 +1432,7 @@ class _NormalizingRoute(_RegistryRoute):
         normalization = self._normalization(call, method, exact_only)
         if self._stage.yields_kernel(call):
             return self._per_value_report(call, normalization, exact)
-        if result is None:
+        if conditional is None:
             if checking() and not exact:
                 evaluated = _named(_evaluated(call.operands["d"]))
                 return Feasibility(
@@ -1422,8 +1442,8 @@ class _NormalizingRoute(_RegistryRoute):
                         f"at given, which only a call computes",
                     ),
                 )
-            result = self._stage.compute(call)
-        info = normalization.report(result)
+            conditional = self._stage.compute(call)
+        info = normalization.report(conditional)
         if info.feasible is not True or exact or not isinstance(info, MethodInfo):
             return info
         return replace(info, exact=False)
@@ -1478,15 +1498,17 @@ class _NormalizingRoute(_RegistryRoute):
             return MethodInfo(True, method_name=normalization.method, exact=exact and method.exact)
         return PointReport(True, exact=exact)
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The exact stage's result, normalized as the declarations, or else its own, require."""
-        result = self._stage.compute(call)
+        conditional = self._stage.compute(call)
         normalized = self._stage.normalized(call)
         if normalized is None:
-            normalized = not _needs_normalization(result)
+            normalized = not _needs_normalization(conditional)
         if normalized:
-            return result
-        return _normalized(result, self._normalization(call, method, exact_only))
+            return conditional
+        return _normalized(conditional, self._normalization(call, method, exact_only))
 
 
 # ---------------------------------------------------------------------------
@@ -1542,11 +1564,11 @@ def _conditioned_expression(d: Any, given: Any) -> Expression:
     paths = _conditioned_paths(given) or ()
     kept = _factors_left(d, paths) if paths else None
     if kept is None:
-        base = embedded(d)
+        base = d._embedded_expression()
     else:
-        left = embedded(kept[0]) if len(kept) == 1 else _product_of(kept)
-        base = with_fixed(left, _fixed_paths(d))
-    return with_fixed(base, paths)
+        left = kept[0]._embedded_expression() if len(kept) == 1 else _product_of(kept)
+        base = left.with_fixed(_fixed_paths(d))
+    return base.with_fixed(paths)
 
 
 def _factors_left(d: Any, keys: tuple[str, ...]) -> list[Any] | None:
@@ -1790,7 +1812,9 @@ class _NormalizingThen(_RegistryRoute):
             f"{_guard_condition(self._admits)}"
         )
 
-    def probe(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Feasibility:
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
         """Whether the law is unnormalized and admitted, then the registry's report for it.
 
         The registry reports on the target the law holds, as :func:`_held_target`
@@ -1809,7 +1833,9 @@ class _NormalizingThen(_RegistryRoute):
             held, method=method, exact_only=exact_only, **self.method_options(call)
         )
 
-    def run(self, call: BoundCall, *, method: str | None, exact_only: bool) -> Any:
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
         """The answer on the law the selected method returns, under the law's own paths."""
         held, renamed = _held_target(call.operands["d"])
         normalized = renamed(

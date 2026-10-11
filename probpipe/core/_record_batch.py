@@ -31,14 +31,14 @@ See design III.3.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Self, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._messages import count, unknown_names
+from .._messages import count, label_given_first, unknown_names
 from ..values._function_base import FunctionSpec
 from ._array_backend import _is_numeric_dtype, _read_only, _to_jax_array
 from ._batch import (
@@ -56,11 +56,13 @@ from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from ._repr import format_levels, format_names, public_class_name, type_name
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
-from .record import Record, _is_numeric_field_value
+from .record import Record, _derived_record_name, _is_numeric_field_value
+from .tracked import _NO_DESCRIPTION
 
 __all__ = ["RecordBatch"]
 
@@ -77,15 +79,11 @@ class RecordBatch(Batch[Record]):
     As a JAX pytree it flattens to its columns, with its spec as the static
     data. The label and the expression do not cross a transform, so two
     batches that differ only in their labels have equal treedefs and share a
-    compilation, and a batch rebuilt from its leaves is labeled by its class,
-    as ``RecordBatch``, until a result boundary labels it.
+    compilation, and a batch rebuilt from its leaves is labeled
+    ``<no description>`` until a result boundary labels it.
 
     Parameters
     ----------
-    label : str
-        The batch's label. Required, as it is for every batch: a batch is a value a
-        caller holds, and a label derived from its class says nothing about what it
-        holds.
     fields : Mapping of str to array
         The field columns, keyed by **leaf path** (``"outer/a"``) or given as a
         nested mapping, which is flattened to leaf paths. Each column holds one
@@ -93,23 +91,28 @@ class RecordBatch(Batch[Record]):
         where the event shape is the field spec's for a ``NumericArraySpec`` and empty
         otherwise — so a field that is not an array takes an object array, one
         entry per element. The keys must be exactly the fields of *element_spec*.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names a single
         level. There is no default, for the reason
         :class:`~probpipe.core._batch.Batch` gives: a level is named so that
         operations can align operands by meaning.
+    label : str, optional
+        The batch's label. Defaults to ``record(field,...)``, which names the
+        top-level fields of the element spec in canonical order, so path-keyed
+        and nested columns of the same fields give the same label.
     element_spec : RecordSpec, optional
         The schema and kind spec every element satisfies. Defaults to the spec
         the columns imply, as a :class:`~probpipe.Record` infers its spec from
         its values: an array column's axes past those the levels hold are its
         field's event shape, and an object column's entries decide its field's
         spec.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -136,6 +139,13 @@ class RecordBatch(Batch[Record]):
         declares a symbolic dimension, which gives its event shape no size to
         split by; if a column leaves no batch axis; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -159,8 +169,12 @@ class RecordBatch(Batch[Record]):
     --------
     >>> import jax.numpy as jnp
     >>> from probpipe import RecordSpec
-    >>> batch = RecordBatch("draws", {"x": jnp.zeros((3, 2))}, "draw",
-    ...                     element_spec=RecordSpec(x=(2,)))
+    >>> batch = RecordBatch(
+    ...     {"x": jnp.zeros((3, 2))},
+    ...     "draw",
+    ...     element_spec=RecordSpec(x=(2,)),
+    ...     label="draws",
+    ... )
     >>> batch.batch_shape
     (3,)
     >>> batch["x"].shape
@@ -176,6 +190,12 @@ class RecordBatch(Batch[Record]):
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # Only a call on the base class selects the class, as ``Record.__new__``
         # does. A view allocates with ``object.__new__`` and so does not call this.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            # A string is never a mapping of columns, so one in first place with no
+            # label keyword is a label passed in the earlier label-first form.
+            raise TypeError(
+                label_given_first(cls.__name__, "fields", args[0], then=("level_names",))
+            )
         if cls is RecordBatch and _columns_promote(args, kwargs):
             # Lazy: the numeric module builds on this one.
             from ._numeric_record_batch import NumericRecordBatch
@@ -185,22 +205,29 @@ class RecordBatch(Batch[Record]):
 
     def __init__(
         self,
-        label: str,
         fields: Mapping[str, Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
+        label: str | None = None,
         element_spec: RecordSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        axes = None if axes_per_level is None else tuple(axes_per_level)
+        names = _as_names(level_names, what=f"{kind} level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what=f"{kind} axes_per_level")
+        )
         if element_spec is None:
             element_spec = _inferred_element_spec(fields, _batch_axis_count(names, axes), kind=kind)
         spec = _record_element_spec(element_spec, kind=kind)
         store = _leaf_keyed_columns(fields, spec, kind=kind)
+        # Derived from the validated spec, so a path-keyed and a nested mapping of
+        # the same columns read alike, as a ``Record``'s top-level fields do.
+        label = _derived_record_name(spec.children) if label is None else label
 
         batch_shape = _batch_shape_of(store, spec, kind=kind)
         groups = _axis_groups_for(batch_shape, names, axes, kind=kind)
@@ -212,7 +239,7 @@ class RecordBatch(Batch[Record]):
 
         object.__setattr__(self, "_columns", store)
         self._init_batch(
-            BatchSpec(spec, groups, names),
+            BatchSpec._from_groups(spec, groups, names),
             label=label,
             provenance=provenance,
         )
@@ -309,13 +336,13 @@ class RecordBatch(Batch[Record]):
         row = {path: column[index] for path, column in self._columns.items()}
         return self._inherit_provenance(
             Record(
-                label,
                 row,
                 event_template=self.element_spec,
                 # The columns were checked against the element spec at
                 # construction, so re-checking each row's leaves repeats work that
                 # iteration pays per element.
                 _validate_leaves=False,
+                label=label,
             )
         )
 
@@ -473,7 +500,7 @@ class RecordBatch(Batch[Record]):
         return self._inherit_provenance(
             column_cls._over_store(
                 column,
-                spec=BatchSpec(spec, self.axis_groups, self.level_names),
+                spec=self.spec._replace(element_spec=spec),
                 label=key,
             )
         )
@@ -495,7 +522,7 @@ class RecordBatch(Batch[Record]):
         view = object.__new__(self._view_class(template))
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
-            BatchSpec(template, self.axis_groups, self.level_names),
+            self.spec._replace(element_spec=template),
             label=path,
         )
         return self._inherit_provenance(view)
@@ -512,7 +539,7 @@ class RecordBatch(Batch[Record]):
         view = object.__new__(self._view_class(element_spec))
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
-            BatchSpec(element_spec, self.axis_groups, self.level_names),
+            self.spec._replace(element_spec=element_spec),
             label=key,
         )
         return self._inherit_provenance(view)
@@ -789,11 +816,11 @@ class RecordBatch(Batch[Record]):
         transform.
         """
         return _batch_class_for(template)(
-            self.label,
             dict(columns),
             self.level_names,
             element_spec=template,
             axes_per_level=_ranks_of(self.axis_groups),
+            label=self.label,
         )
 
     # -- construction from elements -----------------------------------------
@@ -868,10 +895,10 @@ class RecordBatch(Batch[Record]):
             for key in fields
         }
         return cls(
-            label if label is not None else records[0].label,
             columns,
             (level_name,),
             element_spec=spec,
+            label=label if label is not None else records[0].label,
         )
 
     # -- equality -----------------------------------------------------------
@@ -956,9 +983,9 @@ def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
         Whether the call's columns are all numeric and its element spec, if
         given, is a ``NumericRecordSpec``.
     """
-    if len(args) < 2 or (len(args) < 3 and "level_names" not in kwargs):
+    if not args or (len(args) < 2 and "level_names" not in kwargs):
         return False
-    fields = args[1]
+    fields = args[0]
     if not isinstance(fields, Mapping) or not fields:
         return False
     element_spec = kwargs.get("element_spec")
@@ -1065,7 +1092,7 @@ def _flat_columns(fields: Mapping[str, Any], *, kind: str) -> dict[str, Any]:
             f"got {type(fields).__name__}"
         )
     if not fields:
-        raise ValueError(f"{kind} requires at least one field")
+        raise ValueError(f"{kind} requires at least one field, got an empty mapping")
     flat: dict[str, Any] = {}
 
     def _flatten(node: Mapping[str, Any], prefix: str) -> None:
@@ -1413,10 +1440,10 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, BatchSpec]:
     """Flatten for JAX pytree traversal: the columns, keyed by the aux spec.
 
     Children are the columns in the template's canonical order, so they realign
-    with the aux spec on unflatten. The static aux is the batch's own type
-    alone, matching ``Record``: the label, the expression, and the provenance
-    do not cross a JAX transform boundary, so two batches that differ only in
-    their labels have equal treedefs and share a compilation (II.4).
+    with the aux spec on unflatten. The static aux is the batch's spec alone,
+    matching ``Record``: the label, the expression, and the provenance do not
+    cross a JAX transform boundary, so two batches that differ only in their
+    labels have equal treedefs and share a compilation (II.4).
     """
     # ``_columns`` is already in the template's canonical order at every
     # construction site, so the order the aux spec expects needs no second walk —
@@ -1463,10 +1490,10 @@ def _unflatten_with(cls: type[RecordBatch]):
     """
 
     def _unflatten(spec: BatchSpec, children: list) -> RecordBatch | Record:
-        # The label does not cross a transform, so a rebuilt batch is labeled by
-        # its class, and an element by ``Record``, until a result boundary labels
-        # it (II.4).
-        label = public_class_name(cls)
+        # The label does not cross a transform, so a rebuilt batch, and a record
+        # rebuilt from it, is labeled ``<no description>`` until a result
+        # boundary labels it (II.4).
+        label = _NO_DESCRIPTION
         element_spec = cast(RecordSpec, spec.element_spec)
         # ``strict``: a child count that disagrees with the spec's fields would
         # otherwise truncate the columns silently, leaving a value whose own spec
@@ -1508,10 +1535,10 @@ def _unflatten_with(cls: type[RecordBatch]):
                 for path, column in columns.items()
             }
             return Record(
-                "Record",
                 element,
                 event_template=element_spec,
                 _validate_leaves=False,
+                label=_NO_DESCRIPTION,
             )
         surviving = _surviving_batch_shape(columns, rank, refused=refused)
         if surviving != spec.batch_shape:

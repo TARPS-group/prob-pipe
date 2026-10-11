@@ -15,6 +15,9 @@ from threading import Lock
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal
 
+import jax
+import jax.extend.core
+
 from ..core.config import ProvenanceMode, provenance_config
 from ..custom_types import PRNGKey
 from ._errors import UnmanagedConcurrentWorkflowEntryError
@@ -345,6 +348,49 @@ def _guard_automatic_key_request() -> None:
     """Reject omitted-key randomness during actual JAX execution."""
     if _JAX_RUNTIME_GUARD.get():
         raise TypeError(JAX_KEYLESS_DRAW_MESSAGE)
+
+
+def _caller_jax_trace_active() -> bool:
+    """Return whether a JAX transformation is tracing the current call.
+
+    ``jax.core.eval_context`` installs JAX's evaluation trace, which is the
+    current trace at the top level. Under a transformation, such as ``jit``,
+    ``vmap``, or ``grad``, the current trace is the transformation's own.
+    """
+    find_top_trace = getattr(jax.extend.core, "find_top_trace", None)
+    if find_top_trace is None:
+        # JAX 0.9 exposes this extension entry point through jax.core.
+        find_top_trace = jax.core.find_top_trace
+    current = find_top_trace(())
+    with jax.core.eval_context():
+        top_level = find_top_trace(())
+    return current is not top_level
+
+
+def _guard_caller_jax_trace(operation_kind: str) -> None:
+    """Reject a workflow-owned random event claimed inside the caller's JAX trace.
+
+    The engine traces a call only under a route probe or the JAX runtime
+    guard, and each of those settles a claim itself, so an active trace
+    without either is one the caller opened.
+
+    Parameters
+    ----------
+    operation_kind : str
+        The operation that claims the event, named in the error.
+
+    Raises
+    ------
+    RuntimeError
+        If a JAX transformation the caller opened is tracing the call.
+    """
+    if _workflow_side_effects_forbidden() or not _caller_jax_trace_active():
+        return
+    raise RuntimeError(
+        f"the {operation_kind!r} operation cannot draw random values "
+        "inside a JAX transformation opened by the caller. Call the operation outside the "
+        "transformation, or transform only its deterministic part."
+    )
 
 
 def _commit_stochastic_invocation(

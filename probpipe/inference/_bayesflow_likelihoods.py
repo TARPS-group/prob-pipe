@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
 import jax.numpy as jnp
@@ -41,7 +41,7 @@ from ..distributions._capabilities import (
     SupportsUnnormalizedLogProb,
 )
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
-from ..distributions._distribution import Distribution
+from ..distributions._distribution import Distribution, _class_label, _constructor_label
 from ._bayesflow_common import (
     _OBSERVATION_KEY,
     SimBackend,
@@ -75,7 +75,10 @@ class _LearnedLaw(Distribution):
     """The law a learned kernel yields at a value of every parameter, over datasets of rows."""
 
     def __init__(self, kernel: _BayesFlowLikelihoodBase, values: Mapping[str, Any]) -> None:
-        super().__init__(kernel.label, kernel.event_spec)
+        super().__init__(
+            kernel.event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._values = dict(values)
 
@@ -124,9 +127,12 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
     data_dim : int
         Flattened per-row observation width the network was trained on (fixed
         by the simulator's per-draw output at training time).
-    label : str
-        The kernel's label.
+    label : str, optional
+        The kernel's label, the name of its public class by default.
     """
+
+    #: The constructors take no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     def __init__(
         self,
@@ -135,12 +141,12 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
-        label: str,
+        label: str | None = None,
     ):
         super().__init__(
-            label,
             dict(prior.event_spec.components),
             OutputSpec(**{_observation_slot(prior): NumericArraySpec(("observations", data_dim))}),
+            label=_constructor_label(self, label, _class_label(self)),
         )
         attributes = {
             "_approximator": approximator,
@@ -176,7 +182,14 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         ``event_size`` (static under jit: shapes are concrete at trace time).
         """
         components = tuple(self._prior.event_spec.components)
-        t = Record("params", {name: values[name] for name in components}).to_numeric().to_vector()
+        t = (
+            Record(
+                {name: values[name] for name in components},
+                label="params",
+            )
+            .to_numeric()
+            .to_vector()
+        )
         t = jnp.ravel(jnp.asarray(t))
         if t.shape[0] != self._theta_dim:
             raise ValueError(
@@ -294,6 +307,30 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
     ``P(y | theta) = integral over [y, y+1)^d of p(u | theta) du``
     (Theis et al., 2016, arXiv:1511.01844). Pass raw integer-valued
     observations; the kernel owns the cell convention.
+
+    Parameters
+    ----------
+    approximator : ContinuousApproximator
+        The trained BayesFlow approximator whose standardizer and inference
+        network score the rows.
+    prior : Distribution
+        The prior the estimator was trained against, whose components are the
+        given slots.
+    simulator : ConditionalDistribution
+        The training simulator.
+    data_dim : int
+        The flattened width of one observation row the network was trained on.
+    label : str, optional
+        The kernel's label, ``BayesFlowLikelihood`` by default.
+    dequantized : bool, optional
+        Whether the flow was trained on jittered integer-valued observations,
+        so that scoring shifts the data to the unit-cell midpoint; ``False``
+        by default.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
     """
 
     def __init__(
@@ -303,9 +340,16 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase, SupportsConditionalLogProb):
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
+        label: str | None = None,
         dequantized: bool = False,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="likelihood")
+        super().__init__(
+            approximator,
+            prior,
+            simulator,
+            data_dim=data_dim,
+            label=label,
+        )
         object.__setattr__(self, "_dequantized", dequantized)
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedDensity:
@@ -360,6 +404,26 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
     discrete/continuous rows are fine) and has no minimum observation
     dimension -- the two cases where :class:`BayesFlowLikelihood`'s coupling
     flow needs, respectively, dequantization or a custom network.
+
+    Parameters
+    ----------
+    approximator : RatioApproximator
+        The trained BayesFlow ratio approximator whose classifier scores the
+        rows.
+    prior : Distribution
+        The prior the estimator was trained against, whose components are the
+        given slots.
+    simulator : ConditionalDistribution
+        The training simulator.
+    data_dim : int
+        The flattened width of one observation row the network was trained on.
+    label : str, optional
+        The kernel's label, ``BayesFlowRatio`` by default.
+
+    Raises
+    ------
+    TypeError
+        If *label* is neither ``None`` nor a non-empty string.
     """
 
     def __init__(
@@ -369,8 +433,15 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase, SupportsConditionalUnnormalizedLo
         simulator: ConditionalDistribution,
         *,
         data_dim: int,
+        label: str | None = None,
     ):
-        super().__init__(approximator, prior, simulator, data_dim=data_dim, label="ratio")
+        super().__init__(
+            approximator,
+            prior,
+            simulator,
+            data_dim=data_dim,
+            label=label,
+        )
 
     def _law(self, values: Mapping[str, Any]) -> _LearnedRatioLaw:
         return _LearnedRatioLaw(self, values)

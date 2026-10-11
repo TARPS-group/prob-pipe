@@ -110,10 +110,10 @@ calling contract; optional `input_spec: InputSpec` and `output_spec: OutputSpec`
 are authoritative schemas but never derive or replace that signature. Use
 `apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
-wrapping, and Function-first provenance. Results use `output_label`, which
-defaults to the function's label at construction and survives `with_label`. A
-raw implementation's own label survives `apply`, while a normal call labels its
-independent result.
+wrapping, and Function-first provenance. Results derive an application expression;
+explicit `output_label` supplies a display alias. Declare whole-term output
+components with `OutputSpec`, independently of labels. A raw implementation's
+own label survives `apply`, while a normal call describes its independent result.
 
 If an implementation returns an existing `Record`, `RecordBatch`, or
 `Distribution`, `apply` preserves its identity. `__call__` instead creates a
@@ -383,7 +383,7 @@ and a non-empty ``sample_shape`` prepends batch axes on a level named
 Usage::
 
     from probpipe import Normal, sample
-    draws = sample(Normal(loc=0.0, scale=1.0, label="x"), sample_shape=(100,))
+    draws = sample(Normal("x", 0.0, 1.0), sample_shape=(100,))
 """
 ```
 
@@ -398,12 +398,14 @@ class Normal(TFPDistribution):
 
     Parameters
     ----------
-    label : str
-        Distribution label.
+    component : str
+        The component of the law's event.
     loc : array-like
         Mean of the distribution.
     scale : array-like
         Standard deviation (> 0).
+    label : str, optional
+        The law's label, the family's class name by default.
     """
 ```
 
@@ -871,6 +873,27 @@ capability:
 if not isinstance(dist, SupportsMean):
     raise TypeError(f"{type(dist).__name__} does not support mean; it must implement SupportsMean")
 ```
+
+### 9.4 A scalar where a sequence is expected
+
+An argument that takes a shape, a sequence of names, or one axis count per
+level also takes a single item as a sequence of one:
+
+- a shape takes a single int or str as one dimension, so `3` is `(3,)` and
+  `"n"` is `("n",)`, by the rule of design II.1;
+- a sequence of names, such as level names or metric names, takes a single str
+  as one name, so `"draw"` is `("draw",)`;
+- axis counts take a single int as the count of one level.
+
+Any other sequence, such as a tuple, a list, a `range`, or a 1-D array, is read
+as one item per entry and stored as a tuple. An iterator such as a generator, a
+set, `bytes`, a `memoryview`, and a mapping are refused, so an argument is never
+used up or read in an arbitrary order. A `RecordSpec` field given as a shape
+takes a tuple only, since a field's value may also be a spec. `probpipe/core/_shapes.py`
+is the one place these arguments are read. A function that takes one calls the reader there
+rather than calling `tuple()` on the argument, passes its own name and the
+argument's for the error messages (§9.3 rule 7), and annotates the parameter
+with the alias there, such as `ShapeLike` or `NamesLike`.
 
 ---
 

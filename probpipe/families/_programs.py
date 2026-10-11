@@ -62,7 +62,7 @@ from ..distributions._capabilities import (
     _capability_subclass,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution, _given_label
+from ..distributions._distribution import Distribution, _constructor_label, _given_label
 
 __all__ = ["PyMCModel", "StanModel"]
 
@@ -734,8 +734,14 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
     #: The BridgeStan model, built on first use, is not state.
     _transient_state = ("_memo",)
 
+    #: ``StanModel`` builds the posterior, so the repr reads as its call.
+    _repr_component: ClassVar[str | None] = None
+
     def __init__(self, label: str, program: _StanProgram, data: Mapping[str, Any]) -> None:
-        super().__init__(label, OutputSpec(program.parameter_record(data)))
+        super().__init__(
+            OutputSpec(program.parameter_record(data)),
+            label=_constructor_label(self, label, "StanModel"),
+        )
         self._program = program
         self._data = dict(data)
 
@@ -806,6 +812,10 @@ class _StanPosterior(Distribution, SupportsUnnormalizedLogProb):
         """The posterior in the unconstrained parameterization, whose density has the Jacobian."""
         return _UnconstrainedStanView(self)
 
+    def _repr_class_name(self) -> str:
+        """``StanModel``, the constructor that builds the posterior."""
+        return "StanModel"
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The Stan file and the data-block entries bound."""
         return [("stan_file", repr(self.stan_file)), ("data", format_names(sorted(self._data)))]
@@ -827,8 +837,8 @@ class _UnconstrainedStanView(Distribution, SupportsUnnormalizedLogProb):
         self._posterior = posterior
         self._blocks = _param_blocks(posterior._bridgestan_model().param_unc_names())
         super().__init__(
-            f"{posterior.label}_unconstrained",
             OutputSpec(NumericRecordSpec({b.name: b.shape for b in self._blocks})),
+            label=f"{posterior.label}_unconstrained",
         )
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
@@ -913,6 +923,9 @@ class StanModel(
         declaration cannot be read.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     #: The program reads its observed variables' shapes from the data it
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
@@ -927,9 +940,9 @@ class StanModel(
         program = _StanProgram.read(stan_file)
         bound = dict(data or {})
         super().__init__(
-            _given_label(label, "StanModel"),
             program.given_spec(bound),
             OutputSpec(program.parameter_record(bound)),
+            label=_constructor_label(self, label, "StanModel"),
         )
         object.__setattr__(self, "_program", program)
         object.__setattr__(self, "_data", bound)
@@ -1068,6 +1081,48 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     return None
 
 
+def _pymc_dimension_names(shapes: Mapping[str, tuple[Any, ...]]) -> dict[str, tuple[str, ...]]:
+    """A dimension name for each axis of each free variable, every one a distinct identifier.
+
+    Axis *i* of variable *name* is named ``f"{name}_{i}"``, with each character
+    that cannot appear in a Python identifier replaced by ``_`` and a leading
+    ``_`` added when the name would start with a digit, so a nested model's
+    ``"sub::beta"`` gives ``sub__beta_0``. A name that an earlier axis already
+    has takes the first of the suffixes ``_2``, ``_3``, ... that is free, so two
+    variables whose names differ only in such characters keep separate
+    dimensions. The variables are taken in model order, so every build of one
+    model names its axes alike, and a name that is already an identifier is
+    unchanged.
+
+    Parameters
+    ----------
+    shapes : Mapping of str to tuple
+        Each free variable's static shape, in model order.
+
+    Returns
+    -------
+    dict of str to tuple of str
+        One dimension name per axis of each variable.
+    """
+    taken: set[str] = set()
+    names: dict[str, tuple[str, ...]] = {}
+    for name, shape in shapes.items():
+        axes = []
+        for axis in range(len(shape)):
+            base = re.sub(r"\W", "_", f"{name}_{axis}")
+            if not base.isidentifier():
+                base = f"_{base}"
+            if not base.isidentifier():
+                base = "_" + re.sub(r"[^0-9A-Za-z_]", "_", base)
+            candidate, suffix = base, 2
+            while candidate in taken:
+                candidate, suffix = f"{base}_{suffix}", suffix + 1
+            taken.add(candidate)
+            axes.append(candidate)
+        names[name] = tuple(axes)
+    return names
+
+
 class _PyMCProgram:
     """A PyMC model-building function with some arguments bound, and the variables its build has.
 
@@ -1110,6 +1165,7 @@ class _PyMCProgram:
         self.given = tuple(p.name for p in arguments if p.name not in self.observed)
         self.parameters = tuple(name for name in free if name not in self.observed)
         self.shapes = {name: tuple(rv.type.shape) for name, rv in free.items()}
+        self.dimension_names = _pymc_dimension_names(self.shapes)
         self.dtypes = {name: np.dtype(rv.dtype) for name, rv in free.items()}
         self.supports = {name: _pymc_support(model, rv) for name, rv in free.items()}
         self.normalized = not model.potentials and not any(
@@ -1130,13 +1186,15 @@ class _PyMCProgram:
 
         Each variable carries its dtype and the support its transform states.
         Under *symbolic* every dimension is symbolic, for a kernel whose shapes
-        its given values may set.
+        its given values may set. A symbolic dimension takes its name from
+        ``dimension_names``, so it is a Python identifier whatever the
+        variable's name.
         """
         return RecordSpec(
             {
                 name: NumericArraySpec(
                     tuple(
-                        f"{name}_{axis}" if symbolic or size is None else int(size)
+                        self.dimension_names[name][axis] if symbolic or size is None else int(size)
                         for axis, size in enumerate(shape)
                     ),
                     _backend_dtype(self.dtypes[name]),
@@ -1200,7 +1258,10 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
         fields[name] = (
             values[0] if not sample_shape else values.reshape(*sample_shape, *values.shape[1:])
         )
-    return Record(self.label, fields)
+    return Record(
+        fields,
+        label=self.label,
+    )
 
 
 class _PyMCModelMeta(type(Distribution)):
@@ -1248,6 +1309,9 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table: ClassVar = {
         SupportsLogProb: {"_log_prob": _pymc_density},
         SupportsUnnormalizedLogProb: {"_unnormalized_log_prob": _pymc_density},
@@ -1274,7 +1338,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
             ) from e
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         super().__init__(
-            _given_label(label, "PyMCModel"), OutputSpec(program.event_record(symbolic=False))
+            OutputSpec(program.event_record(symbolic=False)),
+            label=_constructor_label(self, label, "PyMCModel"),
         )
         self._program = program
 
@@ -1450,6 +1515,9 @@ class _PyMCKernel(ConditionalDistribution):
     #: receives, so ``condition_on`` leaves their givens to the program.
     _shapes_from_data: ClassVar[bool] = True
 
+    #: ``PyMCModel`` builds the kernel, so the repr reads as its call.
+    _repr_component: ClassVar[str | None] = None
+
     _capability_table: ClassVar = {
         SupportsConditionalLogProb: {"_conditional_log_prob": _pymc_kernel_log_prob},
         SupportsConditionalUnnormalizedLogProb: {
@@ -1468,9 +1536,9 @@ class _PyMCKernel(ConditionalDistribution):
 
     def __init__(self, label: str, program: _PyMCProgram) -> None:
         super().__init__(
-            label,
             {slot: OpaqueSpec() for slot in program.given},
             OutputSpec(program.event_record(symbolic=True)),
+            label=_constructor_label(self, label, "PyMCModel"),
         )
         object.__setattr__(self, "_program", program)
 
@@ -1499,6 +1567,10 @@ class _PyMCKernel(ConditionalDistribution):
         """
         values = _given_values(self.label, given, kwargs, self.given_spec)
         return PyMCModel(self._program.bind(values), label=self.label)
+
+    def _repr_class_name(self) -> str:
+        """``PyMCModel``, the constructor that builds the kernel."""
+        return "PyMCModel"
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The model function, by its name, and its free variables."""

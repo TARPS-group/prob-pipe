@@ -11,8 +11,9 @@ from typing import Any, cast
 import numpy as np
 
 from ._kinds import register_kind
-from ._object_batch import _as_object_array, _ObjectBatch
+from ._object_batch import _ObjectBatch
 from ._opaque import Opaque, OpaqueSpec
+from ._shapes import AxisCountsLike, NamesLike
 from ._spec_base import _opaque_spec_of
 from ._specs import TermSpec
 from .provenance import Provenance
@@ -25,24 +26,25 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     Parameters
     ----------
+    elements : numpy.ndarray or iterable
+        The objects, as an object array of any shape or a flat iterable.
+    level_names : str or sequence of str
+        One name per level, outermost first.
     label : str
         The batch's label. Required, as it is for every batch: a batch is a value a
         caller holds, and a label derived from its class says nothing about what it
         holds.
-    elements : numpy.ndarray or iterable
-        The objects, as an object array of any shape or a flat iterable.
-    level_names : str or iterable of str
-        One name per level, outermost first.
     element_spec : OpaqueSpec, optional
         What every element satisfies. Defaults to the :class:`OpaqueSpec` of
         the type the elements share exactly, which admits any value when they
         differ.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -59,6 +61,13 @@ class OpaqueBatch(_ObjectBatch[Any]):
         the elements are stored in, or gives a count that is not one per level; or
         if it is omitted and the number of level names does not match the number
         of axes.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -79,7 +88,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     Examples
     --------
-    >>> batch = OpaqueBatch("labels", ["north", "south"], "site")
+    >>> batch = OpaqueBatch(
+    ...     ["north", "south"],
+    ...     "site",
+    ...     label="labels",
+    ... )
     >>> batch.batch_shape
     (2,)
     >>> batch[0].value
@@ -98,30 +111,53 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     def __init__(
         self,
-        label: str,
         elements: np.ndarray | Iterable[Any],
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
+        label: str,
         element_spec: OpaqueSpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        if element_spec is None:
-            elements = _as_object_array(elements, kind=type(self).__name__)
-            element_spec = _opaque_spec_of(elements.flat)
-        elif not isinstance(element_spec, OpaqueSpec):
-            raise TypeError(
-                f"OpaqueBatch.element_spec must be an OpaqueSpec, got {type(element_spec).__name__}"
-            )
         super().__init__(
-            label,
             elements,
             level_names,
+            label=label,
             element_spec=element_spec,
             axes_per_level=axes_per_level,
             provenance=provenance,
         )
+
+    def _resolved_element_spec(
+        self, store: np.ndarray, element_spec: TermSpec | None
+    ) -> OpaqueSpec:
+        """*element_spec*, which must be an ``OpaqueSpec``, or the spec the elements share.
+
+        Parameters
+        ----------
+        store : numpy.ndarray
+            The elements, whose shared type the default spec names.
+        element_spec : TermSpec or None
+            The spec the caller supplied, or ``None``.
+
+        Returns
+        -------
+        OpaqueSpec
+            The element spec.
+
+        Raises
+        ------
+        TypeError
+            If *element_spec* is not an ``OpaqueSpec``.
+        """
+        if element_spec is None:
+            return _opaque_spec_of(store.flat)
+        if not isinstance(element_spec, OpaqueSpec):
+            raise TypeError(
+                f"OpaqueBatch.element_spec must be an OpaqueSpec, got {type(element_spec).__name__}"
+            )
+        return element_spec
 
     @property
     def element_spec(self) -> OpaqueSpec:
@@ -130,7 +166,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     def _wrap_element(self, value: Any, label: str) -> Opaque:
         """The stored *value* as an :class:`~probpipe.Opaque` labeled *label*."""
-        return Opaque(label, value, spec=self.element_spec)
+        return Opaque(
+            value,
+            spec=self.element_spec,
+            label=label,
+        )
 
 
 register_kind(OpaqueSpec, term_class=Opaque, batch_class=OpaqueBatch)

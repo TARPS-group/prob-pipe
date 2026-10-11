@@ -5,13 +5,12 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any, Self, cast
 
 import jax
 import numpy as np
 
-from .._messages import count
+from .._messages import count, label_given_first
 from ._array_backend import (
     _event_shape_of,
     _is_numeric_leaf,
@@ -33,8 +32,10 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
+from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
+from .tracked import _NO_DESCRIPTION
 
 __all__ = ["NumericArrayBatch"]
 
@@ -47,34 +48,35 @@ class NumericArrayBatch(Batch[NumericArray]):
     is where a `draw` level lives for an array-valued law. As a JAX pytree it
     flattens to that array with its spec as the static data, so the label and
     the expression do not cross a transform, and a batch rebuilt from its
-    leaves is labeled ``NumericArrayBatch`` until a result boundary labels it.
+    leaves is labeled ``<no description>`` until a result boundary labels it.
 
     Parameters
     ----------
-    label : str
-        The batch's label, **required**, as a :class:`~probpipe.Record`'s and an
-        :class:`~probpipe.Opaque`'s are. A batch is what an operation returns,
-        and the label is what says which one it is; a class-name default would label
-        every batch in a pipeline alike.
     values : array-like
         One array holding every element, shaped ``(*batch_shape, *event_shape)``.
         Stored verbatim in its native form, as a :class:`NumericArray`'s value
         is, so a lazy or disk-backed column is not materialised to be batched,
         and a NumPy array is marked read-only in place.
-    level_names : str or iterable of str
+    level_names : str or sequence of str
         One name per level, outermost first; a single string names one level.
+    label : str
+        The batch's label, **required**, as an unnamed array's and an
+        :class:`~probpipe.Opaque`'s are. A batch is what an operation returns,
+        and the label is what says which one it is; a class-name default would label
+        every batch in a pipeline alike.
     element_spec : NumericArraySpec, optional
         What every element satisfies. Its ``shape`` is the event shape, so it is
         what splits the stored array's axes into batch and event. Defaults to
         the spec the array implies, as a :class:`NumericArray` infers its spec
         from its value: the axes past those the levels hold are the event shape,
         and the array's dtype is the elements' dtype.
-    axes_per_level : iterable of int, optional
-        How many axes each level holds, outermost first; they must account for
-        every batch axis. Defaults to one axis per level, which requires as many
-        names as there are batch axes. The *sizes* are read off the elements
-        rather than restated here — they are already fixed by the data, so the
-        only thing left to say is where one level ends and the next begins.
+    axes_per_level : int or sequence of int, optional
+        How many axes each level holds, outermost first (a single int is one level's
+        count); they must account for every batch axis. Defaults to one axis per
+        level, which requires as many names as there are batch axes. The *sizes* are
+        read off the elements rather than restated here — they are already fixed by
+        the data, so the only thing left to say is where one level ends and the next
+        begins.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -95,6 +97,13 @@ class NumericArrayBatch(Batch[NumericArray]):
         no size to split by; if *values* has fewer axes than the levels hold,
         when the element spec is inferred; or if *axes_per_level* does not
         account for every batch axis, or gives a count that is not one per level.
+    TypeError
+        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
+        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
+        mapping are refused for both.
+    ValueError
+        If an *axes_per_level* count is less than 1, or a level name is empty or
+        contains ``/``.
 
     Notes
     -----
@@ -110,19 +119,32 @@ class NumericArrayBatch(Batch[NumericArray]):
     #: Derived from the store rather than transported, as for ``NumericArray``.
     _transient_state = ("_jax_cache",)
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # A string is never a numeric value, so one in first place with no label
+        # keyword is a label passed in the earlier label-first form.
+        if args and isinstance(args[0], str) and "label" not in kwargs:
+            raise TypeError(
+                label_given_first(cls.__name__, "values", args[0], then=("level_names",))
+            )
+        return object.__new__(cls)
+
     def __init__(
         self,
-        label: str,
         values: Any,
         /,
-        level_names: str | Iterable[str],
+        level_names: NamesLike,
         *,
+        label: str,
         element_spec: NumericArraySpec | None = None,
-        axes_per_level: Iterable[int] | None = None,
+        axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        axes = None if axes_per_level is None else tuple(axes_per_level)
+        names = _as_names(level_names, what="NumericArrayBatch level_names")
+        axes = (
+            None
+            if axes_per_level is None
+            else _as_axis_counts(axes_per_level, what="NumericArrayBatch axes_per_level")
+        )
         if element_spec is None:
             element_spec = _inferred_element_spec(values, _batch_axis_count(names, axes))
         if not isinstance(element_spec, NumericArraySpec):
@@ -175,7 +197,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         groups = _axis_groups_for(batch_shape, names, axes, kind="NumericArrayBatch")
         object.__setattr__(self, "_values", _read_only(values))
         self._init_batch(
-            BatchSpec(element_spec, groups, names),
+            BatchSpec._from_groups(element_spec, groups, names),
             label=label,
             provenance=provenance,
         )
@@ -264,9 +286,9 @@ class NumericArrayBatch(Batch[NumericArray]):
         """
         return self._inherit_provenance(
             NumericArray(
-                label,
                 _take_at(self._values, index),
                 spec=self.element_spec,
+                label=label,
             )
         )
 
@@ -317,11 +339,11 @@ def _numeric_array_batch_unflatten(aux, children):
       :class:`NumericArray` is returned.
 
     The label does not cross a transform, so a rebuilt batch is labeled
-    ``NumericArrayBatch``, and an element ``NumericArray``, until a result
+    ``<no description>``, as is a rebuilt element, until a result
     boundary labels it (II.4).
     """
     spec = aux
-    label = "NumericArrayBatch"
+    label = _NO_DESCRIPTION
     (values,) = children
     element_spec = spec.element_spec
     event_rank = len(element_spec.shape)
@@ -350,7 +372,11 @@ def _numeric_array_batch_unflatten(aux, children):
         view._init_batch(spec, label=label)
         return view
     if not surviving:
-        return NumericArray("NumericArray", values, spec=element_spec)
+        return NumericArray(
+            values,
+            spec=element_spec,
+            label=_NO_DESCRIPTION,
+        )
     raise ValueError(
         _changed_batch_shape(
             _cannot_rebuild("NumericArrayBatch"), tuple(spec.batch_shape), surviving

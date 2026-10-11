@@ -55,7 +55,7 @@ class TestStaleDocs:
     def test_a_function_keyword_that_is_no_control_is_listed(self, root):
         _notebook(
             root / "docs" / "guide.ipynb",
-            "add = Function('add', lambda x, y: x + y, dispatch='sequential', y=2.0)",
+            "add = Function(lambda x, y: x + y, label='add', dispatch='sequential', y=2.0)",
             "@pp.function(n_broadcast_samples=8, scale=2.0)\ndef scaled(x, scale):\n    return x",
         )
         (root / "example_scripts" / "demo.py").write_text(
@@ -74,10 +74,10 @@ class TestStaleDocs:
     def test_construction_parameters_controls_and_bindings_are_not_listed(self, root):
         _notebook(
             root / "docs" / "guide.ipynb",
-            "add = Function(label='add', fn=lambda x, y: x + y, bind={'y': 2.0}, raw=True)",
+            "add = Function(lambda x, y: x + y, label='add', bind={'y': 2.0}, raw=True)",
             "@function(label='f', output_label='value', dispatch='jax', workflow_kind=None)\n"
             "def f(x):\n    return x",
-            "g = Function('g', lambda **kw: 0, **controls)",
+            "g = Function(lambda **kw: 0, label='g', **controls)",
         )
         assert _details(root) == []
 

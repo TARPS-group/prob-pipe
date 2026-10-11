@@ -46,7 +46,7 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conversion import ConversionInfo, Converter, converter_registry
-from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._distribution import Distribution, DistributionSpec, _labeled_by_default
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import _broker
 from ..functions._result import SAMPLE_LEVEL
@@ -852,7 +852,7 @@ class _MomentFit:
 
     law: Distribution | None
     declaration: OutputSpec
-    label: str
+    label: str | None
     parameters: Callable[[_Statistics, dict[str, Any]], dict[str, Any]]
     samples: bool
 
@@ -863,9 +863,10 @@ class _MomentMatching(Converter):
     The family is the requested target, and the fit reads the statistics the
     family's parameters need: a moment the law claims in closed form, and any
     other statistic from one shared batch of ``num_samples`` draws. The fit
-    keeps the law's label and component, and a family whose draws do not cast
-    to the law's dtype is infeasible, as a ``Normal`` fit to a ``Bernoulli``
-    law is. Unless ``check_support=False``, the fit keeps the law's support:
+    keeps the law's component, and its label unless the label is the law's
+    default, so a ``Normal`` fit to ``Laplace("g", 0.0, 1.0)`` reads
+    ``Normal(g)``. A family whose draws do not cast to the law's dtype is
+    infeasible, as a ``Normal`` fit to a ``Bernoulli`` law is. Unless ``check_support=False``, the fit keeps the law's support:
     a family whose support is fixed and differs from the law's is infeasible,
     and a fit whose support depends on its parameters and differs is refused.
     The counted families need the option ``total_count``.
@@ -925,12 +926,12 @@ class _MomentMatching(Converter):
         declared = _declared(source, options)
         law = _entering_law(source, declared)
         if law is None:
-            declaration, label = _scipy_declaration(source, declared), source.dist.name
+            declaration, name = _scipy_declaration(source, declared), source.dist.name
         else:
-            declaration, label = law.event_spec, law.label
+            declaration, name = law.event_spec, law.label
         needs, parameters, rank = fit
-        reason = _array_event(declaration, label, target_type, rank) or _cast_event(
-            declaration, label, target_type
+        reason = _array_event(declaration, name, target_type, rank) or _cast_event(
+            declaration, name, target_type
         )
         if reason is not None:
             return reason
@@ -940,11 +941,10 @@ class _MomentMatching(Converter):
         if samples:
             if law is not None and not isinstance(law, SupportsSampling):
                 return (
-                    f"{label!r} has no closed-form moments for the fit and does not support "
-                    f"sampling"
+                    f"{name!r} has no closed-form moments for the fit and does not support sampling"
                 )
             _sample_count(options)
-        return _MomentFit(law, declaration, label, parameters, samples)
+        return _MomentFit(law, declaration, _kept_label(source, law), parameters, samples)
 
     def check(self, source: Any, target_type: type, **options: Any) -> ConversionInfo:
         """Promise the family *target_type* over the source's declaration, without fitting it.
@@ -1026,8 +1026,8 @@ class _MomentMatching(Converter):
         Returns
         -------
         Distribution
-            The fitted instance of *target_type*, which keeps the source's label and
-            component.
+            The fitted instance of *target_type*, which keeps the source's
+            component, and its label unless the label is the source's default.
 
         Raises
         ------
@@ -1076,8 +1076,20 @@ def _sampled_source(
 
 
 def _label(source: Any, law: Distribution | None, declaration: OutputSpec) -> str:
-    """The label of a sampled representation: the law's, or a SciPy distribution's name."""
+    """The name of a sampled source, which its atoms and messages read: the law's label, or a SciPy distribution's name."""
     return law.label if law is not None else source.dist.name
+
+
+def _kept_label(source: Any, law: Distribution | None) -> str | None:
+    """The label a converted law keeps: the source's, or ``None`` for a source under its default label.
+
+    ``None`` gives the converted law its constructor's default, which names the
+    target, since the source's default names only the source's class. A SciPy
+    distribution without a family keeps its name.
+    """
+    if law is None:
+        return source.dist.name
+    return None if _labeled_by_default(law) else law.label
 
 
 class _EmpiricalDraws(Converter):
@@ -1162,7 +1174,8 @@ class _EmpiricalDraws(Converter):
         Returns
         -------
         Distribution
-            An ``EmpiricalDistribution`` with the source's label, whose equally weighted atoms
+            An ``EmpiricalDistribution`` with the source's label unless the label is
+            the source's default, whose equally weighted atoms
             are the draws.
 
         Raises
@@ -1179,7 +1192,7 @@ class _EmpiricalDraws(Converter):
         law, declaration = sampled
         name = _label(source, law, declaration)
         atoms = _batch_form(name, _draws(source, law, count), SAMPLE_LEVEL, declaration.spec)
-        return EmpiricalDistribution(atoms, label=name, event_spec=declaration)
+        return EmpiricalDistribution(atoms, label=_kept_label(source, law), event_spec=declaration)
 
 
 def _smoothed_atoms(label: str, values: Any, spec: Any) -> Any:
@@ -1290,7 +1303,8 @@ class _KDESmoothing(Converter):
         Returns
         -------
         Distribution
-            A ``KDEDistribution`` with the source's label, centered at the empirical law's
+            A ``KDEDistribution`` with the source's label unless the label is the
+            source's default, centered at the empirical law's
             weighted atoms or at the equally weighted draws.
 
         Raises
@@ -1305,18 +1319,19 @@ class _KDESmoothing(Converter):
             raise TypeError(planned)
         law, declaration, samples = planned
         name = _label(source, law, declaration)
+        label = _kept_label(source, law)
         bandwidth = options.get("bandwidth")
         if not samples:
             return KDEDistribution(
                 _smoothed_atoms(name, law._rows, declaration.spec),
                 bandwidth,
                 law.weights,
-                label=name,
+                label=label,
                 event_spec=declaration,
             )
         draws = _draws(source, law, _sample_count(options))
         atoms = _smoothed_atoms(name, draws, declaration.spec)
-        return KDEDistribution(atoms, bandwidth, label=name, event_spec=declaration)
+        return KDEDistribution(atoms, bandwidth, label=label, event_spec=declaration)
 
 
 converter_registry.register(_TFPConverter())

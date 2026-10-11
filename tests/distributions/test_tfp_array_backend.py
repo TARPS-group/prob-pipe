@@ -29,7 +29,7 @@ from probpipe.families._backend import _TFPArrayBackend
 class TestMakeArrayBackendConstruction:
     def test_normal_returns_tfp_array_backend(self):
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(5,),
             loc=jnp.arange(5.0),
             scale=1.0,
@@ -40,7 +40,7 @@ class TestMakeArrayBackendConstruction:
 
     def test_beta_inherits_make_array_backend(self):
         backend = Beta._make_array_backend(
-            label="b",
+            component="b",
             batch_shape=(3,),
             alpha=jnp.array([1.0, 2.0, 3.0]),
             beta=jnp.array([1.0, 1.0, 1.0]),
@@ -50,7 +50,7 @@ class TestMakeArrayBackendConstruction:
 
     def test_gamma_inherits_make_array_backend(self):
         backend = Gamma._make_array_backend(
-            label="g",
+            component="g",
             batch_shape=(4,),
             concentration=jnp.array([1.0, 2.0, 3.0, 4.0]),
             rate=1.0,
@@ -61,7 +61,7 @@ class TestMakeArrayBackendConstruction:
     def test_mvn_inherits_make_array_backend(self):
         d = 3
         backend = MultivariateNormal._make_array_backend(
-            label="z",
+            component="z",
             batch_shape=(2,),
             loc=jnp.zeros((2, d)),
             scale_tril=jnp.broadcast_to(jnp.eye(d), (2, d, d)),
@@ -72,7 +72,7 @@ class TestMakeArrayBackendConstruction:
 
     def test_required_minimum_surface(self):
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(2,),
             loc=jnp.zeros(2),
             scale=1.0,
@@ -93,7 +93,7 @@ class TestMakeArrayBackendConstruction:
         ``(3,)`` raises ``ValueError`` at backend construction."""
         with pytest.raises(ValueError, match="batch_shape"):
             Normal._make_array_backend(
-                label="x",
+                component="x",
                 batch_shape=(5,),
                 loc=jnp.zeros(3),  # actually batch_shape=(3,)
                 scale=1.0,
@@ -108,7 +108,7 @@ class TestMakeArrayBackendConstruction:
 class TestBatchedOpsMatchTFPNative:
     def _make_pair(self, loc, scale):
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=tuple(
                 jnp.broadcast_shapes(
                     jnp.asarray(loc).shape,
@@ -158,7 +158,7 @@ class TestBatchedOpsMatchTFPNative:
     def test_multi_d_batch_sample_shape(self):
         loc = jnp.zeros((2, 3))
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(2, 3),
             loc=loc,
             scale=1.0,
@@ -177,14 +177,14 @@ class TestPytreeRegistration:
     can flow through ``jit`` / ``vmap`` / ``tree_map``.
 
     Children are the batched parameter values (the JAX-array leaves
-    the user passed); aux carries the distribution class, label,
+    the user passed); aux carries the distribution class, component,
     declared ``batch_shape``, and parameter keys. Reconstruction
     rebuilds the wrapped ``_batched_dist`` from the parameter dict.
     """
 
     def _backend(self):
         return Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(5,),
             loc=jnp.arange(5.0),
             scale=1.0,
@@ -238,7 +238,7 @@ class TestPytreeRegistration:
         """vmap-able through ``tree_map`` lifting a fresh axis on each
         leaf, then calling the backend's vectorised op under the lift."""
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(3,),
             loc=jnp.zeros(3),
             scale=jnp.ones(3),
@@ -272,7 +272,7 @@ class TestScalarParamBroadcasting:
         """All-scalar params + ``batch_shape=(5,)`` produce five
         identical Normals."""
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(5,),
             loc=0.0,
             scale=1.0,
@@ -285,7 +285,7 @@ class TestScalarParamBroadcasting:
         """``loc`` scalar + ``scale`` array broadcasts ``loc`` to
         match the batch axis."""
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(3,),
             loc=0.0,
             scale=jnp.array([0.1, 0.2, 0.3]),
@@ -297,7 +297,7 @@ class TestScalarParamBroadcasting:
 
     def test_multi_d_batch_with_scalar_params(self):
         backend = Normal._make_array_backend(
-            label="x",
+            component="x",
             batch_shape=(2, 3),
             loc=0.0,
             scale=1.0,

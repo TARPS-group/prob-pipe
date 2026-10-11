@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 
 from ._dtype import _as_float_array, _default_float_dtype
+from .core._shapes import SizesLike, _as_shape
 from .custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
@@ -199,7 +200,7 @@ def weighted_choice(
     n: int,
     *,
     weights: Array | None = None,
-    shape: tuple[int, ...] = (),
+    shape: SizesLike = (),
 ) -> Array:
     """Draw random indices with optional weighting.
 
@@ -211,27 +212,42 @@ def weighted_choice(
         Number of items to choose from (indices ``0..n-1``).
     weights : Array or None
         Normalized weights of shape ``(n,)``.  ``None`` for uniform.
-    shape : tuple of int
-        Output shape of index array.
+    shape : int or sequence of int
+        Output shape of index array. A single int is one axis, so ``shape=10``
+        is ``shape=(10,)``.
 
     Returns
     -------
     Array
         Integer index array of the given *shape*.
+
+    Raises
+    ------
+    TypeError
+        If *shape* is not an int or a sequence of ints, or a size is a ``bool``.
+    ValueError
+        If a size is negative.
     """
-    if not shape:
-        shape = (1,)
+    return _weighted_choice(
+        key, n, weights, _as_shape(shape, what="weighted_choice shape", symbolic=False)
+    )
+
+
+def _weighted_choice(key: PRNGKey, n: int, weights: Array | None, sizes: tuple[int, ...]) -> Array:
+    """``weighted_choice`` over a shape already read as a tuple of sizes."""
+    if not sizes:
+        sizes = (1,)
         squeeze = True
     else:
         squeeze = False
 
     if weights is None:
-        indices = jax.random.randint(key, shape=shape, minval=0, maxval=n)
+        indices = jax.random.randint(key, shape=sizes, minval=0, maxval=n)
     else:
         indices = jax.random.choice(
             key,
             n,
-            shape=shape,
+            shape=sizes,
             p=weights,
             replace=True,
         )
@@ -553,13 +569,34 @@ class Weights:
             mean=mean,
         )
 
-    def choice(self, key: PRNGKey, *, shape: tuple[int, ...] = ()) -> Array:
-        """Draw weighted random indices from ``0..n-1``."""
-        return weighted_choice(
+    def choice(self, key: PRNGKey, *, shape: SizesLike = ()) -> Array:
+        """Draw weighted random indices from ``0..n-1``, of shape *shape*.
+
+        Parameters
+        ----------
+        key : PRNGKey
+            JAX PRNG key.
+        shape : int or sequence of int
+            The shape of the index array. A single int is one axis, so
+            ``shape=10`` draws ten indices, and ``()`` draws one.
+
+        Returns
+        -------
+        Array
+            Integer index array of shape *shape*.
+
+        Raises
+        ------
+        TypeError
+            If *shape* is not an int or a sequence of ints, or a size is a ``bool``.
+        ValueError
+            If a size is negative.
+        """
+        return _weighted_choice(
             key,
             self._n,
-            weights=None if self._is_uniform else self.normalized,
-            shape=shape,
+            None if self._is_uniform else self.normalized,
+            _as_shape(shape, what="Weights.choice shape", symbolic=False),
         )
 
     def subsample(self, indices: Array) -> Weights:

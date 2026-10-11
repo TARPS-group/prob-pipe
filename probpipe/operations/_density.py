@@ -25,7 +25,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core._expression import DENSITY, SCORE, Expression, Summary, embedded
+from ..core._expression import DENSITY, SCORE, Expression, Summary
 from ..core._spec_base import NumericArraySpec, TermSpec, _unify_specs
 from ..core._specs import OutputSpec
 from ..core.constraints import non_negative
@@ -97,17 +97,17 @@ def _score_declaration(
 
 def _score_expression(d: Any) -> Expression:
     """The expression of a score of *d*: ``log`` and *d*'s notation, as ``log prior(mu)`` (II.4)."""
-    return Summary(SCORE, embedded(d))
+    return Summary(SCORE, d._embedded_expression())
 
 
 def _density_expression(d: Any) -> Expression:
     """The expression of a density of *d*, which reads as *d*'s notation, as ``prior(mu)`` (II.4)."""
-    return Summary(DENSITY, embedded(d))
+    return Summary(DENSITY, d._embedded_expression())
 
 
 def _random_score_expression(M: Any) -> Expression:
     """The expression of the law of a random measure's log-density: ``log`` and *M*'s notation."""
-    return Summary(SCORE, embedded(M))
+    return Summary(SCORE, M._embedded_expression())
 
 
 def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:

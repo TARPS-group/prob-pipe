@@ -37,7 +37,7 @@ from ..distributions._capabilities import (
 from ..distributions._distribution import (
     Distribution,
     _class_label,
-    _given_label,
+    _constructor_label,
     _whole_term_event,
 )
 from ..functions._descendants import _Descent, _register_descendant_type
@@ -247,8 +247,8 @@ class BijectorTransformedDistribution(Distribution):
     ------
     TypeError
         If *base* is not a ``Distribution`` whose draws are arrays, *component*
-        is not a string, or *bijector* is neither a ``Function`` nor a backend
-        bijector.
+        is not a string, *label* is not a non-empty string, or *bijector* is
+        neither a ``Function`` nor a backend bijector.
     ValueError
         If *component* is not a valid component name.
     ResolutionError
@@ -285,7 +285,7 @@ class BijectorTransformedDistribution(Distribution):
         label: str | None = None,
     ) -> None:
         owner = _class_label(self)
-        label = _given_label(label, owner)
+        label = _constructor_label(self, label, owner)
         if not isinstance(base, Distribution):
             raise TypeError(
                 f"base of BijectorTransformedDistribution must be a Distribution, got "
@@ -319,7 +319,10 @@ class BijectorTransformedDistribution(Distribution):
         object.__setattr__(self, "_base", base)
         object.__setattr__(self, "_bijector", bijector)
         image_spec = NumericArraySpec(tuple(image.shape), image.dtype, _image(bijector))
-        super().__init__(label, _whole_term_event(component, image_spec, None, owner))
+        super().__init__(
+            _whole_term_event(component, image_spec, None, owner),
+            label=label,
+        )
         self.with_provenance(
             Provenance.create("transform", parents=[base], metadata={"bijector": bijector.label})
         )

@@ -19,7 +19,6 @@ from probpipe import (
 )
 from probpipe.core._batch import BatchSpec
 from probpipe.core._dispatch import ResolutionError
-from probpipe.core._expression import expression_of, with_fixed
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._distribution import Distribution
 from probpipe.operations._sample import sample
@@ -47,7 +46,7 @@ class TestOneDraw:
 
     def test_a_draw_lists_a_nested_fixed_path_and_names_no_level_by_it(self):
         law = Gaussian("g")
-        held = law._with_expression(with_fixed(expression_of(law), ("y/obs",)))
+        held = law._with_expression(law._expression.with_fixed(("y/obs",)))
         draws = sample(held, sample_shape=(3,))
         assert draws.label == "g ~ g; y/obs"
         assert draws.level_names == ("sample",)
@@ -71,6 +70,10 @@ class TestBatches:
     def test_an_integer_sample_shape_is_one_axis(self):
         assert sample(Gaussian("g"), sample_shape=5).batch_shape == (5,)
 
+    @pytest.mark.parametrize("shape", [[4, 3], np.array([4, 3]), (np.int64(4), 3)])
+    def test_any_iterable_of_integers_is_a_sample_shape(self, shape):
+        assert sample(Gaussian("g"), sample_shape=shape).batch_shape == (4, 3)
+
     def test_a_record_law_draws_a_batch_of_records(self):
         draws = sample(Pair("p"), sample_shape=(6,))
         assert isinstance(draws, RecordBatch)
@@ -91,7 +94,7 @@ class TestBatches:
         assert isinstance(whole.spec, BatchSpec)
         record = sample.check(Pair("p"), (4,)).result
         assert list(record.components) == list(Pair("p").event_spec.components)
-        assert record.spec == BatchSpec(Pair("p").event_spec.spec, ((4,),), ("sample",))
+        assert record.spec == BatchSpec(Pair("p").event_spec.spec, sample=4)
 
     def test_a_measure_draws_a_batch_of_laws(self):
         draws = sample(Measure("m"), sample_shape=(3,))
@@ -137,9 +140,18 @@ class TestRequirements:
         with pytest.raises(ApplicabilityError, match=r"\['n'\]"):
             sample(Polymorphic("poly"))
 
-    @pytest.mark.parametrize("shape", [True, (2.5,), "3", (-1,)])
-    def test_a_malformed_sample_shape_raises_applicability_error(self, shape):
-        with pytest.raises(ApplicabilityError):
+    @pytest.mark.parametrize(
+        ("shape", "match"),
+        [
+            (True, "sample_shape must be an int or a sequence of ints, got bool True"),
+            ((2.5,), "sample_shape entry must be a non-negative int, got float 2.5"),
+            ("3", "sample_shape must be an int or a sequence of ints, got str '3'"),
+            ("S", "sample_shape must be an int or a sequence of ints, got str 'S'"),
+            ((-1,), "sample_shape entry must be non-negative, got -1"),
+        ],
+    )
+    def test_a_malformed_sample_shape_raises_applicability_error(self, shape, match):
+        with pytest.raises(ApplicabilityError, match=match):
             sample(Gaussian("g"), sample_shape=shape)
 
     def test_a_law_that_does_not_sample_raises_resolution_error(self):

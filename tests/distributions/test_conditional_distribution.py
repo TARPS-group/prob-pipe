@@ -31,7 +31,6 @@ from probpipe import (
     Uniform,
     workflow_run,
 )
-from probpipe.core._expression import expression_of, with_fixed
 from probpipe.core.constraints import positive, real
 from probpipe.distributions import (
     ConditionalDistribution,
@@ -66,7 +65,10 @@ class _GuardedSampler(Distribution, SupportsSampling):
     """A scalar law that samples, whose sampling guard rejects every call."""
 
     def __init__(self, label: str, loc: Any) -> None:
-        super().__init__(label, OutputSpec(**{label: REAL}))
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
         self.loc = loc
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -141,6 +143,20 @@ class TestTheEventDeclaration:
         with pytest.raises(ValueError, match="declares the fields"):
             conditional_distribution(
                 _location, given_spec=SLOTS, event_spec=OutputSpec(obs=None), label="y"
+            )
+
+    def test_a_bare_spec_for_a_law_of_several_components_raises(self):
+        """A bare array spec declares one component, so a joint of two needs an OutputSpec."""
+        with pytest.raises(
+            ValueError,
+            match=r"event_spec of 'yz' needs an explicit OutputSpec for the law's components "
+            r"\['y', 'z'\]",
+        ):
+            conditional_distribution(
+                lambda mu: Normal("y", mu, 1.0) * Normal("z", mu, 1.0),
+                given_spec={"mu": REAL},
+                event_spec=NumericArraySpec(()),
+                label="yz",
             )
 
     def test_a_support_that_depends_on_the_given_values_is_left_undeclared(self):
@@ -270,14 +286,14 @@ class TestNotation:
         kernel = conditional_distribution(_location, given_spec=SLOTS, label="glm")
         curried = kernel._condition_on({"mu": 1.0})
         assert curried.notation == "glm(y | tau)"
-        curried._store_expression(with_fixed(expression_of(curried), ("mu",)))
+        curried._store_expression(curried._expression.with_fixed(("mu",)))
         assert curried.notation == "glm(y | tau; mu)"
         assert kernel.notation == "glm(y | mu, tau)"
 
     def test_currying_a_curried_kernel_keeps_its_fixed_paths(self):
         kernel = conditional_distribution(_scaled_location, given_spec=_THREE_SLOTS, label="glm")
         curried = kernel._condition_on({"mu": 1.0})
-        curried._store_expression(with_fixed(expression_of(curried), ("mu",)))
+        curried._store_expression(curried._expression.with_fixed(("mu",)))
         assert curried._condition_on({"tau": 2.0}).notation == "glm(y | scale; mu)"
 
 

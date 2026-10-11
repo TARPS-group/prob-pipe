@@ -68,6 +68,8 @@ from typing import Any, get_args, get_origin
 import jax as _jax
 import numpy as _np
 
+from ._immutable import declared_state_names, transient_memo
+
 __all__ = ["fingerprint"]
 
 # JAX is a hard dependency of probpipe, so ``jax.Array`` is always importable.
@@ -137,11 +139,23 @@ def _fingerprint_with_strength(
     *,
     max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BYTES,
 ) -> tuple[str, bool]:
-    """Return a digest and whether any component used weak identity semantics."""
+    """Return a digest and whether any component used weak identity semantics.
+
+    A distribution is immutable, so its digest is computed once and kept in its
+    transient memo, which a copy or a pickle leaves out. A law that many views
+    or calls name as their parent is then hashed once.
+    """
+    memo = transient_memo(obj) if _is_distribution(obj) else None
+    key = ("fingerprint", max_array_bytes)
+    if memo is not None and key in memo:
+        return memo[key]
     h = hashlib.sha256()
     state = _FingerprintState()
     _update(h, obj, depth=0, max_array_bytes=max_array_bytes, state=state)
-    return h.hexdigest()[:16], state.is_weak
+    result = (h.hexdigest()[:16], state.is_weak)
+    if memo is not None:
+        memo[key] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -794,10 +808,23 @@ def _update_distribution(
         h.update(b"scales=")
         _update(h, dist._bank._scales, depth + 1, max_array_bytes, state)
     else:
-        # Generic fallback for other non-TFP distributions. The label and the
-        # expression state how the law displays, and record nothing about what
-        # it computes.
-        _SKIP = frozenset({"_label", "_expression", "_provenance", "_annotations"})
+        # Generic fallback for other non-TFP distributions. The label, the
+        # default label, the expression, and what the label's rendering left
+        # out state how the law displays, and record nothing about what it
+        # computes. Transient state, such as the memo that holds this digest,
+        # is computed from the rest on demand.
+        _SKIP = frozenset(
+            {
+                "_label",
+                "_label_collapse",
+                "_default_label",
+                "_uses_default_label",
+                "_default_expression",
+                "_expression",
+                "_provenance",
+                "_annotations",
+            }
+        ) | declared_state_names(type(dist), "_transient_state")
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue

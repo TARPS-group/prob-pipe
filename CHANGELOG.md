@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A value, a batch, and a function take their data first and the label as
+  the keyword `label=`.** `NumericArray(values, label="x")` replaces
+  `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
+  `Record.from_fields(a=1.0)` replaces `Record("r", a=1.0)`, and
+  `Function(fn, label="g")` replaces `Function("g", fn)`. `from_vector`,
+  `from_field_values`, and `from_dict` take the label as the keyword `label=`
+  after their data, as `NumericArray.from_vector(spec, vec, label="x")`. A raw
+  array, an opaque value, and a batch of either require the label. A record and
+  a record batch derive it from their top-level fields, as `record(a,b)`. A
+  function derives it from its callable's name, with `f` for a lambda, and a
+  batch of functions or laws from its members, at most eight in row-major order
+  and then `…`. A call in the label-first form raises a `TypeError` that shows the new
+  call.
+- **A function's output component comes from its callable, and `output_label`
+  is a display alias.** A result's component defaults to the callable's name,
+  with `f` for a lambda and `result` for a callable without a name or whose
+  name is not a Python identifier, and a record result exposes its fields. An
+  `OutputSpec` overrides that default. `output_label` and `with_label` change
+  only how a result displays, never its components, its fingerprint, or its
+  draws. A result without an alias displays the call, as `predict(ambient)`,
+  with only the arguments the caller passed. A `Module` method's results display
+  the call, as `Example.numbers()`, where they displayed the method's name, and
+  a backend bijector's output component is the backend's name, as `exp`.
+- **A term that JAX rebuilds from its leaves displays `<no description>`** until
+  a managed result boundary describes it, and it stays usable inside `jax.jit`
+  and `jax.vmap`.
+- **A law's repr shows `label=` only for a label the caller gave.** A label the
+  constructor derives, such as a product's `lik·prior` or a mixture's, is left
+  out, so evaluating the repr keeps the derived notation. A `KDEDistribution`'s
+  repr shows its bandwidth, and its constructor takes a list of numbers as its
+  atoms.
+- **The default labels of a mixture, a minibatched law, and the BayesFlow
+  kernels describe them.** A `MixtureDistribution` displays its components, as
+  `mixture([a(x), b(x)])`, and a `MinibatchedDistribution` its construction, as
+  `minibatch(prior(beta), lik(y | beta), batch_size=40)`. `BayesFlowLikelihood`
+  and `BayesFlowRatio` take `label=`, which defaults to the class name, where
+  they were labeled `likelihood` and `ratio`, and their repr and a conversion
+  keep a label the caller gave.
+- **A family pickled by a development build in which its label came first no
+  longer loads.** Rebuild it from its constructor and pickle it again.
+
 - **A law's label is optional, and the component of its event is required.**
   A family takes the component first and the label as the keyword `label=`,
   which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps
@@ -40,15 +81,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that are not records and refuse it for record atoms, whose fields are the
   components, and array atoms are labeled by the component.
   `conditional_distribution` labels a kernel after its function's
-  `__name__`, and `p` for a lambda. A subclass of `Distribution` or
+  `__name__`, and `p` for a lambda. A law converted from a law under its
+  default label takes its own default, so `convert(Laplace("g", 9.0, 1.0),
+  Normal)` displays as `Normal(g)`, and any other converted law keeps its
+  source's label. A subclass of `Distribution` or
   `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
   as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
-  a `RecordSpec` no longer takes the label as its component. The repr shows
-  the label and then the component, as
-  `Normal('Normal', component='mu', loc=0.0, scale=1.0)`, and a family
-  pickled before this change loads to the same law. Lightweight provenance
+  a `RecordSpec` no longer takes the label as its component. The repr of a law
+  or a kernel reads as a call of its constructor, as
+  `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
+  equal to the constructor's default, the class name or `p`, as
+  `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
+  nothing fixed evaluates to an equal law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default
   label stay two ancestors.
+- **A law, a kernel, and a function print as their notation, and a derived
+  label groups a product.** `str()` of a law, a kernel, or a function returns
+  its new `notation` property: its label followed by its signature, which lists
+  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
+  kernel, and `predict(x, y)` for a function. A given slot or a parameter
+  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
+  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
+  A slot with a default stays given once conditioning binds the others, so
+  `condition_on(counts, {"K": k, "r": q})` prints as
+  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
+  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
+  `with_label` or by the `FactoredDistribution` constructor prints by that
+  label, as `model(y, mu)`. A label built from another label parenthesizes a
+  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
+  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
+  as `[my draws][draw=1]`. Labels still join associatively, so
+  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model * d` prints as
+  `model(y, mu)·d(z)`. A marginal over the whole
+  events of several factors prints factor by factor, in the order the paths
+  name them where a product can take that order, so
+  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
+  where it was labeled `a·b`. A product that a function returns prints by the
+  function's output label, as `predict(y, mu)`. A batch of laws prints as the
+  notation of one law under its label, `over`, and its levels, as
+  `schools(effect) over school`, and a batch that a function lifted over a
+  law and swept over a batch gives prints as the call, as
+  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
+  position, as `effect_of[tau=3]`, and prints as its row's call, as
+  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
+  notation, as `log_prob(g(g), q ~ q)`.
 - **A value computed from a law is labeled by that value in probability
   notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
   `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled
@@ -57,13 +137,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posterior lists the paths the posterior holds fixed, as `mu ~ model; y`.
   `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
   `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
-  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]`. A batch of draws has
+  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]` by `f`'s output label,
+  as `mean(f(prior))` is. A batch of draws has
   the label of one draw, so its element is `(mu ~ prior)[sample=0]`, and a
   value computed from a batch of laws reads the batch as one law under its
   label, as `E[effect ~ schools]`. The law of a function lifted over laws
   keeps the function's label and prints as the function applied to draws of
   its inputs, as `f(beta ~ model; y)`, and its mean is labeled
-  `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
+  `E[f(beta ~ model; y)]`. The call shows each argument the caller passed and
+  no parameter left at its default. An operator parenthesizes a draw or
   a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
   as `x + (-1.0)`. Replace a comparison of such a result's label with
   its law's label by one with the new label, or set a label with
@@ -73,26 +155,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
   `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
   as `prob(mu)`. The law of an operation lifted over a law, such as
-  `log_prob(prior, q)` for a law `q` of values, names its component by the
-  operation, as `log_prob`, where it took the label of the scored law. Replace a
-  lookup of the component `log_prob` by one of `log_prob(mu)`.
+  `log_prob(prior, q)` for a law `q` of values, declares the component that one
+  point's result declares, as `log_prob(mu)`, where it took the label of the
+  scored law. Replace a lookup of the component `log_prob` by one of
+  `log_prob(mu)`.
 - **The atoms of a posterior are labeled by its components.** The atoms of the
   empirical law that `condition_on` or an inference method returns are labeled
   by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
   `posterior`, so an atom reads as `(K, r, phi)[chain=0, draw=7]`. The atoms of
   an `EmpiricalDistribution` a user constructs keep the label they were given.
+- **`make_posterior` declares a whole-term event it is not given a name for
+  under the component `posterior`.** An `event_spec` that is a bare term spec,
+  or none, declares the posterior's event under `posterior`, where it took the
+  `label` as the component, so `label` names the law alone. Pass
+  `event_spec=OutputSpec(mu=spec)` to name the component.
 - **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
-  and a batch of either flatten with their spec alone as the static data, where
-  the label rode with it, so two terms that differ only in their labels have
+  and a batch of either flatten with their spec alone as the static data, which
+  held the label too, so two terms that differ only in their labels have
   equal treedefs and share a `jax.jit` compilation. A term rebuilt from its
-  leaves, as `jax.tree_util.tree_map` returns one, is labeled by its class, as
-  `NumericArray` or `RecordBatch`, where it kept the label it had; a
-  `Function` call still labels its result by the function's output label.
+  leaves, as `jax.tree_util.tree_map` returns one, displays `<no description>`
+  until a managed result boundary supplies its expression.
   Relabel a rebuilt term with `with_label`.
-- **A map of a Gaussian random function keeps its label, and a sum is labeled
-  by its expression.** `A @ f`, `f + b`, and `alpha * f` are labeled `f`, where
-  they were labeled `linear_map(f)`, `shift(f)`, and `scale(f)`, and `f + g` is
-  labeled `f + g`, where it was `sum(f,g)`.
+- **A map or sum of Gaussian random functions displays its operation.**
+  `A @ f`, `f + b`, and `alpha * f` include their operators and operands,
+  and `(2.0 * f) + g` differs from `f + g`. Their event declarations stay
+  independent of the derived descriptions.
 - **A conditioned law keeps the label of the law it conditions, and prints the
   paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
   where it was `model | y`, and it prints as `model(mu; y)`: its signature
@@ -103,6 +190,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
   inference method's included, and a marginal, a view, and `raw()` keep them.
+  The repr shows them after the constructor call, as
+  `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
+  `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
+  The posterior an inference method returns, which the result's provenance
+  keeps as a parent with the method's own record, is recorded under the
+  result's label, as `model`, where it was recorded as `posterior`.
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
 - **`raw()` of a field view returns the raw form of the marginal at its path.**
@@ -122,6 +215,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parent's label, as `model["y"]` prints as `model(y)`, and the repr of every
   view names `FieldView` and the path. Replace a comparison of such a view's
   label with its parent's label by one with the factor's label.
+- **`BatchSpec` takes its levels by name.** `BatchSpec(element_spec, **levels)`
+  maps each level's name to the shape of its axes, outermost first, as in
+  `BatchSpec(NumericArraySpec(()), chain=4, draw="S")`, and a single int or str
+  is one axis. A level name that no keyword spells goes in a mapping passed
+  positionally, as `BatchSpec(spec, {"my level": 2})`. Replace
+  `BatchSpec(spec, ((4,), (100,)), ("chain", "draw"))` with
+  `BatchSpec(spec, chain=4, draw=100)`, and
+  `BatchSpec(spec, batch.axis_groups, batch.level_names)` with
+  `BatchSpec(spec, batch.spec.levels)`. The new `BatchSpec.levels` returns the
+  mapping, and the repr is the keyword call. `dataclasses.replace` no longer
+  rebuilds a `BatchSpec`; use `copy.replace` on Python 3.13 or later, or
+  construct a new one.
+- **A string shape is one dimension.** `NumericArraySpec("loc")` is
+  `NumericArraySpec(("loc",))`, where it read the three dimensions `'l'`, `'o'`,
+  and `'c'`, and `NumericArraySpec("")` raises `ValueError`, where it gave a
+  rank-0 shape. A dimension name must be a Python identifier, so
+  `NumericArraySpec(("n obs",))` and `with_dim_names(n="n obs")` raise
+  `ValueError`. A negative size raises `ValueError` rather than `TypeError`,
+  and a `bool` size raises `TypeError`, in `with_dim_sizes` too. A generator,
+  a set, `bytes`, a `memoryview`, and a mapping are refused wherever a shape,
+  level names, or axis counts are taken, so pass a tuple or a list. A
+  `PyMCModel` names the symbolic dimensions of a variable whose name is not
+  an identifier by replacing each other character with `_`, so a nested
+  model's `sub::beta` has the dimension `sub__beta_0`, where it was
+  `sub::beta_0`.
+- **A sequence of names is a str or a sequence of str.**
+  `score_posterior(metrics=...)`, `add_mcmc_diagnostics(metrics=...)`, and
+  `simulation_based_calibration(observed=...)` read their names as level names
+  are read. A set, an iterator, `bytes`, or a mapping raises `TypeError`, where
+  a set was read in an arbitrary order and a mapping by its keys, so pass a
+  tuple or a list.
+- **A workflow-owned draw inside a JAX transformation that the caller opens
+  raises `RuntimeError`.** A ProbPipe call that claims a workflow-owned random
+  event, such as `sample`, a lifted `Function` call, or `score_posterior` with
+  the `sliced_wasserstein` metric, raises when a `jax.jit`, `jax.vmap`, or
+  `jax.grad` that the caller opened is tracing it. The error names the
+  operation that claimed the event. A compiled call can capture a key drawn
+  during tracing, and an externally mapped call has no workflow-defined
+  identity for each lane. Call the function outside the transformation,
+  or transform only its deterministic part. For transformed random scoring,
+  use `sliced_wasserstein` with an explicit key: share a key for common random
+  projections, or pass separate keys for independent projections.
+  A deterministic operation, such as
+  `mean` of a closed-form law, runs under the caller's transformation as
+  before. The engine's own traces, such as `dispatch="jax"` and an inference
+  method's compiled chains, draw as before.
 - **A record batch whose columns are all numeric is a `NumericRecordBatch`.**
   `RecordBatch(...)` and `RecordBatch.stack` return a `NumericRecordBatch` when
   every column is numeric and no explicit non-numeric `element_spec` vetoes it,
@@ -282,12 +421,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The scope derives the call's key from the seed and the call's position in the
   scope, so the result differs from the one the old key gave.
-  `score_posterior` raises `TypeError` before claiming an event when sliced
-  Wasserstein scoring runs inside a staged JAX computation, such as `jax.jit`
-  or the body of `jax.lax.scan`. Unstaged `jax.grad` and `jax.vmap` remain
-  supported, including their composition, and mapped calls share random
-  projections across the batch. For staged computation, use
-  `sliced_wasserstein` with an explicit key. Scoring the other metrics, or
+  Random scoring follows the caller-transformation restriction described
+  above. For JAX transformations, use `sliced_wasserstein` with an explicit
+  key. Scoring the other metrics, or
   skipping sliced Wasserstein when the reference has no draws, remains
   compatible with JIT.
 - `OutputSpec` takes one keyword or one positional `RecordSpec`, so its form
@@ -1278,15 +1414,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mean`, `variance`, and `quantile` compute each component of a record
+  law by its own route.** The new route `by_component` computes each component
+  whose view has an exact summary by that view's route, and the other
+  components together, from one set of draws, so the mean of a dependent
+  joint such as `likelihood * prior` holds the exact means of the prior's root
+  factors. The result is approximate when any component is, and its
+  provenance records the route and exactness of each block of components. Under
+  `exact_only=True`, the error names the components that have an exact
+  summary and the calls on their views that compute it. `cov` keeps the
+  Monte Carlo fallback for a dependent joint.
 - **`notation_config.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
   value or law they are computed from. A rendering shows at most
   `notation_config.max_depth` levels, 8 by default or the value of the
-  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`. A part nested deeper
+  environment variable `PROBPIPE_NOTATION_MAX_DEPTH`, and at most 64, the
+  number of levels a stored expression keeps. A part nested deeper
   shows as its label, the name of a law or a function, or as `…` for a value,
-  and the rendering warns with a `UserWarning` that names the setting, so a
-  label derived through a long loop of operations stays short.
+  so a label derived through a long loop of operations stays short. Showing a
+  term warns: `str()`, `repr()`, and `notation` warn with a `UserWarning` that
+  names the setting when what they show has a collapsed part.
+- **A single int is a shape of one axis wherever a shape is taken.**
+  `NumericArraySpec(3)`, `sample(d, sample_shape=100)`,
+  `Weights.choice(key, shape=10)`, and a batch constructor's `axes_per_level=2`
+  each read the int as a tuple of one, and these arguments take any sequence,
+  such as a list, a `range`, or a 1-D array. A `numpy` integer size is stored as
+  a Python `int`.
 - **`tfp_nuts` takes `target_accept_prob`.** The acceptance probability that
   warmup's step-size adaptation targets is a method option, 0.75 unless set,
   so `method_options={"target_accept_prob": 0.9}` adapts a smaller step and
@@ -2219,35 +2373,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **A law, a kernel, and a function print as their notation, and a derived
-  label groups a product.** `str()` of a law, a kernel, or a function returns
-  its new `notation` property: its label followed by its signature, which lists
-  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
-  kernel, and `predict(x, y)` for a function. It returned the repr before, and
-  the repr is unchanged. A product that `*` or `joint` builds prints factor by
-  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
-  `with_label` or by the `FactoredDistribution` constructor prints by that
-  label, as `model(y, mu)`. A label built from another label parenthesizes a
-  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
-  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
-  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
-  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
-  as `[my draws][draw=1]`. Labels still join associatively, so
-  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
-  a further product as one operand, so `model * d` prints as
-  `model(y, mu)·d(z)`. A marginal over the whole
-  events of several factors prints factor by factor, in the order the paths
-  name them where a product can take that order, so
-  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
-  where it was labeled `a·b`. A product that a function returns prints by the
-  function's output label, as `predict(y, mu)`. A batch of laws prints as the
-  notation of one law under its label, `over`, and its levels, as
-  `schools(effect) over school`, and a batch that a function lifted over a
-  law and swept over a batch gives prints as the call, as
-  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
-  position, as `effect_of[tau=3]`, and prints as its row's call, as
-  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
-  notation, as `log_prob(g(g), q ~ q)`.
+- **A dependent joint's mean, variance, and quantiles take `by_component`
+  rather than `monte_carlo`** when one of its components has an exact
+  summary. The check of such a call lists `by_component (exact)` and
+  `by_component (approximate)`, and a seeded estimate of the other components
+  differs from the one `monte_carlo` gave, since they are drawn through their
+  view. A component whose summary is known to be undefined, such as the mean
+  of a Cauchy root factor, now raises `MathematicalDomainError`, where the
+  fallback returned an estimate. `with_options(method="monte_carlo")` keeps the
+  fallback.
+- **A law's fingerprint is computed once.** A distribution keeps its
+  fingerprint in a memo that a copy or a pickle leaves out, so the views and
+  records that name a law as their parent hash it once rather than once each.
+  The fingerprint leaves out every attribute a class declares as transient
+  state, such as that memo, since that state is computed from the rest.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
@@ -3169,6 +3308,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A display warns about a part that storage truncated only when its text
+  shows less than the part.** A law selected many times from a posterior
+  displays without a warning, and a warning that meets both a collapsed level
+  and a truncated part names both limits.
+- **Two functions without an output declaration that differ only in their
+  callable's name share a fingerprint.**
+- **A record batch derives its label from its validated top-level fields**, so
+  path-keyed and nested fields read alike, as `record(y)`, and fields that are
+  not a mapping, or no fields, raise one error that says so. `Record.ensure`
+  and a record built from component values derive their labels the same way.
+- **A `FunctionBatch` of builtins, such as `max`, constructs**, and selecting a
+  batch element never relabels the term the batch stores.
+- **A lift of a function declared to return a law holds each law under the
+  function's output component**, with `include_inputs=True` too, where it
+  exposed the inner law's components, and a lift of a function realized by
+  routes shows only the arguments the call passed.
+- **A product names the positions and labels of two factors that produce one
+  field**, and offers an output declaration besides a rename.
+- **A constructor's refusal names the constructor, the value, and the fix** for
+  fields that are not a mapping, an empty record or object batch without a
+  label, `Record.from_fields()` without fields, and a callable without a name,
+  whose type it names.
+- **A single str is one name wherever a sequence of names is taken.**
+  `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
+  an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
+  where it computed nothing. `add_mcmc_diagnostics` raises `ValueError` for an
+  unknown metric, where it ignored it.
+- A function whose returned overall kind differs from its output declaration
+  raises `ResultKindError`. A result of the declared kind with an incompatible
+  schema raises `ResultSchemaError`. The distinction applies to lifted calls
+  and operation routes. A call with `raw=True` validates its result before
+  detachment. `apply` reports output declaration violations as `ValueError`.
+- **Workflow-owned sampling works on every JAX version the package accepts.**
+  The package requires `jax>=0.9`, but a workflow-owned draw, such as `sample`
+  inside `workflow_run`, raised `AttributeError` on any JAX release before
+  0.10.1. The check of the draw's key called `jax.random.key_dtype`, which JAX
+  added in 0.10.1. The check now compares `jax.random.key_impl(key)` with
+  `"threefry2x32"`. A CI job installs the lowest version of each core
+  dependency that `pyproject.toml` allows and runs the tests of the functions,
+  converters, and operations packages against them.
+- **Caller trace detection supports JAX 0.9.** Workflow random-event guards
+  use `jax.core.find_top_trace` when `jax.extend.core.find_top_trace` is
+  unavailable.
 - **`StanModel` and `PyMCModel` take their label by the keyword `label`.** Their
   constructors document `label` as the first parameter, but a keyword call
   `StanModel(label=..., stan_file=...)` raised `TypeError` because the class

@@ -25,6 +25,7 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
+│   ├── _shapes.py             #   the reading of shape, level-name, and axis-count arguments (II.1, II.5)
 │   ├── _spec_base.py          #   TermSpec and dimension unification (II.1), NumericSpec (II.3), NumericArraySpec, OpaqueSpec (III.1–III.2)
 │   ├── _specs.py              #   InputSpec, OutputSpec and component projection contracts (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
