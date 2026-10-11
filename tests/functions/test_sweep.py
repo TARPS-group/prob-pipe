@@ -352,6 +352,30 @@ class TestPairedNumericSweeps:
                 np.asarray(wrapped(a, b)), np.arange(3.0)[:, None] + np.arange(2.0)
             )
 
+    @pytest.mark.parametrize("record", [False, True])
+    def test_mapped_storage_expands_each_level_before_flattening(self, record):
+        data = jnp.arange(6.0).reshape(3, 1, 2)
+        if record:
+            batch = NumericRecordBatch(
+                {"x": data}, ("site", "replicate"), label="data", element_spec=RecordSpec(x=(2,))
+            )
+        else:
+            batch = NumericArrayBatch(
+                data, ("site", "replicate"), label="data", element_spec=NumericArraySpec((2,))
+            )
+        actual = _sweep.mapped_storage(batch, 24, axis_groups=((2, 3), (4, 1)))
+        if record:
+            actual = actual["x"]
+        expected = np.broadcast_to(np.asarray(data).reshape(1, 3, 1, 1, 2), (2, 3, 4, 1, 2))
+        np.testing.assert_array_equal(actual, expected.reshape(24, 2))
+
+    def test_mapped_storage_validates_row_count_for_empty_events(self):
+        batch = NumericArrayBatch(
+            jnp.empty((2, 0)), "row", label="empty", element_spec=NumericArraySpec((0,))
+        )
+        with pytest.raises(ValueError, match="row count 3"):
+            _sweep.mapped_storage(batch, 3)
+
 
 class TestNestedSweepProbes:
     @pytest.mark.parametrize("dispatch", ["auto", "jax"])
