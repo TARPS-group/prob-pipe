@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -71,8 +73,9 @@ class TestAnEmpiricalLaw:
         assert list(law.event_spec.components) == ["theta"]
 
     @pytest.mark.parametrize("constructor", [EmpiricalDistribution, KDEDistribution])
-    def test_a_label_passed_first_raises_naming_the_keyword(self, constructor):
-        with pytest.raises(TypeError, match="takes the atoms first and the label as the keyword"):
+    def test_a_label_passed_first_raises_with_the_call_to_write(self, constructor):
+        call = f"{constructor.__name__}(atoms, label='theta')"
+        with pytest.raises(TypeError, match=re.escape(call)):
             constructor("theta", jnp.arange(3.0))
 
     def test_a_kde_follows_the_empirical_law(self):
@@ -115,8 +118,10 @@ class TestAKernel:
         )
         assert (kernel.label, kernel.notation) == ("p", "p(y | mu)")
 
-    def test_a_label_first_raises(self):
-        with pytest.raises(TypeError, match="takes the function first"):
+    def test_a_label_first_raises_with_the_call_to_write(self):
+        with pytest.raises(
+            TypeError, match=re.escape("conditional_distribution(function, label='lik')")
+        ):
             conditional_distribution("lik")
 
     def test_a_glm_likelihood_takes_its_component_and_the_label_p(self):
@@ -128,7 +133,9 @@ def test_a_mixture_takes_its_label_as_a_keyword():
     laws = [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)]
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "mixture"
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5]), label="mix").label == "mix"
-    with pytest.raises(TypeError, match="takes the components first and the label as the"):
+    with pytest.raises(
+        TypeError, match=re.escape("MixtureDistribution(components, weights, label='mix')")
+    ):
         MixtureDistribution("mix", laws)
 
 

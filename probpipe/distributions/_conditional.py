@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 import jax
 import jax.numpy as jnp
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from ..core._dispatch import Feasibility
 from ..core._expression import ELLIPSIS, Signature
 from ..core._record_spec import RecordSpec
@@ -55,7 +55,6 @@ from ._distribution import (
     _detached_term,
     _event_repr_parts,
     _given_label,
-    _label_given_first,
     _law_repr,
     _no_free_dims,
     _record_default_expression,
@@ -827,6 +826,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The first public class in this kernel's method-resolution order, which the repr names."""
         return public_class_name(type(self))
 
+    def _derived_label(self) -> str | None:
+        """The label this kernel's constructor gives it when it is given no label, as for a law."""
+        return self._default_label
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The family parameters the repr shows, each by name and formatted value; none here."""
         return []
@@ -1588,7 +1591,7 @@ def conditional_distribution(
         returned law, or if its type does not unify with the law's.
     """
     if isinstance(fn, str):
-        raise TypeError(_label_given_first("conditional_distribution", "function", fn))
+        raise TypeError(label_given_first("conditional_distribution", "function", fn))
     if label is not None:
         _given_label(label, owner="conditional_distribution")
     if fn is not None:

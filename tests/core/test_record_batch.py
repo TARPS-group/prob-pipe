@@ -1398,9 +1398,8 @@ class TestFlatLayout:
         with pytest.raises(
             TypeError,
             match=(
-                r"^NumericRecordBatch\.from_vector takes the spec first and the label as the "
-                r"keyword label, but got the string 'post' as the spec; write "
-                r"NumericRecordBatch\.from_vector\(spec, vec, label='post'\)$"
+                r"^NumericRecordBatch\.from_vector got the string 'post' as its spec; pass the "
+                r"label by keyword: NumericRecordBatch\.from_vector\(spec, vec, label='post'\)$"
             ),
         ):
             NumericRecordBatch.from_vector(
@@ -2216,15 +2215,25 @@ class TestRankZeroReconstruction:
 
 
 class TestTheLabelFirstFormIsRefusedWithAHint:
-    def test_a_label_first_call_names_the_new_form(self):
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: RecordBatch("x", {"a": jnp.zeros(3)}, "draw"), id="positional"),
+            pytest.param(
+                lambda: RecordBatch("x", {"a": jnp.zeros(3)}, level_names="draw"),
+                id="level-names-by-keyword",
+            ),
+        ],
+    )
+    def test_a_label_first_call_names_the_new_form(self, build):
         with pytest.raises(
             TypeError,
             match=(
-                r"^RecordBatch takes the fields first and the label as the keyword label, but got "
-                r"the string 'x' as the fields; write RecordBatch\(fields, level_names, label='x'\)$"
+                r"^RecordBatch got the string 'x' as its fields; pass the label by keyword: "
+                r"RecordBatch\(fields, level_names, label='x'\)$"
             ),
         ):
-            RecordBatch("x", {"a": jnp.zeros(3)}, "draw")
+            build()
 
 
 class TestARebuiltBatchComputes:

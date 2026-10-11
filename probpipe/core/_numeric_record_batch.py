@@ -230,7 +230,7 @@ class NumericRecordBatch(RecordBatch):
         )
 
     @classmethod
-    @refuses_label_first("spec", then=("vec",))
+    @refuses_label_first("spec", "vec")
     def from_vector(
         cls,
         spec: NumericRecordSpec,

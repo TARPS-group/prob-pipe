@@ -1931,12 +1931,10 @@ def _args_for(kind: str, *, shape: tuple[int, ...], levels):
 
 
 class TestTheConstructorSignatureContract:
-    """Read from the signature, not from a message the interpreter produced.
+    """Each constructor's label parameter, read from its signature.
 
-    The tests this replaces asked ``pytest.raises(match="name")`` of a call in the
-    *old* argument order. Such a call fails on the missing ``level_names``, and
-    ``name`` is a substring of ``level_names``, so they passed without ever
-    exercising the rule. A signature cannot pass for that reason.
+    A signature states the parameter directly, where a message match could pass
+    on an unrelated error that names a similar word.
     """
 
     @pytest.fixture(params=NAMED_CONSTRUCTORS)

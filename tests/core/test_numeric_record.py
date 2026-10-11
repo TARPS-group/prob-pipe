@@ -603,7 +603,10 @@ class TestConstructionMessages:
     def test_the_label_first_form_names_the_new_form(self):
         with pytest.raises(
             TypeError,
-            match=r"^NumericRecord takes the fields first .* write NumericRecord\(fields, label='nr'\)$",
+            match=(
+                r"^NumericRecord got the string 'nr' as its fields; pass the label by keyword: "
+                r"NumericRecord\(fields, label='nr'\)$"
+            ),
         ):
             NumericRecord("nr", {"a": 1.0})
 
@@ -611,9 +614,8 @@ class TestConstructionMessages:
         with pytest.raises(
             TypeError,
             match=(
-                r"^NumericRecord\.from_vector takes the spec first and the label as the keyword "
-                r"label, but got the string 'nr' as the spec; write "
-                r"NumericRecord\.from_vector\(spec, vec, label='nr'\)$"
+                r"^NumericRecord\.from_vector got the string 'nr' as its spec; pass the label "
+                r"by keyword: NumericRecord\.from_vector\(spec, vec, label='nr'\)$"
             ),
         ):
             NumericRecord.from_vector("nr", RecordSpec(a=()), jnp.ones(1))

@@ -168,7 +168,8 @@ def function(
     output_spec : OutputSpec or TermSpec or None
         The authoritative result declaration, as :class:`Function` takes it.
     output_label : str or None
-        Optional result alias; otherwise the result describes the application.
+        Optional result alias. Without one, a value result describes the
+        application, and a returned law or kernel takes the function's label.
     differentiable : NumericSpec or None
         The differentiability claim, as :class:`Function` takes it.
     bind : Mapping or None
@@ -321,7 +322,9 @@ def _result_expression(
     """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
     A function's result carries its explicit alias or application expression, and an operation's result
-    the expression its expression rule builds from the operands'. ``None``
+    the expression its expression rule builds from the operands'. The result
+    boundary labels a returned law or kernel by the function's label instead of
+    the application. ``None``
     leaves the result the expression its route gave it.
     """
     derive = getattr(function, "_derived_expression", None)

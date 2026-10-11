@@ -28,14 +28,13 @@ from typing import Any, Self
 import jax
 import numpy as np
 
-from .._messages import label_given_first
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._expression import Applied, Collection, Expression, Named, Signature
 from ._repr import type_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
 from .provenance import Provenance
-from .tracked import TrackedTerm, _callable_label
+from .tracked import TrackedTerm, _callable_label, refuse_label_first
 
 #: How many members the default label of an object batch lists before ``…``.
 _DESCRIBED_MEMBERS = 8
@@ -54,7 +53,7 @@ def _collection_expression(store: np.ndarray, *, kind: str | None = None) -> Exp
     store : numpy.ndarray
         The batch's elements, as an object array of any shape.
     kind : str, optional
-        The class name the error message names, such as ``"FunctionBatch"``.
+        The class name the error messages name, such as ``"FunctionBatch"``.
 
     Returns
     -------
@@ -64,31 +63,52 @@ def _collection_expression(store: np.ndarray, *, kind: str | None = None) -> Exp
     Raises
     ------
     TypeError
-        If *store* holds no element, which leaves nothing to describe.
+        If *store* holds no element, which leaves nothing to describe, or if a
+        member is a callable without a name.
     """
     if not store.size:
         raise TypeError(
             f"cannot derive a default label for an empty {kind or 'batch'}; pass label=..."
         )
     members = tuple(store.flat[i] for i in range(min(store.size, _DESCRIBED_MEMBERS)))
-    expressions = tuple(_member_expression(member) for member in members)
+    expressions = tuple(_member_expression(member, kind=kind) for member in members)
     return Collection(expressions, omitted=store.size > len(members))
 
 
-def _member_expression(member: Any) -> Expression:
+def _member_expression(member: Any, *, kind: str | None = None) -> Expression:
     """The description of one stored *member* in its batch's default label.
 
     A tracked term reads as it reads inside any expression, and a callable as
     its name and parameters, as ``predict(x)``. A callable whose signature
     cannot be inspected, as for some builtins, reads as its name alone.
+
+    Parameters
+    ----------
+    member : Any
+        The stored member.
+    kind : str, optional
+        The batch's class name, which the refusal of a callable without a name
+        names, such as ``"FunctionBatch"``.
+
+    Returns
+    -------
+    Expression
+        The member's description.
+
+    Raises
+    ------
+    TypeError
+        If *member* is a callable without a name, such as a
+        ``functools.partial``.
     """
     if isinstance(member, TrackedTerm):
         return member._embedded_expression()
+    name = _callable_label(member, subject=kind)
     try:
         parameters = tuple(inspect.signature(member).parameters)
     except (TypeError, ValueError):
-        return Named(_callable_label(member, subject="FunctionBatch"))
-    return Named(_callable_label(member, subject="FunctionBatch"), Signature(parameters))
+        return Named(name)
+    return Named(name, Signature(parameters))
 
 
 class _ObjectBatch[E](Batch[E]):
@@ -126,23 +146,26 @@ class _ObjectBatch[E](Batch[E]):
     Raises
     ------
     TypeError
-        If ``elements`` is a string, a mapping, or a non-object array — each of
-        which iterates into something other than its elements — if it is not
-        iterable at all, or if an ndarray of elements is not ``dtype=object``.
+        If any of these holds:
+
+        - *elements* is a string, a mapping, or an array whose dtype is not
+          ``object``, each of which iterates into something other than its
+          elements, or it is not iterable at all;
+        - *label* is omitted and there are no elements to describe, or a
+          callable element has no name to describe it by;
+        - *level_names* is not a str or a sequence of str, or *axes_per_level*
+          is not an int or a sequence of ints. A generator, a set, ``bytes``,
+          and a mapping are refused for both.
     ValueError
-        If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along), if ``axes_per_level`` does not account for every
-        stored axis or gives a count that is not one per level, or if it is omitted
-        and the number of names does not match the number of axes.
-    TypeError
-        If *label* is omitted and there are no elements to describe.
-    TypeError
-        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
-        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
-        mapping are refused for both.
-    ValueError
-        If an *axes_per_level* count is less than 1, or a level name is empty or
-        contains ``/``.
+        If any of these holds:
+
+        - *elements* is a zero-dimensional array, which is one object with no
+          batch axis to count along;
+        - *axes_per_level* does not account for every stored axis, gives a
+          count that is not one per level, or gives a count less than 1;
+        - *axes_per_level* is omitted and the number of names does not match
+          the number of axes;
+        - a level name is empty or contains ``/``.
 
     Notes
     -----
@@ -163,18 +186,18 @@ class _ObjectBatch[E](Batch[E]):
 
     __slots__ = ("_store",)
 
+    #: The element hook returns a relabeled copy of a stored term, or a new term
+    #: wrapping a stored value, so the selection need not copy it again.
+    _fresh_elements = True
+
     #: What the shared spec admits, worded to follow "elements must" in the
     #: refusal a bad element earns.
     _element_rule = "match element_spec"
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
-        # Three positional arguments led by a string, with no label keyword, are
-        # the earlier ``(label, elements, level_names)`` form. With fewer, a
-        # string is the elements, which the constructor refuses on its own terms.
-        if len(args) > 2 and isinstance(args[0], str) and "label" not in kwargs:
-            raise TypeError(
-                label_given_first(cls.__name__, "elements", args[0], then=("level_names",))
-            )
+        refuse_label_first(
+            cls.__name__, args, kwargs, ("elements", "level_names"), takes_strings=True
+        )
         return object.__new__(cls)
 
     def __init__(

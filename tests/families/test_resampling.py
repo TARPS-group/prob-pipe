@@ -10,6 +10,8 @@ smoothed law.
 
 from __future__ import annotations
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -443,6 +445,58 @@ class TestTheBandwidthRules:
         array = KDEDistribution(jnp.array([0.0, 1.0, 3.0]), 0.5, component="k")
         assert repr(listed) == repr(array)
         np.testing.assert_allclose(listed._log_prob(0.5), array._log_prob(0.5))
+
+    def test_listed_atoms_of_different_shapes_raise_with_the_list(self):
+        with pytest.raises(
+            ValueError,
+            match=re.escape(
+                "KDEDistribution atoms must all have one shape, but the list [[0.0, 1.0], [2.0]] "
+                "holds atoms of different shapes; pass an array with one atom per row"
+            ),
+        ):
+            KDEDistribution([[0.0, 1.0], [2.0]], 0.5, component="k")
+
+    @pytest.mark.parametrize(
+        ("atoms", "entry"),
+        [
+            (["a", "b"], "'a' of type str"),
+            ([None, 1.0], "None of type NoneType"),
+            (([1.0, 2.0], [3.0, "x"]), "'x' of type str"),
+            ([True, False], "True of type bool"),
+            ([True, 2.0], "True of type bool"),
+            (([0.0, 1.0], [2.0, False]), "False of type bool"),
+        ],
+        ids=["strings", "none", "nested", "booleans", "mixed-boolean", "nested-boolean"],
+    )
+    def test_listed_atoms_that_are_not_numbers_raise_with_the_entry(self, atoms, entry):
+        kind = type(atoms).__name__
+        with pytest.raises(
+            TypeError,
+            match=re.escape(
+                f"KDEDistribution atoms must be numbers, but the {kind} holds {entry}; "
+                f"pass numeric atoms"
+            ),
+        ):
+            KDEDistribution(atoms, 0.5, component="k")
+
+    @pytest.mark.parametrize(
+        "atoms",
+        [
+            [np.bool_(True), 2.0],
+            [np.array([True]), np.array([2.0])],
+            [np.array([], dtype=str)],
+        ],
+        ids=["numpy-boolean", "boolean-array", "empty-string-array"],
+    )
+    def test_invalid_array_entries_are_refused_before_numeric_coercion(self, atoms):
+        with pytest.raises(TypeError, match="KDEDistribution atoms must be numbers"):
+            KDEDistribution(atoms, 0.5, component="k")
+
+    def test_a_listed_atom_of_another_type_raises_with_its_type(self):
+        with pytest.raises(
+            TypeError, match=r"KDEDistribution atoms must be numbers.*of type object"
+        ):
+            KDEDistribution([object()], 0.5, component="k")
 
     def test_a_rule_refuses_atoms_without_spread(self):
         with pytest.raises(ValueError, match="atoms do not vary"):
