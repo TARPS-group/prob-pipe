@@ -60,7 +60,6 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
-from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
@@ -122,7 +121,6 @@ def function(
     output_label: str | None = None,
     differentiable: NumericSpec | None = None,
     bind: Mapping[str, Any] | None = None,
-    module: Any | None = None,
     **controls: Any,
 ) -> Function | Callable[[Callable[..., Any]], Function]:
     """Decorator to create a :class:`Function` from a plain function.
@@ -175,8 +173,6 @@ def function(
     bind : Mapping or None
         Construction-time values of the wrapped callable's arguments, which
         call arguments override.
-    module : object or None
-        The experimental shared-input container consulted for missing arguments.
     **controls : Any
         The engine's controls, which :class:`Function` lists.
 
@@ -203,7 +199,6 @@ def function(
             output_label=output_label,
             differentiable=differentiable,
             bind=bind,
-            module=module,
             **controls,
             label=label,
         )
@@ -618,8 +613,6 @@ def _run_call(
         args,
         call_inputs,
         bind=function._bind,
-        module=function._module,
-        dependency_type=Node,
         function_name=function._label,
     )
 
@@ -1397,8 +1390,6 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         args,
         kwargs,
         bind=function._bind,
-        module=function._module,
-        dependency_type=Node,
         function_name=function._label,
     )
     values, conversions, waiting = _normalization.plan_distribution_values(

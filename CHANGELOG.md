@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Remove the experimental `Node`, `Module`, `AbstractModule`,
+  `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
+  `Function` and `@function` no longer accept `module=`. Use ordinary callables
+  and `bind=` for construction-time arguments; call arguments override those
+  bindings, followed by Python defaults for omitted arguments.
+
 - Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
   expectation, generic laws or kernels, quantile, variance, covariance, and
   anonymous functions. Explicit labels remain literal, and generated component
@@ -41,8 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fingerprint, or its draws. A value result without an alias displays the call,
   as `predict(ambient)`, with only the arguments the caller passed, and a law
   the function returns keeps the function's label and displays its own
-  signature, as `predict(y, mu)`. A `Module` method's results display the call,
-  as `Example.numbers()`, where they displayed the method's name.
+  signature, as `predict(y, mu)`.
 - **A term that JAX rebuilds from its leaves displays `<no description>`** until
   a managed result boundary describes it, and it stays usable inside `jax.jit`
   and `jax.vmap`.

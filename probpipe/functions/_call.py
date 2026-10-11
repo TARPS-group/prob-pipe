@@ -277,14 +277,12 @@ def resolve_function_call(
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
-    module: Any | None,
-    dependency_type: type,
     function_name: str,
 ) -> dict[str, Any]:
     """Bind one call's arguments to the signature and fill the inputs it omits.
 
     The arguments bind by Python's rules, and an omitted input takes its value
-    from the construction bindings, the module, or the parameter's default.
+    from the construction bindings or the parameter's default.
 
     Parameters
     ----------
@@ -296,12 +294,6 @@ def resolve_function_call(
         The call's keyword arguments.
     bind : Mapping of str to Any
         The Function's construction bindings.
-    module : object or None
-        The shared-input container consulted for an input that the call and
-        *bind* omit, or ``None``.
-    dependency_type : type
-        The class that marks a parameter as a dependency when the parameter's
-        annotation is a subclass of it.
     function_name : str
         The function's label, which the messages name.
 
@@ -315,15 +307,14 @@ def resolve_function_call(
     ------
     TypeError
         If an argument does not bind to the signature, a required input stays
-        unbound, or the call overrides a dependency the module provides.
+        unbound, or a construction binding names no parameter and there is no
+        variadic keyword parameter.
     """
     bound = info.signature.bind_partial(*args, **call_inputs)
     return resolve_function_values(
         info,
         dict(bound.arguments),
         bind=bind,
-        module=module,
-        dependency_type=dependency_type,
         function_name=function_name,
     )
 
