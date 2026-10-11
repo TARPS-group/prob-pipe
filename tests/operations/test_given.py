@@ -23,6 +23,7 @@ from probpipe import (
     conditional_distribution,
     convert,
     cov,
+    distribution,
     expectation,
     factor,
     log_prob,
@@ -122,6 +123,11 @@ class _Moments(
     def _conditional_marginal_guard(self, given, path):
         """The marginal is of the kernel's y component at a positive mean."""
         return path == "y" and given["mu"] > 0
+
+
+class _GuardedDensity(_Direct):
+    def _conditional_log_prob_guard(self, given):
+        return given["mu"] > 0
 
 
 class _Approximate(_Fallback, SupportsApproximateConditioning):
@@ -243,6 +249,40 @@ class TestConditionalOperations:
         result = log_prob(_Direct(), 0.0, given=given)
         np.testing.assert_allclose(result, jax.scipy.stats.norm.logpdf(0.0, jnp.array([1.0, 2.0])))
         assert result.level_names == ("cases",)
+
+    def test_an_empty_given_sweep_uses_declarations_without_drawing(self):
+        kernel = _Direct()
+        given = NumericRecordBatch({"mu": jnp.empty((0,))}, ("cases",), label="givens")
+        report = log_prob.check(kernel, 0.0, given=given)
+        assert report.feasible is True
+        result = log_prob(kernel, 0.0, given=given)
+        assert result.shape == (0,)
+        assert result.level_names == ("cases",)
+        assert not kernel.keys
+
+    def test_an_empty_given_sweep_does_not_probe_a_value_dependent_guard(self):
+        given = NumericRecordBatch({"mu": jnp.empty((0,))}, ("cases",), label="givens")
+        report = marginal.check(_Moments(), "y", given=given)
+        assert report.feasible is True
+        assert not report.routes
+
+    def test_a_law_over_givens_defers_a_value_dependent_guard_without_sampling(self):
+        def forbidden_draw(key):
+            raise AssertionError("a declaration-only check must not draw")
+
+        given = distribution(sample=forbidden_draw, event_spec=RecordSpec(mu=REAL))
+        report = marginal.check(_Moments(), "y", given=given)
+        assert report.feasible is None
+        assert any(route.pending for route in report.routes)
+
+    def test_a_law_over_givens_defers_the_guard_of_a_delegating_default(self):
+        def forbidden_draw(key):
+            raise AssertionError("a declaration-only check must not draw")
+
+        given = distribution(sample=forbidden_draw, event_spec=RecordSpec(mu=REAL))
+        report = unnormalized_log_prob.check(_GuardedDensity(), 0.0, given=given)
+        assert report.feasible is None
+        assert any(route.pending for route in report.routes)
 
     def test_a_given_binds_symbolic_event_dimensions_before_sampling(self):
         class Vector(ConditionalDistribution, SupportsConditionalSampling):

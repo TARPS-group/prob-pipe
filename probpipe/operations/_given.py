@@ -6,9 +6,12 @@ from collections.abc import Callable, Mapping
 from typing import Any, ClassVar
 
 from ..core._dispatch import Feasibility
+from ..core._record_spec import RecordSpec
+from ..core._spec_base import _unify_specs
 from ..core.record import Record
 from ..distributions._capabilities import (
     _CONDITIONAL_TWINS,
+    _DELEGATING_DEFAULTS,
     _capability_guard,
     _capability_subclass,
     _kernel_claims,
@@ -16,6 +19,7 @@ from ..distributions._capabilities import (
 from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..functions._call import ApplicabilityError
+from ..functions._resolution import StandIn
 
 
 def _forward(method: str) -> Callable[..., Any]:
@@ -35,6 +39,12 @@ def _guard(method: str) -> Callable[..., Any]:
     conditional = "_conditional" + method
 
     def guard(self: _GivenLaw, *args: Any, **kwargs: Any) -> Feasibility:
+        if isinstance(self.given, StandIn):
+            target = conditional
+            while target is not None and getattr(self.kernel, target + "_guard", None) is None:
+                target = _DELEGATING_DEFAULTS.get(getattr(type(self.kernel), target, None))
+            if target is not None:
+                return Feasibility(None, pending=("the conditional guard needs the given values",))
         return _capability_guard(self.kernel, conditional, self.given, *args, **kwargs)
 
     guard.__name__ = method + "_guard"
@@ -62,20 +72,23 @@ class _GivenLaw(Distribution):
     It claims exactly the unconditional capabilities whose conditional twins
     the kernel claims. All given values unify in one dimension scope before
     the event declaration is substituted. No density, draw, kernel application,
-    or inference method runs during construction.
+    or inference method runs during construction. Internal declaration-only
+    planning also accepts a record-valued StandIn: its field declarations bind
+    the dimensions, and guards that need its values remain unresolved.
 
     Parameters
     ----------
     kernel : ConditionalDistribution
         The kernel whose conditional capabilities serve this call.
-    given : Record or Mapping[str, Any]
-        Values of every required given slot; optional slots may be omitted.
+    given : Record, Mapping[str, Any], or StandIn
+        Values of every required given slot; optional slots may be omitted. A
+        private planning stand-in carries a RecordSpec for those slots.
 
     Raises
     ------
     ApplicabilityError
-        If the given is not a record or mapping, names an unknown slot, leaves
-        a required slot unbound, or fails its declaration.
+        If the given is not a record, mapping, or record-valued planning stand-in,
+        names an unknown slot, leaves a required slot unbound, or fails its declaration.
     """
 
     _capability_table: ClassVar[dict[type, dict[str, Callable[..., Any]]]] = {
@@ -86,7 +99,9 @@ class _GivenLaw(Distribution):
         return object.__new__(_capability_subclass(cls, _kernel_claims(kernel)))
 
     def __init__(self, kernel: ConditionalDistribution, given: Any) -> None:
-        if isinstance(given, Record):
+        if isinstance(given, StandIn) and isinstance(given.spec, RecordSpec):
+            values = {name: StandIn(spec) for name, spec in given.spec.children.items()}
+        elif isinstance(given, Record):
             values = dict(given.children)
         elif isinstance(given, Mapping):
             values = dict(given)
@@ -103,10 +118,13 @@ class _GivenLaw(Distribution):
         bindings: dict[str, int] = {}
         try:
             for name, value in values.items():
-                kernel.given_spec[name]._bind_dims_from_value(value, bindings, f"given/{name}")
+                if isinstance(value, StandIn):
+                    _unify_specs(kernel.given_spec[name], value.spec, bindings, f"given/{name}")
+                else:
+                    kernel.given_spec[name]._bind_dims_from_value(value, bindings, f"given/{name}")
         except (TypeError, ValueError) as error:
             raise ApplicabilityError(f"given for {kernel.label!r}: {error}") from None
         super().__init__(kernel.event_spec.with_dim_sizes(**bindings), label=kernel.label)
         object.__setattr__(self, "kernel", kernel)
-        object.__setattr__(self, "given", values)
+        object.__setattr__(self, "given", given if isinstance(given, StandIn) else values)
         self._store_expression(kernel._embedded_expression().with_fixed(tuple(values)))
