@@ -116,7 +116,8 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     -------
     OutputSpec
         ``d.event_spec`` for an empty shape, and otherwise that declaration with
-        its spec replaced by the batch spec over the sample axes.
+        its spec replaced by the batch spec over the sample axes followed by
+        any batch levels that belong to one event.
 
     Raises
     ------
@@ -168,7 +169,9 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
         draws takes the label of one draw, so its element is labeled
         ``(mu ~ prior)[sample=0]``. Under ``with_options(raw=True)`` the draws
         are returned as ``d._sample`` gives them, so a record-valued law's
-        batch of draws is the nested mapping of its raw columns.
+        batch of draws is the nested mapping of its raw columns. A batch-valued
+        event keeps its own levels for one draw, and a non-empty *sample_shape*
+        adds the ``sample`` level before them.
 
     Raises
     ------

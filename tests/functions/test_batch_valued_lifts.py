@@ -10,6 +10,7 @@ from probpipe import (
     Function,
     Normal,
     NumericArrayBatch,
+    NumericArraySpec,
     Opaque,
     OpaqueBatch,
     OutputSpec,
@@ -156,3 +157,28 @@ class TestObjectBatchEvents:
             assert isinstance(drawn, OpaqueBatch)
             assert drawn.level_names == ("item",)
             assert drawn[0].raw() == (2, "a")
+
+
+class TestBatchOutputDeclarations:
+    def test_a_polymorphic_declaration_completes_without_mutating_the_function(self):
+        declared = OutputSpec(trajectory=BatchSpec(NumericArraySpec(()), time="n"))
+        wrapped = Function(_trajectory, output_spec=declared, dispatch="sequential")
+        with workflow_run(seed=0):
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"))
+        assert law.event_spec.spec.axis_groups == ((3,),)
+        assert law.event_spec.spec.element_spec.dtype == jnp.float32
+        assert wrapped.output_spec is declared
+        assert wrapped.output_spec.spec.axis_groups == (("n",),)
+        assert wrapped.output_spec.spec.element_spec.dtype is None
+
+    @pytest.mark.parametrize("difference", ["shape", "level"])
+    def test_all_evaluations_must_agree_on_one_event(self, difference):
+        def trajectory(x):
+            size = 2 + int(x) if difference == "shape" else 2
+            level = "time" if difference == "shape" or int(x) == 0 else "other"
+            return NumericArrayBatch(jnp.ones(size), level, label="path")
+
+        wrapped = Function(trajectory, dispatch="sequential")
+        source = EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x")
+        with workflow_run(seed=0), pytest.raises(ResultSchemaError):
+            wrapped(source)

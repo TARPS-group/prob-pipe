@@ -99,15 +99,15 @@ def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
     atoms : Batch or Array
         The atoms in the event's batch form, or an array of array atoms along its
         leading axis.
-
     event_spec : OutputSpec or None
         The event declaration, whose batch levels belong to each atom.
 
     Returns
     -------
     TermSpec
-        The batch's ``element_spec``, or for an array the ``NumericArraySpec`` of
-        its trailing axes and its dtype.
+        The spec of one complete event. A batch-valued event includes its
+        trailing levels in a ``BatchSpec``; otherwise this is the stored batch's
+        ``element_spec`` or the array's trailing shape and dtype.
 
     Raises
     ------
@@ -193,7 +193,7 @@ def _atom_weights(weights: Any, atoms: Batch, event_spec: TermSpec | None = None
     Returns
     -------
     Weights
-        One weight per atom, in the row-major order of the batch axes.
+        One weight per atom, in row-major order over the atom axes.
 
     Raises
     ------
@@ -228,7 +228,7 @@ def _flattened(column: Any, count: int, rank: int) -> Any:
 
 
 def _flat_rows(atoms: Batch, event_spec: TermSpec | None = None) -> Any:
-    """The raw atoms of *atoms* along one leading axis, in row-major order of the batch axes.
+    """The raw atoms along one leading axis, in row-major order over the atom axes.
 
     Parameters
     ----------
@@ -295,7 +295,8 @@ def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
     -------
     Batch
         The batch of the kind *spec* declares, such as a ``RecordBatch`` for a
-        record spec, with *spec* as its ``element_spec``.
+        record spec. Its levels begin with *level* and retain the event's own
+        levels when *spec* is a ``BatchSpec``.
 
     Raises
     ------
