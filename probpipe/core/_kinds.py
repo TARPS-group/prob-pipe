@@ -24,6 +24,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._batch import BatchSpec
+from ._record_spec import RecordSpec
+
 __all__ = [
     "batch_class_for_spec",
     "register_kind",
@@ -87,11 +90,9 @@ def _lookup(spec: Any, side: int) -> type | None:
     """Resolve *spec*'s registered class, honouring subclass registrations.
 
     The exact type first, then the MRO, so a spec subclass inherits its base's
-    kind unless it registers its own.
+    kind unless it registers its own. A batch spec resolves to its element
+    kind's batch form, since a batch of batches has that same form.
     """
-    from ._batch import BatchSpec
-    from ._record_spec import RecordSpec
-
     if isinstance(spec, BatchSpec):
         if isinstance(spec.element_spec, RecordSpec):
             from ._record_batch import _batch_class_for

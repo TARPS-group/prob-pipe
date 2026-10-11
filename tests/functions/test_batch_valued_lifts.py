@@ -10,6 +10,8 @@ from probpipe import (
     Function,
     Normal,
     NumericArrayBatch,
+    Opaque,
+    OpaqueBatch,
     OutputSpec,
     Record,
     RecordBatch,
@@ -128,3 +130,29 @@ class TestBatchOutputComposition:
             second = wrapped.with_label("renamed display")(source)
         np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
         assert second.atoms.level_names == ("trajectory", "time")
+
+
+class TestObjectBatchEvents:
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    def test_object_batch_events_remain_whole_and_frozen(self, include_inputs):
+        def payload(x):
+            return OpaqueBatch(
+                [Opaque((int(x), "a"), label="first"), Opaque((int(x), "b"), label="second")],
+                "item",
+                label="payload",
+            )
+
+        wrapped = Function(payload, dispatch="sequential", include_inputs=include_inputs)
+        with workflow_run(seed=0):
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="x"))
+            drawn = sample(law)
+        assert law.num_atoms == 1
+        if include_inputs:
+            assert isinstance(drawn["payload"], OpaqueBatch)
+            field = law.atoms["payload"]
+            assert field.level_names == ("payload", "item")
+            assert not field.raw().flags.writeable
+        else:
+            assert isinstance(drawn, OpaqueBatch)
+            assert drawn.level_names == ("item",)
+            assert drawn[0].raw() == (2, "a")

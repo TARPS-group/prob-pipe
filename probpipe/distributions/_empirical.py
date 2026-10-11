@@ -879,21 +879,26 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         paths, grouped as design II.4 states, as in ``(x·y)[('a', 'b')]``.
         """
         atoms = self._atoms
+        expression = Indexed(
+            atoms._expression, repr(tuple(requested for requested, _, _ in selected))
+        )
         if isinstance(self.event_spec.spec, BatchSpec):
             shape = _atom_shape(atoms, self.event_spec.spec)
             column = np.empty(shape, dtype=object)
             for index in np.ndindex(shape):
                 column[index] = atoms[index]
             fields = {requested.rsplit(_PATH_SEP, 1)[-1]: node for requested, _, node in selected}
-            return RecordBatch(
+            batch = RecordBatch(
                 {name: column for name in fields},
                 atoms.level_names[: len(atoms.level_names) - len(self.event_spec.spec.level_names)],
                 element_spec=RecordSpec(fields),
                 axes_per_level=_ranks(atoms)[
                     : len(atoms.level_names) - len(self.event_spec.spec.level_names)
                 ],
-                label=atoms.label,
+                label=expression.render_label(),
             )
+            batch._store_expression(expression)
+            return batch
         is_record = isinstance(self.event_spec.spec, RecordSpec)
         stored = atoms._raw_columns() if is_record else {}
         columns: dict[str, Any] = {}
@@ -914,9 +919,6 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                     columns[f"{final}{_PATH_SEP}{leaf[len(prefix) + 1 :]}"] = column
         element = RecordSpec(fields)
         batch_class = NumericRecordBatch if isinstance(element, NumericRecordSpec) else RecordBatch
-        expression = Indexed(
-            atoms._expression, repr(tuple(requested for requested, _, _ in selected))
-        )
         batch = batch_class(
             columns,
             atoms.level_names,

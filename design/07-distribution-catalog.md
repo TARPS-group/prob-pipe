@@ -79,7 +79,7 @@ class EmpiricalDistribution(Distribution):
     @property
     def atoms(self) -> Batch | Array: ...    # the stored atoms, in the event's batch form
     @property
-    def weights(self) -> Array: ...          # normalized, one per atom, row-major over the batch axes
+    def weights(self) -> Array: ...          # normalized, one per atom, row-major over the atom axes
     @property
     def num_atoms(self) -> int: ...
 

@@ -482,7 +482,8 @@ class RecordBatch(Batch[Record]):
 
         The result is a **view**: it shares this batch's column rather than
         copying it, except that batch-valued object entries are stacked into
-        one batch on the outer and inner levels. That case copies their storage. This batch
+        one batch on the outer and inner levels, which copies their storage.
+        This batch
         checked the column against the field's spec when it was built, which is
         the whole of what the column batch's own constructor would redo.
         """
@@ -1038,7 +1039,12 @@ def _stack_batch_column(
             if entries
             else np.empty(shape, dtype=object)
         )
-    return batch_class_for_spec(element)._over_store(values, spec=spec, label=label)
+    if _is_object_array(values):
+        values = _frozen_object_column(values)
+    batch_class = batch_class_for_spec(element)
+    if batch_class is None:
+        raise TypeError(_unbatchable_field(label, element))
+    return batch_class._over_store(values, spec=spec, label=label)
 
 
 def _unbatchable_field(path: str, spec: TermSpec) -> str:
