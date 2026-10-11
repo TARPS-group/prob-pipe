@@ -430,9 +430,11 @@ class NotationConfig:
         A term's label is rendered once, when the term is built, at the setting
         then, and the term keeps it. The notation of a law, a kernel, or a
         function is rendered each time it is shown, at the current setting. A
-        stored expression keeps at most 64 levels, and a part nested deeper
-        shows as its label or ``…`` at any setting, with a ``UserWarning`` that
-        says no setting shows it.
+        stored expression keeps at most 64 levels. A term built over an operand
+        that nests 64 levels stores the whole operand as its label or ``…``,
+        which shows so at any setting, with a ``UserWarning`` that says no
+        setting shows it. A loop that adds to a value therefore gives, every 63
+        steps, a label that shows the last step alone, as ``… + 1``.
 
         Raises
         ------

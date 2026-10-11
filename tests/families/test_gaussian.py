@@ -766,6 +766,20 @@ class TestAlgebraNames:
         total = _named_weight_grf("f") + _named_weight_grf("g")
         assert total.notation == "(f + g)(f)"
 
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda f, g: jnp.eye(3) @ f, id="linear-map"),
+            pytest.param(lambda f, g: f + 1.0, id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, id="scale"),
+            pytest.param(lambda f, g: f + g, id="sum"),
+        ],
+    )
+    def test_the_repr_leaves_out_the_label_of_the_operation_and_shows_another(self, build):
+        result = build(_named_weight_grf("f"), _named_weight_grf("g"))
+        assert f"label={result.label!r}" not in repr(result)
+        assert repr(result.with_label("h")).endswith("    label='h',\n)")
+
 
 # ---------------------------------------------------------------------------
 # Ground truth
@@ -1231,12 +1245,16 @@ class TestTheFactoredGaussian:
         from probpipe import Gamma
 
         with pytest.raises(
-            TypeError, match=r"accepts only Normal or MultivariateNormal .* \['Gamma'\]"
+            TypeError,
+            match=r"^FactoredMultivariateGaussian 'j' accepts only Normal or MultivariateNormal "
+            r".* \['Gamma'\]$",
         ):
             FactoredMultivariateGaussian(
                 [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)],
                 label="j",
             )
+        with pytest.raises(TypeError, match=r"^FactoredMultivariateGaussian 'Normal·Gamma' "):
+            FactoredMultivariateGaussian([Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
 
     def test_its_moments_are_the_factors_in_closed_form(self):
         joint = _gaussian_joint()

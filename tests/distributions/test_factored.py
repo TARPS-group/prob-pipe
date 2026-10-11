@@ -560,7 +560,12 @@ class TestConstruction:
                 label="model",
             )
         with pytest.raises(
-            ValueError, match=_mentions("'beta'", "'prior'", "factor 0", "factor 1", "OutputSpec")
+            ValueError,
+            match=re.escape(
+                "the field 'beta' is produced by both factor 0 ('prior') and factor 1 ('prior'); "
+                "rename it in one of them with with_path_names({'beta': ...}), or build one of "
+                "them with another component, as Normal('beta_2', ...)"
+            ),
         ):
             FactoredDistribution([_prior(), _prior()], label="model")
 

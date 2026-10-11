@@ -351,7 +351,7 @@ class NumericRecord(Record, Numeric):
         return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
-    @refuses_label_first("spec", then=("vec",))
+    @refuses_label_first("spec", "vec")
     def from_vector(
         cls, spec: NumericRecordSpec, vec: Array, *, label: str | None = None
     ) -> NumericRecord:

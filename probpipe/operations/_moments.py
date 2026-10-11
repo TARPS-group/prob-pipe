@@ -90,6 +90,7 @@ from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
 from ._evaluate import (
     _FORWARDED_CONTROLS,
+    NAMELESS_CALLABLE_FIX,
     _as_function,
     _bound_parameter,
     _EvaluationRules,
@@ -1132,7 +1133,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     fixed = dict(call.operands.get("fixed_args") or {})
     if not fixed:
         return raw
-    parameter = _bound_parameter(_as_function(f), fixed)
+    parameter = _bound_parameter(_as_function(f, subject="expectation"), fixed)
     values = {
         name: value.raw() if isinstance(value, TrackedTerm) else value
         for name, value in fixed.items()
@@ -1143,7 +1144,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
     """``d._expectation(f)``, each component of the integrand's output named ``mean(...)``."""
     value = call.operands["d"]._expectation(_integrand(call))
-    declared = _as_function(call.operands["f"]).output_spec
+    declared = _as_function(call.operands["f"], subject="expectation").output_spec
     return value if declared is None else _named_value(value, "mean", declared)
 
 
@@ -1170,7 +1171,7 @@ class _PushforwardMean(_EvaluationRules):
 
     def _values(self, call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
         """The integrand, the parameter a draw binds, the law, and the fixed arguments."""
-        f = _as_function(call.operands["f"])
+        f = _as_function(call.operands["f"], subject="expectation")
         fixed = dict(call.operands.get("fixed_args") or {})
         return f, _bound_parameter(f, fixed), call.operands["d"], fixed
 
@@ -1222,7 +1223,7 @@ def _integrand_label(f: Any) -> str:
     """
     if isinstance(f, Function):
         return f.output_label
-    return _callable_label(f, subject="Function")
+    return _callable_label(f, subject="expectation", fix=NAMELESS_CALLABLE_FIX)
 
 
 def _expectation_expression(d: Any, f: Any) -> Expression:

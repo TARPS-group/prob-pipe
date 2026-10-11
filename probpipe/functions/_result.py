@@ -20,7 +20,7 @@ import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
 from ..core._batch import Batch, BatchSpec, _ranks_of
-from ..core._expression import Expression, Named
+from ..core._expression import AppliedValue, Expression, Named
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -39,6 +39,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._batches import DistributionBatch
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..values._function_base import _ResultKindMismatch, _validate_function_output
 
@@ -237,10 +238,17 @@ def _coerce_output(
 def _prepared(term: Any, expression: Expression) -> Expression:
     """*expression* as *term* carries it: a label alone keeps the paths a law or kernel holds fixed.
 
-    A label alone that *term* carries already gives *term*'s own node, so a
-    caller tells by identity that *term* needs no copy. That comparison reads
-    a node of at most two levels, whatever the depth of *term*'s expression.
+    A law or a kernel that a function's call on values returns is labeled by
+    the function's label rather than by the call, so it displays by that label
+    and its own signature, as ``predict(y, mu)`` (II.4). A label alone that
+    *term* carries already gives *term*'s own node, so a caller tells by
+    identity that *term* needs no copy. That comparison reads a node of at most
+    two levels, whatever the depth of *term*'s expression.
     """
+    if isinstance(expression, AppliedValue) and isinstance(
+        term, (Distribution, ConditionalDistribution)
+    ):
+        expression = Named(expression.function)
     if isinstance(expression, Named) and expression.signature is None:
         relabeled = term._relabeled_expression(expression.label)
         return term._expression if term._expression == relabeled else relabeled

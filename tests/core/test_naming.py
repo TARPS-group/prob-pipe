@@ -530,14 +530,11 @@ class TestRawDrawLabeling:
 
 
 class TestEveryAggregateIsLabeledForItsFunction:
-    """The labeling table, widened across the axes that had diverged.
+    """A sweep's aggregate is labeled by the producing function's call on the swept batch.
 
-    A sweep's aggregate is built by the boundary, not by a caller, so its label is
-    the producing function's call on the swept batch, as ``double(rows)``. Three
-    paths disagreed: the
-    undeclared record aggregate took `stack`'s class-name default, and the scalar,
-    opaque, and declared paths marked a derived label as user-given — which would
-    stop a later operation relabeling it.
+    The sweep builds the aggregate, so its label is derived, as ``double(rows)``,
+    whether the function returns an array, a mapping, an opaque value, a
+    callable, or a sequence, and whether or not it declares its output.
     """
 
     @staticmethod
@@ -577,8 +574,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
         assert result.label == "double(rows)"
 
     def test_a_multi_axis_sweep_is_labeled_the_same_way(self):
-        """The re-cut to the sweep's own geometry is a separate construction, and
-        it had its own labeling."""
+        """The aggregate of a sweep over two levels keeps both levels and the call's label."""
         from probpipe.core._specs import NumericRecordSpec
 
         grid = NumericRecordBatch(
@@ -597,18 +593,12 @@ class TestEveryAggregateIsLabeledForItsFunction:
 
 
 class TestNoKindInventsALabel:
-    """The rule the whole layer now shares: a label is given, or derived from
-    something that carries meaning. A class name carries none.
+    """A label is given, or derived from content that carries meaning, and never from a class name.
 
-    Every batch defaulted to its own lowercased class name, so a pipeline full
-    of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — labels that
-    say what the object *is*, which its type already says, and nothing about
-    which one it is.
-
-    That every constructor takes the label first, positional-only and with no
-    default behind it, is asserted from the signatures themselves in
-    `test_batch.py`'s `TestTheConstructorSignatureContract`. What is left here is
-    the other half of the rule: where a *derived* label comes from.
+    `test_batch.py`'s `TestTheConstructorSignatureContract` asserts from the
+    signatures that every constructor takes the label as the keyword `label`,
+    required only for a raw value. The tests here check where a derived label
+    comes from.
     """
 
     def test_stack_derives_its_label_from_what_it_stacks(self):
