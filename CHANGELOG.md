@@ -41,11 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A term that JAX rebuilds from its leaves displays `<no description>`** until
   a managed result boundary describes it, and it stays usable inside `jax.jit`
   and `jax.vmap`.
-- **A law's repr shows `label=` only for a label the caller gave.** A label the
-  constructor derives, such as a product's `lik·prior` or a mixture's, is left
-  out, so evaluating the repr keeps the derived notation. A `KDEDistribution`'s
+- **A law's repr leaves out a label only where its constructor would give that
+  label again.** A label the constructor derives from the arguments shown, such
+  as a product's `lik·prior` or a mixture's, is left out, so evaluating the repr
+  keeps the derived notation, and any other label is shown, as for a law
+  converted from a mixture or a posterior of a product. A mixture's repr lists up
+  to eight components, as many as the weights it prints. A `KDEDistribution`'s
   repr shows its bandwidth, and its constructor takes a list of numbers as its
-  atoms.
+  atoms and refuses a list of different shapes or of entries that are not
+  numbers.
 - **The default labels of a mixture, a minibatched law, and the BayesFlow
   kernels describe them.** A `MixtureDistribution` displays its components, as
   `mixture([a(x), b(x)])`, and a `MinibatchedDistribution` its construction, as
@@ -3275,6 +3279,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a truncated part names both limits.
 - **A product names the positions and labels of two factors that produce one
   field.**
+- **Reusing a term whose label nests 64 levels no longer renders it again on
+  each use**, and selecting an element of a batch of objects copies the stored
+  term once.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
