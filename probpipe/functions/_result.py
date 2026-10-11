@@ -725,6 +725,12 @@ def _with_dtypes_of(spec: Any, reference: Any) -> Any:
     A leaf whose match in *reference* states no dtype keeps its own, so a law's
     event declaration can take the dtypes its stored atoms hold.
     """
+    if isinstance(spec, BatchSpec) and isinstance(reference, BatchSpec):
+        return BatchSpec._from_groups(
+            _with_dtypes_of(spec.element_spec, reference.element_spec),
+            spec.axis_groups,
+            spec.level_names,
+        )
     if isinstance(spec, RecordSpec) and isinstance(reference, RecordSpec):
         return RecordSpec(
             {
@@ -1259,6 +1265,13 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         If the leading axes are not the declared batch shape, the element does
         not unify with the declared element.
     """
+    while isinstance(spec.element_spec, BatchSpec):
+        inner = spec.element_spec
+        spec = BatchSpec._from_groups(
+            inner.element_spec,
+            tuple(spec.axis_groups) + tuple(inner.axis_groups),
+            tuple(spec.level_names) + tuple(inner.level_names),
+        )
     batch_shape = tuple(spec.batch_shape)
     ranks = _ranks_of(spec.axis_groups)
     levels = tuple(spec.level_names)

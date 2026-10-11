@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **Lifted empirical laws name their atom level after the output component,**
+  such as `trajectory`, instead of `draw`. Display aliases do not rename this
+  level. A batch-valued output retains its event levels after the atom level;
+  a collision requires a distinct component in `OutputSpec`.
+
 - **A value, a batch, and a function take their data first and the label as
   the keyword `label=`.** `NumericArray(values, label="x")` replaces
   `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
@@ -3296,6 +3301,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- **Functions can lift to empirical laws of whole batches.** Atom counts,
+  weights, exact enumeration, and sampling distinguish atom axes from each
+  event's batch axes. `include_inputs=True` retains each complete batch in
+  the joint record, and a subsequent lift receives its batch kind.
 
 - **A display warns about a part that storage truncated only when its text
   shows less than the part.** A law selected many times from a posterior

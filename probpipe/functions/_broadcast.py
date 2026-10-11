@@ -27,7 +27,7 @@ except ImportError:
     task = flow = None
 
 from ..core._array_backend import _is_numeric_leaf
-from ..core._batch import Batch
+from ..core._batch import Batch, BatchSpec
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch
@@ -59,6 +59,7 @@ from ._result import (
     DRAW_LEVEL,
     ResultSchemaError,
     _aggregate_output_spec,
+    _batch_at,
     _make_stack,
     _output_record_spec,
     _record_stored_dtypes,
@@ -192,7 +193,7 @@ def execute_distribution_broadcast(
     Returns
     -------
     EmpiricalDistribution
-        Atoms on the level ``draw``, one per evaluation. The event declaration is
+        Atoms on the output component level, one per evaluation. The event declaration is
         the completed output declaration: a declared output completed by the
         returned values, or else an exposed record for an undeclared record return.
         An undeclared whole-term result uses the callable's original name. Under *include_inputs* the
@@ -303,7 +304,7 @@ def _lift_result(
 ) -> EmpiricalDistribution:
     """The empirical law of a lifted call's evaluations, under their weights.
 
-    The atoms are the outputs on the level ``draw``, and the event declaration
+    The atoms are the outputs on the output component level, and the event declaration
     is the completed output declaration. A declaration that exposes a returned
     law's components holds each law whole under *output_component* instead,
     since each atom is a law. Under *include_inputs* each atom joins
@@ -365,7 +366,7 @@ def _output_atoms(
     output_spec: OutputSpec | None,
     output_component: str,
 ) -> tuple[Batch, OutputSpec]:
-    """The outputs as a batch on the level ``draw``, and the declaration they complete.
+    """The outputs as a batch on the output component level, and the declaration they complete.
 
     A declared output completes to its declaration with the shared dimensions
     bound by the outputs and any type hole filled. An undeclared record exposes
@@ -397,9 +398,10 @@ def _output_atoms(
     ------
     ResultSchemaError
         If the outputs do not satisfy the declaration or do not agree on one spec.
-    NotImplementedError
-        If each evaluation returned a batch, whose empirical law is not built yet.
     """
+    atom_level = (
+        output_spec._component_name if output_spec is not None else None
+    ) or output_component
     if isinstance(outputs, NumericArray):
         # The mapped dispatch returns one array term led by the draw axis. A map
         # that returns its operand returns the stacked draws' own term, whose spec
@@ -409,7 +411,7 @@ def _output_atoms(
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(outputs.value, DRAW_LEVEL, element_spec=element, label=output_label)
+            NumericArrayBatch(outputs.value, atom_level, element_spec=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -418,27 +420,26 @@ def _output_atoms(
             atoms = _make_stack(
                 rows,
                 n=count,
-                level_names=(DRAW_LEVEL,),
+                level_names=(atom_level,),
                 label=output_label,
                 output_spec=completed,
                 output_template=None if completed is None else _output_record_spec(completed),
             )
         except (TypeError, ValueError) as error:
             raise ResultSchemaError(str(error)) from error
-    if len(atoms.level_names) > 1:
-        raise NotImplementedError(
-            f"{output_label!r} returned a Batch while broadcasting over a distribution "
-            f"argument, which is not supported yet"
-        )
+    actual = (
+        BatchSpec._from_groups(atoms.element_spec, atoms.axis_groups[1:], atoms.level_names[1:])
+        if len(atoms.level_names) > 1
+        else atoms.element_spec
+    )
     if output_spec is None:
-        return atoms, OutputSpec.default(atoms.element_spec, component=output_component)
+        return atoms, OutputSpec.default(actual, component=output_component)
     try:
         _validate_stacked_output(function_name=output_label, output_spec=output_spec, batch=atoms)
     except ValueError as error:
         raise ResultSchemaError(str(error)) from error
-    # The declaration records the dtypes the atoms hold, as the atoms' own does.
-    declaration = output_spec.with_spec(atoms.element_spec)
-    return atoms, declaration._with_spec(_with_dtypes_of(declaration.spec, atoms.element_spec))
+    declaration = output_spec.with_spec(actual)
+    return atoms, declaration._with_spec(_with_dtypes_of(declaration.spec, actual))
 
 
 def _rows_of(outputs: Any, output_label: str) -> Any:
@@ -470,7 +471,7 @@ def _joint_atoms(
     Parameters
     ----------
     atoms : Batch
-        The outputs on the level ``draw``, as :func:`_output_atoms` returns them.
+        The outputs on the output component level, as :func:`_output_atoms` returns them.
     declaration : OutputSpec
         The completed output declaration, as :func:`_output_atoms` returns it.
     draws : _LiftDraws
@@ -487,7 +488,7 @@ def _joint_atoms(
     Returns
     -------
     RecordBatch
-        The joint atoms on the level ``draw``, labeled *output_label*.
+        The joint atoms on the output component level, labeled *output_label*.
 
     Raises
     ------
@@ -512,6 +513,16 @@ def _joint_atoms(
             f"or pass output_spec=OutputSpec({_free_component(fields)}=None) to hold the output "
             "under a name no parameter has"
         )
+    if isinstance(declaration.spec, BatchSpec):
+        component = cast(str, declaration._component_name)
+        fields[component] = declaration.spec
+        columns[component] = _from_iterable(
+            [atoms[index] for index in range(draws.count)], kind="batch-valued output atoms"
+        )
+        element = RecordSpec(fields)
+        return _batch_class_for(element)(
+            columns, atoms.level_names[0], element_spec=element, label=output_label
+        )
     stored = _batch_columns(atoms)
     if declaration.exposes_record:
         fields.update(declaration.spec.children)
@@ -521,7 +532,9 @@ def _joint_atoms(
         fields[component] = declaration.spec
         columns.update(_prefixed(component, stored))
     element = RecordSpec(fields)
-    return _batch_class_for(element)(columns, DRAW_LEVEL, element_spec=element, label=output_label)
+    return _batch_class_for(element)(
+        columns, atoms.level_names[0], element_spec=element, label=output_label
+    )
 
 
 def _free_component(taken: Mapping[str, Any]) -> str:
@@ -636,7 +649,9 @@ def _sample_planned_source_groups(
         )
         key = get_key(event)
         binding = stochastic_plan.runtime_bindings[group.index]
-        root_sample = _record_columns(binding.sample_root(key, sample_shape), binding.root.label)
+        root_sample = _record_columns(
+            binding.sample_root(key, sample_shape), binding.root.label, binding.root.event_spec.spec
+        )
         for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators):
             sampled[consumer.arg_ref] = _record_columns(
                 evaluate(root_sample), consumer.arg_ref.label
@@ -644,13 +659,25 @@ def _sample_planned_source_groups(
     return sampled
 
 
-def _record_columns(draws: Any, label: str) -> Any:
+def _record_columns(draws: Any, label: str, event: Any = None) -> Any:
     """*draws*, raw draws along a leading axis, with record draws held in a ``Record`` of columns.
 
     A record-valued law's raw draws are the nested mapping of its columns, and
     the lift reads each row of a record argument as a ``Record``. Any other
-    draws are returned as they are.
+    draws are returned as they are. A batch-valued event is materialized as
+    one batch per leading-axis entry so row-wise evaluation receives its kind.
     """
+    if isinstance(event, BatchSpec):
+        raw = _raw_record(draws) if isinstance(draws, (Record, Mapping)) else draws
+        leaves = jax.tree.leaves(raw)
+        count = len(leaves[0])
+        return _from_iterable(
+            [
+                _batch_at(jax.tree.map(lambda value, index=index: value[index], raw), event, label)
+                for index in range(count)
+            ],
+            kind="batch-valued input atoms",
+        )
     if isinstance(draws, NumericArray):
         return draws.raw()
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
@@ -841,7 +868,9 @@ def _broadcast_enumerate(
     for group_index, root in zip(stochastic_plan.exact_group_order, roots, strict=True):
         binding = stochastic_plan.runtime_bindings[group_index]
         # Every atom along one leading axis, in its raw form.
-        atoms = _record_columns(root._atoms_at(jnp.arange(root.num_atoms)), root.label)
+        atoms = _record_columns(
+            root._atoms_at(jnp.arange(root.num_atoms)), root.label, root.event_spec.spec
+        )
         exact_entries.append(
             (
                 stochastic_plan.source_groups[group_index],
@@ -951,7 +980,9 @@ def _enumerated_inputs(
     ):
         group = stochastic_plan.source_groups[group_index]
         binding = stochastic_plan.runtime_bindings[group_index]
-        atoms = _record_columns(root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label)
+        atoms = _record_columns(
+            root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label, root.event_spec.spec
+        )
         for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators, strict=True):
             inputs[consumer.arg_ref] = _record_columns(evaluate(atoms), consumer.arg_ref.label)
     return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
@@ -1026,6 +1057,8 @@ def _stack_rows(rows: list[Any]) -> Any:
     over the rows, since a ``Record`` has fields rather than a shape. Array
     values stack with ``jnp.stack``, and any other values form an object array.
     """
+    if rows and isinstance(rows[0], Batch):
+        return _from_iterable(rows, kind="batch-valued input atoms")
     if rows and isinstance(rows[0], Record):
         return RecordBatch.stack(rows, level_name=DRAW_LEVEL)
     if all(_is_numeric_leaf(row) for row in rows):

@@ -1293,10 +1293,6 @@ class TestTheProbeModelsItsExecutorsTransform:
             **controls,
         )
 
-    @pytest.mark.pending(
-        reason="the empirical law of a lifted function that returns a batch",
-        raises=NotImplementedError,
-    )
     def test_a_batch_returning_body_falls_back_rather_than_failing_in_the_executor(self):
         """The regression: this raised the pytree rank error out of ``vmap``."""
         dist = Normal("x", loc=0.0, scale=1.0)
@@ -1305,10 +1301,6 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert result is not None
 
-    @pytest.mark.pending(
-        reason="the empirical law of a lifted function that returns a batch",
-        raises=NotImplementedError,
-    )
     def test_the_fallback_is_what_ran(self, caplog):
         dist = Normal("x", loc=0.0, scale=1.0)
 
@@ -1317,10 +1309,6 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert any("not JAX-traceable" in record.message for record in caplog.records)
 
-    @pytest.mark.pending(
-        reason="the empirical law of a lifted function that returns a batch",
-        raises=NotImplementedError,
-    )
     def test_the_fallback_agrees_with_explicit_sequential(self):
         """Falling back costs speed, never the answer."""
         dist = Normal("x", loc=0.0, scale=1.0)
@@ -1352,10 +1340,6 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
 
-    @pytest.mark.pending(
-        reason="the empirical law of a lifted function that returns a batch",
-        raises=NotImplementedError,
-    )
     def test_the_mapped_probe_covers_several_distribution_arguments(self):
         """The probe builds a tuple of draws, one per broadcast argument.
 
@@ -1523,10 +1507,6 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.asarray(mapped.atoms), np.asarray(self._run(sequential, law).atoms)
         )
 
-    @pytest.mark.pending(
-        reason="the empirical law of a lifted function that returns a batch",
-        raises=NotImplementedError,
-    )
     def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
         """A sweep crossed with a law still produces a result.
 

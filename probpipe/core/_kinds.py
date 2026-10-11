@@ -89,6 +89,15 @@ def _lookup(spec: Any, side: int) -> type | None:
     The exact type first, then the MRO, so a spec subclass inherits its base's
     kind unless it registers its own.
     """
+    from ._batch import BatchSpec
+    from ._record_spec import RecordSpec
+
+    if isinstance(spec, BatchSpec):
+        if isinstance(spec.element_spec, RecordSpec):
+            from ._record_batch import _batch_class_for
+
+            return _batch_class_for(spec.element_spec)
+        return _lookup(spec.element_spec, 1)
     for candidate in type(spec).__mro__:
         entry = _KINDS.get(candidate)
         if entry is not None and entry[side] is not None:

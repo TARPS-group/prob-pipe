@@ -8,6 +8,7 @@ Provides:
 from __future__ import annotations
 
 from collections.abc import Callable
+from math import prod
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import jax
@@ -24,7 +25,7 @@ from .._weights import (
     weighted_variance,
 )
 from ..core._array_backend import _to_jax_array
-from ..core._batch import Batch
+from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import Feasibility
 from ..core._expression import Indexed
 from ..core._kinds import batch_class_for_spec
@@ -81,14 +82,16 @@ type _Selected = tuple[str, tuple[str, ...], TermSpec]
 # ---------------------------------------------------------------------------
 
 
-def _numeric_atoms(atoms: Any) -> bool:
+def _numeric_atoms(atoms: Any, event_spec: OutputSpec | None = None) -> bool:
     """Whether one atom of *atoms* is numeric, read without validating *atoms*."""
+    if isinstance(getattr(event_spec, "spec", None), BatchSpec):
+        return False
     if isinstance(atoms, Batch):
         return isinstance(atoms.element_spec, NumericSpec)
     return _is_numeric_array(atoms)
 
 
-def _atom_spec(atoms: Any) -> TermSpec:
+def _atom_spec(atoms: Any, event_spec: OutputSpec | None = None) -> TermSpec:
     """The term spec of one atom of *atoms*.
 
     Parameters
@@ -96,6 +99,9 @@ def _atom_spec(atoms: Any) -> TermSpec:
     atoms : Batch or Array
         The atoms in the event's batch form, or an array of array atoms along its
         leading axis.
+
+    event_spec : OutputSpec or None
+        The event declaration, whose batch levels belong to each atom.
 
     Returns
     -------
@@ -108,7 +114,8 @@ def _atom_spec(atoms: Any) -> TermSpec:
     TypeError
         If *atoms* is neither a batch of a stored kind nor a numeric array.
     ValueError
-        If *atoms* holds no atom, or is an array without a leading axis.
+        If *atoms* holds no atom, is an array without a leading axis, or a batch
+        event does not occupy trailing levels after at least one atom level.
     """
     if isinstance(atoms, Batch):
         if not isinstance(atoms, (NumericArrayBatch, RecordBatch, _ObjectBatch)):
@@ -116,11 +123,26 @@ def _atom_spec(atoms: Any) -> TermSpec:
                 f"atoms must be a NumericArrayBatch, a RecordBatch, or a batch of objects; got "
                 f"{type(atoms).__name__}"
             )
-        if atoms.batch_size == 0:
+        event = getattr(event_spec, "spec", None)
+        if isinstance(event, BatchSpec):
+            n_event = len(event.level_names)
+            if len(atoms.level_names) <= n_event:
+                raise ValueError(
+                    "EmpiricalDistribution needs at least one atom level before the event levels"
+                )
+            if tuple(atoms.level_names[-n_event:]) != tuple(event.level_names):
+                raise ValueError("The event levels must be the trailing levels of the stored atoms")
+            actual = BatchSpec._from_groups(
+                atoms.element_spec, atoms.axis_groups[-n_event:], atoms.level_names[-n_event:]
+            )
+            count = prod(atoms.batch_shape[: len(atoms.batch_shape) - len(actual.batch_shape)])
+        else:
+            actual, count = atoms.element_spec, atoms.batch_size
+        if count == 0:
             raise ValueError(
                 f"EmpiricalDistribution needs at least one atom, but {atoms.label!r} is empty"
             )
-        return atoms.element_spec
+        return actual
     if _is_numeric_array(atoms):
         if atoms.ndim == 0:
             raise ValueError(
@@ -132,6 +154,19 @@ def _atom_spec(atoms: Any) -> TermSpec:
                 f"EmpiricalDistribution needs at least one atom, but atoms has shape "
                 f"{tuple(atoms.shape)}"
             )
+        event = getattr(event_spec, "spec", None)
+        if isinstance(event, BatchSpec):
+            rank = len(event.batch_shape)
+            shape = tuple(atoms.shape[1:])
+            if len(shape) < rank:
+                raise ValueError("The array has fewer axes than the declared batch-valued event")
+            groups, start = [], 0
+            for group in event.axis_groups:
+                groups.append(shape[start : start + len(group)])
+                start += len(group)
+            return BatchSpec._from_groups(
+                NumericArraySpec(shape[rank:], atoms.dtype), tuple(groups), event.level_names
+            )
         return NumericArraySpec(atoms.shape[1:], atoms.dtype)
     hint = "; convert it with jnp.asarray(atoms)" if isinstance(atoms, (list, tuple)) else ""
     raise TypeError(
@@ -140,18 +175,20 @@ def _atom_spec(atoms: Any) -> TermSpec:
     )
 
 
-def _atom_weights(weights: Any, atoms: Batch) -> Weights:
+def _atom_weights(weights: Any, atoms: Batch, event_spec: TermSpec | None = None) -> Weights:
     """The weights of *atoms*, uniform when *weights* is ``None``.
 
-    An array is flat, one entry per atom in the row-major order of the batch
-    axes, or shaped like the batch axes.
+    An array is flat, one entry per atom in the row-major order of the atom
+    axes, or shaped like those axes. Event batch axes do not index weights.
 
     Parameters
     ----------
     weights : Array or Weights or None
         The weights the constructor received.
     atoms : Batch
-        The stored atoms, whose batch axes the weights follow.
+        The stored atoms, whose atom axes the weights follow.
+    event_spec : TermSpec or None
+        The event type, whose batch axes are excluded from the weights.
 
     Returns
     -------
@@ -164,15 +201,22 @@ def _atom_weights(weights: Any, atoms: Batch) -> Weights:
         If the weights do not number one per atom, one is negative, or they do
         not sum to a positive value.
     """
-    count = atoms.batch_size
+    shape = _atom_shape(atoms, event_spec)
+    count = prod(shape)
     if weights is None:
         return Weights.uniform(count)
     if isinstance(weights, Weights):
         return Weights(n=count, weights=weights)
     values = jnp.asarray(weights)
-    if values.shape == tuple(atoms.batch_shape):
+    if values.shape == shape:
         values = jnp.reshape(values, (count,))
     return Weights(n=count, weights=values)
+
+
+def _atom_shape(atoms: Batch, event_spec: TermSpec | None) -> tuple[int, ...]:
+    """The stored batch axes that index atoms, excluding a batch-valued event's axes."""
+    rank = len(event_spec.batch_shape) if isinstance(event_spec, BatchSpec) else 0
+    return tuple(atoms.batch_shape[:-rank] if rank else atoms.batch_shape)
 
 
 def _flattened(column: Any, count: int, rank: int) -> Any:
@@ -183,13 +227,15 @@ def _flattened(column: Any, count: int, rank: int) -> Any:
     return jnp.reshape(values, (count, *values.shape[rank:]))
 
 
-def _flat_rows(atoms: Batch) -> Any:
+def _flat_rows(atoms: Batch, event_spec: TermSpec | None = None) -> Any:
     """The raw atoms of *atoms* along one leading axis, in row-major order of the batch axes.
 
     Parameters
     ----------
     atoms : Batch
         The stored atoms, with any number of batch axes.
+    event_spec : TermSpec or None
+        The event type, whose batch axes stay within each row.
 
     Returns
     -------
@@ -198,7 +244,8 @@ def _flat_rows(atoms: Batch) -> Any:
         that form keyed by leaf path for record atoms, and an object array of
         shape ``(n,)`` otherwise.
     """
-    count, rank = atoms.batch_size, len(atoms.batch_shape)
+    shape = _atom_shape(atoms, event_spec)
+    count, rank = prod(shape), len(shape)
     if isinstance(atoms, NumericArrayBatch):
         return _flattened(atoms.as_jax(), count, rank)
     if isinstance(atoms, RecordBatch):
@@ -255,17 +302,23 @@ def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
     TypeError
         If *spec* has no batch form.
     """
+    levels, ranks = (level,), (1,)
+    if isinstance(spec, BatchSpec):
+        levels += tuple(spec.level_names)
+        ranks += tuple(len(group) for group in spec.axis_groups)
+        spec = spec.element_spec
     if isinstance(spec, RecordSpec):
         return _batch_class_for(spec)(
             _raw_record(raw),
-            level,
+            levels,
             element_spec=spec,
+            axes_per_level=ranks,
             label=label,
         )
     batch_class = batch_class_for_spec(spec)
     if batch_class is None:
         raise TypeError(f"cannot store values declared as {type(spec).__name__} as atoms")
-    return batch_class(raw, level, element_spec=spec, label=label)
+    return batch_class(raw, levels, element_spec=spec, axes_per_level=ranks, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -500,8 +553,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         its leading axis.
     weights : Array or Weights, optional
         Nonnegative weights with a positive sum, normalized at construction:
-        flat, one per atom in the row-major order of the batch axes, or shaped
-        like the batch axes. A ``Weights`` object, which can be built from log
+        flat, one per atom in the row-major order of the atom axes, or shaped
+        like those axes, excluding any event batch axes. A ``Weights`` object, which can be built from log
         weights, is adopted as it is.
     component : str, optional
         The component of a whole-term event, required for atoms that are not
@@ -512,7 +565,10 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         The name of the one level a plain array's atoms lie on. It defaults to
         the law's component.
     event_spec : OutputSpec, optional
-        The declaration of one draw, completed with the atoms' spec.
+        The declaration of one draw, completed with the atoms' spec. For a
+        ``BatchSpec`` event, its named levels must trail the stored atom levels;
+        only the preceding axes index atoms and weights. One draw retains the
+        event's levels, including levels of size zero.
 
     Raises
     ------
@@ -527,7 +583,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         one per atom or are negative or sum to zero, *component* is not a valid
         component name, *level* is not a valid level name, or *event_spec* names
         another component than *component* or declares a type that does not
-        unify with the atoms' spec.
+        unify with the atoms' spec, or a batch-valued event's levels do not
+        trail at least one atom level.
 
     Examples
     --------
@@ -562,7 +619,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         event_spec: OutputSpec | None = None,
     ) -> EmpiricalDistribution:
         base = vars(cls).get("_capability_base", cls)
-        protocols = _NUMERIC_MOMENTS if _numeric_atoms(atoms) else ()
+        protocols = _NUMERIC_MOMENTS if _numeric_atoms(atoms, event_spec) else ()
         return object.__new__(_capability_subclass(base, protocols))
 
     def __init__(
@@ -577,7 +634,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ) -> None:
         if isinstance(atoms, str):
             raise TypeError(label_given_first("EmpiricalDistribution", "atoms", atoms))
-        atom_spec = _atom_spec(atoms)
+        atom_spec = _atom_spec(atoms, event_spec)
         if level is not None and not isinstance(level, str):
             raise TypeError(f"level must be a string, got {type(level).__name__}")
         if level is not None and isinstance(atoms, Batch):
@@ -597,13 +654,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             # and names their level.
             name = _whole_term_component(self.event_spec)
             on_level = name if level is None else level
-            stored = NumericArrayBatch(
-                atoms,
-                on_level,
-                element_spec=atom_spec,
-                label=name,
-            )
-        atom_weights = _atom_weights(weights, stored)
+            stored = _batch_form(name, atoms, on_level, atom_spec)
+        atom_weights = _atom_weights(weights, stored, self.event_spec.spec)
         object.__setattr__(self, "_atoms", stored)
         object.__setattr__(self, "_w", atom_weights)
         # The weights the weighted helpers take, None when uniform. Read here, outside
@@ -620,13 +672,13 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     @property
     def weights(self) -> Array:
-        """The normalized weights, one per atom in the row-major order of the batch axes."""
+        """The normalized weights, one per atom in row-major order over the atom axes."""
         return self._w.normalized if self._p is None else self._p
 
     @property
     def num_atoms(self) -> int:
         """The number of atoms."""
-        return self._atoms.batch_size
+        return prod(_atom_shape(self._atoms, self.event_spec.spec))
 
     @property
     def _rows(self) -> Any:
@@ -637,7 +689,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         """
         cached = getattr(self, "_rows_cache", None)
         if cached is None:
-            cached = _flat_rows(self._atoms)
+            cached = _flat_rows(self._atoms, self.event_spec.spec)
             if not any(isinstance(leaf, jax.core.Tracer) for leaf in jax.tree.leaves(cached)):
                 object.__setattr__(self, "_rows_cache", cached)
         return cached
@@ -650,7 +702,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         array for a leaf that is not numeric.
         """
         rows = self._rows
-        if not isinstance(self.event_spec.spec, RecordSpec):
+        if not isinstance(self._atoms, RecordBatch):
             return _taken(rows, index)
         return _unflatten_paths({path: _taken(column, index) for path, column in rows.items()})
 
@@ -827,6 +879,21 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         paths, grouped as design II.4 states, as in ``(x·y)[('a', 'b')]``.
         """
         atoms = self._atoms
+        if isinstance(self.event_spec.spec, BatchSpec):
+            shape = _atom_shape(atoms, self.event_spec.spec)
+            column = np.empty(shape, dtype=object)
+            for index in np.ndindex(shape):
+                column[index] = atoms[index]
+            fields = {requested.rsplit(_PATH_SEP, 1)[-1]: node for requested, _, node in selected}
+            return RecordBatch(
+                {name: column for name in fields},
+                atoms.level_names[: len(atoms.level_names) - len(self.event_spec.spec.level_names)],
+                element_spec=RecordSpec(fields),
+                axes_per_level=_ranks(atoms)[
+                    : len(atoms.level_names) - len(self.event_spec.spec.level_names)
+                ],
+                label=atoms.label,
+            )
         is_record = isinstance(self.event_spec.spec, RecordSpec)
         stored = atoms._raw_columns() if is_record else {}
         columns: dict[str, Any] = {}
@@ -870,7 +937,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         key under the new paths. Atoms that are not records have no fields to
         move, which gives None.
         """
-        if not isinstance(self._atoms, RecordBatch):
+        if not isinstance(self.event_spec.spec, RecordSpec):
             return None
         atoms = event.draw(self._atoms)
         return EmpiricalDistribution(atoms, self._w, label=self.label, event_spec=event.renamed)

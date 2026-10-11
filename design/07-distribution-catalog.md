@@ -48,7 +48,7 @@ An `EmpiricalDistribution` is a finite set of atoms of any event type, each with
 
 It claims no log-density, since an empirical measure in general has no density.
 
-The atoms are stored in the batch form of the event's kind, such as a `NumericArrayBatch` for array atoms, and the weights are a parallel array with one weight per atom. The levels of the stored batch index the atoms in row-major order, which the weights follow. When the event is itself a batch, its declaration is a `BatchSpec` that names the event's own levels. Those levels trail the stored batch's other levels and belong to each atom, so only the levels before them index atoms. For example, the lift of a function `f` that returns a batch on the level `horizon` stores its atoms on the levels `f` and `horizon`: the level `f` indexes the atoms, and each atom is a batch on `horizon` (V.6).
+The atoms are stored in the batch form of the event's kind, such as a `NumericArrayBatch` for array atoms, and the weights are a parallel array with one weight per atom. The levels of the stored batch index the atoms in row-major order, which the weights follow. When the event is itself a batch, its declaration is a `BatchSpec` that names the event's own levels. Those levels trail the stored batch's other levels and belong to each atom, so only the levels before them index atoms. For example, the lift of a function whose output component is `trajectory` and whose return is a batch on the level `time` stores its atoms on the levels `trajectory` and `time`: the level `trajectory` indexes the atoms, and each atom is a batch on `time` (V.6).
 
 The constructor takes the atoms in one of two forms:
 

@@ -481,7 +481,8 @@ class RecordBatch(Batch[Record]):
         traced column is the stored array.
 
         The result is a **view**: it shares this batch's column rather than
-        copying it, so reading one field costs nothing per element. This batch
+        copying it, except that batch-valued object entries are stacked into
+        one batch on the outer and inner levels. That case copies their storage. This batch
         checked the column against the field's spec when it was built, which is
         the whole of what the column batch's own constructor would redo.
         """
@@ -492,6 +493,8 @@ class RecordBatch(Batch[Record]):
         # Every kind presents through its registered batch form, so a new kind is
         # reachable here by registering itself rather than by being added to a
         # switch this module would otherwise have to know about.
+        if isinstance(spec, BatchSpec):
+            return self._inherit_provenance(_stack_batch_column(column, self.spec, spec, key))
         column_cls = batch_class_for_spec(spec)
         if column_cls is None:
             raise TypeError(_unbatchable_field(key, spec))
@@ -993,6 +996,49 @@ def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
         _is_numeric_field_value(column.raw() if isinstance(column, Batch) else column)
         for column in fields.values()
     )
+
+
+def _stack_batch_column(
+    column: np.ndarray, outer: BatchSpec, event: BatchSpec, label: str
+) -> Batch:
+    """Batch-valued entries of an object column stacked on the outer and event levels."""
+    levels = tuple(outer.level_names) + tuple(event.level_names)
+    groups = tuple(outer.axis_groups) + tuple(event.axis_groups)
+    shape = (*outer.batch_shape, *event.batch_shape)
+    entries = list(column.flat)
+    element = event.element_spec
+    spec = BatchSpec._from_groups(element, groups, levels)
+    if isinstance(element, RecordSpec):
+        columns = {}
+        for path in element:
+            leaf = element[path]
+            values = [entry.raw(path) for entry in entries]
+            if isinstance(leaf, NumericArraySpec):
+                columns[path] = (
+                    jnp.stack(values).reshape((*shape, *leaf.shape))
+                    if values
+                    else jnp.empty((*shape, *leaf.shape), dtype=leaf.dtype)
+                )
+            else:
+                columns[path] = (
+                    np.stack(values).reshape(shape) if values else np.empty(shape, dtype=object)
+                )
+        return _batch_class_for(element)(
+            columns, levels, element_spec=element, axes_per_level=_ranks_of(groups), label=label
+        )
+    if isinstance(element, NumericArraySpec):
+        values = (
+            jnp.stack([entry.raw() for entry in entries]).reshape((*shape, *element.shape))
+            if entries
+            else jnp.empty((*shape, *element.shape), dtype=element.dtype)
+        )
+    else:
+        values = (
+            np.stack([entry.raw() for entry in entries]).reshape(shape)
+            if entries
+            else np.empty(shape, dtype=object)
+        )
+    return batch_class_for_spec(element)._over_store(values, spec=spec, label=label)
 
 
 def _unbatchable_field(path: str, spec: TermSpec) -> str:

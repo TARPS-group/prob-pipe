@@ -1221,12 +1221,7 @@ class TestCompletedOutputDeclarations:
             "function",
             "opaque",
             "record",
-            pytest.param(
-                "batch",
-                marks=pytest.mark.pending(
-                    reason="the empirical law of a lifted function that returns a batch"
-                ),
-            ),
+            "batch",
         ],
     )
     def test_a_lift_keeps_a_non_numeric_component_kind(self, dispatch, kind):
@@ -1252,7 +1247,7 @@ class TestCompletedOutputDeclarations:
             "batch": lambda: NumericArrayBatch(
                 jnp.arange(2.0),
                 "row",
-                element_spec=NumericArraySpec(()),
+                element_spec=NumericArraySpec((), dtype=jnp.float32),
                 label="stored",
             ),
         }[kind]()
