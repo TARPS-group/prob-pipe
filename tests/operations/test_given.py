@@ -340,6 +340,10 @@ class TestConditionalOperations:
         assert kernel.calls[0]["data"] is data
         assert law.event_spec.spec.shape == (3,)
         np.testing.assert_allclose(mean(law), [1.0, 2.0, 3.0], rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(
+            mean(kernel, given={"data": data}), [1.0, 2.0, 3.0], rtol=0.0, atol=0.0
+        )
+        assert kernel.calls[-1]["data"] is data
 
     @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
     def test_nested_opaque_slots_admit_numeric_values_at_binding(self, data_spec):

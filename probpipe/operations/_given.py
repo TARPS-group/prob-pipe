@@ -27,7 +27,7 @@ from ..functions._resolution import StandIn
 def _bind_given_dims_from_spec(
     expected: TermSpec, actual: TermSpec, bindings: dict[str, int], path: str
 ) -> None:
-    """Bind dimensions, retaining value-time admission for explicitly opaque leaves."""
+    """Bind dimensions while leaving value-only admission to concrete binding."""
     if isinstance(expected, OpaqueSpec) and not isinstance(actual, (RecordSpec, OpaqueSpec)):
         # An opaque declaration admits numeric values too. Their numeric spec
         # cannot establish their Python type; concrete binding checks that.
@@ -159,7 +159,9 @@ class _GivenLaw(Distribution):
                         kernel.given_spec[name], value.spec, bindings, f"given/{name}"
                     )
                 else:
-                    kernel.given_spec[name]._bind_dims_from_value(value, bindings, f"given/{name}")
+                    _bind_given_dims_from_value(
+                        kernel.given_spec[name], value, bindings, f"given/{name}"
+                    )
         except (TypeError, ValueError) as error:
             raise ApplicabilityError(f"given for {kernel.label!r}: {error}") from None
         super().__init__(kernel.event_spec.with_dim_sizes(**bindings), label=kernel.label)
