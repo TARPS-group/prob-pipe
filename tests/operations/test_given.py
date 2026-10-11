@@ -284,6 +284,25 @@ class TestConditionalOperations:
         assert report.feasible is None
         assert any(route.pending for route in report.routes)
 
+    def test_a_law_over_givens_defers_fallback_without_applying_or_drawing(self):
+        def forbidden_draw(key):
+            raise AssertionError("a declaration-only check must not draw")
+
+        given = distribution(sample=forbidden_draw, event_spec=RecordSpec(mu=REAL))
+        kernel = _Fallback()
+        report = mean.check(kernel, given=given)
+        assert report.feasible is None
+        assert any(route.pending for route in report.routes)
+        assert not kernel.calls
+
+    def test_a_law_over_givens_executes_fallback_at_each_draw(self):
+        given = distribution(sample=lambda key: {"mu": 2.0}, event_spec=RecordSpec(mu=REAL))
+        kernel = _Fallback()
+        with workflow_run(seed=42):
+            result = mean.with_options(n_broadcast_samples=8)(kernel, given=given)
+        np.testing.assert_allclose(mean(result), 2.0)
+        assert kernel.calls
+
     def test_a_given_binds_symbolic_event_dimensions_before_sampling(self):
         class Vector(ConditionalDistribution, SupportsConditionalSampling):
             def __init__(self):

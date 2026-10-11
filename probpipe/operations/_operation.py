@@ -870,7 +870,8 @@ class _GivenCandidate:
     checks and operation fidelity are deferred, and its exactness is unknown
     until the delegated operation executes. The kernel is never applied by a
     check. This candidate is the last fallback, after every route served by the
-    kernel's declared conditional capabilities.
+    kernel's declared conditional capabilities. A declaration-only given
+    leaves conditioning feasibility unresolved until its values are available.
     """
 
     label = route_name = "conditional"
@@ -883,6 +884,8 @@ class _GivenCandidate:
         subject = call.operands[call.operation._given_subject]
         if not isinstance(subject, _GivenLaw):
             return Feasibility(False, "the operand has no given values")
+        if isinstance(subject.given, StandIn):
+            return Feasibility(None, pending=("conditional delegation needs the given values",))
         from ._condition import condition_on
 
         report = condition_on.with_options(exact_only=call.controls["exact_only"]).check(
