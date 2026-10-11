@@ -284,7 +284,10 @@ class TestRoles:
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
         seen: list[Any] = []
 
-        @operation(result=_open, registry=OperationRegistry())
+        def shifted_result(value: TermSpec) -> OutputSpec:
+            return OutputSpec(shifted=value)
+
+        @operation(result=shifted_result, registry=OperationRegistry())
         def shifted(d: Distribution, value):
             """The value shifted by one."""
 
@@ -315,12 +318,20 @@ class TestRoles:
             """A function, consumed as an object."""
 
         applied.structural_route("any", exact=True, **_route(True, 0.0))
-        functions = FunctionBatch("fs", [lambda x: x, lambda x: 2 * x], "fs")
+        functions = FunctionBatch(
+            [lambda x: x, lambda x: 2 * x],
+            "fs",
+            label="fs",
+        )
         with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
             applied(functions)
 
     def test_apply_lifts_nothing(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "laws",
+            label="laws",
+        )
         with pytest.raises(ApplicabilityError, match="'d' accepts DistributionSpec"):
             center.apply(laws)
 
@@ -824,7 +835,11 @@ class TestControls:
 
 
 def _laws(*laws: Distribution) -> DistributionBatch:
-    return DistributionBatch("laws", list(laws), "laws")
+    return DistributionBatch(
+        list(laws),
+        "laws",
+        label="laws",
+    )
 
 
 class TestLiftedChecks:
@@ -850,7 +865,12 @@ class TestLiftedChecks:
         assert (report.feasible, report.route, report.exact) == (True, None, False)
 
     def test_an_element_kind_the_role_refuses_raises_as_the_call_does(self):
-        values = NumericArrayBatch("values", jnp.zeros(3), "values", element_spec=REAL)
+        values = NumericArrayBatch(
+            jnp.zeros(3),
+            "values",
+            element_spec=REAL,
+            label="values",
+        )
         with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
             center.check(values)
         with pytest.raises(ApplicabilityError, match="but got NumericArrayBatch"):
@@ -858,7 +878,10 @@ class TestLiftedChecks:
 
     def test_an_empty_sweep_is_planned_at_its_element_kind_and_selects_no_route(self):
         empty = DistributionBatch(
-            "laws", np.empty(0, object), "laws", element_spec=Gaussian("g").spec
+            np.empty(0, object),
+            "laws",
+            element_spec=Gaussian("g").spec,
+            label="laws",
         )
         report = center.check(empty)
         assert (report.feasible, report.route, report.lifted) == (True, None, ("d",))
@@ -1064,7 +1087,11 @@ class TestResultAndRandomness:
             _install_expression_rule(_toy(), Named("x"))
 
     def test_a_sweep_is_labeled_by_the_batch_it_sweeps(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "law")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "law",
+            label="laws",
+        )
         centers = center(laws)
         assert centers.label == "laws"
         assert centers[0].label == "laws[law=0]"
@@ -1152,7 +1179,12 @@ class TestRegistry:
 
     def test_only_an_operation_registers(self):
         with pytest.raises(TypeError, match="only an operation"):
-            OperationRegistry().register(Function("plain", lambda x: x))
+            OperationRegistry().register(
+                Function(
+                    lambda x: x,
+                    label="plain",
+                )
+            )
 
     def test_an_unknown_name_raises_key_error(self):
         with pytest.raises(KeyError, match="unknown operation 'absent'"):

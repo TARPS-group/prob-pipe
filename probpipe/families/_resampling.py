@@ -56,6 +56,7 @@ from ..distributions._distribution import (
     DistributionSpec,
     _class_label,
     _constructor_label,
+    _label_given_first,
     _whole_term_event,
 )
 from ..distributions._empirical import EmpiricalDistribution, _atoms_declaration, _batch_form
@@ -273,8 +274,8 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
     ------
     TypeError
         If *source* is not a law that samples, *component* or *level* is not a
-        string, *replicate_size* is not an integer, or *event_spec* is not an
-        ``OutputSpec`` or exposes a record.
+        string, *label* is not a non-empty string, *replicate_size* is not an
+        integer, or *event_spec* is not an ``OutputSpec`` or exposes a record.
     ValueError
         If *replicate_size* is not positive or is omitted for a source without
         atoms, *level* is omitted for a source exposing several components or is
@@ -308,8 +309,8 @@ class BootstrapReplicateDistribution(Distribution, SupportsSampling):
         term = _replicate_spec(law, size, on_level)
         owner = _class_label(self)
         super().__init__(
-            _constructor_label(self, label, owner),
             _whole_term_event(component, term, event_spec, owner),
+            label=_constructor_label(self, label, owner),
         )
         self._source = law
         self._replicate_size = size
@@ -862,8 +863,9 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     Parameters
     ----------
     atoms : Any
-        The atoms the constructor received: a numeric array whose leading axis indexes
-        them, or a ``NumericRecordBatch``.
+        The atoms the constructor received: a numeric array, or a list or a
+        tuple of numbers, whose leading axis indexes them, or a
+        ``NumericRecordBatch``.
 
     Returns
     -------
@@ -876,10 +878,13 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     Raises
     ------
     TypeError
-        If *atoms* is neither a numeric array nor a ``NumericRecordBatch``.
+        If *atoms* is neither a numeric array, a list or a tuple of numbers, nor
+        a ``NumericRecordBatch``.
     ValueError
         If an array of atoms has no leading axis or holds no atom.
     """
+    if isinstance(atoms, list | tuple):
+        atoms = np.asarray(atoms)
     if isinstance(atoms, NumericRecordBatch):
         spec = atoms.element_spec.map(
             lambda leaf: NumericArraySpec(leaf.shape, _floating(leaf.dtype), real)
@@ -1011,7 +1016,7 @@ class KDEDistribution(
 
     Parameters
     ----------
-    atoms : Array or NumericRecordBatch
+    atoms : array-like or NumericRecordBatch
         The centers of the copies, along a leading axis of atoms.
     bandwidth : ArrayLike, NumericRecord, or str, optional
         The scales of the copies, or the name of a selection rule; ``None``
@@ -1032,10 +1037,11 @@ class KDEDistribution(
     Raises
     ------
     TypeError
-        If *atoms* is neither a numeric array nor a ``NumericRecordBatch``,
+        If *atoms* is neither a numeric array-like nor a ``NumericRecordBatch``,
         *kernel* is not a ``SmoothingKernel`` class, *component* is missing for
-        array atoms or given for record atoms, *event_spec* is not an
-        ``OutputSpec``, or *event_spec* exposes a record for array atoms.
+        array atoms or given for record atoms, *label* is not a non-empty
+        string, *event_spec* is not an ``OutputSpec``, or *event_spec* exposes a
+        record for array atoms.
     ValueError
         If the atoms hold none or have no leading axis, the weights are invalid,
         *bandwidth* names no rule or a rule selects a zero scale, the scales do not
@@ -1052,6 +1058,9 @@ class KDEDistribution(
     1.8056
     """
 
+    #: The constructor takes the atoms first and the component as a keyword.
+    _repr_component: ClassVar[str | None] = "keyword"
+
     def __init__(
         self,
         atoms: Array | NumericRecordBatch,
@@ -1063,6 +1072,8 @@ class KDEDistribution(
         label: str | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
+        if isinstance(atoms, str):
+            raise TypeError(_label_given_first("KDEDistribution", "atoms", atoms))
         if not (isinstance(kernel, type) and issubclass(kernel, SmoothingKernel)):
             raise TypeError(
                 f"kernel must be a SmoothingKernel subclass such as GaussianKernel, got {kernel!r}"
@@ -1070,7 +1081,10 @@ class KDEDistribution(
         stored, atom_spec = _kde_atoms(atoms)
         owner = _class_label(self)
         declared = _atoms_declaration(atom_spec, component, event_spec, owner)
-        super().__init__(_constructor_label(self, label, owner), declared)
+        super().__init__(
+            declared,
+            label=_constructor_label(self, label, owner),
+        )
         centers = _flat_centers(stored, _KDE_NAMES)
         atom_weights = _kde_weights(weights, centers.shape[0])
         if bandwidth is None or isinstance(bandwidth, str):
@@ -1082,6 +1096,7 @@ class KDEDistribution(
             _flat_scales(scales, centers, fields, _KDE_NAMES)
         bank = kernel.build_kernels(stored, scales)
         object.__setattr__(self, "_atoms", stored)
+        object.__setattr__(self, "_bandwidth", scales)
         object.__setattr__(self, "_kernel", kernel)
         object.__setattr__(self, "_bank", bank)
         object.__setattr__(self, "_w", atom_weights)
@@ -1228,8 +1243,15 @@ class KDEDistribution(
         return DenseLinOp(weighted_covariance(self._p, centers) + jnp.diag(smoothing))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The atoms, the weights when nonuniform, and the kernel."""
-        fields = [("atoms", format_value(self._atoms))]
+        """The atoms, the bandwidth, the weights when nonuniform, and the kernel.
+
+        The bandwidth shows the scales, which a rule's name selected when it
+        was given in place of them.
+        """
+        fields = [
+            ("atoms", format_value(self._atoms)),
+            ("bandwidth", format_value(self._bandwidth)),
+        ]
         if self._p is not None:
             fields.append(("weights", format_value(self._p)))
         return [*fields, ("kernel", self._kernel.__name__)]

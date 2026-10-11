@@ -127,7 +127,13 @@ def _make_minibatched_distribution():
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
     prior = MultivariateNormal("beta", loc=jnp.zeros(4), cov=jnp.eye(4))
     lik = glm_likelihood("y", BernoulliFamily(), X=X)
-    return MinibatchedDistribution("measure", prior, lik, y, batch_size=2)
+    return MinibatchedDistribution(
+        prior,
+        lik,
+        y,
+        batch_size=2,
+        label="measure",
+    )
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
@@ -158,12 +164,18 @@ def test_distribution_is_not_iterable(make_dist):
 
 
 def test_record_iterates_field_names():
-    r = Record("r", a=1.0, b=2.0)
+    r = Record(
+        {"a": 1.0, "b": 2.0},
+        label="r",
+    )
     assert list(iter(r)) == ["a", "b"]
 
 
 def test_numeric_record_iterates_field_names():
-    nr = NumericRecord("nr", a=jnp.array(1.0), b=jnp.array([2.0, 3.0]))
+    nr = NumericRecord(
+        {"a": jnp.array(1.0), "b": jnp.array([2.0, 3.0])},
+        label="nr",
+    )
     assert list(iter(nr)) == ["a", "b"]
 
 
@@ -171,11 +183,11 @@ def test_a_record_batch_iterates_leading_axis_views():
     from probpipe.core._specs import RecordSpec
 
     batch = RecordBatch(
-        "batch",
         {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
         level_names="draw",
         axes_per_level=(1,),
         element_spec=RecordSpec(a=(), b=()),
+        label="batch",
     )
     rows = list(iter(batch))
     assert len(rows) == 5
@@ -186,11 +198,11 @@ def test_a_numeric_record_batch_iterates_leading_axis_views():
     from probpipe.core._specs import NumericRecordSpec
 
     batch = NumericRecordBatch(
-        "batch",
         {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
         level_names="draw",
         axes_per_level=(1,),
         element_spec=NumericRecordSpec(a=(), b=()),
+        label="batch",
     )
     rows = list(iter(batch))
     assert len(rows) == 4

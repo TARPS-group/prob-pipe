@@ -17,6 +17,7 @@ from probpipe import (
     Gamma,
     Normal,
     NumericArray,
+    OutputSpec,
     evaluate,
     expectation,
     mean,
@@ -273,7 +274,7 @@ class TestGlobalDefaults:
         monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
         set_default_n_broadcast_samples(7)
         law = make_dist()
-        assert evaluate(f, law).num_atoms == 7
+        assert evaluate(Function(f, output_spec=OutputSpec(integrand=None)), law).num_atoms == 7
         assert np.isfinite(float(expectation(law, f)))
 
     @pytest.mark.parametrize(("count", "error"), [(0, ValueError), (2.5, TypeError)])

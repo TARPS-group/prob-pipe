@@ -55,7 +55,7 @@ from ..core.constraints import (
     unit_interval,
 )
 from ..core.record import Record
-from ..core.tracked import TrackedTerm
+from ..core.tracked import TrackedTerm, _callable_label
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -410,7 +410,12 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         return EmpiricalDistribution(
             jnp.asarray(draws), component=name, label=name, level=SAMPLE_LEVEL
         )
-    atoms = _batch_class_for(event)(name, _raw_record(draws), SAMPLE_LEVEL, element_spec=event)
+    atoms = _batch_class_for(event)(
+        _raw_record(draws),
+        SAMPLE_LEVEL,
+        element_spec=event,
+        label=name,
+    )
     return EmpiricalDistribution(atoms, label=name)
 
 
@@ -830,11 +835,15 @@ def _moment_expression(summary: str) -> Callable[[Any], Expression]:
 
 
 def _integrand_label(f: Any) -> str:
-    """The label of an integrand: a Function's label, a callable's ``__name__``, and ``f`` for a lambda."""
+    """The label of an integrand, as ``evaluate`` names its call.
+
+    It is a Function's ``output_label``, so ``expectation(d, g)`` and
+    ``mean(g(d))`` are labeled alike, and a plain callable's label is the one
+    ``evaluate`` wraps it under: its name, and ``f`` for a lambda.
+    """
     if isinstance(f, Function):
-        return f.label
-    name = getattr(f, "__name__", "f")
-    return "f" if name == "<lambda>" else name
+        return f.output_label
+    return _callable_label(f, subject="Function")
 
 
 def _expectation_expression(d: Any, f: Any) -> Expression:

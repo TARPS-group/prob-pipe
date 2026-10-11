@@ -80,13 +80,14 @@ Write every docstring as reference text for a user.
      enforces them exists. *Example:* `to_vector` / `from_vector` are **value**
      operations — a spec describes structure and does not depend on the value
      type, so it carries neither. `to_vector` is `NumericRecord.to_vector` /
-     `NumericRecordBatch.to_vector`; `from_vector(label, spec, vec)` is the
+     `NumericRecordBatch.to_vector`; `from_vector(spec, vec, *, label=...)` is the
      classmethod pair `NumericRecord.from_vector` (single) /
      `NumericRecordBatch.from_vector` (batched), each taking the spec as an
      argument. These are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
-     `list(record.values())` and reconstruct with `Record.from_field_values`, visited at the
+     `list(record.values())` and reconstruct with
+     `Record.from_field_values(template, values, *, label=...)`, visited at the
      **spec's** granularity in canonical `keys()` order. Both treat a container-valued opaque
      leaf (tuple/namedtuple; a dict is never a leaf) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer
      pytree view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten`

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-__all__ = ["count", "unknown_names"]
+__all__ = ["count", "label_given_first", "unknown_names"]
 
 
 def count(n: int, noun: str, plural: str | None = None) -> str:
@@ -58,3 +58,36 @@ def unknown_names(
     head = f"unknown {noun} {names[0]!r}" if len(names) == 1 else f"unknown {plural} {names}"
     tail = f"available {plural}: {have}" if have else f"there are no {plural}"
     return f"{head}; {tail}"
+
+
+def label_given_first(owner: str, first: str, value: str, *, then: tuple[str, ...] = ()) -> str:
+    """The message that *owner* got the string *value* where its first argument *first* goes.
+
+    A constructor that once took its label first takes *first* there now and
+    the label as the keyword ``label``, so a string there is a label passed in
+    the earlier form.
+
+    Parameters
+    ----------
+    owner : str
+        The constructor, such as ``"NumericArray"``.
+    first : str
+        The name of its first parameter, such as ``"value"``.
+    value : str
+        The string the caller passed there.
+    then : tuple of str
+        The names of the positional parameters after *first*, which the
+        rewritten call shows, such as ``("level_names",)``.
+
+    Returns
+    -------
+    str
+        Such as ``"NumericArray takes the value first and the label as the
+        keyword label, but got the string 'x' as the value; write
+        NumericArray(value, label='x')"``.
+    """
+    arguments = ", ".join((first, *then))
+    return (
+        f"{owner} takes the {first} first and the label as the keyword label, but got the "
+        f"string {value!r} as the {first}; write {owner}({arguments}, label={value!r})"
+    )

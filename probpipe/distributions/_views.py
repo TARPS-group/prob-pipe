@@ -27,7 +27,7 @@ from ..core._expression import (
 )
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
-from ..core._repr import WIDTH, call_repr, mapping_repr, term_repr
+from ..core._repr import WIDTH, call_repr, format_names, mapping_repr
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.named_tree import _unflatten_paths
@@ -75,6 +75,7 @@ from ._distribution import (
     _install_field_view,
     _install_renamed_law,
     _keeps_fixed_paths,
+    _law_repr,
     _no_free_dims,
     _shared_final_names,
     _whole_term_component,
@@ -323,8 +324,8 @@ def _projector(declaration: OutputSpec, path: str | tuple[str, ...]) -> Callable
             if single:
                 return nodes[0]
             return Record(
-                value.label,
                 {component: _raw_record(node) for component, node in zip(components, nodes)},
+                label=value.label,
             )
         raw = _raw_record(value)
         nodes = [_extract(raw, each) for each in segments]
@@ -387,15 +388,6 @@ def _marginal_expression_at(law: Distribution, path: str | tuple[str, ...]) -> E
     if declared != [_final_segment(each) for each in requested]:
         product = Selected(product, requested)
     return product.with_fixed(held)
-
-
-def _marginal_label_at(law: Distribution, path: str | tuple[str, ...]) -> str:
-    """The label of the marginal of *law* at *path*, as :func:`_marginal_expression_at` gives it.
-
-    One whole factor gives its own label, several their labels joined with
-    ``·``, and any other marginal keeps *law*'s label.
-    """
-    return _marginal_expression_at(law, path).render_label()
 
 
 def _carrying(law: Any, expression: Expression) -> Any:
@@ -1210,13 +1202,19 @@ class FieldView(Distribution):
         """The view of *parent* at this view's path, carrying this view's expression."""
         return _carrying(FieldView(parent, self._path), self._expression)
 
-    def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The parent's path that the view reads."""
-        return [("path", repr(self._path))]
+    def __repr__(self) -> str:
+        """``FieldView(parent, path=...)``, followed by ``.with_label(...)`` for a view under another label.
 
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """A view's declaration is its parent's schema at its path, which the path states."""
-        return []
+        The constructor gives a view the label of its parent's marginal at its
+        path, so a view that ``with_label`` relabeled reads as the constructor
+        call relabeled. The parent's repr shows any paths it holds fixed.
+        """
+        text = call_repr(
+            self._repr_class_name(), [repr(self._parent)], [("path", repr(self._path))]
+        )
+        if self.label != _marginal_expression_at(self._parent, self._path).render_label():
+            text = _method_call(text, "with_label", repr(self._displayed_label()))
+        return text
 
 
 # ---------------------------------------------------------------------------
@@ -1307,9 +1305,9 @@ def _moved_value(value: Any, moves: Mapping[str, str] | None) -> Any:
     if isinstance(value, Record):
         template = value.event_template
         return Record(
-            value.label,
             {new: value[old] for new, old in moves.items()},
             event_template=RecordSpec({new: template[old] for new, old in moves.items()}),
+            label=value.label,
         )
     if isinstance(value, Mapping):
         fields = _fields_of(value)
@@ -1943,11 +1941,11 @@ class _RenamedDistribution(Distribution):
         if any(self._event.original(path) is None for path, _ in items):
             return None
         return Record(
-            "given",
             {
                 self._event.original(path): self._event.undraw_at(path, value)
                 for path, value in items
             },
+            label="given",
         )
 
     def _originals(self, paths: Sequence[str]) -> list[str]:
@@ -1977,17 +1975,14 @@ class _RenamedDistribution(Distribution):
 
         Each rename shows the paths it changed, and a label that differs from
         the parent's follows as ``.with_label(...)``. A reorder that changes no
-        path, which no rename can state, reads as a call of the parent's class
-        with the parent's arguments and this law's declaration.
+        path, which no rename can state, reads as a call of the parent's
+        constructor with the parent's arguments and this law's declaration as
+        ``event_spec=``.
         """
         renames = [{old: new for old, new in step.items() if old != new} for step in self._renames]
         parent = self._parent
         if not all(renames):
-            return term_repr(
-                self._repr_class_name(),
-                self._displayed_label(),
-                [*parent._repr_arguments(), ("event_spec", repr(self.event_spec))],
-            )
+            return _law_repr(self, parent._repr_arguments(), parent)
         text = repr(parent)
         for step in renames:
             mapping = mapping_repr({old: repr(new) for old, new in step.items()})
@@ -1999,6 +1994,10 @@ class _RenamedDistribution(Distribution):
     def _repr_class_name(self) -> str:
         """The class of the law this one renames, which a law presenting this one names."""
         return self._parent._repr_class_name()
+
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """The component and the declaration, by which this law differs from the law it renames."""
+        return self.event_spec._component_name, repr(self.event_spec)
 
 
 def _method_call(receiver: str, method: str, argument: str) -> str:
@@ -2175,7 +2174,7 @@ def _renamed_through_factors(
             else FactoredDistribution
         )
         renamed = _derived_product(
-            kind(joint.label, factors, _scope=graph.scope, **packaging), joint
+            kind(factors, label=joint.label, _scope=graph.scope, **packaging), joint
         )
     except (KeyError, ValueError):
         return None
@@ -2369,7 +2368,7 @@ def _regrouped(
                 else FactoredConditionalDistribution
             )
             label = _joined_label(part.label for part in parts)
-            unit = kind(label, parts, _scope=graph.scope, _component=node)
+            unit = kind(parts, label=label, _scope=graph.scope, _component=node)
             units.append((indices[0], _with_named(unit, _is_named(joint))))
     except (KeyError, TypeError, ValueError):
         return None
@@ -2383,7 +2382,9 @@ def _regrouped(
         else FactoredDistribution
     )
     try:
-        result = kind(joint.label, [units[position][1] for position in order], _scope=graph.scope)
+        result = kind(
+            [units[position][1] for position in order], label=joint.label, _scope=graph.scope
+        )
     except (KeyError, TypeError, ValueError):
         return None
     if _leaf_specs(result.event_spec) != _leaf_specs(event_spec):
@@ -2489,7 +2490,10 @@ def _slot_value(slot: str, spec: TermSpec, leaves: Mapping[str, Any]) -> Any:
     """The value of the slot *slot*, declared by *spec*, from the values at its leaves."""
     if not isinstance(spec, RecordSpec):
         return leaves[slot]
-    return Record(slot, {leaf[len(slot) + 1 :]: value for leaf, value in leaves.items()})
+    return Record(
+        {leaf[len(slot) + 1 :]: value for leaf, value in leaves.items()},
+        label=slot,
+    )
 
 
 def _renamed_conditional_sample(
@@ -2711,6 +2715,11 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         object.__setattr__(self, "_event", event)
         self._init_declaration(given_spec, event_spec)
 
+    def __repr__(self) -> str:
+        """A call of the renamed kernel's constructor, with this kernel's slots and declaration."""
+        arguments = [*self._repr_arguments(), ("given", format_names(self.given_spec))]
+        return _law_repr(self, arguments, self._parent)
+
     def _repr_class_name(self) -> str:
         """The class of the kernel this one renames, which it presents under new names."""
         return self._parent._repr_class_name()
@@ -2719,9 +2728,9 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         """The family parameters of the kernel this one renames."""
         return self._parent._repr_arguments()
 
-    def _event_repr_arguments(self) -> list[tuple[str, str]]:
-        """The renamed declaration, by which this kernel differs from the one it renames."""
-        return [("event_spec", repr(self.event_spec))]
+    def _event_repr_parts(self) -> tuple[str | None, str | None]:
+        """The component and the renamed declaration, by which this kernel differs from the one it renames."""
+        return self.event_spec._component_name, repr(self.event_spec)
 
     def _translated(self, given: Any) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
         """The parent slots *given* completes, the parent leaves left pending, and the slots bound.

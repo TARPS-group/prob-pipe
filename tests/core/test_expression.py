@@ -16,6 +16,7 @@ from probpipe import (
     Normal,
     NumericArray,
     NumericArraySpec,
+    OutputSpec,
     Record,
     RecordBatch,
     conditional_distribution,
@@ -26,8 +27,12 @@ from probpipe import (
 from probpipe.core._expression import (
     _STORED_DEPTH,
     Applied,
+    AppliedValue,
+    Collapse,
+    Collection,
     Conditioned,
     Draw,
+    Expression,
     Indexed,
     Named,
     Operator,
@@ -35,6 +40,7 @@ from probpipe.core._expression import (
     Selected,
     Signature,
     Summary,
+    Truncated,
     constant,
 )
 from probpipe.core._fingerprint import fingerprint
@@ -220,6 +226,28 @@ class TestRendering:
     def test_a_value_renders_in_full_as_its_label(self, expression, label):
         assert expression.render_label() == expression.render_notation() == label
 
+    @pytest.mark.parametrize("omitted", [False, True], ids=["every-member", "omitted-members"])
+    def test_a_collection_lists_its_members_notations(self, omitted):
+        collection = Collection(
+            (_named("prior", "mu"), Named("lik", Signature(("y",), ("mu",)))), omitted=omitted
+        )
+        label = "[prior(mu), lik(y | mu), …]" if omitted else "[prior(mu), lik(y | mu)]"
+        assert collection.render_label() == collection.render_notation() == label
+
+    def test_an_applied_value_reads_as_the_call(self):
+        value = AppliedValue("f", (Named("beta"), constant(2.0)))
+        assert value.render_label() == value.render_notation() == "f(beta, 2.0)"
+        assert Applied("f", value.arguments).render_label() == "f"
+
+    def test_a_collection_and_an_applied_value_collapse(self):
+        collection = Collection((_named("prior", "mu"),))
+        value = AppliedValue("f", (Named("beta"),))
+        probpipe.notation_config.max_depth = 1
+        with pytest.warns(UserWarning, match="max_depth=1"):
+            assert Indexed(collection, "row=0").render_notation(warn=True) == "[…][row=0]"
+        with pytest.warns(UserWarning, match="max_depth=1"):
+            assert Operator("+", (value, constant(1))).render_notation(warn=True) == "f + 1"
+
     def test_a_terms_own_signature_replaces_the_recorded_one(self):
         expression = Conditioned(_named("model", "y", "mu"), ("y",))
         assert expression.render_notation() == "model"
@@ -253,7 +281,11 @@ class TestFixedPaths:
 
 
 class TestDepth:
-    """A rendering shows at most ``notation_config.max_depth`` nested levels."""
+    """A rendering shows at most ``notation_config.max_depth`` nested levels.
+
+    A value's notation is its label, so ``render_notation`` renders a value's
+    label as a display does, warning when it leaves a part out.
+    """
 
     @staticmethod
     def _chain(steps: int):
@@ -265,22 +297,22 @@ class TestDepth:
     def test_a_shallow_rendering_does_not_warn(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert self._chain(2).render_label(warn=True) == "(x + 1) + 1"
+            assert self._chain(2).render_notation(warn=True) == "(x + 1) + 1"
 
     def test_a_deeper_rendering_collapses_a_value_to_an_ellipsis_and_warns(self):
         probpipe.notation_config.max_depth = 2
         with pytest.warns(UserWarning, match="notation_config.max_depth=2"):
-            assert self._chain(3).render_label(warn=True) == "(… + 1) + 1"
+            assert self._chain(3).render_notation(warn=True) == "(… + 1) + 1"
 
     def test_a_collapsed_law_or_function_shows_its_label(self):
         probpipe.notation_config.max_depth = 1
         lifted = Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),))))
         with pytest.warns(UserWarning, match="max_depth"):
-            assert lifted.render_label(warn=True) == "E[f]"
+            assert lifted.render_notation(warn=True) == "E[f]"
         product = Draw(("a", "b"), Product((_named("a", "a"), _named("b", "b"))))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert product.render_label(warn=True) == "(a, b) ~ a·b"
+            assert product.render_notation(warn=True) == "(a, b) ~ a·b"
 
     def test_a_law_reads_in_full_at_any_depth(self):
         """A conditioning or a selection nests no level, so a draw from one reads in full."""
@@ -288,25 +320,80 @@ class TestDepth:
         draw = Draw(("mu",), Selected(Conditioned(Named("model"), ("y",)), ("mu",)))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert Summary("E", draw).render_label(warn=True) == "E[mu ~ model; y]"
+            assert Summary("E", draw).render_notation(warn=True) == "E[mu ~ model; y]"
 
     def test_raising_the_depth_shows_the_collapsed_levels(self):
         deep = self._chain(10)
         with pytest.warns(UserWarning):
-            assert "…" in deep.render_label(warn=True)
+            assert "…" in deep.render_notation(warn=True)
         probpipe.notation_config.max_depth = 12
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert "…" not in deep.render_label(warn=True)
+            assert "…" not in deep.render_notation(warn=True)
 
     def test_a_stored_tree_is_bounded(self):
         """A long derivation stores a tree of bounded depth, which copies and pickles."""
         deep = self._chain(3 * _STORED_DEPTH)
-        assert deep.depth <= _STORED_DEPTH + 1
+        assert deep.depth <= _STORED_DEPTH
         assert pickle.loads(pickle.dumps(deep)) == deep
 
+    def test_a_part_that_storage_truncated_renders_as_its_text_and_warns(self):
+        deep = self._chain(_STORED_DEPTH)
+        assert isinstance(deep.operands[0], Truncated)
+        assert deep.render_label() == "… + 1"
+        with pytest.warns(UserWarning, match=f"the {_STORED_DEPTH} levels a term stores"):
+            assert deep.render_notation(warn=True) == "… + 1"
+
+    @pytest.mark.parametrize("signed", [False, True], ids=["unsigned", "signed"])
+    def test_a_truncated_law_keeps_the_paths_it_holds_fixed_without_a_warning(self, signed):
+        """After more selections than storage keeps, the posterior still reads ``m(mu; y)``.
+
+        A selection keeps its base's name, so the truncated base shows all that
+        the base rendered in full shows, and a display does not warn.
+        """
+        signature = Signature(("mu",)) if signed else None
+        selected: Expression = Conditioned(Named("m"), ("y",), signature)
+        for _ in range(3 * _STORED_DEPTH):
+            selected = Selected(selected, ("mu",), signature)
+        assert selected.depth <= _STORED_DEPTH
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert selected.render_label() == "m"
+            assert selected.render_notation(Signature(("mu",)), warn=True) == "m(mu; y)"
+            assert Product((selected, _named("q", "a"))).render_notation(warn=True) == (
+                "m(mu; y)·q(a)" if signed else "m·q(a)"
+            )
+
+    def test_a_truncated_call_warns(self):
+        """A draw from a lifted law reads as the call, which a truncated law does not show."""
+        argument = TestDepth._chain(_STORED_DEPTH - 2)
+        draw = Draw(("p",), Applied("f", (argument,)))
+        assert isinstance(draw.law, Truncated)
+        probpipe.notation_config.max_depth = _STORED_DEPTH
+        with pytest.warns(UserWarning, match="at any notation_config.max_depth"):
+            assert draw.render_notation(warn=True) == "p ~ f"
+
+    def test_a_rendering_that_collapses_and_meets_a_truncation_records_both(self):
+        """One operand meets a truncated part, and the other nests beyond the setting."""
+        probpipe.notation_config.max_depth = 3
+        both = Operator("+", (self._chain(_STORED_DEPTH), self._chain(10)))
+        label, collapse = both.label_rendering()
+        assert label == "(… + 1) + ((… + 1) + 1)"
+        assert collapse == Collapse(3, beyond_depth=True, truncated=True)
+        with pytest.warns(
+            UserWarning,
+            match=(
+                rf"max_depth=3 levels and more than the {_STORED_DEPTH} levels a term stores, "
+                rf".*Raise notation_config.max_depth to show up to {_STORED_DEPTH} levels"
+            ),
+        ):
+            assert both.render_notation(warn=True) == label
+
     def test_a_term_derived_in_a_long_loop_pickles(self):
-        value = NumericArray("x", jnp.asarray(1.0))
+        value = NumericArray(
+            jnp.asarray(1.0),
+            label="x",
+        )
         for _ in range(300):
             value = value + 1.0
         restored = pickle.loads(pickle.dumps(value))
@@ -324,10 +411,10 @@ class TestTheWarningFiresWhenATermIsShown:
     """A collapsed rendering warns when a term is shown, and never while terms are computed."""
 
     @staticmethod
-    def _looped() -> NumericArray:
+    def _looped(steps: int = 20) -> NumericArray:
         with workflow_run(seed=0):
             value = sample(_prior())
-        for _ in range(20):
+        for _ in range(steps):
             value = value + 1.0
         return value
 
@@ -349,8 +436,65 @@ class TestTheWarningFiresWhenATermIsShown:
             repr(value)
         assert caught[0].filename == __file__
 
+    def test_a_label_built_at_a_greater_depth_shows_in_full_without_a_warning(self):
+        """The label is rendered when the term is built, at the setting then."""
+        probpipe.notation_config.max_depth = 32
+        value = self._looped()
+        probpipe.notation_config.max_depth = 2
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            text = repr(value)
+        assert "…" not in value.label
+        assert value.label in text
+
+    def test_a_label_built_at_a_smaller_depth_warns_naming_the_setting_then(self):
+        probpipe.notation_config.max_depth = 2
+        value = self._looped()
+        probpipe.notation_config.max_depth = 32
+        with pytest.warns(UserWarning, match="max_depth=2 levels, the setting when the term was"):
+            text = repr(value)
+        assert "…" in value.label
+        assert value.label in text
+
+    def test_a_label_built_at_the_greatest_depth_warns_that_no_setting_shows_more(self):
+        """A label built at depth 64 from more operations shows a part storage truncated."""
+        probpipe.notation_config.max_depth = _STORED_DEPTH
+        value = self._looped(_STORED_DEPTH + 16)
+        assert value._label_collapse == Collapse(_STORED_DEPTH, False, True)
+        with pytest.warns(UserWarning) as caught:
+            repr(value)
+        (message,) = {str(w.message) for w in caught}
+        assert message.startswith(f"this label nests more than the {_STORED_DEPTH} levels")
+        assert message.endswith("at any notation_config.max_depth")
+
+    def test_a_label_that_collapses_over_a_truncated_part_names_both_limits(self):
+        value = self._looped(_STORED_DEPTH + 16)
+        assert value._label_collapse == Collapse(8, True, True)
+        with pytest.warns(
+            UserWarning,
+            match=(
+                rf"max_depth=8 levels, the setting when the term was built, and more than the "
+                rf"{_STORED_DEPTH} levels a term stores.*Raise notation_config.max_depth before "
+                rf"building the term to show up to {_STORED_DEPTH} levels"
+            ),
+        ):
+            repr(value)
+
+    def test_a_notation_renders_at_the_current_setting(self):
+        @function(output_spec=OutputSpec(value=None))
+        def f(mu: jax.Array) -> jax.Array:
+            return mu + 1.0
+
+        probpipe.notation_config.max_depth = 1
+        with workflow_run(seed=0):
+            law = f.with_options(n_broadcast_samples=4)(_prior())
+        probpipe.notation_config.max_depth = 8
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert law.notation == "f(mu ~ prior)"
+
     def test_the_str_and_notation_of_a_collapsed_law_warn(self):
-        @function
+        @function(output_spec=OutputSpec(f=None))
         def f(mu: jax.Array) -> jax.Array:
             return mu + 1.0
 
@@ -377,7 +521,10 @@ class TestTheLabelIsTheExpressionsLabel:
             given_spec={"beta": NumericArraySpec(())},
             label="glm",
         )
-        record = Record("r", {"a": 1.0, "b": 2.0})
+        record = Record(
+            {"a": 1.0, "b": 2.0},
+            label="r",
+        )
         batch = RecordBatch.stack([record, record], level_name="row", label="rows")
         joint = kernel * prior.with_path_names(mu="beta")
         return [
@@ -393,8 +540,15 @@ class TestTheLabelIsTheExpressionsLabel:
             batch,
             batch[0],
             batch[0:1],
-            NumericArray("x", jnp.zeros(2)) * 2.0,
-            Function("predict", lambda x: x),
+            NumericArray(
+                jnp.zeros(2),
+                label="x",
+            )
+            * 2.0,
+            Function(
+                lambda x: x,
+                label="predict",
+            ),
         ]
 
     def test_every_term_carries_the_label_of_its_expression(self):

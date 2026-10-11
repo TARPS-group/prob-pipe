@@ -329,7 +329,13 @@ def observed_target(model: Any, observed: Any) -> Any:
         return _UnnormalizedConditional(model, observed, model.event_spec, keyed=False)
     if not set(values) <= set(law.event_spec.components):
         return _UnnormalizedConditional(law, values, law.event_spec, keyed=False)
-    return _unnormalized_conditional(law, Record("given", values))
+    return _unnormalized_conditional(
+        law,
+        Record(
+            values,
+            label="given",
+        ),
+    )
 
 
 def observed_parts(target: Any) -> tuple[Any, Any]:
@@ -458,7 +464,10 @@ def flat_vector(value: Any) -> Array:
     leaves' coordinates in canonical order, and an array is raveled.
     """
     if isinstance(value, Mapping):
-        value = Record("draw", value)
+        value = Record(
+            value,
+            label="draw",
+        )
     if isinstance(value, Record):
         return value.to_numeric().to_vector()
     return jnp.ravel(jnp.asarray(value))
@@ -475,7 +484,14 @@ def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
     record = flat_record(law)
     if record is None:
         return flat_vector(draw)
-    value = draw if isinstance(draw, Record) else Record("draw", draw)
+    value = (
+        draw
+        if isinstance(draw, Record)
+        else Record(
+            draw,
+            label="draw",
+        )
+    )
     return jnp.concatenate([jnp.ravel(jnp.asarray(value.raw(path))) for path in record])
 
 
@@ -546,9 +562,15 @@ def _joint_of(joint: Any, factors: list[Any]) -> Any:
     if len(factors) == 1:
         return factors[0]
     if _factor_graph(tuple(factors)).unmet is None:
-        part = FactoredDistribution(joint.label, factors)
+        part = FactoredDistribution(
+            factors,
+            label=joint.label,
+        )
     else:
-        part = FactoredConditionalDistribution(joint.label, factors)
+        part = FactoredConditionalDistribution(
+            factors,
+            label=joint.label,
+        )
     return _with_named(part, _is_named(joint))
 
 
@@ -676,7 +698,10 @@ def _joint_draw(target: Any, key: Array, record: NumericRecordSpec) -> Array | N
                     children[component] = draw
         if not set(record.fields) <= set(children):
             return None
-        fields = Record("init", {name: children[name] for name in record.fields})
+        fields = Record(
+            {name: children[name] for name in record.fields},
+            label="init",
+        )
         return fields.to_numeric().to_vector()
     except Exception:
         logger.debug("get_init_state: the joint's draw failed for %r", target, exc_info=True)

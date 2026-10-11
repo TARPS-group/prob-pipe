@@ -273,8 +273,8 @@ class Normal(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -336,8 +336,8 @@ class Beta(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -399,8 +399,8 @@ class Gamma(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -466,8 +466,8 @@ class InverseGamma(_TailBoundedMoments, TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -530,8 +530,8 @@ class Exponential(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -585,8 +585,8 @@ class LogNormal(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -654,8 +654,8 @@ class StudentT(_TailBoundedMoments, TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -725,8 +725,8 @@ class Uniform(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -791,8 +791,8 @@ class Cauchy(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -884,8 +884,8 @@ class Laplace(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -945,8 +945,8 @@ class HalfNormal(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -1003,8 +1003,8 @@ class HalfCauchy(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -1094,8 +1094,8 @@ class Pareto(_TailBoundedMoments, TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -1164,8 +1164,8 @@ class TruncatedNormal(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.

@@ -11,6 +11,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericArraySpec,
+    OutputSpec,
     ResolutionError,
     workflow_run,
 )
@@ -32,26 +33,51 @@ def test_the_route_is_the_evaluation_rule_registry():
 
 
 def test_a_map_evaluates_at_a_value():
-    assert float(evaluate(Function("f", lambda x: x + 1.0), 1.0)) == 2.0
+    assert (
+        float(
+            evaluate(
+                Function(
+                    lambda x: x + 1.0,
+                    label="f",
+                ),
+                1.0,
+            )
+        )
+        == 2.0
+    )
 
 
 def test_a_map_pushes_a_distribution_forward():
     with workflow_run(seed=0):
-        law = evaluate(Function("f", lambda x: 2.0 * x), Gaussian("g"))
+        law = evaluate(
+            Function(lambda x: 2.0 * x, label="f", output_spec=OutputSpec(f=None)),
+            Gaussian("g"),
+        )
     assert isinstance(law, EmpiricalDistribution)
     assert law.provenance.operation == "workflow.evaluate"
 
 
 def test_a_maps_own_sample_count_survives_evaluate():
     """evaluate forwards a control only when its caller set it, so the map keeps its own count."""
-    double = Function("double", lambda x: 2.0 * x, n_broadcast_samples=9, dispatch="sequential")
+    double = Function(
+        lambda x: 2.0 * x,
+        n_broadcast_samples=9,
+        dispatch="sequential",
+        label="double",
+        output_spec=OutputSpec(double=None),
+    )
     with workflow_run(seed=0):
         assert evaluate(double, Gaussian("g")).num_atoms == 9
         assert evaluate.with_options(n_broadcast_samples=5)(double, Gaussian("g")).num_atoms == 5
 
 
 def test_the_result_takes_the_maps_output_name():
-    double = Function("double", lambda x: 2.0 * x, output_label="doubled")
+    double = Function(
+        lambda x: 2.0 * x,
+        output_label="doubled",
+        label="double",
+        output_spec=OutputSpec(doubled=None),
+    )
     with workflow_run(seed=0):
         assert evaluate(double, Gaussian("g")).label == "doubled"
     assert evaluate(double, 1.0).label == "doubled"
@@ -68,7 +94,14 @@ def test_the_fixed_arguments_bind_the_other_parameters():
     def shift(x, offset):
         return x + offset
 
-    value = evaluate(Function("shift", shift), 1.0, fixed_args={"offset": 2.0})
+    value = evaluate(
+        Function(
+            shift,
+            label="shift",
+        ),
+        1.0,
+        fixed_args={"offset": 2.0},
+    )
     assert float(value) == 3.0
 
 
@@ -77,7 +110,13 @@ def test_a_map_left_with_two_open_parameters_is_refused():
         return x + y
 
     with pytest.raises(ApplicabilityError, match="exactly one parameter"):
-        evaluate(Function("add", add), 1.0)
+        evaluate(
+            Function(
+                add,
+                label="add",
+            ),
+            1.0,
+        )
 
 
 def test_a_map_left_with_no_open_parameter_is_refused_without_naming_others():
@@ -85,13 +124,31 @@ def test_a_map_left_with_no_open_parameter_is_refused_without_naming_others():
         return x + y
 
     with pytest.raises(ApplicabilityError, match="no parameter of 'add' is left open") as info:
-        evaluate(Function("add", add), 1.0, fixed_args={"x": 1.0, "y": 2.0})
+        evaluate(
+            Function(
+                add,
+                label="add",
+            ),
+            1.0,
+            fixed_args={"x": 1.0, "y": 2.0},
+        )
     assert "pass the others" not in str(info.value)
 
 
 def test_a_batch_is_swept_elementwise():
-    rows = NumericArrayBatch("rows", jnp.arange(3.0), "row", element_spec=NumericArraySpec(()))
-    swept = evaluate(Function("f", lambda x: x + 1.0), rows)
+    rows = NumericArrayBatch(
+        jnp.arange(3.0),
+        "row",
+        element_spec=NumericArraySpec(()),
+        label="rows",
+    )
+    swept = evaluate(
+        Function(
+            lambda x: x + 1.0,
+            label="f",
+        ),
+        rows,
+    )
     assert isinstance(swept, NumericArrayBatch)
     assert swept.level_names == ("row",)
 
@@ -104,7 +161,7 @@ def _weighted_atoms():
 
 @pytest.mark.parametrize("method", ["sampling_lift", "evaluation_rules/sampling_lift"])
 def test_a_named_rule_runs_as_the_direct_call_runs_it(method):
-    square = Function("square", lambda t: t * t)
+    square = Function(lambda t: t * t, label="square", output_spec=OutputSpec(square=None))
     with workflow_run(seed=0):
         evaluated = evaluate.with_options(method=method, n_broadcast_samples=8)(
             square, _weighted_atoms()
@@ -117,7 +174,10 @@ def test_a_named_rule_runs_as_the_direct_call_runs_it(method):
 
 
 def test_check_reports_the_rule_a_method_names():
-    square = Function("square", lambda t: t * t)
+    square = Function(
+        lambda t: t * t,
+        label="square",
+    )
     report = evaluate.with_options(method="sampling_lift").check(square, _weighted_atoms())
     assert (report.route, report.method, report.exact) == (
         "evaluation_rules",
@@ -127,7 +187,10 @@ def test_check_reports_the_rule_a_method_names():
 
 
 def test_a_rule_named_for_a_value_is_refused_as_the_direct_call_refuses_it():
-    square = Function("square", lambda t: t * t)
+    square = Function(
+        lambda t: t * t,
+        label="square",
+    )
     with pytest.raises(ResolutionError, match="lifts nothing"):
         square.with_options(method="sampling_lift")(3.0)
     with pytest.raises(ResolutionError, match="lifts nothing"):
@@ -138,10 +201,14 @@ class TestThePushforwardOfAView:
     def test_the_identity_over_a_field_view_gives_one_atom_per_draw(self):
         """The map returns its operand, so the stacked draws' term reaches the result step."""
         view = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"]
-        law = evaluate.with_options(n_broadcast_samples=3)(lambda x: x, view)
+        law = evaluate.with_options(n_broadcast_samples=3)(
+            Function(lambda x: x, output_spec=OutputSpec(a=None)), view
+        )
         assert law.num_atoms == 3
         assert law.atoms.element_spec.shape == ()
 
     def test_a_plain_callable_is_admitted_as_the_map(self):
-        law = evaluate.with_options(n_broadcast_samples=4)(lambda x: 2.0 * x, Normal("x", 0.0, 1.0))
+        law = evaluate.with_options(n_broadcast_samples=4)(
+            lambda x: {"doubled": 2.0 * x}, Normal("x", 0.0, 1.0)
+        )
         assert law.num_atoms == 4

@@ -201,11 +201,11 @@ class FullFactorialDesign(Design):
 
         RecordBatch.__init__(
             self,
-            f"FullFactorialDesign({','.join(names)})",
             fields,
             DESIGN_LEVEL,
             element_spec=RecordSpec(template_spec),
             axes_per_level=(1,),
+            label=f"FullFactorialDesign({','.join(names)})",
         )
         # The label is derived from the marginals, not user-typed.
         object.__setattr__(self, "_marginals", dict(marginals))

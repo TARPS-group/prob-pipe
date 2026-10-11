@@ -12,7 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from probpipe import EmpiricalDistribution, Function, Normal, workflow_run
+from probpipe import EmpiricalDistribution, Function, Normal, OutputSpec, workflow_run
 from probpipe.core.node import Node
 from probpipe.functions import Module, _call, workflow_method
 from probpipe.values import _binding
@@ -253,36 +253,36 @@ class TestWorkflowCallHelpers:
 
 class TestArgumentBinding:
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
+        wf = Function(add_func, label="add_func", dispatch="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
+        wf = Function(add_func, label="add_func", dispatch="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(label="identity", fn=identity, dispatch="sequential")
+        wf = Function(identity, label="identity", dispatch="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = Function(label="identity", fn=identity, dispatch="sequential")
+        wf = Function(identity, label="identity", dispatch="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = Function(label="affine_func", fn=affine_func, dispatch="sequential")
+        default_wf = Function(affine_func, label="affine_func", dispatch="sequential")
         bound_wf = Function(
+            affine_func,
             label="affine_func",
-            fn=affine_func,
             dispatch="sequential",
             bind={"offset": 3.0, "scale": 2.0},
         )
@@ -292,7 +292,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = Function(label="add_func", fn=add_func, dispatch="sequential")
+        wf = Function(add_func, label="add_func", dispatch="sequential")
 
         with pytest.raises(TypeError, match=r"add_func\(\) missing required argument 'y'"):
             wf(x=1.0)
@@ -330,7 +330,7 @@ class TestModuleResolution:
         def use_dep(dep: DataNode):
             return 1.0
 
-        wf = Function(label="use_dep", fn=use_dep, dispatch="sequential")
+        wf = Function(use_dep, label="use_dep", dispatch="sequential")
 
         with pytest.raises(
             TypeError,
@@ -346,10 +346,11 @@ class TestCallOptions:
         normal_dist,
     ):
         wf = Function(
+            identity_func,
             label="identity_func",
-            fn=identity_func,
             n_broadcast_samples=20,
             dispatch="sequential",
+            output_spec=OutputSpec(identity_func=None),
         )
 
         with workflow_run(seed=42):
@@ -368,10 +369,11 @@ class TestCallOptions:
         normal_dist,
     ):
         wf = Function(
+            identity_func,
             label="identity_func",
-            fn=identity_func,
             n_broadcast_samples=8,
             dispatch="sequential",
+            output_spec=OutputSpec(identity_func=None),
         )
 
         with workflow_run(seed=42):
@@ -389,7 +391,10 @@ def test_a_function_keyword_reaches_the_wrapped_callable(engine, monkeypatch):
 
     if engine == "plain":
         monkeypatch.setattr(_function_base, "_call_engine", _function_base._plain_call)
-    wrapped = Function("apply_fn", lambda function, x: function(x))
+    wrapped = Function(
+        lambda function, x: function(x),
+        label="apply_fn",
+    )
 
     result = wrapped(function=jnp.sin, x=1.0)
 

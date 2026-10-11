@@ -37,6 +37,7 @@ from probpipe.distributions import (
     NumericDistribution,
 )
 from probpipe.distributions._distribution import _detached_term, _fixed_paths
+from tests._fixed_paths import with_fixed_paths
 
 SCALAR = NumericArraySpec(())
 LABEL = OpaqueSpec()
@@ -62,7 +63,10 @@ class _GivesDeclaredLaw:
     """Implements the primitive with a law over the kernel's own event."""
 
     def _condition_on(self, given, /, **kwargs):
-        return _Law(self.name, self.event_spec)
+        return _Law(
+            self.event_spec,
+            label=self.name,
+        )
 
 
 class Kernel(_GivesDeclaredLaw, ConditionalDistribution):
@@ -85,7 +89,11 @@ class LocationKernel(ConditionalDistribution):
     """``y | mu ~ Normal(mu, 1)``: a normal law over the kernel's event at each ``mu``."""
 
     def __init__(self, label: str = "lik") -> None:
-        super().__init__(label, {"mu": SCALAR}, OutputSpec(y=SCALAR))
+        super().__init__(
+            {"mu": SCALAR},
+            OutputSpec(y=SCALAR),
+            label=label,
+        )
 
     def _condition_on(self, given, /, **kwargs):
         (component,) = self.event_spec.components
@@ -94,9 +102,9 @@ class LocationKernel(ConditionalDistribution):
 
 def _kernel(given=None, event=None, label: str = "k") -> Kernel:
     return Kernel(
-        label,
         {"mu": SCALAR} if given is None else given,
         OutputSpec(y=SCALAR) if event is None else event,
+        label=label,
     )
 
 
@@ -194,11 +202,11 @@ class TestConstructionErrors:
         with pytest.raises(ValueError, match="both as a given slot and as an output field"):
             _kernel(given=given, event=event, label=name)
 
-    def test_a_missing_label_raises(self):
-        with pytest.raises(TypeError, match="label"):
-            Kernel(given_spec={"mu": SCALAR}, event_spec=SCALAR)
+    def test_an_omitted_label_defaults_to_p(self):
+        kernel = Kernel(given_spec={"mu": SCALAR}, event_spec=OutputSpec(y=SCALAR))
+        assert kernel.label == "p"
 
-    @pytest.mark.parametrize("name", ["", None, 3])
+    @pytest.mark.parametrize("name", ["", 3])
     def test_a_name_that_is_not_a_non_empty_string_raises(self, name):
         with pytest.raises(TypeError, match="label must be a non-empty string"):
             _kernel(label=name)
@@ -206,7 +214,11 @@ class TestConstructionErrors:
     @pytest.mark.parametrize("event", [3.0, (3,), "y", None])
     def test_an_event_that_is_not_a_spec_raises(self, event):
         with pytest.raises(TypeError, match="event_spec"):
-            Kernel("k", {"mu": SCALAR}, event)
+            Kernel(
+                {"mu": SCALAR},
+                event,
+                label="k",
+            )
 
     def test_an_event_with_a_type_hole_raises(self):
         with pytest.raises(ValueError, match="does not declare a type"):
@@ -238,7 +250,10 @@ class TestConstructionErrors:
                 self._init_tracked(label)
 
             def _condition_on(self, given, /, **kwargs):
-                return _Law(self.name, SCALAR)
+                return _Law(
+                    SCALAR,
+                    label=self.name,
+                )
 
         with pytest.raises(TypeError, match="undeclared"):
             Undeclared("k")
@@ -321,7 +336,12 @@ class TestConditionalDistributionSpec:
 
     def test_is_valid_refuses_a_value_that_is_not_a_kernel(self):
         spec = ConditionalDistributionSpec({"mu": SCALAR}, OutputSpec(y=SCALAR))
-        assert not spec.is_valid(_Law("y", OutputSpec(y=SCALAR)))
+        assert not spec.is_valid(
+            _Law(
+                OutputSpec(y=SCALAR),
+                label="y",
+            )
+        )
         assert not spec.is_valid(3.0)
         assert not spec.is_valid({"mu": SCALAR})
 
@@ -538,7 +558,7 @@ class TestNumericMarkers:
     def test_a_class_that_inherits_a_marker_constructs_when_the_claim_holds(
         self, cls, marker, given, event
     ):
-        assert isinstance(cls("k", given, event), marker)
+        assert isinstance(cls(given, event, label="k"), marker)
 
     @pytest.mark.parametrize(
         ("cls", "given", "event"),
@@ -555,7 +575,7 @@ class TestNumericMarkers:
         self, cls, given, event
     ):
         with pytest.raises(TypeError, match="inherits"):
-            cls("k", given, event)
+            cls(given, event, label="k")
 
 
 class TestPrimitive:
@@ -566,14 +586,22 @@ class TestPrimitive:
 
     def test_the_base_class_cannot_be_instantiated(self):
         with pytest.raises(TypeError, match="_condition_on"):
-            ConditionalDistribution("k", {"mu": SCALAR}, OutputSpec(y=SCALAR))
+            ConditionalDistribution(
+                {"mu": SCALAR},
+                OutputSpec(y=SCALAR),
+                label="k",
+            )
 
     def test_a_subclass_without_the_primitive_cannot_be_instantiated(self):
         class WithoutPrimitive(ConditionalDistribution):
             pass
 
         with pytest.raises(TypeError, match="_condition_on"):
-            WithoutPrimitive("k", {"mu": SCALAR}, OutputSpec(y=SCALAR))
+            WithoutPrimitive(
+                {"mu": SCALAR},
+                OutputSpec(y=SCALAR),
+                label="k",
+            )
 
     def test_a_subclass_with_the_primitive_gives_a_law_over_its_event(self):
         kernel = LocationKernel()
@@ -643,12 +671,6 @@ class TestWithPathNames:
             rename(_kernel())
 
 
-def _with_fixed_paths(term, *paths: str):
-    """*term* holding *paths* fixed, as applying a kernel at given values records."""
-    term._store_expression(term._expression.with_fixed(paths))
-    return term
-
-
 class TestNotation:
     """A kernel reads as its label, its components, ``|``, and its given slots."""
 
@@ -664,13 +686,13 @@ class TestNotation:
         kernel = _kernel(event=OutputSpec(RecordSpec(y=(), z=())), label="k")
         assert kernel.notation == "k(y, z | mu)"
 
-    def test_str_returns_the_notation_and_the_repr_keeps_the_label_first(self):
+    def test_str_returns_the_notation_and_the_repr_reads_as_the_constructor_call(self):
         glm = _kernel(given={"beta": SCALAR}, label="glm")
         assert str(glm) == "glm(y | beta)"
-        assert repr(glm).startswith("Kernel('glm', component='y', given=('beta',)")
+        assert repr(glm).startswith("Kernel('y', given=('beta',), label='glm'")
 
     def test_fixed_paths_follow_the_given_slots(self):
-        glm = _with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
+        glm = with_fixed_paths(_kernel(given={"sigma": SCALAR}, label="glm"), "beta")
         assert glm.notation == "glm(y | sigma; beta)"
 
     def test_a_kernel_holds_no_path_fixed_by_default(self):
@@ -690,7 +712,7 @@ class TestNotation:
     )
     def test_a_copy_keeps_the_fixed_paths(self, copy):
         kernel = _kernel(given={"sigma": _array("n")}, event=OutputSpec(y=_array("n")))
-        assert _fixed_paths(copy(_with_fixed_paths(kernel, "beta"))) == ("beta",)
+        assert _fixed_paths(copy(with_fixed_paths(kernel, "beta"))) == ("beta",)
 
 
 class TestConditionOnOperation:

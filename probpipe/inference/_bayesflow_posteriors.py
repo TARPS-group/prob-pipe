@@ -309,7 +309,9 @@ class _AmortizedPosterior(
     ):
         slot = _observation_slot(prior)
         super().__init__(
-            f"amortized_posterior_{method}", {slot: NumericArraySpec((data_dim,))}, prior.event_spec
+            {slot: NumericArraySpec((data_dim,))},
+            prior.event_spec,
+            label=f"amortized_posterior_{method}",
         )
         leaf_shapes = dict(_components_record(prior.event_spec).leaf_shapes)
         attributes = {
@@ -488,7 +490,10 @@ class _AmortizedPosteriorLaw(Distribution, SupportsSampling):
         return object.__new__(_capability_subclass(_AmortizedPosteriorLaw, claimed))
 
     def __init__(self, kernel: _AmortizedPosterior, observation: np.ndarray) -> None:
-        super().__init__("posterior", kernel.event_spec)
+        super().__init__(
+            kernel.event_spec,
+            label="posterior",
+        )
         self._kernel = kernel
         self._observation_value = observation
 

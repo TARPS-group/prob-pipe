@@ -83,7 +83,13 @@ class TestTheScoredValue:
             log_prob(Gaussian("g"), jnp.zeros(3))
 
     def test_a_one_field_record_event_takes_a_record(self):
-        score = log_prob(OneField("o"), Record("v", {"x": jnp.float32(0.0)}))
+        score = log_prob(
+            OneField("o"),
+            Record(
+                {"x": jnp.float32(0.0)},
+                label="v",
+            ),
+        )
         assert float(jnp.asarray(score)) == pytest.approx(float(jax.scipy.stats.norm.logpdf(0.0)))
 
     def test_a_one_field_record_event_refuses_a_bare_array(self):
@@ -100,11 +106,11 @@ class TestTheScoredValue:
 
     def test_a_batch_of_values_is_scored_at_its_levels(self):
         values = NumericArrayBatch(
-            "values",
             jnp.linspace(-1.0, 1.0, 6).reshape(2, 3),
             ("rows", "cols"),
             element_spec=NumericArraySpec(()),
             axes_per_level=(1, 1),
+            label="values",
         )
         scores = log_prob(Gaussian("g"), values)
         assert isinstance(scores, NumericArrayBatch)
@@ -120,8 +126,22 @@ class TestTheScoredValue:
     @pytest.mark.parametrize(
         ("law", "values"),
         [
-            (CountedVector("v"), NumericArrayBatch("points", jnp.zeros((4, 2)), "point")),
-            (OneField("o"), NumericRecordBatch("points", {"y": jnp.zeros(4)}, "point")),
+            (
+                CountedVector("v"),
+                NumericArrayBatch(
+                    jnp.zeros((4, 2)),
+                    "point",
+                    label="points",
+                ),
+            ),
+            (
+                OneField("o"),
+                NumericRecordBatch(
+                    {"y": jnp.zeros(4)},
+                    "point",
+                    label="points",
+                ),
+            ),
         ],
         ids=["arrays", "records"],
     )
@@ -136,7 +156,9 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
     @staticmethod
     def _points(n: int) -> NumericArrayBatch:
         return NumericArrayBatch(
-            "points", jax.random.normal(jax.random.PRNGKey(n), (n, 3)), "point"
+            jax.random.normal(jax.random.PRNGKey(n), (n, 3)),
+            "point",
+            label="points",
         )
 
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
@@ -170,11 +192,11 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
     @pytest.mark.parametrize("score", [log_prob, unnormalized_log_prob])
     def test_the_mapped_scores_equal_the_sequential_ones_at_every_level(self, score):
         points = NumericArrayBatch(
-            "grid",
             jax.random.normal(jax.random.PRNGKey(1), (2, 4, 3)),
             ("rows", "cols"),
             element_spec=NumericArraySpec((3,)),
             axes_per_level=(1, 1),
+            label="grid",
         )
         mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
         mapped = score(mapped_law, points)
@@ -198,14 +220,18 @@ class TestLiftedScores:
         # The law of the score at draws of the value is the operation at a draw,
         # and its component is the operation's name, never a derived label.
         assert (lifted.label, lifted.notation) == ("log_prob", "log_prob(g(g), v ~ v)")
-        assert list(lifted.event_spec.components) == ["log_prob"]
+        assert list(lifted.event_spec.components) == ["log_prob(g)"]
 
     def test_a_law_whose_draws_do_not_conform_raises_applicability_error(self):
         with pytest.raises(ApplicabilityError, match="does not conform"):
             log_prob.check(Gaussian("g"), OneField("v"))
 
     def test_a_swept_batch_of_laws_and_a_law_at_the_value_lift_together(self):
-        laws = DistributionBatch("laws", [Gaussian("g", 1.0), Gaussian("g", 2.0)], "laws")
+        laws = DistributionBatch(
+            [Gaussian("g", 1.0), Gaussian("g", 2.0)],
+            "laws",
+            label="laws",
+        )
         report = log_prob.check(laws, Gaussian("v"))
         assert report.feasible is True
         assert report.lifted == ("d", "value")

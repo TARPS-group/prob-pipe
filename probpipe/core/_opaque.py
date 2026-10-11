@@ -6,8 +6,9 @@ See design III.1.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Self
 
+from .._messages import label_given_first
 from ._array_backend import _read_only
 from ._repr import term_repr, type_name
 from ._spec_base import OpaqueSpec
@@ -30,13 +31,13 @@ class Opaque(TrackedTerm, Annotated):
 
     Parameters
     ----------
-    label : str
-        The value's label, required and first as a :class:`~probpipe.Record`
-        takes it: the label is what says which opaque value this is.
     value : Any
         The value this term holds, stored as given. Any non-mapping value; the value
         layer reads a mapping as a subtree. A NumPy array is marked read-only in
         place.
+    label : str
+        The required semantic description, passed by keyword: an opaque value
+        has no fields or callable name from which to derive one.
     spec : OpaqueSpec, optional
         What this value satisfies, carrying any opaque ``meta``. Defaults to the
         :class:`~probpipe.OpaqueSpec` of the value's type.
@@ -51,7 +52,10 @@ class Opaque(TrackedTerm, Annotated):
 
     Examples
     --------
-    >>> fitted = Opaque("sklearn_model", object())
+    >>> fitted = Opaque(
+    ...     object(),
+    ...     label="sklearn_model",
+    ... )
     >>> fitted.label
     'sklearn_model'
     """
@@ -60,17 +64,26 @@ class Opaque(TrackedTerm, Annotated):
         "_annotations",
         "_expression",
         "_label",
+        "_label_collapse",
         "_provenance",
         "_spec",
         "_value",
     )
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        # A string is a valid opaque value, so only a second positional argument
+        # without a label keyword marks it as a label passed in the earlier
+        # label-first form.
+        if len(args) > 1 and isinstance(args[0], str) and "label" not in kwargs:
+            raise TypeError(label_given_first(cls.__name__, "value", args[0]))
+        return object.__new__(cls)
+
     def __init__(
         self,
-        label: str,
         value: Any,
         /,
         *,
+        label: str,
         spec: OpaqueSpec | None = None,
         provenance: Provenance | None = None,
     ) -> None:

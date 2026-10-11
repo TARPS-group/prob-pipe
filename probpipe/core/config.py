@@ -315,11 +315,16 @@ _NOTATION_MAX_DEPTH_ENV_VAR = "PROBPIPE_NOTATION_MAX_DEPTH"
 _DEFAULT_MAX_DEPTH = 8
 
 
+def _invalid_max_depth(source: str, got: str) -> str:
+    """The message that the depth *source* names is not a valid one, having got *got*."""
+    return f"{source} must be an integer from 1 to {_STORED_DEPTH}, got {got}"
+
+
 def _checked_max_depth(value: Any, source: str) -> int:
-    """*value* as a number of nested levels, a positive integer of at most ``_STORED_DEPTH``.
+    """*value* as a number of nested levels, an integer from 1 to ``_STORED_DEPTH``.
 
     A stored expression keeps at most ``_STORED_DEPTH`` levels, so a rendering
-    of more levels would meet parts that storage collapsed without a warning.
+    of more levels would show no more.
 
     Parameters
     ----------
@@ -341,14 +346,9 @@ def _checked_max_depth(value: Any, source: str) -> int:
         If *value* is less than 1 or greater than ``_STORED_DEPTH``.
     """
     if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{source} must be a positive integer, got {type(value).__name__}")
-    if value < 1:
-        raise ValueError(f"{source} must be a positive integer, got {value}")
-    if value > _STORED_DEPTH:
-        raise ValueError(
-            f"{source} must be at most {_STORED_DEPTH}, the number of levels a stored "
-            f"expression keeps, got {value}"
-        )
+        raise TypeError(_invalid_max_depth(source, type(value).__name__))
+    if not 1 <= value <= _STORED_DEPTH:
+        raise ValueError(_invalid_max_depth(source, repr(value)))
     return value
 
 
@@ -356,9 +356,9 @@ def _initial_max_depth() -> int:
     """Resolve the initial ``max_depth`` from the environment.
 
     Reads ``PROBPIPE_NOTATION_MAX_DEPTH``. Unset gives 8, and a value that is
-    not a positive integer of at most ``_STORED_DEPTH`` raises ``ValueError``,
-    so a typo in a deployment's configuration surfaces rather than falling back
-    to the default.
+    not an integer from 1 to ``_STORED_DEPTH`` raises ``ValueError``, so a typo
+    in a deployment's configuration surfaces rather than falling back to the
+    default.
     """
     raw = os.environ.get(_NOTATION_MAX_DEPTH_ENV_VAR)
     if raw is None:
@@ -366,13 +366,8 @@ def _initial_max_depth() -> int:
     try:
         value = int(raw)
     except ValueError:
-        value = 0
-    if value < 1 or value > _STORED_DEPTH:
-        raise ValueError(
-            f"{_NOTATION_MAX_DEPTH_ENV_VAR}={raw!r} is not a valid depth. It must be a "
-            f"positive integer of at most {_STORED_DEPTH}."
-        )
-    return value
+        raise ValueError(_invalid_max_depth(_NOTATION_MAX_DEPTH_ENV_VAR, repr(raw))) from None
+    return _checked_max_depth(value, _NOTATION_MAX_DEPTH_ENV_VAR)
 
 
 class NotationConfig:
@@ -388,17 +383,35 @@ class NotationConfig:
 
         probpipe.notation_config.max_depth = 12
 
+    The setting is global to the process. A term's label is rendered once,
+    when the term is built, at the setting in effect then.
+
     The initial depth can also be set by the ``PROBPIPE_NOTATION_MAX_DEPTH``
-    environment variable. The depth is a positive integer of at most 64, the
-    number of levels a stored expression keeps, so a rendering never shows a
-    part that storage collapsed.
+    environment variable. The depth is an integer from 1 to 64, the number of
+    levels a stored expression keeps, since a rendering of more levels would
+    show no more.
+
+    Raises
+    ------
+    ValueError
+        On construction, which reads ``PROBPIPE_NOTATION_MAX_DEPTH``, if the
+        variable is set to anything but an integer from 1 to 64. The module's
+        singleton is constructed when ``probpipe`` is imported, so the import
+        raises.
     """
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
-        """Restore all settings to defaults (re-reading the env var)."""
+        """Restore all settings to their defaults, reading ``PROBPIPE_NOTATION_MAX_DEPTH`` again.
+
+        Raises
+        ------
+        ValueError
+            If ``PROBPIPE_NOTATION_MAX_DEPTH`` is set to anything but an integer
+            from 1 to 64.
+        """
         self._max_depth: int = _initial_max_depth()
 
     @property
@@ -413,8 +426,13 @@ class NotationConfig:
         ``E[f(beta ~ model; y)][sample=0] + 1`` does, so the default shows
         each of them in full, while a label derived through a long chain of
         operations, such as a loop that adds to a value, stays bounded.
-        Setting it changes the renderings made afterwards, and a term keeps
-        the label it was given.
+
+        A term's label is rendered once, when the term is built, at the setting
+        then, and the term keeps it. The notation of a law, a kernel, or a
+        function is rendered each time it is shown, at the current setting. A
+        stored expression keeps at most 64 levels, and a part nested deeper
+        shows as its label or ``…`` at any setting, with a ``UserWarning`` that
+        says no setting shows it.
 
         Raises
         ------

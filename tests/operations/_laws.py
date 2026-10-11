@@ -50,7 +50,10 @@ class Gaussian(
     """A scalar normal law with every closed form the moment tests read."""
 
     def __init__(self, label: str, loc: float = 0.0, scale: float = 1.0) -> None:
-        super().__init__(label, OutputSpec(**{label: REAL}))
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
         self.loc, self.scale = float(loc), float(scale)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -88,7 +91,10 @@ class Sampler(Distribution, SupportsSampling):
     """A scalar normal law that only samples, recording each sample shape it is asked for."""
 
     def __init__(self, label: str, loc: float = 0.0, scale: float = 1.0) -> None:
-        super().__init__(label, OutputSpec(**{label: REAL}))
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
         self.loc, self.scale = float(loc), float(scale)
         self.shapes: list[tuple[int, ...]] = []
 
@@ -101,7 +107,10 @@ class Vector(Distribution, SupportsSampling):
     """A law on R² with independent coordinates of scales 1 and 2, which only samples."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: NumericArraySpec((2,), jnp.float32, real)}))
+        super().__init__(
+            OutputSpec(**{label: NumericArraySpec((2,), jnp.float32, real)}),
+            label=label,
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         draws = jax.random.normal(key, (*sample_shape, 2))
@@ -112,31 +121,43 @@ class Pair(Distribution, SupportsSampling, SupportsMean):
     """A law drawing an exposed record of a scalar ``a`` and a vector ``b``."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(a=REAL, b=NumericArraySpec((2,), jnp.float32, real)))
+        super().__init__(
+            RecordSpec(a=REAL, b=NumericArraySpec((2,), jnp.float32, real)),
+            label=label,
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         ka, kb = jax.random.split(key)
         shape = tuple(sample_shape)
         return Record(
-            self.label,
             {
                 "a": normal_draws(ka, 1.0, 1.0, shape),
                 "b": normal_draws(kb, -1.0, 1.0, (*shape, 2)),
             },
+            label=self.label,
         )
 
     def _mean(self) -> Any:
-        return Record(self.label, {"a": jnp.float32(1.0), "b": -jnp.ones(2, jnp.float32)})
+        return Record(
+            {"a": jnp.float32(1.0), "b": -jnp.ones(2, jnp.float32)},
+            label=self.label,
+        )
 
 
 class OneField(Distribution, SupportsSampling, SupportsLogProb):
     """A law drawing a record with the one field ``x``, which is not an array-valued law."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(x=REAL))
+        super().__init__(
+            RecordSpec(x=REAL),
+            label=label,
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        return Record(self.label, {"x": normal_draws(key, 0.0, 1.0, tuple(sample_shape))})
+        return Record(
+            {"x": normal_draws(key, 0.0, 1.0, tuple(sample_shape))},
+            label=self.label,
+        )
 
     def _log_prob(self, value: Any) -> Any:
         return jax.scipy.stats.norm.logpdf(jnp.asarray(value["x"]))
@@ -146,7 +167,10 @@ class Coin(Distribution, SupportsSampling, SupportsMean, SupportsLogProb, Suppor
     """A Bernoulli law on {0, 1}, drawn as int32, with an exact expectation over its atoms."""
 
     def __init__(self, label: str, p: float = 0.25) -> None:
-        super().__init__(label, OutputSpec(**{label: NumericArraySpec((), jnp.int32, boolean)}))
+        super().__init__(
+            OutputSpec(**{label: NumericArraySpec((), jnp.int32, boolean)}),
+            label=label,
+        )
         self.p = float(p)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
@@ -168,7 +192,10 @@ class Unnormalized(Distribution, SupportsUnnormalizedLogProb):
     """A law that knows its log-density only up to the constant ``log 2``."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: REAL}))
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
 
     def _unnormalized_log_prob(self, value: Any) -> Any:
         return jax.scipy.stats.norm.logpdf(jnp.asarray(value)) + jnp.log(2.0)
@@ -178,7 +205,10 @@ class Polymorphic(Distribution, SupportsLogProb):
     """A standard normal law on Rⁿ whose length ``n`` is free."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: NumericArraySpec(("n",), jnp.float32, real)}))
+        super().__init__(
+            OutputSpec(**{label: NumericArraySpec(("n",), jnp.float32, real)}),
+            label=label,
+        )
 
     def _log_prob(self, value: Any) -> Any:
         return jnp.sum(jax.scipy.stats.norm.logpdf(jnp.asarray(value)), axis=-1)
@@ -188,7 +218,10 @@ class CountedVector(Distribution, SupportsLogProb):
     """A standard normal law on R³ that records each value its density is called with."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: NumericArraySpec((3,), jnp.float32, real)}))
+        super().__init__(
+            OutputSpec(**{label: NumericArraySpec((3,), jnp.float32, real)}),
+            label=label,
+        )
         self.calls: list[Any] = []
 
     def _log_prob(self, value: Any) -> Any:
@@ -200,7 +233,10 @@ class Measure(Distribution, SupportsSampling):
     """A random measure whose draws are normal laws with standard-normal locations."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: DistributionSpec(OutputSpec(x=REAL))}))
+        super().__init__(
+            OutputSpec(**{label: DistributionSpec(OutputSpec(x=REAL))}),
+            label=label,
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         shape = tuple(sample_shape)
@@ -217,7 +253,10 @@ class RandomDensity(Distribution, SupportsRandomLogProb, SupportsRandomUnnormali
     """A random measure whose random log-densities are stand-in laws."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: DistributionSpec(OutputSpec(x=REAL))}))
+        super().__init__(
+            OutputSpec(**{label: DistributionSpec(OutputSpec(x=REAL))}),
+            label=label,
+        )
 
     def _random_log_prob(self) -> Distribution:
         return Gaussian("log_density", -1.0)
@@ -230,7 +269,10 @@ class Marginalizing(Distribution, SupportsMarginals):
     """A record law over ``a`` and ``b`` whose marginal is exact only at ``a``."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(a=REAL, b=REAL))
+        super().__init__(
+            RecordSpec(a=REAL, b=REAL),
+            label=label,
+        )
         self.paths: list[Any] = []
 
     def _marginal(self, path: Any) -> Distribution:
@@ -266,7 +308,9 @@ class Kernel(ConditionalDistribution):
     ) -> None:
         self.component = label if component is None else component
         super().__init__(
-            label, {slot: REAL for slot in slots}, OutputSpec(**{self.component: REAL})
+            {slot: REAL for slot in slots},
+            OutputSpec(**{self.component: REAL}),
+            label=label,
         )
         self.slots, self.offset = tuple(slots), float(offset)
 
@@ -283,15 +327,18 @@ class ExactPosterior(Distribution, SupportsSampling, SupportsExactConditioning):
     """A law whose ``_condition_on`` returns the conditional law, recording each given."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(theta=REAL, y=REAL))
+        super().__init__(
+            RecordSpec(theta=REAL, y=REAL),
+            label=label,
+        )
         self.givens: list[Any] = []
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         kt, ky = jax.random.split(key)
         shape = tuple(sample_shape)
         return Record(
-            self.label,
             {"theta": normal_draws(kt, 0.0, 1.0, shape), "y": normal_draws(ky, 0.0, 1.0, shape)},
+            label=self.label,
         )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
@@ -303,7 +350,10 @@ class Amortized(Distribution, SupportsApproximateConditioning):
     """A law whose ``_condition_on`` returns a stand-in for the conditional law."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(theta=REAL, y=REAL))
+        super().__init__(
+            RecordSpec(theta=REAL, y=REAL),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Gaussian("theta", 2.0, 1.0)
@@ -313,4 +363,7 @@ class Bare(Distribution):
     """A law that claims no capability."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, OutputSpec(**{label: REAL}))
+        super().__init__(
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )

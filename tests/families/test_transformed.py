@@ -17,6 +17,7 @@ from probpipe import (
     Normal,
     NumericArrayBatch,
     NumericDistribution,
+    OutputSpec,
     ResolutionError,
     bijector_for,
     greater_than,
@@ -48,7 +49,10 @@ class _Exp(Function):
     """The exponential map as a bijector that claims its inverse and its log-Jacobian."""
 
     def __init__(self) -> None:
-        super().__init__("exp", jnp.exp)
+        super().__init__(
+            jnp.exp,
+            label="exp",
+        )
 
     def _inverse(self, y):
         """The preimage ``log(y)`` of *y*."""
@@ -109,7 +113,14 @@ class TestTheLinearPushforward:
 class TestTheBijectorTransform:
     def test_a_map_without_an_inverse_raises(self, standard):
         with pytest.raises(ResolutionError, match="'exp' does not implement SupportsInverse"):
-            BijectorTransformedDistribution("y", standard, Function("exp", jnp.exp))
+            BijectorTransformedDistribution(
+                "y",
+                standard,
+                Function(
+                    jnp.exp,
+                    label="exp",
+                ),
+            )
 
     def test_a_base_drawing_records_raises(self, standard):
         joint = standard * Normal("z", 0.0, 1.0)
@@ -247,7 +258,11 @@ class TestSampling:
             np.asarray(base._sample(key, (100,))),
             atol=1e-6,
         )
-        xs = NumericArrayBatch("x", jnp.array([-1.0, 0.0, 1.0, 2.5]), "point")
+        xs = NumericArrayBatch(
+            jnp.array([-1.0, 0.0, 1.0, 2.5]),
+            "point",
+            label="x",
+        )
         np.testing.assert_allclose(
             np.asarray(log_prob(transformed, xs)), np.asarray(log_prob(base, xs)), atol=1e-5
         )
@@ -280,10 +295,11 @@ class TestReplay:
 
     def test_a_lift_replays_identically(self):
         difference = Function(
+            replayable_difference,
             label="replayable_difference",
-            fn=replayable_difference,
             n_broadcast_samples=8,
             dispatch="sequential",
+            output_spec=OutputSpec(replayable_difference=None),
         )
 
         def operands():

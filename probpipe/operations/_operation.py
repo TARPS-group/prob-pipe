@@ -929,7 +929,10 @@ class Operation(Function):
     ) -> None:
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
-        super().__init__(declaration.__name__, declaration)
+        super().__init__(
+            declaration,
+            label=declaration.__name__,
+        )
         object.__setattr__(self, "_declaration_name", declaration.__name__)
         owner = f"operation {self.label!r}"
         if not callable(result):
@@ -1026,12 +1029,31 @@ class Operation(Function):
     def _derived_label(self, values: Mapping[str, Any]) -> str:
         """The label of the result of a call on *values*, the bound arguments by parameter name.
 
-        It is the label of the expression :meth:`_derived_expression` builds.
-        A result that keeps its route's expression is labeled by the label
+        It is the label of the expression :meth:`_derived_expression` builds,
+        as :meth:`_result_label` gives it (II.4).
+        """
+        return self._result_label(values, self._derived_expression(values))
+
+    def _result_label(self, values: Mapping[str, Any], expression: Expression | None) -> str:
+        """The label of the result of a call on *values* whose derived expression is *expression*.
+
+        It is the label of *expression*. A result that keeps its route's
+        expression, for which *expression* is ``None``, is labeled by the label
         rule where the operation has one, and otherwise by the primary
         operand's label (II.4).
+
+        Parameters
+        ----------
+        values : Mapping of str to Any
+            The call's bound arguments, by parameter name.
+        expression : Expression or None
+            The expression :meth:`_derived_expression` builds for *values*.
+
+        Returns
+        -------
+        str
+            The result's label.
         """
-        expression = self._derived_expression(values)
         if expression is not None:
             return expression.render_label()
         rule = self._label_rule

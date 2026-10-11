@@ -432,7 +432,7 @@ def _unconditioned_event(law: Any, produced: Iterable[str]) -> OutputSpec:
 def _joint_value(value: Any, given: Record) -> Record:
     """The joint's value at *value*, a draw of the unconditioned fields, and at *given*."""
     fields = value.children if isinstance(value, Record) else value
-    return Record("value", {**dict(fields), **dict(given.children)})
+    return Record({**dict(fields), **dict(given.children)}, label="value")
 
 
 def _conditional_density(self: _UnnormalizedConditional, value: Any) -> Any:
@@ -487,7 +487,10 @@ class _UnnormalizedConditional(Distribution):
     def __init__(
         self, joint: Distribution, given: Any, event_spec: OutputSpec, *, keyed: bool = True
     ) -> None:
-        super().__init__(joint.label, event_spec)
+        super().__init__(
+            event_spec,
+            label=joint.label,
+        )
         self._joint = joint
         self._given = given
         self._keyed = keyed
@@ -564,7 +567,11 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
     def __init__(
         self, kernel: ConditionalDistribution, given: Record, event_spec: OutputSpec
     ) -> None:
-        super().__init__(kernel.label, kernel.given_spec, event_spec)
+        super().__init__(
+            kernel.given_spec,
+            event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._given = given
 
@@ -608,7 +615,7 @@ def _unnormalized_conditional(law: Any, given: Record) -> Any:
 
 def _joined(first: Record, second: Record) -> Record:
     """The given values of *first* and *second* in one record."""
-    return Record("given", {**dict(first.children), **dict(second.children)})
+    return Record({**dict(first.children), **dict(second.children)}, label="given")
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +783,11 @@ class _PerValueNormalization(ConditionalDistribution):
         return object.__new__(_capability_subclass(_PerValueNormalization, claimed))
 
     def __init__(self, kernel: ConditionalDistribution, normalization: _Normalization) -> None:
-        super().__init__(kernel.label, kernel.given_spec, kernel.event_spec)
+        super().__init__(
+            kernel.given_spec,
+            kernel.event_spec,
+            label=kernel.label,
+        )
         self._kernel = kernel
         self._normalization = normalization
 
@@ -1017,7 +1028,10 @@ def _bayes(call: BoundCall) -> Any:
     bound = {key: value for key, value in values.items() if _head(key) in slots}
     law = _curried(evaluated, bound) if bound else evaluated
     produced = {key: value for key, value in values.items() if key not in bound}
-    return _unnormalized_conditional(law, Record("given", produced))
+    return _unnormalized_conditional(
+        law,
+        Record(produced, label="given"),
+    )
 
 
 def _bayes_is_exact(call: BoundCall) -> bool:
@@ -1192,7 +1206,11 @@ def _slice(call: BoundCall) -> Any:
         _law_at_defaults(factors[0], ())
         if len(factors) == 1
         else _with_named(
-            FactoredDistribution(_joined_label(f.label for f in factors), factors), False
+            FactoredDistribution(
+                factors,
+                label=_joined_label(f.label for f in factors),
+            ),
+            False,
         )
     )
     if law.provenance is None:

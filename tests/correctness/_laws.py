@@ -74,11 +74,11 @@ class ExactGaussianRegression(
         X = jnp.asarray(X, jnp.float32)
         n, p = X.shape
         super().__init__(
-            "regression",
             RecordSpec(
                 beta=NumericArraySpec((p,), jnp.float32, real),
                 y=NumericArraySpec((n,), jnp.float32, real),
             ),
+            label="regression",
         )
         self.X, self.prior_variance = X, float(prior_variance)
 
@@ -144,7 +144,10 @@ class Population(Distribution, SupportsSampling, SupportsLogProb):
     """The whole record term ``population``: ``mu ~ N(0, 5)`` and ``tau ~ HalfCauchy(0, 5)``."""
 
     def __init__(self) -> None:
-        super().__init__("population", OutputSpec(population=POPULATION))
+        super().__init__(
+            OutputSpec(population=POPULATION),
+            label="population",
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         k_mu, k_tau = jax.random.split(key)
@@ -164,7 +167,10 @@ class Groups(Distribution, SupportsSampling, SupportsLogProb):
     """The whole record term ``groups``: ``theta_tilde ~ N(0, I)``, one coordinate per school."""
 
     def __init__(self) -> None:
-        super().__init__("groups", OutputSpec(groups=GROUPS))
+        super().__init__(
+            OutputSpec(groups=GROUPS),
+            label="groups",
+        )
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         return {"theta_tilde": jax.random.normal(key, (*sample_shape, J)).astype(jnp.float32)}
