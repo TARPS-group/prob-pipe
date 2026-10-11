@@ -498,22 +498,23 @@ class TestACarriedLabel:
         assert "label=" not in repr(law)
 
 
-@pytest.mark.parametrize("count", [5, 8])
-def test_a_mixture_shows_each_component_while_it_shows_each_weight(count):
-    law = MixtureDistribution(
-        [Normal("x", float(index), 1.0) for index in range(count)], jnp.full(count, 1.0 / count)
-    )
-    assert repr(law).count("Normal('x'") == count
-    assert repr(eval(repr(law), _namespace())) == repr(law)
+class TestMixtureRepr:
+    @pytest.mark.parametrize("count", [5, 8])
+    def test_a_mixture_shows_each_component_while_it_shows_each_weight(self, count):
+        law = MixtureDistribution(
+            [Normal("x", float(index), 1.0) for index in range(count)], jnp.full(count, 1.0 / count)
+        )
+        assert repr(law).count("Normal('x'") == count
+        assert repr(eval(repr(law), _namespace())) == repr(law)
 
-
-def test_a_mixture_of_more_components_than_it_shows_weights_gives_their_count():
-    law = MixtureDistribution(
-        [Normal("x", float(index), 1.0) for index in range(9)], jnp.full(9, 1.0 / 9)
-    )
-    assert (
-        repr(law) == "MixtureDistribution(components=9, weights=array(shape=(9,), dtype=float32))"
-    )
+    def test_a_mixture_of_more_components_than_it_shows_weights_gives_their_count(self):
+        law = MixtureDistribution(
+            [Normal("x", float(index), 1.0) for index in range(9)], jnp.full(9, 1.0 / 9)
+        )
+        assert (
+            repr(law)
+            == "MixtureDistribution(components=9, weights=array(shape=(9,), dtype=float32))"
+        )
 
 
 class TestFunctionsAndOperators:

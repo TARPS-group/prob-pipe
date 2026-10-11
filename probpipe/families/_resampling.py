@@ -875,6 +875,8 @@ def _listed_atoms(atoms: list | tuple) -> np.ndarray:
         If the atoms have different shapes.
     """
     kind = type(atoms).__name__
+    missing = object()
+    entry = next((entry for entry in _entries(atoms) if not _is_number(entry)), missing)
     try:
         values = np.asarray(atoms)
     except ValueError:
@@ -883,8 +885,9 @@ def _listed_atoms(atoms: list | tuple) -> np.ndarray:
             f"{reprlib.repr(atoms)} holds atoms of different shapes; pass an array with one "
             f"atom per row"
         ) from None
-    if values.dtype.kind not in _NUMERIC_KINDS:
-        entry = next((entry for entry in _entries(atoms) if not _is_number(entry)), values.flat[0])
+    if entry is not missing or values.dtype.kind not in _NUMERIC_KINDS:
+        if entry is missing:
+            entry = next(_entries(atoms), atoms)
         raise TypeError(
             f"KDEDistribution atoms must be numbers, but the {kind} holds {entry!r} of type "
             f"{type_name(entry)}; pass numeric atoms"
