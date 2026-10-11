@@ -665,6 +665,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
 
+    #: The memo of values computed from the law on demand, such as its
+    #: fingerprint, which a copy or a pickle leaves out.
+    _transient_state = ("_memo",)
+
     #: Where the constructor takes the component of a whole-term event, which the
     #: repr follows: ``"first"`` as its first argument, ``"keyword"`` as
     #: ``component=`` after its other arguments, or ``None`` for a constructor that
