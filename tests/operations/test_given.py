@@ -17,6 +17,7 @@ from probpipe import (
     Normal,
     NumericArraySpec,
     NumericRecordBatch,
+    OpaqueSpec,
     OutputSpec,
     RecordSpec,
     condition_on,
@@ -128,6 +129,21 @@ class _Moments(
 class _GuardedDensity(_Direct):
     def _conditional_log_prob_guard(self, given):
         return given["mu"] > 0
+
+
+class _OpaqueSlots(ConditionalDistribution):
+    def __init__(self, data_spec=None):
+        if data_spec is None:
+            data_spec = OpaqueSpec()
+        super().__init__(
+            {"theta": RecordSpec(data=data_spec, offset=REAL)}, OutputSpec(y=REAL), label="opaque"
+        )
+        self.calls = []
+
+    def _condition_on(self, given, /, **kwargs):
+        self.calls.append(given)
+        theta = given["theta"]
+        return Normal("y", jnp.sum(theta["data"]) + theta["offset"], 1.0)
 
 
 class _Approximate(_Fallback, SupportsApproximateConditioning):
@@ -302,6 +318,38 @@ class TestConditionalOperations:
             result = mean.with_options(n_broadcast_samples=8)(kernel, given=given)
         np.testing.assert_allclose(mean(result), 2.0)
         assert kernel.calls
+
+    @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
+    def test_nested_opaque_slots_admit_numeric_values_at_binding(self, data_spec):
+        kernel = _OpaqueSlots(data_spec)
+        given = {"theta": {"data": np.ones(3), "offset": 2.0}}
+        law = condition_on(kernel, given)
+        np.testing.assert_allclose(mean(law), 5.0)
+        np.testing.assert_allclose(mean(kernel, given=given), 5.0)
+
+    @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
+    def test_nested_opaque_slots_keep_value_admission_open_during_lifted_check(self, data_spec):
+        def forbidden_draw(key):
+            raise AssertionError("a declaration-only check must not draw")
+
+        given = distribution(
+            sample=forbidden_draw,
+            event_spec=RecordSpec(theta=RecordSpec(data=NumericArraySpec((3,)), offset=REAL)),
+        )
+        kernel = _OpaqueSlots(data_spec)
+        assert mean.check(kernel, given=given).feasible is None
+        assert not kernel.calls
+
+    @pytest.mark.parametrize("fused", [False, True])
+    def test_typed_opaque_slots_still_validate_concrete_values(self, fused):
+        kernel = _OpaqueSlots(OpaqueSpec(type=str))
+        given = {"theta": {"data": np.ones(3), "offset": 2.0}}
+        with pytest.raises((ApplicabilityError, ValueError)):
+            if fused:
+                mean(kernel, given=given)
+            else:
+                condition_on(kernel, given)
+        assert not kernel.calls
 
     def test_a_given_binds_symbolic_event_dimensions_before_sampling(self):
         class Vector(ConditionalDistribution, SupportsConditionalSampling):

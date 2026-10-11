@@ -83,7 +83,6 @@ from ..core._spec_base import (
     OpaqueSpec,
     TermSpec,
     _full_array_shape_or_none,
-    _unify_specs,
 )
 from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
@@ -1556,11 +1555,15 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     returns.
     """
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
+        from ._given import _bind_given_dims_from_spec
+
         keys = tuple(given)
         if keys and all(_spec_at(d.given_spec, key) is not None for key in keys):
             bindings: dict[str, int] = {}
             for key in keys:
-                _unify_specs(_spec_at(d.given_spec, key), given[key], bindings, f"given/{key}")
+                _bind_given_dims_from_spec(
+                    _spec_at(d.given_spec, key), given[key], bindings, f"given/{key}"
+                )
             left = _remaining_given_spec(d.given_spec, keys).with_dim_sizes(**bindings)
             event = d.event_spec.with_dim_sizes(**bindings)
             if not left.required:

@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 
 from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import _unify_specs
+from ..core._spec_base import OpaqueSpec, TermSpec, _unify_specs
 from ..core.record import Record
 from ..distributions._capabilities import (
     _CONDITIONAL_TWINS,
@@ -20,6 +20,23 @@ from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..functions._call import ApplicabilityError
 from ..functions._resolution import StandIn
+
+
+def _bind_given_dims_from_spec(
+    expected: TermSpec, actual: TermSpec, bindings: dict[str, int], path: str
+) -> None:
+    """Bind dimensions, retaining value-time admission for explicitly opaque leaves."""
+    if isinstance(expected, OpaqueSpec) and not isinstance(actual, (RecordSpec, OpaqueSpec)):
+        # An opaque declaration admits numeric values too. Their numeric spec
+        # cannot establish their Python type; concrete binding checks that.
+        return
+    if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
+        if expected.children.keys() != actual.children.keys():
+            _unify_specs(expected, actual, bindings, path)
+        for name, spec in expected.children.items():
+            _bind_given_dims_from_spec(spec, actual.children[name], bindings, f"{path}/{name}")
+        return
+    _unify_specs(expected, actual, bindings, path)
 
 
 def _forward(method: str) -> Callable[..., Any]:
@@ -119,7 +136,9 @@ class _GivenLaw(Distribution):
         try:
             for name, value in values.items():
                 if isinstance(value, StandIn):
-                    _unify_specs(kernel.given_spec[name], value.spec, bindings, f"given/{name}")
+                    _bind_given_dims_from_spec(
+                        kernel.given_spec[name], value.spec, bindings, f"given/{name}"
+                    )
                 else:
                     kernel.given_spec[name]._bind_dims_from_value(value, bindings, f"given/{name}")
         except (TypeError, ValueError) as error:
