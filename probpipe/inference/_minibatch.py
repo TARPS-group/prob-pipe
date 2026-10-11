@@ -44,7 +44,7 @@ from typing import Any, ClassVar
 import jax
 import jax.numpy as jnp
 
-from ..core._expression import Applied, Named
+from ..core._expression import Applied, constant
 from ..core._repr import type_name
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
 from ..core.tracked import TrackedTerm
@@ -241,11 +241,8 @@ class MinibatchedDistribution(
                 )
             expression = Applied(
                 "minibatch",
-                (
-                    prior._embedded_expression(),
-                    likelihood._embedded_expression(),
-                    Named(f"batch_size={int(batch_size)}"),
-                ),
+                (prior._embedded_expression(), likelihood._embedded_expression()),
+                (("batch_size", constant(int(batch_size))),),
             )
 
         self._prior = prior

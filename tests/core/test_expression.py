@@ -239,6 +239,13 @@ class TestRendering:
         assert value.render_label() == value.render_notation() == "f(beta, 2.0)"
         assert Applied("f", value.arguments).render_label() == "f"
 
+    def test_a_call_shows_its_keyword_arguments_after_its_positional_ones(self):
+        call = Applied("minibatch", (_named("prior", "mu"),), (("batch_size", constant(40)),))
+        assert call.render_label() == "minibatch"
+        assert call.render_notation() == "minibatch(prior(mu), batch_size=40)"
+        assert call.depth == 2
+        assert call != Applied("minibatch", (_named("prior", "mu"),))
+
     def test_a_collection_and_an_applied_value_collapse(self):
         collection = Collection((_named("prior", "mu"),))
         value = AppliedValue("f", (Named("beta"),))

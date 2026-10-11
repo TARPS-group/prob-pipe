@@ -867,20 +867,28 @@ class Applied(Expression):
     arguments : tuple of Expression
         The arguments in order: a :class:`Draw` for each law drawn from, and
         a value's expression for any other argument.
+    keywords : tuple of (str, Expression)
+        The arguments the call passes by keyword, in order, which the notation
+        shows after the positional ones as ``name=value``; empty by default.
     """
 
     function: str
     arguments: tuple[Expression, ...]
+    keywords: tuple[tuple[str, Expression], ...] = ()
     depth: int = _derived_field()
     holds_loss: bool = _derived_field()
     truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arguments", _kept_all(self.arguments))
+        if self.keywords:
+            names = tuple(name for name, _ in self.keywords)
+            values = _kept_all(tuple(value for _, value in self.keywords))
+            object.__setattr__(self, "keywords", tuple(zip(names, values, strict=True)))
         self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
-        return self.arguments
+        return self.arguments + tuple(value for _, value in self.keywords)
 
     def _collapsed(self) -> str:
         return self.function
@@ -891,10 +899,11 @@ class Applied(Expression):
     def _notation(self, rendering: _Rendering, level: int, own: Signature | None) -> str:
         if rendering.beyond(level):
             return rendering.collapse(self)
-        arguments = ", ".join(
-            self._argument(argument, rendering, level + 1) for argument in self.arguments
+        parts = [self._argument(argument, rendering, level + 1) for argument in self.arguments]
+        parts.extend(
+            f"{name}={self._argument(value, rendering, level + 1)}" for name, value in self.keywords
         )
-        return f"{self.function}({arguments})"
+        return f"{self.function}({', '.join(parts)})"
 
     def _call(self, rendering: _Rendering, level: int) -> str | None:
         return self._notation(rendering, level, None)
