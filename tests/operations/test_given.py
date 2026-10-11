@@ -19,6 +19,7 @@ from probpipe import (
     NumericRecordBatch,
     OpaqueSpec,
     OutputSpec,
+    Record,
     RecordSpec,
     condition_on,
     conditional_distribution,
@@ -344,6 +345,54 @@ class TestConditionalOperations:
             mean(kernel, given={"data": data}), [1.0, 2.0, 3.0], rtol=0.0, atol=0.0
         )
         assert kernel.calls[-1]["data"] is data
+
+    @pytest.mark.parametrize("sequence", [list, tuple])
+    @pytest.mark.parametrize("record", [dict, Record])
+    @pytest.mark.parametrize("direct", [False, True])
+    def test_nested_numeric_sequences_bind_dimensions_without_replacing_values(
+        self, sequence, record, direct
+    ):
+        vector = NumericArraySpec(("n",))
+
+        class Nested(ConditionalDistribution):
+            def __init__(self):
+                super().__init__(
+                    {"theta": RecordSpec(group=RecordSpec(a=vector, b=vector))},
+                    OutputSpec(y=vector),
+                    label="nested",
+                )
+                self.calls = []
+
+            def _condition_on(self, given, /, **kwargs):
+                self.calls.append(given)
+                return Normal("y", self._data(given), 1.0)
+
+            def _data(self, given):
+                theta = given["theta"]
+                data = theta.raw("group/a") if isinstance(theta, Record) else theta["group"]["a"]
+                return np.asarray(data)
+
+        class Direct(Nested, SupportsConditionalMean):
+            def _conditional_mean(self, given):
+                self.calls.append(given)
+                return self._data(given)
+
+        kernel = Direct() if direct else Nested()
+        data = sequence([1.0, 2.0, 3.0])
+        theta = record({"group": {"a": data, "b": np.ones(3)}})
+        given = {"theta": theta}
+        law = condition_on(kernel, given)
+        assert law.event_spec.spec.shape == (3,)
+        report = mean.check(kernel, given=given)
+        assert report.result.spec.shape == (3,)
+        np.testing.assert_allclose(mean(kernel, given=given), data, rtol=0.0, atol=0.0)
+        assert all(call["theta"] is theta for call in kernel.calls)
+        nested_data = theta.raw("group/a") if record is Record else theta["group"]["a"]
+        assert nested_data is data
+        assert kernel.event_spec.spec.free_dims == frozenset({"n"})
+        bad = record({"group": {"a": data, "b": np.ones(2)}})
+        with pytest.raises((ApplicabilityError, ValueError)):
+            mean(kernel, given={"theta": bad})
 
     @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
     def test_nested_opaque_slots_admit_numeric_values_at_binding(self, data_spec):

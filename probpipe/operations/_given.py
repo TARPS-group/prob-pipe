@@ -53,6 +53,12 @@ def _bind_given_dims_from_value(
     expected: TermSpec, value: Any, bindings: dict[str, int], path: str
 ) -> None:
     """Bind dimensions from numeric sequences without replacing the kernel input."""
+    if isinstance(expected, RecordSpec):
+        children = value.children if isinstance(value, Record) else value
+        if isinstance(children, Mapping) and expected.children.keys() == children.keys():
+            for name, spec in expected.children.items():
+                _bind_given_dims_from_value(spec, children[name], bindings, f"{path}/{name}")
+            return
     if isinstance(expected, NumericArraySpec) and isinstance(value, (list, tuple)):
         value = np.asarray(value)
     expected._bind_dims_from_value(value, bindings, path)
