@@ -53,7 +53,7 @@ class LinearPushforwardDistribution(Distribution):
 
     The event type is ``op``'s output type, under the pushforward's own
     component. Sampling pushes the base's draws through ``op``. The mean and
-    the covariance delegate exactly, ``E[A X] = A E[X]`` and ``Cov(A X) = A
+    the covariance delegate exactly, ``𝔼[A X] = A 𝔼[X]`` and ``Cov(A X) = A
     Cov(X) Aᵀ``, lazily through the operator algebra. The log-density exists
     only when ``op`` is invertible, by change of variables.
 
@@ -178,7 +178,7 @@ def _affine_jacobian(self: BijectorTransformedDistribution) -> Array:
 
 
 def _transformed_mean(self: BijectorTransformedDistribution) -> Array:
-    """``f(E[X])``, which is ``E[f(X)]`` for an affine ``f``."""
+    """``f(𝔼[X])``, which is ``𝔼[f(X)]`` for an affine ``f``."""
     return _forward(self._bijector)(jnp.asarray(self._base._mean()))
 
 
@@ -222,7 +222,7 @@ class BijectorTransformedDistribution(Distribution):
 
     The law claims sampling when the base does and the density the base has.
     It claims a moment only where the bijector gives it in closed form: when
-    the forward map is affine, ``E[f(X)] = f(E[X])`` and ``Cov(f(X)) = J
+    the forward map is affine, ``𝔼[f(X)] = f(𝔼[X])`` and ``Cov(f(X)) = J
     Cov(X) Jᵀ`` with ``J`` the map's constant Jacobian. The moment operations
     estimate the others by their Monte Carlo fallback.
 

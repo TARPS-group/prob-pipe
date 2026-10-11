@@ -376,7 +376,7 @@ class NotationConfig:
     A tracked term's label and the notation of a law, a kernel, or a function
     are renderings of the expression the term carries, which nests one level
     for each value or law it was computed from, as
-    ``E[f(beta ~ model; y)]`` nests four. A rendering shows at most
+    ``𝔼[f(beta ~ model; y)]`` nests four. A rendering shows at most
     :attr:`max_depth` levels::
 
         import probpipe
@@ -423,7 +423,7 @@ class NotationConfig:
         ``notation`` warn with a ``UserWarning`` when what they show has such
         a part. Every label the library derives from one law and a
         few operators on it nests at most 5 levels, as
-        ``E[f(beta ~ model; y)][sample=0] + 1`` does, so the default shows
+        ``𝔼[f(beta ~ model; y)][sample=0] + 1`` does, so the default shows
         each of them in full, while a label derived through a long chain of
         operations, such as a loop that adds to a value, stays bounded.
 
