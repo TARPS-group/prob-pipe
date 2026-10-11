@@ -72,13 +72,13 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from math import prod
 from types import MappingProxyType
-from typing import Any, Self, cast
+from typing import Any, ClassVar, Self, cast
 
 from .._messages import count, unknown_names
 from ._expression import (
+    Collapse,
     Expression,
     Indexed,
-    Named,
 )
 from ._record_spec import RecordSpec, _check_kind_of
 from ._repr import (
@@ -510,12 +510,19 @@ class Batch[E](TrackedTerm, ABC):
     __slots__ = (
         "_expression",
         "_label",
+        "_label_collapse",
         "_provenance",
         "_root_expression",
         "_root_selection",
         "_root_spec",
         "_spec",
     )
+
+    #: Whether :meth:`_element_at` returns a new object each time, which no
+    #: caller holds, so the selection writes the element's expression to it
+    #: without copying it first. A class whose hook may return an object a caller
+    #: holds, such as a stored term itself, keeps this ``False``.
+    _fresh_elements: ClassVar[bool] = False
 
     # The three ``_root_*`` slots derive a view's label: they hold the expression
     # and spec of the batch a derivation starts from, and which of *that* batch's
@@ -696,7 +703,9 @@ class Batch[E](TrackedTerm, ABC):
             )
         return self._with_level_names(renamed)
 
-    def _store_expression(self, expression: Expression) -> None:
+    def _store_expression(
+        self, expression: Expression, rendering: tuple[str, Collapse | None] | None = None
+    ) -> None:
         """Store *expression* and its label, and make the batch the root its view labels derive from.
 
         A new expression starts a new view root, so the batch selects all of
@@ -710,8 +719,10 @@ class Batch[E](TrackedTerm, ABC):
         ----------
         expression : Expression
             The batch's new expression, preserved by later transforms.
+        rendering : tuple of (str, Collapse or None), optional
+            The label and what it left out, for a caller that rendered it already.
         """
-        super()._store_expression(expression)
+        super()._store_expression(expression, rendering)
         object.__setattr__(self, "_root_expression", expression)
         object.__setattr__(self, "_root_spec", self._spec)
         object.__setattr__(self, "_root_selection", _whole_of(self._spec))
@@ -916,13 +927,15 @@ class Batch[E](TrackedTerm, ABC):
         its elements returns a view of the stored object under *label*: a copy of
         a stored tracked term that shares its representation, or the stored
         value wrapped as a term of the element kind. That view's provenance
-        records this batch and the stored term, and the stored object keeps its
-        own label and provenance, since the caller may still hold it.
+        records this batch and the stored term.
 
         Provenance is this hook's own, because only it knows whether the element
-        was built or borrowed. An element built under *label* alone then
-        carries the expression of the selection, as ``(mu ~ prior)[sample=0]``,
-        and a stored object returned as it is keeps its own.
+        was built or borrowed. The selection then gives the returned term the
+        expression of the selection, as ``(mu ~ prior)[sample=0]``. It writes
+        to the returned object only when the class sets :attr:`_fresh_elements`,
+        which states that the hook returns a new object each time, and otherwise
+        to a shallow copy of it. A hook that returns a stored object as it is
+        therefore leaves that object's label and provenance unchanged.
         """
 
     def _element_call(self, index: tuple[int, ...]) -> Expression | None:
@@ -1039,7 +1052,7 @@ class Batch[E](TrackedTerm, ABC):
             expression = Indexed(self._root_expression, rendered)
         else:
             expression = self._root_expression
-        label = expression.render_label()
+        label, collapse = expression.label_rendering()
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
@@ -1047,13 +1060,15 @@ class Batch[E](TrackedTerm, ABC):
             if call is not None and isinstance(expression, Indexed):
                 expression = replace(expression, element=call)
             element = self._element_at(dropped, label=label)
-            given = element._expression if isinstance(element, TrackedTerm) else None
-            core = None if given is None else given.core()
-            if isinstance(core, Named) and core.label == label:
-                # A view built under the derived label carries the selection, and a
-                # stored law keeps the paths it holds fixed, after the batch's own.
+            if isinstance(element, TrackedTerm):
+                # The element carries the selection, and a stored law keeps the paths
+                # it holds fixed, after the batch's. Unless the hook built the element
+                # afresh, the expression goes on a copy: the hook may return an object
+                # a caller still holds, such as a stored term, which must keep its label.
                 held = expression.with_fixed(element._expression.fixed_paths())
-                _assign_expression(element, held, label)
+                if not self._fresh_elements:
+                    element = element._shallow_copy()
+                _assign_expression(element, held, (label, collapse))
             return element
 
         groups, names = self._surviving_levels(normalized)
@@ -1061,7 +1076,7 @@ class Batch[E](TrackedTerm, ABC):
         view = self._sub_batch_at(
             tuple(_as_storage_slice(i) for i in normalized), spec=spec, label=label
         )
-        _assign_expression(view, expression, label)
+        _assign_expression(view, expression, (label, collapse))
         object.__setattr__(view, "_root_expression", self._root_expression)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
@@ -1439,11 +1454,17 @@ def _render_index(root_spec: BatchSpec, selection: tuple[int | range, ...]) -> s
     return ", ".join(parts)
 
 
-def _assign_expression(term: Any, expression: Expression, label: str) -> None:
-    """Give *term*, a view just selected, *expression* and its rendered *label*.
+def _assign_expression(
+    term: Any, expression: Expression, rendering: tuple[str, Collapse | None]
+) -> None:
+    """Give *term*, a view just selected, *expression* and its rendered label.
 
-    A view keeps the root it was selected from, so the assignment stores the
+    *rendering* is the label and what it left out, as
+    :meth:`~probpipe.core._expression.Expression.label_rendering` gives them. A
+    view keeps the root it was selected from, so the assignment stores the
     expression without re-rooting it, as :meth:`Batch._store_expression` would.
     """
+    label, collapse = rendering
     object.__setattr__(term, "_expression", expression)
     object.__setattr__(term, "_label", label)
+    object.__setattr__(term, "_label_collapse", collapse)

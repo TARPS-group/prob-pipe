@@ -56,7 +56,8 @@ class Source(Distribution):
 
     def __init__(self, label: str = "x", event_spec: OutputSpec | None = None):
         super().__init__(
-            label, OutputSpec(**{label: _SCALAR}) if event_spec is None else event_spec
+            OutputSpec(**{label: _SCALAR}) if event_spec is None else event_spec,
+            label=label,
         )
 
 
@@ -68,7 +69,10 @@ class Stranger(Distribution):
     """A law that no converter below reads."""
 
     def __init__(self, label: str = "stranger"):
-        super().__init__(label, OutputSpec(**{label: _SCALAR}))
+        super().__init__(
+            OutputSpec(**{label: _SCALAR}),
+            label=label,
+        )
 
 
 class Target(Distribution):
@@ -220,7 +224,7 @@ class ToyConverter(Converter):
             raise self._raises
         if self._result is not None:
             return self._result
-        return self._target_class(source.label, source.event_spec)
+        return self._target_class(source.event_spec, label=source.label)
 
 
 def _registry(*converters: Converter) -> ConverterRegistry:
@@ -333,7 +337,10 @@ _CONVERTER_MEMBERS: dict[str, Any] = {
         target_spec=source.spec,
         target_class=Target,
     ),
-    "execute": lambda self, source, target_type: Target(source.label, source.event_spec),
+    "execute": lambda self, source, target_type: Target(
+        source.event_spec,
+        label=source.label,
+    ),
 }
 
 
@@ -451,7 +458,14 @@ class TestKeying:
 
     @pytest.mark.parametrize(
         "target",
-        ["Target", Target("t", OutputSpec(t=_SCALAR)), None],
+        [
+            "Target",
+            Target(
+                OutputSpec(t=_SCALAR),
+                label="t",
+            ),
+            None,
+        ],
         ids=["a-class-name", "an-instance", "None"],
     )
     def test_a_target_that_is_not_a_class_raises_type_error(self, target: Any):
@@ -611,7 +625,13 @@ class TestTargetAdmission:
     def test_a_sampling_source_type_admits_a_law_that_samples(self):
         registry = _registry(ToyConverter("from_samplers", sources=(SupportsSampling,)))
         assert (
-            registry.check(Sampled("x", OutputSpec(x=_SCALAR)), Target).method_name
+            registry.check(
+                Sampled(
+                    OutputSpec(x=_SCALAR),
+                    label="x",
+                ),
+                Target,
+            ).method_name
             == "from_samplers"
         )
 
@@ -823,7 +843,10 @@ class TestNamedConverter:
 class TestConvert:
     def test_returns_the_selected_converters_result(self):
         source = Source()
-        result = Target("x", source.event_spec)
+        result = Target(
+            source.event_spec,
+            label="x",
+        )
         converter = ToyConverter("m", result=result)
         assert _registry(converter).convert(source, Target) is result
         assert converter.check_calls == [((source, Target), {})]
@@ -875,7 +898,10 @@ class TestConvert:
 
     def test_a_source_already_of_the_target_class_is_returned_as_it_is(self):
         """The registry tests the source first, so no converter runs for it."""
-        source = Target("x", OutputSpec(x=_SCALAR))
+        source = Target(
+            OutputSpec(x=_SCALAR),
+            label="x",
+        )
         assert ConverterRegistry().convert(source, Target) is source
         copier = ToyConverter("copy", sources=(Target,))
         registry = _registry(copier)
@@ -936,7 +962,15 @@ class TestConvert:
             registry.convert(Source(), Target)
 
     def test_a_result_that_is_not_of_the_target_class_raises_type_error(self):
-        registry = _registry(ToyConverter("m", result=Elsewhere("x", OutputSpec(x=_SCALAR))))
+        registry = _registry(
+            ToyConverter(
+                "m",
+                result=Elsewhere(
+                    OutputSpec(x=_SCALAR),
+                    label="x",
+                ),
+            )
+        )
         with pytest.raises(TypeError, match="not a Target"):
             registry.convert(Source(), Target)
 
@@ -1074,7 +1108,15 @@ class TestEventDeclarationPreserved:
         ids=["renamed-component", "reshaped", "repackaged"],
     )
     def test_a_converted_law_with_another_declaration_is_refused(self, declaration: OutputSpec):
-        registry = _registry(ToyConverter("m", result=Target("x", declaration)))
+        registry = _registry(
+            ToyConverter(
+                "m",
+                result=Target(
+                    declaration,
+                    label="x",
+                ),
+            )
+        )
         with pytest.raises(ValueError):
             registry.convert(Source("x"), Target)
 

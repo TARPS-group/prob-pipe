@@ -79,7 +79,8 @@ def predictive_check[D](
         For a single statistic, the record has the fields:
 
         - ``replicated_statistics``: an ``EmpiricalDistribution`` over the
-          statistic's values at the replications.
+          statistic's values at the replications, labeled by the statistic's
+          name and declared under the component ``replicated_statistics``.
         - ``test_fn_name``: the statistic's name.
         - ``observed_statistic``: the statistic of *observed_data*, when
           *observed_data* is given.
@@ -151,7 +152,7 @@ def predictive_check[D](
         stats_array = replicated[name]
         result: dict[str, Any] = {
             "replicated_statistics": EmpiricalDistribution(
-                stats_array, component="replicated_statistics"
+                stats_array, component="replicated_statistics", label=name
             ),
             "test_fn_name": name,
         }

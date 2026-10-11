@@ -41,7 +41,10 @@ class _RecordingNormal(Normal):
 class _GoldenBitsDistribution(NumericDistribution, SupportsSampling):
     def __init__(self, sample_calls):
         self.sample_calls = sample_calls
-        super().__init__("bits", OutputSpec(bits=NumericArraySpec((), "float32", real)))
+        super().__init__(
+            OutputSpec(bits=NumericArraySpec((), "float32", real)),
+            label="bits",
+        )
 
     def _sample(self, key, sample_shape=()):
         words = tuple(int(word) for word in jax.random.key_data(key))
@@ -58,7 +61,11 @@ class TestSequentialLiftingWorkflowRun:
         sample_calls = []
         dist = _GoldenBitsDistribution(sample_calls)
 
-        @function(n_broadcast_samples=5, dispatch="sequential")
+        @function(
+            n_broadcast_samples=5,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(value):
             return value
 
@@ -72,7 +79,11 @@ class TestSequentialLiftingWorkflowRun:
         )
 
     def test_function_builds_one_stochastic_plan_for_a_lifted_call(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
@@ -90,8 +101,8 @@ class TestSequentialLiftingWorkflowRun:
 
     def test_invalid_sample_count_fails_before_probe_or_event_commit(self):
         workflow = Function(
+            lambda x: x,
             label="function",
-            fn=lambda x: x,
             n_broadcast_samples=8,
             dispatch="auto",
         )
@@ -109,11 +120,21 @@ class TestSequentialLiftingWorkflowRun:
 
     def test_nested_sources_claim_raw_keys_by_row_major_logical_unit(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", offset=float(index)) for index in range(3)],
+            [
+                NumericRecord(
+                    {"offset": float(index)},
+                    label="row",
+                )
+                for index in range(3)
+            ],
             level_name="draw",
         )
 
-        @function(n_broadcast_samples=6, dispatch="sequential")
+        @function(
+            n_broadcast_samples=6,
+            dispatch="sequential",
+            output_spec=OutputSpec(combine=None),
+        )
         def combine(row, first, second):
             return row["offset"] + first + second
 
@@ -173,7 +194,11 @@ class TestSequentialLiftingWorkflowRun:
         assert [words for words, _shape in second_calls] == second_key_words
 
     def test_seeded_run_reproduces_distinct_lifted_occurrences(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
@@ -191,7 +216,11 @@ class TestSequentialLiftingWorkflowRun:
         assert not jnp.array_equal(first_run[0].atoms, first_run[1].atoms)
 
     def test_bare_lifted_calls_receive_independent_ephemeral_roots(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
@@ -207,11 +236,15 @@ class TestSequentialLiftingWorkflowRun:
         assert urandom.call_count == 2
 
     def test_non_stochastic_siblings_do_not_shift_later_lifting(self):
-        @function(n_broadcast_samples=16, dispatch="sequential")
+        @function(
+            n_broadcast_samples=16,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 
-        @function(dispatch="sequential")
+        @function(dispatch="sequential", output_spec=OutputSpec(deterministic=None))
         def deterministic(x):
             return x + 1
 
@@ -240,7 +273,11 @@ class TestSequentialLiftingWorkflowRun:
 
 
 def test_auto_probe_detects_nested_randomness_caught_by_user_code():
-    @function(n_broadcast_samples=5, dispatch="sequential")
+    @function(
+        n_broadcast_samples=5,
+        dispatch="sequential",
+        output_spec=OutputSpec(inner_identity=None),
+    )
     def inner_identity(value):
         return value
 
@@ -252,19 +289,25 @@ def test_auto_probe_detects_nested_randomness_caught_by_user_code():
         return value
 
     auto = Function(
+        call_nested_and_catch,
         label="call_nested_and_catch",
-        fn=call_nested_and_catch,
         n_broadcast_samples=5,
         dispatch="auto",
+        output_spec=OutputSpec(call_nested_and_catch=None),
     )
     sequential = Function(
+        call_nested_and_catch,
         label="call_nested_and_catch",
-        fn=call_nested_and_catch,
         n_broadcast_samples=5,
         dispatch="sequential",
+        output_spec=OutputSpec(call_nested_and_catch=None),
     )
 
-    @function(n_broadcast_samples=5, dispatch="sequential")
+    @function(
+        n_broadcast_samples=5,
+        dispatch="sequential",
+        output_spec=OutputSpec(following_identity=None),
+    )
     def following_identity(value):
         return value
 

@@ -68,7 +68,10 @@ class _Conjugate(Distribution, SupportsLogProb):
     """A joint over ``theta`` and ``y`` for which the suite's exact inference method applies."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(theta=REAL, y=REAL))
+        super().__init__(
+            RecordSpec(theta=REAL, y=REAL),
+            label=label,
+        )
 
     def _log_prob(self, value: Any) -> Any:
         theta, y = jnp.asarray(value["theta"]), jnp.asarray(value["y"])
@@ -87,13 +90,19 @@ class _SuitePosterior(Distribution, SupportsSampling):
     """The suite methods' result: a point mass at ``loc`` in every field of the target's event."""
 
     def __init__(self, event_spec: OutputSpec, loc: float) -> None:
-        super().__init__("posterior", event_spec)
+        super().__init__(
+            event_spec,
+            label="posterior",
+        )
         self.loc = float(loc)
 
     def _sample(self, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
         draw = jnp.full(tuple(sample_shape), self.loc, jnp.float32)
         if self.event_spec.exposes_record:
-            return Record("posterior", dict.fromkeys(self.event_spec.components, draw))
+            return Record(
+                dict.fromkeys(self.event_spec.components, draw),
+                label="posterior",
+            )
         return draw
 
 
@@ -202,7 +211,11 @@ class _StructuredKernel(ConditionalDistribution, SupportsConditionalSampling):
     """A kernel conditioning on one record-valued slot ``theta``."""
 
     def __init__(self, label: str = "y") -> None:
-        super().__init__(label, {"theta": RecordSpec(a=REAL, b=REAL)}, OutputSpec(**{label: REAL}))
+        super().__init__(
+            {"theta": RecordSpec(a=REAL, b=REAL)},
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Gaussian(self.name)
@@ -231,7 +244,11 @@ class _UnnormalizedKernel(ConditionalDistribution, SupportsConditionalUnnormaliz
     """A kernel whose laws are known only up to a constant, as a program's posterior targets are."""
 
     def __init__(self, label: str = "theta", slots: tuple[str, ...] = ("data",)) -> None:
-        super().__init__(label, {slot: REAL for slot in slots}, OutputSpec(**{label: REAL}))
+        super().__init__(
+            {slot: REAL for slot in slots},
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
         self.slots = tuple(slots)
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
@@ -246,7 +263,11 @@ class _UndeclaredKernel(ConditionalDistribution):
     """A kernel whose laws are unnormalized, which it implements without declaring a capability."""
 
     def __init__(self, label: str = "theta") -> None:
-        super().__init__(label, {"data": REAL}, OutputSpec(**{label: REAL}))
+        super().__init__(
+            {"data": REAL},
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         return Unnormalized(self.label)
@@ -258,7 +279,11 @@ class _AmortizedKernel(
     """A learned kernel from ``y`` to ``theta``, whose evaluation stands in for a posterior."""
 
     def __init__(self, label: str = "theta") -> None:
-        super().__init__(label, {"y": REAL}, OutputSpec(**{label: REAL}))
+        super().__init__(
+            {"y": REAL},
+            OutputSpec(**{label: REAL}),
+            label=label,
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         object.__setattr__(self, "options", kwargs)
@@ -278,7 +303,16 @@ class TestCurry:
         assert report.result == OutputSpec(DistributionSpec(Kernel().event_spec))
 
     def test_a_record_given_binds_its_fields(self):
-        assert condition_on(_NormalKernel(), Record("given", {"mu": 2.0})).loc == 2.0
+        assert (
+            condition_on(
+                _NormalKernel(),
+                Record(
+                    {"mu": 2.0},
+                    label="given",
+                ),
+            ).loc
+            == 2.0
+        )
 
     def test_the_law_is_labeled_by_the_conditioned_kernel(self):
         assert condition_on(_NormalKernel("likelihood"), {"mu": 1.5}).label == "likelihood"
@@ -515,7 +549,10 @@ class TestTheFixedPaths:
     def test_each_law_of_a_batch_of_givens_holds_the_paths_fixed(self):
         kernel = _NormalKernel("y", ("beta",)).with_label("glm")
         givens = NumericRecordBatch(
-            "betas", {"beta": jnp.array([0.0, 1.0])}, "row", element_spec=RecordSpec(beta=REAL)
+            {"beta": jnp.array([0.0, 1.0])},
+            "row",
+            element_spec=RecordSpec(beta=REAL),
+            label="betas",
         )
         laws = condition_on(kernel, givens)
         assert isinstance(laws, DistributionBatch) and laws.label == "glm"
@@ -705,8 +742,14 @@ class TestTheExactStage:
         model = _Conjugate("model")
         target = condition_on.with_options(method="unnormalized")(model, {"y": 0.3})
         assert isinstance(target, SupportsUnnormalizedLogProb)
-        value = Record("theta", {"theta": 0.7})
-        joint = Record("value", {"theta": 0.7, "y": 0.3})
+        value = Record(
+            {"theta": 0.7},
+            label="theta",
+        )
+        joint = Record(
+            {"theta": 0.7, "y": 0.3},
+            label="value",
+        )
         assert float(target._unnormalized_log_prob(value)) == pytest.approx(
             float(model._log_prob(joint))
         )
@@ -1059,10 +1102,10 @@ class TestNoRouteMessages:
 def _givens(field: str, values: list[float]) -> NumericRecordBatch:
     """A batch of givens of one scalar field, on the level ``dataset``."""
     return NumericRecordBatch(
-        "data",
         {field: jnp.asarray(values, jnp.float32)},
         "dataset",
         element_spec=RecordSpec(**{field: REAL}),
+        label="data",
     )
 
 
@@ -1145,7 +1188,11 @@ class _WholeTermKernel(ConditionalDistribution, SupportsConditionalUnnormalizedL
     def __init__(self) -> None:
         from probpipe import NumericArraySpec
 
-        super().__init__("theta", {"s": REAL}, OutputSpec(theta=NumericArraySpec((2,))))
+        super().__init__(
+            {"s": REAL},
+            OutputSpec(theta=NumericArraySpec((2,))),
+            label="theta",
+        )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
         from probpipe import distribution
@@ -1190,10 +1237,10 @@ class TestEndToEnd:
         from probpipe import NumericArraySpec, provenance_ancestors
 
         givens = NumericRecordBatch(
-            "data",
             {"y": jnp.array([[1, 0, 1, 0], [0, 0, 1, 1]])},
             "dataset",
             element_spec=RecordSpec(y=NumericArraySpec((4,), jnp.int32)),
+            label="data",
         )
         with workflow_run(seed=0):
             posteriors = condition_on.with_options(method_options=_MCMC)(_logistic_joint(), givens)

@@ -9,6 +9,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Remove the experimental `Node`, `Module`, `AbstractModule`,
+  `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
+  `Function` and `@function` no longer accept `module=`. Use ordinary callables
+  and `bind=` for construction-time arguments; call arguments override those
+  bindings, followed by Python defaults for omitted arguments.
+
+- Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
+  expectation, generic laws or kernels, quantile, variance, covariance, and
+  anonymous functions. Explicit labels remain literal, and generated component
+  names remain ASCII.
+
+- **A value, a batch, and a function take their data first and the label as
+  the keyword `label=`.** `NumericArray(values, label="x")` replaces
+  `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
+  `Record.from_fields(a=1.0)` replaces `Record("r", a=1.0)`, and
+  `Function(fn, label="g")` replaces `Function("g", fn)`. `from_vector`,
+  `from_field_values`, and `from_dict` take the label as the keyword `label=`
+  after their data, as `NumericArray.from_vector(spec, vec, label="x")`, and
+  the first parameter of `Record.from_dict` is named `fields`. A raw array, an
+  opaque value, a batch of either, and a function whose callable has no name
+  require the label. A record and a record batch derive it from their validated
+  top-level fields, so path-keyed and nested fields read alike, as
+  `record(a,b)`, and a batch stacked from records takes the first record's
+  label. A function derives it from its callable's name, with `𝒻` for a lambda,
+  and a batch of functions or laws from its members, at most eight in row-major
+  order and then `…`. A call in the label-first form raises a `TypeError` that
+  shows the call to write, and a refusal of fields that are not a mapping, of an
+  empty record or object batch without a label, or of `Record.from_fields()`
+  without fields names the constructor and the fix.
+- **A function's output component comes from its callable, and `output_label`
+  is a display alias.** A result's component defaults to the callable's name,
+  with `f` for a lambda and `result` for a callable without a name or whose
+  name is not a Python identifier or is a keyword, and a record result exposes
+  its fields. An `OutputSpec` overrides that default. `output_label` and
+  `with_label` change only how a result displays, never its components, its
+  fingerprint, or its draws. A value result without an alias displays the call,
+  as `predict(ambient)`, with only the arguments the caller passed, and a law
+  the function returns keeps the function's label and displays its own
+  signature, as `predict(y, mu)`.
+- **A term that JAX rebuilds from its leaves displays `<no description>`** until
+  a managed result boundary describes it, and it stays usable inside `jax.jit`
+  and `jax.vmap`.
+- **A law's repr leaves out a label only where its constructor would give that
+  label again.** A label the constructor derives from the arguments shown, such
+  as a product's `lik·prior` or a mixture's, is left out, so evaluating the repr
+  keeps the derived notation, and any other label is shown, as for a law
+  converted from a mixture or a posterior of a product. A mixture's repr lists up
+  to eight components, as many as the weights it prints. A `KDEDistribution`'s
+  repr shows its bandwidth, and its constructor takes a list of numbers as its
+  atoms and refuses a list of different shapes or of entries that are not
+  numbers.
+- **The default labels of a mixture, a minibatched law, and the BayesFlow
+  kernels describe them.** A `MixtureDistribution` displays its components, as
+  `mixture([a(x), b(x)])`, and a `MinibatchedDistribution` its construction, as
+  `minibatch(prior(beta), lik(y | beta), batch_size=40)`. `BayesFlowLikelihood`
+  and `BayesFlowRatio` take `label=`, which defaults to the class name, where
+  they were labeled `likelihood` and `ratio`, and their repr and a conversion
+  keep a label the caller gave.
+- **A family pickled by a development build in which its label came first no
+  longer loads.** Rebuild it from its constructor and pickle it again.
+
 - **A law's label is optional, and the component of its event is required.**
   A family takes the component first and the label as the keyword `label=`,
   which defaults to the family's class name, so `Normal("mu", 0.0, 1.0)` keeps
@@ -40,17 +101,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that are not records and refuse it for record atoms, whose fields are the
   components, and array atoms are labeled by the component.
   `conditional_distribution` labels a kernel after its function's
-  `__name__`, and `p` for a lambda. A subclass of `Distribution` or
+  `__name__`, and `ℙ` for a lambda. A law converted from a law under its
+  default label takes its own default, so `convert(Laplace("g", 9.0, 1.0),
+  Normal)` displays as `Normal(g)`, and any other converted law keeps its
+  source's label. A subclass of `Distribution` or
   `ConditionalDistribution` declares a whole-term event as an `OutputSpec`,
   as `OutputSpec(mu=NumericArraySpec(()))`, since a bare term spec other than
-  a `RecordSpec` no longer takes the label as its component. The repr shows
-  the label and then the component, as
-  `Normal('prior', component='mu', loc=0.0, scale=1.0)`, and leaves out a
-  label equal to the constructor's default, the class name or `p`, as
-  `Normal(component='mu', loc=0.0, scale=1.0)`; a family
-  pickled before this change loads to the same law. Lightweight provenance
+  a `RecordSpec` no longer takes the label as its component. The repr of a law
+  or a kernel reads as a call of its constructor, as
+  `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
+  equal to the constructor's default, the class name or `ℙ`, as
+  `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
+  nothing fixed evaluates to an equal law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default
   label stay two ancestors.
+- **A law, a kernel, and a function print as their notation, and a derived
+  label groups a product.** `str()` of a law, a kernel, or a function returns
+  its new `notation` property: its label followed by its signature, which lists
+  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
+  kernel, and `predict(x, y)` for a function. A given slot or a parameter
+  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
+  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
+  A slot with a default stays given once conditioning binds the others, so
+  `condition_on(counts, {"K": k, "r": q})` prints as
+  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
+  It returned the repr before. A product that `*` or `joint` builds prints factor by
+  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
+  `with_label` or by the `FactoredDistribution` constructor prints by that
+  label, as `model(y, mu)`. A label built from another label parenthesizes a
+  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
+  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
+  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
+  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
+  as `[my draws][draw=1]`. Labels still join associatively, so
+  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
+  a further product as one operand, so `model * d` prints as
+  `model(y, mu)·d(z)`. A marginal over the whole
+  events of several factors prints factor by factor, in the order the paths
+  name them where a product can take that order, so
+  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
+  where it was labeled `a·b`. A product that a function returns prints by the
+  function's output label, as `predict(y, mu)`. A batch of laws prints as the
+  notation of one law under its label, `over`, and its levels, as
+  `schools(effect) over school`, and a batch that a function lifted over a
+  law and swept over a batch gives prints as the call, as
+  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
+  position, as `effect_of[tau=3]`, and prints as its row's call, as
+  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
+  notation, as `log_prob(g(g), q ~ q)`.
 - **A value computed from a law is labeled by that value in probability
   notation.** For a law `prior` over `mu` and a law `model` over `y` and `mu`,
   `sample(prior)` is labeled `mu ~ prior`, `mean(model)` is labeled
@@ -59,13 +157,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   posterior lists the paths the posterior holds fixed, as `mu ~ model; y`.
   `variance`, `cov`, and `quantile` read `Var[...]`, `Cov[...]`, and
   `Q[...]`, `prob` is labeled by the law's notation, as `prior(mu)`, and
-  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]`. A batch of draws has
+  `expectation(prior, f)` is labeled `E[f(mu ~ prior)]` by `f`'s output label,
+  as `mean(f(prior))` is. A batch of draws has
   the label of one draw, so its element is `(mu ~ prior)[sample=0]`, and a
   value computed from a batch of laws reads the batch as one law under its
   label, as `E[effect ~ schools]`. The law of a function lifted over laws
   keeps the function's label and prints as the function applied to draws of
   its inputs, as `f(beta ~ model; y)`, and its mean is labeled
-  `E[f(beta ~ model; y)]`. An operator parenthesizes a draw or
+  `E[f(beta ~ model; y)]`. The call shows each argument the caller passed and
+  no parameter left at its default. An operator parenthesizes a draw or
   a score among its operands, as `(mu ~ prior) * 2`, and a negative constant,
   as `x + (-1.0)`. Replace a comparison of such a result's label with
   its law's label by one with the new label, or set a label with
@@ -75,26 +175,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
   `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
   as `prob(mu)`. The law of an operation lifted over a law, such as
-  `log_prob(prior, q)` for a law `q` of values, names its component by the
-  operation, as `log_prob`, where it took the label of the scored law. Replace a
-  lookup of the component `log_prob` by one of `log_prob(mu)`.
+  `log_prob(prior, q)` for a law `q` of values, declares the component that one
+  point's result declares, as `log_prob(mu)`, where it took the label of the
+  scored law. Replace a lookup of the component `log_prob` by one of
+  `log_prob(mu)`.
 - **The atoms of a posterior are labeled by its components.** The atoms of the
   empirical law that `condition_on` or an inference method returns are labeled
   by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
   `posterior`, so an atom reads as `(K, r, phi)[chain=0, draw=7]`. The atoms of
   an `EmpiricalDistribution` a user constructs keep the label they were given.
+- **`make_posterior` declares a whole-term event it is not given a name for
+  under the component `posterior`.** An `event_spec` that is a bare term spec,
+  or none, declares the posterior's event under `posterior`, where it took the
+  `label` as the component, so `label` names the law alone. Pass
+  `event_spec=OutputSpec(mu=spec)` to name the component.
 - **A label no longer crosses a JAX transform.** A `NumericArray`, a `Record`,
-  and a batch of either flatten with their spec alone as the static data, where
-  the label rode with it, so two terms that differ only in their labels have
+  and a batch of either flatten with their spec alone as the static data, which
+  held the label too, so two terms that differ only in their labels have
   equal treedefs and share a `jax.jit` compilation. A term rebuilt from its
-  leaves, as `jax.tree_util.tree_map` returns one, is labeled by its class, as
-  `NumericArray` or `RecordBatch`, where it kept the label it had; a
-  `Function` call still labels its result by the function's output label.
+  leaves, as `jax.tree_util.tree_map` returns one, displays `<no description>`
+  until a managed result boundary supplies its expression.
   Relabel a rebuilt term with `with_label`.
-- **A map of a Gaussian random function keeps its label, and a sum is labeled
-  by its expression.** `A @ f`, `f + b`, and `alpha * f` are labeled `f`, where
-  they were labeled `linear_map(f)`, `shift(f)`, and `scale(f)`, and `f + g` is
-  labeled `f + g`, where it was `sum(f,g)`.
+- **A map or sum of Gaussian random functions displays its operation.**
+  `A @ f`, `f + b`, and `alpha * f` include their operators and operands,
+  and `(2.0 * f) + g` differs from `f + g`. Their event declarations stay
+  independent of the derived descriptions.
 - **A conditioned law keeps the label of the law it conditions, and prints the
   paths it fixes.** `condition_on(model, {"y": data})` is labeled `model`,
   where it was `model | y`, and it prints as `model(mu; y)`: its signature
@@ -105,9 +210,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
   inference method's included, and a marginal, a view, and `raw()` keep them.
-  The repr shows them after the component, as
-  `Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)` or
-  `EmpiricalDistribution('model', fixed=('y',), atoms=...)`.
+  The repr shows them after the constructor call, as
+  `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
+  `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
   The posterior an inference method returns, which the result's provenance
   keeps as a parent with the method's own record, is recorded under the
   result's label, as `model`, where it was recorded as `posterior`.
@@ -190,7 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that array afterwards, through the caller's handle or through `.raw()`,
   raises `ValueError: assignment destination is read-only`, where it used to
   change the term. To keep a writable array, pass a copy,
-  as in `NumericArray("x", values.copy())`. A pandas or xarray container is
+  as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
   stored by reference as before.
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
@@ -649,16 +754,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the resolved string. Existing pickles carrying the removed state are
   unsupported.
 
-- **A batch's label is its first argument, and construction takes the axis
-  partition rather than the sizes (#398).** Two changes to the same signatures.
-
-  `Record(label, fields)` and `Opaque(label, value)` put the label first;
-  `NumericArray` and all five batch forms took it as a keyword. They now match —
-  `RecordBatch("draws", columns, "draw", element_spec=...)`,
-  `NumericArray("x", values)` — with the label and the data positional-only, as
-  `Record`'s are, and the level names still acceptable either way.
-
-  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+- **A batch's construction takes the axis partition rather than the sizes
+  (#398).** `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
   level holds rather than restating their sizes: `axes_per_level=(2,)` for one
   level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
   sizes were never information a constructor lacked — the elements fix them and
@@ -1329,6 +1426,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mean`, `variance`, and `quantile` compute each component of a record
+  law by its own route.** The new route `by_component` computes each component
+  whose view has an exact summary by that view's route, and the other
+  components together, from one set of draws, so the mean of a dependent
+  joint such as `likelihood * prior` holds the exact means of the prior's root
+  factors. The result is approximate when any component is, and its
+  provenance records the route and exactness of each block of components. Under
+  `exact_only=True`, the error names the components that have an exact
+  summary and the calls on their views that compute it. `cov` keeps the
+  Monte Carlo fallback for a dependent joint.
 - **`notation_config.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
@@ -2262,40 +2369,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **A law, a kernel, and a function print as their notation, and a derived
-  label groups a product.** `str()` of a law, a kernel, or a function returns
-  its new `notation` property: its label followed by its signature, which lists
-  what it is over, as `prior(mu)` for a law over `mu`, `glm(y | beta)` for a
-  kernel, and `predict(x, y)` for a function. A given slot or a parameter
-  with a default prints as `name=value`, as `counts(y | K, r, n0=50.0)` or
-  `predict(x, scale=1.0)`, and as `name=…` for a default that is not a scalar.
-  A slot with a default stays given once conditioning binds the others, so
-  `condition_on(counts, {"K": k, "r": q})` prints as
-  `counts(y | n0=50.0; K, r)`, and a given that binds it moves it after `;`.
-  It returned the repr before. A product that `*` or `joint` builds prints factor by
-  factor, as `lik(y | mu)·prior(mu)`, and a product given a label by
-  `with_label` or by the `FactoredDistribution` constructor prints by that
-  label, as `model(y, mu)`. A label built from another label parenthesizes a
-  product, a draw such as `mu ~ prior`, and a score such as `log prior(mu)`. So
-  a selection of draws from `x * y` is labeled `(x·y)[sample=0:2]`, where it was
-  `x·y[sample=0:2]`, and the posterior of `lik * prior` given `y` prints as
-  `(lik·prior)(mu; y)`. A batch element brackets a batch label of several words,
-  as `[my draws][draw=1]`. Labels still join associatively, so
-  `(lik * prior) * d` is labeled `lik·prior·d`, and a labeled product enters
-  a further product as one operand, so `model * d` prints as
-  `model(y, mu)·d(z)`. A marginal over the whole
-  events of several factors prints factor by factor, in the order the paths
-  name them where a product can take that order, so
-  `marginal(model, ("b", "a"))` prints as `b(b)·a(a)` and is labeled `b·a`,
-  where it was labeled `a·b`. A product that a function returns prints by the
-  function's output label, as `predict(y, mu)`. A batch of laws prints as the
-  notation of one law under its label, `over`, and its levels, as
-  `schools(effect) over school`, and a batch that a function lifted over a
-  law and swept over a batch gives prints as the call, as
-  `effect_of(mu ~ prior, tau) over tau`. Its element keeps the label of its
-  position, as `effect_of[tau=3]`, and prints as its row's call, as
-  `effect_of(mu ~ prior, 4.0)`. A law passed to a lifted call prints by its
-  notation, as `log_prob(g(g), q ~ q)`.
+- **A dependent joint's mean, variance, and quantiles take `by_component`
+  rather than `monte_carlo`** when one of its components has an exact
+  summary. The check of such a call lists `by_component (exact)` and
+  `by_component (approximate)`, and a seeded estimate of the other components
+  differs from the one `monte_carlo` gave, since they are drawn through their
+  view. A component whose summary is known to be undefined, such as the mean
+  of a Cauchy root factor, now raises `MathematicalDomainError`, where the
+  fallback returned an estimate. `with_options(method="monte_carlo")` keeps the
+  fallback.
+- **A law's fingerprint is computed once.** A distribution keeps its
+  fingerprint in a memo that a copy or a pickle leaves out, so the views and
+  records that name a law as their parent hash it once rather than once each.
+  The fingerprint leaves out every attribute a class declares as transient
+  state, such as that memo, since that state is computed from the rest.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
@@ -3185,6 +3272,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
+  raises `TypeError`, where it warned and used `h`; pass the callable first, as
+  `Function(h, label="g")`.
 - **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
   density alone, as it builds the law of any combination of a sampler and a
   density: replace `UnnormalizedDistribution(label, f, event_spec)` with
@@ -3217,6 +3307,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A display warns about a part that storage truncated only when its text
+  shows less than the part.** A law selected many times from a posterior
+  displays without a warning, and a warning that meets both a collapsed level
+  and a truncated part names both limits.
+- **A product names the positions and labels of two factors that produce one
+  field.**
+- **Reusing a term whose label nests 64 levels no longer renders it again on
+  each use**, and selecting an element of a batch of objects copies the stored
+  term once.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

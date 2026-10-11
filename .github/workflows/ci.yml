@@ -237,7 +237,7 @@ jobs:
             # Map source changes to their covering pytest targets via the shared,
             # unit-tested resolver (scripts/ci/import_graph.py; tests in tests/ci/).
             # It transitively expands over the import graph, then maps each
-            # affected module: subpackage modules (probpipe/core/node.py) ->
+            # affected module: subpackage modules (probpipe/core/record.py) ->
             # tests/core/; root-level modules (probpipe/_array_utils.py) -> the root
             # tests/test_*.py files; and the inference subpackage by filename
             # convention (_foo.py -> tests/inference/test_foo.py; the __init__

@@ -17,8 +17,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from .. import _messages
+from ..core._expression import Applied
+from ..core._object_batch import _collection_expression
 from ..core._record_spec import RecordSpec
-from ..core._repr import format_value, sequence_repr
+from ..core._repr import _MAX_SHOWN_ENTRIES, format_value, sequence_repr
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec
 from ..core.constraints import _known_equal
@@ -33,7 +35,11 @@ from ..distributions._capabilities import (
     _conjunction,
 )
 from ..distributions._conversion import _event_difference, _term_difference
-from ..distributions._distribution import Distribution, _class_label, _constructor_label
+from ..distributions._distribution import (
+    Distribution,
+    _constructor_label,
+    _record_default_expression,
+)
 from ..distributions._factored import _raw_record
 from ..linalg import DenseLinOp, LinOp
 from ..operations import _moments
@@ -288,10 +294,16 @@ def _components(components: Sequence[Distribution]) -> tuple[Distribution, ...]:
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``.
+        If *components* is a string, or a component is not a ``Distribution``.
     ValueError
         If there is no component, or two components declare different events.
     """
+    if isinstance(components, str):
+        raise TypeError(
+            _messages.label_given_first(
+                "MixtureDistribution", "components", components, then=("weights",)
+            )
+        )
     laws = tuple(components)
     if not laws:
         raise ValueError("MixtureDistribution needs at least one component")
@@ -437,8 +449,9 @@ def _weights(weights: ArrayLike, count: int) -> Array:
     return array
 
 
-#: How many components a mixture's repr shows before it gives their count instead.
-_SHOWN_COMPONENTS = 4
+#: How many components a mixture's repr shows before it gives their count instead,
+#: which is as many as the weights whose entries it shows.
+_SHOWN_COMPONENTS = _MAX_SHOWN_ENTRIES
 
 
 class MixtureDistribution(Distribution):
@@ -463,19 +476,24 @@ class MixtureDistribution(Distribution):
     weights : Array
         One nonnegative weight per component, summing to one.
     label : str, optional
-        The mixture's label, ``MixtureDistribution`` by default.
+        The mixture's label, ``mixture`` by default. The default's notation
+        lists the components, up to eight of them, as
+        ``mixture([a(x), b(x)])``.
 
     Raises
     ------
     TypeError
-        If a component is not a ``Distribution``, or *label* is not a non-empty
-        string.
+        If *components* is a string, a component is not a ``Distribution``, or
+        *label* is not a non-empty string.
     ValueError
         If there is no component, two components declare different events, or
         the weights are not one nonnegative weight per component summing to one.
     """
 
     _capability_table: ClassVar = _MIXTURE_CAPABILITIES
+
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
 
     _components: tuple[Distribution, ...]
     _weights: Array
@@ -491,12 +509,23 @@ class MixtureDistribution(Distribution):
         self, components: Sequence[Distribution], weights: ArrayLike, *, label: str | None = None
     ) -> None:
         laws = _components(components)
+        store = np.empty(len(laws), dtype=object)
+        for index, law in enumerate(laws):
+            store[index] = law
+        expression = Applied("mixture", (_collection_expression(store),))
+        rendering = expression.label_rendering()
         object.__setattr__(self, "_components", laws)
         object.__setattr__(self, "_weights", _weights(weights, len(laws)))
-        super().__init__(_constructor_label(self, label, _class_label(self)), _declaration(laws))
+        super().__init__(
+            _declaration(laws),
+            label=_constructor_label(self, label, rendering[0]),
+        )
+        if label is None:
+            self._store_expression(expression, rendering)
+            _record_default_expression(self)
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
-        """The components, by their count when there are more than four, and the weights."""
+        """The components, by their count when there are more than eight, and the weights."""
         components = self._components
         shown = (
             sequence_repr(repr(law) for law in components)

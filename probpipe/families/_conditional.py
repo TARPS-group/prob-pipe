@@ -124,7 +124,10 @@ class _Link(Function, SupportsInverse):
     def __init__(
         self, label: str, forward: Callable[[Array], Array], inverse: Callable[[Array], Array]
     ) -> None:
-        super().__init__(label, forward)
+        super().__init__(
+            forward,
+            label=label,
+        )
         object.__setattr__(self, "_inverse_map", inverse)
 
     def _inverse(self, y: Array) -> Array:
@@ -588,7 +591,9 @@ class _GLMLikelihood(
         object.__setattr__(self, "_canonical", link is family.canonical_link)
         object.__setattr__(self, "_fixed", {})
         super().__init__(
-            _constructor_label(self, label, DEFAULT_LABEL), InputSpec(slots), declaration
+            InputSpec(slots),
+            declaration,
+            label=_constructor_label(self, label, DEFAULT_LABEL),
         )
         fixed: dict[str, Array] = {}
         if X is not None:
@@ -865,7 +870,7 @@ def glm_likelihood(
         The invertible link from the mean to the linear predictor. Defaults to
         the family's canonical link.
     label : str, optional
-        The kernel's label, ``p`` by default.
+        The kernel's label, ``ℙ`` by default.
     event_spec : OutputSpec, optional
         A declaration of *component* that declares the response's type, passed
         through to the family.

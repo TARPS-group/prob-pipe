@@ -182,13 +182,19 @@ class TestStanModel:
     @pytest.mark.usefixtures("_stan_toolchain")
     def test_the_density_is_bridgestans_without_the_jacobian(self, regression_file):
         posterior = StanModel(regression_file, data=_data(), label="regression")
-        value = probpipe.Record("value", {"beta": jnp.array([0.1, -0.2]), "sigma": 1.5})
+        value = probpipe.Record(
+            {"beta": jnp.array([0.1, -0.2]), "sigma": 1.5},
+            label="value",
+        )
         expected = (
             st.norm.logpdf([0.1, -0.2]).sum()
             + st.norm.logpdf(np.zeros(3), np.ones((3, 2)) @ np.array([0.1, -0.2]), 1.5).sum()
         )
         difference = float(posterior._unnormalized_log_prob(value)) - expected
-        other = probpipe.Record("value", {"beta": jnp.array([0.4, 0.3]), "sigma": 0.7})
+        other = probpipe.Record(
+            {"beta": jnp.array([0.4, 0.3]), "sigma": 0.7},
+            label="value",
+        )
         expected_other = (
             st.norm.logpdf([0.4, 0.3]).sum()
             + st.norm.logpdf(np.zeros(3), np.ones((3, 2)) @ np.array([0.4, 0.3]), 0.7).sum()
@@ -441,7 +447,10 @@ class TestPyMCModel:
 
     def test_its_density_is_the_joint_density_of_the_free_variables(self):
         model = PyMCModel(_normal_model, label="normal")
-        value = probpipe.Record("value", {"mu": 0.3, "sigma": 1.2, "y": 0.5})
+        value = probpipe.Record(
+            {"mu": 0.3, "sigma": 1.2, "y": 0.5},
+            label="value",
+        )
         expected = (
             st.norm.logpdf(0.3, 0, 10) + st.halfnorm.logpdf(1.2) + st.norm.logpdf(0.5, 0.3, 1.2)
         )

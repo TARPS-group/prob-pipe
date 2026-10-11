@@ -44,7 +44,10 @@ class _SimulatedLaw(Distribution, SupportsSampling):
     """The law of one observation that a simulator draws, which only samples."""
 
     def __init__(self, label: str, event_spec: OutputSpec, draw: Callable[[PRNGKey], Array]):
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
         object.__setattr__(self, "_draw", draw)
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
@@ -73,9 +76,9 @@ class SimulatorKernel(ConditionalDistribution, SupportsConditionalSampling):
         label: str = "observation",
     ) -> None:
         super().__init__(
-            label,
             dict(prior.event_spec.components),
             OutputSpec(**{label: NumericArraySpec(shape)}),
+            label=label,
         )
         object.__setattr__(self, "_simulate", simulate)
 

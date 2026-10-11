@@ -20,6 +20,7 @@ import probpipe.functions._replay as replay_mod
 from probpipe import (
     Function,
     Normal,
+    OutputSpec,
     Provenance,
     ReplayCompatibilityError,
     replay_run,
@@ -271,7 +272,7 @@ class TestExecutionRequestShape:
             return [request.func(**request.work_items[0].call_values())]
 
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
-        wf = Function(label="add_one", fn=add_one, dispatch="sequential")
+        wf = Function(add_one, label="add_one", dispatch="sequential")
 
         result = wf(x=1)
 
@@ -1119,7 +1120,10 @@ class TestManagedRetryClaims:
             _claim_automatic_words()
             raise RuntimeError("nested failure")
 
-        nested = Function(label="fail_after_claim", fn=fail_after_claim)
+        nested = Function(
+            fail_after_claim,
+            label="fail_after_claim",
+        )
 
         def catch_nested_failure():
             with pytest.raises(RuntimeError, match="nested failure"):
@@ -2289,7 +2293,7 @@ class TestPrefectMapping:
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
         threaded_claim = Function(
-            fn=_claim_automatic_scalar,
+            _claim_automatic_scalar,
             dispatch="thread",
             max_workers=1,
             label="threaded_claim",
@@ -2542,8 +2546,8 @@ class TestPrefectMapping:
 
         def run(mode, outer_seed):
             workflow = Function(
+                _claim_nested_seeded_scalar,
                 label="_claim_nested_seeded_scalar",
-                fn=_claim_nested_seeded_scalar,
                 workflow_kind=(WorkflowKind.TASK if mode == "prefect" else WorkflowKind.OFF),
                 dispatch="sequential",
             )
@@ -2584,14 +2588,14 @@ class TestPrefectMapping:
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
         local = Function(
+            _claim_automatic_scalar,
             label="_claim_automatic_scalar",
-            fn=_claim_automatic_scalar,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
         remote = Function(
+            _claim_automatic_scalar,
             label="_claim_automatic_scalar",
-            fn=_claim_automatic_scalar,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -2614,14 +2618,14 @@ class TestPrefectMapping:
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
         local = Function(
+            _claim_automatic_scalar,
             label="_claim_automatic_scalar",
-            fn=_claim_automatic_scalar,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
         remote = Function(
+            _claim_automatic_scalar,
             label="_claim_automatic_scalar",
-            fn=_claim_automatic_scalar,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -2650,8 +2654,8 @@ class TestPrefectMapping:
 class TestFunctionExecutionConfig:
     def test_make_execution_config_resolves_thread_dispatch_to_thread_mode(self):
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             dispatch="thread",
             workflow_kind=WorkflowKind.OFF,
         )
@@ -2664,7 +2668,7 @@ class TestFunctionExecutionConfig:
         )
 
     def test_thread_dispatch_passes_max_workers_to_execution_config(self):
-        wf = Function(label="add_one", fn=add_one, dispatch="thread", max_workers=3)
+        wf = Function(add_one, label="add_one", dispatch="thread", max_workers=3)
 
         execution = node_mod._make_execution_config(
             wf,
@@ -2674,7 +2678,7 @@ class TestFunctionExecutionConfig:
         assert execution.max_workers == 3
 
     def test_thread_dispatch_accepts_true_max_workers_as_positive_int(self):
-        wf = Function(label="add_one", fn=add_one, dispatch="thread", max_workers=True)
+        wf = Function(add_one, label="add_one", dispatch="thread", max_workers=True)
 
         execution = node_mod._make_execution_config(
             wf,
@@ -2685,7 +2689,7 @@ class TestFunctionExecutionConfig:
 
     def test_auto_dispatch_does_not_use_max_workers_as_mode_switch(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = Function(label="add_one", fn=add_one, dispatch="auto", max_workers=3)
+            wf = Function(add_one, label="add_one", dispatch="auto", max_workers=3)
 
         execution = node_mod._make_execution_config(
             wf,
@@ -2697,21 +2701,21 @@ class TestFunctionExecutionConfig:
     @pytest.mark.parametrize("dispatch", ["loop", "python", "map", None, 1])
     def test_function_rejects_invalid_dispatch(self, dispatch):
         with pytest.raises(ValueError, match="dispatch must be one of"):
-            Function(label="add_one", fn=add_one, dispatch=dispatch)
+            Function(add_one, label="add_one", dispatch=dispatch)
 
     @pytest.mark.parametrize("max_workers", [0, -1, False])
     def test_function_rejects_non_positive_max_workers(self, max_workers):
         with pytest.raises(ValueError, match="max_workers"):
-            Function(label="add_one", fn=add_one, dispatch="sequential", max_workers=max_workers)
+            Function(add_one, label="add_one", dispatch="sequential", max_workers=max_workers)
 
     @pytest.mark.parametrize("max_workers", ["3"])
     def test_function_rejects_invalid_max_workers(self, max_workers):
         with pytest.raises(TypeError, match="max_workers"):
-            Function(label="add_one", fn=add_one, dispatch="sequential", max_workers=max_workers)
+            Function(add_one, label="add_one", dispatch="sequential", max_workers=max_workers)
 
     def test_non_thread_dispatch_warns_and_ignores_max_workers(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = Function(label="add_one", fn=add_one, dispatch="sequential", max_workers=3)
+            wf = Function(add_one, label="add_one", dispatch="sequential", max_workers=3)
 
         execution = node_mod._make_execution_config(
             wf,
@@ -2726,8 +2730,8 @@ class TestFunctionExecutionConfig:
         pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
         wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="thread",
             max_workers=3,
@@ -2752,8 +2756,8 @@ class TestFunctionExecutionConfig:
         prefect_config.workflow_kind = WorkflowKind.FLOW
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = Function(
+                add_one,
                 label="add_one",
-                fn=add_one,
                 dispatch="sequential",
                 max_workers=3,
             )
@@ -2769,8 +2773,8 @@ class TestFunctionExecutionConfig:
     def test_jax_dispatch_warns_and_ignores_max_workers(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = Function(
+                add_one,
                 label="add_one",
-                fn=add_one,
                 dispatch="jax",
                 workflow_kind=WorkflowKind.OFF,
                 max_workers=3,
@@ -2790,12 +2794,13 @@ class TestFunctionExecutionConfig:
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", fail_executor)
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = Function(
+                add_one,
                 label="add_one",
-                fn=add_one,
                 dispatch="jax",
                 workflow_kind=WorkflowKind.OFF,
                 max_workers=3,
                 n_broadcast_samples=8,
+                output_spec=OutputSpec(add_one=None),
             )
 
         with workflow_run(seed=0):
@@ -2816,14 +2821,14 @@ class TestFunctionExecutionConfig:
         monkeypatch.setattr(node_mod, "task", object())
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
         task_wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
         flow_wf = Function(
+            add_one,
             label="add_one",
-            fn=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
         )

@@ -10,10 +10,10 @@ from probpipe.core._record_spec import NumericRecordSpec
 
 def _batch():
     return NumericRecordBatch(
-        "draws",
         {"g/a": jnp.arange(3.0), "g/b": jnp.ones(3), "c": jnp.zeros((3, 2))},
         "draw",
         element_spec=NumericRecordSpec(g=NumericRecordSpec(a=(), b=()), c=(2,)),
+        label="draws",
     )
 
 

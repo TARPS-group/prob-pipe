@@ -137,7 +137,11 @@ class ObservationKernel(
         response: NumericArraySpec,
         build: Callable[..., tfd.Distribution],
     ) -> None:
-        super().__init__(label, dict(given), OutputSpec(**{label: response}))
+        super().__init__(
+            dict(given),
+            OutputSpec(**{label: response}),
+            label=label,
+        )
         object.__setattr__(self, "_build", build)
         object.__setattr__(self, "_support", response.support)
 

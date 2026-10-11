@@ -31,7 +31,10 @@ def _square(z):
 
 
 def _mixed() -> Record:
-    return Record("school", {"effect": jnp.arange(3.0), "label": "A", "model": _square})
+    return Record(
+        {"effect": jnp.arange(3.0), "label": "A", "model": _square},
+        label="school",
+    )
 
 
 class TestARecordFieldIsAViewOfItsKind:
@@ -58,7 +61,10 @@ class TestARecordFieldIsAViewOfItsKind:
 
     def test_a_stored_law_is_a_copy_under_its_key(self):
         law = Normal("theta", 0.0, 1.0, label="prior")
-        record = Record("r", theta=law)
+        record = Record(
+            {"theta": law},
+            label="r",
+        )
 
         view = record["theta"]
 
@@ -66,7 +72,10 @@ class TestARecordFieldIsAViewOfItsKind:
         assert law.label == "prior"
 
     def test_a_nested_field_is_named_by_its_key(self):
-        record = Record("r", {"g/x": jnp.zeros(2), "y": 1.0})
+        record = Record(
+            {"g/x": jnp.zeros(2), "y": 1.0},
+            label="r",
+        )
 
         assert record["g/x"].label == "g/x"
         assert record.at_path("g", "x").label == "g/x"
@@ -89,7 +98,10 @@ class TestAViewRecordsItsContainer:
         assert view.provenance.metadata == {"path": "effect"}
 
     def test_a_stored_term_is_the_second_parent(self):
-        record = Record("r", theta=Normal("theta", 0.0, 1.0, label="prior"))
+        record = Record(
+            {"theta": Normal("theta", 0.0, 1.0, label="prior")},
+            label="r",
+        )
 
         parents = record["theta"].provenance.parents
 
@@ -119,7 +131,12 @@ class TestAFieldInsideATraceIsItsLeaf:
             seen.append(record["x"])
             return record["x"] * 2
 
-        out = double(Record("r", x=jnp.arange(3.0)))
+        out = double(
+            Record(
+                {"x": jnp.arange(3.0)},
+                label="r",
+            )
+        )
 
         assert isinstance(seen[0], jax.core.Tracer)
         np.testing.assert_array_equal(out, [0.0, 2.0, 4.0])
@@ -129,7 +146,10 @@ class TestARecordOfViewsIsTheRecord:
     def test_a_rebuilt_record_is_equal_hashes_alike_and_fingerprints_alike(self):
         record = _mixed()
 
-        rebuilt = Record(record.label, dict(record))
+        rebuilt = Record(
+            dict(record),
+            label=record.label,
+        )
 
         assert rebuilt == record
         assert hash(rebuilt) == hash(record)
@@ -140,10 +160,10 @@ class TestABatchColumnIsTheBatchOfItsKind:
     @pytest.fixture
     def batch(self) -> RecordBatch:
         return RecordBatch(
-            "draws",
             {"x": jnp.arange(6.0).reshape(3, 2), "tag": np.array(["a", "b", "c"], dtype=object)},
             "draw",
             element_spec=RecordSpec(x=NumericArraySpec((2,)), tag=OpaqueSpec(type=str)),
+            label="draws",
         )
 
     def test_an_array_column_is_a_numeric_array_batch_on_the_batch_levels(self, batch):
@@ -162,7 +182,10 @@ class TestABatchColumnIsTheBatchOfItsKind:
 
     def test_a_traced_column_is_the_traced_array(self):
         batch = NumericRecordBatch(
-            "draws", {"x": jnp.arange(3.0)}, "draw", element_spec=RecordSpec(x=())
+            {"x": jnp.arange(3.0)},
+            "draw",
+            element_spec=RecordSpec(x=()),
+            label="draws",
         )
 
         out = jax.jit(lambda b: b["x"] * 2)(batch)

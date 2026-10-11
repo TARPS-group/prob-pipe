@@ -742,17 +742,21 @@ def _named_weight_grf(label):
 
 
 class TestAlgebraNames:
-    """A map of a random function keeps its label, and a sum is labeled by its expression."""
+    """A map or sum of random functions displays its operation and operands."""
 
     @pytest.mark.parametrize(
         ("build", "expected"),
         [
-            pytest.param(lambda f, g: jnp.eye(3) @ f, "f", id="linear-map"),
-            pytest.param(lambda f, g: f + 1.0, "f", id="shift"),
-            pytest.param(lambda f, g: 2.0 * f, "f", id="scale"),
+            pytest.param(
+                lambda f, g: jnp.eye(3) @ f,
+                "array(shape=(3, 3), dtype=float32) @ f",
+                id="linear-map",
+            ),
+            pytest.param(lambda f, g: f + 1.0, "f + 1.0", id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, "2.0 * f", id="scale"),
             pytest.param(lambda f, g: f + g, "f + g", id="sum"),
             pytest.param(lambda f, g: (f + g) + f, "(f + g) + f", id="nested"),
-            pytest.param(lambda f, g: (2.0 * f) + g, "f + g", id="sum-of-a-map"),
+            pytest.param(lambda f, g: (2.0 * f) + g, "(2.0 * f) + g", id="sum-of-a-map"),
         ],
     )
     def test_a_result_is_labeled_from_its_operands(self, build, expected):
@@ -761,6 +765,20 @@ class TestAlgebraNames:
     def test_a_sum_displays_by_its_expression_and_its_component(self):
         total = _named_weight_grf("f") + _named_weight_grf("g")
         assert total.notation == "(f + g)(f)"
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda f, g: jnp.eye(3) @ f, id="linear-map"),
+            pytest.param(lambda f, g: f + 1.0, id="shift"),
+            pytest.param(lambda f, g: 2.0 * f, id="scale"),
+            pytest.param(lambda f, g: f + g, id="sum"),
+        ],
+    )
+    def test_the_repr_leaves_out_the_label_of_the_operation_and_shows_another(self, build):
+        result = build(_named_weight_grf("f"), _named_weight_grf("g"))
+        assert f"label={result.label!r}" not in repr(result)
+        assert repr(result.with_label("h")).endswith("    label='h',\n)")
 
 
 # ---------------------------------------------------------------------------
@@ -1209,7 +1227,10 @@ class TestTheFactoredGaussian:
     def test_constructing_the_factored_law_refines_to_it(self):
         from probpipe.distributions import FactoredDistribution
 
-        joint = FactoredDistribution("j", [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)])
+        joint = FactoredDistribution(
+            [Normal("a", 0.0, 1.0), Normal("b", 0.0, 1.0)],
+            label="j",
+        )
         assert isinstance(joint, FactoredMultivariateGaussian)
 
     def test_a_factor_that_is_not_gaussian_keeps_the_factored_law(self):
@@ -1224,9 +1245,16 @@ class TestTheFactoredGaussian:
         from probpipe import Gamma
 
         with pytest.raises(
-            TypeError, match=r"accepts only Normal or MultivariateNormal .* \['Gamma'\]"
+            TypeError,
+            match=r"^FactoredMultivariateGaussian 'j' accepts only Normal or MultivariateNormal "
+            r".* \['Gamma'\]$",
         ):
-            FactoredMultivariateGaussian("j", [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
+            FactoredMultivariateGaussian(
+                [Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)],
+                label="j",
+            )
+        with pytest.raises(TypeError, match=r"^FactoredMultivariateGaussian 'Normal·Gamma' "):
+            FactoredMultivariateGaussian([Normal("a", 0.0, 1.0), Gamma("g", 2.0, 1.0)])
 
     def test_its_moments_are_the_factors_in_closed_form(self):
         joint = _gaussian_joint()

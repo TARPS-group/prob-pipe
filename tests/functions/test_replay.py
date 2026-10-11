@@ -51,10 +51,11 @@ def _draw(seed: int = 7):
 
 def _lifted_draw(seed: int = 7):
     workflow = Function(
+        replayable_identity,
         label="replayable_identity",
-        fn=replayable_identity,
         dispatch="sequential",
         n_broadcast_samples=5,
+        output_spec=OutputSpec(replayable_identity=None),
     )
     with workflow_run(seed=seed):
         return workflow(value=Normal("value", loc=0.0, scale=1.0))
@@ -162,7 +163,7 @@ class TestReplayScope:
             captured.append(result)
             return result
 
-        workflow = Function(label="outer", fn=outer, dispatch="sequential")
+        workflow = Function(outer, label="outer", dispatch="sequential")
         with workflow_run(seed=17):
             workflow(value=0.0)
         nested = captured[0]
@@ -225,7 +226,7 @@ class TestReplayScope:
 
     def test_caught_failed_root_is_rejected_when_scope_exits(self):
         original = _draw()
-        changed = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
+        changed = Function(replayable_affine, label="replayable_affine", n_broadcast_samples=5)
 
         with (
             pytest.raises(ReplayCompatibilityError, match="did not complete"),
@@ -923,7 +924,12 @@ class TestReplayAdmission:
             pass
 
     def test_unsupported_callable_and_nested_automatic_parent_fail_at_entry(self):
-        unsupported = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
+        unsupported = Function(
+            lambda value: value,
+            label="function",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(function=None),
+        )
         with workflow_run(seed=3):
             unsupported_result = unsupported(value=Normal("value", loc=0.0, scale=1.0))
 
@@ -934,15 +940,21 @@ class TestReplayAdmission:
             pass
 
         inner = Function(
+            lambda value: sample(Normal("inner", loc=value, scale=1.0)),
             label="function",
-            fn=lambda value: sample(Normal("inner", loc=value, scale=1.0)),
             dispatch="sequential",
+            output_spec=OutputSpec(function=None),
         )
 
         def nested(value):
             return inner(value=value)
 
-        outer = Function(label="nested", fn=nested, dispatch="sequential")
+        outer = Function(
+            nested,
+            label="nested",
+            dispatch="sequential",
+            output_spec=OutputSpec(nested=None),
+        )
         with workflow_run(seed=8):
             nested_result = outer(value=1.0)
 
@@ -964,7 +976,10 @@ class TestReplayPreflight:
     )
     def test_plan_scalar_types_are_exact_before_sampling(self, path, replacement):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
@@ -989,11 +1004,19 @@ class TestReplayPreflight:
 
     def test_callable_drift_fails_before_sampling(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
-        changed = Function(label="replayable_affine", fn=replayable_affine, n_broadcast_samples=5)
+        changed = Function(
+            replayable_affine,
+            label="replayable_affine",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_affine=None),
+        )
 
         with (
             pytest.raises(
@@ -1006,11 +1029,19 @@ class TestReplayPreflight:
 
     def test_unsupported_current_callable_fails_before_sampling(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
-        changed = Function(label="function", fn=lambda value: value, n_broadcast_samples=5)
+        changed = Function(
+            lambda value: value,
+            label="function",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(function=None),
+        )
         candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
@@ -1022,7 +1053,10 @@ class TestReplayPreflight:
 
     def test_same_import_anchor_definition_drift_fails_before_sampling(self, monkeypatch):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
@@ -1037,7 +1071,12 @@ class TestReplayPreflight:
             "replayable_identity",
             changed_identity,
         )
-        changed = Function(label="changed_identity", fn=changed_identity, n_broadcast_samples=5)
+        changed = Function(
+            changed_identity,
+            label="changed_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(changed_identity=None),
+        )
         candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
@@ -1055,8 +1094,8 @@ class TestReplayPreflight:
             ({"output_label": "a"}, {"output_label": "b"}),
             ({"output_spec": OutputSpec(a=None)}, {"output_spec": OutputSpec(b=None)}),
             (
-                {"output_label": "a", "output_spec": NumericArraySpec(())},
-                {"output_label": "b", "output_spec": NumericArraySpec(())},
+                {"output_label": "a", "output_spec": OutputSpec(result=NumericArraySpec(()))},
+                {"output_label": "b", "output_spec": OutputSpec(result=NumericArraySpec(()))},
             ),
         ],
         ids=["output-label", "declared-component", "default-component"],
@@ -1065,9 +1104,10 @@ class TestReplayPreflight:
         """A rename changes no value, so the replay reproduces the draws under the new names."""
 
         def lifted(**options):
+            options.setdefault("output_spec", OutputSpec(result=None))
             return Function(
+                replayable_identity,
                 label="replayable_identity",
-                fn=replayable_identity,
                 n_broadcast_samples=5,
                 **options,
             )
@@ -1079,14 +1119,19 @@ class TestReplayPreflight:
             replayed = lifted(**after)(value=law)
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
-        assert list(replayed.event_spec.components) == ["b"]
+        assert list(replayed.event_spec.components) == list(
+            after.get("output_spec", OutputSpec(result=None)).components
+        )
 
     def test_an_input_that_differs_only_in_its_expression_replays_to_the_same_draws(self):
         """Replay omits the expression, as it omits the label, so a relabeled input replays."""
 
         def lifted():
             return Function(
-                label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+                replayable_identity,
+                label="replayable_identity",
+                n_broadcast_samples=5,
+                output_spec=OutputSpec(replayable_identity=None),
             )
 
         law = Normal("value", loc=0.0, scale=1.0, label="value")
@@ -1104,12 +1149,12 @@ class TestReplayPreflight:
         record = RecordSpec(left=(), right=())
         declaration = OutputSpec(bundle=record)
         baseline = Function(
-            "identity",
             replayable_identity,
             output_label="result",
             output_spec=declaration,
             dispatch="sequential",
             n_broadcast_samples=8,
+            label="identity",
         )
         law = Normal("left", 0.0, 1.0) * Normal("right", 0.0, 1.0)
         with workflow_run(seed=4):
@@ -1121,12 +1166,12 @@ class TestReplayPreflight:
             "declaration": None,
         }
         changed = Function(
-            "identity",
             replayable_identity,
             output_label="result",
             output_spec=declarations[change],
             dispatch="sequential",
             n_broadcast_samples=8,
+            label="identity",
         )
         with (
             patch.object(type(law), "_sample", side_effect=AssertionError("sampled")),
@@ -1139,12 +1184,18 @@ class TestReplayPreflight:
 
     def test_plan_drift_fails_before_distribution_sampling(self):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
         changed = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=6
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=6,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
 
@@ -1180,17 +1231,19 @@ class TestReplayPreflight:
 
     def test_route_drift_is_diagnostic_and_preserves_values(self):
         original_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=9,
             dispatch="sequential",
+            output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=9,
             dispatch="thread",
             max_workers=3,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=31):
             original = original_workflow(value=Normal("value", loc=0.0, scale=1.0))
@@ -1246,7 +1299,10 @@ class TestReplayPreflight:
         invalid_signature,
     ):
         workflow = Function(
-            label="replayable_identity", fn=replayable_identity, n_broadcast_samples=5
+            replayable_identity,
+            label="replayable_identity",
+            n_broadcast_samples=5,
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=8):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))
@@ -1303,16 +1359,18 @@ class TestReplayPreflight:
 
     def test_jax_to_rowwise_route_drift_preserves_values(self):
         original_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=7,
             dispatch="jax",
+            output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
+            replayable_identity,
             label="replayable_identity",
-            fn=replayable_identity,
             n_broadcast_samples=7,
             dispatch="sequential",
+            output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=41):
             original = original_workflow(value=Normal("value", loc=0.0, scale=1.0))
@@ -1532,11 +1590,12 @@ class TestReplayEventRegistry:
         monkeypatch,
     ):
         workflow = Function(
+            replayable_optional_nested,
             label="replayable_optional_nested",
-            fn=replayable_optional_nested,
             n_broadcast_samples=5,
             dispatch="thread",
             max_workers=2,
+            output_spec=OutputSpec(replayable_optional_nested=None),
         )
         with workflow_run(seed=71):
             original = workflow(value=Normal("value", loc=0.0, scale=1.0))

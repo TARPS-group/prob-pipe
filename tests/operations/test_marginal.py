@@ -28,7 +28,10 @@ class _Nested(Distribution):
     """A law with two groups that each hold a field named ``a``."""
 
     def __init__(self, label: str) -> None:
-        super().__init__(label, RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL)))
+        super().__init__(
+            RecordSpec(x=RecordSpec(a=REAL), y=RecordSpec(a=REAL)),
+            label=label,
+        )
 
 
 class TestMarginal:
@@ -179,7 +182,13 @@ class TestOptionalSlots:
 
 
 def _difference(fn):
-    return Function("difference", fn, dispatch="sequential", n_broadcast_samples=8)
+    return Function(
+        fn,
+        dispatch="sequential",
+        n_broadcast_samples=8,
+        label="difference",
+        output_spec=OutputSpec(difference=None),
+    )
 
 
 class TestDetachment:
@@ -196,7 +205,11 @@ class TestDetachment:
         assert np.any(np.asarray(result.atoms) != 0.0)
 
     def test_the_marginal_at_a_factor_that_is_a_batch_element_is_its_own_root(self):
-        batch = DistributionBatch("laws", [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)], "law")
+        batch = DistributionBatch(
+            [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)],
+            "law",
+            label="laws",
+        )
         detached = marginal(batch[0] * Normal("b", 2.0, 1.0), "a")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached
@@ -225,7 +238,11 @@ class TestDetachment:
         assert _descendants.capture_stochastic_consumer(detached).root is detached
 
     def test_the_factor_that_is_a_batch_element_is_its_own_root(self):
-        batch = DistributionBatch("laws", [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)], "law")
+        batch = DistributionBatch(
+            [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)],
+            "law",
+            label="laws",
+        )
         detached = factor(batch[0] * Normal("b", 2.0, 1.0), "a")
 
         assert _descendants.capture_stochastic_consumer(detached).root is detached

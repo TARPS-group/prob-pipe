@@ -33,7 +33,7 @@ import jax.numpy as jnp
 
 from .._messages import unknown_names
 from ..core._dispatch import Feasibility
-from ..core._expression import Operator
+from ..core._expression import Operator, constant
 from ..core._repr import format_value
 from ..core._specs import OutputSpec
 from ..core.provenance import Provenance
@@ -46,7 +46,7 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conditional import ConditionalDistribution
-from ..distributions._distribution import Distribution, _class_label
+from ..distributions._distribution import Distribution, _check_component, _class_label
 from ..distributions._factored import (
     FactoredDistribution,
     FactoredNumericDistribution,
@@ -99,10 +99,11 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     Parameters
     ----------
-    label : str
-        The joint's label.
     factors : Sequence[Distribution | ConditionalDistribution]
         The jointly Gaussian factors, in conditional-first order.
+    label : str, optional
+        The joint's label. By default the label joins the factors' labels with
+        ``·``, as ``a·b``, and the notation reads factor by factor.
     _scope : Mapping[str, int], optional
         The sizes already bound in the joint's dimension scope, by dimension name, which a
         joint rebuilt from its factors passes on.
@@ -120,19 +121,24 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
 
     def __init__(
         self,
-        label: str,
         factors: Sequence[Distribution | ConditionalDistribution],
         *,
+        label: str | None = None,
         _scope: Mapping[str, int] | None = None,
         _component: str | None = None,
     ) -> None:
-        super().__init__(label, factors, _scope=_scope, _component=_component)
+        super().__init__(
+            factors,
+            _scope=_scope,
+            _component=_component,
+            label=label,
+        )
         if not _jointly_gaussian(self.factors):
             kinds = sorted(
                 {type(factor).__name__ for factor in self.factors if not _is_gaussian(factor)}
             )
             raise TypeError(
-                f"FactoredMultivariateGaussian {label!r} accepts only Normal or "
+                f"FactoredMultivariateGaussian {self.label!r} accepts only Normal or "
                 f"MultivariateNormal factors, or Gaussian joints of them, got {kinds}"
             )
 
@@ -170,7 +176,13 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution, SupportsExactCon
         ]
         if not kept:
             raise ValueError(self._every_component())
-        law = _derived_product(FactoredDistribution(self.label, kept), self)
+        law = _derived_product(
+            FactoredDistribution(
+                kept,
+                label=self.label,
+            ),
+            self,
+        )
         return law.with_provenance(
             Provenance.create(
                 "condition_on", parents=[self], metadata={"conditioned": sorted(conditioned)}
@@ -341,9 +353,10 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
     Raises
     ------
     TypeError
-        If *component* is not a string, *output_spec* is not an ``OutputSpec``
-        naming one component, or *event_spec* is not an ``OutputSpec`` or
-        declares a type that is not a ``FunctionSpec``.
+        If *component* is not a string, *label* is not a non-empty string,
+        *output_spec* is not an ``OutputSpec`` naming one component, or
+        *event_spec* is not an ``OutputSpec`` or declares a type that is not a
+        ``FunctionSpec``.
     ValueError
         If *event_spec* names another component than *component*, or the
         ``FunctionSpec`` it declares names another output component.
@@ -357,11 +370,7 @@ class GaussianRandomFunction(RandomFunction, SupportsMean, SupportsVariance, ABC
         output_spec: OutputSpec | None = None,
         event_spec: OutputSpec | None = None,
     ) -> None:
-        if not isinstance(component, str):
-            raise TypeError(
-                f"{_class_label(self)} takes the component of its event as its first argument, "
-                f"a string; got {type(component).__name__}"
-            )
+        _check_component(component, _class_label(self))
         output, event = _declarations(component, output_spec, event_spec)
         self._output_spec = output
         super().__init__(component, event, label=label)
@@ -669,7 +678,19 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 # ---------------------------------------------------------------------------
 
 
-class _LinearMapGRF(GaussianRandomFunction):
+class _OperatorGRF(GaussianRandomFunction):
+    """A member that an operator builds from other members and constants, labeled by the operator's expression."""
+
+    def _operator_expression(self) -> Operator:
+        """The expression of the operator applied to the construction's operands."""
+        raise NotImplementedError
+
+    def _derived_label(self) -> str:
+        """The label the construction gives: the operator's expression, as ``f + g``."""
+        return self._operator_expression().render_label()
+
+
+class _LinearMapGRF(_OperatorGRF):
     """``h(x) = A g(x)`` for a member *g* with a vector output; constructed by ``A @ g``."""
 
     def __init__(self, base: GaussianRandomFunction, A: Array) -> None:
@@ -685,8 +706,11 @@ class _LinearMapGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(base._expression)
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``A @ f`` that the construction gives."""
+        return Operator("@", (constant(self._A), self._base._embedded_expression()))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``A``."""
@@ -738,7 +762,7 @@ class _LinearMapGRF(GaussianRandomFunction):
         return jnp.einsum("ow,iwv,pv->iop", self._A, blocks, self._A)
 
 
-class _ShiftedGRF(GaussianRandomFunction):
+class _ShiftedGRF(_OperatorGRF):
     """``h(x) = g(x) + b`` for a constant *b*; constructed by ``g + b``."""
 
     def __init__(self, base: GaussianRandomFunction, b: Array) -> None:
@@ -750,8 +774,11 @@ class _ShiftedGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(base._expression)
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``f + b`` that the construction gives."""
+        return Operator("+", (self._base._embedded_expression(), constant(self._b)))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``b``."""
@@ -771,7 +798,7 @@ class _ShiftedGRF(GaussianRandomFunction):
         return self._base.predict_covariance(X)
 
 
-class _ScaledGRF(GaussianRandomFunction):
+class _ScaledGRF(_OperatorGRF):
     """``h(x) = alpha g(x)`` for a scalar *alpha*; constructed by ``alpha * g``."""
 
     def __init__(self, base: GaussianRandomFunction, alpha: Array) -> None:
@@ -788,8 +815,11 @@ class _ScaledGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        # A map of a law keeps the law's label and its derivation (II.4).
-        self._store_expression(base._expression)
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``alpha * f`` that the construction gives."""
+        return Operator("*", (constant(self._alpha), self._base._embedded_expression()))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``alpha``."""
@@ -839,7 +869,7 @@ def _summed(left: Array, right: Array) -> Array:
     return left + right
 
 
-class _IndependentSumGRF(GaussianRandomFunction):
+class _IndependentSumGRF(_OperatorGRF):
     """``h(x) = g₁(x) + g₂(x)`` for independent members; constructed by ``g₁ + g₂``.
 
     Independence is the caller's statement, so the covariances add; a member
@@ -854,14 +884,21 @@ class _IndependentSumGRF(GaussianRandomFunction):
             )
         self._left = left
         self._right = right
-        expression = Operator("+", (left._embedded_expression(), right._embedded_expression()))
+        expression = self._operator_expression()
+        rendering = expression.label_rendering()
         super().__init__(
             _component_of(left),
-            label=expression.render_label(),
+            label=rendering[0],
             output_spec=left._output_spec,
             event_spec=left.event_spec,
         )
-        self._store_expression(expression)
+        self._store_expression(expression, rendering)
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``f + g`` that the construction gives."""
+        return Operator(
+            "+", (self._left._embedded_expression(), self._right._embedded_expression())
+        )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``left`` and ``right``."""

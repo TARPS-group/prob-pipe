@@ -51,10 +51,28 @@ class Numeric(ABC):
 
     @classmethod
     @abstractmethod
-    def from_vector(cls, name: str, spec: NumericSpec, vec: Any) -> Self:
+    def from_vector(cls, spec: NumericSpec, vec: Any, *, label: str) -> Self:
         """Rebuild the value that *spec* declares from its flat vector *vec*.
 
-        It inverts :meth:`to_vector`, and the rebuilt value is labeled *name*.
+        It inverts :meth:`to_vector`. Every numeric kind takes *label*, so a
+        caller that holds only a ``Numeric`` class passes it. A kind may also
+        derive a default, as :meth:`NumericRecord.from_vector
+        <probpipe.NumericRecord.from_vector>` derives one from the record's
+        top-level fields.
+
+        Parameters
+        ----------
+        spec : NumericSpec
+            The declaration of the value, which supplies its layout.
+        vec : Any
+            The flat vector, of length ``spec.vector_size``.
+        label : str
+            Keyword-only. The label of the rebuilt value.
+
+        Returns
+        -------
+        Self
+            The value whose :meth:`to_vector` equals *vec*.
         """
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:

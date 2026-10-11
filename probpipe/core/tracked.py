@@ -20,8 +20,9 @@ their constructor via :meth:`TrackedTerm._init_tracked`.
 
 from __future__ import annotations
 
+import functools
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
@@ -30,12 +31,16 @@ from collections.abc import Mapping
 # ecosystem (Pydantic, attrs, etc.). If a future Python release renames
 # it, the metaclass would need to switch to whatever new base ``typing``
 # exposes; the conflict-avoidance constraint itself doesn't change.
-from typing import Any, Self, _ProtocolMeta
+from typing import Any, Self, _ProtocolMeta, cast
 
+from .._messages import label_given_first
 from ._expression import (
+    _ANONYMOUS_FUNCTION_SYMBOL,
+    Collapse,
     Expression,
     Named,
     Signature,
+    warn_collapsed,
 )
 from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
@@ -61,6 +66,91 @@ def auto_label(label: str | None, default: str) -> str:
     return default if label is None else label
 
 
+def refuse_label_first(
+    owner: str,
+    args: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+    parameters: tuple[str, ...],
+    *,
+    takes_strings: bool = False,
+) -> None:
+    """Refuse a call to *owner* that passes its label first, in the form it once took.
+
+    *owner* takes *parameters* positionally, and its label as the keyword
+    ``label``. A call is in the earlier form when its first positional argument
+    is a string and it passes no ``label`` keyword. For an owner whose first
+    parameter also takes a string, the call must show the earlier form in one
+    more way: it passes more positional arguments than *parameters*, or it
+    passes by keyword a parameter that its positional arguments fill.
+
+    Parameters
+    ----------
+    owner : str
+        The constructor, such as ``"FunctionBatch"`` or
+        ``"NumericArray.from_vector"``.
+    args : tuple
+        The positional arguments of the call, without the class.
+    kwargs : Mapping
+        The keyword arguments of the call.
+    parameters : tuple of str
+        The names of the parameters *owner* takes positionally, in order, such
+        as ``("elements", "level_names")``.
+    takes_strings : bool
+        Whether the first of *parameters* takes a string, as an opaque value
+        does, or refuses one with its own message, as the elements of an object
+        batch do.
+
+    Raises
+    ------
+    TypeError
+        If the call is in the earlier form, with the call to write.
+    """
+    if not args or not isinstance(args[0], str) or "label" in kwargs:
+        return
+    if takes_strings:
+        filled = parameters[: len(args)]
+        if len(args) <= len(parameters) and not any(name in kwargs for name in filled):
+            return
+    raise TypeError(label_given_first(owner, parameters[0], args[0], then=parameters[1:]))
+
+
+def refuses_label_first[**P, R](
+    *parameters: str,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Make a classmethod constructor refuse a label passed where its first parameter goes.
+
+    The constructor once took its label first and takes *parameters* there now,
+    with the label as the keyword ``label``. The decorated method raises when
+    its first argument after the class is a string, which the first of
+    *parameters* never takes, so a call in the earlier form gets the call to
+    write rather than an error about the number of arguments. Apply it beneath
+    ``@classmethod``.
+
+    Parameters
+    ----------
+    *parameters : str
+        The names of the parameters the method takes positionally after the
+        class, in order, such as ``"spec", "vec"``.
+
+    Returns
+    -------
+    Callable
+        The decorator, which keeps the method's signature and docstring.
+    """
+
+    def decorate(method: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(method)
+        def checked(*args: P.args, **kwargs: P.kwargs) -> R:
+            if args:
+                owner = f"{cast(type, args[0]).__name__}.{method.__name__}"
+                refuse_label_first(owner, args[1:], kwargs, parameters)
+            return method(*args, **kwargs)
+
+        return checked
+
+    return decorate
+
+
 def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     """Return a shallow copy of an annotations container.
 
@@ -72,6 +162,74 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     so a relabeling and a reconstruction decouple the same way.
     """
     return decoupled_container(annotations)
+
+
+#: Presentation of a term reconstructed without its semantic metadata.
+_NO_DESCRIPTION = "<no description>"
+
+
+#: The ASCII name a lambda takes as an output component.
+_LAMBDA_NAME = "f"
+
+
+def _callable_name(fn: Any) -> str | None:
+    """The name of the callable *fn*: its ``__name__``, ``f`` for a lambda, or ``None`` without one.
+
+    A ``functools.partial`` and a callable instance have no ``__name__``, and
+    an empty or non-string ``__name__`` counts as none.
+    """
+    name = getattr(fn, "__name__", None)
+    if name == "<lambda>":
+        return _LAMBDA_NAME
+    return name if isinstance(name, str) and name else None
+
+
+def _callable_label(
+    fn: Any,
+    label: str | None = None,
+    *,
+    subject: str | None = None,
+    fix: str = "pass label=...",
+) -> str:
+    """The label of a term named after the callable *fn*.
+
+    It is *label* when one is given, and otherwise the callable's name by
+    :func:`_callable_name`, so a lambda is labeled ``𝒻``.
+
+    Parameters
+    ----------
+    fn : callable
+        The callable the term is named after.
+    label : str or None
+        The caller's explicit label, which takes precedence.
+    subject : str or None
+        What takes the label, such as ``"Function"``, which the error names.
+    fix : str
+        How the caller supplies the label at this call site, which the error
+        ends with. An operation that takes no label, such as ``expectation``,
+        names the labeled ``Function`` to pass instead.
+
+    Returns
+    -------
+    str
+        The explicit label or the callable's name.
+
+    Raises
+    ------
+    TypeError
+        If *label* is None and *fn* has no name.
+    """
+    if label is not None:
+        return label
+    if getattr(fn, "__name__", None) == "<lambda>":
+        return _ANONYMOUS_FUNCTION_SYMBOL
+    name = _callable_name(fn)
+    if name is None:
+        raise TypeError(
+            f"{subject or 'a term named after a callable'} needs an explicit label for a "
+            f"{type(fn).__name__}, which has no name; {fix}"
+        )
+    return name
 
 
 #: The label of an instance whose ``__init__`` stored none.
@@ -148,7 +306,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     The label is read from the term's **expression**, a private immutable tree
     that states what the term is: a term constructed directly carries its label
     alone, and an operation's result carries the expression the operation
-    builds from its operands', as ``E[(y, mu) ~ model]`` for the mean of a law
+    builds from its operands', as ``𝔼[(y, mu) ~ model]`` for the mean of a law
     ``model``. :meth:`with_label` replaces the expression with the new label,
     so the label hides the derivation, which provenance still records.
 
@@ -178,7 +336,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     Notes
     -----
     The mixin holds no per-instance storage of its own (``__slots__ = ()``);
-    the state is stored in the ``_expression`` / ``_label`` / ``_provenance``
+    the state is stored in the ``_expression`` / ``_label`` / ``_label_collapse`` / ``_provenance``
     attributes, which a host class declares in its ``__slots__`` (when it uses
     slots) and initializes via :meth:`_init_tracked`. All writes go through
     ``object.__setattr__`` so the mixin also works on immutable hosts that
@@ -191,6 +349,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     """
 
     _label: str
+    _label_collapse: Collapse | None
     _expression: Expression
     _provenance: Provenance | None
     __slots__ = ()
@@ -205,22 +364,47 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
         Assigns the expression of *label* alone, the label, and ``_provenance``
         via ``object.__setattr__`` so immutable hosts can call it from their
-        constructor. Performs no validation — the host constructor owns its
-        own ``label`` policy (required vs. auto-derived default).
+        constructor. It performs no validation, since the host constructor
+        decides whether a label is required or has a default, and records any
+        state of its own about that default after this call.
+
+        Parameters
+        ----------
+        label : str
+            The term's label.
+        provenance : Provenance or None, optional
+            The term's provenance, unset by default.
         """
         object.__setattr__(self, "_expression", Named(label))
         object.__setattr__(self, "_label", label)
+        object.__setattr__(self, "_label_collapse", None)
         object.__setattr__(self, "_provenance", provenance)
 
-    def _store_expression(self, expression: Expression) -> None:
+    def _store_expression(
+        self, expression: Expression, rendering: tuple[str, Collapse | None] | None = None
+    ) -> None:
         """Store *expression* and the label it renders, on a term that no caller holds yet.
 
-        The label is stored as the expression renders it now, so it is read
-        once and the term keeps it. A kind whose state derives from its label
-        overrides this, so the state follows the expression.
+        The label is rendered once, now, at the current
+        ``notation_config.max_depth``, and the term keeps it, together with
+        what its rendering left out, which a display of the label warns about.
+        A kind whose state derives from its label overrides this, so the state
+        follows the expression.
+
+        Parameters
+        ----------
+        expression : Expression
+            The term's expression.
+        rendering : tuple of (str, Collapse or None), optional
+            The label and what it left out, as
+            :meth:`Expression.label_rendering` gives them, for a caller that has
+            rendered the label already. By default the expression is rendered
+            here.
         """
+        label, collapse = expression.label_rendering() if rendering is None else rendering
         object.__setattr__(self, "_expression", expression)
-        object.__setattr__(self, "_label", expression.render_label())
+        object.__setattr__(self, "_label", label)
+        object.__setattr__(self, "_label_collapse", collapse)
 
     def _own_signature(self) -> Signature | None:
         """The signature the term's declaration states; ``None`` for a value, which has none."""
@@ -248,16 +432,25 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     @property
     def label(self) -> str:
-        """Human-readable label of this object."""
+        """Human-readable label of this object.
+
+        The label is rendered from the term's expression once, when the term is
+        built, and shows at most the ``notation_config.max_depth`` levels set
+        then. A later setting changes the labels of terms built afterwards, and
+        the notation of a law, a kernel, or a function, which is rendered each
+        time it is shown.
+        """
         return self._label
 
     def _displayed_label(self) -> str:
-        """The label as ``str()`` and the repr show it.
+        """The stored label, as the repr shows it.
 
-        Showing a label warns when its rendering collapses a level beyond
-        ``notation_config.max_depth``, and reading :attr:`label` never warns.
+        Showing a label warns when its rendering, made when the term was built,
+        left a part out, and reading :attr:`label` never warns.
         """
-        self._expression.render_label(warn=True)
+        collapse = getattr(self, "_label_collapse", None)
+        if collapse is not None:
+            warn_collapsed(collapse, stored=True)
         return self._label
 
     def with_label(self, label: str) -> Self:

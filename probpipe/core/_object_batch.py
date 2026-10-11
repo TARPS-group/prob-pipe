@@ -21,6 +21,7 @@ See design II.4, II.5, and III.1.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Self
 
@@ -28,12 +29,86 @@ import jax
 import numpy as np
 
 from ._batch import Batch, BatchSpec, _axis_groups_for
-from ._expression import Applied, Expression
+from ._expression import Applied, Collection, Expression, Named, Signature
 from ._repr import type_name
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import TermSpec
 from .provenance import Provenance
-from .tracked import TrackedTerm
+from .tracked import TrackedTerm, _callable_label, refuse_label_first
+
+#: How many members the default label of an object batch lists before ``…``.
+_DESCRIBED_MEMBERS = 8
+
+
+def _collection_expression(store: np.ndarray, *, kind: str | None = None) -> Expression:
+    """The default description of a batch that stores *store*: a bounded list of its members.
+
+    The list holds the first eight members in row-major order over every batch
+    axis, followed by ``…`` when more remain, so a batch of several axes reads
+    as one flat list and its repr gives the levels. It reads no member past the
+    eighth.
+
+    Parameters
+    ----------
+    store : numpy.ndarray
+        The batch's elements, as an object array of any shape.
+    kind : str, optional
+        The class name the error messages name, such as ``"FunctionBatch"``.
+
+    Returns
+    -------
+    Expression
+        A ``Collection`` of the members' descriptions.
+
+    Raises
+    ------
+    TypeError
+        If *store* holds no element, which leaves nothing to describe, or if a
+        member is a callable without a name.
+    """
+    if not store.size:
+        raise TypeError(
+            f"cannot derive a default label for an empty {kind or 'batch'}; pass label=..."
+        )
+    members = tuple(store.flat[i] for i in range(min(store.size, _DESCRIBED_MEMBERS)))
+    expressions = tuple(_member_expression(member, kind=kind) for member in members)
+    return Collection(expressions, omitted=store.size > len(members))
+
+
+def _member_expression(member: Any, *, kind: str | None = None) -> Expression:
+    """The description of one stored *member* in its batch's default label.
+
+    A tracked term reads as it reads inside any expression, and a callable as
+    its name and parameters, as ``predict(x)``. A callable whose signature
+    cannot be inspected, as for some builtins, reads as its name alone.
+
+    Parameters
+    ----------
+    member : Any
+        The stored member.
+    kind : str, optional
+        The batch's class name, which the refusal of a callable without a name
+        names, such as ``"FunctionBatch"``.
+
+    Returns
+    -------
+    Expression
+        The member's description.
+
+    Raises
+    ------
+    TypeError
+        If *member* is a callable without a name, such as a
+        ``functools.partial``.
+    """
+    if isinstance(member, TrackedTerm):
+        return member._embedded_expression()
+    name = _callable_label(member, subject=kind)
+    try:
+        parameters = tuple(inspect.signature(member).parameters)
+    except (TypeError, ValueError):
+        return Named(name)
+    return Named(name, Signature(parameters))
 
 
 class _ObjectBatch[E](Batch[E]):
@@ -41,10 +116,6 @@ class _ObjectBatch[E](Batch[E]):
 
     Parameters
     ----------
-    label : str
-        The batch's label. Required, as it is for every batch: a batch is a value a
-        caller holds, and a label derived from its class says nothing about what it
-        holds.
     elements : numpy.ndarray or iterable
         The elements, as an object array of any shape or a flat iterable. A
         nested sequence is not unpacked: build the array to state a shape of
@@ -54,8 +125,14 @@ class _ObjectBatch[E](Batch[E]):
     level_names : str or sequence of str
         One name per level, outermost first; a single string names a single
         level. There is no default, deliberately — see *Notes*.
-    element_spec : TermSpec
-        What every element satisfies, checked against each at construction.
+    label : str, optional
+        The batch's label. Defaults to a list of its first eight members in
+        row-major order over every batch axis, followed by ``…`` when more
+        remain, as ``[predict(x), f(x)]``.
+    element_spec : TermSpec, optional
+        What every element satisfies, checked against each at construction. A
+        public class checks its type and gives its default through
+        :meth:`_resolved_element_spec`.
     axes_per_level : int or sequence of int, optional
         How many axes each level holds, outermost first (a single int is one level's
         count); they must account for every batch axis. Defaults to one axis per
@@ -69,21 +146,26 @@ class _ObjectBatch[E](Batch[E]):
     Raises
     ------
     TypeError
-        If ``elements`` is a string, a mapping, or a non-object array — each of
-        which iterates into something other than its elements — if it is not
-        iterable at all, or if an ndarray of elements is not ``dtype=object``.
+        If any of these holds:
+
+        - *elements* is a string, a mapping, or an array whose dtype is not
+          ``object``, each of which iterates into something other than its
+          elements, or it is not iterable at all;
+        - *label* is omitted and there are no elements to describe, or a
+          callable element has no name to describe it by;
+        - *level_names* is not a str or a sequence of str, or *axes_per_level*
+          is not an int or a sequence of ints. A generator, a set, ``bytes``,
+          and a mapping are refused for both.
     ValueError
-        If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along), if ``axes_per_level`` does not account for every
-        stored axis or gives a count that is not one per level, or if it is omitted
-        and the number of names does not match the number of axes.
-    TypeError
-        If *level_names* is not a str or a sequence of str, or *axes_per_level* is
-        not an int or a sequence of ints; a generator, a set, ``bytes``, and a
-        mapping are refused for both.
-    ValueError
-        If an *axes_per_level* count is less than 1, or a level name is empty or
-        contains ``/``.
+        If any of these holds:
+
+        - *elements* is a zero-dimensional array, which is one object with no
+          batch axis to count along;
+        - *axes_per_level* does not account for every stored axis, gives a
+          count that is not one per level, or gives a count less than 1;
+        - *axes_per_level* is omitted and the number of names does not match
+          the number of axes;
+        - a level name is empty or contains ``/``.
 
     Notes
     -----
@@ -94,7 +176,7 @@ class _ObjectBatch[E](Batch[E]):
     suffixing. The caller that mints a level knows what it means.
 
     Construction admits no elements, as selection always did: ``batch[0:0]`` and
-    ``OpaqueBatch("draws", [], "draw")`` are both a batch of nothing. Zero is a count the
+    ``OpaqueBatch([], "draw", label="draws")`` are both a batch of nothing. Zero is a count the
     level can carry, and an object array of no elements still reports the shape
     ``(0,)`` to read it from. What is refused is a missing *axis*: a
     zero-dimensional store is one object, with no level to count along.
@@ -104,23 +186,34 @@ class _ObjectBatch[E](Batch[E]):
 
     __slots__ = ("_store",)
 
+    #: The element hook returns a relabeled copy of a stored term, or a new term
+    #: wrapping a stored value, so the selection need not copy it again.
+    _fresh_elements = True
+
     #: What the shared spec admits, worded to follow "elements must" in the
     #: refusal a bad element earns.
     _element_rule = "match element_spec"
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        refuse_label_first(
+            cls.__name__, args, kwargs, ("elements", "level_names"), takes_strings=True
+        )
+        return object.__new__(cls)
+
     def __init__(
         self,
-        label: str,
         elements: np.ndarray | Iterable[E],
         /,
         level_names: NamesLike,
         *,
-        element_spec: TermSpec,
+        label: str | None = None,
+        element_spec: TermSpec | None = None,
         axes_per_level: AxisCountsLike | None = None,
         provenance: Provenance | None = None,
     ) -> None:
-        store = _as_object_array(elements, kind=type(self).__name__)
         kind = type(self).__name__
+        store = _as_object_array(elements, kind=kind)
+        element_spec = self._resolved_element_spec(store, element_spec)
         names = _as_names(level_names, what=f"{kind} level_names")
         axes = (
             None
@@ -134,13 +227,43 @@ class _ObjectBatch[E](Batch[E]):
             store,
             element_spec,
             refusal=lambda element: self._element_refusal(element, element_spec),
-            kind=type(self).__name__,
+            kind=kind,
         )
-        self._init_batch(
-            BatchSpec._from_groups(element_spec, groups, names),
-            label=label,
-            provenance=provenance,
-        )
+        spec = BatchSpec._from_groups(element_spec, groups, names)
+        if label is not None:
+            self._init_batch(spec, label=label, provenance=provenance)
+            return
+        expression = _collection_expression(store, kind=kind)
+        rendering = expression.label_rendering()
+        self._init_batch(spec, label=rendering[0], provenance=provenance)
+        self._store_expression(expression, rendering)
+
+    def _resolved_element_spec(self, store: np.ndarray, element_spec: TermSpec | None) -> TermSpec:
+        """The spec every element of *store* must satisfy: *element_spec*, checked, or the default.
+
+        Each public class overrides this to check the type of a supplied spec
+        and to give its default; this base requires a supplied spec.
+
+        Parameters
+        ----------
+        store : numpy.ndarray
+            The elements, already copied into a frozen object array.
+        element_spec : TermSpec or None
+            The spec the caller supplied, or ``None``.
+
+        Returns
+        -------
+        TermSpec
+            The element spec.
+
+        Raises
+        ------
+        TypeError
+            If *element_spec* is ``None``.
+        """
+        if element_spec is None:
+            raise TypeError(f"{type(self).__name__} requires element_spec")
+        return element_spec
 
     @classmethod
     def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, label: str) -> Self:

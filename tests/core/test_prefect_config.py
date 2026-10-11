@@ -6,8 +6,7 @@ Exercises:
 - effective_workflow_kind resolution (per-instance vs global)
 - Graceful fallback when Prefect is not installed
 - Task runner auto-detection and explicit override
-- Strict Function / Module workflow_kind validation
-- Module inherits global config
+- Strict Function workflow_kind validation
 - PROBPIPE_WORKFLOW_KIND environment-variable override
 """
 
@@ -19,7 +18,7 @@ import types
 
 import pytest
 
-import probpipe.functions._function as node_mod
+import probpipe.functions._function as function_mod
 from probpipe.core.config import (
     _WORKFLOW_KIND_ENV_VAR,
     PrefectConfig,
@@ -213,8 +212,8 @@ class TestEffectiveWorkflowKind:
     @pytest.fixture
     def prefect_available(self, monkeypatch):
         """Stand in for an installed Prefect, so the requested mode resolves as given."""
-        monkeypatch.setattr(node_mod, "task", object())
-        monkeypatch.setattr(node_mod, "flow", object())
+        monkeypatch.setattr(function_mod, "task", object())
+        monkeypatch.setattr(function_mod, "flow", object())
 
     def test_default_resolves_to_off(self):
         """DEFAULT global → OFF (Prefect is opt-in, not auto-detected).
@@ -227,7 +226,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self, prefect_available):
@@ -240,8 +239,8 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
+            noop,
             label="noop",
-            fn=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -258,8 +257,8 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
+            noop,
             label="noop",
-            fn=noop,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
         )
@@ -268,8 +267,8 @@ class TestEffectiveWorkflowKind:
     def test_explicit_task_warns_without_prefect(self, monkeypatch):
         """Per-instance TASK + Prefect missing → warning + OFF, at the reader's line."""
 
-        monkeypatch.setattr(node_mod, "task", None)
-        monkeypatch.setattr(node_mod, "flow", None)
+        monkeypatch.setattr(function_mod, "task", None)
+        monkeypatch.setattr(function_mod, "flow", None)
 
         from probpipe import Function
 
@@ -277,8 +276,8 @@ class TestEffectiveWorkflowKind:
             return x
 
         wf = Function(
+            noop,
             label="noop",
-            fn=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
@@ -290,8 +289,8 @@ class TestEffectiveWorkflowKind:
     def test_global_task_falls_back_without_prefect(self, monkeypatch):
         """Global TASK + Prefect missing → OFF (graceful)."""
 
-        monkeypatch.setattr(node_mod, "task", None)
-        monkeypatch.setattr(node_mod, "flow", None)
+        monkeypatch.setattr(function_mod, "task", None)
+        monkeypatch.setattr(function_mod, "flow", None)
 
         prefect_config.workflow_kind = WorkflowKind.TASK
 
@@ -300,7 +299,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -313,7 +312,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
 
         assert wf.effective_workflow_kind is WorkflowKind.FLOW
 
@@ -324,7 +323,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(label="noop", fn=noop, dispatch="sequential")
+        wf = Function(noop, label="noop", dispatch="sequential")
         prefect_config.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -335,7 +334,10 @@ class TestEffectiveWorkflowKind:
     def test_a_view_resolves_its_own_control(self, prefect_available):
         from probpipe import Function
 
-        wf = Function("noop", lambda x: x)
+        wf = Function(
+            lambda x: x,
+            label="noop",
+        )
         configured = wf.with_options(workflow_kind=WorkflowKind.TASK)
 
         assert configured.effective_workflow_kind is WorkflowKind.TASK
@@ -351,7 +353,13 @@ class TestEffectiveWorkflowKind:
         from probpipe import Function
 
         prefect_config.workflow_kind = WorkflowKind.DEFAULT
-        assert Function("noop", lambda x: x).effective_workflow_kind is WorkflowKind.OFF
+        assert (
+            Function(
+                lambda x: x,
+                label="noop",
+            ).effective_workflow_kind
+            is WorkflowKind.OFF
+        )
 
     def test_a_call_runs_under_the_mode_the_property_reports(self, monkeypatch):
         from probpipe import Function
@@ -363,7 +371,11 @@ class TestEffectiveWorkflowKind:
             return WorkflowKind.OFF
 
         monkeypatch.setattr(Function, "effective_workflow_kind", property(resolve))
-        wf = Function("increment", lambda x: x + 1, dispatch="sequential")
+        wf = Function(
+            lambda x: x + 1,
+            dispatch="sequential",
+            label="increment",
+        )
         assert float(wf(2)) == 3
         assert calls and all(instance is wf for instance in calls)
 
@@ -384,8 +396,8 @@ class TestWorkflowKindConstructorValidation:
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
             Function(
+                noop,
                 label="noop",
-                fn=noop,
                 workflow_kind="task",
                 dispatch="sequential",
             )
@@ -398,73 +410,11 @@ class TestWorkflowKindConstructorValidation:
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
             Function(
+                noop,
                 label="noop",
-                fn=noop,
                 workflow_kind=None,
                 dispatch="sequential",
             )
-
-    def test_module_rejects_string(self):
-        from probpipe.functions import Module
-
-        with pytest.raises(TypeError, match="WorkflowKind enum member"):
-            Module(workflow_kind="task")
-
-    def test_module_rejects_none(self):
-        from probpipe.functions import Module
-
-        with pytest.raises(TypeError, match="WorkflowKind enum member"):
-            Module(workflow_kind=None)
-
-
-# ---------------------------------------------------------------------------
-# Module inherits global config
-# ---------------------------------------------------------------------------
-
-
-class TestModuleInheritsConfig:
-    """Module with DEFAULT propagates global config to children."""
-
-    @pytest.fixture(autouse=True)
-    def _reset_config(self, monkeypatch):
-        monkeypatch.delenv(_WORKFLOW_KIND_ENV_VAR, raising=False)
-        prefect_config.reset()
-        yield
-        prefect_config.reset()
-
-    def test_module_default_passes_default_to_children(self):
-        from probpipe.functions import Module, workflow_method
-
-        class MyModule(Module):
-            @workflow_method
-            def step(self, x):
-                return x + 1
-
-        mod = MyModule()
-        # The child Function should have DEFAULT as raw value
-        assert mod.step.options["workflow_kind"] is WorkflowKind.DEFAULT
-
-    def test_module_explicit_off_passes_off_to_children(self):
-        from probpipe.functions import Module, workflow_method
-
-        class MyModule(Module):
-            @workflow_method
-            def step(self, x):
-                return x + 1
-
-        mod = MyModule(workflow_kind=WorkflowKind.OFF)
-        assert mod.step.options["workflow_kind"] is WorkflowKind.OFF
-
-    def test_module_explicit_task_passes_task_to_children(self):
-        from probpipe.functions import Module, workflow_method
-
-        class MyModule(Module):
-            @workflow_method
-            def step(self, x):
-                return x + 1
-
-        mod = MyModule(workflow_kind=WorkflowKind.TASK)
-        assert mod.step.options["workflow_kind"] is WorkflowKind.TASK
 
 
 # ---------------------------------------------------------------------------

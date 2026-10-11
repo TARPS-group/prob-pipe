@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 
 __all__ = [
+    "ELLIPSIS",
     "WIDTH",
     "call_repr",
     "format_components",
@@ -50,6 +51,10 @@ __all__ = [
 
 #: The length past which a repr shows one argument per line.
 WIDTH = 100
+
+#: The text that stands for a part a rendering leaves out: a collapsed value, or
+#: a default a signature does not show.
+ELLIPSIS = "…"
 
 #: How many entries a parameter may hold before its repr gives its shape instead.
 _MAX_SHOWN_ENTRIES = 8
@@ -427,7 +432,7 @@ def format_default(value: Any) -> str:
         return repr(value)
     if getattr(value, "shape", None) == () and getattr(value, "dtype", None) is not None:
         return format_value(value)
-    return "…"
+    return ELLIPSIS
 
 
 def format_components(components: Iterable[str]) -> str:
