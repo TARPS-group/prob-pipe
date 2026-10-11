@@ -36,6 +36,7 @@ from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
+from probpipe.distributions._conditional import ConditionalDistributionSpec
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.operations import (
     BoundCall,
@@ -246,7 +247,12 @@ class TestRoles:
             """Three kinds of parameter."""
 
         operands = {operand.name: operand.accepts for operand in annotated.summary().operands}
-        assert operands == {"d": (DistributionSpec,), "value": (TermSpec,), "path": ()}
+        assert operands == {
+            "d": (DistributionSpec, ConditionalDistributionSpec),
+            "value": (TermSpec,),
+            "path": (),
+            "given": (RecordSpec,),
+        }
 
     def test_a_declared_role_overrides_the_annotation(self):
         toy = _toy(roles={"d": (NumericArraySpec,)})
@@ -278,7 +284,7 @@ class TestRoles:
         def scored(d: Distribution, value):
             """An unannotated value."""
 
-        (_, value) = scored.summary().operands
+        (_, value, _) = scored.summary().operands
         assert value.accepts == (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
 
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
@@ -1197,7 +1203,10 @@ class TestRegistry:
         assert summary.priority is None
         assert summary.description == "The center of a law."
         assert summary.module_path == __name__
-        assert summary.operands == (OperandSummary("d", (DistributionSpec,), True),)
+        assert summary.operands == (
+            OperandSummary("d", (DistributionSpec, ConditionalDistributionSpec), True),
+            OperandSummary("given", (RecordSpec,), False),
+        )
         assert (summary.is_derived, summary.identity) == (False, None)
         assert summary.routes == (
             RouteSummary(
@@ -1212,7 +1221,7 @@ class TestRegistry:
 
     def test_describe_renders_one_operation_or_all(self):
         text = _REGISTRY.describe("center")
-        assert text.splitlines()[0] == "center(d) — primitive"
+        assert text.splitlines()[0] == "center(d, given) — primitive"
         assert "closed_form (capability, exact; requires SupportsMean)" in text
         assert "monte_carlo (fallback, approximate): The operand samples." in text
         assert _REGISTRY.describe() == text

@@ -556,7 +556,6 @@ class TestComposition:
 class TestTheOperations:
     """III.9's fused conditional paths and conditioning, through the operations."""
 
-    @pytest.mark.pending(reason="log_prob takes given= for a conditional operand", raises=TypeError)
     def test_log_prob_given(self, X, beta):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         y = jnp.array([0.0, 1.0, 1.0, 2.0])

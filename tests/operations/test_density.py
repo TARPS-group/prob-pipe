@@ -308,8 +308,8 @@ class TestRandomLogDensities:
         assert random_unnormalized_log_prob.check(RandomDensity("m")).result is None
 
     def test_neither_takes_a_value(self):
-        assert list(inspect.signature(random_log_prob).parameters) == ["M"]
-        assert list(inspect.signature(random_unnormalized_log_prob).parameters) == ["M"]
+        assert list(inspect.signature(random_log_prob).parameters) == ["M", "given"]
+        assert list(inspect.signature(random_unnormalized_log_prob).parameters) == ["M", "given"]
 
     def test_a_law_without_a_random_density_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="SupportsRandomLogProb"):

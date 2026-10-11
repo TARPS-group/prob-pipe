@@ -909,14 +909,14 @@ _DERIVED_TWINS: tuple[tuple[type, type, str], ...] = (
 )
 
 
-def _probed_guard(method: str, condition: str) -> Callable[[Any], Feasibility]:
+def _probed_guard(method: str, condition: str) -> Callable[..., Feasibility]:
     """The guard of a derived twin: the report of the law's guard of *method*.
 
     The report is the one the law the function returned at construction gave,
     and *condition* is the guard's condition in words.
     """
 
-    def guard(self: Any) -> Feasibility:
+    def guard(self: Any, *arguments: Any, **keywords: Any) -> Feasibility:
         return self._guards[method]
 
     guard.__doc__ = condition

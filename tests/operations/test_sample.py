@@ -159,14 +159,11 @@ class TestRequirements:
             sample(Bare("b"))
 
     def test_the_operation_takes_no_key(self):
-        assert list(inspect.signature(sample).parameters) == ["d", "sample_shape"]
+        assert list(inspect.signature(sample).parameters) == ["d", "sample_shape", "given"]
 
     def test_a_kernel_is_refused_without_its_given(self):
         with pytest.raises(ApplicabilityError, match="ConditionalDistributionSpec"):
             sample(Kernel())
 
-    @pytest.mark.pending(
-        reason="the fused conditional path adds given= to the operation", raises=TypeError
-    )
     def test_the_fused_path_draws_from_the_kernel_at_its_given(self):
         assert isinstance(sample(Kernel(), given={"mu": 1.0}), NumericArray)
