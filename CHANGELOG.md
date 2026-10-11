@@ -3234,6 +3234,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
+  raises `TypeError`, where it warned and used `h`; pass the callable first, as
+  `Function(h, label="g")`.
 - **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
   density alone, as it builds the law of any combination of a sampler and a
   density: replace `UnnormalizedDistribution(label, f, event_spec)` with
