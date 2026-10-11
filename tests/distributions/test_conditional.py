@@ -202,9 +202,9 @@ class TestConstructionErrors:
         with pytest.raises(ValueError, match="both as a given slot and as an output field"):
             _kernel(given=given, event=event, label=name)
 
-    def test_an_omitted_label_defaults_to_p(self):
+    def test_an_omitted_label_uses_the_generic_symbol(self):
         kernel = Kernel(given_spec={"mu": SCALAR}, event_spec=OutputSpec(y=SCALAR))
-        assert kernel.label == "p"
+        assert kernel.label == "ℙ"
 
     @pytest.mark.parametrize("name", ["", 3])
     def test_a_name_that_is_not_a_non_empty_string_raises(self, name):

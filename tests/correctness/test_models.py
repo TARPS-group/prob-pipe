@@ -240,7 +240,7 @@ class TestPyMCModel:
         """``mu ~ N(0, 10)``, ``sigma ~ HalfNormal(1)``, and ``y ~ N(mu, sigma)`` give known moments.
 
         The mean and variance of ``sigma`` are ``sqrt(2/pi)`` and ``1 - 2/pi``,
-        and ``y`` has mean zero and variance ``100 + E[sigma²] = 101``.
+        and ``y`` has mean zero and variance ``100 + 𝔼[sigma²] = 101``.
         """
         model = PyMCModel(_normal_model, label="normal")
         with workflow_run(seed=12):
@@ -471,7 +471,7 @@ class TestUnnormalizedDensity:
 
 
 def _chain():
-    """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``E[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
+    """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``𝔼[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
     x = Normal("x", 1.0, 2.0)
     y = ObservationKernel("y", {"x": x.event_spec.spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5))
     return y * x

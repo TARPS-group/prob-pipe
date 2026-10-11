@@ -521,7 +521,7 @@ class TestTheConditionalCapabilities:
 
     def test_a_capability_needs_every_given_slot(self, likelihood, beta):
         with pytest.raises(
-            KeyError, match=r"'p' is missing values for the given slots \['dispersion'\]"
+            KeyError, match=r"'ℙ' is missing values for the given slots \['dispersion'\]"
         ):
             likelihood._conditional_mean({"beta": beta})
 

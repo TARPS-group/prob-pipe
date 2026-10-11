@@ -467,7 +467,7 @@ def _view_sample(self: FieldView, key: PRNGKey, sample_shape: tuple[int, ...] = 
 
 
 def _view_mean(self: FieldView) -> Any:
-    """Projection: the parent's mean at the view's path, since ``E[pi X] = pi E[X]``.
+    """Projection: the parent's mean at the view's path, since ``𝔼[pi X] = pi 𝔼[X]``.
 
     A parent without a mean gives the mean of its exact marginal at the path.
     """

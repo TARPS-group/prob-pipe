@@ -459,7 +459,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ``with_level_names`` renames. An array is stored as a ``NumericArrayBatch``
     labeled by the law's component, on one level named by *level*, which
     defaults to the component. The weights are normalized and default to
-    uniform. The law's label is ``p`` unless *label* gives another.
+    uniform. The law's label is ``ℙ`` unless *label* gives another.
 
     **The event declaration.** Record atoms expose their fields, which are the
     law's components, and any other atoms form a whole-term event under
@@ -507,7 +507,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         The component of a whole-term event, required for atoms that are not
         records unless *event_spec* names it, and refused for record atoms.
     label : str, optional
-        The law's label, ``p`` by default.
+        The law's label, ``ℙ`` by default.
     level : str, optional
         The name of the one level a plain array's atoms lie on. It defaults to
         the law's component.
@@ -536,7 +536,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ...     jnp.array([0.0, 1.0, 3.0]), jnp.array([1.0, 1.0, 2.0]), component="theta"
     ... )
     >>> (law.label, list(law.event_spec.components))
-    ('p', ['theta'])
+    ('ℙ', ['theta'])
     >>> law.atoms.level_names
     ('theta',)
     >>> float(law._mean())
@@ -680,7 +680,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     # -- expectation ------------------------------------------------------------
 
     def _expectation(self, f: Callable[[Any], Array]) -> Array:
-        """The exact ``E[f(X)]``: the weighted mean of ``f`` over the atoms.
+        """The exact ``𝔼[f(X)]``: the weighted mean of ``f`` over the atoms.
 
         ``f`` receives each atom in its raw form, as a draw is returned, so a
         record atom is the nested mapping of its raw leaves, and returns an
