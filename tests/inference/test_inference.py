@@ -781,7 +781,10 @@ class TestRWMH:
 
         class NoLogProbNoSample(NumericDistribution):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(**{label: NumericArraySpec((2,))}))
+                super().__init__(
+                    OutputSpec(**{label: NumericArraySpec((2,))}),
+                    label=label,
+                )
 
         dist = NoLogProbNoSample(label="test")
         with pytest.raises(TypeError):
@@ -864,7 +867,10 @@ class TestRWMH:
 
         class LogProbOnlyDist(NumericDistribution, SupportsLogProb):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(**{label: NumericArraySpec((2,), "float32")}))
+                super().__init__(
+                    OutputSpec(**{label: NumericArraySpec((2,), "float32")}),
+                    label=label,
+                )
 
             def _log_prob(self, value):
                 return -0.5 * jnp.sum(value**2)
@@ -895,7 +901,10 @@ class TestRWMH:
 
         class BrokenMeanLogProbDist(NumericDistribution, SupportsLogProb, SupportsMean):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(**{label: NumericArraySpec((2,), "float32")}))
+                super().__init__(
+                    OutputSpec(**{label: NumericArraySpec((2,), "float32")}),
+                    label=label,
+                )
 
             def _log_prob(self, value):
                 return -0.5 * jnp.sum(value**2)
@@ -1131,35 +1140,53 @@ class TestValuesSelect:
     """Record.select() for concrete data."""
 
     def test_positional(self):
-        v = Record("r", r=1.0, K=70.0, phi=10.0)
+        v = Record(
+            {"r": 1.0, "K": 70.0, "phi": 10.0},
+            label="r",
+        )
         sel = v.select("r", "K")
         assert set(sel.keys()) == {"r", "K"}
         np.testing.assert_allclose(float(sel["r"]), 1.0)
         np.testing.assert_allclose(float(sel["K"]), 70.0)
 
     def test_keyword_remap(self):
-        v = Record("r", r=1.0, K=70.0)
+        v = Record(
+            {"r": 1.0, "K": 70.0},
+            label="r",
+        )
         sel = v.select(growth_rate="r")
         assert "growth_rate" in sel
         np.testing.assert_allclose(float(sel["growth_rate"]), 1.0)
 
     def test_mixed(self):
-        v = Record("r", r=1.0, K=70.0, phi=10.0)
+        v = Record(
+            {"r": 1.0, "K": 70.0, "phi": 10.0},
+            label="r",
+        )
         sel = v.select("phi", growth_rate="r")
         assert set(sel.keys()) == {"phi", "growth_rate"}
 
     def test_missing_field_raises(self):
-        v = Record("r", r=1.0)
+        v = Record(
+            {"r": 1.0},
+            label="r",
+        )
         with pytest.raises(KeyError, match="nonexistent"):
             v.select("nonexistent")
 
     def test_missing_mapping_target_raises(self):
-        v = Record("r", r=1.0)
+        v = Record(
+            {"r": 1.0},
+            label="r",
+        )
         with pytest.raises(KeyError, match="z"):
             v.select(x="z")
 
     def test_empty_select(self):
-        v = Record("r", r=1.0, K=70.0)
+        v = Record(
+            {"r": 1.0, "K": 70.0},
+            label="r",
+        )
         sel = v.select()
         assert sel == {}
 
@@ -1255,7 +1282,11 @@ class TestEndToEndValuesPipeline:
         """Broadcast predict(params, x) computes correct function of posterior."""
         from probpipe.functions import function
 
-        @function(n_broadcast_samples=100, dispatch="sequential")
+        @function(
+            n_broadcast_samples=100,
+            dispatch="sequential",
+            output_spec=OutputSpec(predict=None),
+        )
         def predict(params, x):
             return params[0] + params[1] * x
 
@@ -1277,7 +1308,11 @@ class TestEndToEndValuesPipeline:
         """
         from probpipe.functions import function
 
-        @function(n_broadcast_samples=50, dispatch="sequential")
+        @function(
+            n_broadcast_samples=50,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity_pair=None),
+        )
         def identity_pair(a, b):
             return a - b
 
@@ -1314,7 +1349,11 @@ class TestEndToEndValuesPipeline:
         """Workflow with both posterior views and an independent distribution."""
         from probpipe.functions import function
 
-        @function(n_broadcast_samples=posterior.num_atoms, dispatch="sequential")
+        @function(
+            n_broadcast_samples=posterior.num_atoms,
+            dispatch="sequential",
+            output_spec=OutputSpec(noisy_predict=None),
+        )
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 

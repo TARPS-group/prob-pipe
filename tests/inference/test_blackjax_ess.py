@@ -164,9 +164,9 @@ class TestGaussianPriorDetection:
         from probpipe import DistributionBatch
 
         batch = DistributionBatch(
-            "x",
             [Normal("x", loc=0.0, scale=0.5), Normal("x", loc=1.0, scale=2.0)],
             "law",
+            label="x",
         )
         assert not isinstance(batch, Normal)
         assert _gaussian_prior_params(batch) is None

@@ -114,8 +114,8 @@ class Bernoulli(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -196,8 +196,8 @@ class Binomial(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -279,8 +279,8 @@ class Poisson(TFPDistribution):
     Raises
     ------
     TypeError
-        If *component* is not a string, or *event_spec* is not an
-        :class:`~probpipe.OutputSpec` or exposes a record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If *component* is not a valid component name, or *event_spec* names
         another component or declares a type that one draw does not conform to.
@@ -334,8 +334,8 @@ class Categorical(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.
@@ -422,8 +422,8 @@ class NegativeBinomial(TFPDistribution):
     Raises
     ------
     TypeError
-        If *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a
-        record.
+        If *component* is not a string, *label* is not a non-empty string, or
+        *event_spec* is not an :class:`~probpipe.OutputSpec` or exposes a record.
     ValueError
         If not exactly one of *probs* and *logits* is given, or *event_spec*
         declares a type that one draw does not conform to.

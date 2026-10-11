@@ -70,7 +70,11 @@ class NormalKernel(ConditionalDistribution):
         loc: Callable[[Mapping[str, Any]], Any] = _total,
         bound: Mapping[str, Any] | None = None,
     ) -> None:
-        super().__init__(label, given_spec, event_spec)
+        super().__init__(
+            given_spec,
+            event_spec,
+            label=label,
+        )
         self._loc = loc
         self._bound = dict(bound or {})
 
@@ -99,7 +103,10 @@ def _prior() -> Normal:
 
 def _law(label: str, component: str, spec: Any = SCALAR) -> Law:
     """A law labeled *label* whose whole-term component is *component*."""
-    return Law(label, OutputSpec(**{component: spec}))
+    return Law(
+        OutputSpec(**{component: spec}),
+        label=label,
+    )
 
 
 def _kernel(label: str, given: Mapping[str, Any], component: str, spec: Any = SCALAR):
@@ -197,7 +204,10 @@ class TestBoundRule:
         ],
     )
     def test_a_component_meets_a_given_under_either_packaging(self, event_spec):
-        joint = _likelihood() * Law("prior", event_spec)
+        joint = _likelihood() * Law(
+            event_spec,
+            label="prior",
+        )
         assert isinstance(joint, FactoredDistribution)
         assert list(joint.event_spec.components) == ["y", "beta"]
 
@@ -486,7 +496,10 @@ class TestFlattening:
 
     def test_direct_construction_flattens_a_factored_factor(self):
         a, b, c = (_law(name, name) for name in "abc")
-        joint = FactoredDistribution("j", [a * b, c])
+        joint = FactoredDistribution(
+            [a * b, c],
+            label="j",
+        )
         assert [factor.label for factor in joint.factors] == ["a", "b", "c"]
 
     def test_a_chain_of_three_operands_is_one_joint_of_three_factors(self):

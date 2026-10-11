@@ -82,7 +82,8 @@ _LAWS: dict[str, Callable[[], object]] = {
         component="k",
     ),
     "FactoredMultivariateGaussian": lambda: FactoredMultivariateGaussian(
-        "j", [F.Normal("a", 0.0, 1.0), F.Normal("g", 2.0, 1.0)]
+        [F.Normal("a", 0.0, 1.0), F.Normal("g", 2.0, 1.0)],
+        label="j",
     ),
     "GaussianProcess": lambda: GaussianProcess("f", lambda X: jnp.zeros(X.shape[0]), _rbf_kernel),
     "LinearBasisFunction": lambda: LinearBasisFunction(

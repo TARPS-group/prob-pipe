@@ -15,8 +15,14 @@ from probpipe import (
 
 def _values():
     return (
-        NumericArray("x", jnp.arange(6.0).reshape(2, 3)),
-        NumericRecord("r", a=jnp.arange(2.0), b={"c": jnp.ones((2, 2))}),
+        NumericArray(
+            jnp.arange(6.0).reshape(2, 3),
+            label="x",
+        ),
+        NumericRecord(
+            {"a": jnp.arange(2.0), "b": {"c": jnp.ones((2, 2))}},
+            label="r",
+        ),
     )
 
 
@@ -29,9 +35,12 @@ class TestTheNumericKinds:
         assert not issubclass(NumericRecordBatch, Numeric)
 
     def test_a_batch_names_its_layout_spec_as_a_value_does(self):
-        spec = NumericRecord("r", a=jnp.arange(2.0)).spec
+        spec = NumericRecord(
+            {"a": jnp.arange(2.0)},
+            label="r",
+        ).spec
         batch = NumericRecordBatch.from_vector(
-            "b", spec=spec, vec=jnp.zeros((3, 2)), level_names="draw"
+            spec=spec, vec=jnp.zeros((3, 2)), level_names="draw", label="b"
         )
         assert batch.batch_shape == (3,)
 
@@ -39,13 +48,16 @@ class TestTheNumericKinds:
     def test_from_vector_inverts_to_vector(self, value):
         vector = value.to_vector()
         assert vector.shape == (value.vector_size,)
-        rebuilt = type(value).from_vector("rebuilt", value.spec, vector)
+        rebuilt = type(value).from_vector(value.spec, vector, label="rebuilt")
         assert rebuilt.label == "rebuilt"
         np.testing.assert_array_equal(rebuilt.to_vector(), vector)
 
     def test_an_array_presents_its_shape(self):
         # Its coordinates are its elements in row-major order, presented unraveled.
-        value = NumericArray("x", jnp.arange(6.0).reshape(2, 3))
+        value = NumericArray(
+            jnp.arange(6.0).reshape(2, 3),
+            label="x",
+        )
         np.testing.assert_array_equal(np.asarray(value), np.arange(6.0).reshape(2, 3))
         assert jnp.asarray(value).shape == (2, 3)
         np.testing.assert_array_equal(value.to_vector(), jnp.ravel(jnp.asarray(value)))
@@ -67,7 +79,7 @@ class _Pair(Numeric):
         return self._vector
 
     @classmethod
-    def from_vector(cls, name, spec, vec):
+    def from_vector(cls, spec, vec, *, label=None):
         return cls(vec)
 
 
@@ -85,7 +97,7 @@ class TestTheBase:
                 return 0
 
             @classmethod
-            def from_vector(cls, name, spec, vec):
+            def from_vector(cls, spec, vec, *, label=None):
                 return cls()
 
         with pytest.raises(TypeError, match="abstract"):

@@ -409,7 +409,10 @@ class TestNumWarmupZeroWarning:
 
         class NoDensityDist(Distribution):
             def __init__(self):
-                super().__init__("no_density", OutputSpec(no_density=NumericArraySpec((2,))))
+                super().__init__(
+                    OutputSpec(no_density=NumericArraySpec((2,))),
+                    label="no_density",
+                )
 
         with pytest.raises(TypeError, match="SupportsUnnormalizedLogProb"):
             rwmh(dist=NoDensityDist(), num_results=10, num_warmup=10)
@@ -642,7 +645,8 @@ class _NumpyLogProbDist(NumericDistribution, SupportsLogProb):
 
     def __init__(self, label):
         super().__init__(
-            label, OutputSpec(**{label: NumericArraySpec((len(self.precision),), "float32")})
+            OutputSpec(**{label: NumericArraySpec((len(self.precision),), "float32")}),
+            label=label,
         )
 
     def _log_prob(self, value):

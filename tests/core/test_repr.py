@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+import probpipe
 from probpipe import (
     BatchSpec,
     EmpiricalDistribution,
@@ -45,14 +46,17 @@ from probpipe.core._repr import (
     is_product,
 )
 from probpipe.distributions._batches import DistributionBatch
-from probpipe.families import BernoulliFamily, glm_likelihood
+from probpipe.families import BernoulliFamily, MixtureDistribution, glm_likelihood
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
 
 
 def _schools() -> RecordBatch:
     return RecordBatch.stack(
         [
-            Record("school", {"data": {"effect": float(y), "se": 1.0}, "label": label})
+            Record(
+                {"data": {"effect": float(y), "se": 1.0}, "label": label},
+                label="school",
+            )
             for y, label in zip(range(8), "ABCDEFGH", strict=True)
         ],
         level_name="school",
@@ -63,26 +67,48 @@ def _schools() -> RecordBatch:
 def _two_fields() -> NumericRecordBatch:
     """Two record atoms over the fields ``a`` and ``b``."""
     columns = {"a": jnp.array([0.0, 1.0]), "b": jnp.array([1.0, 3.0])}
-    return NumericRecordBatch("rows", columns, "row")
+    return NumericRecordBatch(
+        columns,
+        "row",
+        label="rows",
+    )
 
 
 class TestValuesAndBatches:
     def test_an_array_reads_by_its_label_shape_and_dtype(self):
-        assert repr(NumericArray("x", jnp.zeros(3))) == (
-            "NumericArray('x', shape=(3,), dtype=float32)"
-        )
+        assert repr(
+            NumericArray(
+                jnp.zeros(3),
+                label="x",
+            )
+        ) == ("NumericArray('x', shape=(3,), dtype=float32)")
 
     def test_a_declared_support_is_shown(self):
         spec = NumericArraySpec((), jnp.float32, positive)
-        assert repr(NumericArray("tau", jnp.asarray(1.0), spec=spec)) == (
-            "NumericArray('tau', shape=(), dtype=float32, support=positive)"
-        )
+        assert repr(
+            NumericArray(
+                jnp.asarray(1.0),
+                spec=spec,
+                label="tau",
+            )
+        ) == ("NumericArray('tau', shape=(), dtype=float32, support=positive)")
 
     def test_an_opaque_value_reads_by_its_type(self):
-        assert repr(Opaque("note", "Rubin")) == "Opaque('note', type=str)"
+        assert (
+            repr(
+                Opaque(
+                    "Rubin",
+                    label="note",
+                )
+            )
+            == "Opaque('note', type=str)"
+        )
 
     def test_a_record_reads_by_its_field_paths(self):
-        school = Record("school", {"data": {"effect": 28.0, "se": 15.0}, "label": "A"})
+        school = Record(
+            {"data": {"effect": 28.0, "se": 15.0}, "label": "A"},
+            label="school",
+        )
         assert repr(school) == "Record('school', fields=('data/effect', 'data/se', 'label'))"
 
     def test_a_batch_of_records_reads_by_its_levels_and_field_paths(self):
@@ -92,7 +118,11 @@ class TestValuesAndBatches:
         )
 
     def test_a_batch_of_laws_reads_by_its_element_spec(self):
-        laws = DistributionBatch("laws", [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)], "law")
+        laws = DistributionBatch(
+            [Normal("a", 0.0, 1.0), Normal("a", 1.0, 1.0)],
+            "law",
+            label="laws",
+        )
         assert repr(laws) == (
             "DistributionBatch(\n"
             "    'laws',\n"
@@ -148,56 +178,60 @@ class TestSpecs:
 
 
 class TestDistributions:
-    def test_a_family_reads_by_the_arguments_it_was_built_with(self):
+    def test_a_family_reads_as_the_call_that_built_it(self):
         assert repr(Normal("mu", 0.0, 1.0, label="prior")) == (
-            "Normal('prior', component='mu', loc=0.0, scale=1.0)"
+            "Normal('mu', loc=0.0, scale=1.0, label='prior')"
         )
 
     def test_a_family_under_its_default_label_leaves_the_label_out(self):
-        assert repr(Normal("x", 0.0, 1.0)) == "Normal(component='x', loc=0.0, scale=1.0)"
+        assert repr(Normal("x", 0.0, 1.0)) == "Normal('x', loc=0.0, scale=1.0)"
 
     def test_a_label_equal_to_the_default_is_left_out_however_it_was_given(self):
         relabeled = Normal("x", 0.0, 1.0, label="prior").with_label("Normal")
-        assert repr(relabeled) == "Normal(component='x', loc=0.0, scale=1.0)"
+        assert repr(relabeled) == "Normal('x', loc=0.0, scale=1.0)"
         assert repr(Normal("x", 0.0, 1.0, label="Normal")) == repr(relabeled)
 
     def test_a_law_labeled_by_an_operation_shows_the_label(self):
         kernel = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
-        assert repr(condition_on(kernel, {"mu": 0.5})).startswith("Normal('lik', component='y'")
+        assert repr(condition_on(kernel, {"mu": 0.5})).startswith(
+            "Normal('y', loc=0.5, scale=1.0, label='lik'"
+        )
 
     def test_the_adapter_under_its_backend_name_leaves_the_label_out(self):
         law = TFPDistribution("x", tfd.Normal(0.0, 1.0))
-        assert repr(law).startswith("TFPDistribution(\n    component='x',\n    backend_dist=")
+        assert repr(law).startswith("TFPDistribution(\n    'x',\n    backend_dist=")
+        assert "label=" not in repr(law)
         labeled = TFPDistribution("x", tfd.Normal(0.0, 1.0), label="q")
-        assert repr(labeled).startswith("TFPDistribution(\n    'q',\n    component='x',")
+        assert repr(labeled).endswith(",\n    label='q',\n)")
 
     def test_a_law_under_the_label_p_leaves_the_label_out(self):
         law = EmpiricalDistribution(jnp.arange(3.0), component="theta")
-        assert repr(law).startswith("EmpiricalDistribution(\n    component='theta',\n    atoms=")
+        assert repr(law).startswith("EmpiricalDistribution(\n    atoms=")
+        assert repr(law).endswith("    component='theta',\n)")
         drawn = distribution(
             sample=lambda key: jax.random.normal(key),
             event_spec=NumericArraySpec(()),
             component="z",
         )
-        assert repr(drawn).startswith("Distribution(\n    component='z',\n    sample=")
+        assert repr(drawn).startswith("Distribution(\n    'z',\n    sample=")
 
     def test_a_kernel_under_the_label_p_leaves_the_label_out(self):
         kernel = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), given_spec={"mu": NumericArraySpec(())}
         )
-        assert repr(kernel) == "ConditionalDistribution(component='y', given=('mu',))"
+        assert repr(kernel) == "ConditionalDistribution('y', given=('mu',))"
         assert repr(glm_likelihood("damage", BernoulliFamily())).startswith(
-            "ConditionalDistribution(\n    component='damage',\n    family=BernoulliFamily(),"
+            "ConditionalDistribution(\n    'damage',\n    family=BernoulliFamily(),"
         )
 
-    def test_a_conditioned_law_shows_its_fixed_paths_after_the_component(self):
+    def test_a_conditioned_law_shows_its_fixed_paths_after_the_call(self):
         kernel = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
         assert repr(condition_on(kernel, {"mu": 0.5})) == (
-            "Normal('lik', component='y', fixed=('mu',), loc=0.5, scale=1.0)"
+            "Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))"
         )
 
     def test_a_curried_kernel_shows_its_fixed_slots(self):
@@ -210,11 +244,11 @@ class TestDistributions:
             given_spec={"beta": NumericArraySpec(()), "sigma": NumericArraySpec(())},
         )
         assert repr(condition_on(kernel, {"beta": 0.5})) == (
-            "ConditionalDistribution('glm', component='y', fixed=('beta',), given=('sigma',))"
+            "ConditionalDistribution('y', given=('sigma',), label='glm', fixed=('beta',))"
         )
 
     def test_a_posterior_reads_apart_from_its_atoms_law(self):
-        """The fixed paths come first when no component shows, so a posterior differs."""
+        """The fixed paths follow the call, so a posterior differs from its atoms' law."""
         likelihood = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
         )
@@ -223,9 +257,8 @@ class TestDistributions:
         with workflow_run(seed=0):
             posterior = condition_on(model, {"y": 0.5})
         text = repr(posterior)
-        assert text.startswith(
-            "EmpiricalDistribution(\n    'model',\n    fixed=('y',),\n    atoms="
-        )
+        assert text.startswith("EmpiricalDistribution(\n    atoms=")
+        assert text.endswith("    label='model',\n    fixed=('y',),\n)")
         assert "fixed=" not in repr(EmpiricalDistribution(posterior.atoms, label="model"))
 
     def test_a_law_that_holds_nothing_fixed_shows_no_fixed_item(self):
@@ -236,37 +269,38 @@ class TestDistributions:
             return Normal("y", mu, 1.0)
 
         kernel = conditional_distribution(y_given_mu, given_spec={"mu": NumericArraySpec(())})
-        assert repr(kernel) == (
-            "ConditionalDistribution('y_given_mu', component='y', given=('mu',))"
-        )
+        assert repr(kernel) == ("ConditionalDistribution('y', given=('mu',), label='y_given_mu')")
 
     def test_a_whole_term_event_shows_its_component_and_no_declaration(self):
         law = Normal("beta", 0.0, 1.0, label="prior")
-        assert "component='beta'" in repr(law)
+        assert repr(law).startswith("Normal('beta', ")
         assert "event_spec=" not in repr(law)
 
-    def test_a_field_view_reads_as_a_field_view_at_its_path(self):
-        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
-        assert repr(joint["a"]) == "FieldView('a', path='a')"
-        assert repr(joint.with_label("model")[("b", "a")]) == "FieldView('b·a', path=('b', 'a'))"
+    def test_a_field_view_reads_as_a_call_of_its_constructor(self):
+        joint = Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0)
+        nested = repr(joint).replace("\n", "\n    ")
+        assert repr(joint["a"]) == f"FieldView(\n    {nested},\n    path='a',\n)"
+        assert repr(joint["a"].with_label("x")) == repr(joint["a"]) + ".with_label('x')"
 
     def test_a_regrouped_rename_reads_as_a_factored_joint(self):
         joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
         renamed = repr(joint.with_path_names({"a": "g/a"}))
-        assert renamed.startswith("FactoredMultivariateGaussian(\n    'a·b',\n    factors=(")
+        assert renamed.startswith("FactoredMultivariateGaussian(\n    factors=(")
+        assert "label='a·b'" not in renamed
         assert "_Renamed" not in renamed
 
     def test_an_empirical_law_reads_by_its_atoms(self):
         law = EmpiricalDistribution(jnp.arange(5.0), component="e", label="draws")
-        assert repr(law).startswith(
-            "EmpiricalDistribution(\n    'draws',\n    component='e',\n    atoms=NumericArrayBatch("
-        )
+        assert repr(law).startswith("EmpiricalDistribution(\n    atoms=NumericArrayBatch(")
+        assert repr(law).endswith("    component='e',\n    label='draws',\n)")
 
     def test_a_renamed_empirical_law_reads_by_its_renamed_atoms(self):
         renamed = EmpiricalDistribution(_two_fields(), label="e").with_path_names({"a": "g/a"})
         assert repr(renamed) == (
-            "EmpiricalDistribution('e', atoms=NumericRecordBatch('rows', levels={'row': 2}, "
-            "fields=('b', 'g/a')))"
+            "EmpiricalDistribution(\n"
+            "    atoms=NumericRecordBatch('rows', levels={'row': 2}, fields=('b', 'g/a')),\n"
+            "    label='e',\n"
+            ")"
         )
 
     def test_a_rename_that_holds_its_law_reads_as_that_law_renamed(self):
@@ -286,20 +320,121 @@ class TestDistributions:
         )
         joint = likelihood * Normal("a", 0.0, 1.0, label="a")
         reordered = repr(joint._marginal(("a", "y")))
-        assert reordered.startswith("FactoredDistribution(\n    'y·a',\n    factors=(")
+        assert reordered.startswith("FactoredDistribution(\n    factors=(")
+        assert "label='y·a'" not in reordered
         assert reordered.index("a=NumericArraySpec") < reordered.index("y=NumericArraySpec")
 
     def test_a_marginal_in_another_product_order_reads_as_that_product(self):
         joint = Normal("a", 0.0, 1.0) * Gamma("b", 2.0, 1.0)
         assert repr(joint._marginal(("b", "a"))) == (
             "FactoredDistribution(\n"
-            "    'Gamma·Normal',\n"
-            "    factors=(\n"
-            "        Gamma(component='b', concentration=2.0, rate=1.0),\n"
-            "        Normal(component='a', loc=0.0, scale=1.0),\n"
-            "    ),\n"
+            "    factors=(Gamma('b', concentration=2.0, rate=1.0), Normal('a', loc=0.0, scale=1.0)),\n"
             ")"
         )
+
+
+#: One law of each catalog family with a constructor-call repr, labeled so the label reads too.
+_EVALUABLE = {
+    "Normal": lambda: Normal("x", 0.0, 1.0, label="prior"),
+    "Beta": lambda: probpipe.Beta("x", 2.0, 3.0, label="prior"),
+    "Gamma": lambda: Gamma("x", 2.0, 1.0, label="prior"),
+    "InverseGamma": lambda: probpipe.InverseGamma("x", 2.0, 1.0, label="prior"),
+    "Exponential": lambda: probpipe.Exponential("x", 1.0, label="prior"),
+    "LogNormal": lambda: probpipe.LogNormal("x", 0.0, 1.0, label="prior"),
+    "StudentT": lambda: probpipe.StudentT("x", 3.0, 0.0, 1.0, label="prior"),
+    "Uniform": lambda: probpipe.Uniform("x", -1.0, 2.0, label="prior"),
+    "Cauchy": lambda: probpipe.Cauchy("x", 0.0, 1.0, label="prior"),
+    "Laplace": lambda: probpipe.Laplace("x", 0.0, 1.0, label="prior"),
+    "HalfNormal": lambda: probpipe.HalfNormal("x", 1.0, label="prior"),
+    "HalfCauchy": lambda: probpipe.HalfCauchy("x", 0.5, 1.0, label="prior"),
+    "Pareto": lambda: probpipe.Pareto("x", 2.0, 1.5, label="prior"),
+    "TruncatedNormal": lambda: probpipe.TruncatedNormal("x", 0.0, 1.0, -1.0, 1.0, label="prior"),
+    "Bernoulli": lambda: probpipe.Bernoulli("x", probs=0.3, label="prior"),
+    "Binomial": lambda: probpipe.Binomial("x", 5, probs=0.3, label="prior"),
+    "Poisson": lambda: probpipe.Poisson("x", 2.0, label="prior"),
+    "Categorical": lambda: probpipe.Categorical("x", probs=[0.2, 0.3, 0.5], label="prior"),
+    "NegativeBinomial": lambda: probpipe.NegativeBinomial("x", 5.0, probs=0.3, label="prior"),
+    "MultivariateNormal": lambda: probpipe.MultivariateNormal(
+        "x", jnp.zeros(2), cov=jnp.array([[2.0, 0.5], [0.5, 1.0]]), label="prior"
+    ),
+    "Dirichlet": lambda: probpipe.Dirichlet("x", jnp.ones(3), label="prior"),
+    "Multinomial": lambda: probpipe.Multinomial(
+        "x", 4.0, probs=jnp.array([0.2, 0.3, 0.5]), label="prior"
+    ),
+    "Wishart": lambda: probpipe.Wishart("x", 4.0, scale_tril=jnp.eye(2), label="prior"),
+    "VonMisesFisher": lambda: probpipe.VonMisesFisher(
+        "x", jnp.array([0.0, 1.0]), 2.0, label="prior"
+    ),
+    "MixtureDistribution": lambda: MixtureDistribution(
+        [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], jnp.array([0.25, 0.75]), label="mix"
+    ),
+    "KDEDistribution": lambda: KDEDistribution(
+        jnp.array([0.0, 1.0, 3.0]), 0.5, component="x", label="prior"
+    ),
+    "KDEDistribution under a rule": lambda: KDEDistribution(
+        jnp.array([0.0, 1.0, 3.0]), weights=jnp.array([0.5, 0.25, 0.25]), component="x"
+    ),
+}
+
+
+def _namespace() -> dict:
+    """The public names of ``probpipe`` and its distribution packages, in which a repr evaluates."""
+    modules = (probpipe, probpipe.distributions, probpipe.families)
+    return {name: getattr(module, name) for module in modules for name in module.__all__}
+
+
+@pytest.mark.parametrize("make", list(_EVALUABLE.values()), ids=list(_EVALUABLE))
+def test_the_repr_of_a_law_that_holds_nothing_fixed_rebuilds_it(make):
+    """``eval(repr(d))`` builds a law of the same class, label, and parameters (II.4)."""
+    law = make()
+    rebuilt = eval(repr(law), _namespace())
+    assert type(rebuilt) is type(law)
+    assert (rebuilt.label, rebuilt.event_spec) == (law.label, law.event_spec)
+    assert repr(rebuilt) == repr(law)
+
+
+def test_the_repr_of_a_law_that_holds_paths_fixed_follows_the_call_with_them():
+    kernel = conditional_distribution(
+        lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
+    )
+    law = condition_on(kernel, {"mu": 0.5})
+    call = "Normal('y', loc=0.5, scale=1.0, label='lik')"
+    assert repr(law) == call[:-1] + ", fixed=('mu',))"
+    assert repr(eval(call, {"Normal": Normal})) == call
+
+
+def _product() -> probpipe.Distribution:
+    return Normal("y", 0.0, 1.0, label="lik") * Gamma("mu", 2.0, 1.0, label="prior")
+
+
+def _mixture() -> MixtureDistribution:
+    return MixtureDistribution(
+        [Normal("x", 0.0, 1.0, label="a"), Normal("x", 1.0, 2.0, label="b")],
+        jnp.array([0.25, 0.75]),
+    )
+
+
+class TestADerivedLabel:
+    """A label the constructor derives is left out, so the rebuilt law derives it again."""
+
+    @pytest.mark.parametrize(
+        ("make", "notation"),
+        [(_product, "lik(y)·prior(mu)"), (_mixture, "mixture([a(x), b(x)])")],
+        ids=["product", "mixture"],
+    )
+    def test_the_rebuilt_law_has_the_same_notation(self, make, notation):
+        law = make()
+        assert f"label={law.label!r}" not in repr(law)
+        rebuilt = eval(repr(law), _namespace())
+        assert (rebuilt.notation, law.notation) == (notation, notation)
+        assert rebuilt.label == law.label
+
+    @pytest.mark.parametrize("make", [_product, _mixture], ids=["product", "mixture"])
+    def test_an_alias_of_a_derived_law_is_shown(self, make):
+        law = make().with_label("model")
+        assert repr(law).endswith("    label='model',\n)")
+        rebuilt = eval(repr(law), _namespace())
+        assert (rebuilt.label, rebuilt.notation) == ("model", law.notation)
 
 
 class TestFunctionsAndOperators:
@@ -307,9 +442,12 @@ class TestFunctionsAndOperators:
         def predict(theta, x):
             return x * theta
 
-        assert repr(Function("predict", predict)) == (
-            "Function('predict', parameters=('theta', 'x'))"
-        )
+        assert repr(
+            Function(
+                predict,
+                label="predict",
+            )
+        ) == ("Function('predict', parameters=('theta', 'x'))")
 
     def test_a_composite_operator_shows_its_operands(self):
         product = DenseLinOp(jnp.eye(2)) @ DiagonalLinOp(jnp.array([1.0, 2.0]))

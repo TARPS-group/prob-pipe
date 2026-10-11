@@ -17,6 +17,7 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    OutputSpec,
     function,
     workflow_run,
 )
@@ -96,8 +97,18 @@ class TestTheEngine:
         def misaligned():
             scalar = NumericArraySpec(())
             return (
-                NumericArrayBatch("x", jnp.arange(2.0), "row", element_spec=scalar),
-                NumericArrayBatch("y", jnp.arange(3.0), "row", element_spec=scalar),
+                NumericArrayBatch(
+                    jnp.arange(2.0),
+                    "row",
+                    element_spec=scalar,
+                    label="x",
+                ),
+                NumericArrayBatch(
+                    jnp.arange(3.0),
+                    "row",
+                    element_spec=scalar,
+                    label="y",
+                ),
             )
 
         unrestricted = error_of(lambda: add(*misaligned()))
@@ -124,7 +135,11 @@ class TestCheck:
         assert calls == []
 
     def test_check_causes_no_random_event(self):
-        @function(n_broadcast_samples=8, dispatch="sequential")
+        @function(
+            n_broadcast_samples=8,
+            dispatch="sequential",
+            output_spec=OutputSpec(identity=None),
+        )
         def identity(x):
             return x
 

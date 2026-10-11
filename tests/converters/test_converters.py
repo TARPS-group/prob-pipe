@@ -7,6 +7,8 @@ density estimate approximately; every conversion carries the source's event
 declaration and records the converter in the result's provenance.
 """
 
+import re
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -153,6 +155,36 @@ class TestMomentMatching:
         assert result.label == "g"
         assert list(result.event_spec.components) == ["theta"]
 
+    @pytest.mark.parametrize(
+        ("target", "notation"),
+        [
+            (Normal, "Normal(g)"),
+            (EmpiricalDistribution, "p(g)"),
+            (KDEDistribution, "KDEDistribution(g)"),
+        ],
+    )
+    def test_a_source_under_its_default_label_converts_under_the_targets(self, target, notation):
+        """The default label names the source's class, so the result names the target's."""
+        with workflow_run(seed=0):
+            result = convert.with_options(method_options={"num_samples": 200})(
+                Laplace("g", 9.0, 1.0), target
+            )
+            labeled = convert.with_options(method_options={"num_samples": 200})(
+                Laplace("g", 9.0, 1.0, label="lp"), target
+            )
+        assert str(result) == notation
+        assert str(labeled) == "lp(g)"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            Laplace("g", 9.0, 1.0, label="Laplace"),
+            Laplace("g", 9.0, 1.0).with_label("Laplace"),
+        ],
+    )
+    def test_an_explicit_alias_equal_to_the_family_name_is_preserved(self, source):
+        assert convert(source, Normal).notation == "Laplace(g)"
+
     def test_support_mismatch_raises_by_default(self):
         """A fit to a family on another support is infeasible at check, before any fitting."""
         n = Normal("x", loc=0.5, scale=0.1)
@@ -230,7 +262,12 @@ class TestARecordSource:
     def _posterior() -> EmpiricalDistribution:
         lam = jnp.array([2.2, 2.5, 2.7, 2.4])
         spec = NumericRecordSpec(lam=NumericArraySpec((), lam.dtype))
-        atoms = NumericRecordBatch("atoms", {"lam": lam}, "draw", element_spec=spec)
+        atoms = NumericRecordBatch(
+            {"lam": lam},
+            "draw",
+            element_spec=spec,
+            label="atoms",
+        )
         return EmpiricalDistribution(atoms, label="posterior")
 
     def test_a_record_law_does_not_convert_to_a_family(self):
@@ -882,13 +919,13 @@ class TestProtocolConversion:
         """An empirical law over a record converts to a KDE over its atoms."""
         n = 200
         rows = NumericRecordBatch(
-            "r",
             {
                 "mu": jax.random.normal(jax.random.PRNGKey(2), (n,)),
                 "log_sigma": jax.random.normal(jax.random.PRNGKey(3), (n,)),
             },
             "row",
             element_spec=NumericRecordSpec(mu=(), log_sigma=()),
+            label="r",
         )
         emp = EmpiricalDistribution(rows, label="emp")
         result = converter_registry.convert(emp, SupportsLogProb)
@@ -921,7 +958,14 @@ class TestProtocolConversion:
 
     def test_object_array_empirical_to_kde_rejected(self):
         """An empirical law over opaque atoms does not convert to a KDE, which smooths numbers."""
-        emp = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b", "c"], "site"), component="emp")
+        emp = EmpiricalDistribution(
+            OpaqueBatch(
+                ["a", "b", "c"],
+                "site",
+                label="labels",
+            ),
+            component="emp",
+        )
         with pytest.raises(ResolutionError, match="numeric"):
             converter_registry.convert(emp, KDEDistribution)
 
@@ -991,13 +1035,13 @@ class TestProtocolConversion:
         """An empirical law over a record converts to a KDE over that record's fields."""
         n = 200
         rows = NumericRecordBatch(
-            "r",
             {
                 "intercept": jax.random.normal(jax.random.PRNGKey(0), (n,)),
                 "slope": jax.random.normal(jax.random.PRNGKey(1), (n,)),
             },
             "row",
             element_spec=NumericRecordSpec(intercept=(), slope=()),
+            label="r",
         )
         emp = EmpiricalDistribution(rows, label="emp")
         result = converter_registry.convert(emp, SupportsLogProb)
@@ -1143,10 +1187,13 @@ class TestKDEDistribution:
     def test_repr(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (50,))
         kde = KDEDistribution(samples, component="test_kde")
-        assert repr(kde) == (
-            "KDEDistribution(\n"
-            "    component='test_kde',\n"
-            "    atoms=array(shape=(50,), dtype=float32),\n"
-            "    kernel=GaussianKernel,\n"
-            ")"
+        # Scott's rule selects the bandwidth, which the repr shows as the scale it chose.
+        assert re.fullmatch(
+            r"KDEDistribution\(\n"
+            r"    atoms=array\(shape=\(50,\), dtype=float32\),\n"
+            r"    bandwidth=0\.\d+,\n"
+            r"    kernel=GaussianKernel,\n"
+            r"    component='test_kde',\n"
+            r"\)",
+            repr(kde),
         )

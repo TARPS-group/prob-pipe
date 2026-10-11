@@ -177,9 +177,9 @@ class TestMultivariateNormal:
         assert repr(gaussian) == (
             "MultivariateNormal(\n"
             "    'test_gaussian',\n"
-            "    component='test_gaussian',\n"
             "    loc=[0.0, 1.0, 2.0],\n"
             "    cov=array(shape=(3, 3), dtype=float32),\n"
+            "    label='test_gaussian',\n"
             ")"
         )
 
@@ -566,7 +566,10 @@ class TestDistributionCoverageGaps:
 
         class Scalar(NumericDistribution):
             def __init__(self, label):
-                super().__init__(label, OutputSpec(**{label: NumericArraySpec((), "float32")}))
+                super().__init__(
+                    OutputSpec(**{label: NumericArraySpec((), "float32")}),
+                    label=label,
+                )
 
         s = Scalar("s")
         assert tuple(s.event_spec.components) == ("s",)

@@ -37,7 +37,11 @@ class _ShiftKernel(ConditionalDistribution):
     """``y | x ~ Normal(x, 1)``, the dependent factor of a joint."""
 
     def __init__(self):
-        super().__init__("y", {"x": NumericArraySpec(())}, OutputSpec(y=NumericArraySpec(())))
+        super().__init__(
+            {"x": NumericArraySpec(())},
+            OutputSpec(y=NumericArraySpec(())),
+            label="y",
+        )
 
     def _condition_on(self, given, /, **options):
         return Normal("y", given["x"], 1.0)
@@ -203,7 +207,14 @@ class TestSupportsMean:
 
     def test_empirical_generic_no_moments(self):
         """Non-numeric EmpiricalDistribution does not support moments."""
-        dist = EmpiricalDistribution(OpaqueBatch("labels", ["a", "b", "c"], "atom"), component="x")
+        dist = EmpiricalDistribution(
+            OpaqueBatch(
+                ["a", "b", "c"],
+                "atom",
+                label="labels",
+            ),
+            component="x",
+        )
         assert not isinstance(dist, SupportsMean)
         assert not isinstance(dist, SupportsVariance)
         assert not isinstance(dist, SupportsCovariance)
@@ -295,7 +306,10 @@ class TestFieldViewDynamicProtocols:
 
         class _LogProbOnlyParent(Distribution, SupportsLogProb):
             def __init__(self):
-                super().__init__("lp_only", RecordSpec(x=(), y=()))
+                super().__init__(
+                    RecordSpec(x=(), y=()),
+                    label="lp_only",
+                )
 
             def _log_prob(self, value):
                 import jax.numpy as jnp
@@ -380,10 +394,10 @@ class TestSampleReturnTypeConvention:
     def test_record_empirical_return_types(self):
         """An empirical law over records draws the raw form, the nested mapping of its leaves."""
         rows = NumericRecordBatch(
-            "rows",
             {"x": jnp.asarray([[1.0], [2.0], [3.0]]), "y": jnp.asarray([[0.5], [1.5], [2.5]])},
             "row",
             element_spec=NumericRecordSpec(x=(1,), y=(1,)),
+            label="rows",
         )
         law = EmpiricalDistribution(rows, label="joint")
         k = jax.random.PRNGKey(0)
@@ -436,7 +450,10 @@ class TestTransformedDistributionDynamicProtocols:
 
         class _LogProbOnly(NumericDistribution, SupportsLogProb):
             def __init__(self):
-                super().__init__("lpo", OutputSpec(lpo=NumericArraySpec((), "float32", real)))
+                super().__init__(
+                    OutputSpec(lpo=NumericArraySpec((), "float32", real)),
+                    label="lpo",
+                )
 
             def _log_prob(self, x):
                 return jnp.asarray(0.0)

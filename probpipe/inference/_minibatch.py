@@ -39,12 +39,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from math import prod
-from typing import Any
+from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
 
+from ..core._expression import Applied, Named
+from ..core._repr import type_name
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
+from ..core.tracked import TrackedTerm
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ..distributions._capabilities import (
     SupportsLogProb,
@@ -169,8 +172,6 @@ class MinibatchedDistribution(
 
     Parameters
     ----------
-    label : str
-        Distribution label.
     prior : SupportsLogProb
         Prior distribution over parameters; provides the log-prior
         term :math:`\\log p(\\theta)`.
@@ -185,6 +186,11 @@ class MinibatchedDistribution(
         along its leading axis, of length ``>= batch_size``.
     batch_size : int
         Minibatch size :math:`b`. Must be ``1 <= b <= len(data)``.
+    label : str, optional
+        The measure's label. By default the label is ``minibatch``, and the
+        notation shows the construction over the prior and the likelihood, as
+        ``minibatch(prior(beta), lik(y | beta), batch_size=40)``. A prior that
+        is not a ``Distribution`` has no label to show, so it requires one.
     with_replacement : bool, default False
         Sample minibatch indices with replacement. Default is
         without-replacement (uniform permutation, take first ``b``).
@@ -194,20 +200,24 @@ class MinibatchedDistribution(
     TypeError
         If ``prior`` is not :class:`~probpipe.SupportsLogProb`, or
         ``likelihood`` is not a kernel that scores a subset of its
-        observations.
+        observations, or ``label`` is ``None`` for a prior that is not a
+        ``Distribution``.
     ValueError
         If ``data`` has no leading axis, or ``batch_size`` is not in
         ``[1, len(data)]``.
     """
 
+    #: The constructor takes no component, so the repr shows none.
+    _repr_component: ClassVar[str | None] = None
+
     def __init__(
         self,
-        label: str,
         prior: SupportsLogProb,
         likelihood: ConditionalDistribution,
         data: ArrayLike,
         batch_size: int,
         *,
+        label: str | None = None,
         with_replacement: bool = False,
     ):
         if not isinstance(prior, SupportsLogProb):
@@ -222,6 +232,22 @@ class MinibatchedDistribution(
         if batch_size < 1 or batch_size > n:
             raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}")
 
+        expression = None
+        if label is None:
+            if not isinstance(prior, TrackedTerm):
+                raise TypeError(
+                    f"MinibatchedDistribution cannot take its label from a prior of type "
+                    f"{type_name(prior)}, which has no label; pass label="
+                )
+            expression = Applied(
+                "minibatch",
+                (
+                    prior._embedded_expression(),
+                    likelihood._embedded_expression(),
+                    Named(f"batch_size={int(batch_size)}"),
+                ),
+            )
+
         self._prior = prior
         self._likelihood = likelihood
         self._data = data
@@ -235,6 +261,8 @@ class MinibatchedDistribution(
 
         # A draw is one fixed-minibatch target, the measure's one component.
         super().__init__("target", DistributionSpec(self._draw_event_spec), label=label)
+        if expression is not None:
+            self._store_expression(expression)
 
     # -- read-only metadata --------------------------------------------------
 
@@ -356,7 +384,10 @@ class _FixedMinibatchDistribution(
             label = "fixed_minibatch_distribution"
         if event_spec is None:
             event_spec = _parameter_declaration(prior, "parameters")
-        super().__init__(label, event_spec)
+        super().__init__(
+            event_spec,
+            label=label,
+        )
         self._prior = prior
         self._likelihood = likelihood
         self._data = data
@@ -484,7 +515,10 @@ class _MinibatchLogProbAtPoint(Distribution, SupportsSampling):
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
         # A draw is one scalar log-density value.
-        super().__init__(f"{measure.label}@theta", OutputSpec(log_prob=NumericArraySpec(())))
+        super().__init__(
+            OutputSpec(log_prob=NumericArraySpec(())),
+            label=f"{measure.label}@theta",
+        )
         self._measure = measure
         self._theta = theta
 

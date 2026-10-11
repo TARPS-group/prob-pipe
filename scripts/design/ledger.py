@@ -162,7 +162,7 @@ def _function_keywords() -> dict[str, frozenset[str]]:
     """The keywords ``Function`` and ``function`` take: construction parameters and controls."""
     from probpipe import Function, function
 
-    controls = frozenset(Function("ledger", lambda: None).options)
+    controls = frozenset(Function(lambda: None, label="ledger").options)
 
     def parameters(callable_: object) -> frozenset[str]:
         keyword_kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)

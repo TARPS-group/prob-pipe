@@ -217,7 +217,10 @@ class TestWorkflowAdmission:
             called = True
             return value
 
-        workflow = Function(label="track_call", fn=track_call)
+        workflow = Function(
+            track_call,
+            label="track_call",
+        )
         with (
             patch("probpipe.functions._context._os_urandom") as urandom,
             workflow_run(),
@@ -233,7 +236,10 @@ class TestWorkflowAdmission:
 
     def test_unmanaged_copied_async_task_context_is_rejected(self):
         async def run_child():
-            workflow = Function(label="_identity", fn=_identity)
+            workflow = Function(
+                _identity,
+                label="_identity",
+            )
             with workflow_run(seed=7):
 
                 async def call_workflow():
@@ -290,7 +296,7 @@ class TestWorkflowAdmission:
 
     def test_managed_thread_work_item_can_enter_the_parent_run(self):
         def run_once():
-            workflow = Function(label="_nested_draw", fn=_nested_draw, dispatch="thread")
+            workflow = Function(_nested_draw, label="_nested_draw", dispatch="thread")
             with workflow_run(seed=7):
                 return float(workflow(1.0))
 
@@ -388,7 +394,7 @@ class TestWorkflowOccurrences:
         self,
         dispatch,
     ):
-        workflow = Function(label="_nested_seeded_draw", fn=_nested_seeded_draw, dispatch=dispatch)
+        workflow = Function(_nested_seeded_draw, label="_nested_seeded_draw", dispatch=dispatch)
         occurrence_paths = []
         original_key_for = _context._WorkflowInvocation.key_for
 

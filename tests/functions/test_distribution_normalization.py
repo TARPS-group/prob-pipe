@@ -157,7 +157,11 @@ class TestNormalizeDistributionValues:
         assert exc_info.value is error
 
     def test_a_batch_of_one_law_remains_a_batch(self):
-        batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
+        batch = DistributionBatch(
+            [Normal("x", 3.0, 1.0)],
+            "cell",
+            label="one_cell",
+        )
 
         normalized = normalize_distribution_values(
             values={"dist": batch},
@@ -187,7 +191,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = Function(label="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
+        wf = Function(mean_of_normal, label="mean_of_normal", dispatch="sequential")
 
         result = wf(dist=normal_external)
 
@@ -201,7 +205,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = Function(label="log_prob_at_zero", fn=log_prob_at_zero, dispatch="sequential")
+        wf = Function(log_prob_at_zero, label="log_prob_at_zero", dispatch="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -214,8 +218,12 @@ class TestHintedDistributionConversion:
 class TestDistributionBatchHandling:
     def test_a_batch_of_one_law_is_swept(self, mean_recorder):
         mean_of_normal, seen = mean_recorder
-        batch = DistributionBatch("one_cell", [Normal("x", 3.0, 1.0)], "cell")
-        wf = Function(label="mean_of_normal", fn=mean_of_normal, dispatch="sequential")
+        batch = DistributionBatch(
+            [Normal("x", 3.0, 1.0)],
+            "cell",
+            label="one_cell",
+        )
+        wf = Function(mean_of_normal, label="mean_of_normal", dispatch="sequential")
 
         result = wf(dist=batch)
 
@@ -236,10 +244,11 @@ class TestUnhintedExternalDistribution:
             return value * 2.0
 
         wf = Function(
+            double,
             label="double",
-            fn=double,
             n_broadcast_samples=8,
             dispatch="sequential",
+            output_spec=OutputSpec(double=None),
         )
         external = tfd.Normal(loc=1.0, scale=0.1)
 
@@ -274,10 +283,11 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         return x
 
     wrapped = Function(
+        consume,
         label="consume",
-        fn=consume,
         n_broadcast_samples=8,
         dispatch="sequential",
+        output_spec=OutputSpec(consume=None),
     )
 
     with workflow_run(seed=12):
@@ -301,7 +311,7 @@ def _law_claiming(capability: type) -> Distribution:
         (Distribution, capability),
         exec_body=lambda namespace: namespace.update(_condition_on=_unreachable),
     )
-    return law_type("law", OutputSpec(law=OpaqueSpec()))
+    return law_type(OutputSpec(law=OpaqueSpec()), label="law")
 
 
 @pytest.mark.parametrize("capability", DISTRIBUTION_HINT_PROTOCOLS, ids=lambda c: c.__name__)
@@ -314,7 +324,7 @@ def test_capability_annotation_passes_the_law_through(capability):
 
     consume.__annotations__ = {"law": capability}
     law = _law_claiming(capability)
-    wrapped = Function(label="consume", fn=consume, n_broadcast_samples=8, dispatch="sequential")
+    wrapped = Function(consume, label="consume", n_broadcast_samples=8, dispatch="sequential")
 
     wrapped(law)
 

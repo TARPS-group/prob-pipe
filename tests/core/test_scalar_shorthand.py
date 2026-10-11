@@ -58,26 +58,57 @@ _CASES = {
     "BatchSpec level, a name": _Case(lambda shape: BatchSpec(OpaqueSpec(), draw=shape), "S"),
     "BatchSpec level, a size": _Case(lambda shape: BatchSpec(OpaqueSpec(), draw=shape), 4),
     "NumericArrayBatch level_names": _Case(
-        lambda names: NumericArrayBatch("b", jnp.zeros(2), names), "draw", lambda b: b.spec
+        lambda names: NumericArrayBatch(
+            jnp.zeros(2),
+            names,
+            label="b",
+        ),
+        "draw",
+        lambda b: b.spec,
     ),
     "RecordBatch level_names": _Case(
-        lambda names: RecordBatch("b", {"x": _objects(2)}, names),
+        lambda names: RecordBatch(
+            {"x": _objects(2)},
+            names,
+            label="b",
+        ),
         "draw",
         lambda b: b.spec,
     ),
     "NumericRecordBatch level_names": _Case(
-        lambda names: NumericRecordBatch("b", {"x": jnp.zeros(2)}, names), "draw", lambda b: b.spec
+        lambda names: NumericRecordBatch(
+            {"x": jnp.zeros(2)},
+            names,
+            label="b",
+        ),
+        "draw",
+        lambda b: b.spec,
     ),
     "OpaqueBatch level_names": _Case(
-        lambda names: OpaqueBatch("b", _objects(2), names), "draw", lambda b: b.spec
+        lambda names: OpaqueBatch(
+            _objects(2),
+            names,
+            label="b",
+        ),
+        "draw",
+        lambda b: b.spec,
     ),
     "DistributionBatch level_names": _Case(
-        lambda names: DistributionBatch("b", [Normal("n", 0.0, 1.0), Normal("n", 1.0, 1.0)], names),
+        lambda names: DistributionBatch(
+            [Normal("n", 0.0, 1.0), Normal("n", 1.0, 1.0)],
+            names,
+            label="b",
+        ),
         "draw",
         lambda b: b.spec,
     ),
     "NumericArrayBatch axes_per_level": _Case(
-        lambda axes: NumericArrayBatch("b", jnp.zeros((2, 3)), "draw", axes_per_level=axes),
+        lambda axes: NumericArrayBatch(
+            jnp.zeros((2, 3)),
+            "draw",
+            axes_per_level=axes,
+            label="b",
+        ),
         2,
         lambda b: b.spec,
         (TypeError,) * 6,

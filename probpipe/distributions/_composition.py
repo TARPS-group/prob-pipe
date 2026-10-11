@@ -63,9 +63,15 @@ def _compose(
     operands = (left, right)
     label = _joined_label((left.label, right.label))
     if _factor_graph(operands).unmet is None:
-        joint = FactoredDistribution(label, operands)
+        joint = FactoredDistribution(
+            operands,
+            label=label,
+        )
     else:
-        joint = FactoredConditionalDistribution(label, operands)
+        joint = FactoredConditionalDistribution(
+            operands,
+            label=label,
+        )
     joint._store_expression(_product_of(operands))
     return joint
 
