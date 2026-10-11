@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, ClassVar
 
+import numpy as np
+
 from ..core._dispatch import Feasibility
 from ..core._record_spec import RecordSpec
-from ..core._spec_base import OpaqueSpec, TermSpec, _unify_specs
+from ..core._spec_base import NumericArraySpec, OpaqueSpec, TermSpec, _unify_specs
 from ..core.record import Record
 from ..distributions._capabilities import (
     _CONDITIONAL_TWINS,
@@ -30,6 +32,14 @@ def _bind_given_dims_from_spec(
         # An opaque declaration admits numeric values too. Their numeric spec
         # cannot establish their Python type; concrete binding checks that.
         return
+    if (
+        isinstance(expected, NumericArraySpec)
+        and isinstance(actual, OpaqueSpec)
+        and actual.type in (list, tuple)
+    ):
+        # Sequence payloads are opaque during planning. Concrete numeric
+        # binding checks their shape and dtype before the kernel runs.
+        return
     if isinstance(expected, RecordSpec) and isinstance(actual, RecordSpec):
         if expected.children.keys() != actual.children.keys():
             _unify_specs(expected, actual, bindings, path)
@@ -37,6 +47,15 @@ def _bind_given_dims_from_spec(
             _bind_given_dims_from_spec(spec, actual.children[name], bindings, f"{path}/{name}")
         return
     _unify_specs(expected, actual, bindings, path)
+
+
+def _bind_given_dims_from_value(
+    expected: TermSpec, value: Any, bindings: dict[str, int], path: str
+) -> None:
+    """Bind dimensions from numeric sequences without replacing the kernel input."""
+    if isinstance(expected, NumericArraySpec) and isinstance(value, (list, tuple)):
+        value = np.asarray(value)
+    expected._bind_dims_from_value(value, bindings, path)
 
 
 def _forward(method: str) -> Callable[..., Any]:

@@ -319,6 +319,28 @@ class TestConditionalOperations:
         np.testing.assert_allclose(mean(result), 2.0)
         assert kernel.calls
 
+    @pytest.mark.parametrize("sequence", [list, tuple])
+    def test_conditioning_preserves_numeric_sequence_inputs_for_the_kernel(self, sequence):
+        class SequenceKernel(ConditionalDistribution):
+            def __init__(self):
+                super().__init__(
+                    {"data": NumericArraySpec(("n",))},
+                    OutputSpec(y=NumericArraySpec(("n",))),
+                    label="sequence",
+                )
+                self.calls = []
+
+            def _condition_on(self, given, /, **kwargs):
+                self.calls.append(given)
+                return Normal("y", np.asarray(given["data"]), 1.0)
+
+        kernel = SequenceKernel()
+        data = sequence([1.0, 2.0, 3.0])
+        law = condition_on(kernel, {"data": data})
+        assert kernel.calls[0]["data"] is data
+        assert law.event_spec.spec.shape == (3,)
+        np.testing.assert_allclose(mean(law), [1.0, 2.0, 3.0], rtol=0.0, atol=0.0)
+
     @pytest.mark.parametrize("data_spec", [OpaqueSpec(), OpaqueSpec(type=np.ndarray)])
     def test_nested_opaque_slots_admit_numeric_values_at_binding(self, data_spec):
         kernel = _OpaqueSlots(data_spec)
