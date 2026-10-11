@@ -755,6 +755,30 @@ class TestByComponent:
         assert report.route == "monte_carlo"
         assert all(not info.method_name.startswith("by_component") for info in report.routes)
 
+    @pytest.mark.parametrize(
+        ("components", "expected_blocks"),
+        [
+            (("s0", "s1", "a", "b"), [["s0", "s1"], ["a"], ["b"]]),
+            (("a", "s0", "b", "s1"), [["a"], ["s0", "s1"], ["b"]]),
+            (("a", "b", "s0", "s1"), [["a"], ["b"], ["s0", "s1"]]),
+        ],
+    )
+    def test_blocks_follow_event_order_at_their_first_component(self, components, expected_blocks):
+        factors = {
+            "a": Gaussian("a", 1.0),
+            "b": Gaussian("b", 2.0),
+            "s0": Sampler("s0"),
+            "s1": Sampler("s1"),
+        }
+        law = functools.reduce(operator.mul, [factors[c] for c in components])
+        with workflow_run(seed=7):
+            result = mean.with_options(method="by_component", n_broadcast_samples=8)(law)
+
+        assert result.fields == tuple(f"mean({c})" for c in components)
+        assert [list(components) for components, _, _ in self._blocks(result)] == expected_blocks
+        np.testing.assert_allclose(_value(result["mean(a)"]), 1.0, atol=0, rtol=0)
+        np.testing.assert_allclose(_value(result["mean(b)"]), 2.0, atol=0, rtol=0)
+
     def test_a_seeded_workflow_reproduces_the_result(self):
         results = []
         for _ in range(2):

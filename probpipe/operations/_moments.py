@@ -738,8 +738,8 @@ class _ByComponent(_DelegatingRoute):
         exact = tuple(c for c in components if reports[c].feasible is True)
         if not exact:
             return _Partition((), Feasibility(False, f"no component has an exact {self.summary}"))
-        blocks = [_Block((c,), self._view_at(call, (c,)), reports[c]) for c in exact]
-        rest = tuple(c for c in components if c not in exact)
+        blocks = {c: _Block((c,), self._view_at(call, (c,)), reports[c]) for c in exact}
+        rest = tuple(c for c in components if c not in blocks)
         if rest:
             view = self._view_at(call, rest)
             remaining = self._resolve(call, view, exact_only)
@@ -747,10 +747,10 @@ class _ByComponent(_DelegatingRoute):
                 return _Partition((), Feasibility(None, pending=remaining.pending))
             if remaining.feasible is False:
                 return _Partition((), self._declined(call, exact, rest, exact_only))
-            blocks.append(_Block(rest, view, remaining))
-        blocks.sort(key=lambda block: components.index(block.components[0]))
-        exactness = all(block.report.exact is True for block in blocks)
-        return _Partition(tuple(blocks), PointReport(True, exact=exactness))
+            blocks[rest[0]] = _Block(rest, view, remaining)
+        ordered = tuple(blocks[c] for c in components if c in blocks)
+        exactness = all(block.report.exact is True for block in ordered)
+        return _Partition(ordered, PointReport(True, exact=exactness))
 
     def _declined(
         self, call: BoundCall, exact: tuple[str, ...], rest: tuple[str, ...], exact_only: bool
