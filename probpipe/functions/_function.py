@@ -710,6 +710,7 @@ def _run_call(
         concrete_output_spec = _resolution.lifted_declaration(
             function, values, controls, broadcast_plan
         )
+    _plan.require_empty_sweep_output(broadcast_plan, concrete_output_spec)
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
@@ -1388,6 +1389,9 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     ApplicabilityError
         If an argument's kind is not accepted, a condition fails, or the
         declarations conflict.
+    ValueError
+        If an empty sweep lacks a concrete output declaration after input
+        dimensions bind.
     ResolutionError
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
@@ -1431,6 +1435,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         if function.output_spec is not None
         else None
     )
+    _plan.require_empty_sweep_output(broadcast_plan, result)
     deferred = ()
     if result is None or result.spec is None:
         deferred = ("the result's type is completed from the returned value",)
@@ -1497,6 +1502,7 @@ def _check_routes(
         )
     finally:
         _call._CHECKING.reset(token)
+    _plan.require_empty_sweep_output(broadcast_plan, point.result)
     return _resolution.call_report(
         point, lifted=lifted, conversions=conversions, candidates=candidates
     )

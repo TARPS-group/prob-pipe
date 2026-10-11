@@ -175,10 +175,20 @@ def is_dependency_param(
     *,
     dependency_type: type,
 ) -> bool:
-    """Return whether a parameter annotation names a workflow dependency."""
+    """Whether an annotation names an experimental node dependency rather than a value kind.
+
+    A ``Function`` annotation names a value kind and follows ordinary lifting,
+    even though that kind also inherits the experimental node base.
+    """
+    from ._function_base import Function
+
     ann = info.hints.get(name)
     try:
-        return isinstance(ann, type) and issubclass(ann, dependency_type)
+        return (
+            isinstance(ann, type)
+            and issubclass(ann, dependency_type)
+            and not issubclass(ann, Function)
+        )
     except TypeError:
         return False
 
