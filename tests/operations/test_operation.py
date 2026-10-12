@@ -245,6 +245,98 @@ class TestDeclaration:
 # ---------------------------------------------------------------------------
 
 
+def _center_applies(d: Any) -> Any:
+    """The center has a route for the law."""
+    return center.check(d)
+
+
+def _doubled(body: Any = None, *, checked: bool = True) -> Any:
+    """A fresh derived operation ``doubled(d) = 2 * body(d)``, ``body`` being the raw center."""
+    inner = center.with_options(raw=True) if body is None else body
+    options = {"identity_check": _center_applies} if checked else {}
+
+    @operation(result=_event, registry=OperationRegistry(), **options)
+    def doubled(d: Distribution):
+        """Twice the center."""
+        return inner(d) * 2
+
+    return doubled
+
+
+class TestIdentityControls:
+    def test_exact_only_keeps_an_identity_whose_constituent_selects_an_exact_route(self):
+        doubled = _doubled()
+        result = doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
+        assert float(jnp.asarray(result)) == 3.0
+        metadata = result.provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("identity", True)
+
+    def test_exact_only_refuses_an_identity_whose_constituent_has_only_an_approximate_route(
+        self,
+    ):
+        view = _doubled().with_options(exact_only=True)
+        report = view.check(Sampler("s"))
+        assert report.feasible is False
+        assert "monte_carlo" not in [info.method_name for info in report.routes]
+        with pytest.raises(ResolutionError, match="exact_only"):
+            view(Sampler("s"))
+
+    def test_without_exact_only_the_identity_takes_its_constituents_approximate_route(self):
+        report = _doubled().check(Sampler("s"))
+        assert (report.feasible, report.route, report.exact) == (True, "identity", False)
+
+    def test_exact_only_excludes_an_identity_without_an_identity_check(self):
+        doubled = _doubled(checked=False)
+        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+        with pytest.raises(ResolutionError, match="exact_only"):
+            doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
+        with pytest.raises(ResolutionError, match="not exact"):
+            doubled.with_options(method="identity", exact_only=True)(Gaussian("g", 1.5))
+
+    def test_naming_the_identity_under_exact_only_keeps_a_checked_identity(self):
+        view = _doubled().with_options(method="identity", exact_only=True)
+        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_exact_only_restricts_a_constituent_that_sets_it_false(self):
+        doubled = _doubled(center.with_options(raw=True, exact_only=False))
+        with pytest.raises(ResolutionError, match="exact_only"):
+            doubled.with_options(exact_only=True)(Sampler("s"))
+
+    def test_the_sample_count_passes_to_the_constituent(self):
+        law = Sampler("s")
+        _doubled().with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_the_sample_count_passes_through_a_nested_derived_operation(self):
+        law = Sampler("s")
+        quadrupled = _doubled(_doubled().with_options(raw=True))
+        quadrupled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_a_sample_count_the_constituent_sets_wins(self):
+        law = Sampler("s")
+        doubled = _doubled(center.with_options(raw=True, n_broadcast_samples=40))
+        doubled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(40,)]
+
+    def test_method_does_not_pass_to_the_constituent(self):
+        view = _doubled().with_options(method="identity")
+        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_only_the_calls_the_identity_makes_inherit_the_controls(self):
+        law = Sampler("s")
+        middle = _toy(result=_event)
+
+        def run_center(call: BoundCall, result: OutputSpec | None) -> Any:
+            return center.with_options(raw=True)(call.operands["d"])
+
+        middle.fallback_route(
+            "via_center", check=lambda call, result: True, execute=run_center, exact=False
+        )
+        _doubled(middle.with_options(raw=True)).with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+
+
 class TestRoles:
     def test_roles_follow_the_annotations(self):
         @operation(result=_open, registry=OperationRegistry())

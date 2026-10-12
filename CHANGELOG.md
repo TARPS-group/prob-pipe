@@ -3315,6 +3315,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+  operations its identity calls.** `prob.with_options(exact_only=True)(Normal("x",
+  0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
+  density, because the `log_prob` that `prob` calls selects only exact routes.
+  `exact_only` still refuses a derived operation whose inner operation has only
+  an approximate route, and a derived operation declared without an
+  `identity_check`. A derived operation over `variance` called with
+  `n_broadcast_samples=5` used to draw the default 256 samples and now draws 5.
+  A control that the identity sets on an inner call wins, except `exact_only`,
+  which applies when either call sets it. `method`, `method_options`, and `raw`
+  stay each operation's own.
 - **A SciPy distribution with a location or scale its family does not hold
   converts to the same law.** The `scipy` converter used to read a `beta`'s
   shape arguments alone and drop the location of a `gamma`, `expon`, or

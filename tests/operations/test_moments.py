@@ -50,10 +50,11 @@ from probpipe.distributions._distribution import Distribution
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.functions import _rules
 from probpipe.linalg import LinOp
-from probpipe.operations import RouteSource
+from probpipe.operations import OperationRegistry, RouteSource, operation
 from probpipe.operations._evaluate import evaluate
 from probpipe.operations._moments import (
     _ByComponent,
+    _variance_result,
     cov,
     expectation,
     mean,
@@ -206,8 +207,8 @@ def quadrature(monkeypatch):
     ):
         registry.register(rule)
     monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
-    for operation in (expectation, evaluate):
-        (route,) = [r for r in operation.routes if r.name == "evaluation_rules"]
+    for owner in (expectation, evaluate):
+        (route,) = [r for r in owner.routes if r.name == "evaluation_rules"]
         monkeypatch.setattr(route, "registry", registry)
     return registry
 
@@ -343,6 +344,33 @@ class TestVariance:
     def test_a_measure_valued_event_has_no_variance(self):
         with pytest.raises(ApplicabilityError, match="event-typed variance"):
             variance(Measure("m"))
+
+
+def _variance_applies(d: Any) -> Any:
+    """``variance`` has a route for the law."""
+    return variance.check(d)
+
+
+@operation(result=_variance_result, identity_check=_variance_applies, registry=OperationRegistry())
+def _spread(d: Distribution):
+    """The square root of the variance, a toy derived operation."""
+    return jnp.sqrt(variance.with_options(raw=True)(d))
+
+
+class TestADerivedOperationOverVariance:
+    def test_the_sample_count_reaches_the_variance_fallback(self):
+        law = Sampler("s", 0.0, 2.0)
+        with workflow_run(seed=3):
+            _spread.with_options(n_broadcast_samples=5)(law)
+        assert law.shapes == [(5,)]
+
+    def test_exact_only_takes_the_closed_form_variance(self):
+        result = _spread.with_options(exact_only=True)(Gaussian("g", 0.0, 2.0))
+        assert (_value(result), result.provenance.metadata["exact"]) == (2.0, True)
+
+    def test_exact_only_refuses_a_law_whose_variance_is_only_approximate(self):
+        with pytest.raises(ResolutionError, match="exact_only"):
+            _spread.with_options(exact_only=True)(Sampler("s"))
 
 
 class TestCov:
