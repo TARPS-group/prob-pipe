@@ -1,0 +1,150 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds both distributions, checks them, and publishes
+# them to PyPI. A manual run builds and checks them, and it publishes them to
+# TestPyPI when its `testpypi` input is set. CONTRIBUTING.md § Releasing lists
+# the steps of a release and the one-time PyPI and GitHub setup.
+#
+# Publishing uses PyPI Trusted Publishing, so the repository stores no PyPI
+# token. Each PyPI project trusts this workflow file in the `pypi` environment.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      testpypi:
+        description: "Publish the built distributions to TestPyPI"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      # The tag, both pyproject.toml versions, and the metapackage's exact
+      # probpipe-core pins carry one version.
+      - name: Check the versions
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          uv run --no-project python - <<'EOF'
+          import os
+          import re
+          import sys
+          import tomllib
+
+          core = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          meta = tomllib.load(open("packaging/probpipe/pyproject.toml", "rb"))["project"]
+          version = core["version"]
+          errors = []
+          if meta["version"] != version:
+              errors.append(f"probpipe {meta['version']} differs from probpipe-core {version}")
+          pins = [req for req in meta["dependencies"] if req.startswith("probpipe-core")]
+          exact = re.compile(rf"==\s*{re.escape(version)}\s*(;|$)")
+          errors += [f"{req!r} does not pin probpipe-core=={version}" for req in pins if not exact.search(req)]
+          if os.environ["REF_TYPE"] == "tag" and os.environ["TAG"] != f"v{version}":
+              errors.append(f"tag {os.environ['TAG']} differs from v{version}")
+          print("version:", version)
+          for error in errors:
+              print("error:", error)
+          sys.exit(1 if errors else 0)
+          EOF
+
+      - name: Build probpipe-core
+        run: uv build --out-dir "$GITHUB_WORKSPACE"/dist/core
+
+      - name: Build probpipe
+        run: uv build packaging/probpipe --out-dir "$GITHUB_WORKSPACE"/dist/meta
+
+      - name: Check the distributions with twine
+        run: uvx twine check --strict dist/core/* dist/meta/*
+
+      # Installing from outside the checkout imports the installed wheel, not
+      # the source tree. The metapackage resolves its probpipe-core pin from
+      # the wheel just built.
+      - name: Install the wheels into a fresh environment
+        working-directory: ${{ runner.temp }}
+        run: |
+          uv venv smoke --python 3.12
+          uv pip install --python smoke "$GITHUB_WORKSPACE"/dist/core/*.whl
+          smoke/bin/python -c "import probpipe; print('probpipe-core version:', probpipe.__version__)"
+          uv pip install --python smoke --find-links "$GITHUB_WORKSPACE"/dist/core "$GITHUB_WORKSPACE"/dist/meta/*.whl
+          smoke/bin/python -c "import probpipe, pymc, nutpie, pyabc; print('probpipe version:', probpipe.__version__)"
+          smoke/bin/python -c "from importlib.metadata import version; print('bayesflow version:', version('bayesflow'))"
+
+      - name: Upload the distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/probpipe/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # probpipe pins probpipe-core exactly, so probpipe-core goes first.
+      - name: Publish probpipe-core
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/core/
+
+      - name: Publish probpipe
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/meta/
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch' && inputs.testpypi
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/probpipe/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish probpipe-core to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/core/
+          skip-existing: true
+
+      - name: Publish probpipe to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/meta/
+          skip-existing: true
