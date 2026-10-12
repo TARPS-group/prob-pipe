@@ -16,8 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product as cartesian_product
 from math import prod
-from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, Literal
 
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
@@ -592,13 +591,13 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     so family membership alone would deliver a batch whole to a body that
     declared it takes something else, silently skipping the sweep.
     """
-    origin = get_origin(expected)
-    if origin in (Union, UnionType):
-        # An optional container annotation still names the container: the value
-        # answers whichever arm it satisfies, and ``None`` answers none.
-        return any(_value_matches_hint(value, arm) for arm in get_args(expected))
-    base = origin or expected
-    try:
-        return isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base)
-    except TypeError:
-        return False
+    # An optional container annotation still names the container, and the value
+    # answers whichever arm it satisfies.
+    for arm in _normalization._arms(expected):
+        base = _normalization._hint_class(arm)
+        try:
+            if isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base):
+                return True
+        except TypeError:
+            continue
+    return False

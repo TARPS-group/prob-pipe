@@ -48,6 +48,14 @@ from ..distributions._conversion import ConversionInfo, converter_registry
 from ..distributions._distribution import Distribution, NumericDistribution
 from ..values import _binding
 
+try:
+    import typing_extensions
+except ImportError:
+    _TYPE_ALIAS_CLASSES: tuple[type, ...] = (TypeAliasType,)
+else:
+    # Before Python 3.14, typing_extensions defines a TypeAliasType class of its own.
+    _TYPE_ALIAS_CLASSES = (TypeAliasType, typing_extensions.TypeAliasType)
+
 DISTRIBUTION_HINT_PROTOCOLS: tuple[type, ...] = (
     SupportsExpectation,
     SupportsSampling,
@@ -69,21 +77,13 @@ def is_distribution_hint(expected: Any) -> bool:
     """Return whether a type hint asks for a distribution object.
 
     A union asks for one when any of its arms does, so an optional
-    distribution annotation consumes the distribution as the plain one does.
+    distribution annotation consumes the distribution as the plain one does,
+    and a type alias asks for what its value asks for.
     """
-    if get_origin(expected) in (Union, UnionType):
-        return any(is_distribution_hint(arm) for arm in get_args(expected))
-    expected_type = _hint_class(expected)
-    try:
-        if (
-            expected_type is not None
-            and isinstance(expected_type, type)
-            and issubclass(expected_type, Distribution)
-        ):
-            return True
-    except TypeError:
-        pass
-    return expected in DISTRIBUTION_HINT_PROTOCOLS
+    return any(
+        _is_concrete_distribution_hint(arm) or arm in DISTRIBUTION_HINT_PROTOCOLS
+        for arm in _arms(expected)
+    )
 
 
 def normalize_distribution_values(
@@ -245,30 +245,62 @@ def _entry(
     return method, exact_only, options
 
 
-def _arms(expected: Any) -> tuple[Any, ...]:
-    """The arms of a union annotation other than ``None``, or the annotation itself."""
-    if get_origin(expected) in (Union, UnionType):
-        return tuple(arm for arm in get_args(expected) if arm is not type(None))
-    return (expected,)
+def _resolved(hint: Any, expanded: set[Any] | None = None) -> Any:
+    """The annotation *hint* stands for, with its type aliases and ``Annotated`` wrappers resolved.
+
+    A type alias stands for its value, and a parametrized alias for the value of
+    the alias it parametrizes. ``Annotated[T, ...]`` stands for ``T``, because
+    the hints of a partial or a callable object keep the metadata that
+    ``get_type_hints`` removes from a function's hints. Resolution adds each
+    alias it expands to *expanded* and stops at an alias already in
+    *expanded*, which ends a recursive alias. An alias whose value raises
+    ``NameError`` stays unresolved, as one does whose value names a class
+    imported only under ``TYPE_CHECKING``.
+    """
+    expanded = set() if expanded is None else expanded
+    origin = get_origin(hint)
+    if origin is Annotated:
+        return _resolved(get_args(hint)[0], expanded)
+    alias = hint if isinstance(hint, _TYPE_ALIAS_CLASSES) else origin
+    if not isinstance(alias, _TYPE_ALIAS_CLASSES) or alias in expanded:
+        return hint
+    try:
+        value = alias.__value__
+    except NameError:
+        return hint
+    expanded.add(alias)
+    return _resolved(value, expanded)
+
+
+def _arms(expected: Any, expanded: set[Any] | None = None) -> tuple[Any, ...]:
+    """The arms of a union annotation other than ``None``, or the annotation itself, each resolved.
+
+    The annotation resolves by :func:`_resolved` before a union splits, and each
+    arm resolves and splits in turn, so an alias whose value is a union names
+    the arms of that union. An alias that resolving an enclosing union expanded
+    is in *expanded* and stays unresolved.
+    """
+    expanded = set() if expanded is None else expanded
+    hint = _resolved(expected, expanded)
+    if get_origin(hint) not in (Union, UnionType):
+        return (hint,)
+    return tuple(
+        named
+        for arm in get_args(hint)
+        if arm is not type(None)
+        for named in _arms(arm, set(expanded))
+    )
 
 
 def _hint_class(arm: Any) -> Any:
-    """The class an annotation names, resolving type aliases and aliased origins.
+    """The class an annotation names once :func:`_resolved` resolves it, or the resolved annotation.
 
-    A type alias names the class of its value, so an array alias
-    parametrized by a dtype names the array class. An ``Annotated`` hint
-    names the class of the annotation it wraps, since a partial or a callable
-    object presents its hints without ``get_type_hints`` removing the
-    metadata. Other annotations retain their existing class or value.
+    A parametrized annotation names the class it parametrizes, so an array alias
+    parametrized by a dtype names the array class.
     """
-    if isinstance(arm, TypeAliasType):
-        return _hint_class(arm.__value__)
-    origin = get_origin(arm)
-    if origin is Annotated:
-        return _hint_class(get_args(arm)[0])
-    if isinstance(origin, TypeAliasType):
-        return _hint_class(origin.__value__)
-    return origin if isinstance(origin, type) else arm
+    hint = _resolved(arm)
+    origin = get_origin(hint)
+    return origin if isinstance(origin, type) else hint
 
 
 def _convert_hinted_distribution(

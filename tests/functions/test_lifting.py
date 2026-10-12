@@ -17,7 +17,7 @@ is an instance of the class.
 from __future__ import annotations
 
 import functools
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import jax
 import jax.numpy as jnp
@@ -45,9 +45,20 @@ from probpipe.distributions._capabilities import SupportsLogProb
 
 from ._design_helpers import atom_leaves, error_of, one_field_law, record_law, standard_normal
 
+if TYPE_CHECKING:
+    from pandas import DataFrame
+
 SCALAR = NumericArraySpec(())
+# NumPy 2.5 defines NDArray as a type alias, and _ArrayAlias stands in for it
+# because CI does not install NumPy 2.5.
 type _ArrayAlias[Scalar: np.generic] = np.ndarray[Any, np.dtype[Scalar]]
+type _OptionalArrayAlias = np.ndarray | None
 type _DistributionAlias[Event] = Distribution
+type _OptionalNormalAlias = Normal | None
+type _CapabilityAlias = SupportsLogProb
+type _BatchAlias = NumericArrayBatch
+type _UnresolvedAlias = DataFrame
+type _RecursiveAlias = _RecursiveAlias | None
 
 
 def _batch(values, level: str = "row") -> NumericArrayBatch:
@@ -110,8 +121,24 @@ class TestTheTrigger:
 
     @pytest.mark.parametrize(
         "annotation",
-        [Distribution, Normal, SupportsLogProb, Distribution | None, _DistributionAlias[float]],
-        ids=["Distribution", "subclass", "capability", "optional", "aliased-origin"],
+        [
+            Distribution,
+            Normal,
+            SupportsLogProb,
+            Distribution | None,
+            _DistributionAlias[float],
+            _OptionalNormalAlias,
+            _CapabilityAlias,
+        ],
+        ids=[
+            "Distribution",
+            "subclass",
+            "capability",
+            "optional",
+            "aliased-origin",
+            "aliased-union",
+            "aliased-capability",
+        ],
     )
     def test_a_parameter_that_names_a_distribution_consumes_it(self, annotation):
         seen = []
@@ -146,13 +173,15 @@ class TestTheTrigger:
         assert result.level_names == ("row",)
         np.testing.assert_allclose(np.asarray(result.values), [2.0, 4.0, 6.0])
 
-    def test_a_parameter_that_names_the_batch_consumes_it(self):
+    @pytest.mark.parametrize("annotation", [NumericArrayBatch, _BatchAlias], ids=["class", "alias"])
+    def test_a_parameter_that_names_the_batch_consumes_it(self, annotation):
         seen = []
 
-        def consume(x: NumericArrayBatch):
+        def consume(x):
             seen.append(x)
             return 0.0
 
+        consume.__annotations__ = {"x": annotation}
         rows = _batch([1.0, 2.0])
         Function(
             consume,
@@ -376,16 +405,18 @@ class TestARawClassAnnotation:
             (_ArrayAlias[np.float64], np.arange(3.0)),
             (_ArrayAlias[np.float64] | None, np.arange(3.0)),
             (Annotated[_ArrayAlias[np.float64], "array"], np.arange(3.0)),
+            (_OptionalArrayAlias, np.arange(3.0)),
         ],
         ids=[
             "optional",
             "numpy",
             "bare-numpy",
             "bare-alias",
-            "legacy",
+            "ndarray-generic",
             "alias",
             "optional-alias",
             "annotated-alias",
+            "aliased-union",
         ],
     )
     def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
@@ -397,6 +428,17 @@ class TestARawClassAnnotation:
                 label="x",
             )
         )
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_a_typing_extensions_alias_names_the_class_of_its_value(self):
+        # Before Python 3.14, typing_extensions defines a TypeAliasType class of its own.
+        typing_extensions = pytest.importorskip("typing_extensions")
+        alias = typing_extensions.TypeAliasType("Array", np.ndarray)
+        value = np.arange(3.0)
+        wrapped, seen = _receiving({"x": alias})
+
+        wrapped(NumericArray(value, label="x"))
 
         assert len(seen) == 1 and seen[0] is value
 
@@ -455,8 +497,24 @@ class TestARawClassAnnotation:
 
     @pytest.mark.parametrize(
         "annotations",
-        [{}, {"x": Any}, {"x": NumericArray}, {"x": object}, {"x": np.ndarray}],
-        ids=["unannotated", "Any", "NumericArray", "object", "ndarray"],
+        [
+            {},
+            {"x": Any},
+            {"x": NumericArray},
+            {"x": object},
+            {"x": np.ndarray},
+            {"x": _UnresolvedAlias},
+            {"x": _RecursiveAlias},
+        ],
+        ids=[
+            "unannotated",
+            "Any",
+            "NumericArray",
+            "object",
+            "ndarray",
+            "unresolved-alias",
+            "recursive-alias",
+        ],
     )
     def test_any_other_argument_arrives_as_it_is(self, annotations):
         argument = NumericArray(

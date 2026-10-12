@@ -41,6 +41,7 @@ from probpipe.distributions._capabilities import SupportsExactConditioning
 from ._design_helpers import error_of, standard_normal
 
 type _NormalAlias = Normal
+type _KernelAlias = ConditionalDistribution
 
 SCALAR = NumericArraySpec(())
 
@@ -287,16 +288,19 @@ class TestAdmission:
                 label="body",
             )(_kernel())
 
-    def test_a_kernel_at_a_parameter_that_consumes_kernels_passes(self):
+    @pytest.mark.parametrize(
+        "annotation", [ConditionalDistribution, _KernelAlias], ids=["class", "alias"]
+    )
+    def test_a_kernel_at_a_parameter_that_consumes_kernels_passes(self, annotation):
         seen = []
 
-        @function
-        def consume(kernel: ConditionalDistribution):
+        def consume(kernel):
             seen.append(kernel)
             return 0.0
 
+        consume.__annotations__ = {"kernel": annotation}
         kernel = _kernel()
-        consume(kernel)
+        Function(consume, label="consume")(kernel)
 
         assert seen == [kernel]
 

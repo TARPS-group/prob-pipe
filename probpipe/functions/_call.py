@@ -15,8 +15,8 @@ import html
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from types import MappingProxyType, UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from types import MappingProxyType
+from typing import Any, Literal
 
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
@@ -327,15 +327,22 @@ def resolve_function_call(
 
 
 def _consumes_kernel(expected: Any) -> bool:
-    """Whether an annotation declares that its parameter consumes a kernel itself."""
-    if get_origin(expected) in (Union, UnionType):
-        return any(_consumes_kernel(arm) for arm in get_args(expected))
-    try:
-        if isinstance(expected, type) and issubclass(expected, ConditionalDistribution):
+    """Whether an annotation declares that its parameter consumes a kernel itself.
+
+    An arm of the annotation declares it when the arm names a
+    ``ConditionalDistribution`` class or a conditional capability, after
+    :func:`_normalization._arms` resolves the arm's type aliases.
+    """
+    for arm in _normalization._arms(expected):
+        if arm in _KERNEL_HINT_PROTOCOLS:
             return True
-    except TypeError:
-        pass
-    return expected in _KERNEL_HINT_PROTOCOLS
+        named = _normalization._hint_class(arm)
+        try:
+            if isinstance(named, type) and issubclass(named, ConditionalDistribution):
+                return True
+        except TypeError:
+            continue
+    return False
 
 
 def _expects_value(expected: Any) -> bool:
@@ -361,10 +368,13 @@ def presented_arguments(
     argument is not. A body annotated ``pd.Series`` therefore receives the
     ``Series`` that a record field holds, and one annotated ``jax.Array`` the
     array that a ``NumericArray`` holds. A union annotation names the classes of
-    its arms, and a parametrized annotation, such as ``npt.NDArray[np.float64]``,
-    names the class it parametrizes. Every other argument is presented as it is,
-    as at an unannotated parameter or at one annotated ``Any`` or with the
-    argument's kind.
+    its arms, and a parametrized annotation names the class it parametrizes. A
+    type alias resolves to the class of its value, and an alias of a union to
+    the classes of the union's arms. ``npt.NDArray[np.float64]`` therefore names
+    ``np.ndarray`` whether NumPy defines ``NDArray`` as a generic alias or as a
+    type alias. Every other argument is presented as it is, as at an
+    unannotated parameter or at one annotated ``Any`` or with the argument's
+    kind.
 
     Parameters
     ----------
