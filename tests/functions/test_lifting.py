@@ -16,7 +16,8 @@ is an instance of the class.
 
 from __future__ import annotations
 
-from typing import Any
+import functools
+from typing import TYPE_CHECKING, Annotated, Any
 
 import jax
 import jax.numpy as jnp
@@ -28,15 +29,19 @@ from probpipe import (
     ApplicabilityError,
     Batch,
     Distribution,
+    EmpiricalDistribution,
     Function,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecord,
     OutputSpec,
     Record,
+    RecordBatch,
     ResolutionError,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.distributions import DistributionBatch
@@ -44,7 +49,24 @@ from probpipe.distributions._capabilities import SupportsLogProb
 
 from ._design_helpers import atom_leaves, error_of, one_field_law, record_law, standard_normal
 
+if TYPE_CHECKING:
+    from pandas import DataFrame
+
 SCALAR = NumericArraySpec(())
+# NumPy 2.5 defines NDArray as a type alias, and _ArrayAlias stands in for it
+# because CI does not install NumPy 2.5.
+type _ArrayAlias[Scalar: np.generic] = np.ndarray[Any, np.dtype[Scalar]]
+type _OptionalArrayAlias = np.ndarray | None
+type _DistributionAlias[Event] = Distribution
+type _OptionalNormalAlias = Normal | None
+type _CapabilityAlias = SupportsLogProb
+type _BatchAlias = NumericArrayBatch
+type _UnresolvedAlias = DataFrame
+type _RecursiveAlias = _RecursiveAlias | None
+type _AnyAlias = Any
+type _MaybeAlias[T] = T | None
+type _OptionalOfAlias[T] = _MaybeAlias[T]
+type _SecondOfAlias[First, Second] = Second | None
 
 
 def _batch(values, level: str = "row") -> NumericArrayBatch:
@@ -90,13 +112,15 @@ class TestTheTrigger:
     def test_a_distribution_at_a_value_annotated_parameter_is_lifted(self, annotation):
         assert isinstance(_kind_of(annotation, standard_normal()), Distribution)
 
-    def test_a_parameter_annotated_any_passes_a_law_whole(self):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_passes_a_law_whole(self, annotation):
         seen = []
 
-        def accept(x: Any):
+        def accept(x):
             seen.append(x)
             return 0.0
 
+        accept.__annotations__ = {"x": annotation}
         law = standard_normal()
         Function(
             accept,
@@ -107,8 +131,30 @@ class TestTheTrigger:
 
     @pytest.mark.parametrize(
         "annotation",
-        [Distribution, Normal, SupportsLogProb, Distribution | None],
-        ids=["Distribution", "subclass", "capability", "optional"],
+        [
+            Distribution,
+            Normal,
+            SupportsLogProb,
+            Distribution | None,
+            _DistributionAlias[float],
+            _OptionalNormalAlias,
+            _CapabilityAlias,
+            _MaybeAlias[Normal],
+            _OptionalOfAlias[Normal],
+            _SecondOfAlias[float, Normal],
+        ],
+        ids=[
+            "Distribution",
+            "subclass",
+            "capability",
+            "optional",
+            "aliased-origin",
+            "aliased-union",
+            "aliased-capability",
+            "generic-alias",
+            "nested-generic-alias",
+            "two-parameter-alias",
+        ],
     )
     def test_a_parameter_that_names_a_distribution_consumes_it(self, annotation):
         seen = []
@@ -162,18 +208,38 @@ class TestTheTrigger:
         assert result.level_names == ("row",)
         np.testing.assert_allclose(np.asarray(result.values), [2.0, 4.0, 6.0])
 
-    def test_a_parameter_that_names_the_batch_consumes_it(self):
+    @pytest.mark.parametrize(
+        "annotation",
+        [NumericArrayBatch, _BatchAlias, _MaybeAlias[NumericArrayBatch]],
+        ids=["class", "alias", "generic-alias"],
+    )
+    def test_a_parameter_that_names_the_batch_consumes_it(self, annotation):
         seen = []
 
-        def consume(x: NumericArrayBatch):
+        def consume(x):
             seen.append(x)
             return 0.0
 
+        consume.__annotations__ = {"x": annotation}
         rows = _batch([1.0, 2.0])
         Function(
             consume,
             label="consume",
         )(rows)
+
+        assert seen == [rows]
+
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_passes_a_batch_whole(self, annotation):
+        seen = []
+
+        def accept(x):
+            seen.append(x)
+            return 0.0
+
+        accept.__annotations__ = {"x": annotation}
+        rows = _batch([1.0, 2.0])
+        Function(accept, label="accept")(rows)
 
         assert seen == [rows]
 
@@ -250,6 +316,23 @@ class TestTheDraw:
         assert "theta" not in law.event_spec.components
         assert isinstance(result, Distribution)
         assert all(set(draw.keys()) == {"a", "b"} for draw in seen)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_a_record_passed_beside_a_law_arrives_as_the_call_passed_it(self, dispatch):
+        seen = []
+        weights = NumericRecord({"a": 2.0, "b": 1.0}, label="weights")
+
+        @function(dispatch=dispatch)
+        def affine(weights, mu):
+            seen.append(weights)
+            return weights["a"] * mu + weights["b"]
+
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        result = affine(weights, law)
+
+        assert all(received is weights for received in seen)
+        assert str(result) == "affine(weights, mu ~ prior)"
+        np.testing.assert_allclose(atom_leaves(result)[0], [3.0, 5.0, 9.0])
 
 
 def _receiving(annotations: dict[str, Any], **controls: Any) -> tuple[Function, list[Any]]:
@@ -383,8 +466,34 @@ class TestARawClassAnnotation:
 
     @pytest.mark.parametrize(
         ("annotation", "value"),
-        [(jax.Array | None, jnp.arange(3.0)), (npt.NDArray[np.float64], np.arange(3.0))],
-        ids=["optional", "parametrized"],
+        [
+            (jax.Array | None, jnp.arange(3.0)),
+            (npt.NDArray[np.float64], np.arange(3.0)),
+            (npt.NDArray, np.arange(3.0)),
+            (_ArrayAlias, np.arange(3.0)),
+            (np.ndarray[Any, np.dtype[np.float64]], np.arange(3.0)),
+            (_ArrayAlias[np.float64], np.arange(3.0)),
+            (_ArrayAlias[np.float64] | None, np.arange(3.0)),
+            (Annotated[_ArrayAlias[np.float64], "array"], np.arange(3.0)),
+            (_OptionalArrayAlias, np.arange(3.0)),
+            (_MaybeAlias[np.ndarray], np.arange(3.0)),
+            (_MaybeAlias[_ArrayAlias[np.float64]], np.arange(3.0)),
+            (_SecondOfAlias[jax.Array, np.ndarray], np.arange(3.0)),
+        ],
+        ids=[
+            "optional",
+            "numpy",
+            "bare-numpy",
+            "bare-alias",
+            "ndarray-generic",
+            "alias",
+            "optional-alias",
+            "annotated-alias",
+            "aliased-union",
+            "generic-alias",
+            "generic-alias-of-alias",
+            "two-parameter-alias",
+        ],
     )
     def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
         wrapped, seen = _receiving({"x": annotation})
@@ -397,6 +506,57 @@ class TestARawClassAnnotation:
         )
 
         assert len(seen) == 1 and seen[0] is value
+
+    def test_a_typing_extensions_alias_names_the_class_of_its_value(self):
+        # Before Python 3.14, typing_extensions defines a TypeAliasType class of its own.
+        typing_extensions = pytest.importorskip("typing_extensions")
+        alias = typing_extensions.TypeAliasType("Array", np.ndarray)
+        value = np.arange(3.0)
+        wrapped, seen = _receiving({"x": alias})
+
+        wrapped(NumericArray(value, label="x"))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_a_typing_extensions_generic_alias_names_the_class_of_its_argument(self):
+        typing_extensions = pytest.importorskip("typing_extensions")
+        T = typing_extensions.TypeVar("T")
+        maybe = typing_extensions.TypeAliasType("Maybe", T | None, type_params=(T,))
+        value = np.arange(3.0)
+        wrapped, seen = _receiving({"x": maybe[np.ndarray]})
+
+        wrapped(NumericArray(value, label="x"))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_an_annotated_hint_of_a_callable_object_names_the_class_it_wraps(self):
+        # A callable object presents its hints without get_type_hints removing
+        # the Annotated metadata.
+        seen: list[Any] = []
+
+        class Receive:
+            def __call__(self, x):
+                seen.append(x)
+                return 0.0
+
+        Receive.__call__.__annotations__ = {"x": Annotated[jax.Array, "metadata"]}
+        value = jnp.arange(3.0)
+        Function(Receive(), label="receive")(NumericArray(value, label="x"))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_an_annotated_distribution_hint_of_a_partial_consumes_the_law(self):
+        seen: list[Any] = []
+
+        def consume(d, scale):
+            seen.append(d)
+            return 0.0
+
+        consume.__annotations__ = {"d": Annotated[Normal, "prior"], "scale": float}
+        law = standard_normal()
+        Function(functools.partial(consume, scale=1.0), label="consume")(law)
+
+        assert seen == [law]
 
     def test_each_argument_a_variadic_parameter_collects_arrives_in_its_raw_form(self):
         values = (jnp.arange(2.0), jnp.arange(3.0))
@@ -424,8 +584,26 @@ class TestARawClassAnnotation:
 
     @pytest.mark.parametrize(
         "annotations",
-        [{}, {"x": Any}, {"x": NumericArray}, {"x": object}, {"x": np.ndarray}],
-        ids=["unannotated", "Any", "NumericArray", "object", "ndarray"],
+        [
+            {},
+            {"x": Any},
+            {"x": NumericArray},
+            {"x": object},
+            {"x": np.ndarray},
+            {"x": _UnresolvedAlias},
+            {"x": _RecursiveAlias},
+            {"x": _AnyAlias},
+        ],
+        ids=[
+            "unannotated",
+            "Any",
+            "NumericArray",
+            "object",
+            "ndarray",
+            "unresolved-alias",
+            "recursive-alias",
+            "Any-alias",
+        ],
     )
     def test_any_other_argument_arrives_as_it_is(self, annotations):
         argument = NumericArray(
@@ -549,12 +727,186 @@ class TestAlignment:
         assert isinstance(error, ApplicabilityError)
         assert "row" in str(error)
 
-    @pytest.mark.pending(reason="a level of size one broadcasts", raises=AssertionError)
     def test_a_level_of_size_one_broadcasts(self):
         @function(dispatch="sequential")
         def add(x, y):
             return x + y
 
-        result = error_of(lambda: add(_batch([1.0]), _batch([10.0, 20.0])))
+        result = add(_batch([1.0]), _batch([10.0, 20.0]))
 
-        assert result is None
+        assert result.level_names == ("row",)
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+
+
+@pytest.fixture(params=["auto", "jax", "sequential", "thread"])
+def alignment_dispatch(request):
+    return request.param
+
+
+class TestSingletonAlignment:
+    def test_a_later_singleton_and_three_operands_broadcast(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(x, y, z):
+            return x + y + z
+
+        result = add(_batch([10.0, 20.0]), _batch([1.0]), _batch([100.0]))
+
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [111.0, 121.0], atol=0, rtol=0)
+
+    def test_multi_axis_levels_broadcast_from_the_right(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(x, y):
+            return x + y
+
+        left = NumericArrayBatch(
+            jnp.array([[1.0], [2.0]]), "grid", axes_per_level=(2,), label="left"
+        )
+        right = _batch([10.0, 20.0, 30.0], "grid")
+        result = add(left, right)
+
+        assert result.level_names == ("grid",)
+        assert result.axis_groups == ((2, 3),)
+        np.testing.assert_allclose(
+            result.values, [[11.0, 21.0, 31.0], [12.0, 22.0, 32.0]], atol=0, rtol=0
+        )
+
+    def test_each_level_broadcasts_without_crossing_its_boundary(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(x, y):
+            return x + y
+
+        left = NumericArrayBatch(
+            jnp.array([[1.0], [2.0]]), ("chain", "draw"), axes_per_level=(1, 1), label="left"
+        )
+        right_values = jnp.arange(12.0).reshape(1, 2, 2, 3)
+        right = NumericArrayBatch(
+            right_values, ("chain", "draw"), axes_per_level=(2, 2), label="right"
+        )
+        result = add(left, right)
+
+        assert result.level_names == ("chain", "draw")
+        assert result.axis_groups == ((1, 2), (2, 3))
+        np.testing.assert_allclose(
+            result.values,
+            np.asarray(right_values) + np.array([1.0, 2.0]).reshape(1, 2, 1, 1),
+            atol=0,
+            rtol=0,
+        )
+
+    def test_two_partitions_of_one_array_broadcast_within_each_level(self, alignment_dispatch):
+        """Each level's shapes broadcast by NumPy's rule, so two partitions of one
+        array combine when their shapes for each level broadcast."""
+
+        @function(dispatch=alignment_dispatch)
+        def add(x, y):
+            return x + y
+
+        data = jnp.arange(36.0).reshape(3, 3, 4)
+        left = NumericArrayBatch(data, ("a", "b"), axes_per_level=(1, 2), label="left")
+        right = NumericArrayBatch(data, ("a", "b"), axes_per_level=(2, 1), label="right")
+        result = add(left, right)
+
+        assert left.axis_groups == ((3,), (3, 4))
+        assert right.axis_groups == ((3, 3), (4,))
+        assert result.level_names == ("a", "b")
+        assert result.axis_groups == ((3, 3), (3, 4))
+        assert result.batch_shape == (3, 3, 3, 4)
+        # Left reads level a at its trailing coordinate a1, and right reads level b
+        # at its trailing coordinate b1.
+        for a0, a1, b0, b1 in [(0, 0, 0, 0), (2, 1, 0, 3), (1, 2, 2, 1)]:
+            np.testing.assert_allclose(
+                result.values[a0, a1, b0, b1],
+                data[a1, b0, b1] + data[a0, a1, b1],
+                atol=0,
+                rtol=0,
+            )
+
+    def test_a_singleton_record_broadcasts_with_an_array(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(record, x):
+            return record["offset"] + x
+
+        records = RecordBatch.stack([Record({"offset": 1.0}, label="offsets")], level_name="row")
+        result = add(records, _batch([10.0, 20.0]))
+
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+
+    def test_a_singleton_batch_of_laws_broadcasts_with_an_array(self, alignment_dispatch):
+        @function(dispatch=alignment_dispatch)
+        def add(law: Distribution, x):
+            return mean(law) + x
+
+        laws = DistributionBatch([Normal("z", 1.0, 1.0)], "row", label="laws")
+        if alignment_dispatch == "jax":
+            # JAX vectorizes only batches of records and arrays.
+            with pytest.raises(
+                ValueError, match="can only sweep over batches of records or arrays"
+            ):
+                add(laws, _batch([10.0, 20.0]))
+            return
+        result = add(laws, _batch([10.0, 20.0]))
+
+        assert result.axis_groups == ((2,),)
+        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+
+    def test_an_empty_level_broadcasts_with_one_without_running_the_body(self, alignment_dispatch):
+        calls = []
+
+        @function(dispatch=alignment_dispatch, output_spec=OutputSpec(total=SCALAR))
+        def add(x, y):
+            calls.append((x, y))
+            return x + y
+
+        result = add(_batch([1.0]), _batch([]))
+
+        assert calls == []
+        assert result.axis_groups == ((0,),)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.shape == ()
+
+    def test_a_later_incompatible_size_raises_naming_each_shape(self):
+        @function(dispatch="sequential")
+        def add(x, y, z):
+            return x + y + z
+
+        with pytest.raises(
+            ApplicabilityError,
+            match=(
+                r"^level 'row' has shapes \(1,\) for 'x', \(2,\) for 'y', and \(3,\) for 'z', "
+                r"which do not broadcast$"
+            ),
+        ):
+            add(_batch([1.0]), _batch([10.0, 20.0]), _batch([1.0, 2.0, 3.0]))
+
+    def test_a_singleton_forms_a_product_with_a_differently_named_level(self):
+        @function(dispatch="sequential")
+        def add(x, y):
+            return x + y
+
+        result = add(_batch([1.0], "left"), _batch([10.0, 20.0], "right"))
+
+        assert result.level_names == ("left", "right")
+        assert result.axis_groups == ((1,), (2,))
+        np.testing.assert_allclose(result.values, [[11.0, 21.0]], atol=0, rtol=0)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax", "sequential"])
+    def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self, dispatch):
+        @function(n_broadcast_samples=6, dispatch=dispatch)
+        def add(x, y, z):
+            return x + y + z
+
+        law = EmpiricalDistribution(jnp.array([0.0, 2.0]), component="z")
+        with workflow_run(seed=7):
+            result = add(_batch([1.0]), _batch([10.0, 20.0]), law)
+
+        assert isinstance(result, DistributionBatch)
+        assert result.axis_groups == ((2,),)
+        for index in range(2):
+            leaves = atom_leaves(result[index])
+            assert len(leaves) == 1
+            np.testing.assert_allclose(
+                leaves[0], [11.0 + 10.0 * index, 13.0 + 10.0 * index], atol=0, rtol=0
+            )

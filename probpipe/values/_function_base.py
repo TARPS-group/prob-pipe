@@ -1295,7 +1295,10 @@ class Function(TrackedTerm, Annotated):
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
         construction and :meth:`with_options`, never from the call's keywords,
-        which bind to the wrapped callable.
+        which bind to the wrapped callable. Swept batches align by level name:
+        within each matching level, shapes align from the right and size-one
+        axes broadcast independently of other levels. The sweep carries each
+        level's resulting broadcast shape.
 
         Parameters
         ----------
@@ -1320,8 +1323,9 @@ class Function(TrackedTerm, Annotated):
         TypeError
             If an argument does not bind to the signature.
         ApplicabilityError
-            If an argument's kind is not one its parameter accepts, or the
-            declarations conflict.
+            If an argument's kind is not one its parameter accepts, the
+            declarations conflict, or matching levels have shapes that cannot
+            broadcast.
         ValueError
             If an empty sweep lacks a concrete output declaration after input
             dimensions bind.

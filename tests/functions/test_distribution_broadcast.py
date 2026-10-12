@@ -1507,10 +1507,10 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
     def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
-        """A sweep crossed with a law still produces a result.
+        """A sweep crossed with a law maps a body that returns a batch.
 
-        ``_broadcast_jax`` is not reached in this regime at all, so this pins
-        the composition rather than the mapped-draw probe.
+        The probe feeds the body as its executor will, so a body that returns a
+        batch of records traces, and no cell falls back to row-wise execution.
         """
 
         def body(p, x):
@@ -1541,7 +1541,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             result = self._run(nested, rows, Normal("x", loc=0.0, scale=1.0))
 
         assert result is not None
-        assert any("not JAX-traceable" in record.message for record in caplog.records)
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
 
     def test_a_one_field_record_law_presents_a_record_to_every_dispatch(self, caplog):
         """A one-field draw presents as a record, whichever dispatch runs.

@@ -16,8 +16,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product as cartesian_product
 from math import prod
-from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, Literal
+
+import numpy as np
 
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
@@ -38,10 +39,11 @@ StructuralRngId = tuple[str | int, ...]
 
 @dataclass(frozen=True)
 class ArrayBroadcastGroup:
-    """One zip group of swept batches, read along the same axes.
+    """One zip group of swept batches.
 
     The batches of one group carry the same level names, since levels are how
-    batches align.
+    batches align. ``axis_groups`` holds each level's broadcast shape over the
+    group's batches, and ``batch_shape`` is their concatenation in level order.
     """
 
     arg_refs: tuple[_binding.FunctionInputRef, ...]
@@ -224,7 +226,9 @@ def is_swept(value: Any, expected: Any) -> bool:
     A batched argument is swept unless the annotation names a batched class it
     satisfies or is ``Any``, either of which passes it to the body whole.
     """
-    return _is_batched(value) and not (_value_matches_hint(value, expected) or expected is Any)
+    return _is_batched(value) and not (
+        _value_matches_hint(value, expected) or _binding.resolved_hint(expected) is Any
+    )
 
 
 def is_broadcast(value: Any, expected: Any) -> bool:
@@ -237,7 +241,7 @@ def is_broadcast(value: Any, expected: Any) -> bool:
     return (
         isinstance(value, Distribution)
         and not _is_batched(value)
-        and expected is not Any
+        and _binding.resolved_hint(expected) is not Any
         and not _normalization.is_distribution_hint(expected)
     )
 
@@ -255,7 +259,11 @@ def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None =
         if is_swept(value, expected):
             return "sweep"
         return "broadcast" if is_broadcast(value, expected) else "whole"
-    if not role or expected is Any or role_admits(role, arrived_kind(value)):
+    if (
+        not role
+        or _binding.resolved_hint(expected) is Any
+        or role_admits(role, arrived_kind(value))
+    ):
         return "whole"
     return role_lift(value, role) or "whole"
 
@@ -571,9 +579,11 @@ def build_array_zip_groups(
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build the zip groups of the swept batches.
 
-    Every batch in a group is read along the same axes, so they must agree on
-    what those axes are; a disagreement is a mistake about which multiplicity is
-    which rather than a product to be formed silently.
+    Batches with the same level names broadcast their shapes level by level by
+    NumPy's rule, so within each level the shapes align from the right and a
+    size-one axis expands. The group's shape concatenates the broadcast shapes
+    in level order, and the sweep reads each batch at index zero along its
+    size-one axes.
 
     Parameters
     ----------
@@ -590,32 +600,39 @@ def build_array_zip_groups(
     Raises
     ------
     ApplicabilityError
-        If two batches carry the same levels on different axes, or two groups
+        If matching levels have shapes that cannot broadcast, or two groups
         share a level without sharing all their levels, naming the level.
     """
     groups: list[ArrayBroadcastGroup] = []
     for first, arg_refs in group_by_alignment(values=values, refs=refs):
-        for ref in arg_refs[1:]:
-            other = _binding.input_ref_value(values, ref)
-            # Two operands naming the same levels claim the same axes, group by
-            # group: agreeing on the flat shape alone would zip a ((2,), (3, 4))
-            # partition with a ((2, 3), (4,)) one and hand the output whichever
-            # arrived first.
-            if tuple(other.axis_groups) != tuple(first.axis_groups):
-                raise ApplicabilityError(
-                    f"{arg_refs[0].label!r} and {ref.label!r} have the same levels "
-                    f"{tuple(first.level_names)} but different shapes per level: "
-                    f"{tuple(first.axis_groups)} vs {tuple(other.axis_groups)}. Arguments that "
-                    f"share level names must have the same shape for each level."
+        batches = [_binding.input_ref_value(values, ref) for ref in arg_refs]
+        broadcast_groups = []
+        for level, name in enumerate(first.level_names):
+            shapes = [tuple(batch.axis_groups[level]) for batch in batches]
+            try:
+                broadcast_groups.append(np.broadcast_shapes(*shapes))
+            except ValueError as error:
+                described = [
+                    f"{shape} for {ref.label!r}"
+                    for ref, shape in zip(arg_refs, shapes, strict=True)
+                ]
+                listed = (
+                    " and ".join(described)
+                    if len(described) == 2
+                    else ", ".join(described[:-1]) + ", and " + described[-1]
                 )
-        batch_shape = tuple(first.batch_shape)
+                raise ApplicabilityError(
+                    f"level {name!r} has shapes {listed}, which do not broadcast"
+                ) from error
+        axis_groups = tuple(broadcast_groups)
+        batch_shape = tuple(axis for shape in axis_groups for axis in shape)
         groups.append(
             ArrayBroadcastGroup(
                 arg_refs=tuple(arg_refs),
                 batch_shape=batch_shape,
                 size=prod(batch_shape),
                 level_names=tuple(first.level_names),
-                axis_groups=tuple(first.axis_groups),
+                axis_groups=axis_groups,
             )
         )
     # A level name in two groups is one multiplicity read at two geometries:
@@ -664,13 +681,13 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     so family membership alone would deliver a batch whole to a body that
     declared it takes something else, silently skipping the sweep.
     """
-    origin = get_origin(expected)
-    if origin in (Union, UnionType):
-        # An optional container annotation still names the container: the value
-        # answers whichever arm it satisfies, and ``None`` answers none.
-        return any(_value_matches_hint(value, arm) for arm in get_args(expected))
-    base = origin or expected
-    try:
-        return isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base)
-    except TypeError:
-        return False
+    # An optional container annotation still names the container, and the value
+    # answers whichever arm it satisfies.
+    for arm in _normalization._arms(expected):
+        base = _normalization._hint_class(arm)
+        try:
+            if isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base):
+                return True
+        except TypeError:
+            continue
+    return False

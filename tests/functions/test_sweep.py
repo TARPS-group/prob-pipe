@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from itertools import permutations
 
 import jax
@@ -20,18 +21,22 @@ from probpipe import (
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueBatch,
     OutputSpec,
     Record,
     RecordBatch,
     RecordSpec,
     log_prob,
     mean,
+    workflow_run,
 )
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core.constraints import positive
-from probpipe.functions import _execution, _sweep
+from probpipe.functions import _execution, _function, _sweep
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
+
+from ._design_helpers import atom_leaves
 
 
 def _numeric_record_batch(
@@ -71,6 +76,24 @@ def _unexpected_distribution_broadcast(*args, **kwargs):
 
 def _require_not_called(*args, **kwargs):
     raise AssertionError("JAX traceability should not be required")
+
+
+def _record_probes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[bool, bool]]:
+    """Record each JAX traceability probe as two flags.
+
+    The first flag says whether the probe traced swept values as dynamic inputs.
+    The second says whether the probe succeeded.
+    """
+    probes: list[tuple[bool, bool]] = []
+    original = _function._jax_traceability_error
+
+    def probe(*args: object, **kwargs: object) -> Exception | None:
+        error = original(*args, **kwargs)
+        probes.append((bool(kwargs.get("dynamic_refs")), error is None))
+        return error
+
+    monkeypatch.setattr(_function, "_jax_traceability_error", probe)
+    return probes
 
 
 class TestSliceSweepValues:
@@ -293,6 +316,200 @@ class TestExecuteSweep:
         ]
         assert result.provenance.operation == "workflow.nested"
         assert result.provenance.metadata["k"] == 7
+
+
+class TestPairedNumericSweeps:
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @pytest.mark.parametrize("shape", [(12,), (2, 3)])
+    @pytest.mark.parametrize("record", [False, True])
+    def test_paired_inputs_vectorize_and_match_sequential(self, dispatch, shape, record):
+        a = NumericArrayBatch(
+            jnp.arange(np.prod(shape)).reshape(shape),
+            "row",
+            label="a",
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(len(shape),),
+        )
+        b = NumericArrayBatch(
+            2 * a.as_jax(),
+            "row",
+            label="b",
+            element_spec=NumericArraySpec(()),
+            axes_per_level=(len(shape),),
+        )
+        if record:
+            b = NumericRecordBatch(
+                {"x": b.as_jax()},
+                "row",
+                label="b",
+                element_spec=RecordSpec(x=()),
+                axes_per_level=(len(shape),),
+            )
+        calls = []
+
+        def body(a, b):
+            calls.append(1)
+            return a + (b["x"] if record else b)
+
+        mapped = Function(body, label="sum", dispatch=dispatch)(a, b)
+        assert len(calls) == 2
+        sequential = Function(body, label="sum", dispatch="sequential")(a, b)
+        np.testing.assert_array_equal(np.asarray(mapped), 3 * a.as_jax())
+        np.testing.assert_array_equal(np.asarray(mapped), np.asarray(sequential))
+        assert mapped.element_spec == sequential.element_spec
+        assert mapped.level_names == sequential.level_names == ("row",)
+        assert mapped.axis_groups == sequential.axis_groups == (shape,)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_outer_product_remains_rowwise_or_is_refused(self, dispatch):
+        a = NumericArrayBatch(jnp.arange(3.0), "a", label="a")
+        b = NumericArrayBatch(jnp.arange(2.0), "b", label="b")
+        wrapped = Function(lambda a, b: a + b, label="sum", dispatch=dispatch)
+        if dispatch == "jax":
+            with pytest.raises(ValueError, match="same levels"):
+                wrapped(a, b)
+        else:
+            np.testing.assert_array_equal(
+                np.asarray(wrapped(a, b)), np.arange(3.0)[:, None] + np.arange(2.0)
+            )
+
+    @pytest.mark.parametrize("record", [False, True])
+    def test_mapped_storage_expands_each_level_before_flattening(self, record):
+        data = jnp.arange(6.0).reshape(3, 1, 2)
+        if record:
+            batch = NumericRecordBatch(
+                {"x": data}, ("site", "replicate"), label="data", element_spec=RecordSpec(x=(2,))
+            )
+        else:
+            batch = NumericArrayBatch(
+                data, ("site", "replicate"), label="data", element_spec=NumericArraySpec((2,))
+            )
+        actual = _sweep.mapped_storage(batch, 24, axis_groups=((2, 3), (4, 1)))
+        if record:
+            actual = actual["x"]
+        expected = np.broadcast_to(np.asarray(data).reshape(1, 3, 1, 1, 2), (2, 3, 4, 1, 2))
+        np.testing.assert_array_equal(actual, expected.reshape(24, 2))
+
+    def test_mapped_storage_validates_row_count_for_empty_events(self):
+        batch = NumericArrayBatch(
+            jnp.empty((2, 0)), "row", label="empty", element_spec=NumericArraySpec((0,))
+        )
+        with pytest.raises(ValueError, match="row count 3"):
+            _sweep.mapped_storage(batch, 3)
+
+
+class TestNestedSweepProbes:
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_numeric_sweep_probes_once_and_keeps_per_cell_draws(self, monkeypatch, dispatch):
+        probes = _record_probes(monkeypatch)
+        rows = NumericArrayBatch(jnp.arange(4.0), "row", label="shift")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(
+            lambda shift, noise: shift + noise,
+            label="shift",
+            dispatch=dispatch,
+            n_broadcast_samples=7,
+        )
+        with workflow_run(seed=12):
+            mapped = wrapped(rows, law)
+        assert probes == [(True, True)]
+        with workflow_run(seed=12):
+            sequential = wrapped.with_options(dispatch="sequential")(rows, law)
+        for index in range(4):
+            np.testing.assert_array_equal(
+                np.asarray(mapped[index].atoms), np.asarray(sequential[index].atoms)
+            )
+        assert not np.array_equal(np.asarray(mapped[0].atoms), np.asarray(mapped[1].atoms) - 1)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_fixed_numeric_branch_retains_per_cell_dispatch(self, monkeypatch, dispatch):
+        probes = _record_probes(monkeypatch)
+
+        def body(shift, noise):
+            return noise + shift if float(shift) > 0 else noise - shift
+
+        rows = NumericArrayBatch(jnp.array([-1.0, 2.0]), "row", label="shift")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        with workflow_run(seed=12):
+            actual = wrapped(rows, law)
+        # The branch fails the probe with dynamic shifts, and each cell traces
+        # with its own shift fixed.
+        assert probes == [(True, False), (False, True), (False, True)]
+        with workflow_run(seed=12):
+            expected = wrapped.with_options(dispatch="sequential")(rows, law)
+        with workflow_run(seed=12):
+            noise = Function(
+                lambda shift, noise: noise,
+                label="noise",
+                dispatch="sequential",
+                n_broadcast_samples=7,
+            )(rows, law)
+        # The else branch adds 1 at the shift -1, and the if branch adds 2 at the shift 2.
+        for index, offset in enumerate([1.0, 2.0]):
+            np.testing.assert_array_equal(
+                np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
+            )
+            np.testing.assert_allclose(
+                np.asarray(actual[index].atoms), np.asarray(noise[index].atoms) + offset
+            )
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_untraceable_numeric_sweep_shares_its_first_cell_check(
+        self, monkeypatch, caplog, dispatch
+    ):
+        probes = _record_probes(monkeypatch)
+        rows = NumericArrayBatch(jnp.arange(5.0), "row", label="shift")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(
+            lambda shift, noise: float(noise) + float(shift),
+            label="untraceable",
+            dispatch=dispatch,
+            n_broadcast_samples=7,
+        )
+        if dispatch == "jax":
+            with pytest.raises(ValueError, match="failed while tracing"):
+                wrapped(rows, law)
+        else:
+            with (
+                caplog.at_level(logging.INFO, logger="probpipe.functions._function"),
+                workflow_run(seed=12),
+            ):
+                actual = wrapped(rows, law)
+            logged = [record for record in caplog.records if "not JAX-traceable" in record.message]
+            assert len(logged) == 1
+            with workflow_run(seed=12):
+                expected = wrapped.with_options(dispatch="sequential")(rows, law)
+            for index in range(5):
+                np.testing.assert_array_equal(
+                    np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
+                )
+        # One probe with dynamic shifts and one with the first cell's shift fixed.
+        assert probes == [(True, False), (False, False)]
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_object_cells_keep_their_own_traceability_check(self, monkeypatch, dispatch):
+        probes = _record_probes(monkeypatch)
+
+        def body(mode, noise):
+            return float(noise) if mode.value == "python" else noise + 1
+
+        rows = OpaqueBatch(["mapped", "python"], "row", label="mode")
+        law = Normal("noise", 0.0, 1.0)
+        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        if dispatch == "jax":
+            with pytest.raises(ValueError, match="failed while tracing"):
+                wrapped(rows, law)
+        else:
+            with workflow_run(seed=12):
+                actual = wrapped(rows, law)
+            with workflow_run(seed=12):
+                expected = wrapped.with_options(dispatch="sequential")(rows, law)
+            for index in range(2):
+                np.testing.assert_array_equal(
+                    np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
+                )
+        assert probes == [(False, True), (False, False)]
 
 
 class TestASweptBodyThatReturnsABatch:
@@ -987,6 +1204,73 @@ class TestASweptBatchOfArrays:
         np.testing.assert_allclose(
             np.asarray(result), np.sum(np.arange(24.0).reshape(2, 4, 3) ** 2, axis=-1)
         )
+
+
+class TestANestedSweepOfRecordRows:
+    """A call over a batch of records and a law lifts the law at each record row.
+
+    The body receives each row as a record and reads its fields. The rows are
+    fixed within each row's lift, so the auto and jax dispatches map the law's
+    atoms or draws at each row.
+    """
+
+    @staticmethod
+    def _rows(fields: tuple[str, ...] = ("x", "y")) -> NumericRecordBatch:
+        columns = {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
+        return NumericRecordBatch(
+            {field: columns[field] for field in fields}, ("row",), label="rows"
+        )
+
+    @staticmethod
+    def _shift(row, mu):
+        return row["x"] * mu + row["y"]
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_each_row_lifts_the_law_through_its_fields(self, dispatch):
+        seen = []
+
+        def shift(row, mu):
+            seen.append((type(row), isinstance(mu, jax.core.Tracer)))
+            return self._shift(row, mu)
+
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        result = Function(shift, label="shift", dispatch=dispatch)(self._rows(), law)
+
+        assert isinstance(result, DistributionBatch)
+        assert (result.batch_shape, result.level_names) == ((3,), ("row",))
+        # Each row's atoms are x * mu + y at the law's atoms 1, 2, and 4.
+        expected = [[11.0, 12.0, 14.0], [22.0, 24.0, 28.0], [33.0, 36.0, 42.0]]
+        np.testing.assert_allclose([atom_leaves(row_law)[0] for row_law in result], expected)
+        assert {row_type for row_type, _ in seen} == {NumericRecord}
+        assert {traced for _, traced in seen} == {dispatch != "sequential"}
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_a_mapped_dispatch_draws_the_atoms_sequential_dispatch_draws(self, dispatch):
+        def lift(dispatch):
+            with workflow_run(seed=0):
+                return Function(
+                    self._shift, label="shift", dispatch=dispatch, n_broadcast_samples=6
+                )(self._rows(), Normal("mu", 0.0, 1.0))
+
+        mapped, sequential = lift(dispatch), lift("sequential")
+
+        assert (mapped.batch_shape, mapped.level_names) == (sequential.batch_shape, ("row",))
+        np.testing.assert_allclose(
+            [atom_leaves(row_law)[0] for row_law in mapped],
+            [atom_leaves(row_law)[0] for row_law in sequential],
+            rtol=1e-6,
+        )
+
+    @pytest.mark.parametrize("fields", [("x",), ("x", "y")], ids=["one-field", "two-fields"])
+    def test_a_row_displays_as_the_call_of_its_record(self, fields):
+        law = Normal("mu", 0.0, 1.0, label="prior")
+        result = Function(lambda row, mu: row["x"] * mu, label="scale", dispatch="sequential")(
+            self._rows(fields), law
+        )
+
+        assert [str(row_law) for row_law in result] == [
+            f"scale(rows[row={i}], mu ~ prior)" for i in range(3)
+        ]
 
 
 class TestARecordedDtypeIsTheStoredDtype:

@@ -69,22 +69,13 @@ def is_distribution_hint(expected: Any) -> bool:
     """Return whether a type hint asks for a distribution object.
 
     A union asks for one when any of its arms does, so an optional
-    distribution annotation consumes the distribution as the plain one does.
+    distribution annotation consumes the distribution as the plain one does,
+    and a type alias asks for what its value asks for.
     """
-    if get_origin(expected) in (Union, UnionType):
-        return any(is_distribution_hint(arm) for arm in get_args(expected))
-    origin = getattr(expected, "__origin__", None)
-    expected_type = origin if isinstance(origin, type) else expected
-    try:
-        if (
-            expected_type is not None
-            and isinstance(expected_type, type)
-            and issubclass(expected_type, Distribution)
-        ):
-            return True
-    except TypeError:
-        pass
-    return expected in DISTRIBUTION_HINT_PROTOCOLS
+    return any(
+        _is_concrete_distribution_hint(arm) or arm in DISTRIBUTION_HINT_PROTOCOLS
+        for arm in _arms(expected)
+    )
 
 
 def normalize_distribution_values(
@@ -246,17 +237,36 @@ def _entry(
     return method, exact_only, options
 
 
-def _arms(expected: Any) -> tuple[Any, ...]:
-    """The arms of a union annotation other than ``None``, or the annotation itself."""
-    if get_origin(expected) in (Union, UnionType):
-        return tuple(arm for arm in get_args(expected) if arm is not type(None))
-    return (expected,)
+def _arms(expected: Any, expanded: set[Any] | None = None) -> tuple[Any, ...]:
+    """The arms of a union annotation other than ``None``, or the annotation itself, each resolved.
+
+    The annotation resolves by :func:`_binding.resolved_hint` before a union
+    splits, and each arm resolves and splits in turn, so an alias whose value is
+    a union names the arms of that union. An alias that resolving an enclosing
+    union expanded is in *expanded* and stays unresolved.
+    """
+    expanded = set() if expanded is None else expanded
+    hint = _binding.resolved_hint(expected, expanded)
+    if get_origin(hint) not in (Union, UnionType):
+        return (hint,)
+    return tuple(
+        named
+        for arm in get_args(hint)
+        if arm is not type(None)
+        for named in _arms(arm, set(expanded))
+    )
 
 
 def _hint_class(arm: Any) -> Any:
-    """The class a parametrized annotation names, or the annotation itself."""
-    origin = getattr(arm, "__origin__", None)
-    return origin if isinstance(origin, type) else arm
+    """The class a resolved annotation names, or the resolved annotation.
+
+    :func:`_binding.resolved_hint` resolves *arm*, and a parametrized annotation
+    names the class it parametrizes, so an array alias parametrized by a dtype
+    names the array class.
+    """
+    hint = _binding.resolved_hint(arm)
+    origin = get_origin(hint)
+    return origin if isinstance(origin, type) else hint
 
 
 def _convert_hinted_distribution(
@@ -345,7 +355,7 @@ def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
     ):
         return None
     if len(arms) > 1:
-        if any(isinstance(value, arm) for arm in arms):
+        if any(isinstance(value, _hint_class(arm)) for arm in arms):
             return None
         from ._call import ApplicabilityError
 
