@@ -51,6 +51,7 @@ from probpipe.distributions._capabilities import (
     SupportsConditionalMean,
     SupportsConditionalQuantile,
     SupportsConditionalSampling,
+    SupportsConditionalUnnormalizedLogProb,
     SupportsConditionalVariance,
     SupportsLogProb,
     SupportsMean,
@@ -233,6 +234,26 @@ class TestConditionalOperations:
         assert not kernel.calls
         np.testing.assert_allclose(mean(kernel, given={"mu": 2.0}), 2.0)
         assert kernel.calls
+
+    @pytest.mark.parametrize("exact_only", [False, True])
+    def test_fallback_check_never_applies_an_unnormalized_kernel(self, exact_only):
+        class Unnormalized(_Fallback, SupportsConditionalUnnormalizedLogProb):
+            def _conditional_unnormalized_log_prob(self, given, value):
+                raise AssertionError("checking must not evaluate a density")
+
+            def _condition_on(self, given, /, **kwargs):
+                self.calls.append(given)
+                return distribution(
+                    unnormalized_log_prob=lambda value: -(value**2),
+                    event_spec=OutputSpec(y=REAL),
+                )
+
+        kernel = Unnormalized()
+        report = mean.with_options(exact_only=exact_only).check(kernel, given={"mu": 2.0})
+        assert report.feasible is True
+        assert report.route == "conditional"
+        assert report.deferred
+        assert not kernel.calls
 
     def test_an_explicit_method_is_kept_through_delegation(self):
         np.testing.assert_allclose(
@@ -495,6 +516,25 @@ class TestConditionalOperations:
 
 
 class TestPartialSlots:
+    @pytest.mark.parametrize("scale", [None, 3.0])
+    def test_fused_partial_binding_keeps_optional_slot_defaults(self, scale):
+        kernel = conditional_distribution(
+            lambda theta, scale=2.0: Normal("y", theta["a"] + theta["b"], scale),
+            given_spec={"theta": RecordSpec(a=REAL, b=REAL)},
+        )
+        partial = condition_on(kernel, {"theta/a": 2.0})
+        assert partial.given_spec.optional == {"scale"}
+        given = {"theta": {"b": 3.0}}
+        if scale is not None:
+            given["scale"] = scale
+        law = condition_on(partial, given)
+        np.testing.assert_allclose(log_prob(partial, 0.0, given=given), log_prob(law, 0.0))
+        with workflow_run(seed=42):
+            fused = sample(partial, sample_shape=(4,), given=given)
+        with workflow_run(seed=42):
+            conditioned = sample(law, sample_shape=(4,))
+        np.testing.assert_array_equal(fused, conditioned)
+
     def test_bound_leaves_are_reassembled_with_the_residual_slot(self):
         kernel = conditional_distribution(
             lambda theta: Normal("y", theta["a"] + theta["b"], 1.0),

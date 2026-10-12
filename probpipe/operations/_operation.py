@@ -1003,8 +1003,8 @@ def _kind_names(kinds: Iterable[type]) -> str:
 class _GivenCandidate:
     """The conditional identity, deferred until the kernel's law is available.
 
-    Feasibility means the delegation can run. The resulting law's capability
-    checks and operation fidelity are deferred, and its exactness is unknown
+    Feasibility means the given slots can be bound. Normalization, the resulting
+    law's capability checks, and operation fidelity are deferred, and its exactness is unknown
     until the delegated operation executes. The kernel is never applied by a
     check. This candidate is the last fallback, after every route served by the
     kernel's declared conditional capabilities. A declaration-only given
@@ -1015,7 +1015,7 @@ class _GivenCandidate:
     methods = None
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """Check conditioning without constructing its result law."""
+        """Check slot binding without constructing or normalizing the kernel's law."""
         from ._given import _GivenLaw
 
         subject = call.operands[call.operation._given_subject]
@@ -1023,17 +1023,27 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import condition_on
+        from ._condition import _CURRY, condition_on
 
-        report = condition_on.with_options(exact_only=call.controls["exact_only"]).check(
-            subject.kernel, subject.given
+        binding = BoundCall(
+            condition_on,
+            MappingProxyType({"d": subject.kernel, "given": subject.given}),
+            call.controls,
         )
-        if report.feasible is False:
-            return _as_feasibility(report, condition_on.check, "conditional")
+        report = _CURRY.check(binding)
+        if report.feasible is not True:
+            return report
+        exact = _CURRY.exact(binding)
+        if call.controls["exact_only"] and not exact:
+            return Feasibility(
+                False,
+                "binding the given slots runs approximate conditioning "
+                "(SupportsApproximateConditioning), which exact_only excludes",
+            )
         return PointReport(
             True,
             "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
-            exact=False if report.exact is False else None,
+            exact=None if exact else False,
         )
 
     def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
