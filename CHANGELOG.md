@@ -1476,6 +1476,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A derived operation's `method` error names the operation that has the
+  route.** `expectation.with_options(method="monte_carlo")` raises
+  `ResolutionError` saying that `expectation` does not pass `method` on to
+  `mean`, and to call `mean.with_options(method='monte_carlo')` to choose that
+  route.
 - **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
   The map receives one draw at a time whatever its parameter's annotation, so
   a statistic annotated `Distribution` over a random measure receives each

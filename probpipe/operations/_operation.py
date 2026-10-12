@@ -822,6 +822,24 @@ class _IdentityRoute(_Route):
         return self._declaration(*bound.args, **bound.kwargs)
 
 
+def _named_operations(declaration: Callable[..., Any]) -> tuple[Operation, ...]:
+    """The operations *declaration*'s body names, each once.
+
+    A name counts when it is bound to an operation, or to a view of one, in the
+    declaration's module or in its closure, as ``variance`` is in
+    ``jnp.sqrt(variance.with_options(raw=True)(d))``.
+    """
+    try:
+        names = inspect.getclosurevars(declaration)
+    except TypeError:
+        return ()
+    found: dict[int, Operation] = {}
+    for value in (*names.nonlocals.values(), *names.globals.values()):
+        if isinstance(value, Operation):
+            found.setdefault(id(value), value)
+    return tuple(found.values())
+
+
 def _unchecked(route: Any) -> bool:
     """Whether *route* is a body route without an identity check, which ``exact_only`` excludes."""
     return isinstance(route, _IdentityRoute) and route.identity_check is None
@@ -1403,6 +1421,7 @@ class Operation(Function):
             set_attribute(self, "_roles", MappingProxyType(adapted_roles))
         set_attribute(self, "_derived", derived)
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
+        set_attribute(self, "_body", declaration if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
         set_attribute(self, "_expression_rule", None)
@@ -2079,8 +2098,8 @@ class Operation(Function):
             return [_Candidate(route, None, index, method) for index, route in holders]
         raise ResolutionError(f"{self.label}: {self._unknown_method(method)}")
 
-    def _unknown_method(self, method: str) -> str:
-        """The message that no route or registry method is named *method*, with those that are."""
+    def _method_names(self) -> tuple[list[str], list[str]]:
+        """The names a ``method`` control can take: the routes, and the registry routes' methods."""
         routes = [route.name for route in self._route_table.routes]
         methods = list(
             dict.fromkeys(
@@ -2090,12 +2109,41 @@ class Operation(Function):
                 for name in route.registry.list_methods()
             )
         )
-        close = difflib.get_close_matches(method, routes + methods, n=1)
-        hint = f". Did you mean {close[0]!r}?" if close else ""
-        return (
-            f"unknown method {method!r}; available routes: {routes}, registry methods: "
-            f"{methods}{hint}"
+        return routes, methods
+
+    def _names_method(self, method: str) -> bool:
+        """Whether the plain name *method* names a route or a registry method of this operation."""
+        routes, methods = self._method_names()
+        return method in routes or method in methods
+
+    def _unknown_method(self, method: str) -> str:
+        """The message that no route or registry method is named *method*, with those that are.
+
+        A derived operation's message adds the fix when *method* names a route
+        or a method of an operation its body calls, since ``method`` is not
+        passed into the identity, whichever route realizes it.
+        """
+        routes, methods = self._method_names()
+        message = (
+            f"unknown method {method!r}; available routes: {routes}, registry methods: {methods}"
         )
+        constituents = _named_operations(self._body) if self._body is not None else ()
+        holders = [
+            constituent
+            for constituent in constituents
+            if constituent is not self and constituent._names_method(method)
+        ]
+        if holders:
+            names = " or ".join(holder.label for holder in holders)
+            calls = " or ".join(
+                f"{holder.label}.with_options(method={method!r})" for holder in holders
+            )
+            return (
+                f"{message}. {self.label} does not pass method on to {names}, so call "
+                f"{calls} to choose it"
+            )
+        close = difflib.get_close_matches(method, routes + methods, n=1)
+        return f"{message}. Did you mean {close[0]!r}?" if close else message
 
     # -- the summary ---------------------------------------------------------
 

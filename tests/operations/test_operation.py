@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 import threading
 import warnings
 from typing import Any
@@ -896,6 +897,14 @@ class TestIdentityRoute:
         assert [route.name for route in doubled.routes] == ["composite"]
         assert doubled.summary().identity == "center.with_options(raw=True)(d) * 2"
 
+    def test_a_method_of_the_constituent_names_the_call_that_takes_it(self):
+        message = (
+            "doubled does not pass method on to center, so call "
+            "center.with_options(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _doubled(_Composite(settles=True)).with_options(method="monte_carlo")(Gaussian("g"))
+
     def test_an_operation_without_it_keeps_the_generic_route(self):
         @operation(result=_event, registry=OperationRegistry())
         def doubled(d: Distribution):
@@ -1341,6 +1350,19 @@ class TestIdentityControls:
     def test_method_does_not_pass_to_the_constituent(self):
         view = _body_doubled().with_options(method="identity")
         assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_a_method_of_the_constituent_names_the_call_that_takes_it(self):
+        message = (
+            "doubled does not pass method on to center, so call "
+            "center.with_options(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _body_doubled().with_options(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_method_no_constituent_has_gets_no_constituent_fix(self):
+        with pytest.raises(ResolutionError, match="unknown method 'nope'") as raised:
+            _body_doubled().with_options(method="nope")(Gaussian("g"))
+        assert "does not pass method on" not in str(raised.value)
 
     def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
         law = Sampler("s")
