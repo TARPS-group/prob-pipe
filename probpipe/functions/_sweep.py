@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from itertools import product as cartesian_product
+from math import prod
 from typing import Any
 
 import jax
@@ -249,9 +250,7 @@ def execute_sweep_rows(
     has_object_batch = any(
         isinstance(_binding.input_ref_value(values, ref), _ObjectBatch) for ref in array_args
     )
-    jax_structure_supported = not (
-        has_object_batch or len(plan.array_groups) > 1 or len(array_args) > 1
-    )
+    jax_structure_supported = not (has_object_batch or len(plan.array_groups) > 1)
     jax_contract = _execution_contract.make_execution_contract(
         evaluator="jax_vmap",
         transport=_execution_contract.transport_for_workflow_kind(workflow_kind),
@@ -264,7 +263,7 @@ def execute_sweep_rows(
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' can only sweep over a single Batch of records or arrays; use "
+            "dispatch='jax' can only sweep over batches of records or arrays with the same levels; use "
             "dispatch='auto', 'sequential', or 'thread' for this call"
         )
 
@@ -283,6 +282,7 @@ def execute_sweep_rows(
             values=values,
             array_args=array_args,
             n_total=plan.n_sweep,
+            axis_groups=plan.array_groups[0].axis_groups,
             workflow_kind=workflow_kind,
             function_name=function_name,
             output_is_declared=output_is_declared,
@@ -319,19 +319,26 @@ def execute_sweep_rows(
     return _execution.execute_many(request)
 
 
-def mapped_storage(batch: Batch, n_rows: int) -> Any:
+def mapped_storage(
+    batch: Batch, n_rows: int, *, axis_groups: tuple[tuple[int, ...], ...] | None = None
+) -> Any:
     """The raw storage the map reads from the swept *batch*, as *n_rows* rows on one leading axis.
 
     The batch axes are flattened in row-major order, which is the order of the
     sweep's cells. A batch of arrays is read as its store, and a batch of records
-    as one column per field, keyed by the field's path.
+    as one column per field, keyed by the field's path. When *axis_groups* is
+    given, each named level expands to its target shape before flattening.
+    Missing leading axes align within each level, preserving its boundaries.
 
     Parameters
     ----------
     batch : Batch
         The swept batch.
     n_rows : int
-        The number of rows, which is the product of *batch*'s batch shape.
+        The number of rows, which is the product of the target batch shape.
+    axis_groups : tuple of tuple of int or None
+        Target shapes in the order of *batch*'s levels. Defaults to the batch's
+        own shapes. Each target shape must broadcast from its level's shape.
 
     Returns
     -------
@@ -343,14 +350,29 @@ def mapped_storage(batch: Batch, n_rows: int) -> Any:
     ------
     TypeError
         If *batch* stores objects, as a batch of laws or of functions does.
+    ValueError
+        If the target has a different number of levels, a level cannot broadcast
+        to its target shape, or *n_rows* differs from the target's total size.
     """
     n_batch = len(batch.batch_shape)
+    target_groups = batch.axis_groups if axis_groups is None else axis_groups
+    aligned_shape = []
+    for shape, target in zip(batch.axis_groups, target_groups, strict=True):
+        if len(target) < len(shape) or np.broadcast_shapes(shape, target) != target:
+            raise ValueError(f"cannot broadcast level shape {shape} to {target}")
+        aligned_shape.extend((1,) * (len(target) - len(shape)) + shape)
+    target_shape = tuple(axis for shape in target_groups for axis in shape)
+    if n_rows != prod(target_shape):
+        raise ValueError(f"row count {n_rows} differs from target shape {target_shape}")
 
     def rows(column: Any) -> Any:
         column = jnp.asarray(column)
+        event_shape = jnp.shape(column)[n_batch:]
+        column = jnp.reshape(column, (*aligned_shape, *event_shape))
+        column = jnp.broadcast_to(column, (*target_shape, *event_shape))
         # The row count is stated, since ``-1`` cannot be inferred over a
         # zero-width event.
-        return jnp.reshape(column, (n_rows, *jnp.shape(column)[n_batch:]))
+        return jnp.reshape(column, (n_rows, *event_shape))
 
     if isinstance(batch, NumericArrayBatch):
         return rows(batch.as_jax())
@@ -430,12 +452,13 @@ def execute_sweep_rows_jax(
     values: dict[str, Any],
     array_args: list[_binding.FunctionInputRef],
     n_total: int,
+    axis_groups: tuple[tuple[int, ...], ...] | None = None,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     function_name: str,
     output_is_declared: bool = False,
     output_label: str,
 ) -> Any:
-    """Execute the limited single-batch sweep through ``jax.vmap``."""
+    """Execute paired numeric sweep arguments through ``jax.vmap``."""
     single_call = mapped_row_body(
         func=func,
         values=values,
@@ -445,7 +468,8 @@ def execute_sweep_rows_jax(
     )
 
     vmap_input = [
-        mapped_storage(_binding.input_ref_value(values, ref), n_total) for ref in array_args
+        mapped_storage(_binding.input_ref_value(values, ref), n_total, axis_groups=axis_groups)
+        for ref in array_args
     ]
 
     def run_vmap():
