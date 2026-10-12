@@ -3337,6 +3337,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It used to declare `float32` in both cases.
 - **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
   `log_rate`.** It used to raise `ValueError`.
+- **A call over a batch of records and a law lifts the law at each record row.**
+  The call raised `TypeError` for records of several fields, as did a lift with
+  such a record among its other arguments. A record row displays as its own
+  expression, as `f(rows[row=0], mu ~ prior)`, where a row of one field
+  displayed as a dictionary. The JAX trace probe passes each argument it does
+  not map as the call passed it, as the executor does. A body that reads a
+  record's fields therefore runs in one `vmap` under `dispatch="auto"` and
+  `dispatch="jax"`, where the probe converted the record to an array and
+  failed. A pandas Series among the other arguments sends the call to
+  sequential dispatch under `"auto"`, where the JAX executor raised.
 - **Empty sweeps require a concrete output declaration before execution.**
   Both the call and `Function.check` refuse an omitted declaration, a type hole,
   or an output dimension that remains unbound after input dimensions bind.

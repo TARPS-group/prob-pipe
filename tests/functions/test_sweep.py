@@ -36,6 +36,8 @@ from probpipe.functions import _execution, _function, _sweep
 from probpipe.functions._plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.values import _binding
 
+from ._design_helpers import atom_leaves
+
 
 def _numeric_record_batch(
     field: str, values: range, *, level_name: str = "draw"
@@ -1202,6 +1204,73 @@ class TestASweptBatchOfArrays:
         np.testing.assert_allclose(
             np.asarray(result), np.sum(np.arange(24.0).reshape(2, 4, 3) ** 2, axis=-1)
         )
+
+
+class TestANestedSweepOfRecordRows:
+    """A call over a batch of records and a law lifts the law at each record row.
+
+    The body receives each row as a record and reads its fields. The rows are
+    fixed within each row's lift, so the auto and jax dispatches map the law's
+    atoms or draws at each row.
+    """
+
+    @staticmethod
+    def _rows(fields: tuple[str, ...] = ("x", "y")) -> NumericRecordBatch:
+        columns = {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
+        return NumericRecordBatch(
+            {field: columns[field] for field in fields}, ("row",), label="rows"
+        )
+
+    @staticmethod
+    def _shift(row, mu):
+        return row["x"] * mu + row["y"]
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_each_row_lifts_the_law_through_its_fields(self, dispatch):
+        seen = []
+
+        def shift(row, mu):
+            seen.append((type(row), isinstance(mu, jax.core.Tracer)))
+            return self._shift(row, mu)
+
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        result = Function(shift, label="shift", dispatch=dispatch)(self._rows(), law)
+
+        assert isinstance(result, DistributionBatch)
+        assert (result.batch_shape, result.level_names) == ((3,), ("row",))
+        # Each row's atoms are x * mu + y at the law's atoms 1, 2, and 4.
+        expected = [[11.0, 12.0, 14.0], [22.0, 24.0, 28.0], [33.0, 36.0, 42.0]]
+        np.testing.assert_allclose([atom_leaves(row_law)[0] for row_law in result], expected)
+        assert {row_type for row_type, _ in seen} == {NumericRecord}
+        assert {traced for _, traced in seen} == {dispatch != "sequential"}
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_a_mapped_dispatch_draws_the_atoms_sequential_dispatch_draws(self, dispatch):
+        def lift(dispatch):
+            with workflow_run(seed=0):
+                return Function(
+                    self._shift, label="shift", dispatch=dispatch, n_broadcast_samples=6
+                )(self._rows(), Normal("mu", 0.0, 1.0))
+
+        mapped, sequential = lift(dispatch), lift("sequential")
+
+        assert (mapped.batch_shape, mapped.level_names) == (sequential.batch_shape, ("row",))
+        np.testing.assert_allclose(
+            [atom_leaves(row_law)[0] for row_law in mapped],
+            [atom_leaves(row_law)[0] for row_law in sequential],
+            rtol=1e-6,
+        )
+
+    @pytest.mark.parametrize("fields", [("x",), ("x", "y")], ids=["one-field", "two-fields"])
+    def test_a_row_displays_as_the_call_of_its_record(self, fields):
+        law = Normal("mu", 0.0, 1.0, label="prior")
+        result = Function(lambda row, mu: row["x"] * mu, label="scale", dispatch="sequential")(
+            self._rows(fields), law
+        )
+
+        assert [str(row_law) for row_law in result] == [
+            f"scale(rows[row={i}], mu ~ prior)" for i in range(3)
+        ]
 
 
 class TestARecordedDtypeIsTheStoredDtype:
