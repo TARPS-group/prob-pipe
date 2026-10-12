@@ -128,7 +128,7 @@ A `Function` compares each admitted argument against the kind its parameter expe
 - `Function` (III.3) or a function capability: the parameter expects a value, as for a value type;
 - `Any`: the parameter accepts every kind as it arrives, so a law or a batch passes whole, and an author who wants the lift leaves the parameter unannotated.
 
-Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names.
+Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names, except for a batch-valued draw. A batch-valued draw is passed to a parameter whose annotation names a batch class, such as `NumericArrayBatch` or `Batch`, as that batch, and to any other parameter in its raw form: the array, or for a batch of records the nested mapping of columns that `raw()` returns. A function written for arrays therefore takes a bootstrap replicate unchanged.
 
 A parameter annotated with a class of raw values, such as `pd.Series` or `jax.Array`, receives the raw form of an argument, or of each element or draw that a lift passes to it, when that form is an instance of the class, so a function written for pandas receives the `Series` that a record field holds.
 

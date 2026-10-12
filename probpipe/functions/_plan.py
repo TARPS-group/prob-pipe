@@ -55,7 +55,12 @@ class ArrayBroadcastGroup:
 
 @dataclass(frozen=True)
 class BroadcastPlan:
-    """Pure broadcast classification for one resolved workflow call."""
+    """Pure broadcast classification for one resolved workflow call.
+
+    ``batch_args`` holds the broadcast arguments whose parameter's annotation
+    names a batch class, as :func:`receives_batch` states. A batch-valued draw
+    is passed to such a parameter as a batch, and to any other in its raw form.
+    """
 
     regime: BroadcastRegime
     dist_args: tuple[_binding.FunctionInputRef, ...]
@@ -65,6 +70,7 @@ class BroadcastPlan:
     sweep_level_names: tuple[str, ...]
     sweep_axis_groups: tuple[tuple[int, ...], ...]
     n_sweep: int
+    batch_args: tuple[_binding.FunctionInputRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,8 +121,9 @@ class StochasticRuntimeBinding:
     """Live root and preflight-captured evaluators for one source group.
 
     ``consumer_events`` holds the event type of each consumer, in the order of
-    ``consumer_evaluators``, so that the lift reads a batch-valued consumer's
-    draws as one batch per draw.
+    ``consumer_evaluators``, and ``consumer_batches`` whether each consumer's
+    parameter receives a batch-valued draw as a batch rather than in its raw
+    form.
     """
 
     root: Distribution = field(compare=False, hash=False, repr=False)
@@ -131,6 +138,11 @@ class StochasticRuntimeBinding:
         repr=False,
     )
     consumer_events: tuple[TermSpec, ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+    consumer_batches: tuple[bool, ...] = field(
         compare=False,
         hash=False,
         repr=False,
@@ -259,6 +271,21 @@ def lift_at(function: Any, parameter: str | None, value: Any) -> Lift:
     return lift_of(value, hint, function._roles.get(parameter))
 
 
+def receives_batch(expected: Any) -> bool:
+    """Whether a lifted parameter annotated *expected* receives a batch-valued draw as a batch.
+
+    The annotation names a batch class, such as ``NumericArrayBatch``,
+    ``RecordBatch``, or ``Batch``, in itself or in an arm of a union. Any
+    other annotation, or none, receives the draw in its raw form: an array, or
+    the nested mapping of columns of a batch of records.
+    """
+    for arm in _normalization._arms(expected):
+        named = _normalization._hint_class(arm)
+        if isinstance(named, type) and issubclass(named, Batch):
+            return True
+    return False
+
+
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
@@ -272,6 +299,7 @@ def build_broadcast_plan(
     """
     dist_args: list[_binding.FunctionInputRef] = []
     array_args: list[_binding.FunctionInputRef] = []
+    batch_args: list[_binding.FunctionInputRef] = []
 
     for ref in _binding.iter_input_refs(signature_info, values):
         value = _binding.input_ref_value(values, ref)
@@ -281,6 +309,8 @@ def build_broadcast_plan(
             array_args.append(ref)
         elif lift == "broadcast":
             dist_args.append(ref)
+            if receives_batch(expected):
+                batch_args.append(ref)
 
     array_groups = build_array_zip_groups(values=values, refs=array_args)
     sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
@@ -297,6 +327,7 @@ def build_broadcast_plan(
         sweep_level_names=sweep_level_names,
         sweep_axis_groups=sweep_axis_groups,
         n_sweep=n_sweep,
+        batch_args=tuple(batch_args),
     )
 
 
@@ -327,6 +358,7 @@ def build_stochastic_plan(
             refs=arg_refs,
         )
     )
+    batch_args = set(broadcast_plan.batch_args)
 
     candidates = [
         (index, source)
@@ -363,6 +395,9 @@ def build_stochastic_plan(
             sample_root=runtime_samplers[index],
             consumer_evaluators=tuple(runtime_evaluators[index]),
             consumer_events=tuple(runtime_events[index]),
+            consumer_batches=tuple(
+                consumer.arg_ref in batch_args for consumer in grouped_consumers[index]
+            ),
         )
         for index, source in enumerate(source_values)
     )

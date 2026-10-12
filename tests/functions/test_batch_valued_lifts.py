@@ -1,12 +1,17 @@
 """Lifted trajectory laws retain one whole batch per evaluation."""
 
+from collections.abc import Mapping
+
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
     ApplicabilityError,
+    Batch,
     BatchSpec,
+    BootstrapReplicateDistribution,
     DistributionBatch,
     EmpiricalDistribution,
     Function,
@@ -388,3 +393,102 @@ class TestBatchOutputDeclarations:
         source = EmpiricalDistribution(jnp.array([0.0, 1.0]), component="x")
         with workflow_run(seed=0), pytest.raises(ResultSchemaError):
             wrapped(source)
+
+
+class TestBatchValuedDrawsArriveRaw:
+    """A lifted body receives a batch-valued draw raw, unless its annotation names a batch class."""
+
+    @staticmethod
+    def _received(body, law, dispatch="sequential"):
+        """The draws *body* received over *law*, and the lifted law."""
+        seen = []
+
+        def record(value):
+            seen.append(value)
+            return body(value)
+
+        with workflow_run(seed=0):
+            lifted = Function(record, dispatch=dispatch, n_broadcast_samples=6)(law)
+        return seen, lifted
+
+    def test_a_bootstrap_replicate_arrives_as_an_array(self):
+        source = EmpiricalDistribution(jnp.array([1.0, 5.0, 9.0]), component="y")
+        replicate = BootstrapReplicateDistribution("b", source, 4)
+        seen, means = self._received(lambda b: b.mean(), replicate)
+        assert all(isinstance(b, jax.Array) and b.shape == (4,) for b in seen)
+        drawn = np.asarray([np.asarray(b) for b in seen])
+        np.testing.assert_allclose(means.atoms.raw(), drawn.mean(axis=1), rtol=1e-6)
+
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    def test_an_unannotated_parameter_receives_the_raw_trajectory(self, include_inputs):
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta")
+        trajectory = Function(
+            _trajectory,
+            output_spec=OutputSpec(trajectory=None),
+            include_inputs=include_inputs,
+            dispatch="sequential",
+        )
+        with workflow_run(seed=0):
+            law = trajectory(source)
+        seen, totals = self._received(lambda path: jnp.sum(path), law["trajectory"])
+        assert all(isinstance(path, jax.Array) and path.shape == (3,) for path in seen)
+        np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0], rtol=1e-6)
+
+    @pytest.mark.parametrize("annotation", [NumericArrayBatch, Batch, NumericArrayBatch | None])
+    def test_a_batch_annotation_receives_the_batch(self, annotation):
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta")
+        trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
+        seen = []
+
+        def total(path):
+            seen.append(path)
+            return jnp.sum(path.raw())
+
+        total.__annotations__["path"] = annotation
+        with workflow_run(seed=0):
+            totals = Function(total, dispatch="sequential")(trajectory(source))
+        assert all(isinstance(path, NumericArrayBatch) for path in seen)
+        assert all(path.level_names == ("time",) for path in seen)
+        np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0], rtol=1e-6)
+
+    def test_an_array_annotation_receives_the_raw_trajectory(self):
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
+        trajectory = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
+        seen = []
+
+        def total(path: jax.Array):
+            seen.append(path)
+            return jnp.sum(path)
+
+        with workflow_run(seed=0):
+            Function(total, dispatch="sequential")(trajectory(source))
+        assert all(isinstance(path, jax.Array) and path.shape == (3,) for path in seen)
+
+    @pytest.mark.parametrize("annotated", [False, True])
+    def test_a_batch_of_records_arrives_as_its_columns_or_as_the_batch(self, annotated):
+        def trajectory(beta):
+            return RecordBatch.stack(
+                [Record.from_fields(x=beta, y=beta * k) for k in (1.0, 2.0)], level_name="time"
+            )
+
+        seen = []
+
+        def total(path):
+            seen.append(path)
+            columns = path.raw() if annotated else path
+            return jnp.sum(columns["y"])
+
+        if annotated:
+            total.__annotations__["path"] = RecordBatch
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
+        with workflow_run(seed=0):
+            law = Function(trajectory, dispatch="sequential")(source)
+            totals = Function(total, dispatch="sequential")(law)
+        for path in seen:
+            if annotated:
+                assert isinstance(path, RecordBatch)
+                assert path.level_names == ("time",)
+            else:
+                assert isinstance(path, Mapping) and set(path) == {"x", "y"}
+                assert np.shape(path["y"]) == (2,)
+        np.testing.assert_allclose(totals.atoms.raw(), [6.0, 15.0], rtol=1e-6)

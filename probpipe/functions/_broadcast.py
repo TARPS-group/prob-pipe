@@ -31,12 +31,18 @@ from ..core._batch import Batch, BatchSpec
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
-from ..core._object_batch import _from_iterable, _ObjectBatch
-from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
+from ..core._object_batch import _from_iterable, _is_object_array, _ObjectBatch
+from ..core._record_batch import (
+    RecordBatch,
+    _batch_class_for,
+    _MappedBatchColumns,
+    _stacked_batches,
+)
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
 from ..core.config import WorkflowKind, prefect_config
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -520,9 +526,13 @@ def _joint_atoms(
     fields: dict[str, Any] = {}
     columns: dict[str, Any] = {}
     for ref in broadcast_args:
-        law = input_ref_value(values, ref)
-        fields[ref.label] = law.event_spec.spec
-        columns.update(_draw_columns(ref.label, draws.inputs[ref]))
+        event = input_ref_value(values, ref).event_spec.spec
+        fields[ref.label] = event
+        inputs = draws.inputs[ref]
+        if isinstance(event, BatchSpec):
+            # A batch-valued field holds one batch per draw in its object column.
+            inputs = _record_columns(inputs, ref.label, event, as_batch=True)
+        columns.update(_draw_columns(ref.label, inputs))
     clash = sorted(set(fields) & set(declaration.components))
     if clash:
         if len(clash) == 1:
@@ -674,38 +684,40 @@ def _sample_planned_source_groups(
         root_sample = _record_columns(
             binding.sample_root(key, sample_shape), binding.root.label, binding.root.event_spec.spec
         )
-        for consumer, evaluate, event in zip(
-            group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True
+        for consumer, evaluate, event, as_batch in zip(
+            group.consumers,
+            binding.consumer_evaluators,
+            binding.consumer_events,
+            binding.consumer_batches,
+            strict=True,
         ):
             sampled[consumer.arg_ref] = _record_columns(
-                evaluate(root_sample), consumer.arg_ref.label, event
+                evaluate(root_sample), consumer.arg_ref.label, event, as_batch=as_batch
             )
     return sampled
 
 
-def _record_columns(draws: Any, label: str, event: Any = None) -> Any:
+def _record_columns(draws: Any, label: str, event: Any = None, *, as_batch: bool = False) -> Any:
     """*draws*, raw draws along a leading axis, with record draws held in a ``Record`` of columns.
 
     A record-valued law's raw draws are the nested mapping of its columns, and
     the lift reads each row of a record argument as a ``Record``. Any other
-    draws are returned as they are. A batch-valued event is materialized as
-    one batch per leading-axis entry so row-wise evaluation receives its kind.
-    Its draws are either the batches' raw values or one batch per entry, which
-    a field of a ``Record`` of columns holds as the term of its object column.
+    draws are returned as they are.
+
+    The draws of a batch-valued *event* arrive either as the batches' raw values
+    or as one batch per draw, which a field of a ``Record`` of columns holds in
+    its object column. They are returned as their raw values with the draw axis
+    leading (see :func:`_stacked_draws`), and under *as_batch* as an object
+    array of one batch per draw, labeled *label*, for a parameter whose
+    annotation names a batch class.
     """
     if isinstance(event, BatchSpec):
-        raw = (
-            _raw_record(draws)
-            if isinstance(draws, (Record, RecordBatch, Mapping))
-            else raw_form(draws)
-        )
-        leaves = jax.tree.leaves(raw)
-        count = len(leaves[0])
+        raw = _stacked_draws(draws, event)
+        if not as_batch:
+            return raw
+        count = len(jax.tree.leaves(raw)[0])
         return _from_iterable(
-            [
-                _batch_at(jax.tree.map(lambda value, index=index: value[index], raw), event, label)
-                for index in range(count)
-            ],
+            [_batch_at(_row_at(raw, index), event, label) for index in range(count)],
             kind="batch-valued input atoms",
         )
     if isinstance(draws, NumericArray):
@@ -713,6 +725,40 @@ def _record_columns(draws: Any, label: str, event: Any = None) -> Any:
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
         return Record(_raw_record(draws), label=label)
     return draws
+
+
+def _stacked_draws(draws: Any, event: BatchSpec) -> Any:
+    """The draws of a batch-valued *event* as their raw values, with the draw axis leading.
+
+    Parameters
+    ----------
+    draws : Any
+        The draws along one leading axis: their raw values, a ``Record`` or a
+        mapping of raw columns, or an object array of one batch per draw,
+        possibly held in a tracked term.
+    event : BatchSpec
+        The declaration of one draw.
+
+    Returns
+    -------
+    Any
+        An array for array elements, the nested mapping of raw columns for
+        record elements, and an object array for any other elements. Each leaf
+        has the draw axis, then the event's batch axes, then the element's own
+        axes.
+    """
+    if isinstance(draws, (Record, RecordBatch, Mapping)):
+        return _raw_record(draws)
+    raw = raw_form(draws)
+    if _is_object_array(raw) and raw.ndim == 1 and all(isinstance(entry, Batch) for entry in raw):
+        stacked = _stacked_batches(raw, event)
+        return _unflatten_paths(stacked) if isinstance(stacked, Mapping) else stacked
+    return raw
+
+
+def _row_at(raw: Any, index: int) -> Any:
+    """Row *index* of *raw*, an array or a nested mapping of columns led by the draw axis."""
+    return jax.tree.map(lambda column: column[index], raw)
 
 
 def _broadcast_jax(
@@ -901,13 +947,20 @@ def _broadcast_enumerate(
         atoms = _record_columns(
             root._atoms_at(jnp.arange(root.num_atoms)), root.label, root.event_spec.spec
         )
+        group = stochastic_plan.source_groups[group_index]
         exact_entries.append(
             (
-                stochastic_plan.source_groups[group_index],
+                group,
                 tuple(
-                    _record_columns(evaluate(atoms), root.label, event)
-                    for evaluate, event in zip(
-                        binding.consumer_evaluators, binding.consumer_events, strict=True
+                    _record_columns(
+                        evaluate(atoms), consumer.arg_ref.label, event, as_batch=as_batch
+                    )
+                    for consumer, evaluate, event, as_batch in zip(
+                        group.consumers,
+                        binding.consumer_evaluators,
+                        binding.consumer_events,
+                        binding.consumer_batches,
+                        strict=True,
                     )
                 ),
             )
@@ -1015,11 +1068,15 @@ def _enumerated_inputs(
         atoms = _record_columns(
             root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label, root.event_spec.spec
         )
-        for consumer, evaluate, event in zip(
-            group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True
+        for consumer, evaluate, event, as_batch in zip(
+            group.consumers,
+            binding.consumer_evaluators,
+            binding.consumer_events,
+            binding.consumer_batches,
+            strict=True,
         ):
             inputs[consumer.arg_ref] = _record_columns(
-                evaluate(atoms), consumer.arg_ref.label, event
+                evaluate(atoms), consumer.arg_ref.label, event, as_batch=as_batch
             )
     return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
 
@@ -1090,13 +1147,17 @@ def _stack_rows(rows: list[Any]) -> Any:
     """Stack one argument's per-evaluation values along one leading axis.
 
     Record values stack through ``RecordBatch.stack``, on one level ``draw``
-    over the rows, since a ``Record`` has fields rather than a shape. Array
-    values stack with ``jnp.stack``, and any other values form an object array.
+    over the rows, since a ``Record`` has fields rather than a shape. Nested
+    mappings of columns stack column by column. Array values stack with
+    ``jnp.stack``, and any other values form an object array.
     """
     if rows and isinstance(rows[0], Batch):
         return _from_iterable(rows, kind="batch-valued input atoms")
     if rows and isinstance(rows[0], Record):
         return RecordBatch.stack(rows, level_name=DRAW_LEVEL)
+    if rows and isinstance(rows[0], Mapping) and not isinstance(rows[0], TrackedTerm):
+        # The raw form of a batch of records: the nested mapping of its columns.
+        return jax.tree.map(lambda *columns: _stack_rows(list(columns)), *rows)
     if all(_is_numeric_leaf(row) for row in rows):
         return jnp.stack([jnp.asarray(row) for row in rows])
     return _from_iterable(rows, kind="the draws of a lifted argument")
@@ -1105,8 +1166,9 @@ def _stack_rows(rows: list[Any]) -> Any:
 def _index_sample(s: Any, i: int) -> Any:
     """Row ``i`` of a per-argument sample batch, at the kind one draw is.
 
-    A record draw stays a record whatever its number of fields, and an array
-    draw is an array.
+    A record draw stays a record whatever its number of fields, an array draw
+    is an array, and the raw draw of a batch of records is the nested mapping
+    of its columns.
     """
     if isinstance(s, RecordBatch):
         # The raw columns, so a field that is not an array reaches the body as
@@ -1116,6 +1178,9 @@ def _index_sample(s: Any, i: int) -> Any:
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
         return Record({p: s.raw(p)[i] for p in s.event_template}, label=s.label)
+    if isinstance(s, Mapping) and not isinstance(s, TrackedTerm):
+        # The raw draws of a batch of records: the nested mapping of their columns.
+        return _row_at(s, i)
     return s[i]
 
 

@@ -3310,9 +3310,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Functions can lift to empirical laws of whole batches.** Atom counts,
   weights, exact enumeration, and sampling distinguish atom axes from each
   event's batch axes. `include_inputs=True` retains each complete batch in
-  the joint record, and a subsequent lift receives its batch kind. A
-  batch-valued event with numeric elements has elementwise moments, so the
-  mean of a trajectory law on `time` is a `NumericArrayBatch` on `time`.
+  the joint record. A subsequent lift receives each batch in its raw form,
+  or as the batch at a parameter annotated with a batch class such as
+  `NumericArrayBatch`. A batch-valued event with numeric elements has
+  elementwise moments, so the mean of a trajectory law on `time` is a
+  `NumericArrayBatch` on `time`.
 
 - **A display warns about a part that storage truncated only when its text
   shows less than the part.** A law selected many times from a posterior
