@@ -3292,11 +3292,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose type it names.
 - **A parameter annotated `numpy.typing.NDArray` receives the raw NumPy array
   under NumPy 2.5 as well as earlier versions.** NumPy 2.5 defines `NDArray` as
-  a type alias, and a type alias names the class of its value both when a
-  function presents its inputs and when it detects a distribution hint. A
-  parameter annotated with an alias of `Normal | None` therefore consumes a law
-  as one annotated `Normal | None` does, and a parameter annotated with an alias
-  of `ConditionalDistribution` or of a batch class receives its argument whole.
+  a type alias, and every annotation check reads a type alias as the annotation
+  it stands for. A parameter annotated with an alias of `Normal | None`
+  therefore consumes a law as one annotated `Normal | None` does, and one
+  annotated with an alias of `Any` takes its argument as it arrives.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

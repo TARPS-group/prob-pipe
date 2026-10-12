@@ -62,6 +62,10 @@ class DataNode(Node):
     pass
 
 
+type _DataNodeAlias = DataNode
+type _AnyAlias = Any
+
+
 class CallResolutionModule(Module):
     @workflow_method
     def step(self, dep: DataNode, x, y=7.0):
@@ -120,13 +124,15 @@ class TestWorkflowCallHelpers:
             4,
         )
 
-    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
-        def collect(head: Any, *items: Any, **extras: Any):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self, annotation):
+        def collect(head, *items, **extras):
             return head, items, extras
 
+        collect.__annotations__ = {"head": annotation, "items": annotation, "extras": annotation}
         info = _binding.make_signature_info(collect)
 
-        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is Any
+        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is annotation
         assert (
             _binding.input_ref_hint(
                 info,
@@ -230,6 +236,18 @@ class TestWorkflowCallHelpers:
 
         assert call == {"dep": dep, "x": 5.0, "y": 7.0, "scale": 2.0}
         assert override == {"dep": dep, "x": 5.0, "y": 3.0, "scale": 2.0}
+
+    @pytest.mark.parametrize("annotation", [DataNode, _DataNodeAlias], ids=["class", "alias"])
+    def test_a_dependency_parameter_receives_the_module_node_over_an_input(self, annotation):
+        dep = DataNode()
+        module = SimpleNamespace(child_nodes={"dep": dep}, inputs={"dep": "an input"})
+
+        def step(dep):
+            return dep
+
+        step.__annotations__ = {"dep": annotation}
+
+        assert _resolve_call(step, module=module) == {"dep": dep}
 
     def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
         def step(dep: DataNode):

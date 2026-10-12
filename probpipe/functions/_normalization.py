@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import UnionType
-from typing import Annotated, Any, TypeAliasType, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 from ..core._dispatch import ResolutionError
 from ..core._repr import type_name
@@ -47,14 +47,6 @@ from ..distributions._capabilities import (
 from ..distributions._conversion import ConversionInfo, converter_registry
 from ..distributions._distribution import Distribution, NumericDistribution
 from ..values import _binding
-
-try:
-    import typing_extensions
-except ImportError:
-    _TYPE_ALIAS_CLASSES: tuple[type, ...] = (TypeAliasType,)
-else:
-    # Before Python 3.14, typing_extensions defines a TypeAliasType class of its own.
-    _TYPE_ALIAS_CLASSES = (TypeAliasType, typing_extensions.TypeAliasType)
 
 DISTRIBUTION_HINT_PROTOCOLS: tuple[type, ...] = (
     SupportsExpectation,
@@ -245,43 +237,16 @@ def _entry(
     return method, exact_only, options
 
 
-def _resolved(hint: Any, expanded: set[Any] | None = None) -> Any:
-    """The annotation *hint* stands for, with its type aliases and ``Annotated`` wrappers resolved.
-
-    A type alias stands for its value, and a parametrized alias for the value of
-    the alias it parametrizes. ``Annotated[T, ...]`` stands for ``T``, because
-    the hints of a partial or a callable object keep the metadata that
-    ``get_type_hints`` removes from a function's hints. Resolution adds each
-    alias it expands to *expanded* and stops at an alias already in
-    *expanded*, which ends a recursive alias. An alias whose value raises
-    ``NameError`` stays unresolved, as one does whose value names a class
-    imported only under ``TYPE_CHECKING``.
-    """
-    expanded = set() if expanded is None else expanded
-    origin = get_origin(hint)
-    if origin is Annotated:
-        return _resolved(get_args(hint)[0], expanded)
-    alias = hint if isinstance(hint, _TYPE_ALIAS_CLASSES) else origin
-    if not isinstance(alias, _TYPE_ALIAS_CLASSES) or alias in expanded:
-        return hint
-    try:
-        value = alias.__value__
-    except NameError:
-        return hint
-    expanded.add(alias)
-    return _resolved(value, expanded)
-
-
 def _arms(expected: Any, expanded: set[Any] | None = None) -> tuple[Any, ...]:
     """The arms of a union annotation other than ``None``, or the annotation itself, each resolved.
 
-    The annotation resolves by :func:`_resolved` before a union splits, and each
-    arm resolves and splits in turn, so an alias whose value is a union names
-    the arms of that union. An alias that resolving an enclosing union expanded
-    is in *expanded* and stays unresolved.
+    The annotation resolves by :func:`_binding.resolved_hint` before a union
+    splits, and each arm resolves and splits in turn, so an alias whose value is
+    a union names the arms of that union. An alias that resolving an enclosing
+    union expanded is in *expanded* and stays unresolved.
     """
     expanded = set() if expanded is None else expanded
-    hint = _resolved(expected, expanded)
+    hint = _binding.resolved_hint(expected, expanded)
     if get_origin(hint) not in (Union, UnionType):
         return (hint,)
     return tuple(
@@ -293,12 +258,13 @@ def _arms(expected: Any, expanded: set[Any] | None = None) -> tuple[Any, ...]:
 
 
 def _hint_class(arm: Any) -> Any:
-    """The class an annotation names once :func:`_resolved` resolves it, or the resolved annotation.
+    """The class a resolved annotation names, or the resolved annotation.
 
-    A parametrized annotation names the class it parametrizes, so an array alias
-    parametrized by a dtype names the array class.
+    :func:`_binding.resolved_hint` resolves *arm*, and a parametrized annotation
+    names the class it parametrizes, so an array alias parametrized by a dtype
+    names the array class.
     """
-    hint = _resolved(arm)
+    hint = _binding.resolved_hint(arm)
     origin = get_origin(hint)
     return origin if isinstance(origin, type) else hint
 

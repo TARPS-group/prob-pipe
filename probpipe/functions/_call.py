@@ -351,9 +351,10 @@ def _expects_value(expected: Any) -> bool:
     A parameter expects a value when it is unannotated or annotated with a
     value type. An annotation that names a distribution, a kernel, or one of
     their capabilities declares that the parameter consumes that object, and
-    ``Any`` admits every kind.
+    ``Any`` admits every kind. :func:`_binding.resolved_hint` resolves the
+    annotation before it is compared with ``Any``.
     """
-    if expected is Any:
+    if _binding.resolved_hint(expected) is Any:
         return False
     return not (_normalization.is_distribution_hint(expected) or _consumes_kernel(expected))
 
@@ -399,7 +400,7 @@ def presented_arguments(
 
 def _raw_form_named(value: Any, hint: Any) -> Any:
     """*value*'s raw form if *hint* names a class of that form and not of *value*, else *value*."""
-    if not isinstance(value, TrackedTerm) or hint is Any:
+    if not isinstance(value, TrackedTerm) or _binding.resolved_hint(hint) is Any:
         return value
     classes = tuple(
         named
@@ -556,7 +557,7 @@ def _admit_by_role(
     if role_admits(role, arrived_kind(value)):
         return
     hint = _binding.parameter_lifting_hint(info, ref.parameter_name)
-    if lifts and hint is not Any and role_lift(value, role) is not None:
+    if lifts and _binding.resolved_hint(hint) is not Any and role_lift(value, role) is not None:
         return
     raise _role_refusal(function_name, ref.label, role, value)
 

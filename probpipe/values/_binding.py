@@ -1,4 +1,4 @@
-"""Frozen Python signatures and argument binding for Function values."""
+"""Frozen Python signatures, resolved annotations, and argument binding for Function values."""
 
 from __future__ import annotations
 
@@ -6,7 +6,15 @@ import inspect
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, get_type_hints
+from typing import Annotated, Any, TypeAliasType, get_args, get_origin, get_type_hints
+
+try:
+    import typing_extensions
+except ImportError:
+    _TYPE_ALIAS_CLASSES: tuple[type, ...] = (TypeAliasType,)
+else:
+    # Before Python 3.14, typing_extensions defines a TypeAliasType class of its own.
+    _TYPE_ALIAS_CLASSES = (TypeAliasType, typing_extensions.TypeAliasType)
 
 
 @dataclass(frozen=True)
@@ -101,11 +109,39 @@ def iter_input_refs(
     return tuple(refs)
 
 
+def resolved_hint(hint: Any, expanded: set[Any] | None = None) -> Any:
+    """The annotation *hint* stands for, with its type aliases and ``Annotated`` wrappers resolved.
+
+    A type alias stands for its value, and a parametrized alias for the value of
+    the alias it parametrizes. ``Annotated[T, ...]`` stands for ``T``, because
+    the hints of a partial or a callable object keep the metadata that
+    ``get_type_hints`` removes from a function's hints. Resolution adds each
+    alias it expands to *expanded* and stops at an alias already in
+    *expanded*, which ends a recursive alias. An alias whose value raises
+    ``NameError`` stays unresolved, as one does whose value names a class
+    imported only under ``TYPE_CHECKING``.
+    """
+    expanded = set() if expanded is None else expanded
+    origin = get_origin(hint)
+    if origin is Annotated:
+        return resolved_hint(get_args(hint)[0], expanded)
+    alias = hint if isinstance(hint, _TYPE_ALIAS_CLASSES) else origin
+    if not isinstance(alias, _TYPE_ALIAS_CLASSES) or alias in expanded:
+        return hint
+    try:
+        value = alias.__value__
+    except NameError:
+        return hint
+    expanded.add(alias)
+    return resolved_hint(value, expanded)
+
+
 def parameter_lifting_hint(info: FunctionSignatureInfo, name: str) -> Any:
     """Return the annotation that governs lifting at parameter *name*.
 
     ``Any`` on a variadic parameter governs none, so the arguments it collects
-    lift and sweep as they would at an unannotated parameter.
+    lift and sweep as they would at an unannotated parameter. The annotation is
+    compared with ``Any`` once :func:`resolved_hint` resolves it.
     """
     hint = info.hints.get(name)
     parameter = info.signature.parameters.get(name)
@@ -113,7 +149,7 @@ def parameter_lifting_hint(info: FunctionSignatureInfo, name: str) -> Any:
         inspect.Parameter.VAR_POSITIONAL,
         inspect.Parameter.VAR_KEYWORD,
     )
-    return None if variadic and hint is Any else hint
+    return None if variadic and resolved_hint(hint) is Any else hint
 
 
 def input_ref_hint(info: FunctionSignatureInfo, ref: FunctionInputRef) -> Any:
@@ -175,8 +211,12 @@ def is_dependency_param(
     *,
     dependency_type: type,
 ) -> bool:
-    """Return whether a parameter annotation names a workflow dependency."""
-    ann = info.hints.get(name)
+    """Return whether a parameter annotation names a workflow dependency.
+
+    The annotation names one when the class :func:`resolved_hint` resolves it to
+    is a subclass of *dependency_type*.
+    """
+    ann = resolved_hint(info.hints.get(name))
     try:
         return isinstance(ann, type) and issubclass(ann, dependency_type)
     except TypeError:

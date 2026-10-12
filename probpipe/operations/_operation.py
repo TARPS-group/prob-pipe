@@ -57,7 +57,7 @@ from ..functions import _broker, _descendants
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
-from ..values._binding import values_to_bound_arguments
+from ..values._binding import resolved_hint, values_to_bound_arguments
 from ..values._function_base import _COMPLETED_AT_RETURN
 
 __all__ = [
@@ -793,9 +793,12 @@ def _kinds_for(hint: Any) -> tuple[type[TermSpec], ...]:
     batch of values is swept; one annotated ``Any`` accepts every kind as it
     arrives; a term class accepts its own kind; and any other annotation, such
     as ``str`` for a field path, selects rather than supplies and accepts none.
+    A type alias accepts the kinds of the annotation :func:`resolved_hint`
+    resolves it to.
     """
     if hint is inspect.Parameter.empty:
         return _VALUE_KINDS
+    hint = resolved_hint(hint)
     if hint is Any:
         return (TermSpec,)
     if not isinstance(hint, type):

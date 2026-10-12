@@ -59,6 +59,7 @@ type _CapabilityAlias = SupportsLogProb
 type _BatchAlias = NumericArrayBatch
 type _UnresolvedAlias = DataFrame
 type _RecursiveAlias = _RecursiveAlias | None
+type _AnyAlias = Any
 
 
 def _batch(values, level: str = "row") -> NumericArrayBatch:
@@ -104,13 +105,15 @@ class TestTheTrigger:
     def test_a_distribution_at_a_value_annotated_parameter_is_lifted(self, annotation):
         assert isinstance(_kind_of(annotation, standard_normal()), Distribution)
 
-    def test_a_parameter_annotated_any_passes_a_law_whole(self):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_passes_a_law_whole(self, annotation):
         seen = []
 
-        def accept(x: Any):
+        def accept(x):
             seen.append(x)
             return 0.0
 
+        accept.__annotations__ = {"x": annotation}
         law = standard_normal()
         Function(
             accept,
@@ -187,6 +190,20 @@ class TestTheTrigger:
             consume,
             label="consume",
         )(rows)
+
+        assert seen == [rows]
+
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_passes_a_batch_whole(self, annotation):
+        seen = []
+
+        def accept(x):
+            seen.append(x)
+            return 0.0
+
+        accept.__annotations__ = {"x": annotation}
+        rows = _batch([1.0, 2.0])
+        Function(accept, label="accept")(rows)
 
         assert seen == [rows]
 
@@ -505,6 +522,7 @@ class TestARawClassAnnotation:
             {"x": np.ndarray},
             {"x": _UnresolvedAlias},
             {"x": _RecursiveAlias},
+            {"x": _AnyAlias},
         ],
         ids=[
             "unannotated",
@@ -514,6 +532,7 @@ class TestARawClassAnnotation:
             "ndarray",
             "unresolved-alias",
             "recursive-alias",
+            "Any-alias",
         ],
     )
     def test_any_other_argument_arrives_as_it_is(self, annotations):
