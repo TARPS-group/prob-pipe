@@ -7,6 +7,7 @@ import pytest
 
 from probpipe import (
     BatchSpec,
+    BootstrapReplicateDistribution,
     EmpiricalDistribution,
     Function,
     Normal,
@@ -132,6 +133,75 @@ class TestMultipleAtomLevels:
             EmpiricalDistribution(
                 atoms, event_spec=OutputSpec(path=BatchSpec(NumericArraySpec(()), time=0))
             )
+
+
+class TestNestedBatchEvents:
+    @pytest.mark.parametrize("raw", [False, True])
+    def test_nested_event_levels_flatten_before_counting_atoms(self, raw):
+        nested = BatchSpec(BatchSpec(NumericArraySpec(()), time=(2, 3)), replicate=2)
+        declaration = OutputSpec(path=nested)
+        values = jnp.stack([jnp.ones((2, 2, 3)), jnp.full((2, 2, 3), 5.0)])
+        atoms = (
+            values
+            if raw
+            else NumericArrayBatch(
+                values, ("path", "replicate", "time"), axes_per_level=(1, 1, 2), label="paths"
+            )
+        )
+        law = EmpiricalDistribution(atoms, [0.25, 0.75], event_spec=declaration)
+
+        assert law.num_atoms == 2
+        assert law.event_spec.spec == BatchSpec(
+            NumericArraySpec((), jnp.float32), replicate=2, time=(2, 3)
+        )
+        assert declaration.spec is nested
+        assert isinstance(nested.element_spec, BatchSpec)
+        with workflow_run(seed=0):
+            drawn = sample(law, 4)
+            mu = mean(law)
+        assert drawn.axis_groups == ((4,), (2,), (2, 3))
+        assert drawn.level_names == ("sample", "replicate", "time")
+        assert mu.level_names == ("replicate", "time")
+        # Weight normalization gives a float32 error of 4.8e-7 at the analytic mean 4.
+        np.testing.assert_allclose(mu.raw(), jnp.full((2, 2, 3), 4.0), rtol=0, atol=1e-6)
+
+    def test_repeated_nested_level_names_are_refused(self):
+        nested = BatchSpec(BatchSpec(NumericArraySpec(()), time=3), time=2)
+        with pytest.raises(ValueError, match="level 'time' would appear twice"):
+            EmpiricalDistribution(jnp.ones((2, 2, 3)), event_spec=OutputSpec(path=nested))
+
+    @pytest.mark.parametrize("moment", ["mean", "variance", "cov", "quantile", "quantiles"])
+    def test_bootstrap_replicate_moments_keep_the_nested_event_axes(self, moment):
+        path = jnp.array([2.0, 4.0, 6.0])
+        source = EmpiricalDistribution(
+            path[None, :], event_spec=OutputSpec(path=BatchSpec(NumericArraySpec(()), time=3))
+        )
+        replicate = BootstrapReplicateDistribution("rep", source, 2, level="replicate")
+        operations = {
+            "mean": mean,
+            "variance": variance,
+            "cov": cov,
+            "quantile": lambda d: quantile(d, 0.5),
+            "quantiles": lambda d: quantile(d, jnp.array([0.25, 0.75])),
+        }
+        with workflow_run(seed=0):
+            result = operations[moment](replicate)
+
+        # The source has one atom, so every replicate consists of two copies of path.
+        expected = jnp.broadcast_to(path, (2, 3))
+        if moment == "cov":
+            np.testing.assert_array_equal(result.raw(), jnp.zeros((6, 6)))
+        else:
+            if moment == "variance":
+                expected = jnp.zeros((2, 3))
+            if moment == "quantiles":
+                expected = jnp.broadcast_to(expected, (2, 2, 3))
+            assert result.level_names == (
+                ("quantile", "replicate", "time")
+                if moment == "quantiles"
+                else ("replicate", "time")
+            )
+            np.testing.assert_array_equal(result.raw(), expected)
 
 
 #: The weights and the atoms 2·[1, 2, 3] and 5·[1, 2, 3] of a weighted trajectory law.

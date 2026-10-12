@@ -27,7 +27,7 @@ except ImportError:
     task = flow = None
 
 from ..core._array_backend import _is_numeric_leaf
-from ..core._batch import Batch, BatchSpec
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
 from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
@@ -528,6 +528,8 @@ def _joint_atoms(
     columns: dict[str, Any] = {}
     for ref in broadcast_args:
         event = input_ref_value(values, ref).event_spec.spec
+        if isinstance(event, BatchSpec):
+            event = _flat_batch_spec(event)
         fields[ref.label] = event
         inputs = draws.inputs[ref]
         if isinstance(event, BatchSpec):

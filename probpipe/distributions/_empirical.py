@@ -25,7 +25,7 @@ from .._weights import (
     weighted_variance,
 )
 from ..core._array_backend import _to_jax_array
-from ..core._batch import Batch, BatchSpec
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._dispatch import Feasibility
 from ..core._expression import Indexed
 from ..core._kinds import batch_class_for_spec
@@ -590,7 +590,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         The declaration of one draw, completed with the atoms' spec. For a
         ``BatchSpec`` event, its named levels must trail the stored atom levels;
         only the preceding axes index atoms and weights. One draw retains the
-        event's levels, including levels of size zero.
+        event's levels, including levels of size zero. Nested batches are
+        flattened into one batch, with outer levels before inner levels.
 
     Raises
     ------
@@ -607,7 +608,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         another component than *component* or declares a type that does not
         unify with the atoms' spec, or a batch-valued event's levels do not
         trail at least one atom level or include the level that array atoms
-        lie on.
+        lie on, or nested event batches repeat a level name.
 
     Examples
     --------
@@ -657,6 +658,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
     ) -> None:
         if isinstance(atoms, str):
             raise TypeError(label_given_first("EmpiricalDistribution", "atoms", atoms))
+        if isinstance(event_spec, OutputSpec) and isinstance(event_spec.spec, BatchSpec):
+            event_spec = event_spec._with_spec(_flat_batch_spec(event_spec.spec))
         atom_spec = _atom_spec(atoms, event_spec)
         if level is not None and not isinstance(level, str):
             raise TypeError(f"level must be a string, got {type(level).__name__}")

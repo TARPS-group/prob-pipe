@@ -2391,7 +2391,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns a numeric batch, and a later lift over its law, run in one
   `jax.vmap`. A batch-valued event with numeric elements has
   elementwise moments, so the mean of a trajectory law on `time` is a
-  `NumericArrayBatch` on `time`.
+  `NumericArrayBatch` on `time`. Nested event batches combine their levels in
+  outer-to-inner order, so bootstrap replicates of trajectories support
+  moments and `include_inputs=True` lifts.
 
 ### Changed
 

@@ -494,6 +494,39 @@ class TestBatchValuedDrawsArriveRaw:
         np.testing.assert_allclose(totals.atoms.raw(), [6.0, 15.0], rtol=1e-6)
 
 
+class TestNestedBatchValuedInputs:
+    @pytest.mark.parametrize("dispatch", ["auto", "jax", "sequential", "thread"])
+    @pytest.mark.parametrize("annotated", [False, True])
+    def test_joint_lifts_keep_a_whole_bootstrap_replicate(self, dispatch, annotated):
+        source = EmpiricalDistribution(
+            jnp.array([[2.0, 4.0, 6.0]]),
+            event_spec=OutputSpec(path=BatchSpec(NumericArraySpec(()), time=3)),
+        )
+        replicate = BootstrapReplicateDistribution("rep", source, 2, level="replicate")
+
+        def total(p):
+            if annotated:
+                assert isinstance(p, NumericArrayBatch)
+                assert p.level_names == ("replicate", "time")
+                p = p.raw()
+            return jnp.sum(p)
+
+        if annotated:
+            total.__annotations__["p"] = NumericArrayBatch
+        wrapped = Function(total, dispatch=dispatch, include_inputs=True, n_broadcast_samples=5)
+        with workflow_run(seed=0):
+            law = wrapped(replicate)
+            drawn = sample(law)
+
+        assert law.event_spec.spec["p"] == BatchSpec(
+            NumericArraySpec((), jnp.float32), replicate=2, time=3
+        )
+        assert law.atoms["p"].level_names == ("total", "replicate", "time")
+        assert drawn["p"].level_names == ("replicate", "time")
+        np.testing.assert_array_equal(drawn["p"].raw(), [[2.0, 4.0, 6.0], [2.0, 4.0, 6.0]])
+        np.testing.assert_array_equal(law.atoms.raw("total"), jnp.full((5,), 24.0))
+
+
 def _record_trajectory(beta):
     return RecordBatch.stack(
         [Record.from_fields(x=beta, y=beta * k) for k in (1.0, 2.0)], level_name="time"
