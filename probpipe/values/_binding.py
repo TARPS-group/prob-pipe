@@ -6,15 +6,35 @@ import inspect
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, TypeAliasType, TypeVar, get_args, get_origin, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ParamSpec,
+    TypeAliasType,
+    TypeVar,
+    TypeVarTuple,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 try:
     import typing_extensions
 except ImportError:
     _TYPE_ALIAS_CLASSES: tuple[type, ...] = (TypeAliasType,)
+    _TYPE_PARAMETER_CLASSES: tuple[type, ...] = (TypeVar, ParamSpec, TypeVarTuple)
 else:
-    # Before Python 3.14, typing_extensions defines a TypeAliasType class of its own.
+    # Before Python 3.14, typing_extensions defines a TypeAliasType class of its
+    # own, and before 3.13 its own type parameter classes as well.
     _TYPE_ALIAS_CLASSES = (TypeAliasType, typing_extensions.TypeAliasType)
+    _TYPE_PARAMETER_CLASSES = (
+        TypeVar,
+        ParamSpec,
+        TypeVarTuple,
+        typing_extensions.TypeVar,
+        typing_extensions.ParamSpec,
+        typing_extensions.TypeVarTuple,
+    )
 
 
 @dataclass(frozen=True)

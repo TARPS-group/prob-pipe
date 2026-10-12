@@ -3352,6 +3352,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   annotated with an alias of `Any` takes its argument as it arrives. A generic
   alias reads with its arguments in place of its type parameters, so
   `Maybe[Normal]` reads as `Normal | None` where `type Maybe[T] = T | None`.
+- **A function annotated with a type alias can be replayed.** Its replay
+  identity records each alias by its module, its name, its type parameters,
+  and its value, so a module-level function annotated
+  `numpy.typing.NDArray[np.float64]` under NumPy 2.5, or with any `type`
+  alias, replays where its anchor was unsupported. The identity changes when
+  the alias's value changes. An `Annotated` annotation replays on Python 3.13
+  and later too, and an alias whose value names an undefined name leaves the
+  function unreplayable.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

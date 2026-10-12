@@ -7,6 +7,7 @@ import inspect
 import json
 import sys
 from pathlib import Path
+from typing import TypeAliasType
 from unittest.mock import patch
 
 import jax.numpy as jnp
@@ -19,6 +20,8 @@ from probpipe import (
     Function,
     InputSpec,
     Normal,
+    NumericArray,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
@@ -34,7 +37,7 @@ from probpipe import (
 )
 from probpipe.functions import _broker, _callable, _recipe, _replay
 from probpipe.functions._managed import ManagedEffectClaim, sweep_unit_segment
-from tests.functions import _replay_fixtures
+from tests.functions import _alias_replay_fixtures, _replay_fixtures
 from tests.functions._replay_fixtures import (
     replayable_affine,
     replayable_canonical_defaults,
@@ -573,6 +576,49 @@ class TestWorkflowCallableAnchor:
             anchor.controls()
             == _callable.capture_function_anchor(baseline.with_label("display")).controls()
         )
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "annotated_rows",
+            "annotated_maybe",
+            "annotated_array",
+            "annotated_tree",
+            "annotated_extension_rows",
+            "annotated_metadata",
+        ],
+    )
+    def test_a_type_alias_annotation_has_a_stable_anchor(self, name):
+        workflow = Function(getattr(_alias_replay_fixtures, name), label=name)
+
+        anchor = _callable.capture_function_anchor(workflow)
+
+        assert anchor.supported
+        assert anchor.controls() == _callable.capture_function_anchor(workflow).controls()
+
+    def test_a_type_alias_anchor_follows_the_alias_value(self, monkeypatch):
+        workflow = Function(_alias_replay_fixtures.annotated_rows, label="rows")
+        annotations = _alias_replay_fixtures.annotated_rows.__annotations__
+
+        def anchor_with(alias):
+            monkeypatch.setitem(annotations, "x", alias)
+            return _callable.capture_function_anchor(workflow)
+
+        batch = anchor_with(TypeAliasType("Rows", NumericArrayBatch))
+        same = anchor_with(TypeAliasType("Rows", NumericArrayBatch))
+        array = anchor_with(TypeAliasType("Rows", NumericArray))
+
+        assert batch.supported and same.supported and array.supported
+        assert batch.sha256 == same.sha256
+        assert batch.sha256 != array.sha256
+
+    def test_a_type_alias_whose_value_names_an_undefined_name_is_unsupported(self):
+        workflow = Function(_alias_replay_fixtures.annotated_undefined, label="undefined")
+
+        anchor = _callable.capture_function_anchor(workflow)
+
+        assert not anchor.supported
+        assert anchor.form == "unsupported_definition_state"
 
     def test_callable_canonical_json_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="Out of range float values"):
