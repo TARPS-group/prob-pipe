@@ -45,6 +45,7 @@ from probpipe import (
     MultivariateNormal,
     NegativeBinomial,
     Normal,
+    NumericArraySpec,
     NumericDistribution,
     NumericRecordBatch,
     NumericRecordSpec,
@@ -60,6 +61,7 @@ from probpipe import (
     Uniform,
     VonMisesFisher,
     Wishart,
+    conditional_distribution,
     distribution,
     sample,
 )
@@ -111,6 +113,7 @@ from probpipe.inference._minibatch import (
 )
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._condition import _unnormalized_conditional, _UnnormalizedConditional
+from probpipe.operations._given import _GivenLaw
 from tests._stanc import require_stanc
 
 # -- Constructions ------------------------------------------------------------
@@ -198,8 +201,15 @@ def _squared_exponential(X, Y):
     return jnp.exp(-0.5 * (X[:, None, 0] - Y[None, :, 0]) ** 2)
 
 
+def _normal_at(mu):
+    return Normal("x", mu, 1.0)
+
+
 # One construction per concrete class, keyed by the class it represents.
 _CONSTRUCTIONS: dict[type, Callable[[], Distribution]] = {
+    _GivenLaw: lambda: _GivenLaw(
+        conditional_distribution(_normal_at, given_spec={"mu": NumericArraySpec(())}), {"mu": 0.0}
+    ),
     Normal: lambda: Normal("x", 0.0, 1.0),
     Beta: lambda: Beta("x", 2.0, 3.0),
     Gamma: lambda: Gamma("x", 2.0, 1.0),
@@ -321,6 +331,7 @@ _STAN_CONSTRUCTIONS = frozenset({_StanPosterior, _UnconstrainedStanView})
 
 _BASES = frozenset(
     {
+        NumericArraySpec,
         NumericDistribution,
         FactoredNumericDistribution,
         TFPDistribution,

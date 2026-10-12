@@ -16,6 +16,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.distributions._capabilities import _capability_guard
 from probpipe.families import (
@@ -406,12 +407,13 @@ class TestContinuousMoments:
         )
 
     @pytest.mark.parametrize("name", list(_SCIPY_EQUIVALENTS))
-    def test_samples_pass_ks_test(self, name, key):
+    def test_samples_pass_ks_test(self, name):
         """Two-sided KS test: samples must be consistent with the scipy CDF."""
         cls, kwargs = _CONTINUOUS_DISTS[name]
         our_dist = cls("x", **kwargs)
         scipy_dist = _SCIPY_EQUIVALENTS[name]
-        draws = np.asarray(sample(our_dist, sample_shape=(50_000,)))
+        with workflow_run(seed=42):
+            draws = np.asarray(sample(our_dist, sample_shape=(50_000,)))
         stat, p = _scipy.kstest(draws, scipy_dist.cdf)
         # Project-wide goodness-of-fit threshold: p > 0.001 (~3σ).
         # Strict enough to catch bugs, loose enough to avoid xdist flakes.

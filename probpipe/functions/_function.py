@@ -638,7 +638,7 @@ def _run_call(
     )
     label, expression = _result_identity(function, values, passed)
     controls = function.options
-    candidates = function._route_candidates(controls)
+    candidates = function._route_candidates(controls, values)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
     if candidates is not None and broadcast_plan.regime == "none":
         # The routes realize the one point, so the selection is the call's route.
@@ -1407,7 +1407,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     broadcast_plan = _plan.build_broadcast_plan(
         values=values, signature_info=function._signature_info, roles=function._roles
     )
-    candidates = function._route_candidates(function.options)
+    candidates = function._route_candidates(function.options, values)
     if candidates is not None:
         return _check_routes(function, values, broadcast_plan, candidates, conversions, waiting)
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
@@ -1588,7 +1588,7 @@ class _CallEngine:
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
-        candidates = function._route_candidates(function.options)
+        candidates = function._route_candidates(function.options, values)
         if candidates is None:
             arguments = _call.presented_arguments(function._signature_info, values)
             return function._implementation.invoke(

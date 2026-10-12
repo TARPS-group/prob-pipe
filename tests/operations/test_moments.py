@@ -967,4 +967,4 @@ class TestExpectation:
         assert route.registry is _rules.evaluation_rule_registry
 
     def test_the_operation_takes_no_key(self):
-        assert list(inspect.signature(expectation).parameters) == ["d", "f", "fixed_args"]
+        assert list(inspect.signature(expectation).parameters) == ["d", "f", "fixed_args", "given"]

@@ -1245,12 +1245,16 @@ class Function(TrackedTerm, Annotated):
         """
         return _invoke_engine(self, values, context)
 
-    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[Any, ...] | None:
+    def _route_candidates(
+        self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None
+    ) -> tuple[Any, ...] | None:
         """The routes that may realize one point of a call under *controls*, in selection order.
 
         A Function's body is its one route, so it lists none and the engine
         runs the body. A subclass realized by routes returns them, each with
-        the members :mod:`probpipe.functions._resolution` names.
+        the members :mod:`probpipe.functions._resolution` names. Optional
+        *values* are the already-bound inputs, which an operation may read to
+        include a conditional delegation candidate.
         """
         return None
 
