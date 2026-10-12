@@ -23,6 +23,7 @@ from probpipe import (
     ResultKindError,
     ResultSchemaError,
     TrackedTerm,
+    function,
     workflow_run,
 )
 from probpipe.core._dispatch import (
@@ -57,6 +58,7 @@ from probpipe.operations._operation import (
 )
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
+from probpipe.values._function_base import _INHERITED_CONTROLS
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
 
@@ -250,10 +252,13 @@ def _center_applies(d: Any) -> Any:
     return center.check(d)
 
 
-def _doubled(body: Any = None, *, checked: bool = True) -> Any:
-    """A fresh derived operation ``doubled(d) = 2 * body(d)``, ``body`` being the raw center."""
+def _doubled(body: Any = None, *, check: Any = _center_applies) -> Any:
+    """A fresh derived operation ``doubled(d) = 2 * body(d)``, ``body`` being the raw center.
+
+    *check* is its identity check, and ``None`` declares it without one.
+    """
     inner = center.with_options(raw=True) if body is None else body
-    options = {"identity_check": _center_applies} if checked else {}
+    options = {} if check is None else {"identity_check": check}
 
     @operation(result=_event, registry=OperationRegistry(), **options)
     def doubled(d: Distribution):
@@ -261,6 +266,25 @@ def _doubled(body: Any = None, *, checked: bool = True) -> Any:
         return inner(d) * 2
 
     return doubled
+
+
+@function
+def _identity_map(x):
+    """Its argument, a plain Function that a law at *x* lifts."""
+    return x
+
+
+def _via_center(*, exact: bool) -> Any:
+    """A fresh primitive operation whose one fallback route calls ``center`` on the law."""
+    via = _toy(result=_event)
+
+    def run_center(call: BoundCall, result: OutputSpec | None) -> Any:
+        return center.with_options(raw=True)(call.operands["d"])
+
+    via.fallback_route(
+        "via_center", check=lambda call, result: True, execute=run_center, exact=exact
+    )
+    return via
 
 
 class TestIdentityControls:
@@ -286,7 +310,7 @@ class TestIdentityControls:
         assert (report.feasible, report.route, report.exact) == (True, "identity", False)
 
     def test_exact_only_excludes_an_identity_without_an_identity_check(self):
-        doubled = _doubled(checked=False)
+        doubled = _doubled(check=None)
         assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
         with pytest.raises(ResolutionError, match="exact_only"):
             doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
@@ -323,17 +347,49 @@ class TestIdentityControls:
         view = _doubled().with_options(method="identity")
         assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
 
-    def test_only_the_calls_the_identity_makes_inherit_the_controls(self):
+    def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
         law = Sampler("s")
-        middle = _toy(result=_event)
+        doubled = _doubled(_via_center(exact=False).with_options(raw=True))
+        doubled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
 
-        def run_center(call: BoundCall, result: OutputSpec | None) -> Any:
-            return center.with_options(raw=True)(call.operands["d"])
+    def test_exact_only_restricts_every_call_the_identity_runs(self):
+        via = _via_center(exact=True)
+        doubled = _doubled(via.with_options(raw=True), check=lambda d: via.check(d))
+        assert doubled.with_options(exact_only=True).check(Sampler("s")).feasible is True
+        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.with_options(exact_only=True)(Sampler("s"))
 
-        middle.fallback_route(
-            "via_center", check=lambda call, result: True, execute=run_center, exact=False
-        )
-        _doubled(middle.with_options(raw=True)).with_options(n_broadcast_samples=33)(law)
+    def test_exact_only_refuses_a_plain_function_lifted_in_the_identity(self):
+        doubled = _doubled(lambda d: _identity_map(d) * 1.0)
+        with pytest.raises(ResolutionError, match="exact_only"):
+            doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
+
+    def test_the_sample_count_passes_to_a_plain_function_lifted_in_the_identity(self):
+        law = Sampler("s")
+        doubled = _doubled(lambda d: mean.with_options(raw=True)(_identity_map(d)))
+        with workflow_run(seed=0):
+            doubled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_each_point_of_a_lifted_call_passes_the_sample_count(self):
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        _doubled().with_options(n_broadcast_samples=33)(_laws(first, second))
+        assert first.shapes == second.shapes == [(33,)]
+
+    def test_the_points_of_a_threaded_call_pass_the_sample_count(self):
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        view = _doubled().with_options(n_broadcast_samples=33, dispatch="thread")
+        view(_laws(first, second))
+        assert first.shapes == second.shapes == [(33,)]
+
+    def test_the_inherited_controls_are_cleared_after_the_identity_raises(self):
+        with pytest.raises(ResolutionError):
+            _doubled().with_options(exact_only=True)(Sampler("s"))
+        assert _INHERITED_CONTROLS.get() is None
+        law = Sampler("s")
+        center(law)
         assert law.shapes == [(center.options["n_broadcast_samples"],)]
 
 

@@ -1080,8 +1080,18 @@ quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, 
 
 
 def _evaluate_applies(d: Any, f: Any, fixed_args: Mapping[str, Any] | None = None) -> Any:
-    """``evaluate`` has a route for the integrand over the law."""
-    return evaluate.check(f, d, fixed_args)
+    """``evaluate`` has a route for the integrand over the law.
+
+    A check cannot see the value ``evaluate`` returns, so a feasible report
+    leaves the identity's exactness open and defers the check of ``mean`` on
+    that value to the run.
+    """
+    report = evaluate.check(f, d, fixed_args)
+    if report.feasible is not True:
+        return report
+    return PointReport(
+        True, deferred=("``mean`` of the integrand's value is checked when it runs",)
+    )
 
 
 @operation(

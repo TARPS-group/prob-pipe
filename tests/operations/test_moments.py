@@ -928,6 +928,14 @@ class TestExpectation:
             True,
         )
 
+    def test_the_identity_check_defers_mean_and_leaves_the_exactness_open(self):
+        report = expectation.check(Sampler("s"), _the_law)
+        assert (report.feasible, report.route) == (True, "identity")
+        assert "``mean`` of the integrand's value is checked when it runs" in report.deferred
+        with workflow_run(seed=3):
+            result = expectation(Sampler("s"), _the_law)
+        assert result.provenance.metadata["exact"] is None
+
     def test_exact_only_refuses_the_identity_where_mean_is_only_approximate(self):
         with pytest.raises(ResolutionError, match="mean: no route applies with exact_only"):
             expectation.with_options(exact_only=True)(Sampler("s"), _the_law)

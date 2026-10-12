@@ -3316,17 +3316,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **A derived operation passes `exact_only` and `n_broadcast_samples` to the
-  operations its identity calls.** `prob.with_options(exact_only=True)(Normal("x",
+  functions its identity calls.** `prob.with_options(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
   density, because the `log_prob` that `prob` calls selects only exact routes.
-  `exact_only` still refuses a derived operation whose inner operation has only
-  an approximate route, and a derived operation declared without an
-  `identity_check`. `expectation.with_options(n_broadcast_samples=5)(d, f)`,
+  `exact_only` restricts every operation and plain `Function` the identity
+  runs, at any depth, so a derived operation still raises `ResolutionError`
+  when a call inside it has only an approximate route, and when it is declared
+  without an `identity_check`. `expectation.with_options(n_broadcast_samples=5)(d, f)`,
   for a map `f` that takes the law whole, used to draw the default 256 samples
-  in the `mean` its identity calls and now draws 5.
-  A control that the identity sets on an inner call wins, except `exact_only`,
-  which applies when either call sets it. `method`, `method_options`, and `raw`
-  stay each operation's own.
+  in the `mean` its identity calls and now draws 5. The sample count applies to
+  the calls the identity makes directly, unless the identity sets its own on
+  the call. The other controls stay each call's own.
+- **`expectation.check` defers the `mean` of a map that takes the law whole.**
+  For such a map the check cannot see the value whose `mean` the identity
+  takes, so its report names that check in `deferred`, and the call's
+  provenance leaves the exactness open (`None`) instead of recording it as
+  exact.
 - **A SciPy distribution with a location or scale its family does not hold
   converts to the same law.** The `scipy` converter used to read a `beta`'s
   shape arguments alone and drop the location of a `gamma`, `expon`, or

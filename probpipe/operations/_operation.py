@@ -24,12 +24,18 @@ which reads three declarations from the operation at its steps:
    controls restrict the choice, and provenance records the selected route.
 
 A derived operation's **identity** is the route that runs its declaration's
-body, which calls other operations. Each operation call that the body or the
-identity check makes inherits two controls of the derived call: ``exact_only``,
-which applies when either call sets it, and ``n_broadcast_samples``, unless the
-inner call's view sets its own. Under ``exact_only`` an identity with an
-identity check is therefore kept, since each constituent selects only among its
-exact routes, and an identity without one is excluded.
+body, which calls other operations. The body and the identity check pass two
+controls of the derived call to the Function calls they run, operations and
+plain Functions alike:
+
+- ``exact_only`` restricts every call they run, at any depth, whatever the
+  call sets;
+- ``n_broadcast_samples`` applies to each call they make directly, unless the
+  call's view sets its own.
+
+Under ``exact_only`` no call within the identity runs an approximate route, so
+an identity with an identity check is kept and ranks as exact, and an identity
+without one is excluded.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -49,7 +55,6 @@ import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
@@ -74,7 +79,7 @@ from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
 from ..values._binding import make_signature_info_from_signature, values_to_bound_arguments
-from ..values._function_base import _COMPLETED_AT_RETURN
+from ..values._function_base import _COMPLETED_AT_RETURN, _INHERITED_CONTROLS
 
 __all__ = [
     "BoundCall",
@@ -283,12 +288,12 @@ class OperationRoute(Protocol):
         for a route whose exactness is that of the implementation it delegates
         to, until that implementation is selected. A delegating route, which
         can restrict itself to exact implementations, is ranked twice: among
-        the exact routes and among the approximate ones. A derived operation's
-        identity is ranked once: among the approximate routes, and under
-        ``exact_only`` among the exact ones when it has an identity check, since
-        its constituents then select only exact routes. ``exact_only`` excludes
-        an identity without an identity check and any other route whose
-        exactness is ``None``.
+        the exact routes and among the approximate ones. A route whose
+        ``exact_when_restricted`` is true, as a derived operation's identity
+        with an identity check is, is ranked once: among the approximate routes,
+        and under ``exact_only`` among the exact ones, since every call it runs
+        is then restricted to exact routes. ``exact_only`` excludes any other
+        route whose exactness is ``None``.
     """
 
     name: str
@@ -391,6 +396,9 @@ class _Route:
 
     source: RouteSource
     requires: tuple[type, ...] = ()
+    #: Whether the route's result is exact whenever it runs under ``exact_only``,
+    #: although its exactness is ``None``, so ``exact_only`` keeps the route.
+    exact_when_restricted: bool = False
 
     def __init__(self, name: str, *, exact: bool | None) -> None:
         if not isinstance(name, str) or not name:
@@ -726,30 +734,25 @@ class _RegistryRoute(_DelegatingRoute):
         )
 
 
-#: The controls a derived call passes to the operation calls its identity makes.
-_INHERITED_CONTROLS = ("exact_only", "n_broadcast_samples")
-
-#: The controls the running identity passes down, or ``None`` outside an identity.
-_INHERITED: ContextVar[Mapping[str, Any] | None] = ContextVar(
-    "probpipe_inherited_controls", default=None
-)
+#: The controls a derived call passes to the Function calls its identity runs.
+_PASSED_DOWN = ("exact_only", "n_broadcast_samples")
 
 
 @contextmanager
 def _passing_down(call: BoundCall) -> Iterator[None]:
-    """A scope in which each operation call inherits *call*'s ``exact_only`` and sample count.
+    """A scope in which the Function calls an identity runs inherit *call*'s controls.
 
-    The operation call that inherits them clears the scope for its own routes,
-    as :meth:`Operation._inheriting` states, so only the calls an identity
-    makes directly inherit them.
+    ``exact_only`` restricts every Function call the identity runs, and the
+    sample count applies to the calls it makes directly, as
+    :meth:`~probpipe.values.Function._inheriting` states.
     """
-    token = _INHERITED.set(
-        MappingProxyType({name: call.controls[name] for name in _INHERITED_CONTROLS})
+    token = _INHERITED_CONTROLS.set(
+        MappingProxyType({name: call.controls[name] for name in _PASSED_DOWN})
     )
     try:
         yield
     finally:
-        _INHERITED.reset(token)
+        _INHERITED_CONTROLS.reset(token)
 
 
 class _IdentityRoute(_Route):
@@ -759,11 +762,12 @@ class _IdentityRoute(_Route):
     identity is called, so the route is feasible where the constituent
     operations have routes, and its condition is the identity check's. Its
     exactness is that of the routes the constituents select, so it declares
-    none. The check and the body run in a scope in which each operation call
-    they make inherits the call's ``exact_only`` and ``n_broadcast_samples``,
-    as :meth:`Operation._inheriting` states. Under ``exact_only`` the
-    constituents therefore select only exact routes, and an identity with an
-    identity check ranks as exact.
+    none. The check and the body run in a scope in which every Function call
+    they run inherits the call's ``exact_only``, and each call they make
+    directly inherits its ``n_broadcast_samples``, as
+    :meth:`~probpipe.values.Function._inheriting` states. Under ``exact_only``
+    no call within the identity runs an approximate route, so an identity with
+    an identity check ranks as exact.
 
     Parameters
     ----------
@@ -792,8 +796,8 @@ class _IdentityRoute(_Route):
         self._identity_check = identity_check
 
     @property
-    def checked(self) -> bool:
-        """Whether the identity has an identity check, which ``exact_only`` requires."""
+    def exact_when_restricted(self) -> bool:  # type: ignore[override]
+        """Whether ``exact_only`` keeps the route: whether the identity has an identity check."""
         return self._identity_check is not None
 
     @property
@@ -822,11 +826,11 @@ class _IdentityRoute(_Route):
 def _ranked_exactness(route: Any, exact_only: bool) -> bool | None:
     """The exactness at which *route* ranks under *exact_only*.
 
-    It is the route's own, except that an identity with an identity check
-    ranks as exact under ``exact_only``, since its constituents then select
-    only exact routes.
+    It is the route's own, except that a route whose result is exact whenever
+    it runs under ``exact_only``, as its ``exact_when_restricted`` states, ranks
+    as exact under ``exact_only``.
     """
-    if exact_only and isinstance(route, _IdentityRoute) and route.checked:
+    if exact_only and getattr(route, "exact_when_restricted", False):
         return True
     return route.exact
 
@@ -1201,10 +1205,13 @@ class Operation(Function):
         call's arguments, as the identity is, and returns the report of the
         constituent operations' checks, such as ``log_prob.check(d, value)``
         for ``prob``; the first paragraph of its docstring is the identity
-        route's condition. The check and the identity run with the call's
-        ``exact_only`` and ``n_broadcast_samples`` passed to each operation
-        call they make, so under ``exact_only`` the identity route is kept and
-        its constituents select only exact routes. Without a check, the
+        route's condition. A check that cannot probe a constituent, because
+        its arguments are known only when the identity runs, returns a feasible
+        ``PointReport`` whose ``deferred`` names that check. The check and the
+        identity pass the call's ``exact_only`` to every Function call they
+        run and its ``n_broadcast_samples`` to the calls they make directly, so
+        under ``exact_only`` the identity route is kept and no call within it
+        runs an approximate route. Without a check, the
         identity route admits every call that planning admits, and
         ``exact_only`` excludes it.
     label : callable, optional
@@ -1441,7 +1448,9 @@ class Operation(Function):
 
         A delegating route is listed where its exact implementations rank, and
         any other route whose exactness is ``None`` where approximate routes
-        rank.
+        rank. That is the order without ``exact_only``; under it, a route whose
+        ``exact_when_restricted`` is true, such as an identity with an identity
+        check, ranks among the exact routes.
         """
         indexed = list(enumerate(self._route_table.routes))
 
@@ -1716,73 +1725,6 @@ class Operation(Function):
                 f"{unknown_names('control', sorted(unknown), sorted(self.options))}"
             )
         return super().with_options(**controls)
-
-    def _inheriting(self, inherited: Mapping[str, Any]) -> Operation:
-        """This view under the controls a derived operation's identity passes down.
-
-        Inside an identity, an operation call takes the derived call's
-        ``n_broadcast_samples`` unless this view sets its own, and its
-        ``exact_only`` applies when either sets it. ``method``,
-        ``method_options``, and ``raw`` stay this view's, since route names and
-        budgets belong to each operation.
-
-        Parameters
-        ----------
-        inherited : Mapping of str to Any
-            The derived call's ``exact_only`` and ``n_broadcast_samples``.
-
-        Returns
-        -------
-        Operation
-            The view with the inherited controls, or this view when it already
-            has them.
-        """
-        wanted = {name: value for name, value in inherited.items() if name not in self._options}
-        wanted["exact_only"] = self.options["exact_only"] or inherited["exact_only"]
-        changed = {name: value for name, value in wanted.items() if self.options[name] != value}
-        return self.with_options(**changed) if changed else self
-
-    def _entered(self, entry: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run *entry* on this view, or, inside an identity, on the view that inherits its controls.
-
-        The call clears the inherited controls for its own routes, so only the
-        operation calls an identity makes directly inherit them.
-        """
-        inherited = _INHERITED.get()
-        if inherited is None:
-            return entry(self, *args, **kwargs)
-        token = _INHERITED.set(None)
-        try:
-            return entry(self._inheriting(inherited), *args, **kwargs)
-        finally:
-            _INHERITED.reset(token)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        """Call the operation, as :meth:`Function.__call__` states, under the inherited controls.
-
-        Inside a derived operation's identity, the call inherits the derived
-        call's ``exact_only`` and ``n_broadcast_samples``, as
-        :meth:`_inheriting` states.
-        """
-        return self._entered(Function.__call__, *args, **kwargs)
-
-    def check(self, *args: Any, **kwargs: Any) -> Any:
-        """Probe a call, as :meth:`Function.check` states, under the inherited controls.
-
-        Inside a derived operation's identity check, the probe inherits the
-        derived call's ``exact_only`` and ``n_broadcast_samples``, as
-        :meth:`_inheriting` states.
-        """
-        return self._entered(Function.check, *args, **kwargs)
-
-    def apply(self, *args: Any, **kwargs: Any) -> Any:
-        """Evaluate one point, as :meth:`Function.apply` states, under the inherited controls.
-
-        Inside a derived operation's identity, the evaluation inherits the
-        derived call's ``exact_only`` and ``n_broadcast_samples``, as
-        :meth:`_inheriting` states.
-        """
-        return self._entered(Function.apply, *args, **kwargs)
 
     def raw(self) -> Callable[..., Any]:
         """The evaluator that realizes one call with no lifting, tracking, or provenance.

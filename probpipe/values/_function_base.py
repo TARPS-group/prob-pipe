@@ -19,8 +19,9 @@ import os
 import warnings
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
@@ -705,6 +706,44 @@ _DEFAULTED_BY_NONE = frozenset(
     {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
+#: The controls a derived operation's identity passes to the Function calls it
+#: runs, or ``None`` outside an identity: ``exact_only``, and
+#: ``n_broadcast_samples``, which is ``None`` below the calls the identity makes
+#: directly.
+_INHERITED_CONTROLS: ContextVar[Mapping[str, Any] | None] = ContextVar(
+    "probpipe_inherited_controls", default=None
+)
+
+#: The scope below a call made under an inherited ``exact_only``, which keeps it.
+_EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
+    {"exact_only": True, "n_broadcast_samples": None}
+)
+
+
+def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
+    """*method* of a Function, run under the controls a derived operation's identity passes down.
+
+    Inside an identity, the call runs on the view that
+    :meth:`Function._inheriting` returns. For the extent of the call the
+    passed sample count is cleared, so only the calls the identity makes
+    directly take it, while an inherited ``exact_only`` stays, so it restricts
+    every call the identity runs.
+    """
+
+    @wraps(method)
+    def entered(self: Function, *args: Any, **kwargs: Any) -> Any:
+        inherited = _INHERITED_CONTROLS.get()
+        if inherited is None:
+            return method(self, *args, **kwargs)
+        token = _INHERITED_CONTROLS.set(_EXACT_ONLY_BELOW if inherited["exact_only"] else None)
+        try:
+            return method(self._inheriting(inherited), *args, **kwargs)
+        finally:
+            _INHERITED_CONTROLS.reset(token)
+
+    return entered
+
+
 #: Removed construction keywords, each with the warning it raises, which are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {
@@ -1132,6 +1171,39 @@ class Function(TrackedTerm, Annotated):
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone
 
+    def _inheriting(self, inherited: Mapping[str, Any]) -> Self:
+        """This view under the controls a derived operation's identity passes down.
+
+        An inherited ``exact_only`` applies whatever this view sets, and an
+        inherited ``n_broadcast_samples`` applies unless this view sets its own.
+        Every other control stays this view's, since route names and budgets
+        belong to each function.
+
+        Parameters
+        ----------
+        inherited : Mapping of str to Any
+            The passed ``exact_only``, and the passed ``n_broadcast_samples`` or
+            ``None``.
+
+        Returns
+        -------
+        Self
+            The view with the inherited controls, or this view when it already
+            has them.
+        """
+        revisions: dict[str, Any] = {}
+        if inherited["exact_only"] and not self.options["exact_only"]:
+            revisions["exact_only"] = True
+        count = inherited["n_broadcast_samples"]
+        if (
+            count is not None
+            and "n_broadcast_samples" not in self._options
+            and self.options["n_broadcast_samples"] != count
+        ):
+            revisions["n_broadcast_samples"] = count
+        return self.with_options(**revisions) if revisions else self
+
+    @_inheriting_controls
     def check(self, *args: Any, **kwargs: Any) -> Any:
         """Probe a call through the first six steps of the stack, without executing it.
 
@@ -1201,6 +1273,7 @@ class Function(TrackedTerm, Annotated):
             return self._implementation.callable
         return self.apply
 
+    @_inheriting_controls
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate one point, validating declarations and returning the raw result.
 
@@ -1288,6 +1361,7 @@ class Function(TrackedTerm, Annotated):
         )
         return values, declared, deferred
 
+    @_inheriting_controls
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the function through the installed engine (V.1).
 
