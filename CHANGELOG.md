@@ -3379,6 +3379,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Each cell of a nested sweep over stored objects chooses its own dispatch
   under `auto`.** A cell reused the dispatch that the first cell chose, which
   raised `ConcretizationTypeError` when a later cell could not be traced.
+- **A function sweep broadcasts the shapes of each named level by NumPy's
+  rule.** Within a level that the swept batches share, shapes of any rank align
+  from the right and a size-one axis expands. The result carries each level's
+  broadcast shape. Incompatible sizes raise an `ApplicabilityError` that names
+  the level and each argument's shape.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
