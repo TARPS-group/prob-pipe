@@ -58,6 +58,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
+from ..distributions._views import _drawn_form
 from ..functions import _broker, _descendants, _result
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
@@ -1807,7 +1808,9 @@ def _workflow_draws(
     Returns
     -------
     Any
-        The raw draws, as ``d._sample(key, sample_shape)`` returns them.
+        The raw draws, as ``d._sample(key, sample_shape)`` returns them. The
+        draws of a law that reads another law's draws, such as a field view,
+        take the raw form of *d*'s own event.
     """
     captured = _descendants.capture_stochastic_consumer(d)
     key = _broker._resolve_automatic_key(
@@ -1820,7 +1823,10 @@ def _workflow_draws(
             descendant_descriptor=captured.descendant_descriptor,
         ),
     )
-    return _descendants.sample_captured_consumer(captured, key, sample_shape)
+    draws = _descendants.sample_captured_consumer(captured, key, sample_shape)
+    if captured.root is d:
+        return draws
+    return _drawn_form(draws, d.event_spec.spec, sample_shape)
 
 
 # ---------------------------------------------------------------------------

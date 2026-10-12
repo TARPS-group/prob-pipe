@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
-from ..core._batch import Batch, BatchSpec, _ranks_of
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec, _ranks_of
 from ..core._expression import AppliedValue, Expression, Named
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
@@ -1265,13 +1265,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         If the leading axes are not the declared batch shape, the element does
         not unify with the declared element.
     """
-    while isinstance(spec.element_spec, BatchSpec):
-        inner = spec.element_spec
-        spec = BatchSpec._from_groups(
-            inner.element_spec,
-            tuple(spec.axis_groups) + tuple(inner.axis_groups),
-            tuple(spec.level_names) + tuple(inner.level_names),
-        )
+    spec = _flat_batch_spec(spec)
     batch_shape = tuple(spec.batch_shape)
     ranks = _ranks_of(spec.axis_groups)
     levels = tuple(spec.level_names)

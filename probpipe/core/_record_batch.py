@@ -48,6 +48,7 @@ from ._batch import (
     _batch_axis_count,
     _cannot_rebuild,
     _changed_batch_shape,
+    _flat_batch_spec,
     _ranks_of,
     _uncastable_dtype,
 )
@@ -1003,48 +1004,102 @@ def _stack_batch_column(
     column: np.ndarray, outer: BatchSpec, event: BatchSpec, label: str
 ) -> Batch:
     """Batch-valued entries of an object column stacked on the outer and event levels."""
-    levels = tuple(outer.level_names) + tuple(event.level_names)
-    groups = tuple(outer.axis_groups) + tuple(event.axis_groups)
-    shape = (*outer.batch_shape, *event.batch_shape)
-    entries = list(column.flat)
-    element = event.element_spec
-    spec = BatchSpec._from_groups(element, groups, levels)
+    spec = _flat_batch_spec(outer._replace(element_spec=event))
+    element = spec.element_spec
+    values = _stacked_batches(column, event)
     if isinstance(element, RecordSpec):
-        columns = {}
-        for path in element:
-            leaf = element[path]
-            values = [entry.raw(path) for entry in entries]
-            if isinstance(leaf, NumericArraySpec):
-                columns[path] = (
-                    jnp.stack(values).reshape((*shape, *leaf.shape))
-                    if values
-                    else jnp.empty((*shape, *leaf.shape), dtype=leaf.dtype)
-                )
-            else:
-                columns[path] = (
-                    np.stack(values).reshape(shape) if values else np.empty(shape, dtype=object)
-                )
         return _batch_class_for(element)(
-            columns, levels, element_spec=element, axes_per_level=_ranks_of(groups), label=label
+            values,
+            spec.level_names,
+            element_spec=element,
+            axes_per_level=_ranks_of(spec.axis_groups),
+            label=label,
         )
-    if isinstance(element, NumericArraySpec):
-        values = (
-            jnp.stack([entry.raw() for entry in entries]).reshape((*shape, *element.shape))
-            if entries
-            else jnp.empty((*shape, *element.shape), dtype=element.dtype)
-        )
-    else:
-        values = (
-            np.stack([entry.raw() for entry in entries]).reshape(shape)
-            if entries
-            else np.empty(shape, dtype=object)
-        )
-    if _is_object_array(values):
-        values = _frozen_object_column(values)
     batch_class = batch_class_for_spec(element)
     if batch_class is None:
         raise TypeError(_unbatchable_field(label, element))
     return batch_class._over_store(values, spec=spec, label=label)
+
+
+def _stacked_batches(entries: np.ndarray, event: BatchSpec) -> Any:
+    """The raw leaves of the batches in *entries*, stacked with the axes of *entries* leading.
+
+    Parameters
+    ----------
+    entries : numpy.ndarray
+        An object array of batches, each of which satisfies *event*.
+    event : BatchSpec
+        The declaration of each entry.
+
+    Returns
+    -------
+    Any
+        A mapping of leaf path to column for record elements, and one array
+        otherwise. Each leaf has the shape of *entries*, then the batch shape of
+        *event*, then the leaf's own shape, so an empty *entries* gives empty
+        leaves of that shape. An object array is frozen.
+    """
+    event = _flat_batch_spec(event)
+    shape = (*entries.shape, *event.batch_shape)
+    element = event.element_spec
+    batches = list(entries.flat)
+    if isinstance(element, RecordSpec):
+        return {
+            path: _stacked_leaf([batch.raw(path) for batch in batches], shape, element[path])
+            for path in element
+        }
+    values = _stacked_leaf([batch.raw() for batch in batches], shape, element)
+    return _frozen_object_column(values) if _is_object_array(values) else values
+
+
+def _stacked_leaf(values: list[Any], shape: tuple[int, ...], spec: TermSpec) -> Any:
+    """The leaf of each batch in *values* stacked into one array whose leading axes are *shape*."""
+    if isinstance(spec, NumericArraySpec):
+        full = (*shape, *spec.shape)
+        return jnp.stack(values).reshape(full) if values else jnp.empty(full, dtype=spec.dtype)
+    return np.stack(values).reshape(shape) if values else np.empty(shape, dtype=object)
+
+
+def _batch_over(raw: Any, spec: BatchSpec, label: str) -> Batch:
+    """The raw values *raw* led by *spec*'s batch axes, as the batch that *spec* declares.
+
+    Parameters
+    ----------
+    raw : Any
+        The raw values: an array, or the nested mapping of columns for record
+        elements.
+    spec : BatchSpec
+        The batch declaration, whose element selects the batch class.
+    label : str
+        The batch's label.
+
+    Returns
+    -------
+    Batch
+        The batch of the element's kind on *spec*'s levels, such as a
+        ``RecordBatch`` for record elements.
+
+    Raises
+    ------
+    TypeError
+        If no batch class is registered for the element's kind.
+    """
+    spec = _flat_batch_spec(spec)
+    element = spec.element_spec
+    batch_class = (
+        _batch_class_for(element)
+        if isinstance(element, RecordSpec)
+        else batch_class_for_spec(element)
+    )
+    if batch_class is None:
+        raise TypeError(_unbatchable_field(label, element))
+    return batch_class(
+        raw,
+        spec.level_names,
+        element_spec=element,
+        axes_per_level=_ranks_of(spec.axis_groups),
+        label=label,
+    )
 
 
 def _unbatchable_field(path: str, spec: TermSpec) -> str:

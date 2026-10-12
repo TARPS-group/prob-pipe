@@ -18,6 +18,7 @@ from probpipe import (
     RecordBatch,
     ResultSchemaError,
     function,
+    marginal,
     replay_run,
     sample,
     workflow_run,
@@ -96,6 +97,83 @@ class TestBatchValuedLifts:
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"))
         assert law.atoms.level_names == ("score",)
+
+
+def _trajectory_law(include_inputs):
+    """A lift of a trajectory on the level time, from six draws of beta."""
+    wrapped = Function(
+        _trajectory,
+        output_spec=OutputSpec(trajectory=None),
+        include_inputs=include_inputs,
+        n_broadcast_samples=6,
+    )
+    return wrapped(Normal("beta", 0.0, 1.0))
+
+
+class TestBatchValuedFieldSampling:
+    @pytest.mark.parametrize("sample_shape", [(), (4,), (2, 3)])
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    def test_a_field_view_draws_what_the_marginal_draws(self, include_inputs, sample_shape):
+        with workflow_run(seed=0):
+            law = _trajectory_law(include_inputs)
+            viewed = sample(law["trajectory"], sample_shape)
+            expected = sample(marginal(law, "trajectory"), sample_shape)
+        assert isinstance(viewed, NumericArrayBatch)
+        assert viewed.spec == expected.spec
+        levels = ("sample", "time") if sample_shape else ("time",)
+        assert viewed.level_names == levels
+        assert viewed.batch_shape == (*sample_shape, 3)
+        paths = np.asarray(viewed.raw()).reshape(-1, 3)
+        np.testing.assert_allclose(paths, paths[:, :1] * np.arange(1.0, 4.0), rtol=1e-6)
+
+    @pytest.mark.parametrize("sample_shape", [(), (4,), (2, 3)])
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    def test_a_selection_draws_what_the_marginal_draws(self, include_inputs, sample_shape):
+        with workflow_run(seed=0):
+            law = _trajectory_law(include_inputs)
+            viewed = sample(law[("trajectory",)], sample_shape)
+            expected = sample(marginal(law, ("trajectory",)), sample_shape)
+        assert viewed.spec == expected.spec
+        paths = viewed["trajectory"]
+        assert isinstance(paths, NumericArrayBatch)
+        levels = ("sample", "time") if sample_shape else ("time",)
+        assert paths.level_names == levels
+        assert paths.batch_shape == (*sample_shape, 3)
+
+    @pytest.mark.parametrize("sample_shape", [(), (4,), (2, 3)])
+    def test_joint_draws_pair_each_trajectory_with_its_beta(self, sample_shape):
+        with workflow_run(seed=0):
+            law = _trajectory_law(include_inputs=True)
+            drawn = sample(law[("beta", "trajectory")], sample_shape)
+        paths = drawn["trajectory"]
+        assert paths.level_names == (("sample", "time") if sample_shape else ("time",))
+        assert paths.batch_shape == (*sample_shape, 3)
+        beta = np.asarray(drawn["beta"].raw())
+        assert beta.shape == sample_shape
+        np.testing.assert_allclose(
+            np.asarray(paths.raw()), beta[..., None] * np.arange(1.0, 4.0), rtol=1e-6
+        )
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,)])
+    def test_record_batch_fields_draw_whole_through_every_view(self, sample_shape):
+        def trajectory(beta):
+            return RecordBatch.stack(
+                [Record.from_fields(x=beta, y=beta * k) for k in (1.0, 2.0)], level_name="time"
+            )
+
+        wrapped = Function(trajectory, include_inputs=True, dispatch="sequential")
+        with workflow_run(seed=0):
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta"))
+            single = sample(law["trajectory"], sample_shape)
+            selected = sample(law[("beta", "trajectory")], sample_shape)
+        levels = ("sample", "time") if sample_shape else ("time",)
+        for paths in (single, selected["trajectory"]):
+            assert paths.level_names == levels
+            assert paths.batch_shape == (*sample_shape, 2)
+        beta = np.asarray(selected["beta"].raw())
+        np.testing.assert_array_equal(
+            np.asarray(selected["trajectory"].raw("y")), beta[..., None] * np.array([1.0, 2.0])
+        )
 
 
 class TestBatchOutputComposition:

@@ -17,7 +17,7 @@ from typing import Any
 import jax
 import numpy as np
 
-from ..core._batch import BatchSpec, _ranks_of
+from ..core._batch import BatchSpec, _flat_batch_spec, _ranks_of
 from ..core._expression import Expression, draw_of
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
@@ -56,13 +56,8 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     if call.controls["raw"] or not isinstance(value, Mapping) or result is None:
         return value
     spec = result.spec
-    while isinstance(spec, BatchSpec) and isinstance(spec.element_spec, BatchSpec):
-        inner = spec.element_spec
-        spec = BatchSpec._from_groups(
-            inner.element_spec,
-            tuple(spec.axis_groups) + tuple(inner.axis_groups),
-            tuple(spec.level_names) + tuple(inner.level_names),
-        )
+    if isinstance(spec, BatchSpec):
+        spec = _flat_batch_spec(spec)
     if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
         return value
     return _batch_class_for(spec.element_spec)(
@@ -135,14 +130,9 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
         )
     if not shape:
         return d.event_spec
-    event = d.event_spec.spec
-    if isinstance(event, BatchSpec):
-        spec = BatchSpec._from_groups(
-            event.element_spec, (shape, *event.axis_groups), (SAMPLE_LEVEL, *event.level_names)
-        )
-    else:
-        spec = BatchSpec(event, {SAMPLE_LEVEL: shape})
-    return d.event_spec._with_spec(spec)
+    return d.event_spec._with_spec(
+        _flat_batch_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
+    )
 
 
 @operation(result=_sample_result)
