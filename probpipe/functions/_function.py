@@ -788,9 +788,13 @@ def _run_call(
     )
 
     general_probe_pending = broadcast_plan.regime == "nested" and cache_traceability
+    general_probe_failed = False
 
-    def prepare_shared_probe(dispatch_values, broadcast_args):
-        nonlocal general_probe_pending, dynamic_refs, cache_traceability
+    def prepare_shared_probe(
+        dispatch_values: dict[str, Any],
+        broadcast_args: list[_binding.FunctionInputRef],
+    ) -> None:
+        nonlocal general_probe_pending, general_probe_failed
         nonlocal traceability_checked, resolved_dispatch
         if not general_probe_pending:
             return
@@ -807,10 +811,13 @@ def _run_call(
             traceability_checked = True
             resolved_dispatch = "jax"
         else:
-            # A row can be traceable with a fixed numeric value even when the
-            # same value cannot be dynamic, as with a Python branch over it.
-            dynamic_refs = ()
-            cache_traceability = False
+            # A cell can trace with its swept values fixed although they cannot
+            # trace as dynamic inputs, as with a Python branch on a swept value.
+            # So the first cell's fixed-value check decides whether the cells
+            # share a check. A failure applies to every cell, so dispatch="auto"
+            # runs them all sequentially. A success leaves each later cell to its
+            # own check.
+            general_probe_failed = True
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
@@ -818,7 +825,7 @@ def _run_call(
         *,
         jax_supported: bool = True,
     ) -> str:
-        nonlocal resolved_dispatch
+        nonlocal resolved_dispatch, cache_traceability
         if function.options["dispatch"] == "auto" and jax_supported:
             prepare_shared_probe(dispatch_values, broadcast_args)
         if function.options["dispatch"] != "auto" or not jax_supported or not cache_traceability:
@@ -831,7 +838,7 @@ def _run_call(
                 stochastic_plan=stochastic_plan,
             )
         if resolved_dispatch is None:
-            resolved_dispatch = _resolve_dispatch(
+            dispatch = _resolve_dispatch(
                 function,
                 dispatch_values,
                 broadcast_args,
@@ -839,13 +846,17 @@ def _run_call(
                 func=invoke_point,
                 stochastic_plan=stochastic_plan,
             )
+            if dispatch == "jax" and general_probe_failed:
+                cache_traceability = False
+                return dispatch
+            resolved_dispatch = dispatch
         return resolved_dispatch
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
         broadcast_args: list[_binding.FunctionInputRef],
     ) -> None:
-        nonlocal traceability_checked
+        nonlocal traceability_checked, cache_traceability
         prepare_shared_probe(dispatch_values, broadcast_args)
         if traceability_checked and cache_traceability:
             return
@@ -857,6 +868,8 @@ def _run_call(
             stochastic_plan=stochastic_plan,
         )
         traceability_checked = True
+        if general_probe_failed:
+            cache_traceability = False
 
     def execute_distribution_broadcast(
         *,
@@ -1025,7 +1038,8 @@ def _jax_traceability_error(
 
     *dynamic_refs* names numeric swept inputs to trace as additional dynamic
     arguments. Success then applies across their values at the same shapes and
-    dtypes. A failed generalized probe leaves the caller to check each fixed row.
+    dtypes. After a failed generalized probe, the caller checks rows at their
+    fixed values.
     """
     try:
         dummy_kw = dict(values)
