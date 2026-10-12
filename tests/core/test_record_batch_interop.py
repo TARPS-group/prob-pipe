@@ -764,7 +764,9 @@ class TestZeroRowsAgreeAcrossDispatch:
             return jnp.sum(jnp.asarray(v["x"]))
 
         results = {
-            name: Function(body, label="body", dispatch=name)(v=source)
+            name: Function(body, label="body", dispatch=name, output_spec=NumericArraySpec(()))(
+                v=source
+            )
             for name in ("auto", "sequential", "jax")
         }
 

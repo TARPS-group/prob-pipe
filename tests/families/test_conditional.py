@@ -521,7 +521,7 @@ class TestTheConditionalCapabilities:
 
     def test_a_capability_needs_every_given_slot(self, likelihood, beta):
         with pytest.raises(
-            KeyError, match=r"'p' is missing values for the given slots \['dispersion'\]"
+            KeyError, match=r"'ℙ' is missing values for the given slots \['dispersion'\]"
         ):
             likelihood._conditional_mean({"beta": beta})
 
@@ -556,7 +556,6 @@ class TestComposition:
 class TestTheOperations:
     """III.9's fused conditional paths and conditioning, through the operations."""
 
-    @pytest.mark.pending(reason="log_prob takes given= for a conditional operand", raises=TypeError)
     def test_log_prob_given(self, X, beta):
         likelihood = glm_likelihood("y", PoissonFamily(), X=X)
         y = jnp.array([0.0, 1.0, 1.0, 2.0])

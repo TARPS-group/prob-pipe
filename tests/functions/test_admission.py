@@ -40,6 +40,10 @@ from probpipe.distributions._capabilities import SupportsExactConditioning
 
 from ._design_helpers import error_of, standard_normal
 
+type _NormalAlias = Normal
+type _KernelAlias = ConditionalDistribution
+type _AnyAlias = Any
+
 SCALAR = NumericArraySpec(())
 
 
@@ -202,6 +206,16 @@ class TestConversionPlanning:
         assert isinstance(error, ApplicabilityError)
         assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
 
+    def test_a_union_with_an_aliased_distribution_class_refuses_to_choose_a_conversion(self):
+        def consume(d):
+            return 0.0
+
+        consume.__annotations__ = {"d": _NormalAlias | Gamma}
+        error = error_of(lambda: Function(consume, label="consume")(Beta("b", 2.0, 2.0)))
+
+        assert isinstance(error, ApplicabilityError)
+        assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
+
     def test_a_union_of_several_distribution_classes_admits_a_law_of_one_of_them(self):
         seen = []
 
@@ -275,35 +289,42 @@ class TestAdmission:
                 label="body",
             )(_kernel())
 
-    def test_a_kernel_at_a_parameter_that_consumes_kernels_passes(self):
+    @pytest.mark.parametrize(
+        "annotation", [ConditionalDistribution, _KernelAlias], ids=["class", "alias"]
+    )
+    def test_a_kernel_at_a_parameter_that_consumes_kernels_passes(self, annotation):
         seen = []
 
-        @function
-        def consume(kernel: ConditionalDistribution):
+        def consume(kernel):
             seen.append(kernel)
             return 0.0
 
+        consume.__annotations__ = {"kernel": annotation}
         kernel = _kernel()
-        consume(kernel)
+        Function(consume, label="consume")(kernel)
 
         assert seen == [kernel]
 
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
     @pytest.mark.parametrize("slot", ["parameter", "variadic positional", "variadic keyword"])
-    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot):
+    def test_a_kernel_at_a_slot_annotated_any_passes(self, slot, annotation):
         seen = []
 
-        def at_parameter(proposal: Any):
+        def at_parameter(proposal):
             seen.append(proposal)
             return 0.0
 
-        def at_args(*proposals: Any):
+        def at_args(*proposals):
             seen.extend(proposals)
             return 0.0
 
-        def at_options(**options: Any):
+        def at_options(**options):
             seen.extend(options.values())
             return 0.0
 
+        at_parameter.__annotations__ = {"proposal": annotation}
+        at_args.__annotations__ = {"proposals": annotation}
+        at_options.__annotations__ = {"options": annotation}
         kernel = _kernel()
         if slot == "variadic keyword":
             Function(

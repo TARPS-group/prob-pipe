@@ -25,7 +25,9 @@ Provides:
 from __future__ import annotations
 
 import math
+import numbers
 import operator
+import reprlib
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
@@ -33,13 +35,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from .._weights import Weights, weighted_choice, weighted_covariance, weighted_mean
 from ..core._batch import BatchSpec
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_spec import NumericRecordSpec, RecordSpec
-from ..core._repr import format_value
+from ..core._repr import format_value, type_name
 from ..core._spec_base import NumericArraySpec, TermSpec
 from ..core._specs import OutputSpec, _check_component_name
 from ..core.constraints import real
@@ -56,7 +58,6 @@ from ..distributions._distribution import (
     DistributionSpec,
     _class_label,
     _constructor_label,
-    _label_given_first,
     _whole_term_event,
 )
 from ..distributions._empirical import EmpiricalDistribution, _atoms_declaration, _batch_form
@@ -372,7 +373,7 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
     under *component*.
 
     **Capabilities.** The measure samples, and its mean, the marginalized law
-    ``E[D](A)`` of a draw ``D``, is the source itself, since each atom of a
+    ``𝔼[D](A)`` of a draw ``D``, is the source itself, since each atom of a
     replicate is a draw of the source. A draw has no density, so the measure
     claims no random log-density.
 
@@ -853,6 +854,68 @@ class EpanechnikovKernel(SmoothingKernel):
 _BANDWIDTH_RULES = ("scott", "silverman")
 
 
+def _listed_atoms(atoms: list | tuple) -> np.ndarray:
+    """The atoms a KDE received as a list or a tuple, stacked into an array along its leading axis.
+
+    Parameters
+    ----------
+    atoms : list or tuple
+        The atoms, each a number or a nested list of numbers.
+
+    Returns
+    -------
+    numpy.ndarray
+        The stacked atoms.
+
+    Raises
+    ------
+    TypeError
+        If an entry is not a number, or is a boolean.
+    ValueError
+        If the atoms have different shapes.
+    """
+    kind = type(atoms).__name__
+    missing = object()
+    entry = next((entry for entry in _entries(atoms) if not _is_number(entry)), missing)
+    try:
+        values = np.asarray(atoms)
+    except ValueError:
+        raise ValueError(
+            f"KDEDistribution atoms must all have one shape, but the {kind} "
+            f"{reprlib.repr(atoms)} holds atoms of different shapes; pass an array with one "
+            f"atom per row"
+        ) from None
+    if entry is not missing or values.dtype.kind not in _NUMERIC_KINDS:
+        if entry is missing:
+            entry = next(_entries(atoms), atoms)
+        raise TypeError(
+            f"KDEDistribution atoms must be numbers, but the {kind} holds {entry!r} of type "
+            f"{type_name(entry)}; pass numeric atoms"
+        )
+    return values
+
+
+#: The NumPy dtype kinds that atoms may have: signed and unsigned integer, float, and complex.
+_NUMERIC_KINDS = frozenset("iufc")
+
+
+def _entries(values: Any) -> Any:
+    """Each entry of the nested lists and tuples *values*, in order."""
+    if isinstance(values, list | tuple):
+        for value in values:
+            yield from _entries(value)
+    else:
+        yield values
+
+
+def _is_number(value: Any) -> bool:
+    """Whether *value* is a number other than a boolean, or an array of such numbers."""
+    if isinstance(value, numbers.Number) and not isinstance(value, bool | np.bool_):
+        return True
+    dtype = getattr(value, "dtype", None)
+    return dtype is not None and np.dtype(dtype).kind in _NUMERIC_KINDS
+
+
 def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
     """The atoms of a KDE with the term spec of one draw.
 
@@ -881,10 +944,11 @@ def _kde_atoms(atoms: Any) -> tuple[Array | NumericRecordBatch, TermSpec]:
         If *atoms* is neither a numeric array, a list or a tuple of numbers, nor
         a ``NumericRecordBatch``.
     ValueError
-        If an array of atoms has no leading axis or holds no atom.
+        If an array of atoms has no leading axis or holds no atom, or the atoms
+        of a list or a tuple have different shapes.
     """
     if isinstance(atoms, list | tuple):
-        atoms = np.asarray(atoms)
+        atoms = _listed_atoms(atoms)
     if isinstance(atoms, NumericRecordBatch):
         spec = atoms.element_spec.map(
             lambda leaf: NumericArraySpec(leaf.shape, _floating(leaf.dtype), real)
@@ -1038,12 +1102,13 @@ class KDEDistribution(
     ------
     TypeError
         If *atoms* is neither a numeric array-like nor a ``NumericRecordBatch``,
-        *kernel* is not a ``SmoothingKernel`` class, *component* is missing for
+        a list or a tuple of atoms holds an entry that is not a number, *kernel* is not a ``SmoothingKernel`` class, *component* is missing for
         array atoms or given for record atoms, *label* is not a non-empty
         string, *event_spec* is not an ``OutputSpec``, or *event_spec* exposes a
         record for array atoms.
     ValueError
-        If the atoms hold none or have no leading axis, the weights are invalid,
+        If the atoms hold none or have no leading axis, the atoms of a list or a
+        tuple have different shapes, the weights are invalid,
         *bandwidth* names no rule or a rule selects a zero scale, the scales do not
         broadcast against the atoms or are not positive, or *event_spec* names
         another component or declares a type that does not unify with the atoms'.
@@ -1073,7 +1138,7 @@ class KDEDistribution(
         event_spec: OutputSpec | None = None,
     ) -> None:
         if isinstance(atoms, str):
-            raise TypeError(_label_given_first("KDEDistribution", "atoms", atoms))
+            raise TypeError(label_given_first("KDEDistribution", "atoms", atoms))
         if not (isinstance(kernel, type) and issubclass(kernel, SmoothingKernel)):
             raise TypeError(
                 f"kernel must be a SmoothingKernel subclass such as GaussianKernel, got {kernel!r}"

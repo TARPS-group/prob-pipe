@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     EmpiricalDistribution,
     Function,
     MultivariateNormal,
@@ -755,6 +756,33 @@ class TestIncludeInputsArgument:
             result = w.with_options(include_inputs=True)(a=g1, b=g2)
         assert isinstance(result, EmpiricalDistribution)
         assert list(result.event_spec.components) == ["a", "b", "add_them"]
+
+    def test_include_inputs_refuses_a_parameter_named_as_a_component(self):
+        def mu(mu):
+            return 2.0 * mu
+
+        clashing = Function(mu, n_broadcast_samples=4, dispatch="sequential", include_inputs=True)
+        with (
+            workflow_run(seed=0),
+            pytest.raises(
+                ApplicabilityError,
+                match=r"^include_inputs=True cannot add parameter 'mu' to the output of 'mu', "
+                r"which already has a component with that name; rename the parameter, or pass "
+                r"output_spec=OutputSpec\(output=None\) to hold the output under a name no "
+                r"parameter has$",
+            ),
+        ):
+            clashing(Normal("m", loc=0.0, scale=1.0))
+        renamed = Function(
+            mu,
+            n_broadcast_samples=4,
+            dispatch="sequential",
+            include_inputs=True,
+            output_spec=OutputSpec(output=None),
+        )
+        with workflow_run(seed=0):
+            result = renamed(Normal("m", loc=0.0, scale=1.0))
+        assert list(result.event_spec.components) == ["mu", "output"]
 
 
 # ---------------------------------------------------------------------------

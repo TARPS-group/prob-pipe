@@ -22,7 +22,6 @@ from probpipe import (
     FunctionSpec,
     Gamma,
     InputSpec,
-    Module,
     Normal,
     NumericArray,
     NumericArrayBatch,
@@ -37,7 +36,6 @@ from probpipe import (
     WorkflowKind,
     function,
     sample,
-    workflow_method,
     workflow_run,
 )
 from probpipe.core._fingerprint import fingerprint
@@ -296,6 +294,16 @@ class TestFunctionDeclarations:
                 label="value",
             )
 
+    @pytest.mark.parametrize("name", ["class", "lambda", "None"])
+    def test_a_keyword_name_infers_the_result_component(self, name):
+        def value():
+            return 1.0
+
+        value.__name__ = name
+        wrapped = Function(value, output_spec=NumericArraySpec(()))
+        assert wrapped.label == name
+        assert tuple(wrapped.output_spec.components) == ("result",)
+
     @pytest.mark.parametrize("name", ["group/value", "Model.fit", ""])
     def test_a_non_identifier_name_infers_the_result_component(self, name):
         def value():
@@ -313,7 +321,7 @@ class TestFunctionDeclarations:
 
     def test_decorated_lambda_keeps_its_default_component(self):
         wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
-        assert wrapped.label == "f"
+        assert wrapped.label == "𝒻"
         assert wrapped.output_spec == OutputSpec(f=NumericArraySpec(()))
         assert float(wrapped()) == 1
 
@@ -365,8 +373,8 @@ class TestFunctionDeclarations:
         callable_ = _unnamed_callables()[kind]
         with pytest.raises(
             TypeError,
-            match=f"Function needs an explicit label for a {type(callable_).__name__}, which has "
-            "no __name__",
+            match=f"^Function needs an explicit label for a {type(callable_).__name__}, which has "
+            r"no name; pass label=\.\.\.$",
         ):
             decorate(callable_)
 
@@ -388,17 +396,40 @@ class TestFunctionDeclarations:
         def g(x):
             return x
 
-        with pytest.raises(
-            TypeError, match=r"got the label 'g' first; write Function\(fn, label='g'\)"
-        ):
+        with pytest.raises(TypeError, match=r"'g'.*Function\(fn, label='g'\)"):
             Function("g", g)
 
-    def test_a_callable_given_as_fn_names_the_positional_form(self):
+    def test_a_label_before_a_callable_given_as_fn_names_the_new_form(self):
         def g(x):
             return x
 
-        with pytest.raises(TypeError, match=r"not as fn=; write Function\(fn, label=...\)"):
-            Function(fn=g)
+        with pytest.raises(TypeError, match=r"'g'.*Function\(fn, label='g'\)"):
+            Function("g", fn=g)
+
+    def test_a_label_after_the_callable_names_the_keyword_form(self):
+        def g(x):
+            return x
+
+        with pytest.raises(
+            TypeError,
+            match=r"^Function got the string 'lab' as a second positional argument; "
+            r"pass the label by keyword: Function\(fn, label='lab'\)$",
+        ):
+            Function(g, "lab")
+
+    @pytest.mark.parametrize("keyword", ["fn", "func"])
+    def test_a_callable_given_by_keyword_names_the_positional_form(self, keyword):
+        def g(x):
+            return x
+
+        with pytest.raises(
+            TypeError,
+            match=rf"^Function got the callable as {keyword}=, but takes it as its first "
+            r"positional argument; write Function\(fn, label=...\)$",
+        ):
+            Function(**{keyword: g})
+        with pytest.raises(TypeError, match=r"write Function\(fn, label='g'\)$"):
+            Function(**{keyword: g, "label": "g"})
 
     def test_a_function_copies_after_the_argument_check(self):
         wrapped = Function(_module_level_add, label="add")
@@ -1188,12 +1219,7 @@ class TestCompletedOutputDeclarations:
             "function",
             "opaque",
             "record",
-            pytest.param(
-                "batch",
-                marks=pytest.mark.pending(
-                    reason="the empirical law of a lifted function that returns a batch"
-                ),
-            ),
+            "batch",
         ],
     )
     def test_a_lift_keeps_a_non_numeric_component_kind(self, dispatch, kind):
@@ -1219,7 +1245,7 @@ class TestCompletedOutputDeclarations:
             "batch": lambda: NumericArrayBatch(
                 jnp.arange(2.0),
                 "row",
-                element_spec=NumericArraySpec(()),
+                element_spec=NumericArraySpec((), dtype=jnp.float32),
                 label="stored",
             ),
         }[kind]()
@@ -1358,30 +1384,6 @@ class TestCompletedOutputDeclarations:
         )
         with pytest.raises(ValueError, match="already bound"):
             wrapped(rows)
-
-
-class TestModuleReturnInference:
-    @pytest.mark.parametrize("sequence", [[1, 2], (1, 2), []])
-    def test_method_sequence_uses_the_same_inference_as_a_function(self, sequence):
-        class Example(Module):
-            @workflow_method
-            def numbers(self):
-                return sequence
-
-        method = Example().numbers
-        ordinary = Function(
-            lambda: sequence,
-            label="numbers",
-        )
-        result = method()
-        expected = ordinary()
-        assert method.output_spec is None
-        assert method.label == method.output_label == "Example.numbers"
-        assert method._output_component == "numbers"
-        assert result.label == "Example.numbers()"
-        assert type(result) is type(expected)
-        assert result.spec == expected.spec
-        assert result.value == expected.value == sequence
 
 
 @pytest.mark.parametrize("kind", ["array", "record", "batch"])
@@ -1552,8 +1554,8 @@ class TestFunctionLabels:
             return temperature + 1
 
         assert Function(predict).notation == "predict(temperature)"
-        assert Function(lambda temperature: temperature + 1).notation == "f(temperature)"
-        assert function(lambda temperature: temperature + 1).notation == "f(temperature)"
+        assert Function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
+        assert function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
         assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
         assert Function(predict, output_label="prediction")(2.0).label == "prediction"
 

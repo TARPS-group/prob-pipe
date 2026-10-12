@@ -44,7 +44,7 @@ from typing import Any, ClassVar
 import jax
 import jax.numpy as jnp
 
-from ..core._expression import Applied, Named
+from ..core._expression import Applied, constant
 from ..core._repr import type_name
 from ..core._specs import NumericArraySpec, OpaqueSpec, OutputSpec
 from ..core.tracked import TrackedTerm
@@ -237,15 +237,12 @@ class MinibatchedDistribution(
             if not isinstance(prior, TrackedTerm):
                 raise TypeError(
                     f"MinibatchedDistribution cannot take its label from a prior of type "
-                    f"{type_name(prior)}, which has no label; pass label="
+                    f"{type_name(prior)}, which has no label; pass label=..."
                 )
             expression = Applied(
                 "minibatch",
-                (
-                    prior._embedded_expression(),
-                    likelihood._embedded_expression(),
-                    Named(f"batch_size={int(batch_size)}"),
-                ),
+                (prior._embedded_expression(), likelihood._embedded_expression()),
+                (("batch_size", constant(int(batch_size))),),
             )
 
         self._prior = prior
@@ -330,6 +327,10 @@ class MinibatchedDistribution(
         return _RandomMinibatchLogProb(self)
 
     # -- repr ----------------------------------------------------------------
+
+    def _derived_label(self) -> str | None:
+        """The label the constructor gives when it is given none: ``minibatch``, for a prior that has a label."""
+        return "minibatch" if isinstance(self._prior, TrackedTerm) else None
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The prior, the likelihood, the dataset size, and the minibatch size."""

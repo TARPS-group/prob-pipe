@@ -16,12 +16,12 @@ A moment of the event's kind keeps the event's packaging and derives its
 term specs, support included, and it names each component for the moment, so
 the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
-``E[(mu, tau) ~ d]``, ``Var[...]``, ``Cov[...]``, or ``Q[...]``, and the law of a
+``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and the law of a
 function lifted over laws contributes its notation in place of the draw, as
-``E[f(beta ~ model; y)]``.
+``𝔼[f(beta ~ model; y)]``.
 
-``expectation(d, f)`` returns ``E[f(X)]`` for ``X ~ d``, labeled
-``E[f(mu ~ d)]``. It is the derived
+``expectation(d, f)`` returns ``𝔼[f(X)]`` for ``X ~ d``, labeled
+``𝔼[f(mu ~ d)]``. It is the derived
 operation ``mean(evaluate(f, d))``: a law claiming
 :class:`~probpipe.distributions._capabilities.SupportsExpectation` computes it
 in closed form, and otherwise the call takes the routes of ``evaluate``. Its
@@ -43,14 +43,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import Batch, BatchSpec
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
     ResolutionError,
 )
-from ..core._expression import Applied, Expression, Summary, draw_of
-from ..core._record_batch import RecordBatch, _batch_class_for
+from ..core._expression import (
+    _SUMMARY_SYMBOLS,
+    Applied,
+    Expression,
+    Summary,
+    draw_of,
+)
+from ..core._record_batch import RecordBatch, _batch_class_for, _batch_over
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
@@ -84,6 +90,7 @@ from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
 from ._evaluate import (
     _FORWARDED_CONTROLS,
+    NAMELESS_CALLABLE_FIX,
     _as_function,
     _bound_parameter,
     _EvaluationRules,
@@ -141,8 +148,18 @@ def _hull(support: Any) -> Any:
     return support
 
 
+def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
+    """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
+    return BatchSpec._from_groups(term(spec.element_spec), spec.axis_groups, spec.level_names)
+
+
 def _mean_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a mean: floating leaves on the hull of their support."""
+    """The term spec of a mean: floating leaves on the hull of their support.
+
+    A batch's mean is the batch of its elements' means, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _mean_term)
     if isinstance(spec, NumericArraySpec):
         return NumericArraySpec(spec.shape, _floating(spec.dtype), _hull(spec.support))
     if isinstance(spec, RecordSpec):
@@ -151,7 +168,12 @@ def _mean_term(spec: TermSpec) -> TermSpec:
 
 
 def _variance_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a variance: non-negative floating leaves."""
+    """The term spec of a variance: non-negative floating leaves.
+
+    A batch's variance is the batch of its elements' variances, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _variance_term)
     if isinstance(spec, NumericArraySpec):
         return NumericArraySpec(spec.shape, _floating(spec.dtype), non_negative)
     if isinstance(spec, RecordSpec):
@@ -160,7 +182,12 @@ def _variance_term(spec: TermSpec) -> TermSpec:
 
 
 def _quantile_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a quantile: the event's shapes, with floating dtypes kept."""
+    """The term spec of a quantile: the event's shapes, with floating dtypes kept.
+
+    A batch's quantile is the batch of its elements' quantiles, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _quantile_term)
     if isinstance(spec, NumericArraySpec):
         dtype = (
             spec.dtype if spec.dtype is not None and _floating(spec.dtype) == spec.dtype else None
@@ -172,7 +199,16 @@ def _quantile_term(spec: TermSpec) -> TermSpec:
 
 
 def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
-    """The array leaves of a numeric spec, in the canonical flat order."""
+    """The array leaves of a numeric spec, in the canonical flat order.
+
+    A batch's leaves are its element's leaves, each led by the batch's axes.
+    """
+    if isinstance(spec, BatchSpec):
+        batch_shape = tuple(spec.batch_shape)
+        return [
+            NumericArraySpec((*batch_shape, *leaf.shape), leaf.dtype)
+            for leaf in _array_leaves(spec.element_spec)
+        ]
     if isinstance(spec, NumericArraySpec):
         return [spec]
     if isinstance(spec, RecordSpec):
@@ -329,9 +365,16 @@ def _expectation_result(f: TermSpec) -> OutputSpec | None:
     return None
 
 
+def _is_numeric(spec: TermSpec | None) -> bool:
+    """Whether *spec* declares a numeric value: an array, a record of arrays, or a batch of either."""
+    if isinstance(spec, BatchSpec):
+        spec = _flat_batch_spec(spec).element_spec
+    return isinstance(spec, NumericSpec)
+
+
 def _numeric_event(d: DistributionSpec) -> bool:
-    """The law draws a numeric value: an array or a record of arrays."""
-    return isinstance(d.event_spec.spec, NumericSpec)
+    """The law draws a numeric value: an array, a record of arrays, or a batch of either."""
+    return _is_numeric(d.event_spec.spec)
 
 
 def _event_typed_variance(d: DistributionSpec) -> bool:
@@ -365,7 +408,7 @@ def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     event = call.operands["d"].event_spec.spec
     if isinstance(event, FunctionSpec):
         return Feasibility(False, "the average of function-valued draws is not implemented yet")
-    if not isinstance(event, (NumericSpec, DistributionSpec)):
+    if not (_is_numeric(event) or isinstance(event, DistributionSpec)):
         return Feasibility(
             False, f"cannot average draws of a non-numeric event; got {type(event).__name__}"
         )
@@ -383,7 +426,7 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
         return Feasibility(
             False, "the pointwise variance of function-valued draws is not implemented yet"
         )
-    if not isinstance(event, NumericSpec):
+    if not _is_numeric(event):
         return Feasibility(
             False,
             f"cannot take the variance of draws of a non-numeric event; got {type(event).__name__}",
@@ -412,11 +455,24 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     record event are its atoms as the batch of records the law's event
     declaration calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
+    Draws of a batch-valued event are its atoms on one level before the
+    event's own levels.
     """
     # The empirical law is internal, so it takes a fixed name, which a derived
     # label could not be: a label may hold ``~``, a space, ``;``, or ``/``.
     name = _DRAWS
     event = call.operands["d"].event_spec.spec
+    if isinstance(event, BatchSpec):
+        if isinstance(draws, (RecordBatch, Mapping)):
+            raw = _raw_record(draws)
+        else:
+            raw = jnp.asarray(draws.raw() if isinstance(draws, Batch) else draws)
+        level = name
+        while level in _flat_batch_spec(event).level_names:
+            level += "_"
+        count = jax.tree.leaves(raw)[0].shape[0]
+        atoms = _batch_over(raw, _flat_batch_spec(BatchSpec(event, {level: count})), name)
+        return EmpiricalDistribution(atoms, label=name, event_spec=OutputSpec(**{name: event}))
     if isinstance(draws, Batch):
         records = isinstance(draws.element_spec, RecordSpec)
         return EmpiricalDistribution(draws, component=None if records else name, label=name)
@@ -450,7 +506,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     whose draws are laws it is their finite mixture with equal weights, the
     Monte Carlo estimate of the mean measure.
     """
-    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
+    if _is_numeric(call.operands["d"].event_spec.spec):
         return _named_value(
             _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean(),
             "mean",
@@ -868,11 +924,13 @@ class _ByComponent(_DelegatingRoute):
 
 @operation(result=_mean_result)
 def mean(d: Distribution):
-    """The mean ``E[X]`` for ``X ~ d``, a value shaped like one draw.
+    """The mean ``𝔼[X]`` for ``X ~ d``, a value shaped like one draw.
 
     A record-drawing law's mean is a ``Record`` with the law's schema, a random
     function's is its mean function, and a random measure's is the
-    marginalized law.
+    marginalized law. A batch-valued law's mean is elementwise: a batch on the
+    event's levels whose element at each position is the mean of the draw's
+    element there.
 
     The routes, in selection order, are the law's closed form,
     ``closed_form``; ``by_component``, which computes each component of a
@@ -892,7 +950,7 @@ def mean(d: Distribution):
     Returns
     -------
     TrackedTerm
-        The mean at the law's declared event kind, labeled ``E[(mu, tau) ~ d]``
+        The mean at the law's declared event kind, labeled ``𝔼[(mu, tau) ~ d]``
         for a law ``d`` over ``mu`` and ``tau``.
 
     Raises
@@ -922,7 +980,8 @@ mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=F
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
-    The routes are those of ``mean``: the closed form, ``closed_form``;
+    A batch-valued law's variance is elementwise, as its mean is. The routes
+    are those of ``mean``: the closed form, ``closed_form``;
     ``by_component``, which computes each component of a record event by the
     route that component's view selects; and the Monte Carlo fallback,
     ``monte_carlo``.
@@ -938,7 +997,7 @@ def variance(d: Distribution):
     -------
     TrackedTerm
         The variance at the law's declared event kind, with non-negative
-        leaves, labeled ``Var[(mu, tau) ~ d]``.
+        leaves, labeled ``𝕍[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -972,6 +1031,11 @@ variance.fallback_route(
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
 
+    The flattened draw ravels each array leaf in row-major order and
+    concatenates the leaves in the record's canonical order. A batch-valued
+    draw is raveled in its raw form, so each leaf runs over the event's batch
+    axes and then the element's own axes.
+
     Parameters
     ----------
     d : Distribution
@@ -982,7 +1046,7 @@ def cov(d: Distribution):
     -------
     NumericArray
         The dense covariance over the event's coordinates in canonical order,
-        labeled ``Cov[(mu, tau) ~ d]``.
+        labeled ``ℂ[(mu, tau) ~ d]``.
 
     Raises
     ------
@@ -1013,7 +1077,8 @@ cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=Fals
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
-    The routes are the law's closed form, ``closed_form``; ``by_component``,
+    A batch-valued law's quantiles are elementwise, as its mean is. The routes
+    are the law's closed form, ``closed_form``; ``by_component``,
     which computes each component of a record event by the route that
     component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
     which ``with_options(method=...)`` selects among. The fallback's quantile
@@ -1032,8 +1097,8 @@ def quantile(d: Distribution, q: Any):
     -------
     TrackedTerm
         For one level, a value of the event's kind; for several, the batch of
-        those values on a level named ``quantile``. It is labeled
-        ``Q[mu ~ d]``.
+        those values on a level named ``quantile``, before any levels of a
+        batch-valued event. It is labeled ``ℚ[mu ~ d]``.
 
     Raises
     ------
@@ -1083,7 +1148,7 @@ def _evaluate_applies(d: Any, f: Any, fixed_args: Mapping[str, Any] | None = Non
     identity_check=_evaluate_applies,
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
-    """The expectation ``E[f(X)]`` for ``X ~ d``, defined as ``mean(evaluate(f, d))``.
+    """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(evaluate(f, d))``.
 
     A law claiming ``SupportsExpectation`` computes it in closed form, and
     otherwise the call takes the routes of ``evaluate``: its evaluation rules,
@@ -1104,9 +1169,9 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     Returns
     -------
     TrackedTerm
-        ``E[f(X)]`` at the kind the integrand's output declaration names,
-        labeled ``E[f(mu ~ d)]`` by the integrand's label: a ``Function``'s
-        label, a callable's ``__name__``, and ``f`` for a lambda.
+        ``𝔼[f(X)]`` at the kind the integrand's output declaration names,
+        labeled ``𝔼[f(mu ~ d)]`` by the integrand's label: a ``Function``'s
+        label, a callable's ``__name__``, and ``𝒻`` for a lambda.
 
     Raises
     ------
@@ -1126,7 +1191,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     fixed = dict(call.operands.get("fixed_args") or {})
     if not fixed:
         return raw
-    parameter = _bound_parameter(_as_function(f), fixed)
+    parameter = _bound_parameter(_as_function(f, subject="expectation"), fixed)
     values = {
         name: value.raw() if isinstance(value, TrackedTerm) else value
         for name, value in fixed.items()
@@ -1137,7 +1202,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
     """``d._expectation(f)``, each component of the integrand's output named ``mean(...)``."""
     value = call.operands["d"]._expectation(_integrand(call))
-    declared = _as_function(call.operands["f"]).output_spec
+    declared = _as_function(call.operands["f"], subject="expectation").output_spec
     return value if declared is None else _named_value(value, "mean", declared)
 
 
@@ -1164,7 +1229,7 @@ class _PushforwardMean(_EvaluationRules):
 
     def _values(self, call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
         """The integrand, the parameter a draw binds, the law, and the fixed arguments."""
-        f = _as_function(call.operands["f"])
+        f = _as_function(call.operands["f"], subject="expectation")
         fixed = dict(call.operands.get("fixed_args") or {})
         return f, _bound_parameter(f, fixed), call.operands["d"], fixed
 
@@ -1198,12 +1263,12 @@ expectation.register_route(_PushforwardMean())
 
 
 def _moment_expression(summary: str) -> Callable[[Any], Expression]:
-    """The expression rule of a moment *summary*: the moment of a draw of the law, as ``E[mu ~ d]``."""
+    """The expression rule of a moment *summary*: the moment of a draw of the law, as ``𝔼[mu ~ d]``."""
 
     def rule(d: Any) -> Expression:
         return Summary(summary, draw_of(d))
 
-    rule.__doc__ = f"The expression ``{summary}[draw]`` of the moment of a draw of *d* (II.4)."
+    rule.__doc__ = f"The expression ``{_SUMMARY_SYMBOLS[summary]}[draw]`` of the moment of a draw of *d* (II.4)."
     return rule
 
 
@@ -1212,15 +1277,15 @@ def _integrand_label(f: Any) -> str:
 
     It is a Function's ``output_label``, so ``expectation(d, g)`` and
     ``mean(g(d))`` are labeled alike, and a plain callable's label is the one
-    ``evaluate`` wraps it under: its name, and ``f`` for a lambda.
+    ``evaluate`` wraps it under: its name, and ``𝒻`` for a lambda.
     """
     if isinstance(f, Function):
         return f.output_label
-    return _callable_label(f, subject="Function")
+    return _callable_label(f, subject="expectation", fix=NAMELESS_CALLABLE_FIX)
 
 
 def _expectation_expression(d: Any, f: Any) -> Expression:
-    """The expression of ``E[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``E[f(mu ~ d)]``."""
+    """The expression of ``𝔼[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``𝔼[f(mu ~ d)]``."""
     return Summary("E", Applied(_integrand_label(f), (draw_of(d),)))
 
 

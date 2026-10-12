@@ -214,13 +214,15 @@ class TestArrayGrouping:
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
 
-    def test_one_level_name_at_two_sizes_is_refused(self):
-        """Two batches naming the same level claim to range over the same thing,
-        so disagreeing about its size is a mistake rather than a product."""
+    def test_two_views_at_incompatible_sizes_of_one_level_are_refused(self):
+        """Sizes that broadcast within a level combine, and sizes that do not
+        broadcast are refused."""
         ra_a = _numeric_record_batch("a", range(3))
         ra_b = _numeric_record_batch("b", range(2))
 
-        with pytest.raises(ApplicabilityError, match="different shapes per level"):
+        with pytest.raises(
+            ApplicabilityError, match=r"has shapes \(3,\) for 'a' and \(2,\) for 'b'"
+        ):
             _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
     def test_a_distribution_batch_sweeps_on_its_own_levels(self):
@@ -671,12 +673,12 @@ class TestBatchGrouping:
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
 
-    def test_one_level_name_at_two_sizes_is_refused(self):
-        """Two batches naming the same level claim to range over the same thing,
-        so disagreeing about its size is a mistake rather than a product."""
+    def test_one_level_name_at_incompatible_sizes_is_refused(self):
+        """Sizes that broadcast within a level combine, and sizes that do not
+        broadcast are refused."""
         import pytest
 
-        with pytest.raises(ApplicabilityError, match="different shapes per level"):
+        with pytest.raises(ApplicabilityError, match="level 'draw' has shapes"):
             _plan({"a": _batch("draw", 3), "b": _batch("draw", 2)})
 
 
@@ -722,9 +724,9 @@ class TestPartialLevelOverlap:
         ):
             _plan({"a": two, "b": one})
 
-    def test_the_same_levels_at_different_geometries_are_refused(self):
-        """The flat shape can agree while the partition does not; zipping would
-        hand the output whichever partition arrived first."""
+    def test_partitions_with_incompatible_level_shapes_are_refused(self):
+        """Two partitions of one flat shape combine when each level's shapes
+        broadcast, and here level 'a' has the incompatible shapes (2,) and (2, 3)."""
         from probpipe.core._specs import RecordSpec
 
         ga = NumericRecordBatch(
@@ -743,7 +745,8 @@ class TestPartialLevelOverlap:
         )
 
         with pytest.raises(
-            ApplicabilityError, match=r"same levels \('a', 'b'\) but different shapes per level"
+            ApplicabilityError,
+            match=r"^level 'a' has shapes \(2,\) for 'a' and \(2, 3\) for 'b', which do not broadcast$",
         ):
             _plan({"a": ga, "b": gb})
 

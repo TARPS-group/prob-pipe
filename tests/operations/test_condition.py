@@ -218,10 +218,10 @@ class _StructuredKernel(ConditionalDistribution, SupportsConditionalSampling):
         )
 
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Any:
-        return Gaussian(self.name)
+        return Gaussian(self.label)
 
     def _conditional_sample(self, given: Any, key: Any, sample_shape: tuple[int, ...] = ()) -> Any:
-        return Gaussian(self.name)._sample(key, sample_shape)
+        return Gaussian(self.label)._sample(key, sample_shape)
 
 
 class _NormalKernel(Kernel, SupportsConditionalSampling, SupportsConditionalLogProb):
@@ -327,7 +327,6 @@ class TestCurry:
         )
         assert condition_on(curried, {"b": 2.0}).loc == 3.0
 
-    @pytest.mark.pending(reason="binding part of a structured slot restructures, then binds")
     def test_binding_part_of_a_structured_slot_leaves_the_rest_of_the_slot(self):
         curried = condition_on(_StructuredKernel(), {"theta/a": 1.0})
         assert set(curried.given_spec) == {"theta"}

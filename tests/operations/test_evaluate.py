@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import jax.numpy as jnp
 import pytest
 
@@ -81,6 +83,17 @@ def test_the_result_takes_the_maps_output_name():
     with workflow_run(seed=0):
         assert evaluate(double, Gaussian("g")).label == "doubled"
     assert evaluate(double, 1.0).label == "doubled"
+
+
+def test_a_nameless_map_needs_a_labeled_function():
+    double = partial(lambda x, k: k * x, k=2.0)
+    with pytest.raises(
+        TypeError,
+        match=r"^evaluate needs an explicit label for a partial, which has no name; "
+        r"wrap it as Function\(f, label=\.\.\.\)$",
+    ):
+        evaluate(double, 1.0)
+    assert float(evaluate(Function(double, label="double"), 1.0)) == 2.0
 
 
 def test_the_registry_is_exported_beside_the_converter_registry():

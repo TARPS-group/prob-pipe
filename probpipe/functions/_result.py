@@ -19,8 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
-from ..core._batch import Batch, BatchSpec, _ranks_of
-from ..core._expression import Expression, Named
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec, _ranks_of
+from ..core._expression import AppliedValue, Expression, Named
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
 from ..core._numeric_array import NumericArray
@@ -39,6 +39,7 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._batches import DistributionBatch
+from ..distributions._conditional import ConditionalDistribution
 from ..distributions._distribution import Distribution
 from ..values._function_base import _ResultKindMismatch, _validate_function_output
 
@@ -237,10 +238,17 @@ def _coerce_output(
 def _prepared(term: Any, expression: Expression) -> Expression:
     """*expression* as *term* carries it: a label alone keeps the paths a law or kernel holds fixed.
 
-    A label alone that *term* carries already gives *term*'s own node, so a
-    caller tells by identity that *term* needs no copy. That comparison reads
-    a node of at most two levels, whatever the depth of *term*'s expression.
+    A law or a kernel that a function's call on values returns is labeled by
+    the function's label rather than by the call, so it displays by that label
+    and its own signature, as ``predict(y, mu)`` (II.4). A label alone that
+    *term* carries already gives *term*'s own node, so a caller tells by
+    identity that *term* needs no copy. That comparison reads a node of at most
+    two levels, whatever the depth of *term*'s expression.
     """
+    if isinstance(expression, AppliedValue) and isinstance(
+        term, (Distribution, ConditionalDistribution)
+    ):
+        expression = Named(expression.function)
     if isinstance(expression, Named) and expression.signature is None:
         relabeled = term._relabeled_expression(expression.label)
         return term._expression if term._expression == relabeled else relabeled
@@ -717,6 +725,12 @@ def _with_dtypes_of(spec: Any, reference: Any) -> Any:
     A leaf whose match in *reference* states no dtype keeps its own, so a law's
     event declaration can take the dtypes its stored atoms hold.
     """
+    if isinstance(spec, BatchSpec) and isinstance(reference, BatchSpec):
+        return BatchSpec._from_groups(
+            _with_dtypes_of(spec.element_spec, reference.element_spec),
+            spec.axis_groups,
+            spec.level_names,
+        )
     if isinstance(spec, RecordSpec) and isinstance(reference, RecordSpec):
         return RecordSpec(
             {
@@ -814,7 +828,9 @@ def _stack_rows(
                 label=label,
             )
         if not isinstance(spec, RecordSpec):
-            batch_class = batch_class_for_spec(spec)
+            # The kind table gives a BatchSpec its element's batch class, whose
+            # constructor takes only the element's spec.
+            batch_class = None if isinstance(spec, BatchSpec) else batch_class_for_spec(spec)
             if batch_class is None:
                 raise ValueError(f"An empty sweep has no batch form for {spec!r}")
             return batch_class(
@@ -1251,6 +1267,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         If the leading axes are not the declared batch shape, the element does
         not unify with the declared element.
     """
+    spec = _flat_batch_spec(spec)
     batch_shape = tuple(spec.batch_shape)
     ranks = _ranks_of(spec.axis_groups)
     levels = tuple(spec.level_names)

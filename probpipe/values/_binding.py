@@ -1,4 +1,4 @@
-"""Frozen Python signatures and argument binding for Function values."""
+"""Frozen Python signatures, resolved annotations, and argument binding for Function values."""
 
 from __future__ import annotations
 
@@ -6,7 +6,35 @@ import inspect
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, get_type_hints
+from typing import (
+    Annotated,
+    Any,
+    ParamSpec,
+    TypeAliasType,
+    TypeVar,
+    TypeVarTuple,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+
+try:
+    import typing_extensions
+except ImportError:
+    _TYPE_ALIAS_CLASSES: tuple[type, ...] = (TypeAliasType,)
+    _TYPE_PARAMETER_CLASSES: tuple[type, ...] = (TypeVar, ParamSpec, TypeVarTuple)
+else:
+    # Before Python 3.14, typing_extensions defines a TypeAliasType class of its
+    # own, and before 3.13 its own type parameter classes as well.
+    _TYPE_ALIAS_CLASSES = (TypeAliasType, typing_extensions.TypeAliasType)
+    _TYPE_PARAMETER_CLASSES = (
+        TypeVar,
+        ParamSpec,
+        TypeVarTuple,
+        typing_extensions.TypeVar,
+        typing_extensions.ParamSpec,
+        typing_extensions.TypeVarTuple,
+    )
 
 
 @dataclass(frozen=True)
@@ -101,11 +129,90 @@ def iter_input_refs(
     return tuple(refs)
 
 
+def resolved_hint(hint: Any, expanded: set[Any] | None = None) -> Any:
+    """The annotation *hint* stands for, with its type aliases and ``Annotated`` wrappers resolved.
+
+    A type alias stands for its value. A parametrized alias stands for its value
+    with each type parameter replaced by the argument in its position, so with
+    ``type Maybe[T] = T | None`` the annotation ``Maybe[Normal]`` stands for
+    ``Normal | None``. A generic alias written without arguments stands for its
+    value as written. ``Annotated[T, ...]`` stands for ``T``, because the hints
+    of a partial or a callable object keep the metadata that ``get_type_hints``
+    removes from a function's hints.
+
+    Resolution adds each alias it expands to *expanded* and stops at an alias
+    already in *expanded*, which ends a recursive alias. An alias also stays
+    unresolved when its value raises ``NameError``, as a value that names a
+    class imported only under ``TYPE_CHECKING`` does, and when
+    :func:`_substituted` cannot place its arguments, as for a type parameter
+    that is a ``TypeVarTuple`` or a ``ParamSpec``.
+    """
+    expanded = set() if expanded is None else expanded
+    origin = get_origin(hint)
+    if origin is Annotated:
+        return resolved_hint(get_args(hint)[0], expanded)
+    alias = hint if isinstance(hint, _TYPE_ALIAS_CLASSES) else origin
+    if not isinstance(alias, _TYPE_ALIAS_CLASSES) or alias in expanded:
+        return hint
+    try:
+        value = alias.__value__
+        if alias is not hint:
+            value = _substituted(value, alias.__type_params__, get_args(hint))
+    except (NameError, TypeError):
+        return hint
+    expanded.add(alias)
+    return resolved_hint(value, expanded)
+
+
+def _substituted(value: Any, parameters: tuple[Any, ...], arguments: tuple[Any, ...]) -> Any:
+    """*value* with each type variable in *parameters* replaced by the argument in its position.
+
+    The free type variables of *value* are replaced through its own
+    subscription, so each use of a parameter receives that parameter's argument
+    in any order or nesting, as in ``dict[V, K]`` for ``type Pair[K, V]``. A
+    class stays as it is, because a generic class in an alias's value is not
+    parametrized by the alias.
+
+    Parameters
+    ----------
+    value : Any
+        The value of a generic alias.
+    parameters : tuple
+        The alias's type parameters, in declared order.
+    arguments : tuple
+        The arguments of the parametrized alias, in order.
+
+    Returns
+    -------
+    Any
+        *value* with each parameter replaced by its argument.
+
+    Raises
+    ------
+    TypeError
+        If a parameter is a ``TypeVarTuple`` or a ``ParamSpec``, the arguments
+        differ in number from the parameters, or the subscription refuses an
+        argument.
+    """
+    if len(arguments) != len(parameters) or not all(
+        isinstance(parameter, TypeVar) for parameter in parameters
+    ):
+        raise TypeError(f"cannot place the arguments {arguments} in the parameters {parameters}")
+    argument_of = dict(zip(parameters, arguments))
+    if isinstance(value, TypeVar):
+        return argument_of.get(value, value)
+    free = () if isinstance(value, type) else getattr(value, "__parameters__", ())
+    if not any(parameter in argument_of for parameter in free):
+        return value
+    return value[tuple(argument_of.get(parameter, parameter) for parameter in free)]
+
+
 def parameter_lifting_hint(info: FunctionSignatureInfo, name: str) -> Any:
     """Return the annotation that governs lifting at parameter *name*.
 
     ``Any`` on a variadic parameter governs none, so the arguments it collects
-    lift and sweep as they would at an unannotated parameter.
+    lift and sweep as they would at an unannotated parameter. The annotation is
+    compared with ``Any`` once :func:`resolved_hint` resolves it.
     """
     hint = info.hints.get(name)
     parameter = info.signature.parameters.get(name)
@@ -113,7 +220,7 @@ def parameter_lifting_hint(info: FunctionSignatureInfo, name: str) -> Any:
         inspect.Parameter.VAR_POSITIONAL,
         inspect.Parameter.VAR_KEYWORD,
     )
-    return None if variadic and hint is Any else hint
+    return None if variadic and resolved_hint(hint) is Any else hint
 
 
 def input_ref_hint(info: FunctionSignatureInfo, ref: FunctionInputRef) -> Any:
@@ -169,33 +276,15 @@ def replace_input_refs(
     return out
 
 
-def is_dependency_param(
-    info: FunctionSignatureInfo,
-    name: str,
-    *,
-    dependency_type: type,
-) -> bool:
-    """Return whether a parameter annotation names a workflow dependency."""
-    ann = info.hints.get(name)
-    try:
-        return isinstance(ann, type) and issubclass(ann, dependency_type)
-    except TypeError:
-        return False
-
-
 def resolve_function_values(
     info: FunctionSignatureInfo,
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
-    module: Any | None,
-    dependency_type: type,
     function_name: str,
 ) -> dict[str, Any]:
-    """Resolve final signature-shaped arguments from every value source."""
+    """Resolve arguments from call values, construction bindings, then defaults."""
     values: dict[str, Any] = {}
-    mod_child_nodes = getattr(module, "child_nodes", {}) if module is not None else {}
-    mod_inputs = getattr(module, "inputs", {}) if module is not None else {}
 
     var_keyword_name = next(
         (
@@ -224,22 +313,10 @@ def resolve_function_values(
                 values[name] = extras
             continue
 
-        is_dep = is_dependency_param(info, name, dependency_type=dependency_type)
-
         if name in call_inputs:
-            if module is not None and is_dep and name in mod_child_nodes:
-                raise TypeError(
-                    f"{function_name}: dependency {name!r} is provided by the module and "
-                    f"cannot be overridden at call time"
-                )
             values[name] = call_inputs[name]
         elif name in bind:
             values[name] = bind[name]
-        elif module is not None:
-            if is_dep and name in mod_child_nodes:
-                values[name] = mod_child_nodes[name]
-            elif not is_dep and name in mod_inputs:
-                values[name] = mod_inputs[name]
 
         if name not in values and param.default is not param.empty:
             values[name] = param.default
@@ -255,12 +332,6 @@ def resolve_function_values(
             )
 
     _validate_required_values(info, values, function_name=function_name)
-    _validate_dependency_values(
-        info,
-        values,
-        dependency_type=dependency_type,
-        function_name=function_name,
-    )
     return values
 
 
@@ -291,24 +362,3 @@ def _validate_required_values(
             continue
         if param.default is param.empty and name not in values:
             raise TypeError(f"{function_name}() missing required argument {name!r}")
-
-
-def _validate_dependency_values(
-    info: FunctionSignatureInfo,
-    values: dict[str, Any],
-    *,
-    dependency_type: type,
-    function_name: str,
-) -> None:
-    for ref in iter_input_refs(info, values):
-        name = ref.parameter_name
-        if not is_dependency_param(info, name, dependency_type=dependency_type):
-            continue
-        value = input_ref_value(values, ref)
-        if not isinstance(value, dependency_type):
-            ann = info.hints.get(name)
-            annotation = getattr(ann, "__name__", None) or repr(ann)
-            raise TypeError(
-                f"Function {function_name!r} expects a Node for dependency {ref.label!r} "
-                f"(annotated {annotation}); got {type(value).__name__}"
-            )

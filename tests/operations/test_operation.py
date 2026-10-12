@@ -36,6 +36,7 @@ from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
+from probpipe.distributions._conditional import ConditionalDistributionSpec
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
 from probpipe.functions._resolution import PointReport
 from probpipe.operations import (
@@ -58,6 +59,10 @@ from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
+
+type _DistributionAlias = Distribution
+type _AnyAlias = Any
+type _PathAlias = str
 
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
@@ -245,13 +250,28 @@ class TestDeclaration:
 
 
 class TestRoles:
-    def test_roles_follow_the_annotations(self):
-        @operation(result=_open, registry=OperationRegistry())
-        def annotated(d: Distribution, value: Any, path: str):
+    @pytest.mark.parametrize(
+        "annotations",
+        [
+            {"d": Distribution, "value": Any, "path": str},
+            {"d": _DistributionAlias, "value": _AnyAlias, "path": _PathAlias},
+        ],
+        ids=["classes", "aliases"],
+    )
+    def test_roles_follow_the_annotations(self, annotations):
+        def annotated(d, value, path):
             """Three kinds of parameter."""
 
-        operands = {operand.name: operand.accepts for operand in annotated.summary().operands}
-        assert operands == {"d": (DistributionSpec,), "value": (TermSpec,), "path": ()}
+        annotated.__annotations__ = annotations
+        declared = operation(result=_open, registry=OperationRegistry())(annotated)
+
+        operands = {operand.name: operand.accepts for operand in declared.summary().operands}
+        assert operands == {
+            "d": (DistributionSpec, ConditionalDistributionSpec),
+            "value": (TermSpec,),
+            "path": (),
+            "given": (RecordSpec,),
+        }
 
     def test_a_declared_role_overrides_the_annotation(self):
         toy = _toy(roles={"d": (NumericArraySpec,)})
@@ -283,7 +303,7 @@ class TestRoles:
         def scored(d: Distribution, value):
             """An unannotated value."""
 
-        (_, value) = scored.summary().operands
+        (_, value, _) = scored.summary().operands
         assert value.accepts == (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
 
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
@@ -314,22 +334,26 @@ class TestRoles:
         assert len(seen) == 8
         assert all(d is law and not isinstance(value, Distribution) for d, value in seen)
 
-    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self, annotation):
         def rule(f: Any) -> None:
             """Leaves the result open."""
 
-        @operation(result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry())
-        def applied(f: Any):
+        def applied(f):
             """A function, consumed as an object."""
 
-        applied.structural_route("any", exact=True, **_route(True, 0.0))
+        applied.__annotations__ = {"f": annotation}
+        declared = operation(
+            result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry()
+        )(applied)
+        declared.structural_route("any", exact=True, **_route(True, 0.0))
         functions = FunctionBatch(
             [lambda x: x, lambda x: 2 * x],
             "fs",
             label="fs",
         )
         with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
-            applied(functions)
+            declared(functions)
 
     def test_apply_lifts_nothing(self):
         laws = DistributionBatch(
@@ -1163,7 +1187,7 @@ class TestResultAndRandomness:
         toy.structural_route("value", **_route(True, 1.0), exact=True)
         _install_expression_rule(toy, lambda d: Summary("E", draw_of(d)))
         result = toy(Gaussian("g"))
-        assert (float(result), result.label) == (1.0, "E[g ~ g]")
+        assert (float(result), result.label) == (1.0, "𝔼[g ~ g]")
 
     def test_an_expression_rule_that_returns_none_keeps_the_routes_expression(self):
         toy = _toy()
@@ -1299,7 +1323,10 @@ class TestRegistry:
         assert summary.priority is None
         assert summary.description == "The center of a law."
         assert summary.module_path == __name__
-        assert summary.operands == (OperandSummary("d", (DistributionSpec,), True),)
+        assert summary.operands == (
+            OperandSummary("d", (DistributionSpec, ConditionalDistributionSpec), True),
+            OperandSummary("given", (RecordSpec,), False),
+        )
         assert (summary.is_derived, summary.identity) == (False, None)
         assert summary.routes == (
             RouteSummary(
@@ -1314,7 +1341,7 @@ class TestRegistry:
 
     def test_describe_renders_one_operation_or_all(self):
         text = _REGISTRY.describe("center")
-        assert text.splitlines()[0] == "center(d) — primitive"
+        assert text.splitlines()[0] == "center(d, given) — primitive"
         assert "closed_form (capability, exact; requires SupportsMean)" in text
         assert "monte_carlo (fallback, approximate): The operand samples." in text
         assert _REGISTRY.describe() == text

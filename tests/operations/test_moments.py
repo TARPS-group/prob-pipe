@@ -228,8 +228,8 @@ class TestDerivedLabelsAreNeverComponents:
     @pytest.mark.parametrize(
         ("moment", "label", "component"),
         [
-            (mean, "E[g ~ g; y/obs]", "mean(g)"),
-            (variance, "Var[g ~ g; y/obs]", "variance(g)"),
+            (mean, "𝔼[g ~ g; y/obs]", "mean(g)"),
+            (variance, "𝕍[g ~ g; y/obs]", "variance(g)"),
         ],
     )
     def test_a_monte_carlo_moment_is_labeled_over_the_nested_path(self, moment, label, component):
@@ -243,7 +243,7 @@ class TestDerivedLabelsAreNeverComponents:
         held = self._held()
         with workflow_run(seed=0):
             result = quantile.with_options(method="monte_carlo")(held, jnp.array([0.1, 0.9]))
-        assert result.label == "Q[g ~ g; y/obs]"
+        assert result.label == "ℚ[g ~ g; y/obs]"
         assert result.level_names == ("quantile",)
         assert tuple(quantile.check(held, 0.5).result.components) == ("quantile(g)",)
 
@@ -252,7 +252,7 @@ class TestMean:
     def test_the_closed_form_mean_has_the_event_declaration(self):
         result = mean(Gaussian("g", 2.0))
         assert isinstance(result, NumericArray)
-        assert result.label == "E[g ~ g]"
+        assert result.label == "𝔼[g ~ g]"
         assert result.spec == NumericArraySpec((), jnp.float32, real)
         assert _value(result) == 2.0
 
@@ -934,19 +934,23 @@ class TestExpectation:
             for integrand in (square, lambda x: x**2, Function(square, label="g"))
         ]
         assert [result.label for result in results] == [
-            "E[square(c ~ c)]",
-            "E[f(c ~ c)]",
-            "E[g(c ~ c)]",
+            "𝔼[square(c ~ c)]",
+            "𝔼[𝒻(c ~ c)]",
+            "𝔼[g(c ~ c)]",
         ]
         assert len({result.spec for result in results}) == 1
         assert all(_value(result) == pytest.approx(0.5) for result in results)
 
     def test_a_nameless_integrand_needs_a_labeled_function(self):
         integrand = partial(lambda x, k: x**k, k=2)
-        with pytest.raises(TypeError, match="explicit label for a partial"):
+        with pytest.raises(
+            TypeError,
+            match=r"^expectation needs an explicit label for a partial, which has no name; "
+            r"wrap it as Function\(f, label=\.\.\.\)$",
+        ):
             expectation(Coin("c", 0.5), integrand)
         labeled = expectation(Coin("c", 0.5), Function(integrand, label="g"))
-        assert labeled.label == "E[g(c ~ c)]"
+        assert labeled.label == "𝔼[g(c ~ c)]"
 
     def test_the_integrand_is_a_callable(self):
         with pytest.raises(ApplicabilityError, match="FunctionSpec"):
@@ -963,4 +967,4 @@ class TestExpectation:
         assert route.registry is _rules.evaluation_rule_registry
 
     def test_the_operation_takes_no_key(self):
-        assert list(inspect.signature(expectation).parameters) == ["d", "f", "fixed_args"]
+        assert list(inspect.signature(expectation).parameters) == ["d", "f", "fixed_args", "given"]
