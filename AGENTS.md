@@ -23,6 +23,7 @@ The design reference in `design/` describes the target state, and the documents 
 | An error or warning message | `STYLE_GUIDE.md` §9.3 |
 | A docs page or a notebook | `CONTRIBUTING.md` § Documentation |
 | Installation | `CONTRIBUTING.md` § Installation |
+| A release to PyPI | `CONTRIBUTING.md` § Releasing |
 | The branch, the PR title and body, the CHANGELOG entry, and labels | `CONTRIBUTING.md` § PR Workflow and `.github/PULL_REQUEST_TEMPLATE.md` |
 
 Where `design/` disagrees with the code or with a contributor document, `CONTRACTS.md` directive 5 decides.
