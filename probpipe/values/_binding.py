@@ -169,49 +169,15 @@ def replace_input_refs(
     return out
 
 
-def is_dependency_param(
-    info: FunctionSignatureInfo,
-    name: str,
-    *,
-    dependency_type: type,
-) -> bool:
-    """Whether an annotation names an experimental node dependency rather than a value kind.
-
-    A ``Function`` annotation names a value kind and follows ordinary lifting,
-    even though that kind also inherits the experimental node base.
-    """
-    from ._function_base import Function
-
-    ann = info.hints.get(name)
-    try:
-        return (
-            isinstance(ann, type)
-            and issubclass(ann, dependency_type)
-            and not issubclass(ann, Function)
-        )
-    except TypeError:
-        return False
-
-
 def resolve_function_values(
     info: FunctionSignatureInfo,
     call_inputs: dict[str, Any],
     *,
     bind: Mapping[str, Any],
-    module: Any | None,
-    dependency_type: type,
     function_name: str,
 ) -> dict[str, Any]:
-    """Resolve final signature-shaped arguments from every value source.
-
-    A Function stored among a module's child nodes binds as an ordinary value,
-    so call-time arguments and construction bindings can override it.
-    """
-    from ._function_base import Function
-
+    """Resolve arguments from call values, construction bindings, then defaults."""
     values: dict[str, Any] = {}
-    mod_child_nodes = getattr(module, "child_nodes", {}) if module is not None else {}
-    mod_inputs = getattr(module, "inputs", {}) if module is not None else {}
 
     var_keyword_name = next(
         (
@@ -240,22 +206,10 @@ def resolve_function_values(
                 values[name] = extras
             continue
 
-        is_dep = is_dependency_param(info, name, dependency_type=dependency_type)
-
         if name in call_inputs:
-            if module is not None and is_dep and name in mod_child_nodes:
-                raise TypeError(
-                    f"{function_name}: dependency {name!r} is provided by the module and "
-                    f"cannot be overridden at call time"
-                )
             values[name] = call_inputs[name]
         elif name in bind:
             values[name] = bind[name]
-        elif module is not None:
-            if name in mod_child_nodes and (is_dep or isinstance(mod_child_nodes[name], Function)):
-                values[name] = mod_child_nodes[name]
-            elif not is_dep and name in mod_inputs:
-                values[name] = mod_inputs[name]
 
         if name not in values and param.default is not param.empty:
             values[name] = param.default
@@ -271,12 +225,6 @@ def resolve_function_values(
             )
 
     _validate_required_values(info, values, function_name=function_name)
-    _validate_dependency_values(
-        info,
-        values,
-        dependency_type=dependency_type,
-        function_name=function_name,
-    )
     return values
 
 
@@ -307,24 +255,3 @@ def _validate_required_values(
             continue
         if param.default is param.empty and name not in values:
             raise TypeError(f"{function_name}() missing required argument {name!r}")
-
-
-def _validate_dependency_values(
-    info: FunctionSignatureInfo,
-    values: dict[str, Any],
-    *,
-    dependency_type: type,
-    function_name: str,
-) -> None:
-    for ref in iter_input_refs(info, values):
-        name = ref.parameter_name
-        if not is_dependency_param(info, name, dependency_type=dependency_type):
-            continue
-        value = input_ref_value(values, ref)
-        if not isinstance(value, dependency_type):
-            ann = info.hints.get(name)
-            annotation = getattr(ann, "__name__", None) or repr(ann)
-            raise TypeError(
-                f"Function {function_name!r} expects a Node for dependency {ref.label!r} "
-                f"(annotated {annotation}); got {type(value).__name__}"
-            )

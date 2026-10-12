@@ -6,15 +6,13 @@ internals are split into smaller private modules.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import jax.numpy as jnp
 import pytest
 
-from probpipe import EmpiricalDistribution, Function, Normal, OutputSpec, workflow_run
-from probpipe.core.node import Node
-from probpipe.functions import Module, _call, workflow_method
+from probpipe import EmpiricalDistribution, Function, Normal, OutputSpec, function, workflow_run
+from probpipe.functions import _call
 from probpipe.values import _binding
 
 
@@ -58,21 +56,10 @@ def affine_func():
     return affine
 
 
-class DataNode(Node):
-    pass
-
-
-class CallResolutionModule(Module):
-    @workflow_method
-    def step(self, dep: DataNode, x, y=7.0):
-        return x + y
-
-
 def _resolve_call(
     func,
     *args,
     bind=None,
-    module=None,
     **call_inputs,
 ):
     info = _binding.make_signature_info(func)
@@ -81,8 +68,6 @@ def _resolve_call(
         args,
         call_inputs,
         bind=bind or {},
-        module=module,
-        dependency_type=Node,
         function_name=getattr(func, "__name__", "workflow"),
     )
 
@@ -218,40 +203,42 @@ class TestWorkflowCallHelpers:
             "seed": 123,
         }
 
-    def test_bind_module_and_function_defaults_resolve_in_precedence_order(self):
-        dep = DataNode()
-        module = SimpleNamespace(child_nodes={"dep": dep}, inputs={"x": 5.0})
-
-        def step(dep: DataNode, x, y=7.0, scale=1.0):
+    def test_bind_and_defaults_resolve_in_precedence_order(self):
+        def step(x, y=7.0, scale=1.0):
             return (x + y) * scale
 
-        call = _resolve_call(step, module=module, bind={"scale": 2.0})
-        override = _resolve_call(step, module=module, bind={"scale": 2.0}, y=3.0)
-
-        assert call == {"dep": dep, "x": 5.0, "y": 7.0, "scale": 2.0}
-        assert override == {"dep": dep, "x": 5.0, "y": 3.0, "scale": 2.0}
-
-    def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
-        def step(dep: DataNode):
-            return dep
-
-        module = SimpleNamespace(child_nodes={"dep": DataNode()}, inputs={})
-
-        with pytest.raises(TypeError, match="cannot be overridden"):
-            _resolve_call(step, module=module, dep=DataNode())
-
-    def test_dependency_typed_parameter_requires_node_instance(self):
-        def use_dep(dep: DataNode):
-            return dep
-
-        with pytest.raises(
-            TypeError,
-            match=r"expects a Node for dependency 'dep' \(annotated DataNode\); got object",
-        ):
-            _resolve_call(use_dep, dep=object())
+        assert _resolve_call(step, bind={"x": 5.0, "scale": 2.0}) == {
+            "x": 5.0,
+            "y": 7.0,
+            "scale": 2.0,
+        }
+        assert _resolve_call(step, bind={"x": 5.0, "scale": 2.0}, x=9.0) == {
+            "x": 9.0,
+            "y": 7.0,
+            "scale": 2.0,
+        }
 
 
 class TestArgumentBinding:
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_function_values_bind_and_allow_call_overrides(self, wrapped):
+        def increment(x):
+            return x + 1.0
+
+        def apply(f: Function, x):
+            return f(x)
+
+        def unannotated(f, x):
+            return f(x)
+
+        f = Function(increment, dispatch="sequential") if wrapped else increment
+        for body in (apply, unannotated):
+            bound = Function(body, bind={"f": f, "x": 3.0})
+            assert bound.check().feasible is True
+            assert float(bound()) == 4.0
+            assert float(bound(x=4.0)) == 5.0
+            assert float(bound(f=Function(lambda x: 2.0 * x))) == 6.0
+
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
         wf = Function(add_func, label="add_func", dispatch="sequential")
 
@@ -296,74 +283,6 @@ class TestArgumentBinding:
 
         with pytest.raises(TypeError, match=r"add_func\(\) missing required argument 'y'"):
             wf(x=1.0)
-
-
-class TestModuleResolution:
-    @pytest.mark.parametrize("wrapped", [False, True])
-    def test_module_function_values_bind_and_allow_call_overrides(self, wrapped):
-        class Functions(Module):
-            @workflow_method
-            def apply(self, f: Function, x):
-                return f(x)
-
-            @workflow_method
-            def unannotated(self, f, x):
-                return f(x)
-
-        def increment(x):
-            return x + 1.0
-
-        f = Function(increment, dispatch="sequential") if wrapped else increment
-        module = Functions(f=f, x=3.0)
-        if wrapped:
-            assert module.child_nodes["f"] is f
-        else:
-            assert module.inputs["f"] is f
-        for method in (module.apply, module.unannotated):
-            assert method.check().feasible is True
-            assert float(method()) == 4.0
-            assert float(method(f=Function(lambda x: 2.0 * x))) == 6.0
-        bound = Function(lambda f, x: f(x), module=module, bind={"f": Function(lambda x: 3.0 * x)})
-        assert float(bound()) == 9.0
-
-    def test_module_inputs_dependencies_and_defaults_resolve_for_workflow_methods(self):
-        dep = DataNode()
-        module = CallResolutionModule(dep=dep, x=5.0)
-
-        assert module.child_nodes["dep"] is dep
-        assert float(module.step()) == 12.0
-        assert float(module.step(y=2.0)) == 7.0
-
-    def test_module_records_resolved_plain_inputs(self, full_provenance_mode):
-        dep = DataNode()
-        module = CallResolutionModule(dep=dep, x=5.0)
-
-        result = module.step()
-
-        assert result.provenance is not None
-        assert result.provenance.parents[1:] == ()
-        assert tuple(result.provenance.inputs) == ("dep", "x", "y")
-        assert result.provenance.inputs["dep"].parent is dep
-        assert result.provenance.inputs["x"].parent == 5.0
-        assert result.provenance.inputs["y"].parent == 7.0
-
-    def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
-        module = CallResolutionModule(dep=DataNode(), x=5.0)
-
-        with pytest.raises(TypeError, match="cannot be overridden"):
-            module.step(dep=DataNode())
-
-    def test_dependency_typed_parameter_requires_node_instance(self):
-        def use_dep(dep: DataNode):
-            return 1.0
-
-        wf = Function(use_dep, label="use_dep", dispatch="sequential")
-
-        with pytest.raises(
-            TypeError,
-            match=r"expects a Node for dependency 'dep' \(annotated DataNode\); got object",
-        ):
-            wf(dep=object())
 
 
 class TestCallOptions:
@@ -427,3 +346,46 @@ def test_a_function_keyword_reaches_the_wrapped_callable(engine, monkeypatch):
 
     assert float(result) == pytest.approx(float(jnp.sin(1.0)))
     assert float(wrapped.apply(function=jnp.sin, x=1.0)) == pytest.approx(float(result))
+
+
+class TestOrdinaryCallableBinding:
+    @pytest.mark.parametrize("evaluate", ["apply", "call"])
+    def test_bound_method_uses_python_binding(self, evaluate):
+        class Offset:
+            def __init__(self, value):
+                self.value = value
+
+            def add(self, x, scale=1.0):
+                return (x + self.value) * scale
+
+        wrapped = Function(Offset(3.0).add, bind={"scale": 2.0})
+        invoke = wrapped.apply if evaluate == "apply" else wrapped
+        assert float(invoke(1.0)) == 8.0
+        assert float(invoke(1.0, scale=3.0)) == 12.0
+
+    @pytest.mark.parametrize("evaluate", ["apply", "call", "check"])
+    def test_function_annotation_accepts_a_callable_value(self, evaluate):
+        def evaluate_at(fn: Function, x):
+            return fn.apply(x)
+
+        wrapped = Function(evaluate_at)
+        supplied = Function(lambda x: x + 2.0)
+        if evaluate == "check":
+            assert wrapped.check(supplied, 3.0).feasible is True
+        else:
+            invoke = wrapped.apply if evaluate == "apply" else wrapped
+            assert float(invoke(supplied, 3.0)) == 5.0
+
+    @pytest.mark.parametrize("constructor", [Function, function])
+    def test_module_is_not_a_constructor_option(self, constructor):
+        with pytest.raises(TypeError, match="module"):
+            constructor(lambda: 1.0, module=object())
+
+    def test_module_remains_an_ordinary_callable_parameter(self):
+        def size(module):
+            return module + 1.0
+
+        wrapped = Function(size, bind={"module": 2.0})
+        assert float(wrapped()) == 3.0
+        assert float(wrapped(module=4.0)) == 5.0
+        assert float(wrapped.apply(module=4.0)) == 5.0

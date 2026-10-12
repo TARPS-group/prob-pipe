@@ -441,7 +441,7 @@ probpipe/
 ├── values/         # The Function base, FunctionSpec, and pure argument binding
 ├── linalg/         # Linear operators
 ├── distributions/  # The Distribution base, capabilities, factored laws, batches, conversion
-├── functions/      # The Function engine and the experimental Module containers
+├── functions/      # The Function engine and workflow scopes
 ├── operations/     # The operations and their routes
 ├── families/       # The distribution catalog
 ├── record/         # Parameter-sweep designs

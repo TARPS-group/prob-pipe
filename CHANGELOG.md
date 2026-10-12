@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Remove the experimental `Node`, `Module`, `AbstractModule`,
+  `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
+  `Function` and `@function` no longer accept `module=`. Use ordinary callables
+  and `bind=` for construction-time arguments; call arguments override those
+  bindings, followed by Python defaults for omitted arguments.
+
+- Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
+  expectation, generic laws or kernels, quantile, variance, covariance, and
+  anonymous functions. Explicit labels remain literal, and generated component
+  names remain ASCII.
+
 - **A value, a batch, and a function take their data first and the label as
   the keyword `label=`.** `NumericArray(values, label="x")` replaces
   `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
@@ -21,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   require the label. A record and a record batch derive it from their validated
   top-level fields, so path-keyed and nested fields read alike, as
   `record(a,b)`, and a batch stacked from records takes the first record's
-  label. A function derives it from its callable's name, with `f` for a lambda,
+  label. A function derives it from its callable's name, with `𝒻` for a lambda,
   and a batch of functions or laws from its members, at most eight in row-major
   order and then `…`. A call in the label-first form raises a `TypeError` that
   shows the call to write, and a refusal of fields that are not a mapping, of an
@@ -36,8 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fingerprint, or its draws. A value result without an alias displays the call,
   as `predict(ambient)`, with only the arguments the caller passed, and a law
   the function returns keeps the function's label and displays its own
-  signature, as `predict(y, mu)`. A `Module` method's results display the call,
-  as `Example.numbers()`, where they displayed the method's name.
+  signature, as `predict(y, mu)`.
 - **A term that JAX rebuilds from its leaves displays `<no description>`** until
   a managed result boundary describes it, and it stays usable inside `jax.jit`
   and `jax.vmap`.
@@ -91,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that are not records and refuse it for record atoms, whose fields are the
   components, and array atoms are labeled by the component.
   `conditional_distribution` labels a kernel after its function's
-  `__name__`, and `p` for a lambda. A law converted from a law under its
+  `__name__`, and `ℙ` for a lambda. A law converted from a law under its
   default label takes its own default, so `convert(Laplace("g", 9.0, 1.0),
   Normal)` displays as `Normal(g)`, and any other converted law keeps its
   source's label. A subclass of `Distribution` or
@@ -100,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `RecordSpec` no longer takes the label as its component. The repr of a law
   or a kernel reads as a call of its constructor, as
   `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
-  equal to the constructor's default, the class name or `p`, as
+  equal to the constructor's default, the class name or `ℙ`, as
   `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
   nothing fixed evaluates to an equal law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default
@@ -1415,6 +1425,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alias.
 
 ### Added
+
+- Distribution-subject operations accept keyword-only `given=` for conditional
+  operands, including sampling, densities, moments, quantiles, expectations,
+  marginals, and conversion. Conditional capabilities serve calls directly;
+  other calls delegate to the operation after conditioning. Batch givens retain
+  their named levels, and given values bind symbolic event dimensions before
+  sampling. `condition_on` can bind individual nodes of a structured given
+  slot while keeping its residual fields available for later binding.
 
 - **`mean`, `variance`, and `quantile` compute each component of a record
   law by its own route.** The new route `by_component` computes each component
@@ -3297,8 +3315,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Function-annotated parameters lift distributions and sweep batches as value
-  parameters.** Their annotation no longer requires an experimental graph node.
 - **Empty sweeps require a concrete output declaration before execution.**
   Both the call and `Function.check` refuse an omitted declaration, a type hole,
   or an output dimension that remains unbound after input dimensions bind.

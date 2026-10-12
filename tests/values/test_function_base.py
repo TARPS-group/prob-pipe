@@ -22,7 +22,6 @@ from probpipe import (
     FunctionSpec,
     Gamma,
     InputSpec,
-    Module,
     Normal,
     NumericArray,
     NumericArrayBatch,
@@ -37,7 +36,6 @@ from probpipe import (
     WorkflowKind,
     function,
     sample,
-    workflow_method,
     workflow_run,
 )
 from probpipe.core._fingerprint import fingerprint
@@ -323,7 +321,7 @@ class TestFunctionDeclarations:
 
     def test_decorated_lambda_keeps_its_default_component(self):
         wrapped = function(output_spec=NumericArraySpec(()))(lambda: 1)
-        assert wrapped.label == "f"
+        assert wrapped.label == "𝒻"
         assert wrapped.output_spec == OutputSpec(f=NumericArraySpec(()))
         assert float(wrapped()) == 1
 
@@ -1393,30 +1391,6 @@ class TestCompletedOutputDeclarations:
             wrapped(rows)
 
 
-class TestModuleReturnInference:
-    @pytest.mark.parametrize("sequence", [[1, 2], (1, 2), []])
-    def test_method_sequence_uses_the_same_inference_as_a_function(self, sequence):
-        class Example(Module):
-            @workflow_method
-            def numbers(self):
-                return sequence
-
-        method = Example().numbers
-        ordinary = Function(
-            lambda: sequence,
-            label="numbers",
-        )
-        result = method()
-        expected = ordinary()
-        assert method.output_spec is None
-        assert method.label == method.output_label == "Example.numbers"
-        assert method._output_component == "numbers"
-        assert result.label == "Example.numbers()"
-        assert type(result) is type(expected)
-        assert result.spec == expected.spec
-        assert result.value == expected.value == sequence
-
-
 @pytest.mark.parametrize("kind", ["array", "record", "batch"])
 @pytest.mark.parametrize("mode", ["plain", "sweep"])
 def test_a_shape_only_declaration_keeps_the_returned_terms_dtype_and_support(kind, mode):
@@ -1585,8 +1559,8 @@ class TestFunctionLabels:
             return temperature + 1
 
         assert Function(predict).notation == "predict(temperature)"
-        assert Function(lambda temperature: temperature + 1).notation == "f(temperature)"
-        assert function(lambda temperature: temperature + 1).notation == "f(temperature)"
+        assert Function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
+        assert function(lambda temperature: temperature + 1).notation == "𝒻(temperature)"
         assert Function(predict)(NumericArray(2.0, label="ambient")).label == "predict(ambient)"
         assert Function(predict, output_label="prediction")(2.0).label == "prediction"
 

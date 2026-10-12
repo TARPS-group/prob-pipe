@@ -348,7 +348,7 @@ from probpipe.core.record import Record
 
 The public modules are these:
 
-- `core/`: `config.py`, `constraints.py`, `named_tree.py`, `node.py`,
+- `core/`: `config.py`, `constraints.py`, `named_tree.py`,
   `protocols.py`, `provenance.py`, `record.py`, `tracked.py`, and `transition.py`;
 - `linalg/`: `linear_operator.py`, `operations.py`, and `utils.py`;
 - `record/`: `design.py`;

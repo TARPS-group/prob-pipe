@@ -131,7 +131,6 @@ probpipe/
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the VI.6 registry, and diagnostics and validation are application layers over the public operations.
 - **`designs/`** builds a `Batch` of any element kind from per-field candidate sets combined by a rule, the full factorial being the Cartesian product, on a level named `design`; a design is a distinct concept from the batch it produces, and its section is to be written.
-- **Experimental, placement to be decided.** `Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, and `Module.dag()` in `core/node.py` form a container of `Function`s with shared inputs and a Graphviz view of their graph. They stay outside the reference until their role is settled, at low priority.
 
 A handful of private helper modules (dtypes, array utilities) support the packages and carry no design contract.
 
@@ -153,7 +152,6 @@ The spec implementation in `core/` is divided into three files: `core/_spec_base
 | `core/record.py`, `core/_numeric_record.py` | `values/_record.py` (III.5) |
 | `core/_record_batch.py`, `core/_numeric_record_batch.py` | `values/_record_batch.py`, `values/_numeric_record_batch.py` (III.6) |
 | `core/protocols.py` (`SupportsArrayBackend`) | `distributions/_capabilities.py` |
-| `core/node.py` (`Node`, `InputFrozenError`), `functions/_module.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
 | `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | `inference/`: sequential updating, which folds a step such as `condition_on` over the data |
 | `functions/_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan (V.4) |
 | `functions/_contract.py`, `functions/_descendants.py` | `functions/_plan.py`: the per-call binding of the declared inputs and the root-ancestor capture (V.5, V.6) |
