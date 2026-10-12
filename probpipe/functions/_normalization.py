@@ -357,7 +357,7 @@ def _conversion_target(value: Any, expected: Any, *, label: str) -> type | None:
     ):
         return None
     if len(arms) > 1:
-        if any(isinstance(value, arm) for arm in arms):
+        if any(isinstance(value, _hint_class(arm)) for arm in arms):
             return None
         from ._call import ApplicabilityError
 

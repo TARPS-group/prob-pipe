@@ -40,6 +40,8 @@ from probpipe.distributions._capabilities import SupportsExactConditioning
 
 from ._design_helpers import error_of, standard_normal
 
+type _NormalAlias = Normal
+
 SCALAR = NumericArraySpec(())
 
 
@@ -198,6 +200,16 @@ class TestConversionPlanning:
                 label="consume",
             )(Beta("b", 2.0, 2.0))
         )
+
+        assert isinstance(error, ApplicabilityError)
+        assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
+
+    def test_a_union_with_an_aliased_distribution_class_refuses_to_choose_a_conversion(self):
+        def consume(d):
+            return 0.0
+
+        consume.__annotations__ = {"d": _NormalAlias | Gamma}
+        error = error_of(lambda: Function(consume, label="consume")(Beta("b", 2.0, 2.0)))
 
         assert isinstance(error, ApplicabilityError)
         assert "'d'" in str(error) and "Normal" in str(error) and "Beta" in str(error)
