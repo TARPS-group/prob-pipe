@@ -6,7 +6,7 @@ import inspect
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Annotated, Any, TypeAliasType, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, TypeAliasType, TypeVar, get_args, get_origin, get_type_hints
 
 try:
     import typing_extensions
@@ -112,14 +112,20 @@ def iter_input_refs(
 def resolved_hint(hint: Any, expanded: set[Any] | None = None) -> Any:
     """The annotation *hint* stands for, with its type aliases and ``Annotated`` wrappers resolved.
 
-    A type alias stands for its value, and a parametrized alias for the value of
-    the alias it parametrizes. ``Annotated[T, ...]`` stands for ``T``, because
-    the hints of a partial or a callable object keep the metadata that
-    ``get_type_hints`` removes from a function's hints. Resolution adds each
-    alias it expands to *expanded* and stops at an alias already in
-    *expanded*, which ends a recursive alias. An alias whose value raises
-    ``NameError`` stays unresolved, as one does whose value names a class
-    imported only under ``TYPE_CHECKING``.
+    A type alias stands for its value. A parametrized alias stands for its value
+    with each type parameter replaced by the argument in its position, so with
+    ``type Maybe[T] = T | None`` the annotation ``Maybe[Normal]`` stands for
+    ``Normal | None``. A generic alias written without arguments stands for its
+    value as written. ``Annotated[T, ...]`` stands for ``T``, because the hints
+    of a partial or a callable object keep the metadata that ``get_type_hints``
+    removes from a function's hints.
+
+    Resolution adds each alias it expands to *expanded* and stops at an alias
+    already in *expanded*, which ends a recursive alias. An alias also stays
+    unresolved when its value raises ``NameError``, as a value that names a
+    class imported only under ``TYPE_CHECKING`` does, and when
+    :func:`_substituted` cannot place its arguments, as for a type parameter
+    that is a ``TypeVarTuple`` or a ``ParamSpec``.
     """
     expanded = set() if expanded is None else expanded
     origin = get_origin(hint)
@@ -130,10 +136,55 @@ def resolved_hint(hint: Any, expanded: set[Any] | None = None) -> Any:
         return hint
     try:
         value = alias.__value__
-    except NameError:
+        if alias is not hint:
+            value = _substituted(value, alias.__type_params__, get_args(hint))
+    except (NameError, TypeError):
         return hint
     expanded.add(alias)
     return resolved_hint(value, expanded)
+
+
+def _substituted(value: Any, parameters: tuple[Any, ...], arguments: tuple[Any, ...]) -> Any:
+    """*value* with each type variable in *parameters* replaced by the argument in its position.
+
+    The free type variables of *value* are replaced through its own
+    subscription, so each use of a parameter receives that parameter's argument
+    in any order or nesting, as in ``dict[V, K]`` for ``type Pair[K, V]``. A
+    class stays as it is, because a generic class in an alias's value is not
+    parametrized by the alias.
+
+    Parameters
+    ----------
+    value : Any
+        The value of a generic alias.
+    parameters : tuple
+        The alias's type parameters, in declared order.
+    arguments : tuple
+        The arguments of the parametrized alias, in order.
+
+    Returns
+    -------
+    Any
+        *value* with each parameter replaced by its argument.
+
+    Raises
+    ------
+    TypeError
+        If a parameter is a ``TypeVarTuple`` or a ``ParamSpec``, the arguments
+        differ in number from the parameters, or the subscription refuses an
+        argument.
+    """
+    if len(arguments) != len(parameters) or not all(
+        isinstance(parameter, TypeVar) for parameter in parameters
+    ):
+        raise TypeError(f"cannot place the arguments {arguments} in the parameters {parameters}")
+    argument_of = dict(zip(parameters, arguments))
+    if isinstance(value, TypeVar):
+        return argument_of.get(value, value)
+    free = () if isinstance(value, type) else getattr(value, "__parameters__", ())
+    if not any(parameter in argument_of for parameter in free):
+        return value
+    return value[tuple(argument_of.get(parameter, parameter) for parameter in free)]
 
 
 def parameter_lifting_hint(info: FunctionSignatureInfo, name: str) -> Any:

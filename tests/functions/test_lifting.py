@@ -60,6 +60,9 @@ type _BatchAlias = NumericArrayBatch
 type _UnresolvedAlias = DataFrame
 type _RecursiveAlias = _RecursiveAlias | None
 type _AnyAlias = Any
+type _MaybeAlias[T] = T | None
+type _OptionalOfAlias[T] = _MaybeAlias[T]
+type _SecondOfAlias[First, Second] = Second | None
 
 
 def _batch(values, level: str = "row") -> NumericArrayBatch:
@@ -132,6 +135,9 @@ class TestTheTrigger:
             _DistributionAlias[float],
             _OptionalNormalAlias,
             _CapabilityAlias,
+            _MaybeAlias[Normal],
+            _OptionalOfAlias[Normal],
+            _SecondOfAlias[float, Normal],
         ],
         ids=[
             "Distribution",
@@ -141,6 +147,9 @@ class TestTheTrigger:
             "aliased-origin",
             "aliased-union",
             "aliased-capability",
+            "generic-alias",
+            "nested-generic-alias",
+            "two-parameter-alias",
         ],
     )
     def test_a_parameter_that_names_a_distribution_consumes_it(self, annotation):
@@ -176,7 +185,11 @@ class TestTheTrigger:
         assert result.level_names == ("row",)
         np.testing.assert_allclose(np.asarray(result.values), [2.0, 4.0, 6.0])
 
-    @pytest.mark.parametrize("annotation", [NumericArrayBatch, _BatchAlias], ids=["class", "alias"])
+    @pytest.mark.parametrize(
+        "annotation",
+        [NumericArrayBatch, _BatchAlias, _MaybeAlias[NumericArrayBatch]],
+        ids=["class", "alias", "generic-alias"],
+    )
     def test_a_parameter_that_names_the_batch_consumes_it(self, annotation):
         seen = []
 
@@ -423,6 +436,9 @@ class TestARawClassAnnotation:
             (_ArrayAlias[np.float64] | None, np.arange(3.0)),
             (Annotated[_ArrayAlias[np.float64], "array"], np.arange(3.0)),
             (_OptionalArrayAlias, np.arange(3.0)),
+            (_MaybeAlias[np.ndarray], np.arange(3.0)),
+            (_MaybeAlias[_ArrayAlias[np.float64]], np.arange(3.0)),
+            (_SecondOfAlias[jax.Array, np.ndarray], np.arange(3.0)),
         ],
         ids=[
             "optional",
@@ -434,6 +450,9 @@ class TestARawClassAnnotation:
             "optional-alias",
             "annotated-alias",
             "aliased-union",
+            "generic-alias",
+            "generic-alias-of-alias",
+            "two-parameter-alias",
         ],
     )
     def test_an_annotation_names_the_class_of_its_arm_or_its_origin(self, annotation, value):
@@ -454,6 +473,17 @@ class TestARawClassAnnotation:
         alias = typing_extensions.TypeAliasType("Array", np.ndarray)
         value = np.arange(3.0)
         wrapped, seen = _receiving({"x": alias})
+
+        wrapped(NumericArray(value, label="x"))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_a_typing_extensions_generic_alias_names_the_class_of_its_argument(self):
+        typing_extensions = pytest.importorskip("typing_extensions")
+        T = typing_extensions.TypeVar("T")
+        maybe = typing_extensions.TypeAliasType("Maybe", T | None, type_params=(T,))
+        value = np.arange(3.0)
+        wrapped, seen = _receiving({"x": maybe[np.ndarray]})
 
         wrapped(NumericArray(value, label="x"))
 
