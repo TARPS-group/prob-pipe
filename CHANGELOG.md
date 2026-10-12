@@ -3357,7 +3357,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and its value, so a module-level function annotated
   `numpy.typing.NDArray[np.float64]` under NumPy 2.5, or with any `type`
   alias, replays where its anchor was unsupported. The identity changes when
-  the alias's value changes. An `Annotated` annotation replays on Python 3.13
+  the alias's value changes, including when `from __future__ import annotations`
+  postpones the annotation. An `Annotated` annotation replays on Python 3.13
   and later too, and an alias whose value names an undefined name leaves the
   function unreplayable.
 - **A single str is one name wherever a sequence of names is taken.**

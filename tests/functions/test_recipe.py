@@ -37,7 +37,11 @@ from probpipe import (
 )
 from probpipe.functions import _broker, _callable, _recipe, _replay
 from probpipe.functions._managed import ManagedEffectClaim, sweep_unit_segment
-from tests.functions import _alias_replay_fixtures, _replay_fixtures
+from tests.functions import (
+    _alias_replay_fixtures,
+    _postponed_alias_replay_fixtures,
+    _replay_fixtures,
+)
 from tests.functions._replay_fixtures import (
     replayable_affine,
     replayable_canonical_defaults,
@@ -619,6 +623,51 @@ class TestWorkflowCallableAnchor:
 
         assert not anchor.supported
         assert anchor.form == "unsupported_definition_state"
+
+    @pytest.mark.parametrize("name", ["shift", "optional", "generic", "metadata", "returned"])
+    @pytest.mark.parametrize("change", ["same", "value", "name"])
+    def test_a_postponed_alias_anchor_follows_its_definition(self, monkeypatch, name, change):
+        fixtures = _postponed_alias_replay_fixtures
+        body = getattr(fixtures, name)
+        workflow = Function(body, label=name)
+        original = _callable.capture_function_anchor(workflow)
+        assert original.supported
+        assert (
+            original.controls()
+            == _callable.capture_function_anchor(Function(body, label=name)).controls()
+        )
+
+        alias = fixtures.values_alias(
+            "OtherValues" if change == "name" else "Values",
+            NumericArray if change == "value" else fixtures.Values.__value__,
+        )
+        monkeypatch.setattr(fixtures, "Values", alias)
+        changed = _callable.capture_function_anchor(Function(body, label=name))
+
+        assert changed.supported
+        assert (original.sha256 == changed.sha256) is (change == "same")
+        assert original.controls() == _callable.capture_function_anchor(workflow).controls()
+
+    def test_replay_refuses_a_changed_postponed_alias(self, monkeypatch):
+        fixtures = _postponed_alias_replay_fixtures
+        workflow = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        value = NumericArray(jnp.asarray(1.0), label="x")
+        noise = Normal("noise", loc=0.0, scale=1.0)
+        with workflow_run(seed=0):
+            first = workflow(value, noise)
+        with replay_run(first.provenance):
+            same = workflow(value, noise)
+        np.testing.assert_array_equal(np.asarray(first.atoms), np.asarray(same.atoms))
+
+        monkeypatch.setattr(fixtures, "Values", fixtures.values_alias("Values", NumericArray))
+        changed = Function(fixtures.shift, dispatch="sequential", n_broadcast_samples=5)
+        with (
+            pytest.raises(
+                ReplayCompatibilityError, match="has changed since the call was recorded"
+            ),
+            replay_run(first.provenance),
+        ):
+            changed(value, noise)
 
     def test_callable_canonical_json_rejects_non_finite_values(self):
         with pytest.raises(ValueError, match="Out of range float values"):

@@ -83,7 +83,12 @@ class CallableAnchor:
 
 
 def capture_function_anchor(function: Any) -> CallableAnchor:
-    """Capture a strong anchor or a closed unsupported-form record."""
+    """Capture a strong anchor or a closed unsupported-form record.
+
+    The definition includes each type alias that a postponed annotation names,
+    from the hints captured when the Function was constructed. Those hints also
+    govern the call engine's argument presentation and lifting.
+    """
     implementation = getattr(function, "_implementation", None)
     if not isinstance(implementation, _CallableFunctionImplementation):
         return _unsupported_anchor(function, None, "private_function_implementation")
@@ -112,6 +117,13 @@ def capture_function_anchor(function: Any) -> CallableAnchor:
             "annotations": _canonical_value(candidate.__annotations__),
             "signature_and_declarations": signature_and_declarations,
         }
+        alias_annotations = {
+            name: hint
+            for name, hint in function._signature_info.hints.items()
+            if isinstance(candidate.__annotations__.get(name), str) and _contains_type_alias(hint)
+        }
+        if alias_annotations:
+            definition["resolved_alias_annotations"] = _canonical_value(alias_annotations)
         encoded = _canonical_json(definition)
     except _UnsupportedDefinition:
         return _unsupported_anchor(
@@ -210,6 +222,15 @@ def _signature_and_declarations(function: Any, candidate: Any) -> dict[str, Any]
             None if function.output_spec is None else _unnamed_declaration(function.output_spec)
         ),
     }
+
+
+def _contains_type_alias(hint: Any) -> bool:
+    """Whether *hint* names a type alias, directly or within a typing construct."""
+    return (
+        isinstance(hint, _TYPE_ALIAS_CLASSES)
+        or isinstance(typing.get_origin(hint), _TYPE_ALIAS_CLASSES)
+        or any(_contains_type_alias(argument) for argument in typing.get_args(hint))
+    )
 
 
 def _canonical_value(value: Any) -> dict[str, Any]:
