@@ -36,6 +36,7 @@ from probpipe import (
     random_log_prob,
     random_unnormalized_log_prob,
     sample,
+    standard_deviation,
     unnormalized_log_prob,
     unnormalized_prob,
     variance,
@@ -165,6 +166,7 @@ class TestConditionalOperations:
             random_unnormalized_log_prob,
             mean,
             variance,
+            standard_deviation,
             cov,
             quantile,
             expectation,
@@ -221,6 +223,16 @@ class TestConditionalOperations:
         assert not kernel.keys
         with workflow_run(seed=42):
             result = view(kernel, *args, given={"mu": 2.0})
+        assert jnp.isfinite(result)
+        assert kernel.keys
+
+    def test_the_standard_deviation_takes_the_variances_monte_carlo_route(self):
+        kernel = _Direct()
+        view = standard_deviation.with_options(n_broadcast_samples=64)
+        report = view.check(kernel, given={"mu": 2.0})
+        assert (report.route, report.exact) == ("identity", False)
+        with workflow_run(seed=42):
+            result = view(kernel, given={"mu": 2.0})
         assert jnp.isfinite(result)
         assert kernel.keys
 
@@ -481,6 +493,7 @@ class TestConditionalOperations:
         [
             (mean, (), 2.0),
             (variance, (), 1.0),
+            (standard_deviation, (), 1.0),
             (quantile, (0.5,), 2.0),
             (expectation, (lambda y: 2 * y,), 4.0),
         ],

@@ -21,6 +21,7 @@ from probpipe import (
     pushforward,
     quantile,
     sample,
+    standard_deviation,
     unnormalized_log_prob,
     variance,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "pushforward",
     "quantile",
     "sample",
+    "standard_deviation",
     "unnormalized_log_prob",
     "variance",
 ]

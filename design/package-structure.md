@@ -96,7 +96,7 @@ probpipe/
 │   ├── _sample.py             #   sample (VI.3)
 │   ├── _density.py            #   log_prob, unnormalized_log_prob, prob, unnormalized_prob,
 │   │                          #     random_log_prob, random_unnormalized_log_prob (VI.4)
-│   ├── _moments.py            #   mean, variance, cov, quantile, expectation (VI.5)
+│   ├── _moments.py            #   mean, variance, standard_deviation, cov, quantile, expectation (VI.5)
 │   ├── _condition.py          #   condition_on, the inference registry (VI.6)
 │   ├── _joint.py              #   joint (VI.7)
 │   ├── _marginal.py           #   marginal, factor (VI.8)

@@ -15,6 +15,7 @@ from probpipe import (
     expectation,
     mean,
     quantile,
+    standard_deviation,
     variance,
     workflow_run,
 )
@@ -27,6 +28,7 @@ class TestUnicodeNotation:
         [
             (mean, "𝔼", "mean"),
             (variance, "𝕍", "variance"),
+            (standard_deviation, "√𝕍", "standard_deviation"),
             (cov, "ℂ", "cov"),
             (quantile, "ℚ", "quantile"),
         ],
@@ -57,7 +59,7 @@ class TestUnicodeNotation:
             return x + 1
 
         assert Function(f).notation == "f(x)"
-        for label in ("p", "f", "E", "Q", "Var", "Cov"):
+        for label in ("p", "f", "E", "Q", "Var", "SD", "Cov"):
             assert anonymous.with_label(label).label == label
             assert Function(lambda x: x, label=label).label == label
             assert Function(lambda x: x, output_label=label)(1).label == label

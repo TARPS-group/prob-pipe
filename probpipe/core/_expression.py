@@ -945,7 +945,7 @@ _GENERIC_LAW_SYMBOL = "ℙ"
 _ANONYMOUS_FUNCTION_SYMBOL = "𝒻"
 
 #: Internal summary kinds keep their spelling; only their presentation uses Unicode.
-_SUMMARY_SYMBOLS = {"E": "𝔼", "Var": "𝕍", "Cov": "ℂ", "Q": "ℚ"}
+_SUMMARY_SYMBOLS = {"E": "𝔼", "Var": "𝕍", "SD": "√𝕍", "Cov": "ℂ", "Q": "ℚ"}
 
 #: The summaries a :class:`Summary` node writes as ``kind[argument]``.
 _BRACKETED_SUMMARIES = frozenset(_SUMMARY_SYMBOLS)
@@ -962,11 +962,13 @@ class Summary(Expression):
     """A value that summarizes a law or a draw.
 
     Internal summary kinds keep their ASCII spelling. Their displayed symbols
-    are ``𝔼``, ``𝕍``, ``ℂ``, and ``ℚ`` for ``E``, ``Var``, ``Cov``, and ``Q``.
+    are ``𝔼``, ``𝕍``, ``√𝕍``, ``ℂ``, and ``ℚ`` for ``E``, ``Var``, ``SD``,
+    ``Cov``, and ``Q``.
     Explicit labels are rendered literally. The kinds and their renderings:
 
-    1. ``E``, ``Var``, ``Cov``, and ``Q``: the expectation, the variance, the
-       covariance, and the quantile of a draw, as ``𝔼[(y, mu) ~ model]``;
+    1. ``E``, ``Var``, ``SD``, ``Cov``, and ``Q``: the expectation, the
+       variance, the standard deviation, the covariance, and the quantile of a
+       draw, as ``𝔼[(y, mu) ~ model]``;
     2. ``log``: a score, ``log`` followed by the law's notation, as
        ``log prior(mu)``;
     3. ``density``: a density, which reads as the law's notation, as
@@ -975,7 +977,7 @@ class Summary(Expression):
     Attributes
     ----------
     kind : str
-        One of ``E``, ``Var``, ``Cov``, ``Q``, ``log``, and ``density``.
+        One of ``E``, ``Var``, ``SD``, ``Cov``, ``Q``, ``log``, and ``density``.
     argument : Expression
         A draw or an applied function for the bracketed kinds, and a law for
         ``log`` and ``density``.
