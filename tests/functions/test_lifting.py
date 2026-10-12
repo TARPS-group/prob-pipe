@@ -601,6 +601,34 @@ class TestSingletonAlignment:
             rtol=0,
         )
 
+    def test_two_partitions_of_one_array_broadcast_within_each_level(self, alignment_dispatch):
+        """Each level's shapes broadcast by NumPy's rule, so two partitions of one
+        array combine when their shapes for each level broadcast."""
+
+        @function(dispatch=alignment_dispatch)
+        def add(x, y):
+            return x + y
+
+        data = jnp.arange(36.0).reshape(3, 3, 4)
+        left = NumericArrayBatch(data, ("a", "b"), axes_per_level=(1, 2), label="left")
+        right = NumericArrayBatch(data, ("a", "b"), axes_per_level=(2, 1), label="right")
+        result = add(left, right)
+
+        assert left.axis_groups == ((3,), (3, 4))
+        assert right.axis_groups == ((3, 3), (4,))
+        assert result.level_names == ("a", "b")
+        assert result.axis_groups == ((3, 3), (3, 4))
+        assert result.batch_shape == (3, 3, 3, 4)
+        # Left reads level a at its trailing coordinate a1, and right reads level b
+        # at its trailing coordinate b1.
+        for a0, a1, b0, b1 in [(0, 0, 0, 0), (2, 1, 0, 3), (1, 2, 2, 1)]:
+            np.testing.assert_allclose(
+                result.values[a0, a1, b0, b1],
+                data[a1, b0, b1] + data[a0, a1, b1],
+                atol=0,
+                rtol=0,
+            )
+
     def test_a_singleton_record_broadcasts_with_an_array(self, alignment_dispatch):
         @function(dispatch=alignment_dispatch)
         def add(record, x):
