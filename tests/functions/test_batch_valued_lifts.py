@@ -176,6 +176,57 @@ class TestBatchValuedFieldSampling:
         )
 
 
+def _total(trajectory: NumericArrayBatch):
+    assert isinstance(trajectory, NumericArrayBatch)
+    return jnp.sum(trajectory.raw())
+
+
+def _gap(beta, trajectory: NumericArrayBatch):
+    assert isinstance(trajectory, NumericArrayBatch)
+    return jnp.sum(trajectory.raw()) - 6.0 * beta
+
+
+class TestLiftsOverBatchValuedFields:
+    @pytest.mark.parametrize("dispatch", ["sequential", "auto"])
+    @pytest.mark.parametrize("sampled", [False, True])
+    def test_a_lift_over_a_field_reads_one_batch_per_draw(self, sampled, dispatch):
+        source = (
+            Normal("beta", 0.0, 1.0)
+            if sampled
+            else EmpiricalDistribution(jnp.array([2.0, 5.0]), [1.0, 3.0], component="beta")
+        )
+        joint = Function(
+            _trajectory,
+            output_spec=OutputSpec(trajectory=None),
+            include_inputs=True,
+            n_broadcast_samples=5,
+        )
+        total = Function(_total, dispatch=dispatch, n_broadcast_samples=5)
+        gap = Function(_gap, dispatch=dispatch, n_broadcast_samples=5)
+        with workflow_run(seed=0):
+            law = joint(source)
+            totals = total(law["trajectory"])
+            gaps = gap(law["beta"], law["trajectory"])
+        np.testing.assert_allclose(totals.atoms.raw(), 6.0 * law.atoms.raw("beta"), rtol=1e-6)
+        np.testing.assert_allclose(totals.weights, law.weights)
+        np.testing.assert_allclose(gaps.atoms.raw(), 0.0, atol=1e-5)
+
+    def test_a_lift_over_a_batch_field_of_a_record_output_reads_its_batches(self):
+        def summary(beta):
+            return Record.from_fields(scale=2.0 * beta, traj=_trajectory(beta))
+
+        def total(traj: NumericArrayBatch):
+            assert isinstance(traj, NumericArrayBatch)
+            return jnp.sum(traj.raw())
+
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta")
+        with workflow_run(seed=0):
+            law = Function(summary, dispatch="sequential")(source)
+            totals = Function(total, dispatch="sequential")(law["traj"])
+        assert isinstance(law.event_spec.spec["traj"], BatchSpec)
+        np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0])
+
+
 class TestBatchOutputComposition:
     def test_record_batch_outputs_keep_their_fields_in_joint_draws(self):
         def trajectory(beta):

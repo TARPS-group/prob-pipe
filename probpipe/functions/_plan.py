@@ -112,7 +112,12 @@ class StochasticSourceGroup:
 
 @dataclass(frozen=True)
 class StochasticRuntimeBinding:
-    """Live root and preflight-captured evaluators for one source group."""
+    """Live root and preflight-captured evaluators for one source group.
+
+    ``consumer_events`` holds the event type of each consumer, in the order of
+    ``consumer_evaluators``, so that the lift reads a batch-valued consumer's
+    draws as one batch per draw.
+    """
 
     root: Distribution = field(compare=False, hash=False, repr=False)
     sample_root: Callable[[Any, tuple[int, ...]], Any] = field(
@@ -121,6 +126,11 @@ class StochasticRuntimeBinding:
         repr=False,
     )
     consumer_evaluators: tuple[Callable[[Any], Any], ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+    consumer_events: tuple[TermSpec, ...] = field(
         compare=False,
         hash=False,
         repr=False,
@@ -311,7 +321,7 @@ def build_stochastic_plan(
 
     _validate_stochastic_sample_count(n_broadcast_samples)
     arg_refs = tuple(broadcast_plan.dist_args)
-    grouped_consumers, source_values, runtime_samplers, runtime_evaluators = (
+    grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events = (
         _group_stochastic_sources(
             values=values,
             refs=arg_refs,
@@ -352,6 +362,7 @@ def build_stochastic_plan(
             root=source,
             sample_root=runtime_samplers[index],
             consumer_evaluators=tuple(runtime_evaluators[index]),
+            consumer_events=tuple(runtime_events[index]),
         )
         for index, source in enumerate(source_values)
     )
@@ -402,12 +413,14 @@ def _group_stochastic_sources(
     list[Distribution],
     list[Callable[[Any, tuple[int, ...]], Any]],
     list[list[Callable[[Any], Any]]],
+    list[list[TermSpec]],
 ]:
     """Discover live roots while keeping object IDs out of canonical plans."""
     grouped_consumers: list[list[StochasticConsumerPlan]] = []
     source_values: list[Distribution] = []
     runtime_samplers: list[Callable[[Any, tuple[int, ...]], Any]] = []
     runtime_evaluators: list[list[Callable[[Any], Any]]] = []
+    runtime_events: list[list[TermSpec]] = []
     group_index_by_root_id: dict[int, int] = {}
 
     source_entries = tuple((ref, _binding.input_ref_value(values, ref)) for ref in refs)
@@ -415,7 +428,7 @@ def _group_stochastic_sources(
         tuple(value for _ref, value in source_entries)
     )
 
-    for (ref, _value), captured in zip(source_entries, captured_consumers, strict=True):
+    for (ref, value), captured in zip(source_entries, captured_consumers, strict=True):
         root = captured.root
 
         root_identity = id(root)
@@ -427,6 +440,7 @@ def _group_stochastic_sources(
             source_values.append(root)
             runtime_samplers.append(captured.sample_root)
             runtime_evaluators.append([])
+            runtime_events.append([])
         descendant_descriptor = captured.descendant_descriptor
         if descendant_descriptor is not None:
             descendant_descriptor = (
@@ -442,8 +456,9 @@ def _group_stochastic_sources(
             )
         )
         runtime_evaluators[group_index].append(captured.evaluator)
+        runtime_events[group_index].append(value.event_spec.spec)
 
-    return grouped_consumers, source_values, runtime_samplers, runtime_evaluators
+    return grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events
 
 
 def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ...]:

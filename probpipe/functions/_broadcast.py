@@ -64,6 +64,7 @@ from ._result import (
     _output_record_spec,
     _record_stored_dtypes,
     _with_dtypes_of,
+    raw_form,
 )
 
 MIN_BROADCAST_SAMPLES = 5
@@ -652,9 +653,11 @@ def _sample_planned_source_groups(
         root_sample = _record_columns(
             binding.sample_root(key, sample_shape), binding.root.label, binding.root.event_spec.spec
         )
-        for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators):
+        for consumer, evaluate, event in zip(
+            group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True
+        ):
             sampled[consumer.arg_ref] = _record_columns(
-                evaluate(root_sample), consumer.arg_ref.label
+                evaluate(root_sample), consumer.arg_ref.label, event
             )
     return sampled
 
@@ -666,9 +669,15 @@ def _record_columns(draws: Any, label: str, event: Any = None) -> Any:
     the lift reads each row of a record argument as a ``Record``. Any other
     draws are returned as they are. A batch-valued event is materialized as
     one batch per leading-axis entry so row-wise evaluation receives its kind.
+    Its draws are either the batches' raw values or one batch per entry, which
+    a field of a ``Record`` of columns holds as the term of its object column.
     """
     if isinstance(event, BatchSpec):
-        raw = _raw_record(draws) if isinstance(draws, (Record, Mapping)) else draws
+        raw = (
+            _raw_record(draws)
+            if isinstance(draws, (Record, RecordBatch, Mapping))
+            else raw_form(draws)
+        )
         leaves = jax.tree.leaves(raw)
         count = len(leaves[0])
         return _from_iterable(
@@ -875,8 +884,10 @@ def _broadcast_enumerate(
             (
                 stochastic_plan.source_groups[group_index],
                 tuple(
-                    _record_columns(evaluate(atoms), root.label)
-                    for evaluate in binding.consumer_evaluators
+                    _record_columns(evaluate(atoms), root.label, event)
+                    for evaluate, event in zip(
+                        binding.consumer_evaluators, binding.consumer_events, strict=True
+                    )
                 ),
             )
         )
@@ -983,8 +994,12 @@ def _enumerated_inputs(
         atoms = _record_columns(
             root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label, root.event_spec.spec
         )
-        for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators, strict=True):
-            inputs[consumer.arg_ref] = _record_columns(evaluate(atoms), consumer.arg_ref.label)
+        for consumer, evaluate, event in zip(
+            group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True
+        ):
+            inputs[consumer.arg_ref] = _record_columns(
+                evaluate(atoms), consumer.arg_ref.label, event
+            )
     return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
 
 
