@@ -474,7 +474,8 @@ def _rows_of(outputs: Any, output_label: str) -> Any:
     """The outputs in a form the row aggregator reads.
 
     Row-wise dispatch returns a list of results, and the mapped dispatch one
-    stacked array, record, or mapping, which is read as a record of columns.
+    stacked array, record, or mapping, which is read as a record of columns,
+    or a returned batch's stacked store, which the aggregator reads as it is.
     """
     if isinstance(outputs, Mapping) and not isinstance(outputs, TrackedTerm):
         return Record(dict(outputs), label=output_label)
@@ -665,11 +666,16 @@ def _sample_planned_source_groups(
     sample_shape: tuple[int, ...],
     logical_unit: _plan.LogicalUnit,
     get_key: Callable[[_plan.PlannedRandomEvent], PRNGKey],
+    *,
+    mapped: bool = False,
 ) -> dict[FunctionInputRef, Array]:
     """Claim and sample each planned source once in one logical unit.
 
     Every group uses the root and consumer evaluators captured during
-    preflight, so aliases and record projections share one root draw.
+    preflight, so aliases and record projections share one root draw. The
+    draws of a batch-valued consumer are its raw values when *mapped*, for the
+    mapped body to rebuild row by row, and otherwise take the form its
+    parameter receives (see :func:`_record_columns`).
     """
     sampled: dict[FunctionInputRef, Array] = {}
     for group in source_groups:
@@ -692,7 +698,10 @@ def _sample_planned_source_groups(
             strict=True,
         ):
             sampled[consumer.arg_ref] = _record_columns(
-                evaluate(root_sample), consumer.arg_ref.label, event, as_batch=as_batch
+                evaluate(root_sample),
+                consumer.arg_ref.label,
+                event,
+                as_batch=as_batch and not mapped,
             )
     return sampled
 
@@ -780,6 +789,7 @@ def _broadcast_jax(
         func=func,
         values=values,
         broadcast_args=broadcast_args,
+        batch_events=batch_events(stochastic_plan),
         function_name=function_name,
         workflow_kind=workflow_kind,
     )
@@ -789,6 +799,7 @@ def _broadcast_jax(
         sample_shape,
         logical_unit,
         get_key,
+        mapped=True,
     )
     inputs = {ref: sampled[ref] for ref in broadcast_args}
     return _LiftDraws(
@@ -804,6 +815,7 @@ def _mapped_evaluator(
     func: Callable[..., Any],
     values: dict[str, Any],
     broadcast_args: Sequence[FunctionInputRef],
+    batch_events: Mapping[FunctionInputRef, BatchSpec],
     function_name: str,
     workflow_kind: WorkflowKind,
 ) -> Callable[[Mapping[FunctionInputRef, Any]], Any]:
@@ -823,6 +835,9 @@ def _mapped_evaluator(
         The call's resolved arguments, whose lifted entries each row replaces.
     broadcast_args : sequence of FunctionInputRef
         The references to the lifted arguments.
+    batch_events : mapping of FunctionInputRef to BatchSpec
+        The event of each lifted argument whose parameter receives a
+        batch-valued draw as a batch, as :func:`batch_events` gives them.
     function_name : str
         The function's label, from which a Prefect task or flow takes its name.
     workflow_kind : WorkflowKind
@@ -844,7 +859,9 @@ def _mapped_evaluator(
             "Prefect task or flow execution was requested, but Prefect is not installed. "
             "Install with: pip install probpipe[prefect]"
         )
-    single_call = mapped_draw_body(func=func, values=values, broadcast_args=broadcast_args)
+    single_call = mapped_draw_body(
+        func=func, values=values, broadcast_args=broadcast_args, batch_events=batch_events
+    )
     batch: list[tuple[Any, ...]] = []
 
     def run_vmap():
@@ -894,6 +911,7 @@ def _broadcast_enumerate(
             func=func,
             values=values,
             broadcast_args=stochastic_plan.arg_refs,
+            batch_events=batch_events(stochastic_plan),
             function_name=function_name,
             workflow_kind=workflow_kind,
         )
@@ -930,6 +948,7 @@ def _broadcast_enumerate(
             sample_shape,
             logical_unit,
             get_key,
+            mapped=mapped is not None,
         )
     else:
         sampled = {}
@@ -1056,8 +1075,9 @@ def _enumerated_inputs(
 
     An enumerated group reads the atoms of its root that its column of
     *atom_indices* names, in their raw form, and each consumer reads its
-    argument from them as it reads one from a draw. A sampled group's arguments
-    are its draws in *sampled*.
+    argument from them as it reads one from a draw. A batch-valued argument
+    keeps its raw values, which the mapped body rebuilds row by row. A sampled
+    group's arguments are its draws in *sampled*.
     """
     inputs = dict(sampled)
     for column, (group_index, root) in enumerate(
@@ -1068,15 +1088,11 @@ def _enumerated_inputs(
         atoms = _record_columns(
             root._atoms_at(jnp.asarray(atom_indices[:, column])), root.label, root.event_spec.spec
         )
-        for consumer, evaluate, event, as_batch in zip(
-            group.consumers,
-            binding.consumer_evaluators,
-            binding.consumer_events,
-            binding.consumer_batches,
-            strict=True,
+        for consumer, evaluate, event in zip(
+            group.consumers, binding.consumer_evaluators, binding.consumer_events, strict=True
         ):
             inputs[consumer.arg_ref] = _record_columns(
-                evaluate(atoms), consumer.arg_ref.label, event, as_batch=as_batch
+                evaluate(atoms), consumer.arg_ref.label, event
             )
     return {ref: inputs[ref] for ref in stochastic_plan.arg_refs}
 
@@ -1184,11 +1200,25 @@ def _index_sample(s: Any, i: int) -> Any:
     return s[i]
 
 
+def batch_events(stochastic_plan: _plan.StochasticPlan) -> dict[FunctionInputRef, BatchSpec]:
+    """The event of each lifted argument whose parameter receives a batch-valued draw as a batch."""
+    events: dict[FunctionInputRef, BatchSpec] = {}
+    for group in stochastic_plan.source_groups:
+        binding = stochastic_plan.runtime_bindings[group.index]
+        for consumer, event, as_batch in zip(
+            group.consumers, binding.consumer_events, binding.consumer_batches, strict=True
+        ):
+            if as_batch and isinstance(event, BatchSpec):
+                events[consumer.arg_ref] = event
+    return events
+
+
 def mapped_draw_body(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
     broadcast_args: Sequence[FunctionInputRef],
+    batch_events: Mapping[FunctionInputRef, BatchSpec] | None = None,
 ) -> Callable[[Any], Any]:
     """The body ``jax.vmap`` runs for one draw, and the probe traces.
 
@@ -1196,10 +1226,78 @@ def mapped_draw_body(
     separately maintained functions cannot promise. Mapping a batch of records
     yields a record per draw, which the body receives as the row-wise paths
     present it.
+
+    Each argument in *batch_events* arrives as the raw row of a batch-valued
+    draw, and the body rebuilds it as the batch its event declares, labeled by
+    the argument, as the row-wise paths build it. A function that returns a
+    numeric batch returns it as a :class:`_MappedBatchStore` or a
+    :class:`_MappedBatchColumns`, whose leaves the map stacks with the draw
+    axis first, and the lift's result keeps the batch's levels after the atom
+    level.
+
+    Parameters
+    ----------
+    func : callable
+        The function the map evaluates at each draw.
+    values : dict of str to Any
+        The call's resolved arguments, whose lifted entries each draw replaces.
+    broadcast_args : sequence of FunctionInputRef
+        The references to the lifted arguments, in the order of the slice the
+        body receives.
+    batch_events : mapping of FunctionInputRef to BatchSpec, optional
+        The event of each lifted argument whose parameter receives a
+        batch-valued draw as a batch, as :func:`batch_events` gives them.
+
+    Returns
+    -------
+    callable
+        The body of one draw, which takes the tuple of the lifted arguments'
+        rows and raises :class:`UnmappedBatchError` if the function returns a
+        record that holds a batch, whose rows the map cannot stack.
     """
+    events = dict(batch_events or {})
 
     def one_draw(broadcast_slice):
-        replacements = dict(zip(broadcast_args, broadcast_slice, strict=True))
-        return func(**replace_input_refs(values, replacements))
+        replacements = {
+            ref: row if ref not in events else _batch_at(row, events[ref], ref.label)
+            for ref, row in zip(broadcast_args, broadcast_slice, strict=True)
+        }
+        out = func(**replace_input_refs(values, replacements))
+        if isinstance(out, RecordBatch):
+            return _MappedBatchColumns.of(out)
+        if isinstance(out, NumericArrayBatch):
+            return _MappedBatchStore.of(out)
+        if isinstance(out, Record):
+            held = batch_field(out.spec)
+            if held is not None:
+                path, levels = held
+                raise UnmappedBatchError(
+                    f"dispatch='jax' cannot stack a returned record whose field {path!r} is a "
+                    f"batch on the levels {list(levels)}. Return the batch alone, or use "
+                    f"dispatch='auto', 'sequential', or 'thread'."
+                )
+        return out
 
     return one_draw
+
+
+def batch_field(spec: Any, prefix: str = "") -> tuple[str, tuple[str, ...]] | None:
+    """The path and levels of the first batch-valued field of a record *spec*, or None."""
+    if not isinstance(spec, RecordSpec):
+        return None
+    for name, child in spec.children.items():
+        path = f"{prefix}{name}"
+        if isinstance(child, BatchSpec):
+            return path, tuple(child.level_names)
+        held = batch_field(child, f"{path}/")
+        if held is not None:
+            return held
+    return None
+
+
+class UnmappedBatchError(ValueError):
+    """A batch that the mapped dispatch cannot carry through ``jax.vmap``.
+
+    ``dispatch='jax'`` raises its message as it stands, in place of the generic
+    tracing failure, and ``dispatch='auto'`` falls back to the row-wise dispatch.
+    """

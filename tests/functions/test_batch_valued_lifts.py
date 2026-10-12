@@ -492,3 +492,146 @@ class TestBatchValuedDrawsArriveRaw:
                 assert isinstance(path, Mapping) and set(path) == {"x", "y"}
                 assert np.shape(path["y"]) == (2,)
         np.testing.assert_allclose(totals.atoms.raw(), [6.0, 15.0], rtol=1e-6)
+
+
+def _record_trajectory(beta):
+    return RecordBatch.stack(
+        [Record.from_fields(x=beta, y=beta * k) for k in (1.0, 2.0)], level_name="time"
+    )
+
+
+def _assert_same(mapped, rowwise):
+    """Assert two stored atom forms hold the same values, batch entries included."""
+    if isinstance(mapped, Batch):
+        assert mapped.level_names == rowwise.level_names
+        _assert_same(mapped.raw(), rowwise.raw())
+    elif isinstance(mapped, Mapping):
+        assert set(mapped) == set(rowwise)
+        for key in mapped:
+            _assert_same(mapped[key], rowwise[key])
+    elif isinstance(mapped, np.ndarray) and mapped.dtype == object:
+        assert mapped.shape == rowwise.shape
+        for left, right in zip(mapped.flat, rowwise.flat, strict=True):
+            _assert_same(left, right)
+    else:
+        np.testing.assert_array_equal(np.asarray(mapped), np.asarray(rowwise))
+
+
+def _sources():
+    return {
+        "sampled": Normal("beta", 0.0, 1.0),
+        "enumerated": EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta"),
+    }
+
+
+class TestMappedBatchValuedLifts:
+    """``auto`` and ``jax`` map a body over batch-valued outputs and draws, as row-wise runs do."""
+
+    @staticmethod
+    def _lift(body, law, dispatch, **controls):
+        with workflow_run(seed=3):
+            return Function(body, dispatch=dispatch, n_broadcast_samples=7, **controls)(law)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    @pytest.mark.parametrize("body", [_trajectory, _record_trajectory])
+    @pytest.mark.parametrize("source", ["sampled", "enumerated"])
+    def test_a_batch_returning_body_maps_as_the_row_wise_lift_runs(
+        self, dispatch, include_inputs, body, source
+    ):
+        law = _sources()[source]
+        mapped = self._lift(body, law, dispatch, include_inputs=include_inputs)
+        rowwise = self._lift(body, law, "sequential", include_inputs=include_inputs)
+        assert mapped.provenance.metadata["dispatch"] == "jax"
+        assert mapped.event_spec == rowwise.event_spec
+        _assert_same(mapped.atoms, rowwise.atoms)
+        np.testing.assert_array_equal(mapped.weights, rowwise.weights)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    @pytest.mark.parametrize("annotated", [False, True])
+    @pytest.mark.parametrize("source", ["sampled", "enumerated"])
+    def test_a_second_lift_maps_as_the_row_wise_lift_runs(
+        self, dispatch, include_inputs, annotated, source
+    ):
+        def total(trajectory):
+            values = trajectory.raw() if annotated else trajectory
+            return jnp.sum(values) - 6.0
+
+        if annotated:
+            total.__annotations__["trajectory"] = NumericArrayBatch
+        first = Function(_trajectory, output_spec=OutputSpec(trajectory=None))
+        with workflow_run(seed=1):
+            law = first(_sources()[source])
+        mapped = self._lift(total, law, dispatch, include_inputs=include_inputs)
+        rowwise = self._lift(total, law, "sequential", include_inputs=include_inputs)
+        assert mapped.provenance.metadata["dispatch"] == "jax"
+        _assert_same(mapped.atoms, rowwise.atoms)
+        np.testing.assert_array_equal(mapped.weights, rowwise.weights)
+
+    def test_the_mapped_lift_traces_the_body_instead_of_calling_it_per_draw(self):
+        calls = []
+
+        def trajectory(beta):
+            calls.append("first")
+            return _trajectory(beta)
+
+        def total(path):
+            calls.append("second")
+            return jnp.sum(path)
+
+        source = Normal("beta", 0.0, 1.0)
+        for dispatch in ("jax", "sequential"):
+            calls.clear()
+            with workflow_run(seed=0):
+                law = Function(trajectory, dispatch=dispatch, n_broadcast_samples=50)(source)
+                totals = Function(total, dispatch=dispatch, n_broadcast_samples=50)(law)
+            if dispatch == "jax":
+                # One probe trace and one mapped trace for each lift.
+                assert calls.count("first") <= 2 and calls.count("second") <= 2
+                assert law.provenance.metadata["dispatch"] == "jax"
+                assert totals.provenance.metadata["dispatch"] == "jax"
+            else:
+                assert calls.count("first") == 50 and calls.count("second") == 50
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_a_joint_field_that_stores_batches_is_not_mapped(self, dispatch):
+        joint = Function(
+            _trajectory,
+            output_spec=OutputSpec(trajectory=None),
+            include_inputs=True,
+            n_broadcast_samples=5,
+        )
+        total = Function(lambda path: jnp.sum(path), dispatch=dispatch, n_broadcast_samples=5)
+        with workflow_run(seed=0):
+            law = joint(Normal("beta", 0.0, 1.0))
+            if dispatch == "jax":
+                message = (
+                    r"dispatch='jax' cannot map over the draws of '_trajectory', whose field "
+                    r"'trajectory' stores a batch on the levels \['time'\].*"
+                    r"marginal\(law, 'trajectory'\)"
+                )
+                with pytest.raises(ValueError, match=message):
+                    total(law["trajectory"])
+            else:
+                assert total(law["trajectory"]).provenance.metadata["dispatch"] == "sequential"
+                mapped = total(marginal(law, "trajectory"))
+                assert mapped.provenance.metadata["dispatch"] == "jax"
+
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_a_returned_record_that_holds_a_batch_is_not_mapped(self, dispatch):
+        def summary(beta):
+            return Record.from_fields(scale=2.0 * beta, traj=_trajectory(beta))
+
+        wrapped = Function(summary, dispatch=dispatch, n_broadcast_samples=5)
+        with workflow_run(seed=0):
+            if dispatch == "jax":
+                message = (
+                    r"dispatch='jax' cannot stack a returned record whose field 'traj' is a "
+                    r"batch on the levels \['time'\]"
+                )
+                with pytest.raises(ValueError, match=message):
+                    wrapped(Normal("beta", 0.0, 1.0))
+            else:
+                law = wrapped(Normal("beta", 0.0, 1.0))
+                assert law.provenance.metadata["dispatch"] == "sequential"

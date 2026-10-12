@@ -1293,7 +1293,7 @@ class TestTheProbeModelsItsExecutorsTransform:
             **controls,
         )
 
-    def test_a_batch_returning_body_falls_back_rather_than_failing_in_the_executor(self):
+    def test_a_batch_returning_body_runs_rather_than_failing_in_the_executor(self):
         """The regression: this raised the pytree rank error out of ``vmap``."""
         dist = Normal("x", loc=0.0, scale=1.0)
 
@@ -1301,29 +1301,28 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert result is not None
 
-    def test_the_fallback_is_what_ran(self, caplog):
+    def test_a_batch_returning_body_is_mapped(self, caplog):
+        """The body's batch crosses the map as its columns, so ``auto`` keeps the map."""
         dist = Normal("x", loc=0.0, scale=1.0)
 
         with caplog.at_level(logging.INFO, logger="probpipe.functions._function"):
-            self._run(self._returns_a_batch(), dist)
+            result = self._run(self._returns_a_batch(), dist)
 
-        assert any("not JAX-traceable" in record.message for record in caplog.records)
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        assert result.provenance.metadata["dispatch"] == "jax"
+        assert result.atoms.level_names[1:] == ("k",)
+        assert result.atoms.batch_shape == (8, 3)
 
-    def test_the_fallback_agrees_with_explicit_sequential(self):
-        """Falling back costs speed, never the answer."""
+    @pytest.mark.parametrize("dispatch", ["auto", "jax"])
+    def test_the_mapped_result_agrees_with_explicit_sequential(self, dispatch):
+        """Mapping costs nothing in the answer."""
         dist = Normal("x", loc=0.0, scale=1.0)
 
-        fell_back = self._run(self._returns_a_batch(dispatch="auto"), dist)
+        mapped = self._run(self._returns_a_batch(dispatch=dispatch), dist)
         sequential = self._run(self._returns_a_batch(dispatch="sequential"), dist)
 
-        np.testing.assert_array_equal(np.asarray(fell_back.atoms), np.asarray(sequential.atoms))
-
-    def test_requesting_jax_reports_the_dispatch_rather_than_the_pytree(self):
-        """The refusal names the choice the caller made and can change."""
-        dist = Normal("x", loc=0.0, scale=1.0)
-
-        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
-            self._run(self._returns_a_batch(dispatch="jax"), dist)
+        assert mapped.atoms.level_names == sequential.atoms.level_names
+        np.testing.assert_array_equal(mapped.atoms.raw("y"), sequential.atoms.raw("y"))
 
     def test_a_body_that_survives_the_transform_still_takes_jax(self, caplog):
         """The probe gained a transform, not a blanket refusal."""

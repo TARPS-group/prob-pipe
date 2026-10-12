@@ -3312,7 +3312,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   event's batch axes. `include_inputs=True` retains each complete batch in
   the joint record. A subsequent lift receives each batch in its raw form,
   or as the batch at a parameter annotated with a batch class such as
-  `NumericArrayBatch`. A batch-valued event with numeric elements has
+  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
+  returns a numeric batch, and a later lift over its law, run in one
+  `jax.vmap`. A batch-valued event with numeric elements has
   elementwise moments, so the mean of a trajectory law on `time` is a
   `NumericArrayBatch` on `time`.
 
