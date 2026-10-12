@@ -28,11 +28,13 @@ from probpipe import (
     ApplicabilityError,
     Batch,
     Distribution,
+    EmpiricalDistribution,
     Function,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecord,
     OutputSpec,
     Record,
     ResolutionError,
@@ -250,6 +252,23 @@ class TestTheDraw:
         assert "theta" not in law.event_spec.components
         assert isinstance(result, Distribution)
         assert all(set(draw.keys()) == {"a", "b"} for draw in seen)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_a_record_passed_beside_a_law_arrives_as_the_call_passed_it(self, dispatch):
+        seen = []
+        weights = NumericRecord({"a": 2.0, "b": 1.0}, label="weights")
+
+        @function(dispatch=dispatch)
+        def affine(weights, mu):
+            seen.append(weights)
+            return weights["a"] * mu + weights["b"]
+
+        law = EmpiricalDistribution(jnp.array([1.0, 2.0, 4.0]), component="mu", label="prior")
+        result = affine(weights, law)
+
+        assert all(received is weights for received in seen)
+        assert str(result) == "affine(weights, mu ~ prior)"
+        np.testing.assert_allclose(atom_leaves(result)[0], [3.0, 5.0, 9.0])
 
 
 def _receiving(annotations: dict[str, Any], **controls: Any) -> tuple[Function, list[Any]]:

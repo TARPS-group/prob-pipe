@@ -61,6 +61,7 @@ from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _labeled_product
@@ -475,9 +476,16 @@ def _is_swept_scalar(
 
 
 def _is_scalar(value: Any) -> bool:
-    """Whether *value* is a scalar, which an applied function's notation shows by its value."""
+    """Whether *value* is a scalar, which an applied function's notation shows by its value.
+
+    A scalar is a Python number or string, or an array or NumPy scalar of shape ``()``.
+    """
     if isinstance(value, (bool, int, float, complex, str)):
         return True
+    # A numeric record forwards ``shape`` to its single field, and it raises
+    # TypeError for a record of several fields.
+    if isinstance(value, Record):
+        return False
     return getattr(value, "shape", None) == ()
 
 
@@ -971,7 +979,8 @@ def _jax_traceability_error(
     transform its executor applies — one that returns a batch, whose added
     axis no level can name. So every executor that maps is probed under a
     map, each argument fed the way its own executor will feed it: a swept
-    batch over its first row, a distribution over one draw. A probe failure
+    batch over its first row, a distribution over one draw, and any other
+    argument as the call passed it. A probe failure
     means sequential dispatch, which is always able to run the call — the two
     paths agree on results by contract, so falling back costs speed, never
     correctness.
@@ -981,6 +990,7 @@ def _jax_traceability_error(
         broadcast_refs = set(broadcast_args)
         batched_sources: dict[_binding.FunctionInputRef, Any] = {}
         drawn_refs: list[_binding.FunctionInputRef] = []
+        array_like_refs: list[_binding.FunctionInputRef] = []
         for ref in _binding.iter_input_refs(function._signature_info, values):
             v = _binding.input_ref_value(values, ref)
             if ref in broadcast_refs:
@@ -994,20 +1004,14 @@ def _jax_traceability_error(
                     # multi-field law be probed at all — it has no single
                     # event shape to stand in for one.
                     drawn_refs.append(ref)
-            else:
-                if isinstance(v, jnp.ndarray):
-                    replacement = v
-                elif hasattr(v, "__array__"):
-                    replacement = jnp.asarray(v)
-                else:
-                    replacement = v
-                dummy_kw = _binding.replace_input_ref(dummy_kw, ref, replacement)
+            elif hasattr(v, "__array__") and not isinstance(v, jnp.ndarray):
+                array_like_refs.append(ref)
         with _context._workflow_probe():
             if batched_sources:
                 refs = list(batched_sources)
                 # The executor's own body, not a copy maintained in the
                 # probe. ``dummy_kw`` carries the swept batches at their
-                # references and the other inputs as the probe feeds them.
+                # references and the other inputs as the call passed them.
                 _row_call = _sweep.mapped_row_body(
                     func=func,
                     values=dummy_kw,
@@ -1098,7 +1102,16 @@ def _jax_traceability_error(
 
                 jax.make_jaxpr(jax.vmap(probe_draw))(tuple(root_probes))
             else:
-                jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
+                # The trace takes the arguments as its inputs, so each argument
+                # that converts to an array enters as a JAX array.
+                traced_kw = _binding.replace_input_refs(
+                    dummy_kw,
+                    {
+                        ref: jnp.asarray(_binding.input_ref_value(values, ref))
+                        for ref in array_like_refs
+                    },
+                )
+                jax.make_jaxpr(lambda kw: func(**kw))(traced_kw)
     except Exception as exc:
         return exc
     return None
