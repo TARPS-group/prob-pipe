@@ -316,7 +316,7 @@ class TestRecordValuedFactors:
         )
 
     def test_a_kernel_given_a_record_draws_with_the_law_of_total_variance(self):
-        """``theta | population ~ N(mu, tau)`` gives ``E[theta] = E[mu]`` and ``Var = E[tau²] + Var mu``."""
+        """``theta | population ~ N(mu, tau)`` gives ``𝔼[theta] = 𝔼[mu]`` and ``Var = 𝔼[tau²] + Var mu``."""
         hyper = _population_atoms()
         joint = _theta_given_population() * hyper
         with workflow_run(seed=4):
@@ -398,9 +398,9 @@ class TestNestedViews:
         _assert_correlation(mu, np.asarray(theta)[:, 0], 0.0)
 
     def test_a_function_of_sibling_views_keeps_their_correlation(self):
-        """The lift of ``a * b`` over two sibling views co-samples them, so ``E[ab]`` keeps the covariance.
+        """The lift of ``a * b`` over two sibling views co-samples them, so ``𝔼[ab]`` keeps the covariance.
 
-        Over the parent's atoms ``E[ab]`` differs from ``E[a] E[b]`` by the
+        Over the parent's atoms ``𝔼[ab]`` differs from ``𝔼[a] 𝔼[b]`` by the
         covariance, about 1.0, which is many standard errors at 4000 draws.
         """
         law = _correlated()
@@ -421,8 +421,8 @@ class TestNestedViews:
     def test_views_of_a_dependent_joint_keep_its_dependence(self):
         """Views of ``theta`` and ``population/mu`` in ``p(theta | population) p(population)`` co-sample.
 
-        ``E[theta | population] = mu``, so ``Cov(theta, mu) = Var mu`` and the
-        correlation is ``sqrt(Var mu / Var theta)``, with ``Var theta = E[tau²]
+        ``𝔼[theta | population] = mu``, so ``Cov(theta, mu) = Var mu`` and the
+        correlation is ``sqrt(Var mu / Var theta)``, with ``Var theta = 𝔼[tau²]
         + Var mu`` over the population's atoms.
         """
         hyper = _population_atoms()

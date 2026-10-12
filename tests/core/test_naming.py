@@ -262,8 +262,8 @@ class TestAnOperationLabelsItsResultByItsLaw:
     @pytest.mark.parametrize(
         ("compute", "label"),
         [
-            (lambda d: mean(d), "E[height ~ prior]"),
-            (lambda d: variance(d), "Var[height ~ prior]"),
+            (lambda d: mean(d), "𝔼[height ~ prior]"),
+            (lambda d: variance(d), "𝕍[height ~ prior]"),
             (lambda d: log_prob(d, jnp.asarray(0.0)), "log prior(height)"),
         ],
         ids=["mean", "variance", "log_prob"],
@@ -296,7 +296,7 @@ class TestAnOperationLabelsItsResultByItsLaw:
     ):
         law = self._params()
         result = mean(law)
-        assert result.label == "E[(x, y) ~ params]"
+        assert result.label == "𝔼[(x, y) ~ params]"
         assert list(result.keys()) == ["mean(x)", "mean(y)"]
         assert float(result["mean(x)"]) == 0.0
         assert float(result["mean(y)"]) == 2.0
@@ -530,14 +530,11 @@ class TestRawDrawLabeling:
 
 
 class TestEveryAggregateIsLabeledForItsFunction:
-    """The labeling table, widened across the axes that had diverged.
+    """A sweep's aggregate is labeled by the producing function's call on the swept batch.
 
-    A sweep's aggregate is built by the boundary, not by a caller, so its label is
-    the producing function's call on the swept batch, as ``double(rows)``. Three
-    paths disagreed: the
-    undeclared record aggregate took `stack`'s class-name default, and the scalar,
-    opaque, and declared paths marked a derived label as user-given — which would
-    stop a later operation relabeling it.
+    The sweep builds the aggregate, so its label is derived, as ``double(rows)``,
+    whether the function returns an array, a mapping, an opaque value, a
+    callable, or a sequence, and whether or not it declares its output.
     """
 
     @staticmethod
@@ -577,8 +574,7 @@ class TestEveryAggregateIsLabeledForItsFunction:
         assert result.label == "double(rows)"
 
     def test_a_multi_axis_sweep_is_labeled_the_same_way(self):
-        """The re-cut to the sweep's own geometry is a separate construction, and
-        it had its own labeling."""
+        """The aggregate of a sweep over two levels keeps both levels and the call's label."""
         from probpipe.core._specs import NumericRecordSpec
 
         grid = NumericRecordBatch(
@@ -597,18 +593,12 @@ class TestEveryAggregateIsLabeledForItsFunction:
 
 
 class TestNoKindInventsALabel:
-    """The rule the whole layer now shares: a label is given, or derived from
-    something that carries meaning. A class name carries none.
+    """A label is given, or derived from content that carries meaning, and never from a class name.
 
-    Every batch defaulted to its own lowercased class name, so a pipeline full
-    of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — labels that
-    say what the object *is*, which its type already says, and nothing about
-    which one it is.
-
-    That every constructor takes the label first, positional-only and with no
-    default behind it, is asserted from the signatures themselves in
-    `test_batch.py`'s `TestTheConstructorSignatureContract`. What is left here is
-    the other half of the rule: where a *derived* label comes from.
+    `test_batch.py`'s `TestTheConstructorSignatureContract` asserts from the
+    signatures that every constructor takes the label as the keyword `label`,
+    required only for a raw value. The tests here check where a derived label
+    comes from.
     """
 
     def test_stack_derives_its_label_from_what_it_stacks(self):
@@ -834,23 +824,21 @@ class TestTheLabelsOfValuesComputedFromALaw:
             ),
             pytest.param(prob, lambda: (_prior(), 0.3), "prior(mu)", ("prob(mu)",), id="density"),
             pytest.param(
-                mean, lambda: (_model(),), "E[(y, mu) ~ model]", ("mean(y)", "mean(mu)"), id="mean"
+                mean, lambda: (_model(),), "𝔼[(y, mu) ~ model]", ("mean(y)", "mean(mu)"), id="mean"
             ),
             pytest.param(
                 variance,
                 lambda: (_model(),),
-                "Var[(y, mu) ~ model]",
+                "𝕍[(y, mu) ~ model]",
                 ("variance(y)", "variance(mu)"),
                 id="variance",
             ),
+            pytest.param(cov, lambda: (_model(),), "ℂ[(y, mu) ~ model]", ("cov(y, mu)",), id="cov"),
             pytest.param(
-                cov, lambda: (_model(),), "Cov[(y, mu) ~ model]", ("cov(y, mu)",), id="cov"
+                quantile, lambda: (_prior(), 0.5), "ℚ[mu ~ prior]", ("quantile(mu)",), id="quantile"
             ),
             pytest.param(
-                quantile, lambda: (_prior(), 0.5), "Q[mu ~ prior]", ("quantile(mu)",), id="quantile"
-            ),
-            pytest.param(
-                mean, lambda: (_model()["y"],), "E[y ~ model]", ("mean(y)",), id="mean-of-a-view"
+                mean, lambda: (_model()["y"],), "𝔼[y ~ model]", ("mean(y)",), id="mean-of-a-view"
             ),
         ],
     )
@@ -865,8 +853,8 @@ class TestTheLabelsOfValuesComputedFromALaw:
             return x**2
 
         with workflow_run(seed=0):
-            assert expectation(_prior(), square).label == "E[square(mu ~ prior)]"
-            assert expectation(_prior(), lambda x: x).label == "E[f(mu ~ prior)]"
+            assert expectation(_prior(), square).label == "𝔼[square(mu ~ prior)]"
+            assert expectation(_prior(), lambda x: x).label == "𝔼[𝒻(mu ~ prior)]"
 
     def test_an_expectation_names_its_integrand_as_a_lifted_call_does(self):
         """A relabeled Function keeps its output label, which both labels read."""
@@ -878,7 +866,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
         renamed = square.with_label("g")
         with workflow_run(seed=0):
             lifted = mean(renamed.with_options(n_broadcast_samples=8)(_prior()))
-            assert expectation(_prior(), renamed).label == lifted.label == "E[sq(mu ~ prior)]"
+            assert expectation(_prior(), renamed).label == lifted.label == "𝔼[sq(mu ~ prior)]"
 
     def test_a_draw_and_a_score_of_a_posterior_list_its_fixed_paths(self):
         with workflow_run(seed=0):
@@ -904,7 +892,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
         )
         with workflow_run(seed=0):
             assert sample(laws).label == "effect ~ schools"
-            assert mean(laws).label == "E[effect ~ schools]"
+            assert mean(laws).label == "𝔼[effect ~ schools]"
             scores = log_prob(laws, 0.0)
         assert scores.label == "log schools(effect)"
         assert scores[1].label == "(log schools(effect))[school=1]"
@@ -923,7 +911,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
         assert (2 * effect).label == "2 * effect"
         assert (-(effect + 1.0)).label == "-(effect + 1.0)"
         with workflow_run(seed=0):
-            assert (2 * mean(_prior())).label == "2 * E[mu ~ prior]"
+            assert (2 * mean(_prior())).label == "2 * 𝔼[mu ~ prior]"
 
 
 class TestTheLabelsOfALiftedFunction:
@@ -946,7 +934,7 @@ class TestTheLabelsOfALiftedFunction:
             "challenger_damage_probability",
             notation,
         )
-        assert summary.label == f"E[{notation}]"
+        assert summary.label == f"𝔼[{notation}]"
 
     def test_inputs_drawn_together_share_one_draw(self):
         @function(output_spec=OutputSpec(f=None))
@@ -995,8 +983,8 @@ class TestTheLabelsOfALiftedFunction:
             means = mean(laws)
         assert laws.label == "shifted"
         assert laws[1].label == "shifted[tau=1]"
-        assert means.label == "E[shifted(mu ~ prior, tau)]"
-        assert means[1].label == "E[shifted(mu ~ prior, tau)][tau=1]"
+        assert means.label == "𝔼[shifted(mu ~ prior, tau)]"
+        assert means[1].label == "𝔼[shifted(mu ~ prior, tau)][tau=1]"
 
     def test_a_lifted_batch_displays_its_call_and_its_element_its_rows_call(self):
         @function(output_spec=OutputSpec(effect_of=None))
@@ -1013,7 +1001,7 @@ class TestTheLabelsOfALiftedFunction:
                 Normal("mu", 0.0, 1.0, label="prior"), taus
             )
             element = laws[3]
-            assert mean(element).label == "E[effect_of(mu ~ prior, 4.0)]"
+            assert mean(element).label == "𝔼[effect_of(mu ~ prior, 4.0)]"
             assert sample(element).label == "effect_of(mu ~ prior, 4.0)"
         assert str(laws) == "effect_of(mu ~ prior, tau) over tau"
         # The element keeps the label of its position, and displays as its row's call.

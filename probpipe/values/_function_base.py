@@ -14,6 +14,7 @@ Provides:
 from __future__ import annotations
 
 import inspect
+import keyword
 import os
 import warnings
 from collections.abc import Callable, Mapping
@@ -26,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 import jax
 import jax.numpy as jnp
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from ..core._array_backend import _is_numeric_leaf
 from ..core._dispatch import Feasibility
 from ..core._expression import Collapse, Expression, Signature
@@ -37,7 +38,6 @@ from ..core._repr import format_default, format_names, public_class_name, term_r
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
 from ..core.config import WorkflowKind
-from ..core.node import Node
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -230,9 +230,10 @@ def _callable_component(fn: Any) -> str:
     """The default output component of a Function wrapping *fn*.
 
     It is the callable's name by :func:`~probpipe.core.tracked._callable_name`,
-    so a lambda's is ``f``, when that name is a Python identifier, and
-    ``result`` otherwise, as for a ``functools.partial``, a callable instance,
-    or a ``__name__`` such as ``"Model.fit"``. A label never changes it.
+    so a lambda's is ``f``, when that name is a Python identifier and no
+    keyword, and ``result`` otherwise, as for a ``functools.partial``, a
+    callable instance, a ``__name__`` such as ``"Model.fit"``, or a keyword
+    such as ``"class"``. A label never changes it.
 
     Parameters
     ----------
@@ -245,7 +246,9 @@ def _callable_component(fn: Any) -> str:
         The component, which is a valid component name.
     """
     name = _callable_name(fn)
-    return name if name is not None and name.isidentifier() else _NAMELESS_COMPONENT
+    if name is None or not name.isidentifier() or keyword.iskeyword(name):
+        return _NAMELESS_COMPONENT
+    return name
 
 
 def _complete_output_spec(
@@ -702,11 +705,9 @@ _DEFAULTED_BY_NONE = frozenset(
     {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
-#: Removed construction keywords, each with the warning it raises: ``func``
-#: aliases ``fn``, and the rest are ignored.
+#: Removed construction keywords, each with the warning it raises, which are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {
-        "func": "Function(func=...) is deprecated; pass the callable positionally",
         "input_template": (
             "Function(input_template=...) is no longer supported and is ignored; use input_spec=..."
         ),
@@ -763,7 +764,7 @@ def _refuse_unknown_controls(controls: Mapping[str, Any]) -> None:
         raise _unknown_controls(unknown, construction=True)
 
 
-class Function(Node, TrackedTerm, Annotated):
+class Function(TrackedTerm, Annotated):
     """An immutable callable with a frozen signature and optional declarations.
 
     ``apply`` binds arguments and validates one raw evaluation, returning the
@@ -775,7 +776,7 @@ class Function(Node, TrackedTerm, Annotated):
     fn : Callable
         The wrapped Python callable. Its signature is captured at construction.
     label : str, optional
-        Optional non-empty display alias. Defaults to the callable name, or ``f``
+        Optional non-empty display alias. Defaults to the callable name, or ``𝒻``
         for a lambda; a callable without a name requires an explicit label.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         Authoritative input slots matching fixed signature parameters by name.
@@ -788,8 +789,10 @@ class Function(Node, TrackedTerm, Annotated):
         type is inferred with the same component rule. Display aliases never
         change this default component. A named type hole is inferred independently for each call.
     output_label : str or None
-        Optional result alias. Without one, managed calls derive an application
-        expression. Aliases never affect mathematical declarations.
+        Optional result alias. Without one, a call on values labels a value
+        result by the application, as ``f(2.0)``, and a returned law or kernel
+        by the function's label, as ``f(y, mu)``. Aliases never affect
+        mathematical declarations.
     differentiable : NumericSpec or None
         The differentiability claim: exactly the numeric input values gradients
         propagate through. None makes no claim.
@@ -798,8 +801,6 @@ class Function(Node, TrackedTerm, Annotated):
         by call arguments, and the only way to bind an argument at construction.
         An entry keyed by a name the signature lacks goes to its variadic keyword
         parameter.
-    module : object or None
-        Experimental shared-input container consulted for missing arguments.
     **controls : Any
         The engine's controls, which ``with_options`` revises:
 
@@ -832,7 +833,9 @@ class Function(Node, TrackedTerm, Annotated):
         For an invalid name, callable, declaration type, workflow kind, or
         worker-count type, a control of the wrong type, or a keyword that is
         no control, which the message names; for a label given before the
-        callable, as ``Function("g", g)``, or a callable given as ``fn=``.
+        callable, as ``Function("g", g)``, or as a second positional argument,
+        as ``Function(g, "g")``; and for a callable given as ``fn=`` or
+        ``func=``.
     ValueError
         For mismatched input slots, invalid defaults or bindings, unknown
         dispatch, nonpositive worker or sample counts, conversions for a
@@ -844,7 +847,7 @@ class Function(Node, TrackedTerm, Annotated):
     Warns
     -----
     FutureWarning
-        For the removed keywords ``func``, ``seed``, ``input_template``, and
+        For the removed keywords ``seed``, ``input_template``, and
         ``output_template``, one warning for each one given, pointing at the
         caller's line.
     UserWarning
@@ -852,8 +855,8 @@ class Function(Node, TrackedTerm, Annotated):
 
     Notes
     -----
-    Legacy constructor keywords emit ``FutureWarning``: ``func`` overrides
-    ``fn``; ``seed``, ``input_template``, and ``output_template`` are ignored.
+    The legacy constructor keywords ``seed``, ``input_template``, and
+    ``output_template`` emit ``FutureWarning`` and are ignored.
     Use ``workflow_run(seed=...)`` for workflow randomness or ``bind`` for a
     wrapped callable's seed parameter. ``fn`` is required; the callable name
     supplies an omitted ``label``.
@@ -883,7 +886,6 @@ class Function(Node, TrackedTerm, Annotated):
 
     _signature_info: FunctionSignatureInfo
     _bind: Mapping[str, Any]
-    _module: Any | None
     _implementation: _FunctionImplementation
     _spec: FunctionSpec
     _output_label: str | None
@@ -894,20 +896,25 @@ class Function(Node, TrackedTerm, Annotated):
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # The constructor's arguments are checked here, before ``__init__`` binds
-        # them, so the two call forms it no longer takes get a message naming the
+        # them, so the call forms it no longer takes get a message naming the
         # form it takes rather than Python's count of positional arguments. A
         # subclass with a constructor of its own takes its own arguments.
         if cls.__init__ is not Function.__init__:
             return super().__new__(cls)
-        if len(args) >= 2 and isinstance(args[0], str) and callable(args[1]):
+        if args and isinstance(args[0], str):
+            raise TypeError(label_given_first("Function", "fn", args[0]))
+        for alias in ("fn", "func"):
+            if alias in kwargs:
+                label = kwargs.get("label")
+                shown = repr(label) if isinstance(label, str) else "..."
+                raise TypeError(
+                    f"Function got the callable as {alias}=, but takes it as its first "
+                    f"positional argument; write Function(fn, label={shown})"
+                )
+        if len(args) >= 2 and isinstance(args[1], str):
             raise TypeError(
-                f"Function takes the callable first and the label as a keyword, got the label "
-                f"{args[0]!r} first; write Function(fn, label={args[0]!r})"
-            )
-        if not args and "fn" in kwargs:
-            raise TypeError(
-                "Function takes the callable as its first positional argument, not as fn=; "
-                "write Function(fn, label=...)"
+                f"Function got the string {args[1]!r} as a second positional argument; "
+                f"pass the label by keyword: Function(fn, label={args[1]!r})"
             )
         return super().__new__(cls)
 
@@ -922,7 +929,6 @@ class Function(Node, TrackedTerm, Annotated):
         output_label: str | None = None,
         differentiable: NumericSpec | None = None,
         bind: Mapping[str, Any] | None = None,
-        module: Any | None = None,
         **controls: Any,
     ) -> None:
         _refuse_unknown_controls(controls)
@@ -930,9 +936,7 @@ class Function(Node, TrackedTerm, Annotated):
             warnings.warn(
                 _REMOVED_KEYWORDS[key], FutureWarning, skip_file_prefixes=_WARNING_SKIP_PREFIXES
             )
-            value = controls.pop(key)
-            if key == "func":
-                fn = value
+            controls.pop(key)
         if not callable(fn):
             raise TypeError(f"fn must be callable, got {type(fn).__name__}")
         label = _callable_label(fn, label, subject="Function")
@@ -946,7 +950,6 @@ class Function(Node, TrackedTerm, Annotated):
             differentiable=differentiable,
             metadata_source=fn,
             bind=bind,
-            module=module,
             **controls,
         )
 
@@ -962,7 +965,6 @@ class Function(Node, TrackedTerm, Annotated):
         differentiable: NumericSpec | None = None,
         metadata_source: Any = None,
         bind: Mapping[str, Any] | None = None,
-        module: Any = None,
         **controls: Any,
     ) -> None:
         unknown = controls.keys() - _CONTROL_DEFAULTS.keys()
@@ -1010,7 +1012,6 @@ class Function(Node, TrackedTerm, Annotated):
         set_attribute("_output_component", component)
         set_attribute("_options", MappingProxyType(options))
         set_attribute("_bind", MappingProxyType(construction_bindings))
-        set_attribute("_module", module)
         set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
         set_attribute("__name__", label)
         set_attribute("__qualname__", getattr(metadata_source, "__qualname__", label))
@@ -1018,7 +1019,6 @@ class Function(Node, TrackedTerm, Annotated):
             "__module__", getattr(metadata_source, "__module__", None) or type(self).__module__
         )
         set_attribute("__signature__", signature_info.signature)
-        Node.__init__(self)
 
     @staticmethod
     def _from_implementation(
@@ -1166,6 +1166,9 @@ class Function(Node, TrackedTerm, Annotated):
             If an argument's kind is not one its parameter accepts, an
             applicability condition fails, or the declarations conflict, as the
             call raises.
+        ValueError
+            If an empty sweep lacks a concrete output declaration after input
+            dimensions bind.
         ResolutionError
             If a conversion has no converter, or the ``method`` control names no
             route of a Function realized by routes.
@@ -1221,8 +1224,6 @@ class Function(Node, TrackedTerm, Annotated):
                 self._signature_info,
                 dict(bound.arguments),
                 bind=self._bind,
-                module=self._module,
-                dependency_type=Node,
                 function_name=self.label,
             )
             _, bindings = _bind_function_inputs(
@@ -1247,12 +1248,16 @@ class Function(Node, TrackedTerm, Annotated):
         """
         return _invoke_engine(self, values, context)
 
-    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[Any, ...] | None:
+    def _route_candidates(
+        self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None
+    ) -> tuple[Any, ...] | None:
         """The routes that may realize one point of a call under *controls*, in selection order.
 
         A Function's body is its one route, so it lists none and the engine
         runs the body. A subclass realized by routes returns them, each with
-        the members :mod:`probpipe.functions._resolution` names.
+        the members :mod:`probpipe.functions._resolution` names. Optional
+        *values* are the already-bound inputs, which an operation may read to
+        include a conditional delegation candidate.
         """
         return None
 
@@ -1302,9 +1307,10 @@ class Function(Node, TrackedTerm, Annotated):
         Returns
         -------
         TrackedTerm or Any
-            The result at the kind its declaration names, described by the
-            application or an explicit ``output_label``, with the call's
-            provenance. A broadcast
+            The result at the kind its declaration names, with the call's
+            provenance. It is labeled by an explicit ``output_label``, or else
+            by the application for a value and by the function's label for a
+            returned law or kernel. A broadcast
             returns the law of the results, and a sweep the batch of them on
             the swept levels. Under the ``raw`` control the result is its raw
             form, as its ``raw()`` gives it.
@@ -1316,6 +1322,9 @@ class Function(Node, TrackedTerm, Annotated):
         ApplicabilityError
             If an argument's kind is not one its parameter accepts, or the
             declarations conflict.
+        ValueError
+            If an empty sweep lacks a concrete output declaration after input
+            dimensions bind.
         ResolutionError
             If no route realizes the call.
         ResultKindError, ResultSchemaError

@@ -283,7 +283,7 @@ def _exact_p_values(y, loc, scale):
     Given ``mu``, the data are iid ``Normal(mu, 1)``. The sample mean is then
     ``Normal(loc, sqrt(scale**2 + 1/n))``, the sample variance satisfies
     ``(n - 1) S**2 ~ chi2(n - 1)`` whatever ``mu``, and the maximum's CDF at
-    ``t`` is ``E[Phi(t - mu)**n]``, integrated over ``mu`` by quadrature.
+    ``t`` is ``𝔼[Phi(t - mu)**n]``, integrated over ``mu`` by quadrature.
     """
     y = np.asarray(y, dtype=np.float64)
     n = y.size

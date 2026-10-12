@@ -21,8 +21,7 @@ if TYPE_CHECKING:
     from ._factored import FactoredConditionalDistribution, FactoredDistribution
     from ._views import _EventRenames
 
-from .._messages import label_given_first
-from ..core._expression import Named, Signature
+from ..core._expression import _GENERIC_LAW_SYMBOL, Named, Signature
 from ..core._record_spec import RecordSpec
 from ..core._repr import call_repr, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
@@ -38,7 +37,7 @@ from ._capabilities import _check_guards
 
 
 #: The label of a law or a kernel whose constructor is given none and that is not a family.
-DEFAULT_LABEL = "p"
+DEFAULT_LABEL = _GENERIC_LAW_SYMBOL
 
 
 def _complete_event_spec(event_spec: Any) -> OutputSpec:
@@ -152,16 +151,6 @@ def _check_component(component: Any, owner: str) -> None:
         )
 
 
-def _label_given_first(owner: str, first: str, value: str) -> str:
-    """The message that *owner* got the string *value* as its first argument *first*.
-
-    A constructor that once took its label first takes *first* there now and
-    the label as the keyword ``label=``, so a string there is a label passed
-    in the earlier form.
-    """
-    return label_given_first(owner, first, value)
-
-
 def _class_label(term: Any) -> str:
     """The default label of a family's instance: the name of its public class, as ``Normal``."""
     return public_class_name(type(term))
@@ -235,10 +224,12 @@ def _record_default_expression(term: Any) -> None:
     """Record the expression *term* was just given as its default one, if its label is the default.
 
     The constructors of a law and of a kernel call this after setting the
-    label. :func:`_constructor_label` has marked a term whose constructor
-    received no label, and :func:`_labeled_by_default` compares the
-    expression the term carries with the one recorded here, so a copy, a
-    pickle, and a rename of the term keep its status.
+    label, and a constructor that derives its expression from its arguments,
+    as a mixture does, calls it again after storing that expression.
+    :func:`_constructor_label` has marked a term whose constructor received no
+    label, and :func:`_labeled_by_default` compares the expression the term
+    carries with the one recorded here, so a copy, a pickle, and a rename of
+    the term keep its status.
     """
     if getattr(term, "_uses_default_label", False):
         object.__setattr__(term, "_default_expression", term._expression)
@@ -288,32 +279,30 @@ def _whole_term_component(declaration: OutputSpec) -> str | None:
 
 
 def _labeled_by_default(term: Any) -> bool:
-    """Whether *term* still carries the unaliased expression its constructor gave it.
+    """Whether *term* still carries the default label its constructor gave it, alone.
 
     Its expression is then the default label alone, so it records no label that
     a caller or an operation chose and no path held fixed. The default names
-    the class, or ``p``, so a law converted from *term* takes its converter's
-    label, which names the target (VI.10).
+    the class, or ``ℙ``, so a law converted from *term* takes its converter's
+    label, which names the target (VI.10). A default that the constructor
+    derives from its arguments, as a mixture's ``mixture([a(x), b(x)])``,
+    describes the law, so a converted law keeps it.
     """
-    default = getattr(term, "_default_label", None)
-    return default is not None and term._expression is getattr(term, "_default_expression", None)
+    default = getattr(term, "_default_expression", None)
+    return isinstance(default, Named) and term._expression is default
 
 
 def _shows_label(term: Any, constructor: Any) -> bool:
     """Whether the repr of *term*, as a call of *constructor*'s class, shows the label.
 
-    It shows an alias: a label that a caller gave, which the term's expression
-    holds alone around any paths held fixed, and which differs from the
-    constructor's default. A label that the constructor derives from its
-    arguments, as a product or a mixture does, is left out, since the call
-    derives it again. A term that presents *constructor* under the same label
-    shows it only where *constructor* holds it as an alias too.
+    The call shows the label unless the constructor, given the arguments the
+    call shows and no label, gives *term*'s label again. That label is the
+    class's default, as ``Normal``, or one the constructor derives from its
+    arguments, as a product joins its factors' labels as ``a·b``. A label that
+    an operation carried over, as a converted or a conditioned law keeps its
+    source's label, shows where it differs from that label.
     """
-    if not isinstance(term._expression.core(), Named) or term.label == constructor._default_label:
-        return False
-    if term is constructor or term.label != constructor.label:
-        return True
-    return isinstance(constructor._expression.core(), Named)
+    return term.label != constructor._derived_label()
 
 
 def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = None) -> str:
@@ -326,9 +315,8 @@ def _law_repr(term: Any, arguments: list[tuple[str, str]], constructor: Any = No
     2. *arguments*, the constructor's other arguments in its order;
     3. the component as ``component=`` where the constructor takes it as a
        keyword, as an atoms-based law does;
-    4. the label as ``label=`` where a caller gave it and it differs from the
-       constructor's default, which repeats what the class states; a label
-       the constructor derives from its arguments is left out
+    4. the label as ``label=`` where it differs from the label the
+       constructor gives when it is given none, which the call gives again
        (:func:`_shows_label`);
     5. the event declaration as ``event_spec=`` where it differs from the default
        for the component.
@@ -621,7 +609,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     component of its event first and an optional ``label=``, which defaults to
     the family's class name, so ``Normal("mu", 0.0, 1.0)`` is labeled
     ``Normal`` over the component ``mu``; any other law's label defaults to
-    ``p``, and a joint that ``*`` composes is labeled by its operands' labels.
+    ``ℙ``, and a joint that ``*`` composes is labeled by its operands' labels.
     Every transform preserves the label; only ``with_label`` replaces it. ``str(d)``
     returns the law's :attr:`notation`, its label followed by its signature, as
     ``prior(mu)``, and the repr reads as a call of the constructor, with
@@ -665,6 +653,10 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
 
+    #: The memo of values computed from the law on demand, such as its
+    #: fingerprint, which a copy or a pickle leaves out.
+    _transient_state = ("_memo",)
+
     #: Where the constructor takes the component of a whole-term event, which the
     #: repr follows: ``"first"`` as its first argument, ``"keyword"`` as
     #: ``component=`` after its other arguments, or ``None`` for a constructor that
@@ -679,7 +671,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
-        label = _constructor_label(self, label, "p") if label is None else label
+        label = _constructor_label(self, label, DEFAULT_LABEL) if label is None else label
         _given_label(label, owner=public_class_name(type(self)))
         # ``_provenance`` and ``_annotations`` carry state a reconstruction
         # already holds and that construction cannot otherwise reach: provenance
@@ -1274,6 +1266,15 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
     def _repr_class_name(self) -> str:
         """The first public class in this law's method-resolution order, which the repr names."""
         return public_class_name(type(self))
+
+    def _derived_label(self) -> str | None:
+        """The label this law's constructor gives it when it is given no label, from the arguments its repr shows.
+
+        It is the default label the constructor recorded, or ``None`` for a
+        constructor that requires a label. A constructor that derives its label
+        from its arguments, as a product does from its factors, overrides this.
+        """
+        return self._default_label
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The constructor's arguments the repr shows other than the component, the label, and the declaration.

@@ -21,6 +21,7 @@ from typing import Any, Literal, Union, get_args, get_origin
 
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
+from ..core._specs import OutputSpec
 from ..distributions._distribution import Distribution
 from ..distributions._empirical import EmpiricalDistribution
 from ..values import _binding
@@ -288,6 +289,27 @@ def build_broadcast_plan(
         sweep_axis_groups=sweep_axis_groups,
         n_sweep=n_sweep,
     )
+
+
+def require_empty_sweep_output(plan: BroadcastPlan, output_spec: OutputSpec | None) -> None:
+    """Require a complete output declaration when a sweep has no evaluations.
+
+    Parameters
+    ----------
+    plan : BroadcastPlan
+        The call's lifting regime and sweep shape.
+    output_spec : OutputSpec or None
+        The output declaration after dimensions shared with inputs bind.
+
+    Raises
+    ------
+    ValueError
+        If an empty sweep has no output type or leaves an output dimension
+        unbound, since no returned value can complete its declaration.
+    """
+    if plan.regime in ("sweep", "nested") and plan.n_sweep == 0:
+        if output_spec is None or output_spec.spec is None or not output_spec.spec.is_concrete:
+            raise ValueError("An empty sweep requires a concrete output_spec")
 
 
 def build_stochastic_plan(

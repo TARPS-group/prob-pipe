@@ -172,15 +172,15 @@ class TestRendering:
             pytest.param(Summary("density", _named("prior", "mu")), "prior(mu)", id="density"),
             pytest.param(
                 Summary("E", Draw(("y", "mu"), _named("model", "y", "mu"))),
-                "E[(y, mu) ~ model]",
+                "𝔼[(y, mu) ~ model]",
                 id="mean",
             ),
             pytest.param(
-                Summary("Q", Draw(("mu",), _named("prior", "mu"))), "Q[mu ~ prior]", id="quantile"
+                Summary("Q", Draw(("mu",), _named("prior", "mu"))), "ℚ[mu ~ prior]", id="quantile"
             ),
             pytest.param(
                 Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),)))),
-                "E[f(b ~ m)]",
+                "𝔼[f(b ~ m)]",
                 id="mean-of-a-lifted-law",
             ),
             pytest.param(
@@ -195,7 +195,7 @@ class TestRendering:
                         ),
                     ),
                 ),
-                "E[f(2.0)]",
+                "𝔼[f(2.0)]",
                 id="mean-of-an-element-of-a-lifted-batch",
             ),
             pytest.param(Operator("*", (constant(2), Named("effect"))), "2 * effect", id="binary"),
@@ -238,6 +238,13 @@ class TestRendering:
         value = AppliedValue("f", (Named("beta"), constant(2.0)))
         assert value.render_label() == value.render_notation() == "f(beta, 2.0)"
         assert Applied("f", value.arguments).render_label() == "f"
+
+    def test_a_call_shows_its_keyword_arguments_after_its_positional_ones(self):
+        call = Applied("minibatch", (_named("prior", "mu"),), (("batch_size", constant(40)),))
+        assert call.render_label() == "minibatch"
+        assert call.render_notation() == "minibatch(prior(mu), batch_size=40)"
+        assert call.depth == 2
+        assert call != Applied("minibatch", (_named("prior", "mu"),))
 
     def test_a_collection_and_an_applied_value_collapse(self):
         collection = Collection((_named("prior", "mu"),))
@@ -308,7 +315,7 @@ class TestDepth:
         probpipe.notation_config.max_depth = 1
         lifted = Summary("E", Draw(("p",), Applied("f", (Draw(("b",), Named("m")),))))
         with pytest.warns(UserWarning, match="max_depth"):
-            assert lifted.render_notation(warn=True) == "E[f]"
+            assert lifted.render_notation(warn=True) == "𝔼[f]"
         product = Draw(("a", "b"), Product((_named("a", "a"), _named("b", "b"))))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -320,7 +327,7 @@ class TestDepth:
         draw = Draw(("mu",), Selected(Conditioned(Named("model"), ("y",)), ("mu",)))
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            assert Summary("E", draw).render_notation(warn=True) == "E[mu ~ model; y]"
+            assert Summary("E", draw).render_notation(warn=True) == "𝔼[mu ~ model; y]"
 
     def test_raising_the_depth_shows_the_collapsed_levels(self):
         deep = self._chain(10)
@@ -343,6 +350,38 @@ class TestDepth:
         assert deep.render_label() == "… + 1"
         with pytest.warns(UserWarning, match=f"the {_STORED_DEPTH} levels a term stores"):
             assert deep.render_notation(warn=True) == "… + 1"
+
+    def test_a_derivation_is_truncated_whole_each_time_it_reaches_the_stored_depth(self):
+        """The stored levels of a loop restart every ``_STORED_DEPTH - 1`` steps."""
+        period = _STORED_DEPTH - 1
+        depths = [self._chain(steps).depth for steps in range(1, 3 * period + 2)]
+        assert max(depths) == _STORED_DEPTH
+        restarts = [steps for steps, depth in enumerate(depths, start=1) if depth == 2]
+        assert restarts == [1, 1 + period, 1 + 2 * period, 1 + 3 * period]
+        assert self._chain(1 + period).render_label() == "… + 1"
+
+    def test_a_child_stored_by_many_nodes_is_truncated_once(self):
+        """Reusing a deep operand stores one truncation of it, so each use is cheap."""
+        deep = self._chain(_STORED_DEPTH - 1)
+        assert deep.depth == _STORED_DEPTH and deep.truncation is None
+        first = Operator("+", (deep, constant(2)))
+        second = Operator("-", (deep, constant(3)))
+        assert first.operands[0] is second.operands[0] is deep.truncation
+        assert deep.truncation == Truncated("…", label_lost=True, notation_lost=True)
+
+    def test_the_stored_truncation_takes_no_part_in_equality_or_pickling_loss(self):
+        deep = self._chain(_STORED_DEPTH - 1)
+        fresh = self._chain(_STORED_DEPTH - 1)
+        Operator("+", (deep, constant(2)))
+        assert deep == fresh and hash(deep) == hash(fresh)
+        assert pickle.loads(pickle.dumps(deep)) == fresh
+
+    def test_a_node_records_whether_it_holds_a_lost_part(self):
+        assert not self._chain(_STORED_DEPTH - 1).holds_loss
+        assert self._chain(_STORED_DEPTH).holds_loss
+        assert Product((self._chain(_STORED_DEPTH), _named("q", "a"))).holds_loss
+        kept_name = Truncated("m", label_lost=False, notation_lost=False)
+        assert not Selected(kept_name, ("mu",)).holds_loss
 
     @pytest.mark.parametrize("signed", [False, True], ids=["unsigned", "signed"])
     def test_a_truncated_law_keeps_the_paths_it_holds_fixed_without_a_warning(self, signed):

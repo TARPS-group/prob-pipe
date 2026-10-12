@@ -75,7 +75,7 @@ The kind exists so that closure under operations holds for every return value (`
 
 The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. Its `raw()` is the wrapped callable.
 
-A `Function` accepts an optional `output_label` as a result alias. Without an alias, its managed calls display the application expression; named callables default to their Python name and lambdas to `f`. Output components default to the callable's original name, with `f` for a lambda and `result` for a callable without a name or whose name is not a Python identifier. Record results expose their fields. An optional `OutputSpec`, such as `OutputSpec(mean=None)`, overrides this default or declares the result's type. A bare term spec uses the same default packaging. Relabeling a function or result never changes these declarations.
+A `Function` accepts an optional `output_label` as a result alias. Without an alias, a value its managed calls return displays the application expression, and a law or a kernel they return takes the function's label and displays its own signature, as `predict(y, mu)` (IV.2); named callables default to their Python name and lambdas to `𝒻`. Output components default to the callable's original name, with `f` for a lambda and `result` for a callable without a name or whose name is not a Python identifier or is a keyword. Record results expose their fields. An optional `OutputSpec`, such as `OutputSpec(mean=None)`, overrides this default or declares the result's type. A bare term spec uses the same default packaging. Relabeling a function or result never changes these declarations.
 
 ```python
 @function(label="predict", output_label="prediction",
@@ -113,7 +113,7 @@ class Function(TrackedTerm):
     @property
     def output_spec(self) -> OutputSpec | None: ...                 # view on spec
     @property
-    def output_label(self) -> str: ...                             # result label, outside spec
+    def output_label(self) -> str: ...                             # the results' alias, else the label; outside spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
     def with_options(self, **controls) -> Self: ...      # functional update
@@ -389,7 +389,7 @@ It indexes the batch axes and omits the leaf-keyed `Mapping` contract, so a batc
 
 ### Contract
 
-A `Distribution` is a probability measure over the values its event declaration describes. Its `DistributionSpec` carries the draw's `OutputSpec`, which the property `event_spec` returns. The declaration determines the kind of a draw and the components it exposes (II.2). It is the same declaration type a `Function` carries as `output_spec`, and the attribute names `event_spec` and `output_spec` distinguish a draw from a function's return value. A bare `RecordSpec` is accepted and completed at construction to an exposed record, whose fields are the components. A whole-term event is declared under its component, which a constructor requires: a family takes it first, as `Normal("mu", 0.0, 1.0)` does, and an `OutputSpec`, such as the `event_spec` a family constructor also takes to declare the event's type, names that same component. A constructor fills the declaration's type hole from its parameters with `with_spec`, so the stored declaration is complete. The label is the optional keyword `label=`, which defaults to the family's class name, as `Normal`, and to `p` for any other law (II.4), so `Normal("mu", 0.0, 1.0)` is labeled `Normal` and displays as `Normal(mu)`.
+A `Distribution` is a probability measure over the values its event declaration describes. Its `DistributionSpec` carries the draw's `OutputSpec`, which the property `event_spec` returns. The declaration determines the kind of a draw and the components it exposes (II.2). It is the same declaration type a `Function` carries as `output_spec`, and the attribute names `event_spec` and `output_spec` distinguish a draw from a function's return value. A bare `RecordSpec` is accepted and completed at construction to an exposed record, whose fields are the components. A whole-term event is declared under its component, which a constructor requires: a family takes it first, as `Normal("mu", 0.0, 1.0)` does, and an `OutputSpec`, such as the `event_spec` a family constructor also takes to declare the event's type, names that same component. A constructor fills the declaration's type hole from its parameters with `with_spec`, so the stored declaration is complete. The label is the optional keyword `label=`, which defaults to the family's class name, as `Normal`, and to `ℙ` for any other law (II.4), so `Normal("mu", 0.0, 1.0)` is labeled `Normal` and displays as `Normal(mu)`.
 
 It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4). The `raw()` of a field view `d[p]` is the representation of the detached marginal, `d._marginal(p).raw()` (III.8): the backend object where the marginal has one, such as the TFP distribution of a parametric family (VII.1), and the detached law otherwise. That `raw()` raises `ResolutionError` where `d` has no exact marginal at `p`. A draw is a tracked term of the kind the event declaration names.
 
@@ -515,7 +515,7 @@ class SupportsQuantile(Protocol):
 
 @runtime_checkable
 class SupportsExpectation(Protocol):
-    def _expectation(self, f: Callable[[Any], Array]) -> Array: ...   # exact E[f(X)] for arbitrary f
+    def _expectation(self, f: Callable[[Any], Array]) -> Array: ...   # exact 𝔼[f(X)] for arbitrary f
 
 class SupportsExactConditioning(ABC):        # claimed by inheriting, not structurally
     def _condition_on(self, given: Record | Mapping[str, Any], /, **options: Any) -> Distribution: ...   # the conditional law given fixed values
@@ -544,7 +544,7 @@ Each of these capabilities is defined only for a probability law: a sampler draw
 | capability on `v` | derivation | available when |
 |---|---|---|
 | `_sample` | co-sample: draw `X ~ d` and return `π(X)` | parent `SupportsSampling` |
-| `_mean` | projection: `mean(d)[p]`, since `E[πX] = π E[X]` | parent `SupportsMean` |
+| `_mean` | projection: `mean(d)[p]`, since `𝔼[πX] = π 𝔼[X]` | parent `SupportsMean` |
 | `_variance` | restriction of `variance(d)` to the coordinates of `p` | parent `SupportsVariance` |
 | `_cov` | the sub-block `P Σ Pᵀ`, with `P` the coordinate-selection `LinOp`, built lazily through the operator algebra | parent `SupportsCovariance`, numeric field |
 | `_quantile` | restriction of the parent's per-coordinate quantiles to `p` | parent `SupportsQuantile`, numeric field |
@@ -558,7 +558,7 @@ The projection rows are exact whenever the parent's answer is, and the rows thro
 
 Each derived capability carries the parent's guard for the call that its derivation makes, such as the parent's quantile guard at the same probabilities for the quantile row. A moment row through the marginal carries the parent's marginal guard at `p` and then the marginal's guard of the moment, so the view returns or raises as the marginal does. The sample row passes its key and sample shape to the parent unchanged, so a view's draw at a key is the projection at `p` of its parent's draw at that key. A given that covers every field of the view is malformed, since no law remains, so the conditioning row's guard rejects it and `_condition_on` raises `ValueError`. A selection drops each node that the given covers and keeps the rest.
 
-**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution(atoms, component="b")` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed. It offers the density rows when the report includes the density, and a moment row its parent does not claim when the report includes the moment, so a view of a dependent joint at a root factor carries the factor's exact moments, which the joint does not claim. The projection rows derive from the parent's own capabilities, since each computes from the parent's answer.
+**The marginal's capabilities.** A law claiming `SupportsMarginals` may define the companion `_marginal_capabilities(path)`, which returns the capabilities its exact marginal at `path` claims, read from its declarations without building the marginal. The marginals of a law that defines none claim the law's own capabilities. A factored joint reports the capabilities of the factors a marginal keeps, and an empirical law reports sampling and its moments but no density, so a view of `Normal("a", 0.0, 1.0) * EmpiricalDistribution(atoms, component="b")` at `a` claims a density and one at `b` does not. A view reads the report once, at construction, since its path is fixed. It offers the density rows when the report includes the density, and a moment row its parent does not claim when the report includes the moment, so a view of a dependent joint at a root factor carries the factor's exact moments, which the joint does not claim. The `by_component` route of `mean`, `variance`, and `quantile` (VI.5) computes those components of the joint's summary through their views, so those components of the summary are exact. The projection rows derive from the parent's own capabilities, since each computes from the parent's answer.
 
 ### Rationale
 

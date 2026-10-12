@@ -31,6 +31,7 @@ from probpipe import (
     TFPDistribution,
     condition_on,
     conditional_distribution,
+    convert,
     distribution,
     positive,
     workflow_run,
@@ -436,6 +437,85 @@ class TestADerivedLabel:
         rebuilt = eval(repr(law), _namespace())
         assert (rebuilt.label, rebuilt.notation) == ("model", law.notation)
 
+    def test_a_label_the_mixture_does_not_derive_is_shown(self):
+        law = MixtureDistribution(
+            [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)],
+            jnp.array([0.25, 0.75]),
+            label="MixtureDistribution",
+        )
+        assert repr(law).endswith("    label='MixtureDistribution',\n)")
+        assert eval(repr(law), _namespace()).label == "MixtureDistribution"
+
+    def test_the_label_the_mixture_derives_is_left_out_however_it_was_given(self):
+        law = _mixture()
+        given = MixtureDistribution(
+            [Normal("x", 0.0, 1.0, label="a"), Normal("x", 1.0, 2.0, label="b")],
+            jnp.array([0.25, 0.75]),
+            label="mixture",
+        )
+        assert repr(given) == repr(law)
+        assert eval(repr(given), _namespace()).label == given.label
+
+    def test_a_marginal_of_one_factor_leaves_the_label_of_that_factor_out(self):
+        joint = Normal("a", 0.0, 1.0, label="a") * Normal("b", 0.0, 1.0, label="b")
+        marginal = joint._marginal(("a",))
+        assert repr(marginal) == (
+            "FactoredMultivariateGaussian(factors=(Normal('a', loc=0.0, scale=1.0, label='a'),))"
+        )
+        assert eval(repr(marginal), _namespace()).label == marginal.label
+
+
+class TestACarriedLabel:
+    """A label that an operation carries over to another class is shown, so the rebuilt law has it."""
+
+    def test_a_law_converted_from_a_mixture_shows_the_mixtures_label(self):
+        law = convert(_mixture(), Normal)
+        assert law.label == "mixture"
+        assert repr(law).endswith(", label='mixture')")
+        assert eval(repr(law), _namespace()).label == "mixture"
+
+    @pytest.mark.parametrize("target", [EmpiricalDistribution, KDEDistribution])
+    def test_a_law_converted_from_a_product_shows_the_products_label(self, target):
+        product = Normal("x", 0.0, 1.0, label="a") * Normal("y", 1.0, 2.0, label="b")
+        with workflow_run(seed=0):
+            law = convert(product, target)
+        assert law.label == "a·b"
+        assert "    label='a·b',\n" in repr(law)
+
+    def test_a_posterior_of_a_product_shows_the_products_label(self):
+        likelihood = conditional_distribution(
+            lambda mu: Normal("y", mu, 1.0), label="lik", given_spec={"mu": NumericArraySpec(())}
+        )
+        prior = EmpiricalDistribution(jnp.linspace(-1.0, 1.0, 5), component="mu", label="prior")
+        with workflow_run(seed=0):
+            posterior = condition_on(likelihood * prior, {"y": 0.5})
+        assert posterior.label == "lik·prior"
+        assert repr(posterior).endswith("    label='lik·prior',\n    fixed=('y',),\n)")
+
+    def test_a_law_converted_from_a_law_under_its_default_label_leaves_the_label_out(self):
+        law = convert(probpipe.Laplace("x", 0.0, 1.0), Normal)
+        assert law.label == "Normal"
+        assert "label=" not in repr(law)
+
+
+class TestMixtureRepr:
+    @pytest.mark.parametrize("count", [5, 8])
+    def test_a_mixture_shows_each_component_while_it_shows_each_weight(self, count):
+        law = MixtureDistribution(
+            [Normal("x", float(index), 1.0) for index in range(count)], jnp.full(count, 1.0 / count)
+        )
+        assert repr(law).count("Normal('x'") == count
+        assert repr(eval(repr(law), _namespace())) == repr(law)
+
+    def test_a_mixture_of_more_components_than_it_shows_weights_gives_their_count(self):
+        law = MixtureDistribution(
+            [Normal("x", float(index), 1.0) for index in range(9)], jnp.full(9, 1.0 / 9)
+        )
+        assert (
+            repr(law)
+            == "MixtureDistribution(components=9, weights=array(shape=(9,), dtype=float32))"
+        )
+
 
 class TestFunctionsAndOperators:
     def test_a_function_reads_by_its_label_and_parameters(self):
@@ -503,7 +583,7 @@ class TestGrouping:
         assert is_compound(label)
         assert grouped_label(label) == f"({label})"
 
-    @pytest.mark.parametrize("label", ["prior", "prior(mu)", "x[sample=0]", "E[mu ~ prior]"])
+    @pytest.mark.parametrize("label", ["prior", "prior(mu)", "x[sample=0]", "𝔼[mu ~ prior]"])
     def test_a_label_of_one_word_is_used_as_it_is(self, label):
         """A call or a selection holds its spaces and symbols inside its brackets."""
         assert not is_compound(label)
@@ -515,7 +595,7 @@ class TestGrouping:
         assert not is_compound(label)
         assert grouped_label(label) == f"[{label}]"
 
-    @pytest.mark.parametrize("label", ["f(lik·prior)", "E[lik·prior]", "f(mu ~ prior)"])
+    @pytest.mark.parametrize("label", ["f(lik·prior)", "𝔼[lik·prior]", "f(mu ~ prior)"])
     def test_a_symbol_inside_parentheses_or_brackets_is_not_at_the_top_level(self, label):
         assert not is_compound(label)
         assert grouped_label(label) == label

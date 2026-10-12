@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -47,9 +49,9 @@ class TestAFamily:
 
 
 class TestAnEmpiricalLaw:
-    def test_array_atoms_take_the_component_and_the_label_p(self):
+    def test_array_atoms_take_the_component_and_the_generic_label(self):
         law = EmpiricalDistribution(jnp.arange(3.0), component="theta")
-        assert (law.label, list(law.event_spec.components)) == ("p", ["theta"])
+        assert (law.label, list(law.event_spec.components)) == ("ℙ", ["theta"])
         assert (law.atoms.label, law.atoms.level_names) == ("theta", ("theta",))
 
     def test_array_atoms_without_a_component_raise(self):
@@ -71,8 +73,9 @@ class TestAnEmpiricalLaw:
         assert list(law.event_spec.components) == ["theta"]
 
     @pytest.mark.parametrize("constructor", [EmpiricalDistribution, KDEDistribution])
-    def test_a_label_passed_first_raises_naming_the_keyword(self, constructor):
-        with pytest.raises(TypeError, match="takes the atoms first and the label as the keyword"):
+    def test_a_label_passed_first_raises_with_the_call_to_write(self, constructor):
+        call = f"{constructor.__name__}(atoms, label='theta')"
+        with pytest.raises(TypeError, match=re.escape(call)):
             constructor("theta", jnp.arange(3.0))
 
     def test_a_kde_follows_the_empirical_law(self):
@@ -87,7 +90,7 @@ class TestALawFromFunctions:
         law = distribution(
             sample=lambda key: jax.random.normal(key), event_spec=_SCALAR, component="z"
         )
-        assert (law.label, law.notation) == ("p", "p(z)")
+        assert (law.label, law.notation) == ("ℙ", "ℙ(z)")
 
     def test_a_bare_spec_without_a_component_raises(self):
         with pytest.raises(TypeError, match="needs a component"):
@@ -103,7 +106,7 @@ class TestALawFromFunctions:
 
 
 class TestAKernel:
-    def test_a_lambda_is_labeled_p_and_a_def_by_its_name(self):
+    def test_a_lambda_uses_the_generic_label_and_a_def_by_its_name(self):
         def y_given_mu(mu):
             return Normal("y", mu, 1.0)
 
@@ -113,22 +116,26 @@ class TestAKernel:
         kernel = conditional_distribution(
             lambda mu: Normal("y", mu, 1.0), given_spec={"mu": _SCALAR}
         )
-        assert (kernel.label, kernel.notation) == ("p", "p(y | mu)")
+        assert (kernel.label, kernel.notation) == ("ℙ", "ℙ(y | mu)")
 
-    def test_a_label_first_raises(self):
-        with pytest.raises(TypeError, match="takes the function first"):
+    def test_a_label_first_raises_with_the_call_to_write(self):
+        with pytest.raises(
+            TypeError, match=re.escape("conditional_distribution(function, label='lik')")
+        ):
             conditional_distribution("lik")
 
-    def test_a_glm_likelihood_takes_its_component_and_the_label_p(self):
+    def test_a_glm_likelihood_takes_its_component_and_the_generic_label(self):
         glm = glm_likelihood("damage", BernoulliFamily())
-        assert (glm.label, list(glm.event_spec.components)) == ("p", ["damage"])
+        assert (glm.label, list(glm.event_spec.components)) == ("ℙ", ["damage"])
 
 
 def test_a_mixture_takes_its_label_as_a_keyword():
     laws = [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)]
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5])).label == "mixture"
     assert MixtureDistribution(laws, jnp.array([0.5, 0.5]), label="mix").label == "mix"
-    with pytest.raises(TypeError, match="takes the components first and the label as the"):
+    with pytest.raises(
+        TypeError, match=re.escape("MixtureDistribution(components, weights, label='mix')")
+    ):
         MixtureDistribution("mix", laws)
 
 

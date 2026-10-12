@@ -10,6 +10,7 @@ check.
 from __future__ import annotations
 
 import copy
+import functools
 import pickle
 
 import jax.numpy as jnp
@@ -19,10 +20,12 @@ import pytest
 from probpipe import (
     Batch,
     BatchSpec,
+    DistributionBatch,
     Function,
     FunctionBatch,
     FunctionSpec,
     InputSpec,
+    Normal,
     NumericArraySpec,
     Opaque,
     OpaqueBatch,
@@ -446,6 +449,28 @@ class TestElements:
         assert [function._expression for function in stored] == expressions
         assert all(function.provenance is None for function in stored)
 
+    def test_selecting_copies_a_stored_term_once_and_leaves_it_unchanged(self, monkeypatch):
+        """The element hook returns a relabeled copy, so the selection writes to that copy."""
+        stored = [Opaque(object(), label="north"), Opaque(object(), label="east")]
+        expressions = [term._expression for term in stored]
+        batch = OpaqueBatch(stored, "site", label="s")
+        copies = []
+        original = Opaque._shallow_copy
+
+        def counted(term):
+            copies.append(term)
+            return original(term)
+
+        monkeypatch.setattr(Opaque, "_shallow_copy", counted)
+        element = batch[1]
+        assert copies == [stored[1]]
+        assert element is not stored[1]
+        assert element.value is stored[1].value
+        assert element.label == "s[site=1]"
+        assert [term.label for term in stored] == ["north", "east"]
+        assert [term._expression for term in stored] == expressions
+        assert all(term.provenance is None for term in stored)
+
     def test_iteration_walks_the_leading_axis(self, functions):
         assert [f(2) for f in functions] == [2, 4, 6]
 
@@ -601,7 +626,7 @@ class TestTheDefaultLabel:
         def predict(x, y):
             return x + y
 
-        assert FunctionBatch([predict, lambda x: x], "model").label == "[predict(x, y), f(x)]"
+        assert FunctionBatch([predict, lambda x: x], "model").label == "[predict(x, y), 𝒻(x)]"
 
     def test_a_callable_without_an_inspectable_signature_reads_as_its_name(self):
         """``max`` has no signature to inspect, so construction must not need one."""
@@ -634,20 +659,67 @@ class TestTheDefaultLabel:
             FunctionBatch([], "model")
         assert FunctionBatch([], "model", label="none").batch_shape == (0,)
 
+    def test_a_member_without_a_name_says_the_batch_needs_a_label(self):
+        """A partial has no name to describe it, so the batch needs a label."""
+
+        def scale(a, x):
+            return a * x
+
+        with pytest.raises(TypeError, match=r"^FunctionBatch .*label"):
+            FunctionBatch([functools.partial(scale, 1)], "m")
+        labeled = FunctionBatch([functools.partial(scale, 1)], "m", label="scales")
+        assert labeled.label == "scales"
+
+    def test_the_refusal_names_the_batch_class(self):
+        class Scales(FunctionBatch):
+            pass
+
+        def scale(a, x):
+            return a * x
+
+        with pytest.raises(TypeError, match=r"^Scales .*label"):
+            Scales([functools.partial(scale, 1)], "m")
+
 
 class TestTheLabelFirstFormIsRefusedWithAHint:
-    """Three positional arguments led by a string are the earlier label-first form."""
+    """A string with the elements after it, and no label keyword, is the earlier label-first form."""
 
     def test_a_label_first_call_names_the_new_form(self):
         with pytest.raises(
             TypeError,
             match=(
-                r"^FunctionBatch takes the elements first and the label as the keyword label, "
-                r"but got the string 'f' as the elements; "
-                r"write FunctionBatch\(elements, level_names, label='f'\)$"
+                r"^FunctionBatch got the string 'f' as its elements; pass the label by keyword: "
+                r"FunctionBatch\(elements, level_names, label='f'\)$"
             ),
         ):
             FunctionBatch("f", [abs], "variant")
+
+    @pytest.mark.parametrize(
+        ("cls", "elements"),
+        [
+            pytest.param(FunctionBatch, [abs, len], id="FunctionBatch"),
+            pytest.param(OpaqueBatch, [object(), object()], id="OpaqueBatch"),
+            pytest.param(
+                DistributionBatch,
+                [Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)],
+                id="DistributionBatch",
+            ),
+        ],
+    )
+    def test_level_names_by_keyword_names_the_new_form(self, cls, elements):
+        with pytest.raises(
+            TypeError,
+            match=(
+                rf"^{cls.__name__} got the string 'fs' as its elements; pass the label by "
+                rf"keyword: {cls.__name__}\(elements, level_names, label='fs'\)$"
+            ),
+        ):
+            cls("fs", elements, level_names="m")
+
+    def test_a_string_of_elements_is_refused_on_its_own_terms(self):
+        """A string and the level names alone match the new form, so the elements are refused."""
+        with pytest.raises(TypeError, match=r"^FunctionBatch: elements must be a sequence"):
+            FunctionBatch("ab", "m")
 
 
 class TestFieldKeys:
