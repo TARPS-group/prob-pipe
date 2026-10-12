@@ -487,6 +487,64 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 ---
 
+## Releasing
+
+The workflow `.github/workflows/release.yml` publishes both distributions to
+PyPI when a tag `vX.Y.Z` is pushed. It runs these steps:
+
+1. It builds the sdist and the wheel of each distribution.
+2. It checks that the tag matches both versions.
+3. It runs `twine check` on the four files.
+4. It installs both wheels into a fresh environment and imports `probpipe`.
+5. It uploads `probpipe-core` and then `probpipe` through PyPI Trusted Publishing.
+
+### One-time setup
+
+A trusted publisher on PyPI has these fields:
+
+| Field | Value |
+|---|---|
+| Owner | `TARPS-group` |
+| Repository name | `prob-pipe` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+1. On PyPI, add this trusted publisher to each of the projects `probpipe-core`
+   and `probpipe`. Before a project's first upload, add it as a pending publisher
+   under **Publishing** in the account settings.
+2. In the repository's settings on GitHub, create the environment `pypi` under
+   **Environments**. A required reviewer on it makes each upload wait for approval.
+3. To test the workflow on TestPyPI, repeat both steps with TestPyPI and the
+   environment `testpypi`, and then run the workflow by hand with its `testpypi`
+   input checked.
+
+### Each release
+
+1. On a branch, set `version` in both `pyproject.toml` files and the
+   metapackage's `probpipe-core==` pins to the new version, as
+   *Distributions: `probpipe-core` and `probpipe`* describes.
+2. In `CHANGELOG.md`, move the entries under `## [Unreleased]` to a heading
+   `## [X.Y.Z] - YYYY-MM-DD` with the release date.
+3. In `CITATION.cff`, set `version` and `date-released`.
+4. Open a PR into `main` and merge it once CI passes.
+5. Tag the merge commit and push the tag, which starts the release workflow:
+
+   ```bash
+   git checkout main && git pull
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+6. Approve the `pypi` deployment if the environment requires a reviewer.
+7. Check the release in a fresh environment:
+
+   ```bash
+   python -m venv /tmp/check && /tmp/check/bin/pip install probpipe==X.Y.Z
+   /tmp/check/bin/python -c "import probpipe; print(probpipe.__version__)"
+   ```
+
+---
+
 ## Architecture
 
 The design reference in [`design/`](design/README.md) describes the
