@@ -15,7 +15,7 @@ ProbPipe has two distributions, and both install the same import package, `probp
 | `probpipe-core` | ProbPipe with JAX, BlackJAX, TensorFlow Probability, and ArviZ | A minimal install, to which you add the extras you need |
 | `probpipe` | `probpipe-core` with the extras `pymc`, `nutpie`, and `pyabc`, and with `bayesflow` on Python 3.12 and 3.13 | Running the tutorials |
 
-The `probpipe` distribution depends on `probpipe-core==0.1.0`, which is not yet on PyPI.
+The `probpipe` distribution depends on `probpipe-core==0.2.0`, which is not yet on PyPI.
 Until it is, install the tutorials' set of extras through `probpipe-core`, as the commands below do.
 
 ## Google Colab
@@ -123,7 +123,7 @@ print("standard deviation of the draws:", round(float(jnp.std(draws.values)), 2)
 It prints:
 
 ```text
-ProbPipe version: 0.1.0
+ProbPipe version: 0.2.0
 number of draws: 1000
 mean of the draws: 3.0
 standard deviation of the draws: 1.0
