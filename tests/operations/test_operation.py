@@ -384,6 +384,18 @@ class TestIdentityControls:
         view(_laws(first, second))
         assert first.shapes == second.shapes == [(33,)]
 
+    def test_exact_only_holds_in_the_workers_of_a_threaded_constituent(self):
+        def worker(d: Distribution) -> Any:
+            return center.with_options(raw=True)(d)
+
+        inner = Function(worker).with_options(dispatch="thread", raw=True)
+        doubled = _doubled(lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True)
+        law = Sampler("s")
+        view = doubled.with_options(exact_only=True)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            view(law)
+        assert law.shapes == []
+
     def test_the_inherited_controls_are_cleared_after_the_identity_raises(self):
         with pytest.raises(ResolutionError):
             _doubled().with_options(exact_only=True)(Sampler("s"))

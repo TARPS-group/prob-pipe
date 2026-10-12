@@ -744,6 +744,29 @@ def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
     return entered
 
 
+def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
+    """*func*, run under the inherited controls of the calling context, in whatever thread runs it.
+
+    A worker thread starts without the calling thread's context, so a call
+    dispatched to a worker inside a derived operation's identity would
+    otherwise lose an inherited ``exact_only``. Outside an identity *func* is
+    returned as it is.
+    """
+    inherited = _INHERITED_CONTROLS.get()
+    if inherited is None:
+        return func
+
+    @wraps(func)
+    def carried(*args: Any, **kwargs: Any) -> Any:
+        token = _INHERITED_CONTROLS.set(inherited)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _INHERITED_CONTROLS.reset(token)
+
+    return carried
+
+
 #: Removed construction keywords, each with the warning it raises, which are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {

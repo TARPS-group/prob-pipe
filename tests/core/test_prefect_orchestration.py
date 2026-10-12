@@ -13,6 +13,7 @@ Uses ``prefect_test_harness()`` for an in-process temporary server.
 from __future__ import annotations
 
 from contextlib import nullcontext
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +30,12 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core._dispatch import ResolutionError
+from probpipe.distributions._batches import DistributionBatch
+from probpipe.distributions._distribution import Distribution
+from probpipe.operations import OperationRegistry, mean, operation
+
+from ..operations._laws import Sampler
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
 prefect_test_harness = prefect_testing.prefect_test_harness
@@ -566,3 +573,36 @@ class TestPrefectImportGuard:
         with workflow_run(seed=62), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
         assert isinstance(result, EmpiricalDistribution)
+
+
+# ---------------------------------------------------------------------------
+# Controls a derived operation's identity passes to a Prefect constituent
+# ---------------------------------------------------------------------------
+
+
+def _mean_of_law(law: Distribution) -> Any:
+    """The raw mean of *law*, a constituent that runs in a Prefect task."""
+    return mean.with_options(raw=True)(law)
+
+
+class TestInheritedControlsInPrefectTasks:
+    def test_exact_only_holds_in_a_prefect_task_constituent(self):
+        inner = Function(
+            _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
+        ).with_options(raw=True)
+
+        @operation(
+            result=lambda d: None, registry=OperationRegistry(), identity_check=lambda d: True
+        )
+        def summed_means(d: Distribution):
+            """The sum of the means of two copies of *d*."""
+            laws = DistributionBatch([d, d], "laws", label="laws")
+            return jnp.sum(jnp.asarray(inner(laws)))
+
+        law = Sampler("s")
+        with (
+            workflow_run(seed=63),
+            pytest.raises(ResolutionError, match="mean: no route applies with exact_only"),
+        ):
+            summed_means.with_options(exact_only=True)(law)
+        assert law.shapes == []
