@@ -3277,6 +3277,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers ``_default_float_dtype()`` and ``_promote_floats()`` live in
   ``probpipe/_dtype.py``. The float64-truncation warning filter previously
   in ``probpipe/__init__.py`` is removed.
+- **Sweeps over numeric batches with the same levels run as one vectorized
+  call** under `auto` and `jax` dispatch, including several paired arguments.
+  A nested numeric sweep checks once whether its function traces with JAX and
+  shares that check across its cells. Each cell keeps its own check when its
+  swept values must stay fixed or when the sweep is over stored objects.
 
 ### Removed (breaking)
 
@@ -3361,6 +3366,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   postpones the annotation. An `Annotated` annotation replays on Python 3.13
   and later too, and an alias whose value names an undefined name leaves the
   function unreplayable.
+- **Each cell of a nested sweep over stored objects chooses its own dispatch
+  under `auto`.** A cell reused the dispatch that the first cell chose, which
+  raised `ConcretizationTypeError` when a later cell could not be traced.
 - **A function sweep broadcasts the shapes of each named level by NumPy's
   rule.** Within a level that the swept batches share, shapes of any rank align
   from the right and a size-one axis expands. The result carries each level's

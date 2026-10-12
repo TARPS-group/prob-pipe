@@ -772,6 +772,49 @@ def _run_call(
         return _labeled_product(result)
 
     resolved_dispatch: str | None = None
+    traceability_checked = False
+    # A numeric batch has one shape and dtype per column across every cell.
+    # Probe its rows as dynamic inputs so a check can be shared across cells.
+    dynamic_refs = tuple(
+        ref
+        for ref in broadcast_plan.array_args
+        if isinstance(_binding.input_ref_value(values, ref).element_spec, NumericSpec)
+    )
+    cache_traceability = broadcast_plan.regime != "nested" or len(dynamic_refs) == len(
+        broadcast_plan.array_args
+    )
+
+    general_probe_pending = broadcast_plan.regime == "nested" and cache_traceability
+    general_probe_failed = False
+
+    def prepare_shared_probe(
+        dispatch_values: dict[str, Any],
+        broadcast_args: list[_binding.FunctionInputRef],
+    ) -> None:
+        nonlocal general_probe_pending, general_probe_failed
+        nonlocal traceability_checked, resolved_dispatch
+        if not general_probe_pending:
+            return
+        general_probe_pending = False
+        error = _jax_traceability_error(
+            function,
+            dispatch_values,
+            broadcast_args,
+            func=invoke_point,
+            stochastic_plan=stochastic_plan,
+            dynamic_refs=dynamic_refs,
+        )
+        if error is None:
+            traceability_checked = True
+            resolved_dispatch = "jax"
+        else:
+            # A cell can trace with its swept values fixed although they cannot
+            # trace as dynamic inputs, as with a Python branch on a swept value.
+            # So the first cell's fixed-value check decides whether the cells
+            # share a check. A failure applies to every cell, so dispatch="auto"
+            # runs them all sequentially. A success leaves each later cell to its
+            # own check.
+            general_probe_failed = True
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
@@ -779,8 +822,10 @@ def _run_call(
         *,
         jax_supported: bool = True,
     ) -> str:
-        nonlocal resolved_dispatch
-        if function.options["dispatch"] != "auto" or not jax_supported:
+        nonlocal resolved_dispatch, cache_traceability
+        if function.options["dispatch"] == "auto" and jax_supported:
+            prepare_shared_probe(dispatch_values, broadcast_args)
+        if function.options["dispatch"] != "auto" or not jax_supported or not cache_traceability:
             return _resolve_dispatch(
                 function,
                 dispatch_values,
@@ -790,7 +835,7 @@ def _run_call(
                 stochastic_plan=stochastic_plan,
             )
         if resolved_dispatch is None:
-            resolved_dispatch = _resolve_dispatch(
+            dispatch = _resolve_dispatch(
                 function,
                 dispatch_values,
                 broadcast_args,
@@ -798,12 +843,20 @@ def _run_call(
                 func=invoke_point,
                 stochastic_plan=stochastic_plan,
             )
+            if dispatch == "jax" and general_probe_failed:
+                cache_traceability = False
+                return dispatch
+            resolved_dispatch = dispatch
         return resolved_dispatch
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
         broadcast_args: list[_binding.FunctionInputRef],
     ) -> None:
+        nonlocal traceability_checked, cache_traceability
+        prepare_shared_probe(dispatch_values, broadcast_args)
+        if traceability_checked and cache_traceability:
+            return
         _require_jax_traceable(
             function,
             dispatch_values,
@@ -811,6 +864,9 @@ def _run_call(
             func=invoke_point,
             stochastic_plan=stochastic_plan,
         )
+        traceability_checked = True
+        if general_probe_failed:
+            cache_traceability = False
 
     def execute_distribution_broadcast(
         *,
@@ -963,6 +1019,7 @@ def _jax_traceability_error(
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
+    dynamic_refs: tuple[_binding.FunctionInputRef, ...] = (),
 ) -> Exception | None:
     """Return the JAX trace-probe error for the current call, if any.
 
@@ -975,6 +1032,11 @@ def _jax_traceability_error(
     means sequential dispatch, which is always able to run the call — the two
     paths agree on results by contract, so falling back costs speed, never
     correctness.
+
+    *dynamic_refs* names numeric swept inputs to trace as additional dynamic
+    arguments. Success then applies across their values at the same shapes and
+    dtypes. After a failed generalized probe, the caller checks rows at their
+    fixed values.
     """
     try:
         dummy_kw = dict(values)
@@ -1030,9 +1092,6 @@ def _jax_traceability_error(
                 if stochastic_plan is None:  # pragma: no cover - planner contract guard
                     raise RuntimeError("distribution probe is missing its stochastic plan")
                 refs = drawn_refs
-                _draw_call = _broadcast.mapped_draw_body(
-                    func=func, values=dummy_kw, broadcast_args=refs
-                )
                 # The executor reads an enumerated group's atoms as it reads a
                 # sampled group's draws, so every group is probed with a stand-in
                 # for one draw of its root.
@@ -1080,7 +1139,13 @@ def _jax_traceability_error(
                         root_probe = next(iter(columns.values()))
                     root_probes.append(root_probe)
 
-                def probe_draw(root_values):
+                def probe_draw(root_values, dynamic_values):
+                    probe_values = _binding.replace_input_refs(
+                        dummy_kw, dict(zip(dynamic_refs, dynamic_values, strict=True))
+                    )
+                    _draw_call = _broadcast.mapped_draw_body(
+                        func=func, values=probe_values, broadcast_args=refs
+                    )
                     sampled = {}
                     for group, root_value in zip(
                         stochastic_plan.source_groups,
@@ -1096,7 +1161,12 @@ def _jax_traceability_error(
                             sampled[consumer.arg_ref] = evaluate(root_value)
                     return _draw_call(tuple(sampled[ref] for ref in refs))
 
-                jax.make_jaxpr(jax.vmap(probe_draw))(tuple(root_probes))
+                dynamic_values = tuple(
+                    _binding.input_ref_value(dummy_kw, ref) for ref in dynamic_refs
+                )
+                jax.make_jaxpr(jax.vmap(probe_draw, in_axes=(0, None)))(
+                    tuple(root_probes), dynamic_values
+                )
             else:
                 jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
     except Exception as exc:
