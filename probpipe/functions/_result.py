@@ -828,7 +828,9 @@ def _stack_rows(
                 label=label,
             )
         if not isinstance(spec, RecordSpec):
-            batch_class = batch_class_for_spec(spec)
+            # The kind table gives a BatchSpec its element's batch class, whose
+            # constructor takes only the element's spec.
+            batch_class = None if isinstance(spec, BatchSpec) else batch_class_for_spec(spec)
             if batch_class is None:
                 raise ValueError(f"An empty sweep has no batch form for {spec!r}")
             return batch_class(

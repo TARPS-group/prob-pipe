@@ -15,6 +15,7 @@ from probpipe import (
     NumericArraySpec,
     Opaque,
     OpaqueBatch,
+    OpaqueSpec,
     OutputSpec,
     Record,
     RecordBatch,
@@ -347,6 +348,13 @@ class TestBatchOutputDeclarations:
         assert wrapped.output_spec is declared
         assert wrapped.output_spec.spec.axis_groups == (("n",),)
         assert wrapped.output_spec.spec.element_spec.dtype is None
+
+    @pytest.mark.parametrize("element", [NumericArraySpec((), jnp.float32), OpaqueSpec()])
+    def test_an_empty_sweep_of_a_batch_output_has_no_batch_form(self, element):
+        declared = OutputSpec(trajectory=BatchSpec(element, time=3))
+        wrapped = Function(_trajectory, output_spec=declared, dispatch="sequential")
+        with pytest.raises(ValueError, match="An empty sweep has no batch form for BatchSpec"):
+            wrapped(NumericArrayBatch(jnp.zeros((0,)), "beta", label="beta"))
 
     @pytest.mark.parametrize("difference", ["shape", "level"])
     def test_all_evaluations_must_agree_on_one_event(self, difference):
