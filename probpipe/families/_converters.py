@@ -362,11 +362,11 @@ def _affine_support(support: Constraint | None, shift: float, scale: float) -> C
     return None
 
 
-def _affine_bijector(shift: float, scale: float) -> tfb.Bijector:
-    """The backend bijector ``x ↦ shift + scale·x``, omitting an identity part."""
+def _affine_bijector(shift: float, scale: float, dtype: np.dtype) -> tfb.Bijector:
+    """The backend bijector ``x ↦ shift + scale·x``, in *dtype*, omitting an identity part."""
     parts = [
-        *([tfb.Shift(shift)] if shift != 0.0 else []),
-        *([tfb.Scale(scale)] if scale != 1.0 else []),
+        *([tfb.Shift(jnp.asarray(shift, dtype=dtype))] if shift != 0.0 else []),
+        *([tfb.Scale(jnp.asarray(scale, dtype=dtype))] if scale != 1.0 else []),
     ]
     return parts[0] if len(parts) == 1 else tfb.Chain(parts)
 
@@ -393,7 +393,7 @@ def _scipy_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
         return entry.family(component, **arguments, label=name, event_spec=declared)
     base = entry.family(f"{component}_base", **arguments, label=name)
     law = BijectorTransformedDistribution(
-        component, base, _affine_bijector(shift, stretch), label=name
+        component, base, _affine_bijector(shift, stretch, base.event_spec.spec.dtype), label=name
     )
     drawn = law.event_spec.spec
     support = _affine_support(_fixed_support(entry.family), shift, stretch) or drawn.support

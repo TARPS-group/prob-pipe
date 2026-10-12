@@ -768,7 +768,8 @@ class TestScipyConverter:
             ),
         ],
     )
-    def test_a_scipy_law_has_scipy_moments_and_density(self, arguments, family):
+    @pytest.mark.parametrize("x64", [False, True])
+    def test_a_scipy_law_has_scipy_moments_and_density(self, arguments, family, x64):
         """The law a SciPy distribution enters as has SciPy's mean, variance, and density.
 
         A location or scale the family does not hold enters through a
@@ -777,18 +778,19 @@ class TestScipyConverter:
         """
         import scipy.stats as ss
 
-        name, shapes, keywords = arguments
-        source = getattr(ss, name)(*shapes, **keywords)
-        info = converter_registry.check(source, Distribution)
-        assert (info.method_name, info.exact) == ("scipy", True)
-        result = converter_registry.convert(source, Distribution)
-        assert isinstance(result, family or BijectorTransformedDistribution)
-        np.testing.assert_allclose(float(mean(result)), source.mean(), rtol=1e-5)
-        np.testing.assert_allclose(float(variance(result)), source.var(), rtol=1e-5)
-        point = source.mean() + 0.1
-        np.testing.assert_allclose(
-            float(log_prob(result, point)), source.logpdf(point), rtol=1e-5, atol=1e-6
-        )
+        with jax.enable_x64(x64):
+            name, shapes, keywords = arguments
+            source = getattr(ss, name)(*shapes, **keywords)
+            info = converter_registry.check(source, Distribution)
+            assert (info.method_name, info.exact) == ("scipy", True)
+            result = converter_registry.convert(source, Distribution)
+            assert isinstance(result, family or BijectorTransformedDistribution)
+            np.testing.assert_allclose(float(mean(result)), source.mean(), rtol=1e-5)
+            np.testing.assert_allclose(float(variance(result)), source.var(), rtol=1e-5)
+            point = source.mean() + 0.1
+            np.testing.assert_allclose(
+                float(log_prob(result, point)), source.logpdf(point), rtol=1e-5, atol=1e-6
+            )
 
     @pytest.mark.parametrize(
         ("source", "support"),
