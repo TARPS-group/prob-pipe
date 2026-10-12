@@ -623,6 +623,18 @@ class TestTFPConverter:
     def test_is_distribution_type_for_tfp(self):
         assert converter_registry.is_distribution_type(tfd.Gamma(1.0, 1.0))
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param(tfd.Gamma(concentration=2.0, log_rate=0.5), id="gamma"),
+            pytest.param(tfd.Poisson(log_rate=1.0), id="poisson"),
+        ],
+    )
+    def test_a_backend_given_its_log_rate_enters_with_its_rate(self, source):
+        result = converter_registry.convert(source, Distribution)
+        np.testing.assert_allclose(float(mean(result)), float(source.mean()), rtol=1e-6)
+        np.testing.assert_allclose(float(variance(result)), float(source.variance()), rtol=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # SciPy frozen distributions entering ProbPipe (optional)

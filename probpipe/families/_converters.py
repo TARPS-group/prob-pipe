@@ -225,11 +225,16 @@ def _class_claims(cls: type) -> tuple[type, ...]:
 # ---------------------------------------------------------------------------
 
 
+def _tfp_rate(source: tfd.Distribution) -> Any:
+    """The rate of a TFP ``Gamma`` or ``Poisson``, which holds a rate or its logarithm."""
+    return source.rate if source.rate is not None else jnp.exp(source.log_rate)
+
+
 #: The family a TFP backend distribution enters as, with the family's arguments it holds.
 _TFP_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str, Any]]]] = {
     tfd.Normal: (Normal, lambda d: {"loc": d.loc, "scale": d.scale}),
     tfd.Beta: (Beta, lambda d: {"alpha": d.concentration1, "beta": d.concentration0}),
-    tfd.Gamma: (Gamma, lambda d: {"concentration": d.concentration, "rate": d.rate}),
+    tfd.Gamma: (Gamma, lambda d: {"concentration": d.concentration, "rate": _tfp_rate(d)}),
     tfd.InverseGamma: (
         InverseGamma,
         lambda d: {"concentration": d.concentration, "scale": d.scale},
@@ -244,7 +249,7 @@ _TFP_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str,
     tfd.HalfCauchy: (HalfCauchy, lambda d: {"loc": d.loc, "scale": d.scale}),
     tfd.Pareto: (Pareto, lambda d: {"concentration": d.concentration, "scale": d.scale}),
     tfd.Bernoulli: (Bernoulli, lambda d: {"probs": d.probs_parameter()}),
-    tfd.Poisson: (Poisson, lambda d: {"rate": d.rate}),
+    tfd.Poisson: (Poisson, lambda d: {"rate": _tfp_rate(d)}),
     tfd.Categorical: (Categorical, lambda d: {"probs": d.probs_parameter()}),
     tfd.Dirichlet: (Dirichlet, lambda d: {"concentration": d.concentration}),
     tfd.MultivariateNormalTriL: (

@@ -3330,6 +3330,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scipy.stats.poisson`, and the default floating dtype otherwise, which is
   `float64` under `jax_enable_x64`.
   It used to declare `float32` in both cases.
+- **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
+  `log_rate`.** It used to raise `ValueError`.
 - **Empty sweeps require a concrete output declaration before execution.**
   Both the call and `Function.check` refuse an omitted declaration, a type hole,
   or an output dimension that remains unbound after input dimensions bind.
