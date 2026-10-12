@@ -1,0 +1,3 @@
+# The sdist holds the probpipe package and the files that build it.
+# The test suite stays in the repository.
+prune tests
