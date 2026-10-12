@@ -56,6 +56,9 @@ def affine_func():
     return affine
 
 
+type _AnyAlias = Any
+
+
 def _resolve_call(
     func,
     *args,
@@ -105,13 +108,15 @@ class TestWorkflowCallHelpers:
             4,
         )
 
-    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
-        def collect(head: Any, *items: Any, **extras: Any):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self, annotation):
+        def collect(head, *items, **extras):
             return head, items, extras
 
+        collect.__annotations__ = {"head": annotation, "items": annotation, "extras": annotation}
         info = _binding.make_signature_info(collect)
 
-        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is Any
+        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is annotation
         assert (
             _binding.input_ref_hint(
                 info,

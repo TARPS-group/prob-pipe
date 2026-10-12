@@ -63,7 +63,11 @@ from ..functions import _broker, _descendants, _result
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
-from ..values._binding import make_signature_info_from_signature, values_to_bound_arguments
+from ..values._binding import (
+    make_signature_info_from_signature,
+    resolved_hint,
+    values_to_bound_arguments,
+)
 from ..values._function_base import _COMPLETED_AT_RETURN
 
 __all__ = [
@@ -931,9 +935,12 @@ def _kinds_for(hint: Any) -> tuple[type[TermSpec], ...]:
     batch of values is swept; one annotated ``Any`` accepts every kind as it
     arrives; a term class accepts its own kind; and any other annotation, such
     as ``str`` for a field path, selects rather than supplies and accepts none.
+    A type alias accepts the kinds of the annotation :func:`resolved_hint`
+    resolves it to.
     """
     if hint is inspect.Parameter.empty:
         return _VALUE_KINDS
+    hint = resolved_hint(hint)
     if hint is Any:
         return (TermSpec,)
     if not isinstance(hint, type):
@@ -1155,7 +1162,9 @@ class Operation(Function):
         super().__init__(declaration, label=declaration.__name__)
         object.__setattr__(self, "_declaration_name", declaration.__name__)
         first = next(iter(self.signature.parameters), None)
-        subject = first if self._signature_info.hints.get(first) is Distribution else None
+        subject = (
+            first if resolved_hint(self._signature_info.hints.get(first)) is Distribution else None
+        )
         if "given" in self.signature.parameters or (
             roles is not None and first in roles and DistributionSpec not in roles[first]
         ):

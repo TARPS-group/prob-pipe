@@ -16,8 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product as cartesian_product
 from math import prod
-from types import UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from typing import Any, Literal
 
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
@@ -202,7 +201,9 @@ def is_swept(value: Any, expected: Any) -> bool:
     A batched argument is swept unless the annotation names a batched class it
     satisfies or is ``Any``, either of which passes it to the body whole.
     """
-    return _is_batched(value) and not (_value_matches_hint(value, expected) or expected is Any)
+    return _is_batched(value) and not (
+        _value_matches_hint(value, expected) or _binding.resolved_hint(expected) is Any
+    )
 
 
 def is_broadcast(value: Any, expected: Any) -> bool:
@@ -215,7 +216,7 @@ def is_broadcast(value: Any, expected: Any) -> bool:
     return (
         isinstance(value, Distribution)
         and not _is_batched(value)
-        and expected is not Any
+        and _binding.resolved_hint(expected) is not Any
         and not _normalization.is_distribution_hint(expected)
     )
 
@@ -233,7 +234,11 @@ def lift_of(value: Any, expected: Any, role: tuple[type[TermSpec], ...] | None =
         if is_swept(value, expected):
             return "sweep"
         return "broadcast" if is_broadcast(value, expected) else "whole"
-    if not role or expected is Any or role_admits(role, arrived_kind(value)):
+    if (
+        not role
+        or _binding.resolved_hint(expected) is Any
+        or role_admits(role, arrived_kind(value))
+    ):
         return "whole"
     return role_lift(value, role) or "whole"
 
@@ -614,13 +619,13 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     so family membership alone would deliver a batch whole to a body that
     declared it takes something else, silently skipping the sweep.
     """
-    origin = get_origin(expected)
-    if origin in (Union, UnionType):
-        # An optional container annotation still names the container: the value
-        # answers whichever arm it satisfies, and ``None`` answers none.
-        return any(_value_matches_hint(value, arm) for arm in get_args(expected))
-    base = origin or expected
-    try:
-        return isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base)
-    except TypeError:
-        return False
+    # An optional container annotation still names the container, and the value
+    # answers whichever arm it satisfies.
+    for arm in _normalization._arms(expected):
+        base = _normalization._hint_class(arm)
+        try:
+            if isinstance(base, type) and issubclass(base, Batch) and isinstance(value, base):
+                return True
+        except TypeError:
+            continue
+    return False

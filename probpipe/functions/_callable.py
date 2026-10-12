@@ -23,6 +23,7 @@ import numpy as np
 
 from ..core._specs import RecordSpec, _unnamed_declaration
 from ..core.constraints import Constraint
+from ..values._binding import _TYPE_ALIAS_CLASSES, _TYPE_PARAMETER_CLASSES
 from ..values._function_base import _CallableFunctionImplementation
 
 _CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
@@ -82,7 +83,12 @@ class CallableAnchor:
 
 
 def capture_function_anchor(function: Any) -> CallableAnchor:
-    """Capture a strong anchor or a closed unsupported-form record."""
+    """Capture a strong anchor or a closed unsupported-form record.
+
+    The definition includes each type alias that a postponed annotation names,
+    from the hints captured when the Function was constructed. Those hints also
+    govern the call engine's argument presentation and lifting.
+    """
     implementation = getattr(function, "_implementation", None)
     if not isinstance(implementation, _CallableFunctionImplementation):
         return _unsupported_anchor(function, None, "private_function_implementation")
@@ -111,6 +117,13 @@ def capture_function_anchor(function: Any) -> CallableAnchor:
             "annotations": _canonical_value(candidate.__annotations__),
             "signature_and_declarations": signature_and_declarations,
         }
+        alias_annotations = {
+            name: hint
+            for name, hint in function._signature_info.hints.items()
+            if isinstance(candidate.__annotations__.get(name), str) and _contains_type_alias(hint)
+        }
+        if alias_annotations:
+            definition["resolved_alias_annotations"] = _canonical_value(alias_annotations)
         encoded = _canonical_json(definition)
     except _UnsupportedDefinition:
         return _unsupported_anchor(
@@ -211,6 +224,15 @@ def _signature_and_declarations(function: Any, candidate: Any) -> dict[str, Any]
     }
 
 
+def _contains_type_alias(hint: Any) -> bool:
+    """Whether *hint* names a type alias, directly or within a typing construct."""
+    return (
+        isinstance(hint, _TYPE_ALIAS_CLASSES)
+        or isinstance(typing.get_origin(hint), _TYPE_ALIAS_CLASSES)
+        or any(_contains_type_alias(argument) for argument in typing.get_args(hint))
+    )
+
+
 def _canonical_value(value: Any) -> dict[str, Any]:
     return _canonical_value_inner(value, set())
 
@@ -238,6 +260,8 @@ def _canonical_value_inner(value: Any, active_ids: set[int]) -> dict[str, Any]:
         return {"tag": "str", "value": value}
     if isinstance(value, bytes):
         return {"tag": "bytes", "base64": base64.b64encode(value).decode("ascii")}
+    if isinstance(value, _TYPE_ALIAS_CLASSES):
+        return _canonical_type_alias(value, active_ids)
     object_id = id(value)
     if object_id in active_ids:
         raise _UnsupportedDefinition("cyclic callable-definition state")
@@ -316,6 +340,8 @@ def _canonical_value_inner(value: Any, active_ids: set[int]) -> dict[str, Any]:
                 "type": _type_identity(type(value)),
                 "name": value.name,
             }
+        if isinstance(value, _TYPE_PARAMETER_CLASSES):
+            return _canonical_type_parameter(value, active_ids)
         if isinstance(value, (types.GenericAlias, types.UnionType)):
             return {
                 "tag": "generic",
@@ -331,11 +357,69 @@ def _canonical_value_inner(value: Any, active_ids: set[int]) -> dict[str, Any]:
             }
         if isinstance(value, type):
             return {"tag": "type", "value": _type_identity(value)}
+        if isinstance(value, typing._SpecialForm):
+            # The origin of a typing construct that is no class, as
+            # ``Annotated`` on Python 3.13 and later and ``Union`` before 3.14.
+            return {"tag": "special_form", "name": repr(value)}
         raise _UnsupportedDefinition(
             f"unsupported callable-definition value {type(value).__name__}"
         )
     finally:
         active_ids.remove(object_id)
+
+
+def _canonical_type_alias(alias: Any, active_ids: set[int]) -> dict[str, Any]:
+    """A type alias by its import identity, its type parameters, and its value.
+
+    An alias that its own value names again, as ``type Tree = list[Tree] | int``
+    does, is encoded at that inner occurrence by its identity alone.
+    """
+    module = getattr(alias, "__module__", None)
+    name = getattr(alias, "__name__", None)
+    if not isinstance(module, str) or not isinstance(name, str):
+        raise _UnsupportedDefinition("type alias has no import identity")
+    identity = {"module": module, "name": name}
+    alias_id = id(alias)
+    if alias_id in active_ids:
+        return {"tag": "type_alias_reference", **identity}
+    try:
+        value = alias.__value__
+    except NameError as error:
+        raise _UnsupportedDefinition("type alias value names an undefined name") from error
+    active_ids.add(alias_id)
+    try:
+        return {
+            "tag": "type_alias",
+            **identity,
+            "type_params": _canonical_value_inner(tuple(alias.__type_params__), active_ids),
+            "value": _canonical_value_inner(value, active_ids),
+        }
+    finally:
+        active_ids.remove(alias_id)
+
+
+def _canonical_type_parameter(parameter: Any, active_ids: set[int]) -> dict[str, Any]:
+    """A type variable, a ``ParamSpec``, or a ``TypeVarTuple`` by its name, bound, and variance."""
+    try:
+        bound = getattr(parameter, "__bound__", None)
+        constraints = tuple(getattr(parameter, "__constraints__", ()))
+    except NameError as error:
+        raise _UnsupportedDefinition("type parameter bound names an undefined name") from error
+    encoded = {
+        "tag": "type_parameter",
+        "kind": type(parameter).__name__,
+        "name": parameter.__name__,
+        "bound": _canonical_value_inner(bound, active_ids),
+        "constraints": _canonical_value_inner(constraints, active_ids),
+        "variance": [
+            bool(getattr(parameter, f"__{name}__", False))
+            for name in ("covariant", "contravariant", "infer_variance")
+        ],
+    }
+    has_default = getattr(parameter, "has_default", None)
+    if callable(has_default) and has_default():
+        encoded["default"] = _canonical_value_inner(parameter.__default__, active_ids)
+    return encoded
 
 
 def _canonical_code(code: types.CodeType, active_ids: set[int]) -> dict[str, Any]:
