@@ -36,3 +36,14 @@ def test_the_metapackage_moves_in_lockstep_with_the_core():
     assert pins
     exact = re.compile(rf"==\s*{re.escape(core['version'])}\s*(;|$)")
     assert [req for req in pins if not exact.search(req)] == []
+
+
+def test_the_metapackage_ships_the_root_license():
+    """The metapackage's ``LICENSE`` is a copy of the repository's ``LICENSE``.
+
+    PEP 639 requires each license file to be inside the project directory, so
+    ``packaging/probpipe/`` carries its own copy for the metapackage's sdist and wheel.
+    """
+    root = Path(__file__).resolve().parents[1]
+    copy = root / "packaging" / "probpipe" / "LICENSE"
+    assert copy.read_bytes() == (root / "LICENSE").read_bytes()

@@ -18,7 +18,7 @@ to pin a specific version (each release also gets its own version DOI).
              Erozer, Can and Lim, Yongho},
   title   = {{ProbPipe}: Probabilistic pipelines with automated uncertainty quantification},
   year    = {2026},
-  version = {0.1.0},
+  version = {0.2.0},
   doi     = {10.5281/zenodo.20683559},
   url     = {https://github.com/TARPS-group/prob-pipe}
 }
