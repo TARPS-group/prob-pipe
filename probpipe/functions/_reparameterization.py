@@ -121,8 +121,9 @@ def _is_affine(bijector: Function) -> bool:
 class _ForwardMap:
     """The forward map of a backend bijector at one point, named as the backend names it.
 
-    The name makes the bijector's output component the backend's name, as
-    ``exp``, by the rule that names a Function's output after its callable.
+    The name makes the bijector's label and output component the backend's
+    name, as ``exp``, by the rule that names a Function and its output after
+    its callable.
     """
 
     def __init__(self, bijector: tfb.Bijector) -> None:
@@ -143,10 +144,7 @@ class _BackendBijector(Function, SupportsInverse, SupportsLogDetJacobian):
     """
 
     def __init__(self, bijector: tfb.Bijector, image: Constraint | None = None) -> None:
-        super().__init__(
-            _ForwardMap(bijector),
-            label=bijector.name,
-        )
+        super().__init__(_ForwardMap(bijector))
         object.__setattr__(self, "_bijector", bijector)
         object.__setattr__(self, "_image", image)
         object.__setattr__(self, "_affine", _backend_is_affine(bijector))

@@ -168,11 +168,30 @@ class TestTheTrigger:
 
         assert seen == [law]
 
-    @pytest.mark.pending(
-        reason="a parameter annotated Function expects a value and lifts a law", raises=TypeError
-    )
     def test_a_parameter_annotated_function_expects_a_value(self):
         assert isinstance(_kind_of(Function, standard_normal()), Distribution)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
+    def test_a_function_annotation_lifts_in_check_and_execution(self, dispatch):
+        @function(dispatch=dispatch, n_broadcast_samples=6)
+        def square(x: Function):
+            return x * x
+
+        law = standard_normal()
+        report = square.check(law)
+        assert report.feasible is True
+        assert report.lifted == ("x",)
+        with workflow_run(seed=0):
+            result = square(law)
+        assert isinstance(result, Distribution)
+        assert result.num_atoms == 6
+
+    def test_a_function_annotation_sweeps_values(self):
+        @function(dispatch="sequential")
+        def double(x: Function):
+            return 2.0 * x
+
+        np.testing.assert_array_equal(double(_batch([1.0, 2.0])).raw(), [2.0, 4.0])
 
     def test_a_batch_where_one_element_is_expected_is_swept(self):
         @function(dispatch="sequential")

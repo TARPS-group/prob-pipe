@@ -678,7 +678,19 @@ class LinearBasisFunction(GaussianRandomFunction, SupportsSampling):
 # ---------------------------------------------------------------------------
 
 
-class _LinearMapGRF(GaussianRandomFunction):
+class _OperatorGRF(GaussianRandomFunction):
+    """A member that an operator builds from other members and constants, labeled by the operator's expression."""
+
+    def _operator_expression(self) -> Operator:
+        """The expression of the operator applied to the construction's operands."""
+        raise NotImplementedError
+
+    def _derived_label(self) -> str:
+        """The label the construction gives: the operator's expression, as ``f + g``."""
+        return self._operator_expression().render_label()
+
+
+class _LinearMapGRF(_OperatorGRF):
     """``h(x) = A g(x)`` for a member *g* with a vector output; constructed by ``A @ g``."""
 
     def __init__(self, base: GaussianRandomFunction, A: Array) -> None:
@@ -694,7 +706,11 @@ class _LinearMapGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        self._store_expression(Operator("@", (constant(A), base._embedded_expression())))
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``A @ f`` that the construction gives."""
+        return Operator("@", (constant(self._A), self._base._embedded_expression()))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``A``."""
@@ -746,7 +762,7 @@ class _LinearMapGRF(GaussianRandomFunction):
         return jnp.einsum("ow,iwv,pv->iop", self._A, blocks, self._A)
 
 
-class _ShiftedGRF(GaussianRandomFunction):
+class _ShiftedGRF(_OperatorGRF):
     """``h(x) = g(x) + b`` for a constant *b*; constructed by ``g + b``."""
 
     def __init__(self, base: GaussianRandomFunction, b: Array) -> None:
@@ -758,7 +774,11 @@ class _ShiftedGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        self._store_expression(Operator("+", (base._embedded_expression(), constant(b))))
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``f + b`` that the construction gives."""
+        return Operator("+", (self._base._embedded_expression(), constant(self._b)))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``b``."""
@@ -778,7 +798,7 @@ class _ShiftedGRF(GaussianRandomFunction):
         return self._base.predict_covariance(X)
 
 
-class _ScaledGRF(GaussianRandomFunction):
+class _ScaledGRF(_OperatorGRF):
     """``h(x) = alpha g(x)`` for a scalar *alpha*; constructed by ``alpha * g``."""
 
     def __init__(self, base: GaussianRandomFunction, alpha: Array) -> None:
@@ -795,7 +815,11 @@ class _ScaledGRF(GaussianRandomFunction):
             output_spec=base._output_spec,
             event_spec=base.event_spec,
         )
-        self._store_expression(Operator("*", (constant(alpha), base._embedded_expression())))
+        self._store_expression(self._operator_expression())
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``alpha * f`` that the construction gives."""
+        return Operator("*", (constant(self._alpha), self._base._embedded_expression()))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``base`` and ``alpha``."""
@@ -845,7 +869,7 @@ def _summed(left: Array, right: Array) -> Array:
     return left + right
 
 
-class _IndependentSumGRF(GaussianRandomFunction):
+class _IndependentSumGRF(_OperatorGRF):
     """``h(x) = g₁(x) + g₂(x)`` for independent members; constructed by ``g₁ + g₂``.
 
     Independence is the caller's statement, so the covariances add; a member
@@ -860,7 +884,7 @@ class _IndependentSumGRF(GaussianRandomFunction):
             )
         self._left = left
         self._right = right
-        expression = Operator("+", (left._embedded_expression(), right._embedded_expression()))
+        expression = self._operator_expression()
         rendering = expression.label_rendering()
         super().__init__(
             _component_of(left),
@@ -869,6 +893,12 @@ class _IndependentSumGRF(GaussianRandomFunction):
             event_spec=left.event_spec,
         )
         self._store_expression(expression, rendering)
+
+    def _operator_expression(self) -> Operator:
+        """The expression ``f + g`` that the construction gives."""
+        return Operator(
+            "+", (self._left._embedded_expression(), self._right._embedded_expression())
+        )
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The parameters ``left`` and ``right``."""

@@ -9,37 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Remove the experimental `Node`, `Module`, `AbstractModule`,
+  `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
+  `Function` and `@function` no longer accept `module=`. Use ordinary callables
+  and `bind=` for construction-time arguments; call arguments override those
+  bindings, followed by Python defaults for omitted arguments.
+
+- Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
+  expectation, generic laws or kernels, quantile, variance, covariance, and
+  anonymous functions. Explicit labels remain literal, and generated component
+  names remain ASCII.
+
 - **A value, a batch, and a function take their data first and the label as
   the keyword `label=`.** `NumericArray(values, label="x")` replaces
   `NumericArray("x", values)`, `Record({"a": 1.0}, label="r")` or
   `Record.from_fields(a=1.0)` replaces `Record("r", a=1.0)`, and
   `Function(fn, label="g")` replaces `Function("g", fn)`. `from_vector`,
   `from_field_values`, and `from_dict` take the label as the keyword `label=`
-  after their data, as `NumericArray.from_vector(spec, vec, label="x")`. A raw
-  array, an opaque value, and a batch of either require the label. A record and
-  a record batch derive it from their top-level fields, as `record(a,b)`. A
-  function derives it from its callable's name, with `f` for a lambda, and a
-  batch of functions or laws from its members, at most eight in row-major order
-  and then `…`. A call in the label-first form raises a `TypeError` that shows the new
-  call.
+  after their data, as `NumericArray.from_vector(spec, vec, label="x")`, and
+  the first parameter of `Record.from_dict` is named `fields`. A raw array, an
+  opaque value, a batch of either, and a function whose callable has no name
+  require the label. A record and a record batch derive it from their validated
+  top-level fields, so path-keyed and nested fields read alike, as
+  `record(a,b)`, and a batch stacked from records takes the first record's
+  label. A function derives it from its callable's name, with `𝒻` for a lambda,
+  and a batch of functions or laws from its members, at most eight in row-major
+  order and then `…`. A call in the label-first form raises a `TypeError` that
+  shows the call to write, and a refusal of fields that are not a mapping, of an
+  empty record or object batch without a label, or of `Record.from_fields()`
+  without fields names the constructor and the fix.
 - **A function's output component comes from its callable, and `output_label`
   is a display alias.** A result's component defaults to the callable's name,
   with `f` for a lambda and `result` for a callable without a name or whose
-  name is not a Python identifier, and a record result exposes its fields. An
-  `OutputSpec` overrides that default. `output_label` and `with_label` change
-  only how a result displays, never its components, its fingerprint, or its
-  draws. A result without an alias displays the call, as `predict(ambient)`,
-  with only the arguments the caller passed. A `Module` method's results display
-  the call, as `Example.numbers()`, where they displayed the method's name, and
-  a backend bijector's output component is the backend's name, as `exp`.
+  name is not a Python identifier or is a keyword, and a record result exposes
+  its fields. An `OutputSpec` overrides that default. `output_label` and
+  `with_label` change only how a result displays, never its components, its
+  fingerprint, or its draws. A value result without an alias displays the call,
+  as `predict(ambient)`, with only the arguments the caller passed, and a law
+  the function returns keeps the function's label and displays its own
+  signature, as `predict(y, mu)`.
 - **A term that JAX rebuilds from its leaves displays `<no description>`** until
   a managed result boundary describes it, and it stays usable inside `jax.jit`
   and `jax.vmap`.
-- **A law's repr shows `label=` only for a label the caller gave.** A label the
-  constructor derives, such as a product's `lik·prior` or a mixture's, is left
-  out, so evaluating the repr keeps the derived notation. A `KDEDistribution`'s
+- **A law's repr leaves out a label only where its constructor would give that
+  label again.** A label the constructor derives from the arguments shown, such
+  as a product's `lik·prior` or a mixture's, is left out, so evaluating the repr
+  keeps the derived notation, and any other label is shown, as for a law
+  converted from a mixture or a posterior of a product. A mixture's repr lists up
+  to eight components, as many as the weights it prints. A `KDEDistribution`'s
   repr shows its bandwidth, and its constructor takes a list of numbers as its
-  atoms.
+  atoms and refuses a list of different shapes or of entries that are not
+  numbers.
 - **The default labels of a mixture, a minibatched law, and the BayesFlow
   kernels describe them.** A `MixtureDistribution` displays its components, as
   `mixture([a(x), b(x)])`, and a `MinibatchedDistribution` its construction, as
@@ -81,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that are not records and refuse it for record atoms, whose fields are the
   components, and array atoms are labeled by the component.
   `conditional_distribution` labels a kernel after its function's
-  `__name__`, and `p` for a lambda. A law converted from a law under its
+  `__name__`, and `ℙ` for a lambda. A law converted from a law under its
   default label takes its own default, so `convert(Laplace("g", 9.0, 1.0),
   Normal)` displays as `Normal(g)`, and any other converted law keeps its
   source's label. A subclass of `Distribution` or
@@ -90,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `RecordSpec` no longer takes the label as its component. The repr of a law
   or a kernel reads as a call of its constructor, as
   `Normal('mu', loc=0.0, scale=1.0, label='prior')`, and leaves out a label
-  equal to the constructor's default, the class name or `p`, as
+  equal to the constructor's default, the class name or `ℙ`, as
   `Normal('mu', loc=0.0, scale=1.0)`, so the repr of a family that holds
   nothing fixed evaluates to an equal law. Lightweight provenance
   keys a root parent by its identity, so two root laws under one default
@@ -275,7 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that array afterwards, through the caller's handle or through `.raw()`,
   raises `ValueError: assignment destination is read-only`, where it used to
   change the term. To keep a writable array, pass a copy,
-  as in `NumericArray("x", values.copy())`. A pandas or xarray container is
+  as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
   stored by reference as before.
 - **A relabeled or dimension-bound copy of a law draws together with the law
   it copies.** A lift draws every law that `with_label`, `with_dim_names`, or
@@ -734,16 +754,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the resolved string. Existing pickles carrying the removed state are
   unsupported.
 
-- **A batch's label is its first argument, and construction takes the axis
-  partition rather than the sizes (#398).** Two changes to the same signatures.
-
-  `Record(label, fields)` and `Opaque(label, value)` put the label first;
-  `NumericArray` and all five batch forms took it as a keyword. They now match —
-  `RecordBatch("draws", columns, "draw", element_spec=...)`,
-  `NumericArray("x", values)` — with the label and the data positional-only, as
-  `Record`'s are, and the level names still acceptable either way.
-
-  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+- **A batch's construction takes the axis partition rather than the sizes
+  (#398).** `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
   level holds rather than restating their sizes: `axes_per_level=(2,)` for one
   level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
   sizes were never information a constructor lacked — the elements fix them and
@@ -1414,6 +1426,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Distribution-subject operations accept keyword-only `given=` for conditional
+  operands, including sampling, densities, moments, quantiles, expectations,
+  marginals, and conversion. Conditional capabilities serve calls directly;
+  other calls delegate to the operation after conditioning. Batch givens retain
+  their named levels, and given values bind symbolic event dimensions before
+  sampling. `condition_on` can bind individual nodes of a structured given
+  slot while keeping its residual fields available for later binding.
+
+- **`mean`, `variance`, and `quantile` compute each component of a record
+  law by its own route.** The new route `by_component` computes each component
+  whose view has an exact summary by that view's route, and the other
+  components together, from one set of draws, so the mean of a dependent
+  joint such as `likelihood * prior` holds the exact means of the prior's root
+  factors. The result is approximate when any component is, and its
+  provenance records the route and exactness of each block of components. Under
+  `exact_only=True`, the error names the components that have an exact
+  summary and the calls on their views that compute it. `cov` keeps the
+  Monte Carlo fallback for a dependent joint.
 - **`notation_config.max_depth` sets how many nested levels a label or a
   notation shows.** A label derived from other terms, such as
   `E[f(beta ~ model; y)]`, and the notation of a law nest one level for each
@@ -2347,6 +2377,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A dependent joint's mean, variance, and quantiles take `by_component`
+  rather than `monte_carlo`** when one of its components has an exact
+  summary. The check of such a call lists `by_component (exact)` and
+  `by_component (approximate)`, and a seeded estimate of the other components
+  differs from the one `monte_carlo` gave, since they are drawn through their
+  view. A component whose summary is known to be undefined, such as the mean
+  of a Cauchy root factor, now raises `MathematicalDomainError`, where the
+  fallback returned an estimate. `with_options(method="monte_carlo")` keeps the
+  fallback.
+- **A law's fingerprint is computed once.** A distribution keeps its
+  fingerprint in a memo that a copy or a pickle leaves out, so the views and
+  records that name a law as their parent hash it once rather than once each.
+  The fingerprint leaves out every attribute a class declares as transient
+  state, such as that memo, since that state is computed from the rest.
 - **Error and warning messages say what went wrong in the caller's terms.**
   Each message names the call that failed, the argument and value at fault,
   and the fix when it is certain, following the new rules of `STYLE_GUIDE.md`
@@ -3236,6 +3280,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
+  raises `TypeError`, where it warned and used `h`; pass the callable first, as
+  `Function(h, label="g")`.
 - **`UnnormalizedDistribution` is removed.** `distribution` builds the law of a
   density alone, as it builds the law of any combination of a sampler and a
   density: replace `UnnormalizedDistribution(label, f, event_spec)` with
@@ -3268,28 +3315,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A SciPy distribution with a location or scale its family does not hold
+  converts to the same law.** The `scipy` converter used to read a `beta`'s
+  shape arguments alone and drop the location of a `gamma`, `expon`, or
+  `lognorm`, while it reported the conversion as exact.
+  Such a distribution now enters as a `BijectorTransformedDistribution` of the
+  family under the affine map of that location and scale.
+  Its sampling, density, mean, and variance are SciPy's, and it declares the
+  shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
+  The approximate converters read a SciPy source through the same law, so
+  their fits and draws follow the location and scale too.
+- **A SciPy distribution without a family declares the dtype of its draws**:
+  JAX's default integer dtype for a discrete distribution, such as
+  `scipy.stats.poisson`, and the default floating dtype otherwise, which is
+  `float64` under `jax_enable_x64`.
+  It used to declare `float32` in both cases.
+- **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
+  `log_rate`.** It used to raise `ValueError`.
+- **Empty sweeps require a concrete output declaration before execution.**
+  Both the call and `Function.check` refuse an omitted declaration, a type hole,
+  or an output dimension that remains unbound after input dimensions bind.
 - **A display warns about a part that storage truncated only when its text
   shows less than the part.** A law selected many times from a posterior
   displays without a warning, and a warning that meets both a collapsed level
   and a truncated part names both limits.
-- **Two functions without an output declaration that differ only in their
-  callable's name share a fingerprint.**
-- **A record batch derives its label from its validated top-level fields**, so
-  path-keyed and nested fields read alike, as `record(y)`, and fields that are
-  not a mapping, or no fields, raise one error that says so. `Record.ensure`
-  and a record built from component values derive their labels the same way.
-- **A `FunctionBatch` of builtins, such as `max`, constructs**, and selecting a
-  batch element never relabels the term the batch stores.
-- **A lift of a function declared to return a law holds each law under the
-  function's output component**, with `include_inputs=True` too, where it
-  exposed the inner law's components, and a lift of a function realized by
-  routes shows only the arguments the call passed.
 - **A product names the positions and labels of two factors that produce one
-  field**, and offers an output declaration besides a rename.
-- **A constructor's refusal names the constructor, the value, and the fix** for
-  fields that are not a mapping, an empty record or object batch without a
-  label, `Record.from_fields()` without fields, and a callable without a name,
-  whose type it names.
+  field.**
+- **Reusing a term whose label nests 64 levels no longer renders it again on
+  each use**, and selecting an element of a batch of objects copies the stored
+  term once.
 - **A parameter annotated `numpy.typing.NDArray` receives the raw NumPy array
   under NumPy 2.5 as well as earlier versions.** NumPy 2.5 defines `NDArray` as
   a type alias, and every annotation check reads a type alias as the annotation

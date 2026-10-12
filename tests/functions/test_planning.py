@@ -17,12 +17,17 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    DistributionBatch,
+    DistributionSpec,
     EmpiricalDistribution,
     Function,
+    InputSpec,
+    NumericArrayBatch,
     NumericArraySpec,
     OutputSpec,
     RecordSpec,
     function,
+    mean,
     workflow_run,
 )
 from probpipe.core.constraints import positive
@@ -130,13 +135,7 @@ class TestTheResultOfALift:
 
         assert isinstance(result, EmpiricalDistribution)
 
-    @pytest.mark.pending(
-        reason="an empty sweep needs a declaration sufficient to construct its result",
-        raises=AssertionError,
-    )
     def test_an_empty_sweep_without_a_declaration_is_refused(self):
-        from probpipe import NumericArrayBatch
-
         @function(dispatch="sequential")
         def double(x):
             return 2.0 * x
@@ -149,6 +148,60 @@ class TestTheResultOfALift:
         )
 
         assert error_of(lambda: double(empty)) is not None
+
+
+class TestEmptySweepPlanning:
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
+    @pytest.mark.parametrize(
+        "declaration",
+        [None, OutputSpec(value=None), NumericArraySpec(("n",)), RecordSpec(x=("n",))],
+        ids=["undeclared", "type-hole", "unbound-array", "unbound-record"],
+    )
+    @pytest.mark.parametrize("check", [False, True], ids=["execute", "check"])
+    def test_an_incomplete_declaration_is_refused_without_running_the_body(
+        self, dispatch, declaration, check
+    ):
+        @function(dispatch=dispatch, output_spec=declaration)
+        def unexpected(x):
+            raise AssertionError("An empty sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros((0,)), "row", label="rows")
+        call = unexpected.check if check else unexpected
+        with pytest.raises(ValueError, match="empty sweep requires a concrete output_spec"):
+            call(empty)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread", "auto", "jax"])
+    def test_input_dimensions_complete_an_empty_sweeps_output(self, dispatch):
+        @function(
+            dispatch=dispatch,
+            input_spec=InputSpec(x=NumericArraySpec(("n",))),
+            output_spec=NumericArraySpec(("n",)),
+        )
+        def unexpected(x):
+            raise AssertionError("An empty sweep must not evaluate the body")
+
+        empty = NumericArrayBatch(jnp.zeros((0, 2)), "row", label="rows")
+        assert unexpected.check(empty).result.spec.shape == (2,)
+        result = unexpected(empty)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.shape == (2,)
+        assert result.raw().shape == (0, 2)
+
+    def test_an_operation_derives_the_empty_sweeps_declaration(self):
+        import numpy as np
+
+        empty = DistributionBatch(
+            np.empty((0,), dtype=object),
+            "row",
+            element_spec=DistributionSpec(OutputSpec(x=NumericArraySpec(()))),
+            label="laws",
+        )
+        assert mean.check(empty).result.spec.shape == ()
+        result = mean(empty)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == (0,)
+        assert result.element_spec.shape == ()
 
 
 class TestIncludingTheInputs:

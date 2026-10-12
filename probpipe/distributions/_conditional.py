@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 import jax
 import jax.numpy as jnp
 
-from .._messages import unknown_names
+from .._messages import label_given_first, unknown_names
 from ..core._dispatch import Feasibility
 from ..core._expression import ELLIPSIS, Signature
 from ..core._record_spec import RecordSpec
@@ -55,7 +55,6 @@ from ._distribution import (
     _detached_term,
     _event_repr_parts,
     _given_label,
-    _label_given_first,
     _law_repr,
     _no_free_dims,
     _record_default_expression,
@@ -542,7 +541,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ) -> None:
-        label = _constructor_label(self, label, "p") if label is None else label
+        label = _constructor_label(self, label, DEFAULT_LABEL) if label is None else label
         _given_label(label, owner=public_class_name(type(self)))
         self._init_tracked(label, provenance=_provenance)
         _record_default_expression(self)
@@ -827,6 +826,10 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         """The first public class in this kernel's method-resolution order, which the repr names."""
         return public_class_name(type(self))
 
+    def _derived_label(self) -> str | None:
+        """The label this kernel's constructor gives it when it is given no label, as for a law."""
+        return self._default_label
+
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The family parameters the repr shows, each by name and formatted value; none here."""
         return []
@@ -909,14 +912,14 @@ _DERIVED_TWINS: tuple[tuple[type, type, str], ...] = (
 )
 
 
-def _probed_guard(method: str, condition: str) -> Callable[[Any], Feasibility]:
+def _probed_guard(method: str, condition: str) -> Callable[..., Feasibility]:
     """The guard of a derived twin: the report of the law's guard of *method*.
 
     The report is the one the law the function returned at construction gave,
     and *condition* is the guard's condition in words.
     """
 
-    def guard(self: Any) -> Feasibility:
+    def guard(self: Any, *arguments: Any, **keywords: Any) -> Feasibility:
         return self._guards[method]
 
     guard.__doc__ = condition
@@ -1465,7 +1468,7 @@ def _function_kernel(
     ----------
     label : str or None
         The kernel's label. ``None`` takes the label from ``fn.__name__``, and
-        ``p`` for a lambda or a callable without a name.
+        ``ℙ`` for a lambda or a callable without a name.
     fn : callable
         The function of the given values that returns a law.
     given_spec : InputSpec or Mapping[str, TermSpec] or None
@@ -1528,7 +1531,7 @@ def conditional_distribution(
     binding fewer slots curries the kernel over the rest.
 
     The kernel is labeled *label*, or after the function's ``__name__``, and
-    ``p`` for a lambda. The call form takes the function first::
+    ``ℙ`` for a lambda. The call form takes the function first::
 
         likelihood = conditional_distribution(
             lambda mu, tau: Normal("y", mu, tau), label="lik", given_spec={"mu": real, "tau": scale}
@@ -1559,7 +1562,7 @@ def conditional_distribution(
         result is a decorator.
     label : str, optional
         The kernel's label. Defaults to the function's ``__name__``, and to
-        ``p`` for a lambda or a callable without a name.
+        ``ℙ`` for a lambda or a callable without a name.
     given_spec : InputSpec or Mapping[str, TermSpec], optional
         The specs of some or all given slots, keyed by parameter.
     event_spec : OutputSpec or TermSpec, optional
@@ -1588,7 +1591,7 @@ def conditional_distribution(
         returned law, or if its type does not unify with the law's.
     """
     if isinstance(fn, str):
-        raise TypeError(_label_given_first("conditional_distribution", "function", fn))
+        raise TypeError(label_given_first("conditional_distribution", "function", fn))
     if label is not None:
         _given_label(label, owner="conditional_distribution")
     if fn is not None:

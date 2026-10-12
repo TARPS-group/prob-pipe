@@ -1330,32 +1330,48 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
         [
             pytest.param(lambda: NumericArray("x", jnp.ones(3)), id="label-and-value"),
             pytest.param(lambda: NumericArray("x"), id="label-alone"),
+            pytest.param(
+                lambda: NumericArray("x", jnp.ones(3), spec=NumericArraySpec((3,))),
+                id="label-value-and-a-later-keyword",
+            ),
         ],
     )
     def test_a_numeric_array(self, build):
         with pytest.raises(
             TypeError,
             match=(
-                r"^NumericArray takes the value first and the label as the keyword label, but "
-                r"got the string 'x' as the value; write NumericArray\(value, label='x'\)$"
+                r"^NumericArray got the string 'x' as its value; pass the label by keyword: "
+                r"NumericArray\(value, label='x'\)$"
             ),
         ):
             build()
 
-    def test_a_numeric_array_batch(self):
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: NumericArrayBatch("x", jnp.ones(3), "draw"), id="positional"),
+            pytest.param(
+                lambda: NumericArrayBatch("x", jnp.ones(3), level_names="draw"),
+                id="level-names-by-keyword",
+            ),
+        ],
+    )
+    def test_a_numeric_array_batch(self, build):
         with pytest.raises(
             TypeError,
-            match=r"write NumericArrayBatch\(values, level_names, label='x'\)$",
+            match=(
+                r"^NumericArrayBatch got the string 'x' as its values; pass the label by "
+                r"keyword: NumericArrayBatch\(values, level_names, label='x'\)$"
+            ),
         ):
-            NumericArrayBatch("x", jnp.ones(3), "draw")
+            build()
 
     def test_from_vector(self):
         with pytest.raises(
             TypeError,
             match=(
-                r"^NumericArray\.from_vector takes the spec first and the label as the keyword "
-                r"label, but got the string 'x' as the spec; write "
-                r"NumericArray\.from_vector\(spec, vec, label='x'\)$"
+                r"^NumericArray\.from_vector got the string 'x' as its spec; pass the label by "
+                r"keyword: NumericArray\.from_vector\(spec, vec, label='x'\)$"
             ),
         ):
             NumericArray.from_vector("x", NumericArraySpec((2,)), jnp.ones(2))
