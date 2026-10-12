@@ -302,9 +302,16 @@ def _batch_form(label: str, raw: Any, level: str, spec: TermSpec) -> Batch:
     ------
     TypeError
         If *spec* has no batch form.
+    ValueError
+        If *spec* is a ``BatchSpec`` that has a level named *level*.
     """
     levels, ranks = (level,), (1,)
     if isinstance(spec, BatchSpec):
+        if level in spec.level_names:
+            raise ValueError(
+                f"the atom level {level!r} is also a level of each atom, which is a batch on the "
+                f"levels {list(spec.level_names)}. Rename the atom level or the event's level."
+            )
         levels += tuple(spec.level_names)
         ranks += tuple(len(group) for group in spec.axis_groups)
         spec = spec.element_spec
@@ -585,7 +592,8 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         component name, *level* is not a valid level name, or *event_spec* names
         another component than *component* or declares a type that does not
         unify with the atoms' spec, or a batch-valued event's levels do not
-        trail at least one atom level.
+        trail at least one atom level or include the level that array atoms
+        lie on.
 
     Examples
     --------

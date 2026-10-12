@@ -88,11 +88,29 @@ class TestBatchValuedLifts:
             np.testing.assert_array_equal(values, [12.0, 30.0])
             np.testing.assert_allclose(second.weights, [0.25, 0.75])
 
-    def test_a_component_collision_requires_a_distinct_output_component(self):
+    @pytest.mark.parametrize("include_inputs", [False, True])
+    @pytest.mark.parametrize("declared", [False, True])
+    def test_a_component_collision_requires_a_distinct_output_component(
+        self, declared, include_inputs
+    ):
+        def time(beta):
+            return _trajectory(beta)
+
         source = EmpiricalDistribution(jnp.array([2.0]), component="beta")
-        bad = Function(_trajectory, output_spec=OutputSpec(time=None), dispatch="sequential")
-        with workflow_run(seed=0), pytest.raises(ResultSchemaError, match="level"):
+        bad = Function(
+            time,
+            output_spec=OutputSpec(time=None) if declared else None,
+            dispatch="sequential",
+            include_inputs=include_inputs,
+        )
+        message = r"level 'time'.*\['time'\].*OutputSpec with a distinct output component"
+        with workflow_run(seed=0), pytest.raises(ResultSchemaError, match=message):
             bad(source)
+
+    def test_array_atoms_on_an_event_level_name_both_levels(self):
+        event = OutputSpec(trajectory=BatchSpec(NumericArraySpec(()), time=3))
+        with pytest.raises(ValueError, match=r"atom level 'time'.*levels \['time'\]"):
+            EmpiricalDistribution(jnp.ones((4, 3)), event_spec=event, level="time")
 
     def test_non_batch_outputs_use_their_component_as_the_atom_level(self):
         wrapped = Function(lambda x: x + 1, output_spec=OutputSpec(score=None), label="alias")

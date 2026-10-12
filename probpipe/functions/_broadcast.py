@@ -30,9 +30,9 @@ from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
 from ..core._expression import Expression
 from ..core._numeric_array import NumericArray
-from ..core._numeric_array_batch import NumericArrayBatch
+from ..core._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ..core._object_batch import _from_iterable, _ObjectBatch
-from ..core._record_batch import RecordBatch, _batch_class_for
+from ..core._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from ..core._record_spec import RecordSpec
 from ..core._spec_base import NumericArraySpec
 from ..core._specs import OutputSpec
@@ -398,7 +398,9 @@ def _output_atoms(
     Raises
     ------
     ResultSchemaError
-        If the outputs do not satisfy the declaration or do not agree on one spec.
+        If the outputs do not satisfy the declaration or do not agree on one spec,
+        or an evaluation returns a batch with a level named like the output
+        component, which names the atom level.
     """
     atom_level = (
         output_spec._component_name if output_spec is not None else None
@@ -416,6 +418,15 @@ def _output_atoms(
         )
     else:
         rows = _rows_of(outputs, output_label)
+        returned = _returned_levels(rows)
+        if atom_level in returned:
+            raise ResultSchemaError(
+                f"the atoms of {output_label!r} lie on the level {atom_level!r} that the output "
+                f"component names, but the evaluations return batches on the levels "
+                f"{list(returned)}, which include it. Pass an explicit OutputSpec with a distinct "
+                f"output component, such as "
+                f"output_spec=OutputSpec({_free_component(dict.fromkeys(returned))}=None)."
+            )
         completed = None if output_spec is None else _aggregate_output_spec(output_spec, rows)
         try:
             atoms = _make_stack(
@@ -441,6 +452,16 @@ def _output_atoms(
         raise ResultSchemaError(str(error)) from error
     declaration = output_spec.with_spec(actual)
     return atoms, declaration._with_spec(_with_dtypes_of(declaration.spec, actual))
+
+
+def _returned_levels(rows: Any) -> tuple[str, ...]:
+    """The levels of the batches that the evaluations in *rows* returned, in first-seen order."""
+    entries = rows if isinstance(rows, list) else [rows]
+    levels: dict[str, None] = {}
+    for entry in entries:
+        if isinstance(entry, (Batch, _MappedBatchStore, _MappedBatchColumns)):
+            levels.update(dict.fromkeys(entry.level_names))
+    return tuple(levels)
 
 
 def _rows_of(outputs: Any, output_label: str) -> Any:
