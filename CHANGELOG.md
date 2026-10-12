@@ -3315,6 +3315,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A SciPy distribution with a location or scale its family does not hold
+  converts to the same law.** The `scipy` converter used to read a `beta`'s
+  shape arguments alone and drop the location of a `gamma`, `expon`, or
+  `lognorm`, while it reported the conversion as exact.
+  Such a distribution now enters as a `BijectorTransformedDistribution` of the
+  family under the affine map of that location and scale.
+  Its sampling, density, mean, and variance are SciPy's, and it declares the
+  shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
+  The approximate converters read a SciPy source through the same law, so
+  their fits and draws follow the location and scale too.
+- **A SciPy distribution without a family declares the dtype of its draws**:
+  JAX's default integer dtype for a discrete distribution, such as
+  `scipy.stats.poisson`, and the default floating dtype otherwise, which is
+  `float64` under `jax_enable_x64`.
+  It used to declare `float32` in both cases.
+- **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
+  `log_rate`.** It used to raise `ValueError`.
 - **Empty sweeps require a concrete output declaration before execution.**
   Both the call and `Function.check` refuse an omitted declaration, a type hole,
   or an output dimension that remains unbound after input dimensions bind.

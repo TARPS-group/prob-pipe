@@ -18,9 +18,11 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 from probpipe import (
     Bernoulli,
     Beta,
+    BijectorTransformedDistribution,
     Categorical,
     ConversionInfo,
     Converter,
+    Distribution,
     EmpiricalDistribution,
     Exponential,
     Gamma,
@@ -37,8 +39,14 @@ from probpipe import (
     convert,
     converter_registry,
     function,
+    log_prob,
+    mean,
+    sample,
+    variance,
     workflow_run,
 )
+from probpipe._dtype import _default_float_dtype
+from probpipe.core.constraints import greater_than, interval
 from probpipe.distributions import ConverterRegistry
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
@@ -615,6 +623,18 @@ class TestTFPConverter:
     def test_is_distribution_type_for_tfp(self):
         assert converter_registry.is_distribution_type(tfd.Gamma(1.0, 1.0))
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param(tfd.Gamma(concentration=2.0, log_rate=0.5), id="gamma"),
+            pytest.param(tfd.Poisson(log_rate=1.0), id="poisson"),
+        ],
+    )
+    def test_a_backend_given_its_log_rate_enters_with_its_rate(self, source):
+        result = converter_registry.convert(source, Distribution)
+        np.testing.assert_allclose(float(mean(result)), float(source.mean()), rtol=1e-6)
+        np.testing.assert_allclose(float(variance(result)), float(source.variance()), rtol=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # SciPy frozen distributions entering ProbPipe (optional)
@@ -731,6 +751,90 @@ class TestScipyConverter:
         import scipy.stats as ss
 
         assert converter_registry.is_distribution_type(ss.norm(0, 1))
+
+    @pytest.mark.parametrize(
+        ("arguments", "family"),
+        [
+            pytest.param(("beta", (2.0, 3.0), {}), Beta, id="beta"),
+            pytest.param(("beta", (2.0, 3.0), {"scale": 2.0}), None, id="beta-scaled"),
+            pytest.param(("beta", (2.0, 3.0), {"loc": 1.0, "scale": 2.0}), None, id="beta-shifted"),
+            pytest.param(("gamma", (2.0,), {"scale": 1.5}), Gamma, id="gamma"),
+            pytest.param(("gamma", (2.0,), {"loc": 3.0, "scale": 1.5}), None, id="gamma-shifted"),
+            pytest.param(("expon", (), {"scale": 2.0}), Exponential, id="expon"),
+            pytest.param(("expon", (), {"loc": 5.0, "scale": 2.0}), None, id="expon-shifted"),
+            pytest.param(("lognorm", (0.5,), {"scale": 1.5}), LogNormal, id="lognorm"),
+            pytest.param(
+                ("lognorm", (0.5,), {"loc": 2.0, "scale": 1.5}), None, id="lognorm-shifted"
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("x64", [False, True])
+    def test_a_scipy_law_has_scipy_moments_and_density(self, arguments, family, x64):
+        """The law a SciPy distribution enters as has SciPy's mean, variance, and density.
+
+        A location or scale the family does not hold enters through a
+        ``BijectorTransformedDistribution`` of the family, and the conversion
+        stays exact.
+        """
+        import scipy.stats as ss
+
+        with jax.enable_x64(x64):
+            name, shapes, keywords = arguments
+            source = getattr(ss, name)(*shapes, **keywords)
+            info = converter_registry.check(source, Distribution)
+            assert (info.method_name, info.exact) == ("scipy", True)
+            result = converter_registry.convert(source, Distribution)
+            assert isinstance(result, family or BijectorTransformedDistribution)
+            np.testing.assert_allclose(float(mean(result)), source.mean(), rtol=1e-5)
+            np.testing.assert_allclose(float(variance(result)), source.var(), rtol=1e-5)
+            point = source.mean() + 0.1
+            np.testing.assert_allclose(
+                float(log_prob(result, point)), source.logpdf(point), rtol=1e-5, atol=1e-6
+            )
+
+    @pytest.mark.parametrize(
+        ("source", "support"),
+        [
+            pytest.param(("beta", (2.0, 3.0), {"loc": 1.0, "scale": 2.0}), (1.0, 3.0), id="beta"),
+            pytest.param(("gamma", (2.0,), {"loc": 3.0}), (3.0, np.inf), id="gamma"),
+            pytest.param(("expon", (), {"loc": 5.0}), (5.0, np.inf), id="expon"),
+            pytest.param(("lognorm", (0.5,), {"loc": 2.0}), (2.0, np.inf), id="lognorm"),
+        ],
+    )
+    def test_a_shifted_scipy_law_declares_the_shifted_support(self, source, support):
+        """The support is the family's under the affine map, and the draws lie in it."""
+        import scipy.stats as ss
+
+        name, shapes, keywords = source
+        result = converter_registry.convert(getattr(ss, name)(*shapes, **keywords), Distribution)
+        low, high = support
+        expected = greater_than(low) if np.isinf(high) else interval(low, high)
+        assert result.support == expected
+        with workflow_run(seed=0):
+            draws = np.asarray(sample(result, sample_shape=(500,)))
+        assert bool(np.all(expected.check(draws)))
+
+    def test_a_shifted_scipy_law_takes_the_declared_component(self):
+        import scipy.stats as ss
+
+        result = converter_registry.convert(
+            ss.gamma(2.0, loc=3.0), Distribution, event_spec=OutputSpec(y=None)
+        )
+        assert result.label == "gamma"
+        assert result.event_spec == OutputSpec(
+            y=NumericArraySpec((), _default_float_dtype(), greater_than(3.0))
+        )
+
+    def test_a_scipy_distribution_without_a_family_declares_the_dtype_of_its_draws(self):
+        """A discrete distribution draws JAX's default integer dtype, any other its float dtype."""
+        import scipy.stats as ss
+
+        discrete = converter_registry.check(ss.poisson(3.0), Distribution)
+        continuous = converter_registry.check(ss.chi2(df=3), Distribution)
+        assert discrete.target_spec.event_spec.spec.dtype == jnp.asarray(0).dtype
+        assert continuous.target_spec.event_spec.spec.dtype == _default_float_dtype()
+        result = converter_registry.convert(ss.poisson(3.0), EmpiricalDistribution, num_samples=50)
+        assert result.event_spec.spec.dtype == jnp.asarray(0).dtype
 
 
 # ---------------------------------------------------------------------------
