@@ -3321,8 +3321,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   density, because the `log_prob` that `prob` calls selects only exact routes.
   `exact_only` still refuses a derived operation whose inner operation has only
   an approximate route, and a derived operation declared without an
-  `identity_check`. A derived operation over `variance` called with
-  `n_broadcast_samples=5` used to draw the default 256 samples and now draws 5.
+  `identity_check`. `expectation.with_options(n_broadcast_samples=5)(d, f)`,
+  for a map `f` that takes the law whole, used to draw the default 256 samples
+  in the `mean` its identity calls and now draws 5.
   A control that the identity sets on an inner call wins, except `exact_only`,
   which applies when either call sets it. `method`, `method_options`, and `raw`
   stay each operation's own.
