@@ -22,8 +22,10 @@ from probpipe import (
     ResultSchemaError,
     function,
     marginal,
+    mean,
     replay_run,
     sample,
+    variance,
     workflow_run,
 )
 
@@ -118,6 +120,25 @@ class TestBatchValuedLifts:
         with workflow_run(seed=0):
             law = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"))
         assert law.atoms.level_names == ("score",)
+
+
+class TestBatchValuedLiftMoments:
+    def test_a_weighted_trajectory_law_has_elementwise_moments(self):
+        source = EmpiricalDistribution(jnp.array([2.0, 5.0]), [0.25, 0.75], component="beta")
+        trajectory = Function(
+            _trajectory, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
+        )
+        with workflow_run(seed=0):
+            law = trajectory(source)
+            mu = mean(law)
+            var = variance(law)
+        for moment in (mu, var):
+            assert isinstance(moment, NumericArrayBatch)
+            assert moment.level_names == ("time",)
+            assert moment.batch_shape == (3,)
+        # The atoms 2·[1, 2, 3] and 5·[1, 2, 3] under the weights 0.25 and 0.75.
+        np.testing.assert_allclose(mu.raw(), [4.25, 8.5, 12.75], rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(var.raw(), [1.6875, 6.75, 15.1875], rtol=1e-6, atol=1e-6)
 
 
 def _trajectory_law(include_inputs):

@@ -82,10 +82,12 @@ type _Selected = tuple[str, tuple[str, ...], TermSpec]
 # ---------------------------------------------------------------------------
 
 
-def _numeric_atoms(atoms: Any, event_spec: OutputSpec | None = None) -> bool:
-    """Whether one atom of *atoms* is numeric, read without validating *atoms*."""
-    if isinstance(getattr(event_spec, "spec", None), BatchSpec):
-        return False
+def _numeric_atoms(atoms: Any) -> bool:
+    """Whether one atom of *atoms* is numeric, read without validating *atoms*.
+
+    The stored element decides, so an atom that is a batch of numeric elements
+    is numeric too.
+    """
     if isinstance(atoms, Batch):
         return isinstance(atoms.element_spec, NumericSpec)
     return _is_numeric_array(atoms)
@@ -349,7 +351,9 @@ def _coordinates(law: EmpiricalDistribution) -> Array:
     """The flat coordinates of the atoms, an ``(n, d)`` array in the event's flat layout.
 
     An array atom is raveled in row-major order, and a record atom's leaves are
-    raveled and concatenated in the record's canonical order.
+    raveled and concatenated in the record's canonical order. An atom that is a
+    batch is raveled in its raw form, so each leaf runs over the event's batch
+    axes and then the element's own axes.
     """
     rows, count = law._rows, law.num_atoms
     if isinstance(rows, dict):
@@ -358,7 +362,11 @@ def _coordinates(law: EmpiricalDistribution) -> Array:
 
 
 def _empirical_mean(self: EmpiricalDistribution) -> Any:
-    """The weighted mean of the atoms, a value shaped like one draw."""
+    """The weighted mean of the atoms, a value shaped like one draw.
+
+    A batch-valued event's mean is elementwise: its entry at each position of
+    the event's levels is the weighted mean of the atoms' entries there.
+    """
     return _leafwise(self, weighted_mean)
 
 
@@ -549,10 +557,16 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
                                 each coordinate's weighted CDF, for a numeric event
     ==========================  ===================================================
 
-    An instance whose event is not numeric claims no moment. The law claims no
+    An instance claims the moments when its event is numeric: an array, a
+    record of arrays, or a batch of either. The moments of a batch-valued event
+    are elementwise: the mean, the variance, and the quantiles at each position
+    of the event's levels are those of the atoms' entries at that position. Its
+    covariance is over the flat coordinates of one draw, which run over the
+    event's batch axes and then the element's own axes. The law claims no
     density, since an empirical measure has none in general. Every result that
     is shaped like a draw is in the draw's raw form, so a record event's draw,
-    moment, or quantiles are a nested mapping of raw leaves.
+    moment, or quantiles are a nested mapping of raw leaves, and each leaf of a
+    batch-valued event's mean has the event's batch axes leading.
 
     Parameters
     ----------
@@ -628,7 +642,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
         event_spec: OutputSpec | None = None,
     ) -> EmpiricalDistribution:
         base = vars(cls).get("_capability_base", cls)
-        protocols = _NUMERIC_MOMENTS if _numeric_atoms(atoms, event_spec) else ()
+        protocols = _NUMERIC_MOMENTS if _numeric_atoms(atoms) else ()
         return object.__new__(_capability_subclass(base, protocols))
 
     def __init__(
