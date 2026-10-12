@@ -60,6 +60,10 @@ from probpipe.values import Function, FunctionSpec
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
 
+type _DistributionAlias = Distribution
+type _AnyAlias = Any
+type _PathAlias = str
+
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
 # ---------------------------------------------------------------------------
@@ -246,12 +250,22 @@ class TestDeclaration:
 
 
 class TestRoles:
-    def test_roles_follow_the_annotations(self):
-        @operation(result=_open, registry=OperationRegistry())
-        def annotated(d: Distribution, value: Any, path: str):
+    @pytest.mark.parametrize(
+        "annotations",
+        [
+            {"d": Distribution, "value": Any, "path": str},
+            {"d": _DistributionAlias, "value": _AnyAlias, "path": _PathAlias},
+        ],
+        ids=["classes", "aliases"],
+    )
+    def test_roles_follow_the_annotations(self, annotations):
+        def annotated(d, value, path):
             """Three kinds of parameter."""
 
-        operands = {operand.name: operand.accepts for operand in annotated.summary().operands}
+        annotated.__annotations__ = annotations
+        declared = operation(result=_open, registry=OperationRegistry())(annotated)
+
+        operands = {operand.name: operand.accepts for operand in declared.summary().operands}
         assert operands == {
             "d": (DistributionSpec, ConditionalDistributionSpec),
             "value": (TermSpec,),
@@ -320,22 +334,26 @@ class TestRoles:
         assert len(seen) == 8
         assert all(d is law and not isinstance(value, Distribution) for d, value in seen)
 
-    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self, annotation):
         def rule(f: Any) -> None:
             """Leaves the result open."""
 
-        @operation(result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry())
-        def applied(f: Any):
+        def applied(f):
             """A function, consumed as an object."""
 
-        applied.structural_route("any", exact=True, **_route(True, 0.0))
+        applied.__annotations__ = {"f": annotation}
+        declared = operation(
+            result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry()
+        )(applied)
+        declared.structural_route("any", exact=True, **_route(True, 0.0))
         functions = FunctionBatch(
             [lambda x: x, lambda x: 2 * x],
             "fs",
             label="fs",
         )
         with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
-            applied(functions)
+            declared(functions)
 
     def test_apply_lifts_nothing(self):
         laws = DistributionBatch(
