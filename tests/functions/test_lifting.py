@@ -721,7 +721,7 @@ class TestAlignment:
         np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
 
 
-@pytest.fixture(params=["auto", "sequential", "thread"])
+@pytest.fixture(params=["auto", "jax", "sequential", "thread"])
 def alignment_dispatch(request):
     return request.param
 
@@ -822,6 +822,13 @@ class TestSingletonAlignment:
             return mean(law) + x
 
         laws = DistributionBatch([Normal("z", 1.0, 1.0)], "row", label="laws")
+        if alignment_dispatch == "jax":
+            # JAX vectorizes only batches of records and arrays.
+            with pytest.raises(
+                ValueError, match="can only sweep over batches of records or arrays"
+            ):
+                add(laws, _batch([10.0, 20.0]))
+            return
         result = add(laws, _batch([10.0, 20.0]))
 
         assert result.axis_groups == ((2,),)
@@ -867,8 +874,9 @@ class TestSingletonAlignment:
         assert result.axis_groups == ((1,), (2,))
         np.testing.assert_allclose(result.values, [[11.0, 21.0]], atol=0, rtol=0)
 
-    def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self):
-        @function(n_broadcast_samples=6, dispatch="sequential")
+    @pytest.mark.parametrize("dispatch", ["auto", "jax", "sequential"])
+    def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self, dispatch):
+        @function(n_broadcast_samples=6, dispatch=dispatch)
         def add(x, y, z):
             return x + y + z
 
