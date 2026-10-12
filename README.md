@@ -151,7 +151,21 @@ Its provenance shows it was generated using this sampling approach and that it i
 
 ## Installation
 
-ProbPipe requires Python 3.12 or later. It is not yet on PyPI, so it installs from the `main` branch on GitHub:
+ProbPipe requires Python 3.12 or later.
+This command installs ProbPipe from PyPI with the inference backends that the documentation uses:
+
+```bash
+pip install probpipe
+```
+
+For a minimal install, install `probpipe-core` and add the extras you need:
+
+```bash
+pip install probpipe-core
+pip install "probpipe-core[pymc,nutpie]"
+```
+
+The development version installs from the `main` branch on GitHub:
 
 ```bash
 pip install "probpipe-core @ git+https://github.com/TARPS-group/prob-pipe.git@main"
@@ -164,6 +178,6 @@ The [installation page](https://tarps-group.github.io/prob-pipe/get_started/inst
 - [The quickstart](https://tarps-group.github.io/prob-pipe/get_started/quickstart/) works through this example in more detail, including demonstrating how to use built-in diagnostics and perform a predictive check.
 - [The tutorials](https://tarps-group.github.io/prob-pipe/tutorials/01_first_analysis/) work through a complete statistical analysis of a moose population, including model checks, model elaboration, forecasting, and fitting models with likelihood-free methods.
 - [The API reference](https://tarps-group.github.io/prob-pipe/api/) provides complete documentation of ProbPipe capabilities.
-- [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](CONTRIBUTING.md).
+- [How to cite ProbPipe](https://tarps-group.github.io/prob-pipe/cite/), [getting help](https://tarps-group.github.io/prob-pipe/help/), and [contributing](https://github.com/TARPS-group/prob-pipe/blob/main/CONTRIBUTING.md).
 
 > **Human-validated** by Jonathan Huggins on 2026-10-04.
