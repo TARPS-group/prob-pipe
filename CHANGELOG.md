@@ -3344,6 +3344,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reusing a term whose label nests 64 levels no longer renders it again on
   each use**, and selecting an element of a batch of objects copies the stored
   term once.
+- **A parameter annotated `numpy.typing.NDArray` receives the raw NumPy array
+  under NumPy 2.5 as well as earlier versions.** NumPy 2.5 defines `NDArray` as
+  a type alias, and every annotation check reads a type alias as the annotation
+  it stands for. A parameter annotated with an alias of `Normal | None`
+  therefore consumes a law as one annotated `Normal | None` does, and one
+  annotated with an alias of `Any` takes its argument as it arrives. A generic
+  alias reads with its arguments in place of its type parameters, so
+  `Maybe[Normal]` reads as `Normal | None` where `type Maybe[T] = T | None`.
+- **A function annotated with a type alias can be replayed.** Its replay
+  identity records each alias by its module, its name, its type parameters,
+  and its value, so a module-level function annotated
+  `numpy.typing.NDArray[np.float64]` under NumPy 2.5, or with any `type`
+  alias, replays where its anchor was unsupported. The identity changes when
+  the alias's value changes, including when `from __future__ import annotations`
+  postpones the annotation. An `Annotated` annotation replays on Python 3.13
+  and later too, and an alias whose value names an undefined name leaves the
+  function unreplayable.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
