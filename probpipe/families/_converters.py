@@ -6,8 +6,9 @@ carries the source's event declaration:
 - ``tfp`` (exact) brings a TFP backend distribution into ProbPipe as its law:
   the family whose parameters it holds, or the bare backend adapter for a
   backend distribution the catalog has no family for;
-- ``scipy`` (exact) brings a SciPy frozen distribution into ProbPipe as the
-  family whose parameters it holds;
+- ``scipy`` (exact) brings a SciPy frozen distribution into ProbPipe as its
+  family, transformed by an affine bijector when the family does not hold its
+  location or scale;
 - ``moment_match`` (approximate) fits a parametric family to a law by matching
   its moments, or, for a family fit to draws, the statistics of the law's draws;
 - ``empirical`` (approximate) represents a law by the empirical law of its draws;
@@ -30,13 +31,21 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from .._dtype import _default_float_dtype
 from .._messages import unknown_names
 from ..core._spec_base import NumericArraySpec, NumericSpec
 from ..core._specs import OutputSpec
-from ..core.constraints import Constraint, _supports_compatible
+from ..core.constraints import (
+    Constraint,
+    _supports_compatible,
+    greater_than,
+    interval,
+    positive,
+    unit_interval,
+)
 from ..distributions._capabilities import (
     _LAW_CAPABILITIES,
     SupportsCovariance,
@@ -46,7 +55,12 @@ from ..distributions._capabilities import (
     SupportsVariance,
 )
 from ..distributions._conversion import ConversionInfo, Converter, converter_registry
-from ..distributions._distribution import Distribution, DistributionSpec, _labeled_by_default
+from ..distributions._distribution import (
+    Distribution,
+    DistributionSpec,
+    _labeled_by_default,
+    _whole_term_event,
+)
 from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import _broker
 from ..functions._result import SAMPLE_LEVEL
@@ -72,6 +86,7 @@ from ._continuous import (
 from ._discrete import Bernoulli, Binomial, Categorical, NegativeBinomial, Poisson
 from ._multivariate import Dirichlet, Multinomial, MultivariateNormal, VonMisesFisher, Wishart
 from ._resampling import KDEDistribution
+from ._transformed import BijectorTransformedDistribution
 
 try:
     import scipy.stats as _stats
@@ -209,6 +224,7 @@ def _class_claims(cls: type) -> tuple[type, ...]:
 # Backend distributions entering ProbPipe
 # ---------------------------------------------------------------------------
 
+
 #: The family a TFP backend distribution enters as, with the family's arguments it holds.
 _TFP_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str, Any]]]] = {
     tfd.Normal: (Normal, lambda d: {"loc": d.loc, "scale": d.scale}),
@@ -273,61 +289,116 @@ def _scipy_arguments(source: Any) -> tuple[tuple[Any, ...], float, float]:
     return shapes, float(loc), float(scale)
 
 
+@dataclass(frozen=True)
+class _ScipyFamily:
+    """The family a SciPy distribution enters as, and which of SciPy's location and scale it holds.
+
+    ``arguments`` maps SciPy's shape arguments, location, and scale to the
+    family's arguments. A location or scale the family does not hold is applied
+    by an affine bijector, so a shifted or scaled distribution enters as the
+    family transformed by it.
+    """
+
+    family: type[TFPDistribution]
+    arguments: Callable[[tuple[Any, ...], float, float], dict[str, Any]]
+    holds_loc: bool = True
+    holds_scale: bool = True
+
+
 #: The family a SciPy frozen distribution enters as, by its distribution's class.
-_SCIPY_FAMILIES: dict[type, tuple[type[TFPDistribution], Callable[[Any], dict[str, Any]]]] = {}
+_SCIPY_FAMILIES: dict[type, _ScipyFamily] = {}
 if _HAS_SCIPY:
     _SCIPY_FAMILIES = {
-        type(_stats.norm): (
-            Normal,
-            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_scipy_arguments(d)),
-        ),
-        type(_stats.beta): (
+        type(_stats.norm): _ScipyFamily(Normal, lambda s, loc, scale: {"loc": loc, "scale": scale}),
+        type(_stats.beta): _ScipyFamily(
             Beta,
-            lambda d: (lambda s, loc, scale: {"alpha": s[0], "beta": s[1]})(*_scipy_arguments(d)),
+            lambda s, loc, scale: {"alpha": s[0], "beta": s[1]},
+            holds_loc=False,
+            holds_scale=False,
         ),
-        type(_stats.gamma): (
+        type(_stats.gamma): _ScipyFamily(
             Gamma,
-            lambda d: (lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale})(
-                *_scipy_arguments(d)
-            ),
+            lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale},
+            holds_loc=False,
         ),
-        type(_stats.expon): (
-            Exponential,
-            lambda d: (lambda s, loc, scale: {"rate": 1.0 / scale})(*_scipy_arguments(d)),
+        type(_stats.expon): _ScipyFamily(
+            Exponential, lambda s, loc, scale: {"rate": 1.0 / scale}, holds_loc=False
         ),
-        type(_stats.lognorm): (
+        type(_stats.lognorm): _ScipyFamily(
             LogNormal,
-            lambda d: (lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]})(
-                *_scipy_arguments(d)
-            ),
+            lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]},
+            holds_loc=False,
         ),
-        type(_stats.uniform): (
-            Uniform,
-            lambda d: (lambda s, loc, scale: {"low": loc, "high": loc + scale})(
-                *_scipy_arguments(d)
-            ),
+        type(_stats.uniform): _ScipyFamily(
+            Uniform, lambda s, loc, scale: {"low": loc, "high": loc + scale}
         ),
-        type(_stats.cauchy): (
-            Cauchy,
-            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_scipy_arguments(d)),
+        type(_stats.cauchy): _ScipyFamily(
+            Cauchy, lambda s, loc, scale: {"loc": loc, "scale": scale}
         ),
-        type(_stats.laplace): (
-            Laplace,
-            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_scipy_arguments(d)),
+        type(_stats.laplace): _ScipyFamily(
+            Laplace, lambda s, loc, scale: {"loc": loc, "scale": scale}
         ),
     }
 
 
-def _scipy_law(source: Any, declared: OutputSpec | None) -> TFPDistribution | None:
-    """The family the SciPy frozen distribution *source* enters as, or ``None`` when it has none."""
+def _affine_support(support: Constraint | None, shift: float, scale: float) -> Constraint | None:
+    """The image of *support* under ``x ↦ shift + scale·x`` for ``scale > 0``, or ``None``.
+
+    The image is known for the positive half-line and the unit interval, which
+    are the supports of the families that take a SciPy location or scale
+    through a bijector.
+    """
+    if scale <= 0.0:
+        return None
+    if support == positive:
+        return greater_than(shift)
+    if support == unit_interval:
+        return interval(shift, shift + scale)
+    return None
+
+
+def _affine_bijector(shift: float, scale: float) -> tfb.Bijector:
+    """The backend bijector ``x ↦ shift + scale·x``, omitting an identity part."""
+    parts = [
+        *([tfb.Shift(shift)] if shift != 0.0 else []),
+        *([tfb.Scale(scale)] if scale != 1.0 else []),
+    ]
+    return parts[0] if len(parts) == 1 else tfb.Chain(parts)
+
+
+def _scipy_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
+    """The law the SciPy frozen distribution *source* enters as, or ``None`` when it has no family.
+
+    A distribution whose location and scale the family holds enters as the
+    family. Otherwise it enters as a ``BijectorTransformedDistribution`` of the
+    family under the affine map of the location and scale the family does not
+    hold, and declares the image of the family's support under that map, such
+    as ``greater_than(loc)`` for a shifted gamma.
+    """
     entry = _SCIPY_FAMILIES.get(type(source.dist))
     if entry is None:
         return None
-    family, arguments = entry
+    shapes, loc, scale = _scipy_arguments(source)
     name = source.dist.name
-    return family(
-        _backend_component(name, declared), **arguments(source), label=name, event_spec=declared
+    component = _backend_component(name, declared)
+    arguments = entry.arguments(shapes, loc, scale)
+    shift = 0.0 if entry.holds_loc else loc
+    stretch = 1.0 if entry.holds_scale else scale
+    if shift == 0.0 and stretch == 1.0:
+        return entry.family(component, **arguments, label=name, event_spec=declared)
+    base = entry.family(f"{component}_base", **arguments, label=name)
+    law = BijectorTransformedDistribution(
+        component, base, _affine_bijector(shift, stretch), label=name
     )
+    drawn = law.event_spec.spec
+    support = _affine_support(_fixed_support(entry.family), shift, stretch) or drawn.support
+    event = _whole_term_event(
+        component,
+        NumericArraySpec(drawn.shape, drawn.dtype, support),
+        declared,
+        "BijectorTransformedDistribution",
+    )
+    return law._with_declaration(event, "with_support", {"support": support})
 
 
 def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | None:
@@ -344,8 +415,13 @@ def _entering_law(source: Any, declared: OutputSpec | None) -> Distribution | No
 
 
 def _scipy_declaration(source: Any, declared: OutputSpec | None) -> OutputSpec:
-    """The declaration of one draw of a SciPy frozen distribution: a scalar under its name."""
-    spec = NumericArraySpec((), jnp.float32)
+    """The declaration of one draw of a SciPy frozen distribution: a scalar under its name.
+
+    Its dtype is the one JAX gives SciPy's draws: the default integer dtype for
+    a discrete distribution, and the default floating dtype otherwise.
+    """
+    drawn = np.int64 if isinstance(source.dist, _stats.rv_discrete) else np.float64
+    spec = NumericArraySpec((), jax.dtypes.canonicalize_dtype(drawn))
     if declared is not None:
         return declared.with_spec(spec)
     return OutputSpec(**{source.dist.name: spec})
@@ -455,15 +531,19 @@ class _TFPConverter(_BackendConverter):
 
 
 class _ScipyConverter(_BackendConverter):
-    """A SciPy frozen distribution enters ProbPipe as the family whose parameters it holds."""
+    """A SciPy frozen distribution enters ProbPipe as its family, exactly.
+
+    A location or scale the family does not hold, such as a gamma's location,
+    enters through a ``BijectorTransformedDistribution`` of the family.
+    """
 
     @property
     def name(self) -> str:
         return "scipy"
 
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
-        families = tuple(dict.fromkeys(family for family, _ in _SCIPY_FAMILIES.values()))
-        return ((_rv_frozen,), families)
+        families = tuple(dict.fromkeys(entry.family for entry in _SCIPY_FAMILIES.values()))
+        return ((_rv_frozen,), (*families, BijectorTransformedDistribution))
 
     def _law(self, source: Any, declared: OutputSpec | None) -> Distribution | None:
         return _scipy_law(source, declared)
