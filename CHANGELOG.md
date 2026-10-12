@@ -3315,6 +3315,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Empty sweeps require a concrete output declaration before execution.**
+  Both the call and `Function.check` refuse an omitted declaration, a type hole,
+  or an output dimension that remains unbound after input dimensions bind.
 - **A display warns about a part that storage truncated only when its text
   shows less than the part.** A law selected many times from a posterior
   displays without a warning, and a warning that meets both a collapsed level

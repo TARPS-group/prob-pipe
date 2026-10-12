@@ -1166,6 +1166,9 @@ class Function(TrackedTerm, Annotated):
             If an argument's kind is not one its parameter accepts, an
             applicability condition fails, or the declarations conflict, as the
             call raises.
+        ValueError
+            If an empty sweep lacks a concrete output declaration after input
+            dimensions bind.
         ResolutionError
             If a conversion has no converter, or the ``method`` control names no
             route of a Function realized by routes.
@@ -1319,6 +1322,9 @@ class Function(TrackedTerm, Annotated):
         ApplicabilityError
             If an argument's kind is not one its parameter accepts, or the
             declarations conflict.
+        ValueError
+            If an empty sweep lacks a concrete output declaration after input
+            dimensions bind.
         ResolutionError
             If no route realizes the call.
         ResultKindError, ResultSchemaError
