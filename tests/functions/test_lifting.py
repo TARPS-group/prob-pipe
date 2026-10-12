@@ -16,6 +16,7 @@ is an instance of the class.
 
 from __future__ import annotations
 
+import functools
 from typing import Annotated, Any
 
 import jax
@@ -398,6 +399,35 @@ class TestARawClassAnnotation:
         )
 
         assert len(seen) == 1 and seen[0] is value
+
+    def test_an_annotated_hint_of_a_callable_object_names_the_class_it_wraps(self):
+        # A callable object presents its hints without get_type_hints removing
+        # the Annotated metadata.
+        seen: list[Any] = []
+
+        class Receive:
+            def __call__(self, x):
+                seen.append(x)
+                return 0.0
+
+        Receive.__call__.__annotations__ = {"x": Annotated[jax.Array, "metadata"]}
+        value = jnp.arange(3.0)
+        Function(Receive(), label="receive")(NumericArray(value, label="x"))
+
+        assert len(seen) == 1 and seen[0] is value
+
+    def test_an_annotated_distribution_hint_of_a_partial_consumes_the_law(self):
+        seen: list[Any] = []
+
+        def consume(d, scale):
+            seen.append(d)
+            return 0.0
+
+        consume.__annotations__ = {"d": Annotated[Normal, "prior"], "scale": float}
+        law = standard_normal()
+        Function(functools.partial(consume, scale=1.0), label="consume")(law)
+
+        assert seen == [law]
 
     def test_each_argument_a_variadic_parameter_collects_arrives_in_its_raw_form(self):
         values = (jnp.arange(2.0), jnp.arange(3.0))

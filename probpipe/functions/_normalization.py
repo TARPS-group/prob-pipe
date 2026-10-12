@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import UnionType
-from typing import Any, TypeAliasType, Union, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, Union, get_args, get_origin
 
 from ..core._dispatch import ResolutionError
 from ..core._repr import type_name
@@ -256,12 +256,16 @@ def _hint_class(arm: Any) -> Any:
     """The class an annotation names, resolving type aliases and aliased origins.
 
     A type alias names the class of its value, so an array alias
-    parametrized by a dtype names the array class. Other annotations retain
-    their existing class or value.
+    parametrized by a dtype names the array class. An ``Annotated`` hint
+    names the class of the annotation it wraps, since a partial or a callable
+    object presents its hints without ``get_type_hints`` removing the
+    metadata. Other annotations retain their existing class or value.
     """
     if isinstance(arm, TypeAliasType):
         return _hint_class(arm.__value__)
     origin = get_origin(arm)
+    if origin is Annotated:
+        return _hint_class(get_args(arm)[0])
     if isinstance(origin, TypeAliasType):
         return _hint_class(origin.__value__)
     return origin if isinstance(origin, type) else arm
