@@ -202,7 +202,13 @@ def resolve_function_values(
     dependency_type: type,
     function_name: str,
 ) -> dict[str, Any]:
-    """Resolve final signature-shaped arguments from every value source."""
+    """Resolve final signature-shaped arguments from every value source.
+
+    A Function stored among a module's child nodes binds as an ordinary value,
+    so call-time arguments and construction bindings can override it.
+    """
+    from ._function_base import Function
+
     values: dict[str, Any] = {}
     mod_child_nodes = getattr(module, "child_nodes", {}) if module is not None else {}
     mod_inputs = getattr(module, "inputs", {}) if module is not None else {}
@@ -246,7 +252,7 @@ def resolve_function_values(
         elif name in bind:
             values[name] = bind[name]
         elif module is not None:
-            if is_dep and name in mod_child_nodes:
+            if name in mod_child_nodes and (is_dep or isinstance(mod_child_nodes[name], Function)):
                 values[name] = mod_child_nodes[name]
             elif not is_dep and name in mod_inputs:
                 values[name] = mod_inputs[name]

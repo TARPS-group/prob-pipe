@@ -299,6 +299,33 @@ class TestArgumentBinding:
 
 
 class TestModuleResolution:
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_module_function_values_bind_and_allow_call_overrides(self, wrapped):
+        class Functions(Module):
+            @workflow_method
+            def apply(self, f: Function, x):
+                return f(x)
+
+            @workflow_method
+            def unannotated(self, f, x):
+                return f(x)
+
+        def increment(x):
+            return x + 1.0
+
+        f = Function(increment, dispatch="sequential") if wrapped else increment
+        module = Functions(f=f, x=3.0)
+        if wrapped:
+            assert module.child_nodes["f"] is f
+        else:
+            assert module.inputs["f"] is f
+        for method in (module.apply, module.unannotated):
+            assert method.check().feasible is True
+            assert float(method()) == 4.0
+            assert float(method(f=Function(lambda x: 2.0 * x))) == 6.0
+        bound = Function(lambda f, x: f(x), module=module, bind={"f": Function(lambda x: 3.0 * x)})
+        assert float(bound()) == 9.0
+
     def test_module_inputs_dependencies_and_defaults_resolve_for_workflow_methods(self):
         dep = DataNode()
         module = CallResolutionModule(dep=dep, x=5.0)
