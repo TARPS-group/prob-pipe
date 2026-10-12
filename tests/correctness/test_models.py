@@ -240,7 +240,7 @@ class TestPyMCModel:
         """``mu ~ N(0, 10)``, ``sigma ~ HalfNormal(1)``, and ``y ~ N(mu, sigma)`` give known moments.
 
         The mean and variance of ``sigma`` are ``sqrt(2/pi)`` and ``1 - 2/pi``,
-        and ``y`` has mean zero and variance ``100 + E[sigma²] = 101``.
+        and ``y`` has mean zero and variance ``100 + 𝔼[sigma²] = 101``.
         """
         model = PyMCModel(_normal_model, label="normal")
         with workflow_run(seed=12):
@@ -471,7 +471,7 @@ class TestUnnormalizedDensity:
 
 
 def _chain():
-    """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``E[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
+    """``x ~ N(1, 2)`` and ``y | x ~ N(2x + 1, 0.5)``: ``𝔼[y] = 3``, ``Var y = 16.25``, ``Cov = 8``."""
     x = Normal("x", 1.0, 2.0)
     y = ObservationKernel("y", {"x": x.event_spec.spec}, REAL, lambda x: tfd.Normal(2 * x + 1, 0.5))
     return y * x
@@ -512,6 +512,20 @@ class TestFactoredJoints:
                 joint
             )
         _within_mcse([means["mean(x)"], means["mean(y)"]], [1.0, 3.0], [2.0, np.sqrt(16.25)])
+
+    def test_the_mean_of_a_dependent_joint_is_exact_at_its_root_factor(self):
+        """``by_component`` gives ``E[x] = 1`` and ``Var x = 4`` exactly, and estimates ``y``."""
+        joint = _chain()
+        assert mean.check(joint).route == "by_component"
+        with workflow_run(seed=17):
+            means = mean.with_options(n_broadcast_samples=DRAWS, raw=True)(joint)
+            variances = variance.with_options(n_broadcast_samples=DRAWS, raw=True)(joint)
+        assert float(means["mean(x)"]) == pytest.approx(1.0, abs=1e-6)
+        assert float(variances["variance(x)"]) == pytest.approx(4.0, abs=1e-5)
+        _within_mcse(means["mean(y)"], 3.0, np.sqrt(16.25))
+        # Observed across seeds 17 to 20: errors of the estimated variance up to
+        # 0.48, against a standard error of about 0.36.
+        np.testing.assert_allclose(float(variances["variance(y)"]), 16.25, atol=1.45, rtol=0)
 
     def test_the_marginal_of_the_root_factor_is_the_factor(self):
         marginal_x = marginal(_chain(), "x")

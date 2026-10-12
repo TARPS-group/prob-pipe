@@ -60,7 +60,6 @@ from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
-from ..core.node import Node
 from ..core.provenance import Provenance
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
@@ -122,7 +121,6 @@ def function(
     output_label: str | None = None,
     differentiable: NumericSpec | None = None,
     bind: Mapping[str, Any] | None = None,
-    module: Any | None = None,
     **controls: Any,
 ) -> Function | Callable[[Callable[..., Any]], Function]:
     """Decorator to create a :class:`Function` from a plain function.
@@ -161,21 +159,20 @@ def function(
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
     label : str or None
-        The function label, defaulting to the callable's name, or ``f`` for a lambda.
+        The function label, defaulting to the callable's name, or ``𝒻`` for a lambda.
         A callable with none, such as a ``functools.partial``, needs it.
     input_spec : InputSpec or Mapping[str, TermSpec] or None
         The authoritative input slots, as :class:`Function` takes them.
     output_spec : OutputSpec or TermSpec or None
         The authoritative result declaration, as :class:`Function` takes it.
     output_label : str or None
-        Optional result alias; otherwise the result describes the application.
+        Optional result alias. Without one, a value result describes the
+        application, and a returned law or kernel takes the function's label.
     differentiable : NumericSpec or None
         The differentiability claim, as :class:`Function` takes it.
     bind : Mapping or None
         Construction-time values of the wrapped callable's arguments, which
         call arguments override.
-    module : object or None
-        The experimental shared-input container consulted for missing arguments.
     **controls : Any
         The engine's controls, which :class:`Function` lists.
 
@@ -202,7 +199,6 @@ def function(
             output_label=output_label,
             differentiable=differentiable,
             bind=bind,
-            module=module,
             **controls,
             label=label,
         )
@@ -321,7 +317,9 @@ def _result_expression(
     """The expression of the result of a call of *function* on the arguments *values* (II.4).
 
     A function's result carries its explicit alias or application expression, and an operation's result
-    the expression its expression rule builds from the operands'. ``None``
+    the expression its expression rule builds from the operands'. The result
+    boundary labels a returned law or kernel by the function's label instead of
+    the application. ``None``
     leaves the result the expression its route gave it.
     """
     derive = getattr(function, "_derived_expression", None)
@@ -615,8 +613,6 @@ def _run_call(
         args,
         call_inputs,
         bind=function._bind,
-        module=function._module,
-        dependency_type=Node,
         function_name=function._label,
     )
 
@@ -642,7 +638,7 @@ def _run_call(
     )
     label, expression = _result_identity(function, values, passed)
     controls = function.options
-    candidates = function._route_candidates(controls)
+    candidates = function._route_candidates(controls, values)
     selection: tuple[Any, OutputSpec | None, Any, Any] | None = None
     if candidates is not None and broadcast_plan.regime == "none":
         # The routes realize the one point, so the selection is the call's route.
@@ -707,6 +703,7 @@ def _run_call(
         concrete_output_spec = _resolution.lifted_declaration(
             function, values, controls, broadcast_plan
         )
+    _plan.require_empty_sweep_output(broadcast_plan, concrete_output_spec)
     concrete_output_template = (
         _output_record_spec(concrete_output_spec) if concrete_output_spec is not None else None
     )
@@ -1385,6 +1382,9 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     ApplicabilityError
         If an argument's kind is not accepted, a condition fails, or the
         declarations conflict.
+    ValueError
+        If an empty sweep lacks a concrete output declaration after input
+        dimensions bind.
     ResolutionError
         If a conversion has no converter, or the ``method`` control names no
         route of a Function realized by routes.
@@ -1394,8 +1394,6 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         args,
         kwargs,
         bind=function._bind,
-        module=function._module,
-        dependency_type=Node,
         function_name=function._label,
     )
     values, conversions, waiting = _normalization.plan_distribution_values(
@@ -1413,7 +1411,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
     broadcast_plan = _plan.build_broadcast_plan(
         values=values, signature_info=function._signature_info, roles=function._roles
     )
-    candidates = function._route_candidates(function.options)
+    candidates = function._route_candidates(function.options, values)
     if candidates is not None:
         return _check_routes(function, values, broadcast_plan, candidates, conversions, waiting)
     lifted_refs = (*broadcast_plan.array_args, *broadcast_plan.dist_args)
@@ -1428,6 +1426,7 @@ def _check_call(function: Function, args: tuple[Any, ...], kwargs: dict[str, Any
         if function.output_spec is not None
         else None
     )
+    _plan.require_empty_sweep_output(broadcast_plan, result)
     deferred = ()
     if result is None or result.spec is None:
         deferred = ("the result's type is completed from the returned value",)
@@ -1494,6 +1493,7 @@ def _check_routes(
         )
     finally:
         _call._CHECKING.reset(token)
+    _plan.require_empty_sweep_output(broadcast_plan, point.result)
     return _resolution.call_report(
         point, lifted=lifted, conversions=conversions, candidates=candidates
     )
@@ -1594,7 +1594,7 @@ class _CallEngine:
         admits each argument by its role, with no lifting, runs the route
         selected for the point, and returns the result's raw form.
         """
-        candidates = function._route_candidates(function.options)
+        candidates = function._route_candidates(function.options, values)
         if candidates is None:
             arguments = _call.presented_arguments(function._signature_info, values)
             return function._implementation.invoke(

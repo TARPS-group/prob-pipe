@@ -21,7 +21,7 @@ child nodes. No node holds a reference to a term. The node classes are these:
    ``f(beta ~ model; y)``;
 7. :class:`AppliedValue`: the value a function's call returns, as
    ``f(beta, 2.0)``;
-8. :class:`Summary`: a summary of a law or a draw, as ``E[mu ~ prior]`` or
+8. :class:`Summary`: a summary of a law or a draw, as ``𝔼[mu ~ prior]`` or
    ``log prior(mu)``;
 9. :class:`Operator`: an operator applied to values, as ``2 * effect``;
 10. :class:`Indexed`: a selection of a batch, as ``(mu ~ prior)[sample=0]``;
@@ -38,10 +38,13 @@ child records the law's signature, because the node holds no term.
 A rendering shows at most :attr:`~probpipe.core.config.NotationConfig.max_depth`
 nested levels. A node deeper than that renders as its collapsed text, which is
 the name of a law or a function, or ``…`` for a value. A stored expression keeps
-at most :data:`_STORED_DEPTH` levels, and a part nested deeper is stored as a
-:class:`Truncated` node, which renders as the part's collapsed text and holds
-the paths the part holds fixed. A term's label is rendered once, when the term
-is built, and its notation each time it is shown. A display of a term warns
+at most :data:`_STORED_DEPTH` levels. A node built over a child that nests that
+many levels stores the whole child as a :class:`Truncated` node, which renders
+as the child's collapsed text and holds the paths the child holds fixed. A
+long derivation, such as a loop that adds to a value, is therefore truncated
+whole each time it reaches that depth, and the label of the operation that
+truncates it shows that operation alone, as ``… + 1``. A term's label is
+rendered once, when the term is built, and its notation each time it is shown. A display of a term warns
 when what it shows collapsed a level, or shows a truncated part whose text is
 less than the part rendered in full. Storing a label renders it silently.
 """
@@ -176,8 +179,7 @@ class _Rendering:
         recorded too, since a greater setting would not show that part.
         """
         self.collapsed = True
-        if not self.truncated:
-            self.truncated = _holds_lost_part(node)
+        self.truncated = self.truncated or node.holds_loss
         return node._collapsed()
 
     def result(self) -> Collapse | None:
@@ -192,25 +194,38 @@ class Expression:
 
     Every node renders a label and a notation (:meth:`render_label`,
     :meth:`render_notation`), states the paths it holds fixed (:meth:`fixed_paths`),
-    and stores its nesting depth in its field ``depth``. A subclass is a frozen
-    dataclass whose fields are strings, tuples of strings, and child nodes, and
-    its ``__post_init__`` sets ``depth`` once the children are final.
+    and stores its nesting depth in its field ``depth``, and in its field
+    ``holds_loss`` whether it is or holds a :class:`Truncated` node whose text
+    shows less than its part. A subclass is a frozen dataclass whose fields are
+    strings, tuples of strings, and child nodes, and its ``__post_init__`` sets
+    both fields once the children are final. Its field ``truncation`` holds the
+    :class:`Truncated` node that stores it, once a node built over it has
+    truncated it. None of the three takes part in equality, hashing, or the
+    repr.
     """
 
     __slots__ = ()
+
+    #: The fields every subclass stores, as the class docstring states.
+    depth: int
+    holds_loss: bool
+    truncation: Truncated | None
 
     def _children(self) -> tuple[Expression, ...]:
         """The child nodes, in rendering order."""
         return ()
 
-    def _set_depth(self) -> None:
-        """Store the depth of this node, computed from its children's stored depths.
+    def _set_derived(self) -> None:
+        """Store this node's ``depth`` and ``holds_loss``, computed from its children's.
 
         The depth is the number of nodes on the longest path from this node to
-        a leaf, this node included.
+        a leaf, this node included. The node holds a loss when a child is or
+        holds a :class:`Truncated` node whose text shows less than its part.
         """
-        depth = 1 + max((child.depth for child in self._children()), default=0)
+        children = self._children()
+        depth = 1 + max((child.depth for child in children), default=0)
         object.__setattr__(self, "depth", depth)
+        object.__setattr__(self, "holds_loss", any(child.holds_loss for child in children))
 
     # -- reading the tree ----------------------------------------------------
 
@@ -329,7 +344,7 @@ class Expression:
         A conditioning and a selection keep their base's label, a product without
         a label joins its factors' labels with ``·``, and an applied function takes
         the function's label. A value renders in full, as ``(y, mu) ~ model`` or
-        ``E[mu ~ prior]``, with each part grouped by design II.4.
+        ``𝔼[mu ~ prior]``, with each part grouped by design II.4.
 
         Returns
         -------
@@ -399,37 +414,38 @@ class Expression:
 def _kept(child: Expression) -> Expression:
     """*child* as a node stores it.
 
-    A child that nests :data:`_STORED_DEPTH` levels is stored as a
-    :class:`Truncated` node, which keeps its collapsed text, its signature, the
-    paths it holds fixed, and the defaulted given slots it leaves free, and
-    records where its text shows less than *child* renders in full.
+    A child that nests :data:`_STORED_DEPTH` levels is stored as the
+    :class:`Truncated` node that :func:`_truncated` builds. The child keeps
+    that node in its field ``truncation``, so a child stored by many nodes is
+    rendered in full once.
     """
     if child.depth < _STORED_DEPTH:
         return child
-    signature = child.signature if isinstance(child, _Signed) else None
-    shown = Truncated(child._collapsed(), child.fixed_paths(), child._defaulted_givens(), signature)
+    truncation = child.truncation
+    if truncation is None:
+        truncation = _truncated(child)
+        object.__setattr__(child, "truncation", truncation)
+    return truncation
+
+
+def _truncated(part: Expression) -> Truncated:
+    """The :class:`Truncated` node that stores *part*.
+
+    It keeps the part's collapsed text, its signature, the paths it holds
+    fixed, and the defaulted given slots it leaves free, and records where its
+    text shows less than the part renders in full.
+    """
+    signature = part.signature if isinstance(part, _Signed) else None
+    shown = Truncated(part._collapsed(), part.fixed_paths(), part._defaulted_givens(), signature)
     return replace(
         shown,
-        label_lost=_shows_less(child._label, shown._label),
+        label_lost=_shows_less(part._label, shown._label),
         notation_lost=_shows_less(
-            lambda rendering, level: child._notation(rendering, level, None),
+            lambda rendering, level: part._notation(rendering, level, None),
             lambda rendering, level: shown._notation(rendering, level, None),
         ),
-        call_lost=_shows_less(child._call, shown._call),
+        call_lost=_shows_less(part._call, shown._call),
     )
-
-
-def _holds_lost_part(node: Expression) -> bool:
-    """Whether *node* is or holds a :class:`Truncated` node that shows less than its part."""
-    pending = [node]
-    while pending:
-        current = pending.pop()
-        if isinstance(current, Truncated):
-            if current.label_lost or current.notation_lost or current.call_lost:
-                return True
-        else:
-            pending.extend(current._children())
-    return False
 
 
 def _shows_less(full: Any, shown: Any) -> bool:
@@ -449,12 +465,12 @@ def _kept_all(children: Iterable[Expression]) -> tuple[Expression, ...]:
     return tuple(_kept(child) for child in children)
 
 
-def _depth_field() -> Any:
-    """The dataclass field that stores a node's depth.
+def _derived_field() -> Any:
+    """The dataclass field that stores a fact a node derives from its children.
 
-    A node computes its depth once, when it is built, from its children's
-    stored depths. The field takes no part in equality, hashing, or the repr,
-    so two nodes compare by their content alone.
+    A node computes its ``depth`` and its ``holds_loss`` once, when it is built,
+    from its children's stored fields. Such a field takes no part in equality,
+    hashing, or the repr, so two nodes compare by their content alone.
     """
     return field(init=False, compare=False, repr=False)
 
@@ -502,10 +518,12 @@ class Named(_Signed):
 
     label: str
     signature: Signature | None = None
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._set_depth()
+        self._set_derived()
 
     def _defaulted_givens(self) -> tuple[tuple[str, str], ...]:
         signature = self.signature
@@ -562,10 +580,15 @@ class Truncated(_Signed):
     label_lost: bool = True
     notation_lost: bool = True
     call_lost: bool = False
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._set_depth()
+        object.__setattr__(self, "depth", 1)
+        object.__setattr__(
+            self, "holds_loss", self.label_lost or self.notation_lost or self.call_lost
+        )
 
     def fixed_paths(self) -> tuple[str, ...]:
         return self.fixed
@@ -612,14 +635,16 @@ class Product(Expression):
     """
 
     factors: tuple[Expression, ...]
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         flat: list[Expression] = []
         for factor in self.factors:
             flat.extend(factor.factors if isinstance(factor, Product) else (factor,))
         object.__setattr__(self, "factors", _kept_all(flat))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return self.factors
@@ -656,11 +681,13 @@ class Collection(Expression):
 
     elements: tuple[Expression, ...]
     omitted: bool = False
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "elements", _kept_all(self.elements))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return self.elements
@@ -701,7 +728,9 @@ class Conditioned(_Signed):
     base: Expression
     fixed: tuple[str, ...]
     signature: Signature | None = None
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         base = self.base
@@ -709,7 +738,7 @@ class Conditioned(_Signed):
             object.__setattr__(self, "fixed", _merged(base.fixed, self.fixed))
             base = base.base
         object.__setattr__(self, "base", _kept(base))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return (self.base,)
@@ -753,11 +782,13 @@ class Selected(_Signed):
     base: Expression
     paths: tuple[str, ...]
     signature: Signature | None = None
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base", _kept(self.base))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return (self.base,)
@@ -799,11 +830,13 @@ class Draw(Expression):
 
     components: tuple[str, ...]
     law: Expression
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "law", _kept(self.law))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return (self.law,)
@@ -834,18 +867,28 @@ class Applied(Expression):
     arguments : tuple of Expression
         The arguments in order: a :class:`Draw` for each law drawn from, and
         a value's expression for any other argument.
+    keywords : tuple of (str, Expression)
+        The arguments the call passes by keyword, in order, which the notation
+        shows after the positional ones as ``name=value``; empty by default.
     """
 
     function: str
     arguments: tuple[Expression, ...]
-    depth: int = _depth_field()
+    keywords: tuple[tuple[str, Expression], ...] = ()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arguments", _kept_all(self.arguments))
-        self._set_depth()
+        if self.keywords:
+            names = tuple(name for name, _ in self.keywords)
+            values = _kept_all(tuple(value for _, value in self.keywords))
+            object.__setattr__(self, "keywords", tuple(zip(names, values, strict=True)))
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
-        return self.arguments
+        return self.arguments + tuple(value for _, value in self.keywords)
 
     def _collapsed(self) -> str:
         return self.function
@@ -856,10 +899,11 @@ class Applied(Expression):
     def _notation(self, rendering: _Rendering, level: int, own: Signature | None) -> str:
         if rendering.beyond(level):
             return rendering.collapse(self)
-        arguments = ", ".join(
-            self._argument(argument, rendering, level + 1) for argument in self.arguments
+        parts = [self._argument(argument, rendering, level + 1) for argument in self.arguments]
+        parts.extend(
+            f"{name}={self._argument(value, rendering, level + 1)}" for name, value in self.keywords
         )
-        return f"{self.function}({arguments})"
+        return f"{self.function}({', '.join(parts)})"
 
     def _call(self, rendering: _Rendering, level: int) -> str | None:
         return self._notation(rendering, level, None)
@@ -896,8 +940,15 @@ class AppliedValue(Applied):
         return self._notation(rendering, level, None)
 
 
+#: Automatic law and anonymous-function descriptions; explicit labels stay literal.
+_GENERIC_LAW_SYMBOL = "ℙ"
+_ANONYMOUS_FUNCTION_SYMBOL = "𝒻"
+
+#: Internal summary kinds keep their spelling; only their presentation uses Unicode.
+_SUMMARY_SYMBOLS = {"E": "𝔼", "Var": "𝕍", "Cov": "ℂ", "Q": "ℚ"}
+
 #: The summaries a :class:`Summary` node writes as ``kind[argument]``.
-_BRACKETED_SUMMARIES = frozenset({"E", "Var", "Cov", "Q"})
+_BRACKETED_SUMMARIES = frozenset(_SUMMARY_SYMBOLS)
 
 #: The summary of a law's score, written ``log`` and the law's notation.
 SCORE = "log"
@@ -910,10 +961,12 @@ DENSITY = "density"
 class Summary(Expression):
     """A value that summarizes a law or a draw.
 
-    The kinds and their renderings:
+    Internal summary kinds keep their ASCII spelling. Their displayed symbols
+    are ``𝔼``, ``𝕍``, ``ℂ``, and ``ℚ`` for ``E``, ``Var``, ``Cov``, and ``Q``.
+    Explicit labels are rendered literally. The kinds and their renderings:
 
     1. ``E``, ``Var``, ``Cov``, and ``Q``: the expectation, the variance, the
-       covariance, and the quantile of a draw, as ``E[(y, mu) ~ model]``;
+       covariance, and the quantile of a draw, as ``𝔼[(y, mu) ~ model]``;
     2. ``log``: a score, ``log`` followed by the law's notation, as
        ``log prior(mu)``;
     3. ``density``: a density, which reads as the law's notation, as
@@ -930,13 +983,15 @@ class Summary(Expression):
 
     kind: str
     argument: Expression
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.kind not in _BRACKETED_SUMMARIES | {SCORE, DENSITY}:
             raise ValueError(f"unknown summary kind {self.kind!r}")
         object.__setattr__(self, "argument", _kept(self.argument))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return (self.argument,)
@@ -951,8 +1006,10 @@ class Summary(Expression):
             return argument._notation(rendering, level + 1, None)
         if isinstance(argument, Applied):
             # The expectation of a function at draws is the expectation of the call.
-            return f"{self.kind}[{argument._notation(rendering, level + 1, None)}]"
-        return f"{self.kind}[{argument._label(rendering, level + 1)}]"
+            return (
+                f"{_SUMMARY_SYMBOLS[self.kind]}[{argument._notation(rendering, level + 1, None)}]"
+            )
+        return f"{_SUMMARY_SYMBOLS[self.kind]}[{argument._label(rendering, level + 1)}]"
 
 
 #: The unary operators written as a call of their operand, as ``abs(x)``.
@@ -977,11 +1034,13 @@ class Operator(Expression):
 
     symbol: str
     operands: tuple[Expression, ...]
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "operands", _kept_all(self.operands))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return self.operands
@@ -1026,13 +1085,15 @@ class Indexed(_Signed):
     index: str
     signature: Signature | None = None
     element: Expression | None = None
-    depth: int = _depth_field()
+    depth: int = _derived_field()
+    holds_loss: bool = _derived_field()
+    truncation: Truncated | None = field(default=None, init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base", _kept(self.base))
         if self.element is not None:
             object.__setattr__(self, "element", _kept(self.element))
-        self._set_depth()
+        self._set_derived()
 
     def _children(self) -> tuple[Expression, ...]:
         return (self.base,) if self.element is None else (self.base, self.element)

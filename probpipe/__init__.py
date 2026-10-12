@@ -155,13 +155,9 @@ from probpipe.families._resampling import (
     KDEDistribution,
 )
 from probpipe.functions import (
-    AbstractModule,
-    Module,
-    abstract_workflow_method,
     bijector_for,
     function,
     register_bijector,
-    workflow_method,
 )
 from probpipe.functions._call import ApplicabilityError, CallReport
 from probpipe.functions._context import workflow_run
@@ -223,7 +219,6 @@ from probpipe.values import (
 )
 
 __all__ = [
-    "AbstractModule",
     "Annotated",
     "ApplicabilityError",
     "ArrayBackend",
@@ -266,7 +261,6 @@ __all__ = [
     "LogNormal",
     "MathematicalDomainError",
     "MinibatchedDistribution",
-    "Module",
     "Multinomial",
     "MultivariateNormal",
     "NamedTree",
@@ -329,7 +323,6 @@ __all__ = [
     "Weights",
     "Wishart",
     "WorkflowKind",
-    "abstract_workflow_method",
     "array_backend_for",
     "bijector_for",
     "boolean",
@@ -393,7 +386,6 @@ __all__ = [
     "variance",
     "with_conversion",
     "with_resampling",
-    "workflow_method",
     "workflow_run",
 ]
 

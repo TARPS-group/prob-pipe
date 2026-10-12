@@ -26,6 +26,7 @@ from probpipe import (
     Record,
     RecordSpec,
     TermSpec,
+    workflow_run,
 )
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
@@ -594,7 +595,9 @@ class TestFunctionHashing:
         a = Function(first)
         b = Function(second)
         assert a.output_spec is None and b.output_spec is None
-        assert a._output_component != b._output_component
+        with workflow_run(seed=0):
+            laws = [f.with_options(n_broadcast_samples=8)(Normal("x", 0.0, 1.0)) for f in (a, b)]
+        assert [tuple(law.event_spec.components) for law in laws] == [("first",), ("second",)]
         assert fingerprint(a) == fingerprint(b)
 
     @pytest.mark.parametrize(

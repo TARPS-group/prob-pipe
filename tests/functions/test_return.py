@@ -34,13 +34,22 @@ from probpipe import (
     RecordSpec,
     ResultKindError,
     ResultSchemaError,
+    function,
     workflow_run,
 )
 from probpipe.core.constraints import positive
+from probpipe.distributions import ConditionalDistribution
 
 from ._design_helpers import error_of, standard_normal
 
 SCALAR = NumericArraySpec(())
+
+
+class _Kernel(ConditionalDistribution):
+    """A kernel from a scalar ``mu`` to a law over a scalar ``y``, which is never conditioned."""
+
+    def _condition_on(self, given, /, **kwargs):
+        raise NotImplementedError
 
 
 class TestTheKindDirectedWrap:
@@ -175,9 +184,51 @@ class TestLabelAndProvenance:
             label="predict",
         )()
 
-        assert result.label == "predict()"
-        assert str(result) == result.notation == "predict()"
+        assert result.label == "predict"
+        assert str(result) == result.notation == "predict(a, b)"
         assert product.notation == "Normal(a)·Gamma(b)"
+
+    def test_a_law_returned_by_a_value_call_displays_by_the_function_label(self):
+        @function
+        def predict(x):
+            return Normal("y", x, 1.0) * Normal("mu", 0.0, 1.0)
+
+        @function
+        def single(x):
+            return Normal("y", x, 1.0)
+
+        product, law = predict(1.0), single(1.0)
+
+        assert (product.label, str(product)) == ("predict", "predict(y, mu)")
+        assert (law.label, str(law)) == ("single", "single(y)")
+
+    def test_a_kernel_returned_by_a_value_call_displays_by_the_function_label(self):
+        result = Function(
+            lambda scale: _Kernel({"mu": SCALAR}, OutputSpec(y=SCALAR)), label="make"
+        )(2.0)
+
+        assert isinstance(result, ConditionalDistribution)
+        assert (result.label, str(result)) == ("make", "make(y | mu)")
+
+    def test_a_returned_law_takes_the_output_label_alias(self):
+        def predict(x):
+            return Normal("y", x, 1.0) * Normal("mu", 0.0, 1.0)
+
+        product = Function(predict, label="predict", output_label="model")(1.0)
+        law = Function(lambda x: Normal("y", x, 1.0), label="single", output_label="lik")(1.0)
+
+        assert (product.label, str(product)) == ("model", "model(y, mu)")
+        assert (law.label, str(law)) == ("lik", "lik(y)")
+
+    def test_a_relabeled_function_labels_its_returned_law(self):
+        single = Function(lambda x: Normal("y", x, 1.0), label="single").with_label("renamed")
+
+        assert str(single(1.0)) == "renamed(y)"
+
+    def test_a_value_result_keeps_the_application(self):
+        result = Function(lambda x: 2.0 * x, label="double")(1.0)
+
+        assert result.label == "double(1.0)"
 
     def test_each_product_of_a_sweep_displays_by_its_element_label(self):
         def predict(loc):

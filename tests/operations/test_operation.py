@@ -36,7 +36,9 @@ from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
+from probpipe.distributions._conditional import ConditionalDistributionSpec
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
+from probpipe.functions._resolution import PointReport
 from probpipe.operations import (
     BoundCall,
     OperandSummary,
@@ -48,7 +50,11 @@ from probpipe.operations import (
     operation,
 )
 from probpipe.operations._moments import mean
-from probpipe.operations._operation import _install_expression_rule, _workflow_draws
+from probpipe.operations._operation import (
+    _DelegatingRoute,
+    _install_expression_rule,
+    _workflow_draws,
+)
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
@@ -246,7 +252,12 @@ class TestRoles:
             """Three kinds of parameter."""
 
         operands = {operand.name: operand.accepts for operand in annotated.summary().operands}
-        assert operands == {"d": (DistributionSpec,), "value": (TermSpec,), "path": ()}
+        assert operands == {
+            "d": (DistributionSpec, ConditionalDistributionSpec),
+            "value": (TermSpec,),
+            "path": (),
+            "given": (RecordSpec,),
+        }
 
     def test_a_declared_role_overrides_the_annotation(self):
         toy = _toy(roles={"d": (NumericArraySpec,)})
@@ -278,7 +289,7 @@ class TestRoles:
         def scored(d: Distribution, value):
             """An unannotated value."""
 
-        (_, value) = scored.summary().operands
+        (_, value, _) = scored.summary().operands
         assert value.accepts == (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
 
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
@@ -714,6 +725,103 @@ class TestRegistryRoutes:
         assert "precise, rough" in routes["methods"].condition
 
 
+class _Delegate(_DelegatingRoute):
+    """A structural route that returns 2 by an exact implementation, where it has one, and 3 otherwise.
+
+    It records the ``exact_only`` restriction of each probe and run.
+    """
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self, *, exact_available: bool) -> None:
+        super().__init__("delegate")
+        self.exact_available = exact_available
+        self.probes: list[bool] = []
+        self.runs: list[bool] = []
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        self.probes.append(exact_only)
+        if exact_only and not self.exact_available:
+            return Feasibility(False, "no exact implementation")
+        return PointReport(True, exact=self.exact_available)
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        self.runs.append(exact_only)
+        return jnp.float32(2.0 if self.exact_available else 3.0)
+
+
+class TestDelegatingRoutes:
+    """A route whose exactness is delegated is ranked twice, as a registry route is."""
+
+    def _operation(self, delegate: _Delegate) -> Any:
+        toy = _toy()
+        toy.structural_route("stand_in", exact=False, **_route(True, 1.0))
+        toy.register_route(delegate)
+        return toy
+
+    def test_its_exact_candidate_outranks_an_approximate_route_registered_before_it(self):
+        delegate = _Delegate(exact_available=True)
+        toy = self._operation(delegate)
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.method, report.exact) == ("delegate", None, True)
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 2.0
+        assert delegate.runs == [True]
+
+    def test_its_approximate_candidate_ranks_by_registration_order(self):
+        delegate = _Delegate(exact_available=False)
+        report = self._operation(delegate).check(Gaussian("g"))
+        assert report.route == "stand_in"
+        assert [info.method_name for info in report.routes] == ["delegate (exact)", "stand_in"]
+
+    def test_it_runs_approximately_when_no_route_ranks_above_it(self):
+        delegate = _Delegate(exact_available=False)
+        toy = _toy()
+        toy.register_route(delegate)
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
+        assert float(jnp.asarray(toy(Gaussian("g")))) == 3.0
+        assert delegate.runs == [False]
+
+    def test_exact_only_keeps_only_its_exact_candidate(self):
+        toy = self._operation(_Delegate(exact_available=False)).with_options(exact_only=True)
+        with pytest.raises(ResolutionError, match=r"delegate \(exact\): no exact implementation"):
+            toy(Gaussian("g"))
+        exact = self._operation(_Delegate(exact_available=True)).with_options(exact_only=True)
+        assert float(jnp.asarray(exact(Gaussian("g")))) == 2.0
+
+    def test_naming_it_offers_both_candidates(self):
+        toy = self._operation(_Delegate(exact_available=False)).with_options(method="delegate")
+        report = toy.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("delegate", False)
+        assert [info.method_name for info in report.routes] == [
+            "delegate (exact)",
+            "delegate (approximate)",
+        ]
+
+    def test_provenance_records_the_exactness_its_probe_reported(self):
+        metadata = self._operation(_Delegate(exact_available=True))(
+            Gaussian("g")
+        ).provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("delegate", True)
+
+    def test_it_is_listed_with_the_exact_routes_and_its_exactness_delegated(self):
+        toy = self._operation(_Delegate(exact_available=True))
+        assert [route.name for route in toy.routes] == ["delegate", "stand_in"]
+        routes = {route.name: route for route in toy.summary().routes}
+        assert (routes["delegate"].source, routes["delegate"].exact) == (
+            RouteSource.STRUCTURAL,
+            None,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Controls
 # ---------------------------------------------------------------------------
@@ -1061,7 +1169,7 @@ class TestResultAndRandomness:
         toy.structural_route("value", **_route(True, 1.0), exact=True)
         _install_expression_rule(toy, lambda d: Summary("E", draw_of(d)))
         result = toy(Gaussian("g"))
-        assert (float(result), result.label) == (1.0, "E[g ~ g]")
+        assert (float(result), result.label) == (1.0, "𝔼[g ~ g]")
 
     def test_an_expression_rule_that_returns_none_keeps_the_routes_expression(self):
         toy = _toy()
@@ -1197,7 +1305,10 @@ class TestRegistry:
         assert summary.priority is None
         assert summary.description == "The center of a law."
         assert summary.module_path == __name__
-        assert summary.operands == (OperandSummary("d", (DistributionSpec,), True),)
+        assert summary.operands == (
+            OperandSummary("d", (DistributionSpec, ConditionalDistributionSpec), True),
+            OperandSummary("given", (RecordSpec,), False),
+        )
         assert (summary.is_derived, summary.identity) == (False, None)
         assert summary.routes == (
             RouteSummary(
@@ -1212,7 +1323,7 @@ class TestRegistry:
 
     def test_describe_renders_one_operation_or_all(self):
         text = _REGISTRY.describe("center")
-        assert text.splitlines()[0] == "center(d) — primitive"
+        assert text.splitlines()[0] == "center(d, given) — primitive"
         assert "closed_form (capability, exact; requires SupportsMean)" in text
         assert "monte_carlo (fallback, approximate): The operand samples." in text
         assert _REGISTRY.describe() == text

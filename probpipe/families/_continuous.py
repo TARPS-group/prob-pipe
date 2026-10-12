@@ -1041,7 +1041,7 @@ class HalfCauchy(TFPDistribution):
         return greater_than(self._loc)
 
     def _mean(self) -> Array:
-        """The mean, ``inf`` at each coordinate, since ``E[X]`` diverges."""
+        """The mean, ``inf`` at each coordinate, since ``𝔼[X]`` diverges."""
         return jnp.full(jnp.shape(self._tfp_dist.mean()), jnp.inf, self._tfp_dist.dtype)
 
     def _variance(self) -> NoReturn:

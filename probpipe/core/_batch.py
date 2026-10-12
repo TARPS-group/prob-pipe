@@ -72,7 +72,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from math import prod
 from types import MappingProxyType
-from typing import Any, Self, cast
+from typing import Any, ClassVar, Self, cast
 
 from .._messages import count, unknown_names
 from ._expression import (
@@ -518,6 +518,12 @@ class Batch[E](TrackedTerm, ABC):
         "_spec",
     )
 
+    #: Whether :meth:`_element_at` returns a new object each time, which no
+    #: caller holds, so the selection writes the element's expression to it
+    #: without copying it first. A class whose hook may return an object a caller
+    #: holds, such as a stored term itself, keeps this ``False``.
+    _fresh_elements: ClassVar[bool] = False
+
     # The three ``_root_*`` slots derive a view's label: they hold the expression
     # and spec of the batch a derivation starts from, and which of *that* batch's
     # positions this object selects — one entry per root axis, an integer where an
@@ -924,11 +930,12 @@ class Batch[E](TrackedTerm, ABC):
         records this batch and the stored term.
 
         Provenance is this hook's own, because only it knows whether the element
-        was built or borrowed. The selection then gives a shallow copy of the
-        returned term the expression of the selection, as
-        ``(mu ~ prior)[sample=0]``, and returns the copy. The object this hook
-        returns is never written to, so a hook that returns a stored object as
-        it is leaves that object's label and provenance unchanged.
+        was built or borrowed. The selection then gives the returned term the
+        expression of the selection, as ``(mu ~ prior)[sample=0]``. It writes
+        to the returned object only when the class sets :attr:`_fresh_elements`,
+        which states that the hook returns a new object each time, and otherwise
+        to a shallow copy of it. A hook that returns a stored object as it is
+        therefore leaves that object's label and provenance unchanged.
         """
 
     def _element_call(self, index: tuple[int, ...]) -> Expression | None:
@@ -1055,11 +1062,12 @@ class Batch[E](TrackedTerm, ABC):
             element = self._element_at(dropped, label=label)
             if isinstance(element, TrackedTerm):
                 # The element carries the selection, and a stored law keeps the paths
-                # it holds fixed, after the batch's. The expression goes on a copy:
-                # the hook may return an object a caller still holds, such as a
-                # stored term, and that object must keep its own label.
+                # it holds fixed, after the batch's. Unless the hook built the element
+                # afresh, the expression goes on a copy: the hook may return an object
+                # a caller still holds, such as a stored term, which must keep its label.
                 held = expression.with_fixed(element._expression.fixed_paths())
-                element = element._shallow_copy()
+                if not self._fresh_elements:
+                    element = element._shallow_copy()
                 _assign_expression(element, held, (label, collapse))
             return element
 

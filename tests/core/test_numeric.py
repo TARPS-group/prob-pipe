@@ -1,5 +1,7 @@
 """Numeric, the flat-vector interface of the numeric kinds (design II.3)."""
 
+import inspect
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -51,6 +53,14 @@ class TestTheNumericKinds:
         rebuilt = type(value).from_vector(value.spec, vector, label="rebuilt")
         assert rebuilt.label == "rebuilt"
         np.testing.assert_array_equal(rebuilt.to_vector(), vector)
+
+    def test_from_vector_declares_the_label_every_kind_requires(self):
+        """A caller that holds only a Numeric class passes the label, which every kind takes."""
+        label = inspect.signature(Numeric.from_vector).parameters["label"]
+        assert label.kind is inspect.Parameter.KEYWORD_ONLY
+        assert label.default is inspect.Parameter.empty
+        array = inspect.signature(NumericArray.from_vector).parameters["label"]
+        assert array.default is inspect.Parameter.empty
 
     def test_an_array_presents_its_shape(self):
         # Its coordinates are its elements in row-major order, presented unraveled.

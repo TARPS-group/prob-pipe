@@ -398,8 +398,9 @@ def _factor_graph(
                 raise ValueError(
                     f"the field {component!r} is produced by both factor "
                     f"{producers[component]} ({factors[producers[component]].label!r}) and "
-                    f"factor {index} ({factor.label!r}); rename one with with_path_names() or "
-                    f"declare its output with OutputSpec"
+                    f"factor {index} ({factor.label!r}); rename it in one of them with "
+                    f"with_path_names({{{component!r}: ...}}), or build one of them with "
+                    f"another component, as Normal('{component}_2', ...)"
                 )
             producers[component] = index
             component_specs[component] = spec
@@ -2095,6 +2096,10 @@ class FactoredDistribution(Distribution, SupportsFactors):
         """The factors, in conditional-first order."""
         return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
 
+    def _derived_label(self) -> str:
+        """The label the constructor gives the factors the repr shows: their labels joined with ``·``."""
+        return _product_of(self.factors).render_label()
+
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
 
@@ -2232,6 +2237,10 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The factors, in conditional-first order."""
         return [("factors", sequence_repr(repr(factor) for factor in self.factors))]
+
+    def _derived_label(self) -> str:
+        """The label the constructor gives the factors the repr shows: their labels joined with ``·``."""
+        return _product_of(self.factors).render_label()
 
     def with_dim_sizes(self, **sizes: int) -> Self:
         """Bind named symbolic dimensions in every factor that declares them.
