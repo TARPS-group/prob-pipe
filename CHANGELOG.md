@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function` and `@function` no longer accept `module=`. Use ordinary callables
   and `bind=` for construction-time arguments; call arguments override those
   bindings, followed by Python defaults for omitted arguments.
+- **Lifted empirical laws name their atom level after the output component,**
+  such as `trajectory`, instead of `draw`. Display aliases leave this level as
+  it is. A batch-valued output keeps its event levels after the atom level, and
+  an output component named like one of those levels needs a distinct component
+  in `OutputSpec`. Two lifted laws whose output components differ, such as
+  `double` and `shift`, keep their atoms on different levels, so a function
+  called on both `.atoms` forms their outer product where it paired them on
+  `draw`.
 
 - Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
   expectation, generic laws or kernels, quantile, variance, covariance, and
@@ -2374,6 +2382,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
+- **Functions can lift to empirical laws of whole batches.** Atom counts,
+  weights, exact enumeration, and sampling distinguish atom axes from each
+  event's batch axes. `include_inputs=True` retains each complete batch in
+  the joint record. A subsequent lift receives each batch in its raw form,
+  or as the batch at a parameter annotated with a batch class such as
+  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
+  returns a numeric batch, and a later lift over its law, run in one
+  `jax.vmap`. A batch-valued event with numeric elements has
+  elementwise moments, so the mean of a trajectory law on `time` is a
+  `NumericArrayBatch` on `time`. Nested event batches combine their levels in
+  outer-to-inner order, so bootstrap replicates of trajectories support
+  moments and `include_inputs=True` lifts.
 
 ### Changed
 

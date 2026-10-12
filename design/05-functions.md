@@ -128,7 +128,7 @@ A `Function` compares each admitted argument against the kind its parameter expe
 - `Function` (III.3) or a function capability: the parameter expects a value, as for a value type;
 - `Any`: the parameter accepts every kind as it arrives, so a law or a batch passes whole, and an author who wants the lift leaves the parameter unannotated.
 
-Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names.
+Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names, except for a batch-valued draw. A batch-valued draw is passed to a parameter whose annotation names a batch class, such as `NumericArrayBatch` or `Batch`, as that batch, and to any other parameter in its raw form: the array, or for a batch of records the nested mapping of columns that `raw()` returns. A function written for arrays therefore takes a bootstrap replicate unchanged.
 
 A parameter annotated with a class of raw values, such as `pd.Series` or `jax.Array`, receives the raw form of an argument, or of each element or draw that a lift passes to it, when that form is an instance of the class, so a function written for pandas receives the `Series` that a record field holds.
 
@@ -160,7 +160,7 @@ def rate(x):
 
 **The result of a lift.** Planning declares the result of a lifted call from the function's output declaration. The route that resolution selects then chooses the representation that realizes the declaration (V.7). The kind of the result depends on the lift's regime (V.5):
 
-1. **A broadcast** returns a law over the function's outputs, declared as a `DistributionSpec` whose event declaration is the output declaration. A closed-form rule may return a parametric law, such as a Gaussian, and the sampling lift returns an `EmpiricalDistribution`. An empirical result holds the outputs as its atoms, on one fixed level named `draw`. An output that is itself a batch keeps its own levels within each atom, after the atom level (VII.2).
+1. **A broadcast** returns a law over the function's outputs, declared as a `DistributionSpec` whose event declaration is the output declaration. A closed-form rule may return a parametric law, such as a Gaussian, and the sampling lift returns an `EmpiricalDistribution`. An empirical result holds the outputs as its atoms, on one level named by the output component, or by the callable's default output component when the output exposes a record. An output that is itself a batch keeps its own levels within each atom, after the atom level (VII.2). Display aliases do not change that level. A collision with an event level raises `ResultSchemaError`; an explicit `OutputSpec` can supply a distinct output component.
 2. **A sweep** returns a batch of the output kind on the swept levels, with one element for each element swept.
 3. **A nested sweep** returns a `DistributionBatch` on the swept levels, whose element at each position is the law that the broadcast at that position returns.
 
@@ -174,9 +174,9 @@ def growth(interest, years):
 interest = Normal("interest", 0.05, 0.02)
 horizons = NumericArrayBatch(jnp.array([5.0, 10.0, 20.0]), "horizon", label="years")
 
-growth(interest, 10.0)      # a broadcast: an EmpiricalDistribution whose atoms lie on the level draw
+growth(interest, 10.0)      # a broadcast: an EmpiricalDistribution whose atoms lie on the level growth
 growth(0.05, horizons)      # a sweep: a NumericArrayBatch on the level horizon
-growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of laws whose atoms lie on draw
+growth(interest, horizons)  # a nested sweep: a DistributionBatch on horizon, of laws whose atoms lie on growth
 ```
 
 **Including the inputs.** With `include_inputs=True`, the sampling lift returns a joint empirical law over inputs and outputs. Each lifted parameter contributes one component containing its complete draw, named by the parameter. A record draw remains nested even when it has one field. The output contributes exactly the components its `OutputSpec` exposes (II.2); a record exposed under `parameters` remains under that name. Plain inputs contribute no fields, since provenance records them. A collision between parameter and output component names raises at planning when known and at return otherwise. This control selects only routes that produce the joint of inputs and outputs. Grouping determines co-sampling, and the parameters determine the layout.

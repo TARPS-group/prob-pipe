@@ -45,7 +45,7 @@ try:
 except ImportError:
     task = flow = None
 
-from ..core._batch import Batch
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._expression import (
     Applied,
@@ -57,9 +57,10 @@ from ..core._expression import (
     draw_of,
 )
 from ..core._numeric_record_batch import NumericRecordBatch
-from ..core._spec_base import NumericSpec, TermSpec
+from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -1033,11 +1034,14 @@ def _jax_traceability_error(
 
     The probe traces the operation the dispatch is choosing, not merely the
     body: a body can trace cleanly bare yet be impossible under the
-    transform its executor applies — one that returns a batch, whose added
-    axis no level can name. So every executor that maps is probed under a
-    map, each argument fed the way its own executor will feed it: a swept
-    batch over its first row, a distribution over one draw, and any other
-    argument as the call passed it. A probe failure
+    transform its executor applies, as one that returns a record holding a
+    batch is. So every executor that maps is probed under a map, each
+    argument fed the way its own executor will feed it: a swept batch over its
+    first row, a distribution over one draw, a batch-valued draw in its raw
+    form, which a parameter annotated with a batch class receives rebuilt as
+    the batch, and any other argument as the call passed it. A law whose record
+    event stores a batch for each draw in an object column has no stand-in, and
+    the probe reports it. A probe failure
     means sequential dispatch, which is always able to run the call — the two
     paths agree on results by contract, so falling back costs speed, never
     correctness.
@@ -1103,6 +1107,21 @@ def _jax_traceability_error(
                 for group in stochastic_plan.source_groups:
                     binding = stochastic_plan.runtime_bindings[group.index]
                     root = binding.root
+                    event = root.event_spec.spec
+                    if isinstance(event, BatchSpec):
+                        # A batch-valued draw is mapped in its raw form.
+                        root_probes.append(_batch_stand_in(root, event))
+                        continue
+                    held = _broadcast.batch_field(event)
+                    if held is not None:
+                        path, levels = held
+                        raise _broadcast.UnmappedBatchError(
+                            f"dispatch='jax' cannot map over the draws of {root.label!r}, whose "
+                            f"field {path!r} stores a batch on the levels {list(levels)} for "
+                            f"each draw. Lift over the marginal law at that field, as "
+                            f"marginal(law, {path!r}) gives it, or use dispatch='auto', "
+                            f"'sequential', or 'thread'."
+                        )
                     from ..core._specs import _components_record
 
                     components = _components_record(root.event_spec)
@@ -1148,7 +1167,10 @@ def _jax_traceability_error(
                         dummy_kw, dict(zip(dynamic_refs, dynamic_values, strict=True))
                     )
                     _draw_call = _broadcast.mapped_draw_body(
-                        func=func, values=probe_values, broadcast_args=refs
+                        func=func,
+                        values=probe_values,
+                        broadcast_args=refs,
+                        batch_events=_broadcast.batch_events(stochastic_plan),
                     )
                     sampled = {}
                     for group, root_value in zip(
@@ -1187,6 +1209,54 @@ def _jax_traceability_error(
     return None
 
 
+def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
+    """A stand-in for one raw draw of *root*, whose event is the batch *event*, led by an axis of one.
+
+    Parameters
+    ----------
+    root : Distribution
+        The law whose draws the probe stands in for.
+    event : BatchSpec
+        The law's event declaration.
+
+    Returns
+    -------
+    Any
+        A ``jax.ShapeDtypeStruct`` for array elements, and the nested mapping of
+        them for record elements. Each has the axis of one, then the event's
+        batch axes, then the element's own axes.
+
+    Raises
+    ------
+    TypeError
+        If the event's elements are not numeric, its shapes are not concrete, or
+        a leaf's dtype is neither declared nor stored.
+    """
+    flat = _flat_batch_spec(event)
+    element = flat.element_spec
+    if not isinstance(element, NumericSpec) or not flat.is_concrete:
+        raise TypeError(
+            f"{type(root).__name__} must declare a concrete numeric event to run under "
+            f"dispatch='jax'"
+        )
+    lead = (1, *flat.batch_shape)
+    if isinstance(element, NumericArraySpec):
+        leaves = {"": element}
+    else:
+        leaves = {path: element[path] for path in element}
+    columns = {}
+    for path, leaf in leaves.items():
+        dtype = leaf.dtype if leaf.dtype is not None else _stored_dtype(root, path)
+        if dtype is None:
+            raise TypeError(
+                f"{type(root).__name__} must declare its field dtypes to run under dispatch='jax'"
+            )
+        columns[path] = jax.ShapeDtypeStruct((*lead, *leaf.shape), dtype)
+    if isinstance(element, NumericArraySpec):
+        return columns[""]
+    return _unflatten_paths(columns)
+
+
 def _stored_dtype(root: Any, path: str) -> Any:
     """The dtype of the atoms an empirical *root* stores at the leaf *path*, or None.
 
@@ -1216,7 +1286,9 @@ def _require_jax_traceable(
     unchanged: the :class:`~._call.ApplicabilityError` of a point whose
     declarations violate the call contract, which planning raises, and the
     :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError` of
-    a result that violates its declaration, which the return raises.
+    a result that violates its declaration, which the return raises. A batch
+    the map cannot carry, such as a joint law's batch-valued field, raises a
+    ``ValueError`` that names it.
     """
     trace_error = _jax_traceability_error(
         function, values, broadcast_args, func=func, stochastic_plan=stochastic_plan
@@ -1228,6 +1300,8 @@ def _require_jax_traceable(
         (_call.ApplicabilityError, _result.ResultSchemaError, _result.ResultKindError),
     ):
         raise trace_error
+    if isinstance(trace_error, _broadcast.UnmappedBatchError):
+        raise ValueError(str(trace_error)) from None
     if isinstance(trace_error, _context._StochasticProbeSignal):
         message = (
             _context.JAX_SUBMISSION_MESSAGE

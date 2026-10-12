@@ -43,7 +43,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import Batch, BatchSpec
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -56,7 +56,7 @@ from ..core._expression import (
     Summary,
     draw_of,
 )
-from ..core._record_batch import RecordBatch, _batch_class_for
+from ..core._record_batch import RecordBatch, _batch_class_for, _batch_over
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
@@ -148,8 +148,18 @@ def _hull(support: Any) -> Any:
     return support
 
 
+def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
+    """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
+    return BatchSpec._from_groups(term(spec.element_spec), spec.axis_groups, spec.level_names)
+
+
 def _mean_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a mean: floating leaves on the hull of their support."""
+    """The term spec of a mean: floating leaves on the hull of their support.
+
+    A batch's mean is the batch of its elements' means, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _mean_term)
     if isinstance(spec, NumericArraySpec):
         return NumericArraySpec(spec.shape, _floating(spec.dtype), _hull(spec.support))
     if isinstance(spec, RecordSpec):
@@ -158,7 +168,12 @@ def _mean_term(spec: TermSpec) -> TermSpec:
 
 
 def _variance_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a variance: non-negative floating leaves."""
+    """The term spec of a variance: non-negative floating leaves.
+
+    A batch's variance is the batch of its elements' variances, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _variance_term)
     if isinstance(spec, NumericArraySpec):
         return NumericArraySpec(spec.shape, _floating(spec.dtype), non_negative)
     if isinstance(spec, RecordSpec):
@@ -167,7 +182,12 @@ def _variance_term(spec: TermSpec) -> TermSpec:
 
 
 def _quantile_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a quantile: the event's shapes, with floating dtypes kept."""
+    """The term spec of a quantile: the event's shapes, with floating dtypes kept.
+
+    A batch's quantile is the batch of its elements' quantiles, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _quantile_term)
     if isinstance(spec, NumericArraySpec):
         dtype = (
             spec.dtype if spec.dtype is not None and _floating(spec.dtype) == spec.dtype else None
@@ -179,7 +199,16 @@ def _quantile_term(spec: TermSpec) -> TermSpec:
 
 
 def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
-    """The array leaves of a numeric spec, in the canonical flat order."""
+    """The array leaves of a numeric spec, in the canonical flat order.
+
+    A batch's leaves are its element's leaves, each led by the batch's axes.
+    """
+    if isinstance(spec, BatchSpec):
+        batch_shape = tuple(spec.batch_shape)
+        return [
+            NumericArraySpec((*batch_shape, *leaf.shape), leaf.dtype)
+            for leaf in _array_leaves(spec.element_spec)
+        ]
     if isinstance(spec, NumericArraySpec):
         return [spec]
     if isinstance(spec, RecordSpec):
@@ -336,9 +365,16 @@ def _expectation_result(f: TermSpec) -> OutputSpec | None:
     return None
 
 
+def _is_numeric(spec: TermSpec | None) -> bool:
+    """Whether *spec* declares a numeric value: an array, a record of arrays, or a batch of either."""
+    if isinstance(spec, BatchSpec):
+        spec = _flat_batch_spec(spec).element_spec
+    return isinstance(spec, NumericSpec)
+
+
 def _numeric_event(d: DistributionSpec) -> bool:
-    """The law draws a numeric value: an array or a record of arrays."""
-    return isinstance(d.event_spec.spec, NumericSpec)
+    """The law draws a numeric value: an array, a record of arrays, or a batch of either."""
+    return _is_numeric(d.event_spec.spec)
 
 
 def _event_typed_variance(d: DistributionSpec) -> bool:
@@ -372,7 +408,7 @@ def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     event = call.operands["d"].event_spec.spec
     if isinstance(event, FunctionSpec):
         return Feasibility(False, "the average of function-valued draws is not implemented yet")
-    if not isinstance(event, (NumericSpec, DistributionSpec)):
+    if not (_is_numeric(event) or isinstance(event, DistributionSpec)):
         return Feasibility(
             False, f"cannot average draws of a non-numeric event; got {type(event).__name__}"
         )
@@ -390,7 +426,7 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
         return Feasibility(
             False, "the pointwise variance of function-valued draws is not implemented yet"
         )
-    if not isinstance(event, NumericSpec):
+    if not _is_numeric(event):
         return Feasibility(
             False,
             f"cannot take the variance of draws of a non-numeric event; got {type(event).__name__}",
@@ -419,11 +455,24 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     record event are its atoms as the batch of records the law's event
     declaration calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
+    Draws of a batch-valued event are its atoms on one level before the
+    event's own levels.
     """
     # The empirical law is internal, so it takes a fixed name, which a derived
     # label could not be: a label may hold ``~``, a space, ``;``, or ``/``.
     name = _DRAWS
     event = call.operands["d"].event_spec.spec
+    if isinstance(event, BatchSpec):
+        if isinstance(draws, (RecordBatch, Mapping)):
+            raw = _raw_record(draws)
+        else:
+            raw = jnp.asarray(draws.raw() if isinstance(draws, Batch) else draws)
+        level = name
+        while level in _flat_batch_spec(event).level_names:
+            level += "_"
+        count = jax.tree.leaves(raw)[0].shape[0]
+        atoms = _batch_over(raw, _flat_batch_spec(BatchSpec(event, {level: count})), name)
+        return EmpiricalDistribution(atoms, label=name, event_spec=OutputSpec(**{name: event}))
     if isinstance(draws, Batch):
         records = isinstance(draws.element_spec, RecordSpec)
         return EmpiricalDistribution(draws, component=None if records else name, label=name)
@@ -457,7 +506,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     whose draws are laws it is their finite mixture with equal weights, the
     Monte Carlo estimate of the mean measure.
     """
-    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
+    if _is_numeric(call.operands["d"].event_spec.spec):
         return _named_value(
             _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean(),
             "mean",
@@ -879,7 +928,9 @@ def mean(d: Distribution):
 
     A record-drawing law's mean is a ``Record`` with the law's schema, a random
     function's is its mean function, and a random measure's is the
-    marginalized law.
+    marginalized law. A batch-valued law's mean is elementwise: a batch on the
+    event's levels whose element at each position is the mean of the draw's
+    element there.
 
     The routes, in selection order, are the law's closed form,
     ``closed_form``; ``by_component``, which computes each component of a
@@ -929,7 +980,8 @@ mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=F
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
-    The routes are those of ``mean``: the closed form, ``closed_form``;
+    A batch-valued law's variance is elementwise, as its mean is. The routes
+    are those of ``mean``: the closed form, ``closed_form``;
     ``by_component``, which computes each component of a record event by the
     route that component's view selects; and the Monte Carlo fallback,
     ``monte_carlo``.
@@ -979,6 +1031,11 @@ variance.fallback_route(
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
 
+    The flattened draw ravels each array leaf in row-major order and
+    concatenates the leaves in the record's canonical order. A batch-valued
+    draw is raveled in its raw form, so each leaf runs over the event's batch
+    axes and then the element's own axes.
+
     Parameters
     ----------
     d : Distribution
@@ -1020,7 +1077,8 @@ cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=Fals
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
-    The routes are the law's closed form, ``closed_form``; ``by_component``,
+    A batch-valued law's quantiles are elementwise, as its mean is. The routes
+    are the law's closed form, ``closed_form``; ``by_component``,
     which computes each component of a record event by the route that
     component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
     which ``with_options(method=...)`` selects among. The fallback's quantile
@@ -1039,8 +1097,8 @@ def quantile(d: Distribution, q: Any):
     -------
     TrackedTerm
         For one level, a value of the event's kind; for several, the batch of
-        those values on a level named ``quantile``. It is labeled
-        ``ℚ[mu ~ d]``.
+        those values on a level named ``quantile``, before any levels of a
+        batch-valued event. It is labeled ``ℚ[mu ~ d]``.
 
     Raises
     ------
