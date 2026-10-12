@@ -638,15 +638,21 @@ class TestSingletonAlignment:
         assert result.batch_shape == (0,)
         assert result.element_spec.shape == ()
 
-    def test_a_singleton_does_not_hide_a_later_incompatible_size(self):
+    def test_a_later_incompatible_size_raises_naming_each_shape(self):
         @function(dispatch="sequential")
         def add(x, y, z):
             return x + y + z
 
-        with pytest.raises(ApplicabilityError, match=r"level 'row'.*incompatible shapes"):
+        with pytest.raises(
+            ApplicabilityError,
+            match=(
+                r"^level 'row' has shapes \(1,\) for 'x', \(2,\) for 'y', and \(3,\) for 'z', "
+                r"which do not broadcast$"
+            ),
+        ):
             add(_batch([1.0]), _batch([10.0, 20.0]), _batch([1.0, 2.0, 3.0]))
 
-    def test_a_singleton_does_not_align_differently_named_levels(self):
+    def test_a_singleton_forms_a_product_with_a_differently_named_level(self):
         @function(dispatch="sequential")
         def add(x, y):
             return x + y

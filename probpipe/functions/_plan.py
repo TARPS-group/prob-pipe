@@ -39,10 +39,11 @@ StructuralRngId = tuple[str | int, ...]
 
 @dataclass(frozen=True)
 class ArrayBroadcastGroup:
-    """One zip group of swept batches, read along the same axes.
+    """One zip group of swept batches.
 
     The batches of one group carry the same level names, since levels are how
-    batches align.
+    batches align. ``axis_groups`` holds each level's broadcast shape over the
+    group's batches, and ``batch_shape`` is their concatenation in level order.
     """
 
     arg_refs: tuple[_binding.FunctionInputRef, ...]
@@ -501,11 +502,11 @@ def build_array_zip_groups(
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build the zip groups of the swept batches.
 
-    Batches with the same level names broadcast each level's shape separately,
-    using trailing-axis alignment and size-one expansion within that level.
-    Level boundaries never align with axes from another level. The group's
-    shape concatenates the broadcast shapes in level order; each input is read
-    at zero along its singleton axes.
+    Batches with the same level names broadcast their shapes level by level by
+    NumPy's rule, so within each level the shapes align from the right and a
+    size-one axis expands. The group's shape concatenates the broadcast shapes
+    in level order, and the sweep reads each batch at index zero along its
+    size-one axes.
 
     Parameters
     ----------
@@ -527,25 +528,26 @@ def build_array_zip_groups(
     """
     groups: list[ArrayBroadcastGroup] = []
     for first, arg_refs in group_by_alignment(values=values, refs=refs):
-        axis_groups = tuple(first.axis_groups)
-        for ref in arg_refs[1:]:
-            other = _binding.input_ref_value(values, ref)
-            broadcast_groups = []
-            for name, shape, other_shape in zip(
-                first.level_names, axis_groups, other.axis_groups, strict=True
-            ):
-                try:
-                    broadcast_groups.append(np.broadcast_shapes(shape, other_shape))
-                except ValueError as error:
-                    raise ApplicabilityError(
-                        f"Arguments {tuple(arg.label for arg in arg_refs)} have the same levels "
-                        f"{tuple(first.level_names)} but different shapes per level: "
-                        f"level {name!r} has incompatible shapes {shape} (combined so far) "
-                        f"and {other_shape} (argument {ref.label!r}). "
-                        f"Arguments that share level names must have broadcast-compatible "
-                        f"shapes for each level."
-                    ) from error
-            axis_groups = tuple(broadcast_groups)
+        batches = [_binding.input_ref_value(values, ref) for ref in arg_refs]
+        broadcast_groups = []
+        for level, name in enumerate(first.level_names):
+            shapes = [tuple(batch.axis_groups[level]) for batch in batches]
+            try:
+                broadcast_groups.append(np.broadcast_shapes(*shapes))
+            except ValueError as error:
+                described = [
+                    f"{shape} for {ref.label!r}"
+                    for ref, shape in zip(arg_refs, shapes, strict=True)
+                ]
+                listed = (
+                    " and ".join(described)
+                    if len(described) == 2
+                    else ", ".join(described[:-1]) + ", and " + described[-1]
+                )
+                raise ApplicabilityError(
+                    f"level {name!r} has shapes {listed}, which do not broadcast"
+                ) from error
+        axis_groups = tuple(broadcast_groups)
         batch_shape = tuple(axis for shape in axis_groups for axis in shape)
         groups.append(
             ArrayBroadcastGroup(

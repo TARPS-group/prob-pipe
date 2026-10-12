@@ -3290,11 +3290,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields that are not a mapping, an empty record or object batch without a
   label, `Record.from_fields()` without fields, and a callable without a name,
   whose type it names.
-- Function sweeps broadcast size-one axes within matching named levels. Each
-  level's shape aligns from the right independently, and the result carries
-  its broadcast shape. Incompatible non-singleton sizes still raise
-  `ApplicabilityError` naming the level.
-
+- **A function sweep broadcasts the shapes of each named level by NumPy's
+  rule.** Within a level that the swept batches share, shapes of any rank align
+  from the right and a size-one axis expands. The result carries each level's
+  broadcast shape. Incompatible sizes raise an `ApplicabilityError` that names
+  the level and each argument's shape.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

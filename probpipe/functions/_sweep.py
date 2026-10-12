@@ -201,8 +201,9 @@ def slice_sweep_values(
     """Read one row-major sweep cell, expanding singleton axes within each level.
 
     Each input uses zero on a size-one axis and the cell's coordinate otherwise.
-    Shapes align from the right within each named level, so a missing leading
-    axis consumes no index in that input. The inputs' data are not expanded.
+    Shapes align from the right within each named level, so an input with fewer
+    axes in a level reads that level's trailing coordinates. Each input is
+    indexed in place at its own shape.
     """
     out = dict(values)
     rem = index
@@ -225,8 +226,9 @@ def slice_sweep_values(
             position = []
             offset = 0
             for shape, target_shape in zip(batch.axis_groups, group.axis_groups, strict=True):
-                # Shapes align within each named level, never across its
-                # boundary. An omitted leading axis broadcasts like size one.
+                # The input's axes for this level match the trailing axes of the
+                # level's broadcast shape, so an omitted leading axis broadcasts
+                # like size one.
                 start = offset + len(target_shape) - len(shape)
                 position.extend(
                     0 if size == 1 else coordinates[start + axis] for axis, size in enumerate(shape)
