@@ -325,7 +325,9 @@ class TestBayesFlowNPE:
     def test_observation_dim_mismatch(self, npe_model):
         """Conditioning on wrong-size observed data raises a clear error rather
         than an opaque keras shape failure."""
-        with pytest.raises(ValueError, match="observed data has 5 values, but"):
+        with pytest.raises(
+            ValueError, match=r"given/observation has dimension 5, expected 2 from shape \(2,\)"
+        ):
             condition_on(npe_model, {"observation": np.zeros(5, dtype="float32")})
 
     def test_the_model_claims_no_direct_sampling(self, npe_model):

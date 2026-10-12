@@ -851,10 +851,10 @@ class TestRenamedKernelCapabilities:
         assert list(draw.keys()) == ["obs", "z"]
         assert jnp.allclose(draw["obs"] - draw["z"], 1.0)
 
-    def test_a_conditional_capability_needs_every_slot(self):
+    def test_a_conditional_capability_needs_every_required_slot(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc")
-        with pytest.raises(ValueError, match="every given slot"):
+        with pytest.raises(ValueError, match="every required given slot"):
             renamed._parent_given({"loc": 1.0})
 
     def test_a_conditional_capability_carries_the_parent_guard(self):

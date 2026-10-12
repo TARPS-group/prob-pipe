@@ -58,12 +58,13 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
+from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._views import _drawn_form
 from ..functions import _broker, _descendants, _result
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
-from ..values._binding import values_to_bound_arguments
+from ..values._binding import make_signature_info_from_signature, values_to_bound_arguments
 from ..values._function_base import _COMPLETED_AT_RETURN
 
 __all__ = [
@@ -1000,6 +1001,74 @@ def _kind_names(kinds: Iterable[type]) -> str:
     return ", ".join(kind.__name__ for kind in kinds)
 
 
+class _GivenCandidate:
+    """The conditional identity, deferred until the kernel's law is available.
+
+    Feasibility means the given slots can be bound. Normalization, the resulting
+    law's capability checks, and operation fidelity are deferred, and its exactness is unknown
+    until the delegated operation executes. The kernel is never applied by a
+    check. This candidate is the last fallback, after every route served by the
+    kernel's declared conditional capabilities. A declaration-only given
+    leaves conditioning feasibility unresolved until its values are available.
+    """
+
+    label = route_name = "conditional"
+    methods = None
+
+    def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
+        """Check slot binding without constructing or normalizing the kernel's law."""
+        from ._given import _GivenLaw
+
+        subject = call.operands[call.operation._given_subject]
+        if not isinstance(subject, _GivenLaw):
+            return Feasibility(False, "the operand has no given values")
+        if isinstance(subject.given, StandIn):
+            return Feasibility(None, pending=("conditional delegation needs the given values",))
+        from ._condition import _CURRY, condition_on
+
+        binding = BoundCall(
+            condition_on,
+            MappingProxyType({"d": subject.kernel, "given": subject.given}),
+            call.controls,
+        )
+        report = _CURRY.check(binding)
+        if report.feasible is not True:
+            return report
+        exact = _CURRY.exact(binding)
+        if call.controls["exact_only"] and not exact:
+            return Feasibility(
+                False,
+                "binding the given slots runs approximate conditioning "
+                "(SupportsApproximateConditioning), which exact_only excludes",
+            )
+        return PointReport(
+            True,
+            "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
+            exact=None if exact else False,
+        )
+
+    def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
+        """Condition at execution, then run the original operation under its controls."""
+        from ._condition import condition_on
+
+        subject = call.operands[call.operation._given_subject]
+        law = condition_on.with_options(
+            exact_only=call.controls["exact_only"],
+            method_options=call.controls["method_options"],
+        )(subject.kernel, subject.given)
+        values = {**call.operands, call.operation._given_subject: law}
+        bound = values_to_bound_arguments(call.operation.signature, values)
+        return call.operation.with_options(**dict(call.controls))(*bound.args, **bound.kwargs)
+
+    def exactness(self, report: Feasibility) -> bool | None:
+        """Known approximate conditioning is approximate; otherwise fidelity is deferred."""
+        return report.exact if isinstance(report, PointReport) else None
+
+    def method_of(self, report: Feasibility) -> None:
+        """The delegated operation selects its own method."""
+        return None
+
+
 class Operation(Function):
     """A Function realized by routes, with operand roles, conditions, and a result rule.
 
@@ -1013,6 +1082,21 @@ class Operation(Function):
     routes are registered after construction with the four helpers or
     :meth:`register_route`, and a derived operation also carries its defining
     identity as a route.
+
+    A subject annotated ``Distribution`` automatically adds keyword-only
+    ``given=None`` unless the declaration already names ``given`` or a role
+    overrides the subject's kind. A complete given supplies a conditional
+    operand's required slots and binds its symbolic dimensions before planning
+    the result. Routes use the kernel's declared conditional twins, including
+    sampling-based fallbacks and derived identities. If no such route applies,
+    delegation applies the operation to ``condition_on(subject, given)`` at execution.
+    A check never constructs that law. The delegation report defers the law's
+    capabilities and fidelity, conservatively reporting open fidelity as
+    approximate. Invalid or incomplete givens raise ``ApplicabilityError``;
+    unavailable capabilities or fidelity controls raise ``ResolutionError``.
+    Record-batch givens sweep at their named levels. Calls without a given
+    keep their ordinary route behavior and require an unconditional subject
+    unless the authored role explicitly admits kernels.
 
     Parameters
     ----------
@@ -1067,11 +1151,53 @@ class Operation(Function):
     ) -> None:
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
-        super().__init__(
-            declaration,
-            label=declaration.__name__,
-        )
+        if roles is not None:
+            roles = {name: tuple(kinds) for name, kinds in roles.items()}
+        super().__init__(declaration, label=declaration.__name__)
         object.__setattr__(self, "_declaration_name", declaration.__name__)
+        first = next(iter(self.signature.parameters), None)
+        subject = first if self._signature_info.hints.get(first) is Distribution else None
+        if "given" in self.signature.parameters or (
+            roles is not None and first in roles and DistributionSpec not in roles[first]
+        ):
+            subject = None
+        object.__setattr__(self, "_given_subject", subject)
+        from ..distributions._conditional import ConditionalDistributionSpec
+
+        object.__setattr__(
+            self, "_admits_kernel", ConditionalDistributionSpec in (roles or {}).get(first, ())
+        )
+        if subject is not None:
+            parameter = inspect.Parameter(
+                "given", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=Record
+            )
+            parameters = list(self.signature.parameters.values())
+            index = next(
+                (
+                    i
+                    for i, item in enumerate(parameters)
+                    if item.kind is inspect.Parameter.VAR_KEYWORD
+                ),
+                len(parameters),
+            )
+            parameters.insert(index, parameter)
+            signature = self.signature.replace(parameters=parameters)
+            info = make_signature_info_from_signature(signature, hints=self._signature_info.hints)
+            object.__setattr__(self, "_signature_info", info)
+            object.__setattr__(self, "__signature__", signature)
+            given_doc = (
+                "    given : Record or Mapping[str, Any], optional\n"
+                "        Complete values of a conditional operand's required slots. The\n"
+                "        declared conditional capabilities serve applicable routes; otherwise\n"
+                "        the operation applies after condition_on at execution, and check\n"
+                "        defers the resulting law's capabilities and fidelity. A RecordBatch\n"
+                "        is swept at its named levels. None keeps the authored subject role.\n\n"
+            )
+            object.__setattr__(
+                self,
+                "__doc__",
+                (self.__doc__ or "").replace("    Returns\n", given_doc + "    Returns\n", 1),
+            )
         owner = f"operation {self.label!r}"
         if not callable(result):
             raise TypeError(f"{owner} needs a callable result rule; got {result!r}")
@@ -1111,6 +1237,13 @@ class Operation(Function):
                 _validated_roles(self.signature, self._signature_info.hints, roles, owner)
             ),
         )
+        if subject is not None:
+            from ..distributions._conditional import ConditionalDistributionSpec
+
+            adapted_roles = dict(self._roles)
+            adapted_roles[subject] = (*adapted_roles[subject], ConditionalDistributionSpec)
+            adapted_roles["given"] = (RecordSpec,)
+            set_attribute(self, "_roles", MappingProxyType(adapted_roles))
         set_attribute(self, "_derived", derived)
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
@@ -1151,6 +1284,15 @@ class Operation(Function):
             The result's expression, or ``None`` when the route's result keeps
             its own.
         """
+        if self._given_subject is not None and values.get("given") is not None:
+            from ._condition import _conditioned_paths
+
+            subject = values[self._given_subject]
+            view = Distribution(subject.event_spec, label=subject.label)
+            view._store_expression(
+                subject._embedded_expression().with_fixed(_conditioned_paths(values["given"]) or ())
+            )
+            values = {**values, self._given_subject: view}
         rule = self._expression_rule
         if rule is not None:
             return rule(**{name: values.get(name) for name in _parameter_names(rule)})
@@ -1506,7 +1648,9 @@ class Operation(Function):
 
     # -- the declarations the engine reads ------------------------------------
 
-    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[_Candidate, ...]:
+    def _route_candidates(
+        self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None
+    ) -> tuple[_Candidate | _GivenCandidate, ...]:
         """The candidates that may realize one point under *controls*, in selection order.
 
         A ``method`` name resolves as :meth:`_named_candidates` states.
@@ -1516,6 +1660,9 @@ class Operation(Function):
         controls : Mapping of str to Any
             The call's resolved controls, whose ``method`` and ``exact_only``
             entries restrict the candidates.
+        values : Mapping of str to Any or None
+            The bound inputs. A supplied given adds the conditional delegation
+            candidate; ordinary calls retain their existing candidate sequence.
 
         Returns
         -------
@@ -1528,7 +1675,15 @@ class Operation(Function):
             If ``method`` names no route or registry method, matches several, or
             names an approximate route while ``exact_only`` is set.
         """
-        return tuple(self._candidates(controls))
+        candidates = self._candidates(controls)
+        if (
+            self._given_subject is not None
+            and candidates
+            and values is not None
+            and values.get("given") is not None
+        ):
+            return (*candidates, _GivenCandidate())
+        return tuple(candidates)
 
     def _plan_point(
         self, values: Mapping[str, Any], controls: Mapping[str, Any]
@@ -1562,8 +1717,29 @@ class Operation(Function):
         TypeError
             If the result rule returns something other than an OutputSpec or None.
         """
-        call = BoundCall(self, MappingProxyType(dict(values)), controls)
+        point_values = dict(values)
+        if self._given_subject is not None:
+            from ..distributions._conditional import ConditionalDistribution
+            from ._given import _GivenLaw
+
+            given = point_values.pop("given", None)
+            subject = point_values[self._given_subject]
+            if given is not None:
+                if not isinstance(subject, ConditionalDistribution):
+                    raise ApplicabilityError(
+                        f"{self.name}: given requires a ConditionalDistribution operand"
+                    )
+                point_values[self._given_subject] = _GivenLaw(subject, given)
+            elif isinstance(subject, ConditionalDistribution) and not self._admits_kernel:
+                raise ApplicabilityError(
+                    f"{self.name}: ConditionalDistributionSpec requires given values"
+                )
+        call = BoundCall(self, MappingProxyType(point_values), controls)
         result, deferred = self._plan(call)
+        if self._given_subject is not None and values.get("given") is not None:
+            deferred += (
+                "if conditional delegation is selected, the resulting law's capabilities and fidelity are checked at execution",
+            )
         return call, result, deferred
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:

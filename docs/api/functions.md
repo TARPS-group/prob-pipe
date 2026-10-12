@@ -14,9 +14,28 @@ The operations, which are functions with several implementations, are on [Operat
 
 ::: probpipe.FunctionBatch
 
-::: probpipe.core.node.Node
-    options:
-      show_root_full_path: true
+## Binding arguments
+
+Pass an ordinary bound method to `Function` when a computation uses an object's
+state. Use `bind=` for arguments supplied at construction; call arguments
+replace those bindings, and omitted arguments use the callable's defaults.
+
+```python
+from probpipe import Function
+
+
+class Affine:
+    def __init__(self, offset):
+        self.offset = offset
+
+    def evaluate(self, x, scale=1.0):
+        return (x + self.offset) * scale
+
+
+compute = Function(Affine(3.0).evaluate, bind={"scale": 2.0})
+assert float(compute(1.0)) == 8.0
+assert float(compute(1.0, scale=3.0)) == 12.0
+```
 
 ## Differentiability and invertibility
 
@@ -39,19 +58,3 @@ The operations, which are functions with several implementations, are on [Operat
 ::: probpipe.ResultKindError
 
 ::: probpipe.ResultSchemaError
-
-## Modules
-
-`Module` and the decorators of this section are experimental.
-
-::: probpipe.Module
-
-::: probpipe.AbstractModule
-
-::: probpipe.workflow_method
-
-::: probpipe.abstract_workflow_method
-
-::: probpipe.core.node.InputFrozenError
-    options:
-      show_root_full_path: true

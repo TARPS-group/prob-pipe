@@ -9,10 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Remove the experimental `Node`, `Module`, `AbstractModule`,
+  `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
+  `Function` and `@function` no longer accept `module=`. Use ordinary callables
+  and `bind=` for construction-time arguments; call arguments override those
+  bindings, followed by Python defaults for omitted arguments.
 - **Lifted empirical laws name their atom level after the output component,**
-  such as `trajectory`, instead of `draw`. Display aliases do not rename this
-  level. A batch-valued output retains its event levels after the atom level;
-  a collision requires a distinct component in `OutputSpec`.
+  such as `trajectory`, instead of `draw`. Display aliases leave this level as
+  it is. A batch-valued output keeps its event levels after the atom level, and
+  an output component named like one of those levels needs a distinct component
+  in `OutputSpec`. Two lifted laws whose output components differ, such as
+  `double` and `shift`, keep their atoms on different levels, so a function
+  called on both `.atoms` forms their outer product where it paired them on
+  `draw`.
 
 - Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
   expectation, generic laws or kernels, quantile, variance, covariance, and
@@ -46,8 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fingerprint, or its draws. A value result without an alias displays the call,
   as `predict(ambient)`, with only the arguments the caller passed, and a law
   the function returns keeps the function's label and displays its own
-  signature, as `predict(y, mu)`. A `Module` method's results display the call,
-  as `Example.numbers()`, where they displayed the method's name.
+  signature, as `predict(y, mu)`.
 - **A term that JAX rebuilds from its leaves displays `<no description>`** until
   a managed result boundary describes it, and it stays usable inside `jax.jit`
   and `jax.vmap`.
@@ -1426,6 +1434,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Distribution-subject operations accept keyword-only `given=` for conditional
+  operands, including sampling, densities, moments, quantiles, expectations,
+  marginals, and conversion. Conditional capabilities serve calls directly;
+  other calls delegate to the operation after conditioning. Batch givens retain
+  their named levels, and given values bind symbolic event dimensions before
+  sampling. `condition_on` can bind individual nodes of a structured given
+  slot while keeping its residual fields available for later binding.
+
 - **`mean`, `variance`, and `quantile` compute each component of a record
   law by its own route.** The new route `by_component` computes each component
   whose view has an exact summary by that view's route, and the other
@@ -2366,6 +2382,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
+- **Functions can lift to empirical laws of whole batches.** Atom counts,
+  weights, exact enumeration, and sampling distinguish atom axes from each
+  event's batch axes. `include_inputs=True` retains each complete batch in
+  the joint record. A subsequent lift receives each batch in its raw form,
+  or as the batch at a parameter annotated with a batch class such as
+  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
+  returns a numeric batch, and a later lift over its law, run in one
+  `jax.vmap`. A batch-valued event with numeric elements has
+  elementwise moments, so the mean of a trajectory law on `time` is a
+  `NumericArrayBatch` on `time`.
 
 ### Changed
 
@@ -3307,17 +3333,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Functions can lift to empirical laws of whole batches.** Atom counts,
-  weights, exact enumeration, and sampling distinguish atom axes from each
-  event's batch axes. `include_inputs=True` retains each complete batch in
-  the joint record. A subsequent lift receives each batch in its raw form,
-  or as the batch at a parameter annotated with a batch class such as
-  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
-  returns a numeric batch, and a later lift over its law, run in one
-  `jax.vmap`. A batch-valued event with numeric elements has
-  elementwise moments, so the mean of a trajectory law on `time` is a
-  `NumericArrayBatch` on `time`.
-
+- **A SciPy distribution with a location or scale its family does not hold
+  converts to the same law.** The `scipy` converter used to read a `beta`'s
+  shape arguments alone and drop the location of a `gamma`, `expon`, or
+  `lognorm`, while it reported the conversion as exact.
+  Such a distribution now enters as a `BijectorTransformedDistribution` of the
+  family under the affine map of that location and scale.
+  Its sampling, density, mean, and variance are SciPy's, and it declares the
+  shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
+  The approximate converters read a SciPy source through the same law, so
+  their fits and draws follow the location and scale too.
+- **A SciPy distribution without a family declares the dtype of its draws**:
+  JAX's default integer dtype for a discrete distribution, such as
+  `scipy.stats.poisson`, and the default floating dtype otherwise, which is
+  `float64` under `jax_enable_x64`.
+  It used to declare `float32` in both cases.
+- **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
+  `log_rate`.** It used to raise `ValueError`.
+- **Empty sweeps require a concrete output declaration before execution.**
+  Both the call and `Function.check` refuse an omitted declaration, a type hole,
+  or an output dimension that remains unbound after input dimensions bind.
 - **A display warns about a part that storage truncated only when its text
   shows less than the part.** A law selected many times from a posterior
   displays without a warning, and a warning that meets both a collapsed level

@@ -62,6 +62,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from types import MappingProxyType
 from typing import Any, ClassVar
 
@@ -77,8 +78,13 @@ from ..core._expression import Expression
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names, public_class_name
-from ..core._spec_base import NumericSpec, OpaqueSpec, TermSpec, _full_array_shape_or_none
-from ..core._specs import OutputSpec, _components_record
+from ..core._spec_base import (
+    NumericSpec,
+    OpaqueSpec,
+    TermSpec,
+    _full_array_shape_or_none,
+)
+from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..distributions._capabilities import (
@@ -92,7 +98,11 @@ from ..distributions._capabilities import (
     _is_normalized,
     _kernel_is_normalized,
 )
-from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
+from ..distributions._conditional import (
+    ConditionalDistribution,
+    ConditionalDistributionSpec,
+    _moved_slots,
+)
 from ..distributions._distribution import (
     Distribution,
     DistributionSpec,
@@ -354,7 +364,12 @@ def _given_kind(call: BoundCall) -> Feasibility | None:
 def _unknown_paths(d: Any, keys: Iterable[str]) -> list[str]:
     """The keys among *keys* that name neither a given slot of *d* nor a field it declares."""
     slots = _slots_of(d)
-    return [key for key in keys if _head(key) not in slots and _spec_at(d.event_spec, key) is None]
+    return [
+        key
+        for key in keys
+        if (_spec_at(d.given_spec, key) if _head(key) in slots else _spec_at(d.event_spec, key))
+        is None
+    ]
 
 
 def _unknown(d: Any, unknown: list[str]) -> Feasibility:
@@ -381,14 +396,6 @@ def _nested_field(key: str) -> Feasibility:
     )
 
 
-def _part_of_a_slot(key: str) -> str:
-    """The message that binding *key*, part of a structured given slot, is not supported."""
-    return (
-        f"binding part of the given slot {_head(key)!r} ({key!r}) is not supported yet; "
-        f"pass a value for the whole slot"
-    )
-
-
 def _fixes_every(d: Any) -> Feasibility:
     """The actionable report that the given fixes every field of *d*."""
     return Feasibility(False, _fixes_every_field(d.label), actionable=True)
@@ -404,7 +411,29 @@ def _curried(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any
 
     A result that carries a record of its own keeps it.
     """
-    result = kernel._condition_on(given, **options)
+    values = _given_values(given)
+    bindings: dict[str, int] = {}
+    from ._given import _bind_given_dims_from_value
+
+    for path, value in values.items():
+        _bind_given_dims_from_value(_spec_at(kernel.given_spec, path), value, bindings, repr(path))
+    if bindings:
+        kernel = kernel.with_dim_sizes(**bindings)
+    nested = [path for path in values if _PATH_SEP in path]
+    if nested:
+        # Promote each bound node to its own slot, preserving the unbound
+        # fields of every structured slot in the boundary translation.
+        occupied = set(kernel.given_spec) | set(kernel.event_spec.components)
+        moves: dict[str, str] = {}
+        for path in nested:
+            name = "_bound"
+            while name in occupied:
+                name += "_"
+            occupied.add(name)
+            moves[path] = name
+        kernel = kernel.with_path_names(moves)
+        values = {moves.get(path, path): value for path, value in values.items()}
+    result = kernel._condition_on(values, **options)
     if result is not kernel and result.provenance is None:
         result.with_provenance(
             Provenance.create(
@@ -924,10 +953,6 @@ def _can_curry(call: BoundCall) -> Feasibility:
         A feasible report, or a declined one whose description names the part
         of the condition that fails.
 
-    Raises
-    ------
-    NotImplementedError
-        If a key names part of a structured slot.
     """
     d, keys = call.operands["d"], _given_keys(call.operands["given"])
     if not isinstance(d, ConditionalDistribution):
@@ -941,9 +966,6 @@ def _can_curry(call: BoundCall) -> Feasibility:
     fields = [key for key in keys if _head(key) not in _slots_of(d)]
     if fields:
         return Feasibility(False, f"{fields} are fields of {d.label!r}, not given slots")
-    for key in keys:
-        if _PATH_SEP in key:
-            raise NotImplementedError(f"condition_on: {_part_of_a_slot(key)}")
     return Feasibility(True)
 
 
@@ -974,8 +996,12 @@ def _curried_is_normalized(call: BoundCall) -> bool | None:
 
 def _leaves_a_slot(call: BoundCall) -> bool:
     """The given leaves a given slot of the conditioned object unbound."""
-    bound = {_head(key) for key in _given_keys(call.operands["given"]) or ()}
-    return bool(_slots_of(call.operands["d"]) - bound)
+    kernel = call.operands["d"]
+    if not isinstance(kernel, ConditionalDistribution):
+        return False
+    keys = _given_keys(call.operands["given"]) or ()
+    slots = tuple(key for key in keys if _spec_at(kernel.given_spec, key) is not None)
+    return bool(_remaining_given_spec(kernel.given_spec, slots).required)
 
 
 def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
@@ -999,9 +1025,6 @@ def _can_form_the_unnormalized_conditional(call: BoundCall) -> Feasibility:
     for key in produced:
         if key not in components:
             return _nested_field(key)
-    for key in keys:
-        if _head(key) in slots and _PATH_SEP in key:
-            return Feasibility(False, _part_of_a_slot(key), actionable=True)
     if components <= set(produced):
         return _fixes_every(d)
     return Feasibility(True)
@@ -1284,7 +1307,12 @@ def _given_conformance(call: BoundCall) -> Feasibility | None:
     d, given = call.operands["d"], call.operands["given"]
     if _reads_shapes_from_data(d) or _given_keys(given) is None:
         return None
+    paths = sorted(_given_keys(given))
+    for first, second in pairwise(paths):
+        if second.startswith(first + _PATH_SEP):
+            return Feasibility(False, f"given paths overlap at {first!r}", actionable=True)
     slots = d.given_spec if isinstance(d, ConditionalDistribution) else {}
+    bindings: dict[str, int] = {}
     for path, value in _given_values(given).items():
         expected = _spec_at(slots, path)
         if expected is None:
@@ -1292,7 +1320,7 @@ def _given_conformance(call: BoundCall) -> Feasibility | None:
         if not isinstance(expected, NumericSpec) or _full_array_shape_or_none(value) is None:
             continue
         try:
-            expected._bind_dims_from_value(value, {}, repr(path))
+            expected._bind_dims_from_value(value, bindings, repr(path))
         except ValueError as error:
             return Feasibility(
                 False,
@@ -1516,6 +1544,15 @@ class _NormalizingRoute(_RegistryRoute):
 # ---------------------------------------------------------------------------
 
 
+def _remaining_given_spec(given_spec: InputSpec, keys: tuple[str, ...]) -> InputSpec:
+    """The given slots left after binding whole slots or nodes inside them."""
+    moves = {key: f"_bound_{index}" for index, key in enumerate(keys)}
+    while set(moves.values()) & set(given_spec):
+        moves = {key: "_" + target for key, target in moves.items()}
+    moved, _ = _moved_slots(given_spec, moves)
+    return moved.without(*moves.values())
+
+
 def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     """Binding given slots declares the kernel's law, or a kernel over the slots left.
 
@@ -1524,12 +1561,20 @@ def _condition_on_result(d: TermSpec, given: TermSpec) -> OutputSpec | None:
     returns.
     """
     if isinstance(d, ConditionalDistributionSpec) and isinstance(given, RecordSpec):
-        keys = tuple(given.children)
-        if keys and all(key in d.given_spec for key in keys):
-            left = d.given_spec.without(*keys)
+        from ._given import _bind_given_dims_from_spec
+
+        keys = tuple(given)
+        if keys and all(_spec_at(d.given_spec, key) is not None for key in keys):
+            bindings: dict[str, int] = {}
+            for key in keys:
+                _bind_given_dims_from_spec(
+                    _spec_at(d.given_spec, key), given[key], bindings, f"given/{key}"
+                )
+            left = _remaining_given_spec(d.given_spec, keys).with_dim_sizes(**bindings)
+            event = d.event_spec.with_dim_sizes(**bindings)
             if not left.required:
-                return OutputSpec(DistributionSpec(d.event_spec))
-            return OutputSpec(ConditionalDistributionSpec(left, d.event_spec))
+                return OutputSpec(DistributionSpec(event))
+            return OutputSpec(ConditionalDistributionSpec(left, event))
     return None
 
 
@@ -1635,7 +1680,10 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
         The law or kernel to condition.
     given : Record, Mapping, or RecordBatch
         The values, keyed by field path: given slots of a kernel, or fields the
-        law produces; or a batch of such values.
+        law produces; or a batch of such values. A path into a structured given
+        slot binds that node and leaves the other fields in the residual slot;
+        binding its last field dissolves the slot. Paths must not overlap, and
+        all values bind shared symbolic dimensions together.
 
     Returns
     -------

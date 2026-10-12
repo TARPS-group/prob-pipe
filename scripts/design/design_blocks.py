@@ -310,6 +310,20 @@ def _compare_signature(
     declared = list(member.parameters)
     if skip_first and declared and declared[0].name in ("self", "cls"):
         declared = declared[1:]
+    # VI.0 adds given at the operation boundary; design blocks show the
+    # authored declaration. Check the injected parameter's contract too.
+    if getattr(implemented, "_given_subject", None) is not None and not any(
+        parameter.name == "given" for parameter in declared
+    ):
+        index = next(
+            (
+                index
+                for index, parameter in enumerate(declared)
+                if parameter.kind is inspect.Parameter.VAR_KEYWORD
+            ),
+            len(declared),
+        )
+        declared.insert(index, Parameter("given", inspect.Parameter.KEYWORD_ONLY, None, "None"))
     actual = list(signature.parameters.values())
     if skip_first and actual and actual[0].name in ("self", "cls"):
         actual = actual[1:]

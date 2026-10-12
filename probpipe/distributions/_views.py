@@ -2899,7 +2899,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         return complete, pending, slots
 
     def _parent_given(self, given: Any) -> dict[str, Any]:
-        """*given*, a value for every slot of this kernel, translated to the parent's slots.
+        """*given*, values for this kernel's required slots, translated to the parent's slots.
 
         Parameters
         ----------
@@ -2909,18 +2909,19 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         Returns
         -------
         dict[str, Any]
-            The value of each slot of the parent, keyed by the parent's slot name.
+            The supplied parent slots, keyed by the parent's slot name. Omitted
+            optional slots retain the parent's defaults.
 
         Raises
         ------
         ValueError
-            If *given* leaves a slot of this kernel unbound.
+            If *given* leaves a required slot unbound or supplies only part of a slot.
         """
         complete, pending, _ = self._translated(given)
-        if pending or len(complete) != len(self._parent.given_spec):
+        if pending or not set(self._parent.given_spec.required) <= set(complete):
             raise ValueError(
-                f"cannot bind {self.label!r}: it needs a value for every given slot "
-                f"{list(self.given_spec)}"
+                f"cannot bind {self.label!r}: it needs a value for every required given slot "
+                f"{list(self.given_spec.required)}"
             )
         return complete
 
