@@ -5,7 +5,9 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ApplicabilityError,
     BatchSpec,
+    DistributionBatch,
     EmpiricalDistribution,
     Function,
     Normal,
@@ -225,6 +227,34 @@ class TestLiftsOverBatchValuedFields:
             totals = Function(total, dispatch="sequential")(law["traj"])
         assert isinstance(law.event_spec.spec["traj"], BatchSpec)
         np.testing.assert_allclose(totals.atoms.raw(), [12.0, 30.0])
+
+
+class TestSampleLevelCollision:
+    @staticmethod
+    def _on_sample(beta, scale=1.0):
+        return NumericArrayBatch(beta * scale * jnp.arange(1.0, 4.0), "sample", label="path")
+
+    def test_a_sample_shape_names_the_event_level_it_repeats(self):
+        wrapped = Function(
+            self._on_sample, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
+        )
+        with workflow_run(seed=0):
+            law = wrapped(EmpiricalDistribution(jnp.array([2.0, 5.0]), component="beta"))
+            assert sample(law).level_names == ("sample",)
+            with pytest.raises(ApplicabilityError, match=r"level 'sample'.*Rename the event's"):
+                sample(law, 2)
+
+    def test_a_nested_sweep_names_the_event_level_it_repeats(self):
+        wrapped = Function(
+            self._on_sample, output_spec=OutputSpec(trajectory=None), dispatch="sequential"
+        )
+        scales = NumericArrayBatch(jnp.array([1.0, 10.0]), "horizon", label="scale")
+        with workflow_run(seed=0):
+            laws = wrapped(EmpiricalDistribution(jnp.array([2.0]), component="beta"), scales)
+            assert isinstance(laws, DistributionBatch)
+            assert sample(laws).level_names == ("horizon", "sample")
+            with pytest.raises(ApplicabilityError, match=r"level 'sample'.*Rename the event's"):
+                sample(laws, 2)
 
 
 class TestBatchOutputComposition:

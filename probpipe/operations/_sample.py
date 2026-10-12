@@ -117,8 +117,9 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, or the declaration has free dimensions,
-        which a draw has no value to bind.
+        If *sample_shape* is malformed, the declaration has free dimensions,
+        which a draw has no value to bind, or a non-empty *sample_shape* meets
+        a batch-valued event that already has a level named ``sample``.
     """
     shape = _sample_shape(sample_shape)
     free = d.free_dims
@@ -130,6 +131,13 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
         )
     if not shape:
         return d.event_spec
+    event = d.event_spec.spec
+    if isinstance(event, BatchSpec) and SAMPLE_LEVEL in event.level_names:
+        raise ApplicabilityError(
+            f"sample: sample_shape={shape} adds the level {SAMPLE_LEVEL!r}, but each draw is "
+            f"already a batch on the levels {list(event.level_names)}. Rename the event's level "
+            f"{SAMPLE_LEVEL!r}, such as in the function that returns the batch."
+        )
     return d.event_spec._with_spec(
         _flat_batch_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
     )
@@ -166,7 +174,9 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, or the declaration has free dimensions.
+        If *sample_shape* is malformed, the declaration has free dimensions, or
+        a non-empty *sample_shape* meets a batch-valued event that already has
+        a level named ``sample``.
     ResolutionError
         If *d* does not sample.
     """
