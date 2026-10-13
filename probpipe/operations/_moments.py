@@ -1230,7 +1230,8 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     fixed_args : mapping of str to Any, optional
         The other parameters of a map with several, by name. Each is a
         constant: a law the direct call would sample, or a batch it would
-        sweep, is refused. ``mean(function(f)(x=d, a=A))`` integrates over the
+        sweep, is refused, including arguments set through the map's
+        construction ``bind``. ``mean(function(f)(x=d, a=A))`` integrates over the
         law ``A`` as well, and ``function(lambda a: expectation(d, f, {"a": a}))(A)``
         is the law of the expectation at a draw of ``A``.
 

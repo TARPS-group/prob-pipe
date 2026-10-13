@@ -18,6 +18,7 @@ from probpipe import (
     OutputSpec,
     Record,
     conditional_distribution,
+    expectation,
     log_prob,
     mean,
     variance,
@@ -486,3 +487,59 @@ def test_describe_lists_the_evaluation_rules():
     text = operation_registry.describe("pushforward")
     assert text.startswith("pushforward(d, f, fixed_args, given) — primitive")
     assert "evaluation_rules (registry, exactness delegated)" in text
+
+
+@pytest.mark.parametrize("operation", [pushforward, expectation])
+@pytest.mark.parametrize("method", [None, "empirical_enumeration", "sampling_lift"])
+@pytest.mark.parametrize("check", [False, True])
+@pytest.mark.parametrize(
+    "bound",
+    [
+        Normal("a", 10.0, 1.0),
+        NumericArrayBatch(jnp.array([10.0, 20.0]), "i", label="a"),
+    ],
+)
+def test_bound_arguments_must_be_constants(operation, method, check, bound):
+    calls = []
+
+    def shift(x, a):
+        calls.append(x)
+        return x + a
+
+    mapped = Function(shift, label="shift", bind={"a": bound})
+    op = operation.with_options(method=method)
+    with pytest.raises(ApplicabilityError, match=r"fixed_args\['a'\] must be a fixed value"):
+        (op.check if check else op)(_weighted_atoms(), mapped)
+    assert calls == []
+
+
+@pytest.mark.parametrize("operation", [pushforward, expectation])
+def test_explicit_constant_overrides_a_bound_law(operation):
+    mapped = Function(lambda x, a: x + a, label="shift", bind={"a": Normal("a", 10.0, 1.0)})
+    result = operation(_weighted_atoms(), mapped, {"a": 2.0})
+    assert _value(mean(result) if operation is pushforward else result) == pytest.approx(3.3)
+
+
+@pytest.mark.parametrize("dispatch", ["jax", "sequential"])
+@pytest.mark.parametrize("output_size", [2, 3])
+def test_any_map_preserves_shared_input_output_dimensions(dispatch, output_size):
+    def mapped(x: Any):
+        return jnp.ones(output_size)
+
+    fn = Function(
+        mapped,
+        label="mapped",
+        input_spec={"x": NumericArraySpec(("n",))},
+        output_spec=NumericArraySpec(("n",)),
+    )
+    law = EmpiricalDistribution(jnp.ones((2, 2)), component="x")
+    op = pushforward.with_options(dispatch=dispatch)
+    if output_size == 3:
+        with pytest.raises(ValueError) as error:
+            op(law, fn)
+        cause = error.value.__cause__ if dispatch == "jax" else error.value
+        assert "already bound to 2" in str(cause)
+    else:
+        result = op(law, fn)
+        assert result.event_spec.spec.shape == (2,)
+        assert jnp.array_equal(mean(result).raw(), jnp.ones(2))

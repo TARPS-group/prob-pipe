@@ -290,7 +290,7 @@ def _integrand_conditions(subject: str) -> tuple[Callable[..., Any], Callable[..
         if event is None:
             return True
         fn = _as_function(f, subject=subject)
-        fixed = dict(fixed_args or {})
+        fixed = {**fn._bind, **dict(fixed_args or {})}
         parameter = _bound_parameter(fn, fixed, subject=subject)
         reason = _domain_refusal(fn, parameter, event, fixed)
         if not reason:
@@ -301,9 +301,9 @@ def _integrand_conditions(subject: str) -> tuple[Callable[..., Any], Callable[..
 
     def fixed_arguments_constant(f: Any, fixed_args: Any) -> Any:
         """The map's fixed arguments are constants, which the call does not lift."""
-        if not fixed_args:
-            return True
-        reason = _lifted_fixed_argument(_as_function(f, subject=subject), dict(fixed_args))
+        fn = _as_function(f, subject=subject)
+        fixed = {**fn._bind, **dict(fixed_args or {})}
+        reason = _lifted_fixed_argument(fn, fixed)
         return Feasibility(False, f"{subject}: {reason}") if reason else True
 
     return draw_admitted, fixed_arguments_constant
@@ -371,7 +371,8 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
         from *fixed_args*, and each draw binds it whatever its name.
     fixed_args : mapping of str to Any, optional
         The map's other parameters, by name. Each is a constant: a law the
-        direct call would sample, or a batch it would sweep, is refused. The
+        direct call would sample, or a batch it would sweep, is refused. This
+        also applies to arguments set through the map's construction ``bind``. The
         direct call ``f(x=d, a=A)`` gives the joint law of the map over both.
 
     Returns
@@ -426,7 +427,7 @@ def _draw_map(
     operation, whose ``method`` names its own routes rather than evaluation
     rules, the map is a new ``Function`` whose one unannotated parameter receives each draw and
     calls *f* on it with the fixed arguments. A map whose parameter is annotated
-    ``Any`` is called on the draw directly, so it traces; any other is called
+    ``Any`` is applied to the draw with schema validation, so it traces; any other is called
     as a direct call, so the draw goes through its admission, conversions, and
     routes. The new map keeps *f*'s label, output declaration, and sample count.
     """
@@ -436,9 +437,8 @@ def _draw_map(
     hint = f._signature_info.hints.get(parameter)
     direct = operation or hint is None or resolved_hint(hint) is not Any
     target = f.with_options(exact_only=True) if direct and exact_only else f
-    call = target if direct else f.raw()
-    # The raw callable skips the construction ``bind``, which the direct call applies.
-    constants = dict(fixed) if direct else {**f._bind, **fixed}
+    call = target if direct else f.apply
+    constants = dict(fixed)
 
     def each_draw(draw: Any) -> Any:
         return _call_at(call, f, parameter, draw, constants)

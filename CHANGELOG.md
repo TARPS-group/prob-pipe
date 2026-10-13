@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- `pushforward` and `expectation` validate construction-bound arguments as
+  constants, just as they validate `fixed_args`. Maps annotated `Any` retain
+  their input/output schema checks when pushed forward, including shared
+  symbolic dimensions.
+
 - **`expectation(d, f)` integrates `f` over draws of `d` on every route.**
   It is `mean(pushforward(d, f))`, so the integrand receives one draw at a
   time whatever its parameter's annotation. An integrand whose declared input
