@@ -30,7 +30,7 @@ import math
 import warnings
 from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from types import MappingProxyType
 from typing import Any, overload
@@ -45,7 +45,7 @@ try:
 except ImportError:
     task = flow = None
 
-from ..core._batch import Batch
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._dispatch import MethodInfo, ResolutionError
 from ..core._expression import (
     Applied,
@@ -57,10 +57,12 @@ from ..core._expression import (
     draw_of,
 )
 from ..core._numeric_record_batch import NumericRecordBatch
-from ..core._spec_base import NumericSpec, TermSpec
+from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
 from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
+from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
+from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _labeled_product
@@ -475,9 +477,16 @@ def _is_swept_scalar(
 
 
 def _is_scalar(value: Any) -> bool:
-    """Whether *value* is a scalar, which an applied function's notation shows by its value."""
+    """Whether *value* is a scalar, which an applied function's notation shows by its value.
+
+    A scalar is a Python number or string, or an array or NumPy scalar of shape ``()``.
+    """
     if isinstance(value, (bool, int, float, complex, str)):
         return True
+    # A numeric record forwards ``shape`` to its single field, and it raises
+    # TypeError for a record of several fields.
+    if isinstance(value, Record):
+        return False
     return getattr(value, "shape", None) == ()
 
 
@@ -597,7 +606,7 @@ def _realized_point(
     """
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
-    value = candidate.run(point, result, report)
+    value, _ = _resolution.settled(candidate.run(point, result, report))
     label, expression = _result_identity(function, values, passed)
     term = _result.declared_term(value, result, label, kind_error=kind_error)
     return _expressed(_keeping_route_record(term, value), expression)
@@ -721,11 +730,16 @@ def _run_call(
     # The selected route's result, when it carries a record of its own, which the
     # call's record keeps as a parent under the call's expression.
     route_records: list[TrackedTerm] = []
+    # The exactness the selected route settled when it ran, which the record
+    # takes in place of the one its check reported.
+    settled_exactness: list[bool | None] = []
 
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
             point, result, candidate, report = selection
-            value = candidate.run(point, result, report)
+            value, exact = _resolution.settled(candidate.run(point, result, report))
+            if exact is not None:
+                settled_exactness.append(exact)
             term = _expressed(_result.declared_term(value, result, label), expression)
             if (
                 isinstance(value, TrackedTerm)
@@ -772,6 +786,49 @@ def _run_call(
         return _labeled_product(result)
 
     resolved_dispatch: str | None = None
+    traceability_checked = False
+    # A numeric batch has one shape and dtype per column across every cell.
+    # Probe its rows as dynamic inputs so a check can be shared across cells.
+    dynamic_refs = tuple(
+        ref
+        for ref in broadcast_plan.array_args
+        if isinstance(_binding.input_ref_value(values, ref).element_spec, NumericSpec)
+    )
+    cache_traceability = broadcast_plan.regime != "nested" or len(dynamic_refs) == len(
+        broadcast_plan.array_args
+    )
+
+    general_probe_pending = broadcast_plan.regime == "nested" and cache_traceability
+    general_probe_failed = False
+
+    def prepare_shared_probe(
+        dispatch_values: dict[str, Any],
+        broadcast_args: list[_binding.FunctionInputRef],
+    ) -> None:
+        nonlocal general_probe_pending, general_probe_failed
+        nonlocal traceability_checked, resolved_dispatch
+        if not general_probe_pending:
+            return
+        general_probe_pending = False
+        error = _jax_traceability_error(
+            function,
+            dispatch_values,
+            broadcast_args,
+            func=invoke_point,
+            stochastic_plan=stochastic_plan,
+            dynamic_refs=dynamic_refs,
+        )
+        if error is None:
+            traceability_checked = True
+            resolved_dispatch = "jax"
+        else:
+            # A cell can trace with its swept values fixed although they cannot
+            # trace as dynamic inputs, as with a Python branch on a swept value.
+            # So the first cell's fixed-value check decides whether the cells
+            # share a check. A failure applies to every cell, so dispatch="auto"
+            # runs them all sequentially. A success leaves each later cell to its
+            # own check.
+            general_probe_failed = True
 
     def resolve_dispatch(
         dispatch_values: dict[str, Any],
@@ -779,8 +836,10 @@ def _run_call(
         *,
         jax_supported: bool = True,
     ) -> str:
-        nonlocal resolved_dispatch
-        if function.options["dispatch"] != "auto" or not jax_supported:
+        nonlocal resolved_dispatch, cache_traceability
+        if function.options["dispatch"] == "auto" and jax_supported:
+            prepare_shared_probe(dispatch_values, broadcast_args)
+        if function.options["dispatch"] != "auto" or not jax_supported or not cache_traceability:
             return _resolve_dispatch(
                 function,
                 dispatch_values,
@@ -790,7 +849,7 @@ def _run_call(
                 stochastic_plan=stochastic_plan,
             )
         if resolved_dispatch is None:
-            resolved_dispatch = _resolve_dispatch(
+            dispatch = _resolve_dispatch(
                 function,
                 dispatch_values,
                 broadcast_args,
@@ -798,12 +857,20 @@ def _run_call(
                 func=invoke_point,
                 stochastic_plan=stochastic_plan,
             )
+            if dispatch == "jax" and general_probe_failed:
+                cache_traceability = False
+                return dispatch
+            resolved_dispatch = dispatch
         return resolved_dispatch
 
     def require_jax_traceable(
         dispatch_values: dict[str, Any],
         broadcast_args: list[_binding.FunctionInputRef],
     ) -> None:
+        nonlocal traceability_checked, cache_traceability
+        prepare_shared_probe(dispatch_values, broadcast_args)
+        if traceability_checked and cache_traceability:
+            return
         _require_jax_traceable(
             function,
             dispatch_values,
@@ -811,6 +878,9 @@ def _run_call(
             func=invoke_point,
             stochastic_plan=stochastic_plan,
         )
+        traceability_checked = True
+        if general_probe_failed:
+            cache_traceability = False
 
     def execute_distribution_broadcast(
         *,
@@ -937,6 +1007,9 @@ def _run_call(
         ),
     )
     result = _execution.execute_many(request)[0]
+    if settled_exactness:
+        exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
+        route = replace(route, exact=exact)
     name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
@@ -963,24 +1036,35 @@ def _jax_traceability_error(
     *,
     func: Callable[..., Any],
     stochastic_plan: _plan.StochasticPlan | None,
+    dynamic_refs: tuple[_binding.FunctionInputRef, ...] = (),
 ) -> Exception | None:
     """Return the JAX trace-probe error for the current call, if any.
 
     The probe traces the operation the dispatch is choosing, not merely the
     body: a body can trace cleanly bare yet be impossible under the
-    transform its executor applies — one that returns a batch, whose added
-    axis no level can name. So every executor that maps is probed under a
-    map, each argument fed the way its own executor will feed it: a swept
-    batch over its first row, a distribution over one draw. A probe failure
+    transform its executor applies, as one that returns a record holding a
+    batch is. So every executor that maps is probed under a map, each
+    argument fed the way its own executor will feed it: a swept batch over its
+    first row, a distribution over one draw, a batch-valued draw in its raw
+    form, which a parameter annotated with a batch class receives rebuilt as
+    the batch, and any other argument as the call passed it. A law whose record
+    event stores a batch for each draw in an object column has no stand-in, and
+    the probe reports it. A probe failure
     means sequential dispatch, which is always able to run the call — the two
     paths agree on results by contract, so falling back costs speed, never
     correctness.
+
+    *dynamic_refs* names numeric swept inputs to trace as additional dynamic
+    arguments. Success then applies across their values at the same shapes and
+    dtypes. After a failed generalized probe, the caller checks rows at their
+    fixed values.
     """
     try:
         dummy_kw = dict(values)
         broadcast_refs = set(broadcast_args)
         batched_sources: dict[_binding.FunctionInputRef, Any] = {}
         drawn_refs: list[_binding.FunctionInputRef] = []
+        array_like_refs: list[_binding.FunctionInputRef] = []
         for ref in _binding.iter_input_refs(function._signature_info, values):
             v = _binding.input_ref_value(values, ref)
             if ref in broadcast_refs:
@@ -994,20 +1078,14 @@ def _jax_traceability_error(
                     # multi-field law be probed at all — it has no single
                     # event shape to stand in for one.
                     drawn_refs.append(ref)
-            else:
-                if isinstance(v, jnp.ndarray):
-                    replacement = v
-                elif hasattr(v, "__array__"):
-                    replacement = jnp.asarray(v)
-                else:
-                    replacement = v
-                dummy_kw = _binding.replace_input_ref(dummy_kw, ref, replacement)
+            elif hasattr(v, "__array__") and not isinstance(v, jnp.ndarray):
+                array_like_refs.append(ref)
         with _context._workflow_probe():
             if batched_sources:
                 refs = list(batched_sources)
                 # The executor's own body, not a copy maintained in the
                 # probe. ``dummy_kw`` carries the swept batches at their
-                # references and the other inputs as the probe feeds them.
+                # references and the other inputs as the call passed them.
                 _row_call = _sweep.mapped_row_body(
                     func=func,
                     values=dummy_kw,
@@ -1030,9 +1108,6 @@ def _jax_traceability_error(
                 if stochastic_plan is None:  # pragma: no cover - planner contract guard
                     raise RuntimeError("distribution probe is missing its stochastic plan")
                 refs = drawn_refs
-                _draw_call = _broadcast.mapped_draw_body(
-                    func=func, values=dummy_kw, broadcast_args=refs
-                )
                 # The executor reads an enumerated group's atoms as it reads a
                 # sampled group's draws, so every group is probed with a stand-in
                 # for one draw of its root.
@@ -1040,6 +1115,21 @@ def _jax_traceability_error(
                 for group in stochastic_plan.source_groups:
                     binding = stochastic_plan.runtime_bindings[group.index]
                     root = binding.root
+                    event = root.event_spec.spec
+                    if isinstance(event, BatchSpec):
+                        # A batch-valued draw is mapped in its raw form.
+                        root_probes.append(_batch_stand_in(root, event))
+                        continue
+                    held = _broadcast.batch_field(event)
+                    if held is not None:
+                        path, levels = held
+                        raise _broadcast.UnmappedBatchError(
+                            f"dispatch='jax' cannot map over the draws of {root.label!r}, whose "
+                            f"field {path!r} stores a batch on the levels {list(levels)} for "
+                            f"each draw. Lift over the marginal law at that field, as "
+                            f"marginal(law, {path!r}) gives it, or use dispatch='auto', "
+                            f"'sequential', or 'thread'."
+                        )
                     from ..core._specs import _components_record
 
                     components = _components_record(root.event_spec)
@@ -1080,7 +1170,16 @@ def _jax_traceability_error(
                         root_probe = next(iter(columns.values()))
                     root_probes.append(root_probe)
 
-                def probe_draw(root_values):
+                def probe_draw(root_values, dynamic_values):
+                    probe_values = _binding.replace_input_refs(
+                        dummy_kw, dict(zip(dynamic_refs, dynamic_values, strict=True))
+                    )
+                    _draw_call = _broadcast.mapped_draw_body(
+                        func=func,
+                        values=probe_values,
+                        broadcast_args=refs,
+                        batch_events=_broadcast.batch_events(stochastic_plan),
+                    )
                     sampled = {}
                     for group, root_value in zip(
                         stochastic_plan.source_groups,
@@ -1096,12 +1195,74 @@ def _jax_traceability_error(
                             sampled[consumer.arg_ref] = evaluate(root_value)
                     return _draw_call(tuple(sampled[ref] for ref in refs))
 
-                jax.make_jaxpr(jax.vmap(probe_draw))(tuple(root_probes))
+                dynamic_values = tuple(
+                    _binding.input_ref_value(dummy_kw, ref) for ref in dynamic_refs
+                )
+                jax.make_jaxpr(jax.vmap(probe_draw, in_axes=(0, None)))(
+                    tuple(root_probes), dynamic_values
+                )
             else:
-                jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
+                # The trace takes the arguments as its inputs, so each argument
+                # that converts to an array enters as a JAX array.
+                traced_kw = _binding.replace_input_refs(
+                    dummy_kw,
+                    {
+                        ref: jnp.asarray(_binding.input_ref_value(values, ref))
+                        for ref in array_like_refs
+                    },
+                )
+                jax.make_jaxpr(lambda kw: func(**kw))(traced_kw)
     except Exception as exc:
         return exc
     return None
+
+
+def _batch_stand_in(root: Any, event: BatchSpec) -> Any:
+    """A stand-in for one raw draw of *root*, whose event is the batch *event*, led by an axis of one.
+
+    Parameters
+    ----------
+    root : Distribution
+        The law whose draws the probe stands in for.
+    event : BatchSpec
+        The law's event declaration.
+
+    Returns
+    -------
+    Any
+        A ``jax.ShapeDtypeStruct`` for array elements, and the nested mapping of
+        them for record elements. Each has the axis of one, then the event's
+        batch axes, then the element's own axes.
+
+    Raises
+    ------
+    TypeError
+        If the event's elements are not numeric, its shapes are not concrete, or
+        a leaf's dtype is neither declared nor stored.
+    """
+    flat = _flat_batch_spec(event)
+    element = flat.element_spec
+    if not isinstance(element, NumericSpec) or not flat.is_concrete:
+        raise TypeError(
+            f"{type(root).__name__} must declare a concrete numeric event to run under "
+            f"dispatch='jax'"
+        )
+    lead = (1, *flat.batch_shape)
+    if isinstance(element, NumericArraySpec):
+        leaves = {"": element}
+    else:
+        leaves = {path: element[path] for path in element}
+    columns = {}
+    for path, leaf in leaves.items():
+        dtype = leaf.dtype if leaf.dtype is not None else _stored_dtype(root, path)
+        if dtype is None:
+            raise TypeError(
+                f"{type(root).__name__} must declare its field dtypes to run under dispatch='jax'"
+            )
+        columns[path] = jax.ShapeDtypeStruct((*lead, *leaf.shape), dtype)
+    if isinstance(element, NumericArraySpec):
+        return columns[""]
+    return _unflatten_paths(columns)
 
 
 def _stored_dtype(root: Any, path: str) -> Any:
@@ -1133,7 +1294,9 @@ def _require_jax_traceable(
     unchanged: the :class:`~._call.ApplicabilityError` of a point whose
     declarations violate the call contract, which planning raises, and the
     :class:`~._result.ResultSchemaError` or :class:`~._result.ResultKindError` of
-    a result that violates its declaration, which the return raises.
+    a result that violates its declaration, which the return raises. A batch
+    the map cannot carry, such as a joint law's batch-valued field, raises a
+    ``ValueError`` that names it.
     """
     trace_error = _jax_traceability_error(
         function, values, broadcast_args, func=func, stochastic_plan=stochastic_plan
@@ -1145,6 +1308,8 @@ def _require_jax_traceable(
         (_call.ApplicabilityError, _result.ResultSchemaError, _result.ResultKindError),
     ):
         raise trace_error
+    if isinstance(trace_error, _broadcast.UnmappedBatchError):
+        raise ValueError(str(trace_error)) from None
     if isinstance(trace_error, _context._StochasticProbeSignal):
         message = (
             _context.JAX_SUBMISSION_MESSAGE

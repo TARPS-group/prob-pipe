@@ -17,7 +17,7 @@ from typing import Any
 import jax
 import numpy as np
 
-from ..core._batch import BatchSpec, _ranks_of
+from ..core._batch import BatchSpec, _flat_batch_spec, _ranks_of
 from ..core._expression import Expression, draw_of
 from ..core._record_batch import _batch_class_for
 from ..core._record_spec import RecordSpec
@@ -56,6 +56,8 @@ def _record_batch(value: Any, call: BoundCall, result: OutputSpec | None) -> Any
     if call.controls["raw"] or not isinstance(value, Mapping) or result is None:
         return value
     spec = result.spec
+    if isinstance(spec, BatchSpec):
+        spec = _flat_batch_spec(spec)
     if not isinstance(spec, BatchSpec) or not isinstance(spec.element_spec, RecordSpec):
         return value
     return _batch_class_for(spec.element_spec)(
@@ -109,13 +111,15 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
     -------
     OutputSpec
         ``d.event_spec`` for an empty shape, and otherwise that declaration with
-        its spec replaced by the batch spec over the sample axes.
+        its spec replaced by the batch spec over the sample axes followed by
+        any batch levels that belong to one event.
 
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, or the declaration has free dimensions,
-        which a draw has no value to bind.
+        If *sample_shape* is malformed, the declaration has free dimensions,
+        which a draw has no value to bind, or a non-empty *sample_shape* meets
+        a batch-valued event that already has a level named ``sample``.
     """
     shape = _sample_shape(sample_shape)
     free = d.free_dims
@@ -127,7 +131,16 @@ def _sample_result(d: DistributionSpec, sample_shape: Any) -> OutputSpec:
         )
     if not shape:
         return d.event_spec
-    return d.event_spec._with_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
+    event = d.event_spec.spec
+    if isinstance(event, BatchSpec) and SAMPLE_LEVEL in event.level_names:
+        raise ApplicabilityError(
+            f"sample: sample_shape={shape} adds the level {SAMPLE_LEVEL!r}, but each draw is "
+            f"already a batch on the levels {list(event.level_names)}. Rename the event's level "
+            f"{SAMPLE_LEVEL!r}, such as in the function that returns the batch."
+        )
+    return d.event_spec._with_spec(
+        _flat_batch_spec(BatchSpec(d.event_spec.spec, {SAMPLE_LEVEL: shape}))
+    )
 
 
 @operation(result=_sample_result)
@@ -154,12 +167,16 @@ def sample(d: Distribution, sample_shape: SizesLike = ()):
         draws takes the label of one draw, so its element is labeled
         ``(mu ~ prior)[sample=0]``. Under ``with_options(raw=True)`` the draws
         are returned as ``d._sample`` gives them, so a record-valued law's
-        batch of draws is the nested mapping of its raw columns.
+        batch of draws is the nested mapping of its raw columns. A batch-valued
+        event keeps its own levels for one draw, and a non-empty *sample_shape*
+        adds the ``sample`` level before them.
 
     Raises
     ------
     ApplicabilityError
-        If *sample_shape* is malformed, or the declaration has free dimensions.
+        If *sample_shape* is malformed, the declaration has free dimensions, or
+        a non-empty *sample_shape* meets a batch-valued event that already has
+        a level named ``sample``.
     ResolutionError
         If *d* does not sample.
     """

@@ -52,7 +52,7 @@ The `convert` operation is on [Conversion](conversion.md), the inference methods
 
 ## Maps
 
-::: probpipe.evaluate
+::: probpipe.pushforward
 
 ::: probpipe.inverse
 

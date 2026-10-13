@@ -46,11 +46,13 @@ from ._sweep import slice_sweep_values
 
 __all__ = [
     "PointReport",
+    "RouteOutcome",
     "StandIn",
     "call_report",
     "check_point",
     "check_points",
     "selected",
+    "settled",
 ]
 
 
@@ -64,6 +66,46 @@ class StandIn:
     """
 
     spec: TermSpec
+
+
+@dataclass(frozen=True)
+class RouteOutcome:
+    """A route's raw result with the exactness the route learned only when it ran.
+
+    A route whose check cannot know the exactness of what it will run, as a
+    route that runs one operation on the result of another cannot, returns its
+    result in this form, and the call records *exact* in place of the exactness
+    its check reported.
+
+    Attributes
+    ----------
+    value : Any
+        The route's raw result.
+    exact : bool or None
+        Whether the result denotes the call's mathematical result; ``None`` when
+        the run could not tell.
+    """
+
+    value: Any
+    exact: bool | None
+
+
+def settled(value: Any) -> tuple[Any, bool | None]:
+    """A route's raw result and the exactness it settled when it ran, ``None`` when it settled none.
+
+    Parameters
+    ----------
+    value : Any
+        What a candidate's ``run`` returned: a raw result, or a RouteOutcome.
+
+    Returns
+    -------
+    tuple
+        The raw result, and the exactness a RouteOutcome carries or ``None``.
+    """
+    if isinstance(value, RouteOutcome):
+        return value.value, value.exact
+    return value, None
 
 
 @dataclass(frozen=True)
@@ -259,6 +301,10 @@ def check_point(
         return PointReport(
             None, pending=report.pending, result=result, routes=reports, deferred=deferred
         )
+    if isinstance(report, PointReport):
+        # A route's own deferred checks, such as one it can make only on a value
+        # its run produces, are the call's as well.
+        deferred = (*deferred, *report.deferred)
     return PointReport(
         True,
         route=candidate.route_name,
@@ -266,7 +312,7 @@ def check_point(
         exact=candidate.exactness(report),
         result=result,
         routes=reports,
-        deferred=(*deferred, *getattr(report, "deferred", ())),
+        deferred=deferred,
     )
 
 

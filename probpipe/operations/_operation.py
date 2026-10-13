@@ -20,13 +20,19 @@ which reads three declarations from the operation at its steps:
    order for the remaining ties. A route whose exactness is that of the
    implementations it delegates to, as a registry route's is, is ranked twice:
    restricted to its exact implementations among the exact routes, and
-   otherwise among the approximate ones. The ``method`` and ``exact_only``
-   controls restrict the choice, and provenance records the selected route.
+   otherwise among the approximate ones. A derived operation's identity ranks
+   below the direct routes of its exactness, and an identity that restricts
+   the calls it runs, a composite identity or one with an identity check, is
+   ranked once: among the exact routes under ``exact_only`` and among the
+   approximate ones otherwise. The ``method`` and ``exact_only`` controls
+   restrict the choice, and provenance records the selected route.
 
-A derived operation's **identity** is the route that runs its declaration's
-body, which calls other operations. The body and the identity check pass two
+A derived operation's **identity** is the route that runs its definition: by
+default the declaration's body, or else a composite route that runs a route of
+each constituent operation in turn. The body and the identity check pass two
 controls of the derived call to the Function calls they run, operations and
-plain Functions alike:
+plain Functions alike, and a composite identity runs its constituent
+operations under the same two:
 
 - ``exact_only`` restricts every call they run, at any depth, whatever the
   call sets;
@@ -34,8 +40,8 @@ plain Functions alike:
   call's view sets its own.
 
 Under ``exact_only`` no call within the identity runs an approximate route, so
-an identity with an identity check is kept and ranks as exact, and an identity
-without one is excluded.
+a body identity with an identity check is kept and ranks as exact, and one
+without an identity check is excluded.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -48,6 +54,7 @@ derived, and its routes in selection order.
 from __future__ import annotations
 
 import ast
+import copy
 import difflib
 import dis
 import inspect
@@ -74,11 +81,16 @@ from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
 from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._views import _drawn_form
 from ..functions import _broker, _descendants, _result
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
-from ..values._binding import make_signature_info_from_signature, values_to_bound_arguments
+from ..values._binding import (
+    make_signature_info_from_signature,
+    resolved_hint,
+    values_to_bound_arguments,
+)
 from ..values._function_base import _COMPLETED_AT_RETURN, _INHERITED_CONTROLS
 
 __all__ = [
@@ -288,12 +300,13 @@ class OperationRoute(Protocol):
         for a route whose exactness is that of the implementation it delegates
         to, until that implementation is selected. A delegating route, which
         can restrict itself to exact implementations, is ranked twice: among
-        the exact routes and among the approximate ones. A route whose
-        ``exact_when_restricted`` is true, as a derived operation's identity
-        with an identity check is, is ranked once: among the approximate routes,
-        and under ``exact_only`` among the exact ones, since every call it runs
-        is then restricted to exact routes. ``exact_only`` excludes any other
-        route whose exactness is ``None``.
+        the exact routes and among the approximate ones. An identity that
+        restricts the calls it runs, a composite identity or a route whose
+        ``exact_when_restricted`` is true, as a body identity with an identity
+        check is, is ranked once: among the approximate routes, and under
+        ``exact_only`` among the exact ones, since every call it runs is then
+        restricted to exact routes. ``exact_only`` excludes any other route
+        whose exactness is ``None``.
     """
 
     name: str
@@ -396,6 +409,9 @@ class _Route:
 
     source: RouteSource
     requires: tuple[type, ...] = ()
+    #: Whether the route realizes a derived operation's identity, which ranks it
+    #: below the operation's direct routes of its exactness (VI.0).
+    realizes_identity: bool = False
     #: Whether the route's result is exact whenever it runs under ``exact_only``,
     #: although its exactness is ``None``, so ``exact_only`` keeps the route.
     exact_when_restricted: bool = False
@@ -783,6 +799,7 @@ class _IdentityRoute(_Route):
     """
 
     source = RouteSource.FALLBACK
+    realizes_identity = True
 
     def __init__(
         self,
@@ -823,18 +840,6 @@ class _IdentityRoute(_Route):
             return self._declaration(*bound.args, **bound.kwargs)
 
 
-def _ranked_exactness(route: Any, exact_only: bool) -> bool | None:
-    """The exactness at which *route* ranks under *exact_only*.
-
-    It is the route's own, except that a route whose result is exact whenever
-    it runs under ``exact_only``, as its ``exact_when_restricted`` states, ranks
-    as exact under ``exact_only``.
-    """
-    if exact_only and getattr(route, "exact_when_restricted", False):
-        return True
-    return route.exact
-
-
 # ---------------------------------------------------------------------------
 # The candidates of selection
 # ---------------------------------------------------------------------------
@@ -858,12 +863,13 @@ class _Candidate:
     method: str | None = None
 
     @property
-    def rank(self) -> tuple[int, int, int]:
+    def rank(self) -> tuple[int, int, int, int]:
         """A fallback below every other source whatever its exactness, then exact before
-        approximate, then registration order."""
+        approximate, then a direct route before the identity, then registration order."""
         return (
             1 if self.route.source is RouteSource.FALLBACK else 0,
             0 if self.exact is True else 1,
+            1 if self.route.realizes_identity else 0,
             self.index,
         )
 
@@ -879,6 +885,8 @@ class _Candidate:
             return self.route.name
         if self.method is not None:
             return f"{self.route.name}/{self.method}"
+        if self.route.realizes_identity:
+            return self.route.name
         exactness = "exact" if self.exact else "approximate"
         if isinstance(self.route, _RegistryRoute):
             return f"{self.route.name} ({exactness} methods)"
@@ -912,11 +920,11 @@ class _Candidate:
         """The route's raw result for *call*, by the method *report* selected for a registry route."""
         route = self.route
         if isinstance(route, _DelegatingRoute):
-            selected = isinstance(route, _RegistryRoute) and isinstance(report, MethodInfo)
+            selected = self.method_of(report)
             return route.run(
                 call,
                 result,
-                method=report.method_name if selected else self.method,
+                method=self.method if selected is None else selected,
                 exact_only=call.controls["exact_only"] or self.exact is True,
             )
         return route.execute(call, result)
@@ -937,9 +945,33 @@ class _Candidate:
 
     def method_of(self, report: Feasibility) -> str | None:
         """The registry method a registry route delegates to, as *report* names it."""
-        if isinstance(self.route, _RegistryRoute) and isinstance(report, MethodInfo):
+        if not isinstance(self.route, _RegistryRoute):
+            return None
+        if isinstance(report, MethodInfo):
             return report.method_name
+        if isinstance(report, PointReport):
+            return report.method
         return None
+
+
+def _route_candidates(route: Any, index: int, exact_only: bool) -> list[_Candidate]:
+    """The candidates *route*, registered at *index*, contributes to a call under *exact_only*.
+
+    A delegating route contributes two, restricted to its exact implementations
+    and not, unless it realizes an identity. An identity that restricts the
+    calls it runs, a composite identity or one whose ``exact_when_restricted``
+    is true, is ranked once: among the approximate routes, and under
+    *exact_only* among the exact ones, since every call it runs is then
+    restricted to exact routes (VI.0). Any other route contributes one at its
+    declared exactness.
+    """
+    if isinstance(route, _DelegatingRoute):
+        if route.realizes_identity:
+            return [_Candidate(route, True if exact_only else None, index)]
+        return [_Candidate(route, True, index), _Candidate(route, False, index)]
+    if exact_only and getattr(route, "exact_when_restricted", False):
+        return [_Candidate(route, True, index)]
+    return [_Candidate(route, route.exact, index)]
 
 
 # ---------------------------------------------------------------------------
@@ -1015,9 +1047,12 @@ def _kinds_for(hint: Any) -> tuple[type[TermSpec], ...]:
     batch of values is swept; one annotated ``Any`` accepts every kind as it
     arrives; a term class accepts its own kind; and any other annotation, such
     as ``str`` for a field path, selects rather than supplies and accepts none.
+    A type alias accepts the kinds of the annotation :func:`resolved_hint`
+    resolves it to.
     """
     if hint is inspect.Parameter.empty:
         return _VALUE_KINDS
+    hint = resolved_hint(hint)
     if hint is Any:
         return (TermSpec,)
     if not isinstance(hint, type):
@@ -1193,8 +1228,10 @@ class Operation(Function):
         value, and returns the result's ``OutputSpec``, or ``None`` when the
         declarations leave the result open.
     conditions : iterable of callable
-        Applicability conditions, called like the result rule and before it.
-        Each returns ``True``, ``False``, ``None`` when the answer depends on
+        Applicability conditions, called like the result rule and before it,
+        except that a parameter whose role names ``FunctionSpec`` alone receives
+        the map itself, whose annotations, roles, and ``input_spec`` are declared
+        static information (V.6). Each returns ``True``, ``False``, ``None`` when the answer depends on
         values not yet known, or a ``Feasibility``; the first paragraph of its
         docstring states the condition.
     roles : mapping of str to iterable of TermSpec subclasses, optional
@@ -1214,6 +1251,11 @@ class Operation(Function):
         runs an approximate route. Without a check, the
         identity route admits every call that planning admits, and
         ``exact_only`` excludes it.
+    identity_route : OperationRoute, optional
+        A derived operation's composite identity route, which replaces the
+        generic route that runs the body. It runs a route of each constituent
+        operation in turn and records their combined exactness, so it is ranked
+        once, as an identity, below the direct routes of its exactness.
     label : callable, optional
         The label rule, called with the call's arguments it names and
         returning the result's label. Without it, the result takes the label
@@ -1225,8 +1267,10 @@ class Operation(Function):
     TypeError
         If *declaration*, *result*, a condition, *identity_check*, or *label*
         is not callable, the result rule, a condition, or the label rule reads
-        a name the declaration does not declare, a role is malformed, or a
-        primitive operation is given an identity check.
+        a name the declaration does not declare, a role is malformed, a
+        primitive operation is given an identity check or an identity route,
+        an identity route is given beside an identity check, or it is not a
+        delegating route.
     """
 
     def __init__(
@@ -1237,6 +1281,7 @@ class Operation(Function):
         conditions: Iterable[Callable[..., Any]] = (),
         roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
         identity_check: Callable[..., Any] | None = None,
+        identity_route: OperationRoute | None = None,
         label: Callable[..., str] | None = None,
     ) -> None:
         if not callable(declaration):
@@ -1246,7 +1291,9 @@ class Operation(Function):
         super().__init__(declaration, label=declaration.__name__)
         object.__setattr__(self, "_declaration_name", declaration.__name__)
         first = next(iter(self.signature.parameters), None)
-        subject = first if self._signature_info.hints.get(first) is Distribution else None
+        subject = (
+            first if resolved_hint(self._signature_info.hints.get(first)) is Distribution else None
+        )
         if "given" in self.signature.parameters or (
             roles is not None and first in roles and DistributionSpec not in roles[first]
         ):
@@ -1313,6 +1360,22 @@ class Operation(Function):
                 )
             if not callable(identity_check):
                 raise TypeError(f"{owner} needs a callable identity check; got {identity_check!r}")
+        if identity_route is not None:
+            if not derived:
+                raise TypeError(
+                    f"{owner} has an empty body, so it cannot take identity_route; only an "
+                    f"operation whose body returns its identity can"
+                )
+            if identity_check is not None:
+                raise TypeError(
+                    f"{owner} cannot take both identity_route and identity_check; the "
+                    f"identity route checks its own feasibility"
+                )
+            if not isinstance(identity_route, _DelegatingRoute):
+                raise TypeError(
+                    f"{owner} needs an identity route that delegates its exactness to the "
+                    f"routes it runs; got {identity_route!r}"
+                )
         set_attribute = object.__setattr__
         set_attribute(self, "_result_rule", result)
         set_attribute(self, "_rule_parameters", _parameter_names(result))
@@ -1339,7 +1402,12 @@ class Operation(Function):
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
         set_attribute(self, "_expression_rule", None)
-        if derived:
+        if identity_route is not None:
+            # A copy carries the identity's rank, so the caller's route keeps its own.
+            identity_route = copy.copy(identity_route)
+            identity_route.realizes_identity = True
+            self.register_route(identity_route)
+        elif derived:
             self.register_route(_IdentityRoute(declaration, self.signature, identity_check))
 
     # -- identity ----------------------------------------------------------
@@ -1448,17 +1516,20 @@ class Operation(Function):
 
         A delegating route is listed where its exact implementations rank, and
         any other route whose exactness is ``None`` where approximate routes
-        rank. That is the order without ``exact_only``; under it, a route whose
-        ``exact_when_restricted`` is true, such as an identity with an identity
-        check, ranks among the exact routes.
+        rank, as an identity does without ``exact_only``. An identity is
+        listed after the direct routes that rank with it. Under ``exact_only``
+        an identity that restricts the calls it runs, a composite identity or
+        one with an identity check, ranks among the exact routes.
         """
         indexed = list(enumerate(self._route_table.routes))
 
-        def key(entry: tuple[int, Any]) -> tuple[int, int, int]:
+        def key(entry: tuple[int, Any]) -> tuple[int, int, int, int]:
             index, route = entry
-            exact = route.exact is True or isinstance(route, _DelegatingRoute)
+            exact = route.exact is True or (
+                isinstance(route, _DelegatingRoute) and not route.realizes_identity
+            )
             fallback = route.source is RouteSource.FALLBACK
-            return (0 if exact else 1, 1 if fallback else 0, index)
+            return (0 if exact else 1, 1 if fallback else 0, int(route.realizes_identity), index)
 
         return tuple(route for _, route in sorted(indexed, key=key))
 
@@ -1859,7 +1930,12 @@ class Operation(Function):
         declarations = call.declarations
         deferred: list[str] = []
         for condition in self._conditions:
-            arguments = {name: declarations[name] for name in _parameter_names(condition)}
+            arguments = {
+                name: call.operands.get(name)
+                if self._roles.get(name) == (FunctionSpec,)
+                else declarations[name]
+                for name in _parameter_names(condition)
+            }
             report = _as_feasibility(
                 condition(**arguments),
                 condition,
@@ -1909,12 +1985,7 @@ class Operation(Function):
         else:
             candidates = []
             for index, route in enumerate(self._route_table.routes):
-                if isinstance(route, _DelegatingRoute):
-                    candidates += [_Candidate(route, True, index), _Candidate(route, False, index)]
-                else:
-                    candidates.append(
-                        _Candidate(route, _ranked_exactness(route, exact_only), index)
-                    )
+                candidates += _route_candidates(route, index, exact_only)
         if exact_only:
             candidates = [c for c in candidates if c.exact is True or c.method is not None]
         return sorted(candidates, key=lambda candidate: candidate.rank)
@@ -1989,13 +2060,13 @@ class Operation(Function):
         if named:
             index, route = named[0]
             if isinstance(route, _DelegatingRoute):
-                return [_Candidate(route, True, index), _Candidate(route, False, index)]
-            exact = _ranked_exactness(route, exact_only)
-            if exact_only and exact is not True:
+                return _route_candidates(route, index, exact_only)
+            candidates = _route_candidates(route, index, exact_only)
+            if exact_only and candidates[0].exact is not True:
                 raise ResolutionError(
                     f"{self.label}: route {method!r} is not exact, but exact_only=True"
                 )
-            return [_Candidate(route, exact, index)]
+            return candidates
         if holders:
             return [_Candidate(route, None, index, method) for index, route in holders]
         raise ResolutionError(f"{self.label}: {self._unknown_method(method)}")
@@ -2079,7 +2150,9 @@ def _workflow_draws(
     Returns
     -------
     Any
-        The raw draws, as ``d._sample(key, sample_shape)`` returns them.
+        The raw draws, as ``d._sample(key, sample_shape)`` returns them. The
+        draws of a law that reads another law's draws, such as a field view,
+        take the raw form of *d*'s own event.
     """
     captured = _descendants.capture_stochastic_consumer(d)
     key = _broker._resolve_automatic_key(
@@ -2092,7 +2165,10 @@ def _workflow_draws(
             descendant_descriptor=captured.descendant_descriptor,
         ),
     )
-    return _descendants.sample_captured_consumer(captured, key, sample_shape)
+    draws = _descendants.sample_captured_consumer(captured, key, sample_shape)
+    if captured.root is d:
+        return draws
+    return _drawn_form(draws, d.event_spec.spec, sample_shape)
 
 
 # ---------------------------------------------------------------------------
@@ -2338,6 +2414,7 @@ def operation(
     conditions: Iterable[Callable[..., Any]] = (),
     roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
     identity_check: Callable[..., Any] | None = None,
+    identity_route: OperationRoute | None = None,
     label: Callable[..., str] | None = None,
     registry: OperationRegistry | None = None,
 ) -> Callable[[Callable[..., Any]], Operation]:
@@ -2358,6 +2435,8 @@ def operation(
         Roles that override the kinds the annotations name.
     identity_check : callable, optional
         A derived operation's probe of its identity; see :class:`Operation`.
+    identity_route : OperationRoute, optional
+        A derived operation's composite identity route; see :class:`Operation`.
     label : callable, optional
         The label rule; see :class:`Operation`.
     registry : OperationRegistry, optional
@@ -2383,6 +2462,7 @@ def operation(
             conditions=conditions,
             roles=roles,
             identity_check=identity_check,
+            identity_route=identity_route,
             label=label,
         )
         (operation_registry if registry is None else registry).register(op)

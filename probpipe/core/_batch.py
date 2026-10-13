@@ -1300,6 +1300,44 @@ def _ranks_of(groups: Iterable[Iterable[Any]]) -> tuple[int, ...]:
     return tuple(len(tuple(group)) for group in groups)
 
 
+def _flat_batch_spec(spec: BatchSpec) -> BatchSpec:
+    """*spec* over its innermost element, with each nested batch's levels after its container's.
+
+    A batch whose elements are batches is one batch on the levels of both, with
+    the outer levels first. A spec whose element is not a batch is returned as it is.
+
+    Parameters
+    ----------
+    spec : BatchSpec
+        The batch declaration, whose element may itself be a ``BatchSpec``.
+
+    Returns
+    -------
+    BatchSpec
+        The declaration whose element is not a batch, with the levels and axis
+        groups of every nesting in order, outermost first.
+
+    Raises
+    ------
+    ValueError
+        If a nested batch repeats a level name of its container.
+    """
+    while isinstance(spec.element_spec, BatchSpec):
+        inner = spec.element_spec
+        shared = [name for name in inner.level_names if name in spec.level_names]
+        if shared:
+            raise ValueError(
+                f"a batch on the levels {list(spec.level_names)} holds batches on the levels "
+                f"{list(inner.level_names)}, so the level {shared[0]!r} would appear twice"
+            )
+        spec = BatchSpec._from_groups(
+            inner.element_spec,
+            (*spec.axis_groups, *inner.axis_groups),
+            (*spec.level_names, *inner.level_names),
+        )
+    return spec
+
+
 def _normalize_indexer(
     indexer: Any, size: int, axis: int, shape: tuple[int, ...], where: str | None = None
 ) -> int | range:

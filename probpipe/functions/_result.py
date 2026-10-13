@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._array_backend import _event_shape_of, _numpy_dtype_of, _to_jax_array
-from ..core._batch import Batch, BatchSpec, _ranks_of
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec, _ranks_of
 from ..core._expression import AppliedValue, Expression, Named
 from ..core._function_batch import FunctionBatch
 from ..core._kinds import batch_class_for_spec
@@ -725,6 +725,12 @@ def _with_dtypes_of(spec: Any, reference: Any) -> Any:
     A leaf whose match in *reference* states no dtype keeps its own, so a law's
     event declaration can take the dtypes its stored atoms hold.
     """
+    if isinstance(spec, BatchSpec) and isinstance(reference, BatchSpec):
+        return BatchSpec._from_groups(
+            _with_dtypes_of(spec.element_spec, reference.element_spec),
+            spec.axis_groups,
+            spec.level_names,
+        )
     if isinstance(spec, RecordSpec) and isinstance(reference, RecordSpec):
         return RecordSpec(
             {
@@ -822,7 +828,9 @@ def _stack_rows(
                 label=label,
             )
         if not isinstance(spec, RecordSpec):
-            batch_class = batch_class_for_spec(spec)
+            # The kind table gives a BatchSpec its element's batch class, whose
+            # constructor takes only the element's spec.
+            batch_class = None if isinstance(spec, BatchSpec) else batch_class_for_spec(spec)
             if batch_class is None:
                 raise ValueError(f"An empty sweep has no batch form for {spec!r}")
             return batch_class(
@@ -1259,6 +1267,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         If the leading axes are not the declared batch shape, the element does
         not unify with the declared element.
     """
+    spec = _flat_batch_spec(spec)
     batch_shape = tuple(spec.batch_shape)
     ranks = _ranks_of(spec.axis_groups)
     levels = tuple(spec.level_names)

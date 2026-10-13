@@ -48,6 +48,7 @@ from ._batch import (
     _batch_axis_count,
     _cannot_rebuild,
     _changed_batch_shape,
+    _flat_batch_spec,
     _ranks_of,
     _uncastable_dtype,
 )
@@ -481,7 +482,9 @@ class RecordBatch(Batch[Record]):
         traced column is the stored array.
 
         The result is a **view**: it shares this batch's column rather than
-        copying it, so reading one field costs nothing per element. This batch
+        copying it, except that batch-valued object entries are stacked into
+        one batch on the outer and inner levels, which copies their storage.
+        This batch
         checked the column against the field's spec when it was built, which is
         the whole of what the column batch's own constructor would redo.
         """
@@ -492,6 +495,8 @@ class RecordBatch(Batch[Record]):
         # Every kind presents through its registered batch form, so a new kind is
         # reachable here by registering itself rather than by being added to a
         # switch this module would otherwise have to know about.
+        if isinstance(spec, BatchSpec):
+            return self._inherit_provenance(_stack_batch_column(column, self.spec, spec, key))
         column_cls = batch_class_for_spec(spec)
         if column_cls is None:
             raise TypeError(_unbatchable_field(key, spec))
@@ -992,6 +997,108 @@ def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
     return all(
         _is_numeric_field_value(column.raw() if isinstance(column, Batch) else column)
         for column in fields.values()
+    )
+
+
+def _stack_batch_column(
+    column: np.ndarray, outer: BatchSpec, event: BatchSpec, label: str
+) -> Batch:
+    """Batch-valued entries of an object column stacked on the outer and event levels."""
+    spec = _flat_batch_spec(outer._replace(element_spec=event))
+    element = spec.element_spec
+    values = _stacked_batches(column, event)
+    if isinstance(element, RecordSpec):
+        return _batch_class_for(element)(
+            values,
+            spec.level_names,
+            element_spec=element,
+            axes_per_level=_ranks_of(spec.axis_groups),
+            label=label,
+        )
+    batch_class = batch_class_for_spec(element)
+    if batch_class is None:
+        raise TypeError(_unbatchable_field(label, element))
+    return batch_class._over_store(values, spec=spec, label=label)
+
+
+def _stacked_batches(entries: np.ndarray, event: BatchSpec) -> Any:
+    """The raw leaves of the batches in *entries*, stacked with the axes of *entries* leading.
+
+    Parameters
+    ----------
+    entries : numpy.ndarray
+        An object array of batches, each of which satisfies *event*.
+    event : BatchSpec
+        The declaration of each entry.
+
+    Returns
+    -------
+    Any
+        A mapping of leaf path to column for record elements, and one array
+        otherwise. Each leaf has the shape of *entries*, then the batch shape of
+        *event*, then the leaf's own shape, so an empty *entries* gives empty
+        leaves of that shape. An object array is frozen.
+    """
+    event = _flat_batch_spec(event)
+    shape = (*entries.shape, *event.batch_shape)
+    element = event.element_spec
+    batches = list(entries.flat)
+    if isinstance(element, RecordSpec):
+        return {
+            path: _stacked_leaf([batch.raw(path) for batch in batches], shape, element[path])
+            for path in element
+        }
+    values = _stacked_leaf([batch.raw() for batch in batches], shape, element)
+    return _frozen_object_column(values) if _is_object_array(values) else values
+
+
+def _stacked_leaf(values: list[Any], shape: tuple[int, ...], spec: TermSpec) -> Any:
+    """The leaf of each batch in *values* stacked into one array whose leading axes are *shape*."""
+    if isinstance(spec, NumericArraySpec):
+        full = (*shape, *spec.shape)
+        return jnp.stack(values).reshape(full) if values else jnp.empty(full, dtype=spec.dtype)
+    return np.stack(values).reshape(shape) if values else np.empty(shape, dtype=object)
+
+
+def _batch_over(raw: Any, spec: BatchSpec, label: str) -> Batch:
+    """The raw values *raw* led by *spec*'s batch axes, as the batch that *spec* declares.
+
+    Parameters
+    ----------
+    raw : Any
+        The raw values: an array, or the nested mapping of columns for record
+        elements.
+    spec : BatchSpec
+        The batch declaration, whose element selects the batch class.
+    label : str
+        The batch's label.
+
+    Returns
+    -------
+    Batch
+        The batch of the element's kind on *spec*'s levels, such as a
+        ``RecordBatch`` for record elements.
+
+    Raises
+    ------
+    TypeError
+        If no batch class is registered for the element's kind.
+    """
+    spec = _flat_batch_spec(spec)
+    element = spec.element_spec
+    batch_class = (
+        _batch_class_for(element)
+        if isinstance(element, RecordSpec)
+        else batch_class_for_spec(element)
+    )
+    if batch_class is None:
+        raise TypeError(_unbatchable_field(label, element))
+    return batch_class(
+        raw,
+        spec.level_names,
+        element_spec=element,
+        axes_per_level=_ranks_of(spec.axis_groups),
+        label=label,
     )
 
 

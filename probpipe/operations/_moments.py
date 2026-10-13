@@ -22,11 +22,13 @@ function lifted over laws contributes its notation in place of the draw, as
 
 ``expectation(d, f)`` returns ``𝔼[f(X)]`` for ``X ~ d``, labeled
 ``𝔼[f(mu ~ d)]``. It is the derived
-operation ``mean(evaluate(f, d))``: a law claiming
+operation ``mean(pushforward(d, f))``, so the integrand receives draws of
+``d`` on every route: a law claiming
 :class:`~probpipe.distributions._capabilities.SupportsExpectation` computes it
-in closed form, and otherwise the call takes the routes of ``evaluate``. Its
-method names are therefore the evaluation rules', and an integration rule
-registered with the evaluation-rule registry serves both operations.
+in closed form, and otherwise the route ``pushforward_mean`` builds the
+pushforward by an evaluation rule and takes its mean. Its method names are
+therefore the evaluation rules', and an integration rule registered with the
+evaluation-rule registry serves both operations.
 
 The draws of every Monte Carlo route are workflow-owned random events, and
 their number is the ``n_broadcast_samples`` control.
@@ -34,6 +36,7 @@ their number is the ``n_broadcast_samples`` control.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from math import prod
@@ -43,7 +46,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..core._batch import Batch, BatchSpec
+from ..core._batch import Batch, BatchSpec, _flat_batch_spec
 from ..core._dispatch import (
     Feasibility,
     MathematicalDomainError,
@@ -56,7 +59,7 @@ from ..core._expression import (
     Summary,
     draw_of,
 )
-from ..core._record_batch import RecordBatch, _batch_class_for
+from ..core._record_batch import RecordBatch, _batch_class_for, _batch_over
 from ..core._record_spec import RecordSpec
 from ..core._repr import format_names
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
@@ -71,7 +74,7 @@ from ..core.constraints import (
     unit_interval,
 )
 from ..core.record import Record
-from ..core.tracked import TrackedTerm, _callable_label
+from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import (
     SupportsCovariance,
     SupportsExpectation,
@@ -84,21 +87,13 @@ from ..distributions._capabilities import (
 from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
-from ..functions._call import ApplicabilityError
-from ..functions._resolution import PointReport, check_point, selected
+from ..functions._call import ApplicabilityError, presented_arguments
+from ..functions._resolution import PointReport, RouteOutcome, check_point, selected, settled
 from ..functions._result import SAMPLE_LEVEL
-from ..values import Function, FunctionSpec
-from ._evaluate import (
-    _FORWARDED_CONTROLS,
-    NAMELESS_CALLABLE_FIX,
-    _as_function,
-    _bound_parameter,
-    _EvaluationRules,
-    _lifts,
-    evaluate,
-)
+from ..values import FunctionSpec
 from ._operation import (
     BoundCall,
+    Operation,
     RouteSource,
     _assembled,
     _call_label,
@@ -107,6 +102,15 @@ from ._operation import (
     _subject_name,
     _workflow_draws,
     operation,
+)
+from ._pushforward import (
+    _as_function,
+    _bound_parameter,
+    _call_at,
+    _EvaluationRules,
+    _integrand_conditions,
+    _output_label,
+    pushforward,
 )
 from ._sample import _record_batch
 
@@ -148,8 +152,18 @@ def _hull(support: Any) -> Any:
     return support
 
 
+def _elementwise(spec: BatchSpec, term: Callable[[TermSpec], TermSpec]) -> BatchSpec:
+    """The batch spec on *spec*'s levels whose element is *term* of *spec*'s element."""
+    return BatchSpec._from_groups(term(spec.element_spec), spec.axis_groups, spec.level_names)
+
+
 def _mean_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a mean: floating leaves on the hull of their support."""
+    """The term spec of a mean: floating leaves on the hull of their support.
+
+    A batch's mean is the batch of its elements' means, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _mean_term)
     if isinstance(spec, NumericArraySpec):
         return NumericArraySpec(spec.shape, _floating(spec.dtype), _hull(spec.support))
     if isinstance(spec, RecordSpec):
@@ -158,7 +172,12 @@ def _mean_term(spec: TermSpec) -> TermSpec:
 
 
 def _variance_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a variance: non-negative floating leaves."""
+    """The term spec of a variance: non-negative floating leaves.
+
+    A batch's variance is the batch of its elements' variances, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _variance_term)
     if isinstance(spec, NumericArraySpec):
         return NumericArraySpec(spec.shape, _floating(spec.dtype), non_negative)
     if isinstance(spec, RecordSpec):
@@ -167,7 +186,12 @@ def _variance_term(spec: TermSpec) -> TermSpec:
 
 
 def _quantile_term(spec: TermSpec) -> TermSpec:
-    """The term spec of a quantile: the event's shapes, with floating dtypes kept."""
+    """The term spec of a quantile: the event's shapes, with floating dtypes kept.
+
+    A batch's quantile is the batch of its elements' quantiles, on the same levels.
+    """
+    if isinstance(spec, BatchSpec):
+        return _elementwise(spec, _quantile_term)
     if isinstance(spec, NumericArraySpec):
         dtype = (
             spec.dtype if spec.dtype is not None and _floating(spec.dtype) == spec.dtype else None
@@ -179,7 +203,16 @@ def _quantile_term(spec: TermSpec) -> TermSpec:
 
 
 def _array_leaves(spec: TermSpec) -> list[NumericArraySpec]:
-    """The array leaves of a numeric spec, in the canonical flat order."""
+    """The array leaves of a numeric spec, in the canonical flat order.
+
+    A batch's leaves are its element's leaves, each led by the batch's axes.
+    """
+    if isinstance(spec, BatchSpec):
+        batch_shape = tuple(spec.batch_shape)
+        return [
+            NumericArraySpec((*batch_shape, *leaf.shape), leaf.dtype)
+            for leaf in _array_leaves(spec.element_spec)
+        ]
     if isinstance(spec, NumericArraySpec):
         return [spec]
     if isinstance(spec, RecordSpec):
@@ -325,7 +358,7 @@ def _quantile_result(d: DistributionSpec, q: TermSpec) -> OutputSpec:
 
 
 def _expectation_result(f: TermSpec) -> OutputSpec | None:
-    """The mean of the integrand's output declaration, as ``mean(evaluate(f, d))`` declares it.
+    """The mean of the integrand's output declaration, as ``mean(pushforward(d, f))`` declares it.
 
     Each of the integrand's components is named ``mean(...)``, with an average's
     term specs. An integrand that declares no output leaves the declaration to
@@ -336,9 +369,16 @@ def _expectation_result(f: TermSpec) -> OutputSpec | None:
     return None
 
 
+def _is_numeric(spec: TermSpec | None) -> bool:
+    """Whether *spec* declares a numeric value: an array, a record of arrays, or a batch of either."""
+    if isinstance(spec, BatchSpec):
+        spec = _flat_batch_spec(spec).element_spec
+    return isinstance(spec, NumericSpec)
+
+
 def _numeric_event(d: DistributionSpec) -> bool:
-    """The law draws a numeric value: an array or a record of arrays."""
-    return isinstance(d.event_spec.spec, NumericSpec)
+    """The law draws a numeric value: an array, a record of arrays, or a batch of either."""
+    return _is_numeric(d.event_spec.spec)
 
 
 def _event_typed_variance(d: DistributionSpec) -> bool:
@@ -372,7 +412,7 @@ def _can_average(call: BoundCall, result: OutputSpec | None) -> Feasibility:
     event = call.operands["d"].event_spec.spec
     if isinstance(event, FunctionSpec):
         return Feasibility(False, "the average of function-valued draws is not implemented yet")
-    if not isinstance(event, (NumericSpec, DistributionSpec)):
+    if not (_is_numeric(event) or isinstance(event, DistributionSpec)):
         return Feasibility(
             False, f"cannot average draws of a non-numeric event; got {type(event).__name__}"
         )
@@ -390,7 +430,7 @@ def _can_average_squares(call: BoundCall, result: OutputSpec | None) -> Feasibil
         return Feasibility(
             False, "the pointwise variance of function-valued draws is not implemented yet"
         )
-    if not isinstance(event, NumericSpec):
+    if not _is_numeric(event):
         return Feasibility(
             False,
             f"cannot take the variance of draws of a non-numeric event; got {type(event).__name__}",
@@ -419,11 +459,24 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
     record event are its atoms as the batch of records the law's event
     declaration calls for, whether they arrive as a nested mapping of raw
     columns or as a record of columns. A batch of records is taken as it is.
+    Draws of a batch-valued event are its atoms on one level before the
+    event's own levels.
     """
     # The empirical law is internal, so it takes a fixed name, which a derived
     # label could not be: a label may hold ``~``, a space, ``;``, or ``/``.
     name = _DRAWS
     event = call.operands["d"].event_spec.spec
+    if isinstance(event, BatchSpec):
+        if isinstance(draws, (RecordBatch, Mapping)):
+            raw = _raw_record(draws)
+        else:
+            raw = jnp.asarray(draws.raw() if isinstance(draws, Batch) else draws)
+        level = name
+        while level in _flat_batch_spec(event).level_names:
+            level += "_"
+        count = jax.tree.leaves(raw)[0].shape[0]
+        atoms = _batch_over(raw, _flat_batch_spec(BatchSpec(event, {level: count})), name)
+        return EmpiricalDistribution(atoms, label=name, event_spec=OutputSpec(**{name: event}))
     if isinstance(draws, Batch):
         records = isinstance(draws.element_spec, RecordSpec)
         return EmpiricalDistribution(draws, component=None if records else name, label=name)
@@ -457,7 +510,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     whose draws are laws it is their finite mixture with equal weights, the
     Monte Carlo estimate of the mean measure.
     """
-    if isinstance(call.operands["d"].event_spec.spec, NumericSpec):
+    if _is_numeric(call.operands["d"].event_spec.spec):
         return _named_value(
             _empirical_of(call, _monte_carlo_draws(call, "mean"))._mean(),
             "mean",
@@ -800,8 +853,11 @@ class _ByComponent(_DelegatingRoute):
         point, declared, _ = operation._plan_point(self._values(call, block.view), controls)
         candidates = operation._route_candidates(controls)
         candidate, report = selected(operation.label, controls, candidates, point, declared)
-        exactness = candidate.exactness(report) is True
-        return candidate.run(point, declared, report), candidate.route_name, exactness
+        value, settled_exactness = settled(candidate.run(point, declared, report))
+        exactness = (
+            candidate.exactness(report) if settled_exactness is None else settled_exactness
+        ) is True
+        return value, candidate.route_name, exactness
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
@@ -879,7 +935,9 @@ def mean(d: Distribution):
 
     A record-drawing law's mean is a ``Record`` with the law's schema, a random
     function's is its mean function, and a random measure's is the
-    marginalized law.
+    marginalized law. A batch-valued law's mean is elementwise: a batch on the
+    event's levels whose element at each position is the mean of the draw's
+    element there.
 
     The routes, in selection order, are the law's closed form,
     ``closed_form``; ``by_component``, which computes each component of a
@@ -929,7 +987,8 @@ mean.fallback_route("monte_carlo", check=_can_average, execute=_mc_mean, exact=F
 def variance(d: Distribution):
     """The variance of ``X ~ d``, a value shaped like one draw.
 
-    The routes are those of ``mean``: the closed form, ``closed_form``;
+    A batch-valued law's variance is elementwise, as its mean is. The routes
+    are those of ``mean``: the closed form, ``closed_form``;
     ``by_component``, which computes each component of a record event by the
     route that component's view selects; and the Monte Carlo fallback,
     ``monte_carlo``.
@@ -979,6 +1038,11 @@ variance.fallback_route(
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
 
+    The flattened draw ravels each array leaf in row-major order and
+    concatenates the leaves in the record's canonical order. A batch-valued
+    draw is raveled in its raw form, so each leaf runs over the event's batch
+    axes and then the element's own axes.
+
     Parameters
     ----------
     d : Distribution
@@ -1020,7 +1084,8 @@ cov.fallback_route("monte_carlo", check=_can_sample, execute=_mc_cov, exact=Fals
 def quantile(d: Distribution, q: Any):
     """The per-coordinate quantiles of ``X ~ d`` at the levels *q*.
 
-    The routes are the law's closed form, ``closed_form``; ``by_component``,
+    A batch-valued law's quantiles are elementwise, as its mean is. The routes
+    are the law's closed form, ``closed_form``; ``by_component``,
     which computes each component of a record event by the route that
     component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
     which ``with_options(method=...)`` selects among. The fallback's quantile
@@ -1039,8 +1104,8 @@ def quantile(d: Distribution, q: Any):
     -------
     TrackedTerm
         For one level, a value of the event's kind; for several, the batch of
-        those values on a level named ``quantile``. It is labeled
-        ``ℚ[mu ~ d]``.
+        those values on a level named ``quantile``, before any levels of a
+        batch-valued event. It is labeled ``ℚ[mu ~ d]``.
 
     Raises
     ------
@@ -1079,33 +1144,80 @@ quantile.register_route(_ByComponent("quantile"))
 quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, exact=False)
 
 
-def _evaluate_applies(d: Any, f: Any, fixed_args: Mapping[str, Any] | None = None) -> Any:
-    """``evaluate`` has a route for the integrand over the law.
+class _PushforwardMean(_EvaluationRules):
+    """The identity of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
 
-    A check cannot see the value ``evaluate`` returns, so a feasible report
-    leaves the identity's exactness open and defers the check of ``mean`` on
-    that value to the run.
+    The route runs ``pushforward``'s route and then ``mean`` on the law it
+    returns, so its method names are the evaluation rules'. It ranks once, as an
+    identity: among the approximate routes, and under ``exact_only`` among the
+    exact ones, with the rule and the mean both restricted to exact routes. The
+    mean's route is chosen only once the law exists, so without ``exact_only``
+    the probe reports the rule's exactness when it is approximate and leaves it
+    open otherwise, which the call's report states as approximate, and it
+    defers the mean's check; the run records the exactness of both steps.
     """
-    report = evaluate.check(f, d, fixed_args)
-    if report.feasible is not True:
-        return report
-    return PointReport(
-        True, deferred=("``mean`` of the integrand's value is checked when it runs",)
-    )
+
+    def __init__(self) -> None:
+        super().__init__("pushforward_mean")
+
+    @property
+    def condition(self) -> str:
+        """An evaluation rule builds the pushforward, and ``mean`` averages it."""
+        return (
+            "An evaluation rule builds the law of the integrand's value, as pushforward does, "
+            "and a route of mean averages it."
+        )
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        """The rule's report, with the mean of the law it builds deferred to the run."""
+        rule = super().probe(call, result, method=method, exact_only=exact_only)
+        if rule.feasible is not True:
+            return rule
+        exact = rule.exact if exact_only or rule.exact is False else None
+        return PointReport(
+            True,
+            method=rule.method_name,
+            exact=exact,
+            deferred=("the mean of the pushforward is checked when it runs",),
+        )
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
+        law = super().run(call, result, method=method, exact_only=exact_only)
+        controls: dict[str, Any] = {"exact_only": exact_only}
+        if "n_broadcast_samples" in call.operation._options:
+            controls["n_broadcast_samples"] = call.controls["n_broadcast_samples"]
+        averaged = mean.with_options(**controls)(law)
+        steps = (_recorded_exactness(law), _recorded_exactness(averaged))
+        exact = False if False in steps else (True if steps == (True, True) else None)
+        return RouteOutcome(averaged.raw(), exact)
+
+
+def _recorded_exactness(term: Any) -> bool | None:
+    """The exactness *term*'s provenance records, ``None`` when it records none."""
+    provenance = getattr(term, "provenance", None)
+    return None if provenance is None else provenance.metadata.get("exact")
 
 
 @operation(
     result=_expectation_result,
     roles={"f": (FunctionSpec,)},
-    identity_check=_evaluate_applies,
+    conditions=_integrand_conditions("expectation"),
+    identity_route=_PushforwardMean(),
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
-    """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(evaluate(f, d))``.
+    """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(pushforward(d, f))``.
 
-    A law claiming ``SupportsExpectation`` computes it in closed form, and
-    otherwise the call takes the routes of ``evaluate``: its evaluation rules,
-    which ``with_options(method=...)`` names, and its controls, such as the
-    sampling lift's ``n_broadcast_samples``.
+    The integrand receives one draw of *d* at a time, whatever its parameter's
+    annotation, on every route. A law claiming ``SupportsExpectation`` computes
+    the expectation in closed form, and otherwise the route ``pushforward_mean``
+    builds the pushforward by an evaluation rule, which
+    ``with_options(method=...)`` names, and takes its mean. Under ``exact_only``
+    both steps are restricted to exact routes.
 
     Parameters
     ----------
@@ -1113,10 +1225,15 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
         The law to integrate against.
     f : callable or Function
         Maps one draw to a value; a ``Function``'s output declaration names the
-        result's kind.
+        result's kind. Exactly one of its parameters has no default and is
+        absent from *fixed_args*, and each draw binds it.
     fixed_args : mapping of str to Any, optional
-        The other parameters of a map with several, by name, bound as
-        ``evaluate`` binds them.
+        The other parameters of a map with several, by name. Each is a
+        constant: a law the direct call would sample, or a batch it would
+        sweep, is refused, including arguments set through the map's
+        construction ``bind``. ``mean(function(f)(x=d, a=A))`` integrates over the
+        law ``A`` as well, and ``function(lambda a: expectation(d, f, {"a": a}))(A)``
+        is the law of the expectation at a draw of ``A``.
 
     Returns
     -------
@@ -1128,27 +1245,51 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     Raises
     ------
     ApplicabilityError
-        If *f* is not a callable, or *fixed_args* leaves other than one of its
-        parameters open.
+        If *f* is not a callable, *fixed_args* leaves other than one of its
+        parameters open, the open parameter's declaration does not admit a draw
+        of *d*, or a fixed argument is a law or a batch the call would lift.
     ResolutionError
-        If neither the closed form nor an evaluation rule applies.
+        If neither the closed form nor an evaluation rule applies, or, under
+        ``exact_only``, either step has no exact route.
     """
-    return mean(evaluate(f, d, fixed_args))
+    return mean(pushforward(d, f, fixed_args))
 
 
 def _integrand(call: BoundCall) -> Callable[[Any], Any]:
-    """The integrand as a callable of one draw, with its other parameters bound."""
-    f = call.operands["f"]
-    raw = f.raw() if isinstance(f, Function) else f
+    """The integrand as a callable of one atom, presented as the evaluation rules present a draw.
+
+    A record atom arrives as the nested mapping of its raw leaves and is passed
+    as a ``Record``, and the fixed arguments are passed as the direct call
+    presents them, with the map's construction ``bind``. An operation is
+    called as itself, and any other map as its raw callable, so it traces. A
+    map whose open parameter is its first and takes the atom alone is the raw
+    callable itself.
+    """
+    f = _as_function(call.operands["f"], subject="expectation")
     fixed = dict(call.operands.get("fixed_args") or {})
-    if not fixed:
-        return raw
-    parameter = _bound_parameter(_as_function(f, subject="expectation"), fixed)
-    values = {
-        name: value.raw() if isinstance(value, TrackedTerm) else value
-        for name, value in fixed.items()
-    }
-    return lambda draw: raw(**{parameter: draw}, **values)
+    parameter = _bound_parameter(f, fixed, subject="expectation")
+    operation = isinstance(f, Operation)
+    body = f if operation else f.raw()
+    constants = {**({} if operation else f._bind), **fixed}
+    if constants:
+        constants = dict(presented_arguments(f._signature_info, constants))
+    record = isinstance(call.operands["d"].event_spec.spec, RecordSpec)
+    first = next(iter(f.signature.parameters.values()), None)
+    positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    if (
+        not (constants or record or operation)
+        and first is not None
+        and first.name == parameter
+        and first.kind in positional
+    ):
+        return body
+
+    def integrand(atom: Any) -> Any:
+        if record and isinstance(atom, Mapping) and not isinstance(atom, TrackedTerm):
+            atom = Record(atom, label=parameter)
+        return _call_at(body, f, parameter, atom, constants)
+
+    return integrand
 
 
 def _closed_form_expectation(call: BoundCall, result: OutputSpec | None) -> Any:
@@ -1168,47 +1309,6 @@ expectation.capability_route(
 )
 
 
-class _PushforwardMean(_EvaluationRules):
-    """The mean of the pushforward ``evaluate(f, d)``, by the rule the evaluation-rule registry selects.
-
-    The route takes ``evaluate``'s rules, rule names, and controls, apart from
-    ``include_inputs``, so the mean is of the integrand's values alone. A map
-    whose parameter takes the law itself, rather than its draws, has nothing
-    to integrate.
-    """
-
-    _forwarded = tuple(name for name in _FORWARDED_CONTROLS if name != "include_inputs")
-
-    def _values(self, call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
-        """The integrand, the parameter a draw binds, the law, and the fixed arguments."""
-        f = _as_function(call.operands["f"], subject="expectation")
-        fixed = dict(call.operands.get("fixed_args") or {})
-        return f, _bound_parameter(f, fixed), call.operands["d"], fixed
-
-    def probe(
-        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
-    ) -> Feasibility:
-        """The registry's report for the law's draws."""
-        f, parameter, operand, _ = self._values(call)
-        if not _lifts(f, parameter, operand):
-            return Feasibility(
-                False,
-                f"{f.label!r} takes the law itself at {parameter!r}, so it has no draws to "
-                f"integrate",
-            )
-        return super().probe(call, result, method=method, exact_only=exact_only)
-
-    def run(
-        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
-    ) -> Any:
-        """The mean of the pushforward law the selected rule returns."""
-        pushforward = super().run(call, result, method=method, exact_only=exact_only)
-        return mean.with_options(raw=True)(pushforward)
-
-
-expectation.register_route(_PushforwardMean())
-
-
 # ---------------------------------------------------------------------------
 # The expressions of the moments
 # ---------------------------------------------------------------------------
@@ -1224,21 +1324,9 @@ def _moment_expression(summary: str) -> Callable[[Any], Expression]:
     return rule
 
 
-def _integrand_label(f: Any) -> str:
-    """The label of an integrand, as ``evaluate`` names its call.
-
-    It is a Function's ``output_label``, so ``expectation(d, g)`` and
-    ``mean(g(d))`` are labeled alike, and a plain callable's label is the one
-    ``evaluate`` wraps it under: its name, and ``𝒻`` for a lambda.
-    """
-    if isinstance(f, Function):
-        return f.output_label
-    return _callable_label(f, subject="expectation", fix=NAMELESS_CALLABLE_FIX)
-
-
 def _expectation_expression(d: Any, f: Any) -> Expression:
     """The expression of ``𝔼[f(X)]`` for ``X ~ d``: the expectation of *f* at a draw, as ``𝔼[f(mu ~ d)]``."""
-    return Summary("E", Applied(_integrand_label(f), (draw_of(d),)))
+    return Summary("E", Applied(_output_label(f, subject="expectation"), (draw_of(d),)))
 
 
 _install_expression_rule(mean, _moment_expression("E"))
