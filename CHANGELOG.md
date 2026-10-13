@@ -3420,6 +3420,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+  functions its identity calls.** `prob.with_options(exact_only=True)(Normal("x",
+  0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
+  density, because the `log_prob` that `prob` calls selects only exact routes.
+  `exact_only` restricts the route selection of every operation and plain
+  `Function` the identity runs, at any depth and in the workers the engine
+  dispatches to. A derived operation therefore still raises `ResolutionError`
+  when a call inside it has only an approximate route, and when it is declared
+  without an `identity_check`, which the message names. The conversion of an
+  argument inside the identity follows its parameter's `conversions` control,
+  as in a direct call. A derived operation's `n_broadcast_samples` used to be
+  dropped at its identity's calls, which drew their own default, and now sets
+  their draws when the derived call sets it, unless the identity sets its own
+  on the call. The other controls stay each call's own. A composite identity,
+  such as `expectation`'s, runs each of its steps under the same two controls.
+  A call under `exact_only` on an operation without an exact route says so,
+  where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
   converts to the same law.** The `scipy` converter used to read a `beta`'s
   shape arguments alone and drop the location of a `gamma`, `expon`, or

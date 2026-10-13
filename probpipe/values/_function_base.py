@@ -17,10 +17,11 @@ import inspect
 import keyword
 import os
 import warnings
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass
-from functools import partial
+from functools import partial, wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Protocol, Self, runtime_checkable
 
@@ -705,6 +706,105 @@ _DEFAULTED_BY_NONE = frozenset(
     {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
+#: The controls that the Function calls of the current context inherit from a
+#: derived operation's identity, or ``None`` where they inherit none:
+#: ``exact_only``, and ``n_broadcast_samples``, which is ``None`` where the
+#: derived call sets no count and below the calls the scope makes.
+_INHERITED_CONTROLS: ContextVar[Mapping[str, Any] | None] = ContextVar(
+    "probpipe_inherited_controls", default=None
+)
+
+#: The scope below a call made under an inherited ``exact_only``, which keeps it.
+_EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
+    {"exact_only": True, "n_broadcast_samples": None}
+)
+
+
+@contextmanager
+def _passing_down(*, exact_only: bool, n_broadcast_samples: int | None) -> Iterator[None]:
+    """A scope whose Function calls inherit *exact_only* and *n_broadcast_samples*.
+
+    :meth:`Function._inheriting` states how a call takes them. A scope that
+    passes neither leaves the context as it is.
+    """
+    if not exact_only and n_broadcast_samples is None:
+        yield
+        return
+    token = _INHERITED_CONTROLS.set(
+        MappingProxyType({"exact_only": exact_only, "n_broadcast_samples": n_broadcast_samples})
+    )
+    try:
+        yield
+    finally:
+        _INHERITED_CONTROLS.reset(token)
+
+
+def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
+    """*method* of a Function, run under the controls a derived operation's identity passes down.
+
+    Inside an identity, the call runs on the view that
+    :meth:`Function._inheriting` returns. For the extent of the call the
+    passed sample count is cleared, so it applies only to the calls the scope
+    makes outside any other call, while an inherited ``exact_only`` stays, so
+    it restricts every call within the identity.
+    """
+
+    @wraps(method)
+    def entered(self: Function, *args: Any, **kwargs: Any) -> Any:
+        inherited = _INHERITED_CONTROLS.get()
+        if inherited is None:
+            return method(self, *args, **kwargs)
+        token = _INHERITED_CONTROLS.set(_EXACT_ONLY_BELOW if inherited["exact_only"] else None)
+        try:
+            return method(self._inheriting(inherited), *args, **kwargs)
+        finally:
+            _INHERITED_CONTROLS.reset(token)
+
+    return entered
+
+
+class _CarriedControls:
+    """A work function that runs under the inherited controls of the context that made it.
+
+    It holds the function and the controls as plain data, so it pickles
+    wherever the function does, and a worker in another thread or process
+    runs the function under the same controls.
+
+    Parameters
+    ----------
+    func : callable
+        The work function.
+    inherited : Mapping of str to Any
+        The inherited controls to restore while *func* runs.
+    """
+
+    def __init__(self, func: Callable[..., Any], inherited: Mapping[str, Any]) -> None:
+        self.func = func
+        self.inherited = dict(inherited)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """*func*'s result, computed under the carried controls."""
+        token = _INHERITED_CONTROLS.set(MappingProxyType(self.inherited))
+        try:
+            return self.func(*args, **kwargs)
+        finally:
+            _INHERITED_CONTROLS.reset(token)
+
+
+def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
+    """*func*, run under the inherited controls of the calling context, in whatever worker runs it.
+
+    A worker thread starts without the calling thread's context, and a worker
+    process without the calling process's, so a call dispatched to a worker
+    inside a derived operation's identity would otherwise lose an inherited
+    ``exact_only``. Outside an identity *func* is returned as it is.
+    """
+    inherited = _INHERITED_CONTROLS.get()
+    if inherited is None:
+        return func
+    return _CarriedControls(func, inherited)
+
+
 #: Removed construction keywords, each with the warning it raises, which are ignored.
 _REMOVED_KEYWORDS: Mapping[str, str] = MappingProxyType(
     {
@@ -826,6 +926,10 @@ class Function(TrackedTerm, Annotated):
           entries when it runs. Empty by default.
         - ``raw`` (bool): whether a call returns its result detached from the
           workflow, False by default.
+
+        A call inside a derived operation's identity also takes the
+        ``exact_only`` and ``n_broadcast_samples`` that the identity passes
+        down (VI.0).
 
     Raises
     ------
@@ -1132,6 +1236,46 @@ class Function(TrackedTerm, Annotated):
         object.__setattr__(clone, "_options", MappingProxyType(options))
         return clone
 
+    def _inheriting(self, inherited: Mapping[str, Any]) -> Self:
+        """This view under the controls a derived operation's identity passes down.
+
+        An inherited ``exact_only`` applies whatever this view sets, and an
+        inherited ``n_broadcast_samples`` applies unless this view sets its own.
+        Every other control stays this view's, since route names and budgets
+        belong to each function.
+
+        Parameters
+        ----------
+        inherited : Mapping of str to Any
+            The passed ``exact_only``, and the passed ``n_broadcast_samples`` or
+            ``None``.
+
+        Returns
+        -------
+        Self
+            The view with the inherited controls, or this view when it already
+            has them.
+        """
+        options = self.options
+        revisions: dict[str, Any] = {}
+        if inherited["exact_only"] and not options["exact_only"]:
+            revisions["exact_only"] = True
+        count = inherited["n_broadcast_samples"]
+        if (
+            count is not None
+            and "n_broadcast_samples" not in self._options
+            and options["n_broadcast_samples"] != count
+        ):
+            revisions["n_broadcast_samples"] = count
+        if not revisions:
+            return self
+        # The derived call validated both controls, so the view takes them
+        # without validating this view's own controls again.
+        view = self._shallow_copy()
+        object.__setattr__(view, "_options", MappingProxyType(dict(self._options) | revisions))
+        return view
+
+    @_inheriting_controls
     def check(self, *args: Any, **kwargs: Any) -> Any:
         """Probe a call through the first six steps of the stack, without executing it.
 
@@ -1201,6 +1345,7 @@ class Function(TrackedTerm, Annotated):
             return self._implementation.callable
         return self.apply
 
+    @_inheriting_controls
     def apply(self, *args: Any, **kwargs: Any) -> Any:
         """Evaluate one point, validating declarations and returning the raw result.
 
@@ -1288,14 +1433,16 @@ class Function(TrackedTerm, Annotated):
         )
         return values, declared, deferred
 
+    @_inheriting_controls
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Call the function through the installed engine (V.1).
 
         The arguments bind to the signature as in :meth:`apply`, and a law or a
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
-        construction and :meth:`with_options`, never from the call's keywords,
-        which bind to the wrapped callable. Swept batches align by level name:
+        construction and :meth:`with_options`, together with those that a
+        derived operation's identity passes down (VI.0), and the call's
+        keywords bind to the wrapped callable. Swept batches align by level name:
         within each matching level, shapes align from the right and size-one
         axes broadcast independently of other levels. The sweep carries each
         level's resulting broadcast shape.

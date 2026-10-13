@@ -289,6 +289,24 @@ class TestDerivedDensities:
         assert (report.feasible, report.route, report.exact) == (True, "identity", True)
         assert {info.method_name: info for info in report.routes}["identity"].exact is True
 
+    def test_exact_only_admits_prob_where_log_prob_is_exact(self):
+        law = Gaussian("g", 0.0, 2.0)
+        exact = prob.with_options(exact_only=True)(law, 0.0)
+        assert float(jnp.asarray(exact)) == float(jnp.asarray(prob(law, 0.0)))
+        assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
+            "identity",
+            True,
+        )
+
+    def test_exact_only_admits_unnormalized_prob_where_its_constituent_is_exact(self):
+        law = Unnormalized("u")
+        exact = unnormalized_prob.with_options(exact_only=True)(law, 0.0)
+        assert float(jnp.asarray(exact)) == float(jnp.asarray(unnormalized_prob(law, 0.0)))
+        assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
+            "identity",
+            True,
+        )
+
     def test_the_identity_route_states_its_constituent_as_its_condition(self):
         (route,) = prob.summary().routes
         assert route.condition == "``log_prob`` has a route for the law and the value."
