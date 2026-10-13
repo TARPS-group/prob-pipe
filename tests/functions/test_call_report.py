@@ -12,8 +12,8 @@ from probpipe.core._dispatch import MethodInfo
 from probpipe.core._repr import WIDTH
 from probpipe.functions._call import CallReport
 from probpipe.operations._condition import condition_on
-from probpipe.operations._evaluate import evaluate
-from probpipe.operations._moments import expectation, mean
+from probpipe.operations._moments import mean
+from probpipe.operations._pushforward import pushforward
 
 
 @function
@@ -21,8 +21,8 @@ def _shifted(mu, tau, z):
     return mu + tau * z
 
 
-def _evaluate_report() -> CallReport:
-    return evaluate.check(_shifted, Normal("mu", 0.0, 5.0), fixed_args={"tau": 3.0, "z": 0.5})
+def _pushforward_report() -> CallReport:
+    return pushforward.check(Normal("mu", 0.0, 5.0), _shifted, fixed_args={"tau": 3.0, "z": 0.5})
 
 
 def _rows(report: CallReport) -> list[list[str]]:
@@ -60,7 +60,7 @@ class TestTheRegistryMethods:
         assert not any("Available" in info.description for info in report.routes)
 
     def test_a_route_entry_names_the_rule_its_registry_selects(self):
-        report = _evaluate_report()
+        report = _pushforward_report()
 
         assert [info.method_name for info in report.routes] == [
             "evaluation_rules (exact methods)",
@@ -70,16 +70,18 @@ class TestTheRegistryMethods:
         assert report.methods["evaluation_rules"][-1] == "sampling_lift"
 
     def test_an_entry_that_selects_nothing_reads_at_the_exactness_it_covers(self):
-        report = expectation.check(Normal("mu", 0.0, 5.0), lambda x: x**2)
+        report = pushforward.check(Normal("mu", 0.0, 5.0), lambda x: x**2)
 
-        exact_methods = report.routes[1]
+        (exact_methods,) = [
+            info for info in report.routes if info.method_name == "evaluation_rules (exact methods)"
+        ]
         assert exact_methods.method_name == "evaluation_rules (exact methods)"
         assert exact_methods.feasible is False and exact_methods.exact is True
 
 
 class TestTheNotebookTable:
     def test_the_html_is_well_formed_with_one_row_per_route(self):
-        report = _evaluate_report()
+        report = _pushforward_report()
 
         rows = _rows(report)
 
@@ -89,7 +91,7 @@ class TestTheNotebookTable:
         ]
 
     def test_the_selected_route_is_marked(self):
-        rows = _rows(_evaluate_report())
+        rows = _rows(_pushforward_report())
 
         assert [row[0] for row in rows[:2]] == ["", "selected"]
         assert rows[1][3:5] == ["approximate", "feasible"]
@@ -119,7 +121,7 @@ class TestTheNotebookTable:
     @pytest.mark.parametrize("term", ["lifted", "methods of evaluation_rules"])
     def test_the_section_below_lists_the_lifted_arguments_and_the_methods(self, term):
         report = _shifted.check(Normal("mu", 0.0, 5.0), 3.0, 0.5)
-        evaluated = _evaluate_report()
+        evaluated = _pushforward_report()
 
         markup = report._repr_html_() + evaluated._repr_html_()
 

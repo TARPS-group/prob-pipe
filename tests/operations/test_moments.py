@@ -51,7 +51,6 @@ from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.functions import _rules
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
-from probpipe.operations._evaluate import evaluate
 from probpipe.operations._moments import (
     _ByComponent,
     cov,
@@ -60,6 +59,7 @@ from probpipe.operations._moments import (
     quantile,
     variance,
 )
+from probpipe.operations._pushforward import pushforward
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import (
@@ -206,8 +206,10 @@ def quadrature(monkeypatch):
     ):
         registry.register(rule)
     monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
-    for operation in (expectation, evaluate):
-        (route,) = [r for r in operation.routes if r.name == "evaluation_rules"]
+    for operation in (expectation, pushforward):
+        (route,) = [
+            r for r in operation.routes if r.name in ("evaluation_rules", "pushforward_mean")
+        ]
         monkeypatch.setattr(route, "registry", registry)
     return registry
 
@@ -880,7 +882,7 @@ class TestExpectation:
         law = Gaussian("g")
         report = expectation.check(law, lambda x: x**2)
         assert (report.route, report.method, report.exact) == (
-            "evaluation_rules",
+            "pushforward_mean",
             "sampling_lift",
             False,
         )
@@ -956,15 +958,304 @@ class TestExpectation:
         with pytest.raises(ApplicabilityError, match="FunctionSpec"):
             expectation(Gaussian("g"), 3.0)
 
-    def test_the_routes_are_the_closed_form_then_the_evaluation_rules(self):
-        routes = [(route.name, route.source) for route in expectation.summary().routes]
+    def test_the_routes_are_the_closed_form_then_the_pushforward_mean(self):
+        summary = expectation.summary()
+        assert (summary.is_derived, summary.identity) == (
+            True,
+            "mean(pushforward(d, f, fixed_args))",
+        )
+        routes = [(route.name, route.source) for route in summary.routes]
         assert routes == [
             ("closed_form", RouteSource.CAPABILITY),
-            ("evaluation_rules", RouteSource.REGISTRY),
-            ("identity", RouteSource.FALLBACK),
+            ("pushforward_mean", RouteSource.REGISTRY),
         ]
-        (route,) = [r for r in expectation.routes if r.name == "evaluation_rules"]
+        (route,) = [r for r in expectation.routes if r.name == "pushforward_mean"]
         assert route.registry is _rules.evaluation_rule_registry
 
     def test_the_operation_takes_no_key(self):
         assert list(inspect.signature(expectation).parameters) == ["d", "f", "fixed_args", "given"]
+
+
+# ---------------------------------------------------------------------------
+# expectation integrates over draws on every route
+# ---------------------------------------------------------------------------
+
+
+def _the_law(law: Distribution) -> Any:
+    return law
+
+
+def _atoms() -> EmpiricalDistribution:
+    return EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), component="x")
+
+
+class TestTheIntegrandReceivesDraws:
+    """expectation(d, f) is mean(pushforward(d, f)): f receives draws of d, whatever its annotation."""
+
+    @pytest.mark.parametrize("law", [Gaussian("g"), _atoms()], ids=["sampled", "closed_form"])
+    @pytest.mark.parametrize("call", ["call", "check"])
+    def test_an_integrand_taking_a_law_is_refused(self, law, call):
+        refusal = (
+            r"^expectation: cannot pass a draw of argument 'd' to '_the_law', since its "
+            r"parameter 'law' takes a distribution, but the draw is an array$"
+        )
+        with pytest.raises(ApplicabilityError, match=refusal):
+            getattr(expectation, "__call__" if call == "call" else "check")(law, _the_law)
+
+    def test_the_refusal_runs_no_body_and_draws_nothing(self):
+        calls: list[Any] = []
+
+        def recorded(law: Distribution) -> Any:
+            calls.append(law)
+            return law
+
+        class _Counting(Sampler):
+            draws = 0
+
+            def _sample(self, key, sample_shape=()):
+                type(self).draws += 1
+                return super()._sample(key, sample_shape)
+
+        for options in ({}, {"exact_only": True}):
+            with pytest.raises(ApplicabilityError):
+                expectation.using(**options)(_Counting("s"), recorded)
+        assert calls == [] and _Counting.draws == 0
+
+    def test_a_kernel_given_values_is_refused_the_same_way(self):
+        kernel = _Shift()
+        with pytest.raises(ApplicabilityError, match="takes a distribution"):
+            expectation(kernel, _the_law, given={"mu": 1.0})
+
+    def test_an_integrand_annotated_any_receives_draws(self):
+        received: list[Any] = []
+
+        def square(x: Any) -> Any:
+            received.append(x)
+            return x * x
+
+        assert _value(expectation(_atoms(), square)) == pytest.approx(14.0 / 3.0)
+        with workflow_run(seed=3):
+            estimate = expectation.using(n_broadcast_samples=_DRAWS)(Gaussian("g", 1.0), square)
+        assert received and not any(isinstance(x, Distribution) for x in received)
+        # E[X^2] = 2 for X ~ N(1, 1); 4000 draws give a standard error of about 0.04.
+        assert _value(estimate) == pytest.approx(2.0, abs=0.15)
+        assert estimate.provenance.metadata["route"] == "pushforward_mean"
+
+    def test_an_unannotated_and_a_numeric_integrand_are_admitted(self):
+        def plain(x):
+            return x * x
+
+        def numeric(x: float) -> float:
+            return x * x
+
+        for integrand in (plain, numeric):
+            assert _value(expectation(_atoms(), integrand)) == pytest.approx(14.0 / 3.0)
+
+    @pytest.mark.parametrize("method", [None, "empirical_enumeration", "sampling_lift"])
+    def test_a_positional_only_integrand_receives_draws_on_every_route(self, method):
+        with workflow_run(seed=0):
+            value = expectation.using(method=method)(_atoms(), jnp.exp)
+        exact = float(jnp.mean(jnp.exp(jnp.array([1.0, 2.0, 3.0]))))
+        # The sampling lift draws the three atoms by stratified resampling.
+        assert _value(value) == pytest.approx(exact, rel=0.1)
+
+    def test_a_maps_construction_bind_is_kept_on_every_route(self):
+        def shift(x, a):
+            return x + a
+
+        bound = Function(shift, label="shift", bind={"a": 10.0})
+        for method in (None, "empirical_enumeration"):
+            value = expectation.using(method=method)(_atoms(), bound)
+            assert _value(value) == pytest.approx(12.0)
+
+    def test_an_integrand_over_a_random_measure_receives_each_draw_as_a_law(self):
+        from probpipe.families import BootstrapDistribution
+
+        measure = BootstrapDistribution("D", _atoms(), 3)
+
+        def statistic(D: Distribution) -> Any:
+            return mean(D)
+
+        with workflow_run(seed=0):
+            estimate = expectation.using(n_broadcast_samples=200)(measure, statistic)
+        # The replicate means of the atoms 1, 2, 3 have mean 2 and standard
+        # deviation sqrt(2/9), so 200 of them give a standard error of about 0.033.
+        assert _value(estimate) == pytest.approx(2.0, abs=0.2)
+
+    def test_a_vector_event_is_integrated_coordinatewise(self):
+        with workflow_run(seed=0):
+            estimate = expectation.using(n_broadcast_samples=_DRAWS)(Vector("v"), lambda v: v * v)
+        # The coordinates have scales 1 and 2; 4000 draws give standard errors
+        # of about 0.022 and 0.09 for their second moments.
+        np.testing.assert_allclose(jnp.asarray(estimate), [1.0, 4.0], atol=0.3)
+
+    def test_a_record_atom_reaches_the_integrand_alike_on_both_routes(self):
+        law = _record_empirical()
+        received: list[type] = []
+
+        def total(r):
+            received.append(type(r))
+            return r["a"] + jnp.sum(r["b"])
+
+        closed = expectation(law, total)
+        enumerated = expectation.using(method="empirical_enumeration")(law, total)
+        assert closed.provenance.metadata["route"] == "closed_form"
+        assert enumerated.provenance.metadata["route"] == "pushforward_mean"
+        # The atoms give 2 + 3, 1 + 1, and 3 + 5, whose mean is 5.
+        assert _value(closed) == pytest.approx(_value(enumerated)) == pytest.approx(5.0)
+        assert received and all(issubclass(kind, Record) for kind in received)
+
+
+class TestFixedArgumentsOfExpectation:
+    @staticmethod
+    def _shift(x, a):
+        return x + a
+
+    @pytest.mark.parametrize("law", [Gaussian("g"), _atoms()], ids=["sampled", "closed_form"])
+    def test_a_law_in_fixed_args_is_refused_on_every_route(self, law):
+        with pytest.raises(
+            ApplicabilityError,
+            match=r"^expectation: fixed_args\['a'\] must be a fixed value, but got "
+            r"Gaussian 'a', which is a distribution$",
+        ):
+            expectation(law, self._shift, {"a": Gaussian("a", 100.0)})
+
+    @pytest.mark.parametrize("law", [Gaussian("g"), _atoms()], ids=["sampled", "closed_form"])
+    def test_a_batch_in_fixed_args_is_refused_on_every_route(self, law):
+        batch = NumericArrayBatch(jnp.array([0.0, 10.0]), "i", label="a")
+        with pytest.raises(ApplicabilityError, match="got NumericArrayBatch 'a', which is a batch"):
+            expectation(law, self._shift, {"a": batch})
+
+    def test_a_constant_binds_on_every_route(self):
+        assert _value(expectation(_atoms(), self._shift, {"a": 10.0})) == pytest.approx(12.0)
+        enumerated = expectation.using(method="empirical_enumeration")(
+            _atoms(), self._shift, {"a": 10.0}
+        )
+        assert _value(enumerated) == pytest.approx(12.0)
+
+    def test_a_law_at_a_parameter_taking_a_law_is_a_constant(self):
+        def offset(x, reference: Distribution):
+            return x + mean(reference)
+
+        value = expectation(_atoms(), offset, {"reference": Gaussian("r", 10.0)})
+        assert _value(value) == pytest.approx(12.0)
+
+
+class _ExactToSampler(BinaryDispatchMethod):
+    """An exact rule whose pushforward is a law with no exact mean, so the mean is Monte Carlo."""
+
+    name = "exact_to_sampler"
+    exact = True
+    priority = 90
+
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]:
+        return ((Function,), (Distribution,))
+
+    def check(self, f: Any, operand: Any, /, **call: Any) -> Feasibility:
+        return Feasibility(isinstance(operand, Gaussian), "only a Gaussian")
+
+    def __init__(self) -> None:
+        self.pushed = Sampler("pushed", 3.0)
+
+    def execute(self, f: Any, operand: Any, /, **call: Any) -> Any:
+        return self.pushed
+
+
+@pytest.fixture
+def exact_to_sampler(monkeypatch):
+    """The evaluation rules, for one test, with an exact rule whose result has no exact mean."""
+    registry = type(_rules.evaluation_rule_registry)()
+    exact_rule = _ExactToSampler()
+    for rule in (
+        _rules._SamplingLift(),
+        _rules._ElementwiseSweep(),
+        _rules._EmpiricalEnumeration(),
+        exact_rule,
+    ):
+        registry.register(rule)
+    monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
+    for operation in (expectation, pushforward):
+        (route,) = [
+            r for r in operation.routes if r.name in ("evaluation_rules", "pushforward_mean")
+        ]
+        monkeypatch.setattr(route, "registry", registry)
+    return exact_rule
+
+
+class TestTheExactnessOfBothSteps:
+    """pushforward_mean records the exactness of the rule and of the mean together."""
+
+    def test_an_exact_rule_and_an_exact_mean_are_exact(self):
+        result = expectation.using(method="empirical_enumeration")(_atoms(), lambda x: x)
+        assert result.provenance.metadata["exact"] is True
+        with_only = expectation.using(method="empirical_enumeration", exact_only=True)
+        assert with_only(_atoms(), lambda x: x).provenance.metadata["exact"] is True
+
+    def test_an_approximate_rule_is_approximate_in_the_check_and_the_record(self):
+        report = expectation.check(Gaussian("g"), lambda x: x)
+        assert report.exact is False
+        assert "the mean of the pushforward is checked when it runs" in report.deferred
+        with workflow_run(seed=0):
+            result = expectation(Gaussian("g"), lambda x: x)
+        assert result.provenance.metadata["exact"] is False
+
+    def test_an_exact_rule_with_a_monte_carlo_mean_is_approximate(self, exact_to_sampler):
+        with workflow_run(seed=0):
+            result = expectation.using(n_broadcast_samples=_DRAWS)(Gaussian("g"), lambda x: x)
+        metadata = result.provenance.metadata
+        assert (metadata["method"], metadata["exact"]) == ("exact_to_sampler", False)
+        assert exact_to_sampler.pushed.shapes == [(_DRAWS,)]
+        # 4000 draws of N(3, 1) give a standard error of about 0.016.
+        assert _value(result) == pytest.approx(3.0, abs=0.1)
+
+    def test_the_check_states_an_exact_rule_approximate_until_the_mean_runs(self):
+        named = expectation.using(method="empirical_enumeration")
+        report = named.check(_atoms(), lambda x: x)
+        assert (report.route, report.method, report.exact) == (
+            "pushforward_mean",
+            "empirical_enumeration",
+            False,
+        )
+        assert "the mean of the pushforward is checked when it runs" in report.deferred
+        assert named(_atoms(), lambda x: x).provenance.metadata["exact"] is True
+
+    def test_naming_the_route_selects_it(self):
+        for options in ({}, {"exact_only": True}):
+            named = expectation.using(method="pushforward_mean", **options)
+            result = named(_atoms(), lambda x: x)
+            assert result.provenance.metadata["route"] == "pushforward_mean"
+            assert _value(result) == pytest.approx(2.0)
+
+    def test_exact_only_refuses_monte_carlo_in_the_mean(self, exact_to_sampler):
+        with pytest.raises(ResolutionError, match=r"^mean: no route applies with exact_only"):
+            expectation.using(exact_only=True)(Gaussian("g"), lambda x: x)
+
+    def test_the_mean_draws_its_own_count_when_the_call_sets_none(self, exact_to_sampler):
+        with workflow_run(seed=3):
+            expectation(Gaussian("g"), lambda x: x)
+        assert exact_to_sampler.pushed.shapes == [(mean.options["n_broadcast_samples"],)]
+
+    def test_exact_only_refuses_monte_carlo_in_the_rule(self):
+        with pytest.raises(ResolutionError, match="pushforward_mean"):
+            expectation.using(exact_only=True)(Sampler("s"), lambda x: x)
+
+    def test_an_empirical_law_takes_the_closed_form_with_and_without_exact_only(self):
+        for options in ({}, {"exact_only": True}):
+            report = expectation.using(**options).check(_atoms(), lambda x: x)
+            assert (report.route, report.exact) == ("closed_form", True)
+
+    def test_a_rule_name_selects_the_rule_inside_the_route(self):
+        named = expectation.using(method="sampling_lift").check(_atoms(), lambda x: x)
+        assert (named.route, named.method) == ("pushforward_mean", "sampling_lift")
+        qualified = expectation.using(method="pushforward_mean/sampling_lift")
+        assert qualified.check(_atoms(), lambda x: x).method == "sampling_lift"
+
+    def test_the_body_and_the_route_agree_on_an_exact_case(self):
+        """pushforward_mean replaces the generic route, so the body, which states the identity, never runs."""
+
+        def scaled(x, a):
+            return a * x * x
+
+        body = expectation.apply(_atoms(), scaled, {"a": 2.0})
+        route = expectation.using(method="empirical_enumeration")(_atoms(), scaled, {"a": 2.0})
+        assert _value(body) == pytest.approx(_value(route)) == pytest.approx(28.0 / 3.0)

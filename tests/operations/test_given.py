@@ -216,7 +216,7 @@ class TestConditionalOperations:
         if method is not None:
             options["method"] = "sampling_lift" if operation is expectation else method
         view = operation.using(**options)
-        expected_route = "evaluation_rules" if operation is expectation else "monte_carlo"
+        expected_route = "pushforward_mean" if operation is expectation else "monte_carlo"
         assert view.check(kernel, *args, given={"mu": 2.0}).route == expected_route
         assert not kernel.keys
         with workflow_run(seed=42):

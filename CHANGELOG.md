@@ -13,6 +13,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
   `condition_on.using(method="tfp_nuts")(model, data)`.
+- **A kernel's conditional methods must be pure.** A joint compiles the
+  function of `conditional_distribution`, and the conditional methods of any
+  `ConditionalDistribution`, when it draws or scores the kernel at many given
+  values, and it keeps the compiled program. A call that reuses the program
+  computes with the values that the globals the function reads had when it
+  was compiled, while a call with new input shapes or a single given value
+  reads their current values. A warning the function issues is issued when a
+  program is compiled. A value that changes between calls belongs in a given
+  slot.
+- `pushforward` and `expectation` validate construction-bound arguments as
+  constants, just as they validate `fixed_args`. Maps annotated `Any` retain
+  their input/output schema checks when pushed forward, including shared
+  symbolic dimensions.
+
+- **`expectation(d, f)` integrates `f` over draws of `d` on every route.**
+  It is `mean(pushforward(d, f))`, so the integrand receives one draw at a
+  time whatever its parameter's annotation. An integrand whose declared input
+  cannot take a draw raises `ApplicabilityError` from the call and from
+  `check()`, on every route: `expectation(Normal("x", 1.0, 2.0), the_law)` for
+  `the_law(law: Distribution)` used to return `1.0`, which is the mean of
+  `the_law(d)`, and now raises. An integrand annotated `Any` receives draws,
+  where it received the whole law. A law or a batch in `fixed_args` raises
+  `ApplicabilityError`, where `closed_form` passed it to the integrand as it
+  is and the evaluation rules lifted it, so the result depended on the route;
+  `mean(function(f)(x=d, a=A))` integrates over both laws.
+- **`expectation`'s routes are `closed_form` and `pushforward_mean`,** which
+  replace `evaluation_rules` and `identity`. A rule name such as
+  `method="sampling_lift"` still selects the rule, and the qualified form is
+  `pushforward_mean/sampling_lift`. The provenance of `pushforward_mean`
+  records the exactness of the rule and of the mean together, while
+  `expectation.check` states a call whose rule is exact as approximate, since
+  the mean's route is chosen only when the call runs. Under `exact_only` both
+  steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
+  that an exact rule built raises `ResolutionError` naming `mean`.
+- **On `closed_form`, `expectation` passes a record atom to the integrand as a
+  `Record`,** as the evaluation rules pass a record draw, where it passed the
+  nested `dict` of the atom's raw leaves. The integrand's open parameter is
+  the one parameter with no default that is neither in `fixed_args` nor bound
+  by the map's `bind`, on every route, so an integrand whose only parameter has
+  a default or is variadic raises `ApplicabilityError` on `closed_form` as on
+  the other routes.
+
 - Remove the experimental `Node`, `Module`, `AbstractModule`,
   `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
   `Function` and `@function` no longer accept `module=`. Use ordinary callables
@@ -1438,6 +1480,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
+  The map receives one draw at a time whatever its parameter's annotation, so
+  a statistic annotated `Distribution` over a random measure receives each
+  draw, and `pushforward(K, f, given=s)` conditions a kernel first. An integrand
+  whose declared input cannot take a draw, and a law or a batch in
+  `fixed_args`, raise `ApplicabilityError` before any route runs.
+- **`@operation(identity_route=...)`** registers a composite route that runs
+  a route of each constituent operation in turn in place of the generic
+  identity route of a derived operation, and provenance records the exactness
+  that route learns when it runs.
 - Distribution-subject operations accept keyword-only `given=` for conditional
   operands, including sampling, densities, moments, quantiles, expectations,
   marginals, and conversion. Conditional capabilities serve calls directly;
@@ -2401,6 +2453,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A parametric family and a joint's conditional factors reuse their
+  compiled code across calls.** A family samples, scores, and takes quantiles
+  through compiled programs that a later call with the same parameter shapes
+  reuses. A joint draws and scores a conditional factor with numeric givens at
+  all of its given draws through one compiled program, which the factor keeps
+  and which takes new draws, keys, and numeric unmet givens without compiling
+  again.
+  - **Speed:** a warm `sample(model, 50)` of the first tutorial's model drops
+    from about 1.2 s to about 0.005 s.
+  - **Seeded results:** a compiled program fuses its arithmetic differently,
+    which changes the last float32 digit of some draws and densities. A
+    rejection sampler or a discrete family can then return a different value
+    where a parameter differs in its last digit.
+  - **Checks:** a family's checks of its parameter values do not run inside a
+    conditional factor's compiled program, so an invalid parameter, such as a
+    negative mixture weight, gives draws and densities, such as `nan`, rather
+    than an error.
+  - **Uncompiled calls:** a backend that holds a class a user writes, a
+    function such as the model of a `JointDistributionSequential`, or a part
+    built with `validate_args=True` runs uncompiled. So does a factor that does
+    not compile, such as one that converts a given to a Python number, for
+    calls with the same structure of unmet givens.
 - **A dependent joint's mean, variance, and quantiles take `by_component`
   rather than `monte_carlo`** when one of its components has an exact
   summary. The check of such a call lists `by_component (exact)` and
@@ -3309,6 +3383,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
+  for `X ~ d`, and the direct call `f(v)` replaces every other use:
+  `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
+  that takes the law itself. `evaluate.check(f, v)` becomes `f.check(v)` or
+  `pushforward.check(d, f)`. The bootstrap distribution of a statistic is
+  `pushforward(B, stat)`.
 - **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
   raises `TypeError`, where it warned and used `h`; pass the callable first, as
   `Function(h, label="g")`.
@@ -3344,6 +3424,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+  functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
+  0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
+  density, because the `log_prob` that `prob` calls selects only exact routes.
+  `exact_only` restricts the route selection of every operation and plain
+  `Function` the identity runs, at any depth and in the workers the engine
+  dispatches to. A derived operation therefore still raises `ResolutionError`
+  when a call inside it has only an approximate route, and when it is declared
+  without an `identity_check`, which the message names. The conversion of an
+  argument inside the identity follows its parameter's `conversions` control,
+  as in a direct call. A derived operation's `n_broadcast_samples` used to be
+  dropped at its identity's calls, which drew their own default, and now sets
+  their draws when the derived call sets it, unless the identity sets its own
+  on the call. The other controls stay each call's own. A composite identity,
+  such as `expectation`'s, runs each of its steps under the same two controls.
+  A call under `exact_only` on an operation without an exact route says so,
+  where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
   converts to the same law.** The `scipy` converter used to read a `beta`'s
   shape arguments alone and drop the location of a `gamma`, `expon`, or

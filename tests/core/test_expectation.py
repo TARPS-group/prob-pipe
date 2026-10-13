@@ -18,9 +18,9 @@ from probpipe import (
     Normal,
     NumericArray,
     OutputSpec,
-    evaluate,
     expectation,
     mean,
+    pushforward,
     set_default_n_broadcast_samples,
     variance,
     workflow_run,
@@ -274,7 +274,7 @@ class TestGlobalDefaults:
         monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
         set_default_n_broadcast_samples(7)
         law = make_dist()
-        assert evaluate(Function(f, output_spec=OutputSpec(integrand=None)), law).num_atoms == 7
+        assert pushforward(law, Function(f, output_spec=OutputSpec(integrand=None))).num_atoms == 7
         assert np.isfinite(float(expectation(law, f)))
 
     @pytest.mark.parametrize(("count", "error"), [(0, ValueError), (2.5, TypeError)])
@@ -320,8 +320,12 @@ def rules(monkeypatch):
     ):
         registry.register(rule)
     monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
-    for operation in (expectation, evaluate):
-        (route,) = [r for r in operation._route_table.routes if r.name == "evaluation_rules"]
+    for operation in (expectation, pushforward):
+        (route,) = [
+            r
+            for r in operation._route_table.routes
+            if r.name in ("evaluation_rules", "pushforward_mean")
+        ]
         monkeypatch.setattr(route, "registry", registry)
     return registry
 
@@ -333,11 +337,13 @@ class TestExpectationRoutes:
 
     def test_a_continuous_law_takes_the_sampling_lift(self):
         report = expectation.check(Normal("n", 0.0, 1.0), lambda x: x)
-        assert report.selected.method_name == "evaluation_rules/sampling_lift"
+        assert report.selected.method_name == "pushforward_mean/sampling_lift"
 
     def test_a_named_rule_runs_instead_of_the_closed_form(self):
         law = Bernoulli("b", probs=0.3)
-        result = expectation.using(method="sampling_lift")(law, lambda x: x)
+        with workflow_run(seed=0):
+            result = expectation.using(method="sampling_lift")(law, lambda x: x)
+        # 256 draws give a standard error of about 0.029.
         np.testing.assert_allclose(float(result), 0.3, atol=0.1)
 
     def test_exact_only_refuses_a_law_without_an_exact_route(self):
@@ -352,20 +358,22 @@ class TestExpectationRoutes:
         law = Normal("n", 0.0, 1.0)
         assert float(expectation.using(method="quadrature_stand_in")(law, lambda x: x)) == -1.0
         assert expectation.check(law, lambda x: x).selected.method_name == (
-            "evaluation_rules/sampling_lift"
+            "pushforward_mean/sampling_lift"
         )
 
-    def test_a_rule_serves_evaluate_and_expectation_alike(self, rules):
+    def test_a_rule_serves_pushforward_and_expectation_alike(self, rules):
         law = Normal("n", 0.0, 1.0)
-        pushforward = evaluate.using(method="quadrature_stand_in")(lambda x: x, law)
-        assert float(mean(pushforward)) == -1.0
+        pushed = pushforward.using(method="quadrature_stand_in")(law, lambda x: x)
+        assert float(mean(pushed)) == -1.0
+        integrated = expectation.using(method="quadrature_stand_in")(law, lambda x: x)
+        assert float(integrated) == -1.0
 
     def test_a_raised_priority_makes_a_rule_the_default(self, rules):
         law = Normal("n", 0.0, 1.0)
         rules.set_priorities(quadrature_stand_in=60)
         assert float(expectation(law, lambda x: x)) == -1.0
         assert expectation.check(law, lambda x: x).selected.method_name == (
-            "evaluation_rules/quadrature_stand_in"
+            "pushforward_mean/quadrature_stand_in"
         )
 
     def test_the_closed_form_ranks_before_a_higher_priority_rule(self, rules):
