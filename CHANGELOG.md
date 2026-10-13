@@ -3461,6 +3461,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check reports such a fit infeasible, as for `scipy.stats.gamma(2, loc=1)`
   to `Gamma` or `Normal`, and `convert` raises `ResolutionError` when no
   other converter applies.
+  List and tuple bounds compare element-wise, as array bounds do, so a law
+  declared on `interval([0, 0], [1, 1])` can be fit by `Beta`.
   The converter option `check_support=False` still fits the family on its own
   support.
   The same comparison checks a law a `Function` returns against the support its

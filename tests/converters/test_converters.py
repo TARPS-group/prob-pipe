@@ -263,6 +263,22 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
             converter_registry.convert(source, Exponential, check_support=False), Exponential
         )
 
+    @pytest.mark.parametrize("container", [list, tuple])
+    def test_sequence_bounds_keep_the_fitted_beta_moments(self, container):
+        support = interval(container([0.0, 0.0]), container([1.0, 1.0]))
+        source = EmpiricalDistribution(
+            jnp.array([[0.2, 0.3], [0.4, 0.5], [0.6, 0.7]]),
+            event_spec=OutputSpec(x=NumericArraySpec((2,), support=support)),
+        )
+        info = converter_registry.check(source, Beta)
+        assert (info.feasible, info.method_name, info.samples) == (True, "moment_match", False)
+        fitted = converter_registry.convert(source, Beta)
+        assert isinstance(fitted, Beta)
+        assert fitted.support == unit_interval
+        # The three equally weighted atoms have means 0.4 and 0.5 and variance 0.08 / 3.
+        np.testing.assert_allclose(mean(fitted).raw(), [0.4, 0.5], rtol=1e-6, atol=0)
+        np.testing.assert_allclose(variance(fitted).raw(), [0.08 / 3] * 2, rtol=1e-6, atol=0)
+
 
 class TestASupportTheFamilyDoesNotShare:
     """A fit keeps the source's declared support, so a family on another support is refused."""

@@ -16,6 +16,7 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    Beta,
     DistributionSpec,
     EmpiricalDistribution,
     Function,
@@ -1018,6 +1019,24 @@ class TestCompletedOutputDeclarations:
             label="factory",
         )
         assert factory.apply().support == interval(0.0, 1.0)
+
+    @pytest.mark.parametrize("container", [list, tuple])
+    def test_a_returned_law_conforms_to_declared_sequence_bounds(self, container):
+        stored = Beta("x", [2.0, 3.0], [3.0, 4.0])
+        factory = Function(
+            lambda: stored,
+            output_spec=OutputSpec(
+                factory=DistributionSpec(
+                    OutputSpec(
+                        x=NumericArraySpec(
+                            (2,), support=interval(container([0.0, 0.0]), container([1.0, 1.0]))
+                        )
+                    )
+                )
+            ),
+            label="factory",
+        )
+        assert factory.apply() is stored
 
     def test_a_returned_law_over_a_whole_record_is_checked_field_by_field(self):
         from probpipe import Distribution

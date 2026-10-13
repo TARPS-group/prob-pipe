@@ -361,12 +361,18 @@ def _all_supersets() -> dict[type, set[type]]:
     return result
 
 
+def _comparison_bound(bound: ArrayLike) -> ArrayLike:
+    """The array form of a sequence bound, with scalar and array bounds preserved."""
+    return jnp.asarray(bound) if isinstance(bound, (list, tuple)) else bound
+
+
 def _real_bounds(constraint: Constraint) -> tuple[ArrayLike, ArrayLike] | None:
     """The lower and upper bounds of an interval of the reals, or ``None`` for another support.
 
     The real line, the half-lines, the unit interval, and the parameterized
     intervals are each an interval of the reals, with an infinite bound where
-    it is unbounded.
+    it is unbounded. List and tuple bounds become arrays for element-wise
+    comparison. Scalar and array bounds retain their representation.
     """
     if isinstance(constraint, _Real):
         return -jnp.inf, jnp.inf
@@ -375,9 +381,9 @@ def _real_bounds(constraint: Constraint) -> tuple[ArrayLike, ArrayLike] | None:
     if isinstance(constraint, _UnitInterval):
         return 0.0, 1.0
     if isinstance(constraint, _Interval):
-        return constraint.low, constraint.high
+        return _comparison_bound(constraint.low), _comparison_bound(constraint.high)
     if isinstance(constraint, _GreaterThan):
-        return constraint.lower_bound, jnp.inf
+        return _comparison_bound(constraint.lower_bound), jnp.inf
     return None
 
 
