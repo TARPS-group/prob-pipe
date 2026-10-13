@@ -33,13 +33,14 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    Uniform,
     WorkflowKind,
     function,
     sample,
     workflow_run,
 )
 from probpipe.core._fingerprint import fingerprint
-from probpipe.core.constraints import positive, real
+from probpipe.core.constraints import interval, positive, real, unit_interval
 from probpipe.core.tracked import _NO_DESCRIPTION
 
 
@@ -993,6 +994,30 @@ class TestCompletedOutputDeclarations:
             ValueError, match=r"factory/a support real does not conform to positive"
         ):
             factory.apply()
+
+    def test_a_returned_law_on_a_wider_interval_is_refused(self):
+        factory = Function(
+            lambda: Uniform("y", low=0.0, high=2.0),
+            output_spec=OutputSpec(
+                factory=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=unit_interval)))
+            ),
+            label="factory",
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"factory/y support interval\(0\.0, 2\.0\) does not conform to unit_interval",
+        ):
+            factory.apply()
+
+    def test_a_returned_law_on_the_declared_interval_is_accepted(self):
+        factory = Function(
+            lambda: Uniform("y", low=0.0, high=1.0),
+            output_spec=OutputSpec(
+                factory=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=unit_interval)))
+            ),
+            label="factory",
+        )
+        assert factory.apply().support == interval(0.0, 1.0)
 
     def test_a_returned_law_over_a_whole_record_is_checked_field_by_field(self):
         from probpipe import Distribution

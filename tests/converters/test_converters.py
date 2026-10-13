@@ -47,7 +47,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe._dtype import _default_float_dtype
-from probpipe.core.constraints import greater_than, interval
+from probpipe.core.constraints import greater_than, interval, unit_interval
 from probpipe.distributions import ConverterRegistry
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
@@ -298,12 +298,15 @@ class TestASupportTheFamilyDoesNotShare:
     def test_the_check_refuses_without_drawing(self):
         import scipy.stats as ss
 
-        with patch(
-            "probpipe.families._converters._draws",
+        # The shifted law draws through its base Beta, so any draw of it calls Beta._sample.
+        with patch.object(
+            Beta,
+            "_sample",
             side_effect=AssertionError("the check drew from the source"),
-        ):
+        ) as draw:
             info = converter_registry.check(ss.beta(2.0, 3.0, loc=1.0, scale=2.0), Beta)
         assert info.feasible is False
+        draw.assert_not_called()
 
     def test_a_law_on_the_unit_interval_is_fit_by_a_beta(self):
         source = Uniform("x", low=0.0, high=1.0)
@@ -320,6 +323,7 @@ class TestASupportTheFamilyDoesNotShare:
         source = ss.beta(2.0, 3.0, loc=1.0, scale=2.0)
         result = converter_registry.convert(source, Beta, check_support=False)
         assert isinstance(result, Beta)
+        assert result.support == unit_interval
 
 
 class TestARecordSource:

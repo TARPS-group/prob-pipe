@@ -3463,9 +3463,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other converter applies.
   The converter option `check_support=False` still fits the family on its own
   support.
-  The same comparison applies where a law is matched against a declared
-  support and where an argument's support is checked against a parameter's,
-  so a law on the real line fails a declared bounded interval there.
+  The same comparison checks a law a `Function` returns against the support its
+  output spec declares, so a returned `Uniform` on `[0, 2]` fails a declared
+  `unit_interval`.
+  The support refusals of `moment_match` at check and at fit read alike, and
+  each names the converter option `check_support=False`.
 - **A SciPy distribution without a family declares the dtype of its draws**:
   JAX's default integer dtype for a discrete distribution, such as
   `scipy.stats.poisson`, and the default floating dtype otherwise, which is
