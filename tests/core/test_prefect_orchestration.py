@@ -586,6 +586,12 @@ def _mean_of_law(law: Distribution) -> Any:
 
 
 class TestInheritedControlsInPrefectTasks:
+    """Prefect's in-process task runner keeps the controls a derived operation's identity passes down.
+
+    A worker that receives the work function serialized is covered in
+    ``tests/operations/test_operation.py``.
+    """
+
     def test_exact_only_holds_in_a_prefect_task_constituent(self):
         inner = Function(
             _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"

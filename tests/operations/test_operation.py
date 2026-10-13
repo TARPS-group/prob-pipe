@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import threading
+import warnings
 from typing import Any
 
 import jax
@@ -39,6 +41,7 @@ from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
 from probpipe.distributions._conditional import ConditionalDistributionSpec
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
+from probpipe.functions import _execution
 from probpipe.functions._resolution import PointReport, RouteOutcome
 from probpipe.operations import (
     BoundCall,
@@ -402,6 +405,69 @@ class TestIdentityControls:
         with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
             view(law)
         assert law.shapes == []
+
+    def test_exact_only_holds_in_a_worker_that_receives_a_serialized_function(self, monkeypatch):
+        cloudpickle = pytest.importorskip("cloudpickle")
+
+        def in_fresh_threads(request: Any, *, parent_frame: Any, parent_broker: Any) -> list[Any]:
+            # Stand in for a worker in another process: the work function arrives
+            # serialized, and each item runs in a thread with an empty context.
+            func = cloudpickle.loads(cloudpickle.dumps(request.func))
+            outcomes: list[Any] = []
+
+            def run(item: Any) -> None:
+                try:
+                    outcomes.append(
+                        _execution._execute_work_item(func, item, parent_frame, parent_broker)
+                    )
+                except BaseException as error:
+                    outcomes.append(error)
+
+            for item in request.work_items:
+                worker = threading.Thread(target=run, args=(item,))
+                worker.start()
+                worker.join()
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException):
+                    raise outcome
+            return outcomes
+
+        monkeypatch.setattr(_execution, "execute_many_threaded", in_fresh_threads)
+
+        def worker(d: Distribution) -> Any:
+            return center.with_options(raw=True)(d)
+
+        inner = Function(worker).with_options(dispatch="thread", raw=True)
+        doubled = _body_doubled(
+            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
+        )
+        law = Sampler("s")
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.with_options(exact_only=True)(law)
+        assert law.shapes == []
+
+    def test_an_inherited_view_does_not_repeat_its_construction_warnings(self):
+        with pytest.warns(UserWarning, match="max_workers configures only"):
+            shifted = Function(lambda x: x + 1.0, label="shifted", max_workers=2)
+        doubled = _body_doubled(lambda d: shifted(center.with_options(raw=True)(d)))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for _ in range(3):
+                doubled.with_options(n_broadcast_samples=50)(Gaussian("g", 1.5))
+
+    def test_an_identity_check_may_defer_a_constituent_to_the_run(self):
+        def center_later(d: Any) -> Any:
+            """The center is checked when the identity runs."""
+            return PointReport(True, deferred=("the center is checked when it runs",))
+
+        doubled = _body_doubled(check=center_later)
+        report = doubled.check(Gaussian("g", 1.5))
+        assert (report.feasible, report.route) == (True, "identity")
+        assert "the center is checked when it runs" in report.deferred
+        assert doubled.with_options(exact_only=True).check(Gaussian("g", 1.5)).exact is True
+        result = doubled(Gaussian("g", 1.5))
+        assert float(jnp.asarray(result)) == 3.0
+        assert result.provenance.metadata["exact"] is None
 
     def test_the_inherited_controls_are_cleared_after_the_identity_raises(self):
         with pytest.raises(ResolutionError):

@@ -744,27 +744,46 @@ def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
     return entered
 
 
-def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
-    """*func*, run under the inherited controls of the calling context, in whatever thread runs it.
+class _CarriedControls:
+    """A work function that runs under the inherited controls of the context that made it.
 
-    A worker thread starts without the calling thread's context, so a call
-    dispatched to a worker inside a derived operation's identity would
-    otherwise lose an inherited ``exact_only``. Outside an identity *func* is
-    returned as it is.
+    It holds the function and the controls as plain data, so it pickles
+    wherever the function does, and a worker in another thread or process
+    runs the function under the same controls.
+
+    Parameters
+    ----------
+    func : callable
+        The work function.
+    inherited : Mapping of str to Any
+        The inherited controls to restore while *func* runs.
+    """
+
+    def __init__(self, func: Callable[..., Any], inherited: Mapping[str, Any]) -> None:
+        self.func = func
+        self.inherited = dict(inherited)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """*func*'s result, computed under the carried controls."""
+        token = _INHERITED_CONTROLS.set(MappingProxyType(self.inherited))
+        try:
+            return self.func(*args, **kwargs)
+        finally:
+            _INHERITED_CONTROLS.reset(token)
+
+
+def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
+    """*func*, run under the inherited controls of the calling context, in whatever worker runs it.
+
+    A worker thread starts without the calling thread's context, and a worker
+    process without the calling process's, so a call dispatched to a worker
+    inside a derived operation's identity would otherwise lose an inherited
+    ``exact_only``. Outside an identity *func* is returned as it is.
     """
     inherited = _INHERITED_CONTROLS.get()
     if inherited is None:
         return func
-
-    @wraps(func)
-    def carried(*args: Any, **kwargs: Any) -> Any:
-        token = _INHERITED_CONTROLS.set(inherited)
-        try:
-            return func(*args, **kwargs)
-        finally:
-            _INHERITED_CONTROLS.reset(token)
-
-    return carried
+    return _CarriedControls(func, inherited)
 
 
 #: Removed construction keywords, each with the warning it raises, which are ignored.
@@ -1214,17 +1233,24 @@ class Function(TrackedTerm, Annotated):
             The view with the inherited controls, or this view when it already
             has them.
         """
+        options = self.options
         revisions: dict[str, Any] = {}
-        if inherited["exact_only"] and not self.options["exact_only"]:
+        if inherited["exact_only"] and not options["exact_only"]:
             revisions["exact_only"] = True
         count = inherited["n_broadcast_samples"]
         if (
             count is not None
             and "n_broadcast_samples" not in self._options
-            and self.options["n_broadcast_samples"] != count
+            and options["n_broadcast_samples"] != count
         ):
             revisions["n_broadcast_samples"] = count
-        return self.with_options(**revisions) if revisions else self
+        if not revisions:
+            return self
+        # The derived call validated both controls, so the view takes them
+        # without validating this view's own controls again.
+        view = self._shallow_copy()
+        object.__setattr__(view, "_options", MappingProxyType(dict(self._options) | revisions))
+        return view
 
     @_inheriting_controls
     def check(self, *args: Any, **kwargs: Any) -> Any:

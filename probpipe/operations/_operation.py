@@ -31,8 +31,8 @@ A derived operation's **identity** is the route that runs its definition: by
 default the declaration's body, or else a composite route that runs a route of
 each constituent operation in turn. The body and the identity check pass two
 controls of the derived call to the Function calls they run, operations and
-plain Functions alike, and a composite identity runs its constituent
-operations under the same two:
+plain Functions alike, and a composite identity runs each of its steps in the
+same scope:
 
 - ``exact_only`` restricts every call they run, at any depth, whatever the
   call sets;
@@ -412,8 +412,9 @@ class _Route:
     #: Whether the route realizes a derived operation's identity, which ranks it
     #: below the operation's direct routes of its exactness (VI.0).
     realizes_identity: bool = False
-    #: Whether the route's result is exact whenever it runs under ``exact_only``,
-    #: although its exactness is ``None``, so ``exact_only`` keeps the route.
+    #: Whether a body identity's result is exact whenever it runs under
+    #: ``exact_only``, so ``exact_only`` keeps it, as it keeps every composite
+    #: identity (VI.0).
     exact_when_restricted: bool = False
 
     def __init__(self, name: str, *, exact: bool | None) -> None:
@@ -965,12 +966,11 @@ def _route_candidates(route: Any, index: int, exact_only: bool) -> list[_Candida
     restricted to exact routes (VI.0). Any other route contributes one at its
     declared exactness.
     """
-    if isinstance(route, _DelegatingRoute):
-        if route.realizes_identity:
-            return [_Candidate(route, True if exact_only else None, index)]
+    delegating = isinstance(route, _DelegatingRoute)
+    if route.realizes_identity and (delegating or getattr(route, "exact_when_restricted", False)):
+        return [_Candidate(route, True if exact_only else None, index)]
+    if delegating:
         return [_Candidate(route, True, index), _Candidate(route, False, index)]
-    if exact_only and getattr(route, "exact_when_restricted", False):
-        return [_Candidate(route, True, index)]
     return [_Candidate(route, route.exact, index)]
 
 

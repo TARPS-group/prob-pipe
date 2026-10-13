@@ -3400,8 +3400,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `n_broadcast_samples` used to be dropped at its identity's calls, which drew
   the default 256 samples, and now sets their draws, unless the identity sets
   its own on the call. The other controls stay each call's own. A composite
-  identity, such as `expectation`'s, runs its constituent operations under the
-  same two controls.
+  identity, such as `expectation`'s, runs each of its steps under the same two
+  controls.
 - **A SciPy distribution with a location or scale its family does not hold
   converts to the same law.** The `scipy` converter used to read a `beta`'s
   shape arguments alone and drop the location of a `gamma`, `expon`, or
