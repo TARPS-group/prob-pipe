@@ -15,8 +15,8 @@ import html
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from types import MappingProxyType, UnionType
-from typing import Any, Literal, Union, get_args, get_origin
+from types import MappingProxyType
+from typing import Any, Literal
 
 from ..core._array_backend import _is_numeric_leaf
 from ..core._batch import Batch, BatchSpec
@@ -320,15 +320,22 @@ def resolve_function_call(
 
 
 def _consumes_kernel(expected: Any) -> bool:
-    """Whether an annotation declares that its parameter consumes a kernel itself."""
-    if get_origin(expected) in (Union, UnionType):
-        return any(_consumes_kernel(arm) for arm in get_args(expected))
-    try:
-        if isinstance(expected, type) and issubclass(expected, ConditionalDistribution):
+    """Whether an annotation declares that its parameter consumes a kernel itself.
+
+    An arm of the annotation declares it when the arm names a
+    ``ConditionalDistribution`` class or a conditional capability, after
+    :func:`_normalization._arms` resolves the arm's type aliases.
+    """
+    for arm in _normalization._arms(expected):
+        if arm in _KERNEL_HINT_PROTOCOLS:
             return True
-    except TypeError:
-        pass
-    return expected in _KERNEL_HINT_PROTOCOLS
+        named = _normalization._hint_class(arm)
+        try:
+            if isinstance(named, type) and issubclass(named, ConditionalDistribution):
+                return True
+        except TypeError:
+            continue
+    return False
 
 
 def _expects_value(expected: Any) -> bool:
@@ -337,9 +344,10 @@ def _expects_value(expected: Any) -> bool:
     A parameter expects a value when it is unannotated or annotated with a
     value type. An annotation that names a distribution, a kernel, or one of
     their capabilities declares that the parameter consumes that object, and
-    ``Any`` admits every kind.
+    ``Any`` admits every kind. :func:`_binding.resolved_hint` resolves the
+    annotation before it is compared with ``Any``.
     """
-    if expected is Any:
+    if _binding.resolved_hint(expected) is Any:
         return False
     return not (_normalization.is_distribution_hint(expected) or _consumes_kernel(expected))
 
@@ -354,10 +362,13 @@ def presented_arguments(
     argument is not. A body annotated ``pd.Series`` therefore receives the
     ``Series`` that a record field holds, and one annotated ``jax.Array`` the
     array that a ``NumericArray`` holds. A union annotation names the classes of
-    its arms, and a parametrized annotation, such as ``npt.NDArray[np.float64]``,
-    names the class it parametrizes. Every other argument is presented as it is,
-    as at an unannotated parameter or at one annotated ``Any`` or with the
-    argument's kind.
+    its arms, and a parametrized annotation names the class it parametrizes. A
+    type alias resolves to the class of its value, and an alias of a union to
+    the classes of the union's arms. ``npt.NDArray[np.float64]`` therefore names
+    ``np.ndarray`` whether NumPy defines ``NDArray`` as a generic alias or as a
+    type alias. Every other argument is presented as it is, as at an
+    unannotated parameter or at one annotated ``Any`` or with the argument's
+    kind.
 
     Parameters
     ----------
@@ -382,7 +393,7 @@ def presented_arguments(
 
 def _raw_form_named(value: Any, hint: Any) -> Any:
     """*value*'s raw form if *hint* names a class of that form and not of *value*, else *value*."""
-    if not isinstance(value, TrackedTerm) or hint is Any:
+    if not isinstance(value, TrackedTerm) or _binding.resolved_hint(hint) is Any:
         return value
     classes = tuple(
         named
@@ -539,7 +550,7 @@ def _admit_by_role(
     if role_admits(role, arrived_kind(value)):
         return
     hint = _binding.parameter_lifting_hint(info, ref.parameter_name)
-    if lifts and hint is not Any and role_lift(value, role) is not None:
+    if lifts and _binding.resolved_hint(hint) is not Any and role_lift(value, role) is not None:
         return
     raise _role_refusal(function_name, ref.label, role, value)
 

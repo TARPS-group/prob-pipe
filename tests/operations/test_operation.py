@@ -36,8 +36,9 @@ from probpipe.core._spec_base import TermSpec
 from probpipe.core._specs import OutputSpec
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import SupportsMean, SupportsSampling
+from probpipe.distributions._conditional import ConditionalDistributionSpec
 from probpipe.distributions._distribution import Distribution, DistributionSpec, _fixed_paths
-from probpipe.functions._resolution import PointReport
+from probpipe.functions._resolution import PointReport, RouteOutcome
 from probpipe.operations import (
     BoundCall,
     OperandSummary,
@@ -50,6 +51,7 @@ from probpipe.operations import (
 )
 from probpipe.operations._moments import mean
 from probpipe.operations._operation import (
+    _CheckedRoute,
     _DelegatingRoute,
     _install_expression_rule,
     _workflow_draws,
@@ -58,6 +60,10 @@ from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
+
+type _DistributionAlias = Distribution
+type _AnyAlias = Any
+type _PathAlias = str
 
 # ---------------------------------------------------------------------------
 # A toy operation with a capability route and a Monte Carlo fallback
@@ -245,13 +251,28 @@ class TestDeclaration:
 
 
 class TestRoles:
-    def test_roles_follow_the_annotations(self):
-        @operation(result=_open, registry=OperationRegistry())
-        def annotated(d: Distribution, value: Any, path: str):
+    @pytest.mark.parametrize(
+        "annotations",
+        [
+            {"d": Distribution, "value": Any, "path": str},
+            {"d": _DistributionAlias, "value": _AnyAlias, "path": _PathAlias},
+        ],
+        ids=["classes", "aliases"],
+    )
+    def test_roles_follow_the_annotations(self, annotations):
+        def annotated(d, value, path):
             """Three kinds of parameter."""
 
-        operands = {operand.name: operand.accepts for operand in annotated.summary().operands}
-        assert operands == {"d": (DistributionSpec,), "value": (TermSpec,), "path": ()}
+        annotated.__annotations__ = annotations
+        declared = operation(result=_open, registry=OperationRegistry())(annotated)
+
+        operands = {operand.name: operand.accepts for operand in declared.summary().operands}
+        assert operands == {
+            "d": (DistributionSpec, ConditionalDistributionSpec),
+            "value": (TermSpec,),
+            "path": (),
+            "given": (RecordSpec,),
+        }
 
     def test_a_declared_role_overrides_the_annotation(self):
         toy = _toy(roles={"d": (NumericArraySpec,)})
@@ -283,7 +304,7 @@ class TestRoles:
         def scored(d: Distribution, value):
             """An unannotated value."""
 
-        (_, value) = scored.summary().operands
+        (_, value, _) = scored.summary().operands
         assert value.accepts == (NumericArraySpec, RecordSpec, OpaqueSpec, FunctionSpec)
 
     def test_a_law_at_a_value_role_is_lifted_and_a_law_its_role_admits_passes_whole(self):
@@ -314,22 +335,26 @@ class TestRoles:
         assert len(seen) == 8
         assert all(d is law and not isinstance(value, Distribution) for d, value in seen)
 
-    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_a_parameter_annotated_any_takes_its_argument_as_it_arrives(self, annotation):
         def rule(f: Any) -> None:
             """Leaves the result open."""
 
-        @operation(result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry())
-        def applied(f: Any):
+        def applied(f):
             """A function, consumed as an object."""
 
-        applied.structural_route("any", exact=True, **_route(True, 0.0))
+        applied.__annotations__ = {"f": annotation}
+        declared = operation(
+            result=rule, roles={"f": (FunctionSpec,)}, registry=OperationRegistry()
+        )(applied)
+        declared.structural_route("any", exact=True, **_route(True, 0.0))
         functions = FunctionBatch(
             [lambda x: x, lambda x: 2 * x],
             "fs",
             label="fs",
         )
         with pytest.raises(ApplicabilityError, match=r"'f' accepts FunctionSpec.*FunctionBatch"):
-            applied(functions)
+            declared(functions)
 
     def test_apply_lifts_nothing(self):
         laws = DistributionBatch(
@@ -816,6 +841,155 @@ class TestDelegatingRoutes:
         )
 
 
+class _Composite(_DelegatingRoute):
+    """A composite identity route: twice the center, by a route whose exactness it settles when it runs.
+
+    Its check leaves the exactness open unless ``exact_only`` restricts it, and
+    its run records the restriction and settles the exactness *settles*.
+    """
+
+    source = RouteSource.STRUCTURAL
+
+    def __init__(self, *, settles: bool | None) -> None:
+        super().__init__("composite")
+        self.settles = settles
+        self.runs: list[tuple[str | None, bool]] = []
+
+    def probe(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Feasibility:
+        return PointReport(
+            True, exact=True if exact_only else None, deferred=("the second step's check",)
+        )
+
+    def run(
+        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
+    ) -> Any:
+        self.runs.append((method, exact_only))
+        exact = True if exact_only else self.settles
+        return RouteOutcome(jnp.float32(4.0), exact)
+
+
+def _doubled(identity_route: Any, **options: Any) -> Any:
+    """A derived operation ``doubled(d)`` whose identity *identity_route* realizes."""
+
+    @operation(
+        result=_event, identity_route=identity_route, registry=OperationRegistry(), **options
+    )
+    def doubled(d: Distribution):
+        """Twice the center."""
+        return center.with_options(raw=True)(d) * 2
+
+    return doubled
+
+
+class TestIdentityRoute:
+    """A composite identity route replaces the generic one and is ranked once, below the direct routes."""
+
+    def test_it_replaces_the_generic_route(self):
+        doubled = _doubled(_Composite(settles=False))
+        assert doubled.is_derived
+        assert [route.name for route in doubled.routes] == ["composite"]
+        assert doubled.summary().identity == "center.with_options(raw=True)(d) * 2"
+
+    def test_an_operation_without_it_keeps_the_generic_route(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center."""
+            return center.with_options(raw=True)(d) * 2
+
+        assert [route.name for route in doubled.routes] == ["identity"]
+
+    def test_it_ranks_below_an_exact_direct_route(self):
+        doubled = _doubled(_Composite(settles=True))
+        doubled.structural_route("direct", exact=True, **_route(True, 1.0))
+        assert [route.name for route in doubled.routes] == ["direct", "composite"]
+        for options in ({}, {"exact_only": True}):
+            report = doubled.with_options(**options).check(Gaussian("g"))
+            assert report.route == "direct"
+
+    def test_it_ranks_below_an_approximate_direct_route_registered_after_it(self):
+        doubled = _doubled(_Composite(settles=True))
+        doubled.structural_route("direct", exact=False, **_route(True, 1.0))
+        assert [route.name for route in doubled.routes] == ["direct", "composite"]
+        assert doubled.check(Gaussian("g")).route == "direct"
+        assert doubled.with_options(exact_only=True).check(Gaussian("g")).route == "composite"
+
+    def test_the_callers_route_keeps_its_own_rank(self):
+        composite = _Composite(settles=True)
+        _doubled(composite)
+        assert composite.realizes_identity is False
+
+    def test_it_is_ranked_once_and_leaves_its_exactness_open(self):
+        report = _doubled(_Composite(settles=True)).check(Gaussian("g"))
+        # A call whose exactness is open reports itself approximate.
+        assert (report.route, report.exact) == ("composite", False)
+        assert [info.method_name for info in report.routes] == ["composite"]
+        assert "the second step's check" in report.deferred
+
+    def test_provenance_records_the_exactness_it_settles_when_it_runs(self):
+        for settles in (True, False):
+            composite = _Composite(settles=settles)
+            value = _doubled(composite)(Gaussian("g"))
+            assert float(jnp.asarray(value)) == 4.0
+            assert value.provenance.metadata["exact"] is settles
+            assert composite.runs == [(None, False)]
+
+    def test_exact_only_ranks_it_among_the_exact_routes_and_restricts_it(self):
+        composite = _Composite(settles=False)
+        doubled = _doubled(composite).with_options(exact_only=True)
+        assert doubled.check(Gaussian("g")).exact is True
+        assert doubled(Gaussian("g")).provenance.metadata["exact"] is True
+        assert composite.runs == [(None, True)]
+
+    def test_a_primitive_takes_no_identity_route(self):
+        with pytest.raises(TypeError, match="empty body, so it cannot take identity_route"):
+            _toy(identity_route=_Composite(settles=True))
+
+    def test_it_is_not_given_beside_an_identity_check(self):
+        with pytest.raises(TypeError, match="both identity_route and identity_check"):
+            _doubled(_Composite(settles=True), identity_check=lambda d: True)
+
+    def test_it_delegates_its_exactness(self):
+        fixed = _CheckedRoute(
+            "fixed", source=RouteSource.STRUCTURAL, exact=True, **_route(True, 1.0)
+        )
+        with pytest.raises(TypeError, match="delegates its exactness"):
+            _doubled(fixed)
+
+
+class TestConditionsReadingAMap:
+    """A condition receives the map itself at a parameter whose role is FunctionSpec (V.6)."""
+
+    def test_it_receives_the_map_and_reads_its_annotations(self):
+        seen: list[Any] = []
+
+        def reads_the_map(d: Any, f: Any) -> bool:
+            """The map is a callable."""
+            seen.append((d, f))
+            return True
+
+        @operation(
+            result=_open,
+            roles={"f": (FunctionSpec,)},
+            conditions=(reads_the_map,),
+            registry=OperationRegistry(),
+        )
+        def apply_to(d: Distribution, f: Any):
+            """A toy operation over a law and a map."""
+
+        apply_to.structural_route("any", exact=True, **_route(True, 0.0))
+
+        def square(x: float) -> float:
+            return x * x
+
+        apply_to(Gaussian("g"), square)
+        (d, f), *_ = seen
+        assert isinstance(d, DistributionSpec)
+        assert f is square
+        assert f.__annotations__["x"] in (float, "float")
+
+
 # ---------------------------------------------------------------------------
 # Controls
 # ---------------------------------------------------------------------------
@@ -1299,7 +1473,10 @@ class TestRegistry:
         assert summary.priority is None
         assert summary.description == "The center of a law."
         assert summary.module_path == __name__
-        assert summary.operands == (OperandSummary("d", (DistributionSpec,), True),)
+        assert summary.operands == (
+            OperandSummary("d", (DistributionSpec, ConditionalDistributionSpec), True),
+            OperandSummary("given", (RecordSpec,), False),
+        )
         assert (summary.is_derived, summary.identity) == (False, None)
         assert summary.routes == (
             RouteSummary(
@@ -1314,7 +1491,7 @@ class TestRegistry:
 
     def test_describe_renders_one_operation_or_all(self):
         text = _REGISTRY.describe("center")
-        assert text.splitlines()[0] == "center(d) — primitive"
+        assert text.splitlines()[0] == "center(d, given) — primitive"
         assert "closed_form (capability, exact; requires SupportsMean)" in text
         assert "monte_carlo (fallback, approximate): The operand samples." in text
         assert _REGISTRY.describe() == text

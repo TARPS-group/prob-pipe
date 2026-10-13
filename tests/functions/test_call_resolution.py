@@ -56,6 +56,9 @@ def affine_func():
     return affine
 
 
+type _AnyAlias = Any
+
+
 def _resolve_call(
     func,
     *args,
@@ -105,13 +108,15 @@ class TestWorkflowCallHelpers:
             4,
         )
 
-    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
-        def collect(head: Any, *items: Any, **extras: Any):
+    @pytest.mark.parametrize("annotation", [Any, _AnyAlias], ids=["Any", "alias"])
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self, annotation):
+        def collect(head, *items, **extras):
             return head, items, extras
 
+        collect.__annotations__ = {"head": annotation, "items": annotation, "extras": annotation}
         info = _binding.make_signature_info(collect)
 
-        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is Any
+        assert _binding.input_ref_hint(info, _binding.FunctionInputRef("head")) is annotation
         assert (
             _binding.input_ref_hint(
                 info,
@@ -220,6 +225,25 @@ class TestWorkflowCallHelpers:
 
 
 class TestArgumentBinding:
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_function_values_bind_and_allow_call_overrides(self, wrapped):
+        def increment(x):
+            return x + 1.0
+
+        def apply(f: Function, x):
+            return f(x)
+
+        def unannotated(f, x):
+            return f(x)
+
+        f = Function(increment, dispatch="sequential") if wrapped else increment
+        for body in (apply, unannotated):
+            bound = Function(body, bind={"f": f, "x": 3.0})
+            assert bound.check().feasible is True
+            assert float(bound()) == 4.0
+            assert float(bound(x=4.0)) == 5.0
+            assert float(bound(f=Function(lambda x: 2.0 * x))) == 6.0
+
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
         wf = Function(add_func, label="add_func", dispatch="sequential")
 

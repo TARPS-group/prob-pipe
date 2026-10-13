@@ -133,7 +133,11 @@ class TestBatchedOpsMatchTFPNative:
         key = jax.random.PRNGKey(7)
         b_samples = backend._sample(key, sample_shape=(10,))
         n_samples = native.sample(seed=key, sample_shape=(10,))
-        np.testing.assert_allclose(np.asarray(b_samples), np.asarray(n_samples))
+        # The backend samples through a compiled program, whose fused arithmetic changes
+        # the last float32 digit: observed at most 5.7e-7 absolute over every family.
+        np.testing.assert_allclose(
+            np.asarray(b_samples), np.asarray(n_samples), rtol=2e-6, atol=2e-6
+        )
 
     def test_log_prob_matches_native(self):
         backend, native = self._make_pair(jnp.arange(4.0), 1.5)

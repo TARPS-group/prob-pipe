@@ -15,6 +15,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.families import Bernoulli, Binomial, Categorical, NegativeBinomial, Poisson
 
@@ -258,10 +259,11 @@ class TestDiscreteMoments:
         np.testing.assert_allclose(float(mean(d)), 0.7, rtol=1e-6)
         np.testing.assert_allclose(float(variance(d)), 0.7 * 0.3, rtol=1e-6)
 
-    def test_bernoulli_samples_chi2(self, key):
+    def test_bernoulli_samples_chi2(self):
         """Bernoulli(0.7) samples must pass a chi-squared test."""
         d = Bernoulli("x", probs=0.7)
-        s = np.asarray(sample(d, sample_shape=(50_000,)))
+        with workflow_run(seed=42):
+            s = np.asarray(sample(d, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=2)
         _, p = _chi2_discrete(counts, np.array([0.3, 0.7]))
         assert p > 0.001, f"chi2 failed: p={p:.4e}"
@@ -272,10 +274,11 @@ class TestDiscreteMoments:
         np.testing.assert_allclose(float(mean(d)), n * p, rtol=1e-6)
         np.testing.assert_allclose(float(variance(d)), n * p * (1 - p), rtol=1e-6)
 
-    def test_binomial_samples_chi2(self, key):
+    def test_binomial_samples_chi2(self):
         """Binomial(10, 0.3) samples must pass a chi-squared test."""
         d = Binomial("x", total_count=10, probs=0.3)
-        s = np.asarray(sample(d, sample_shape=(50_000,)))
+        with workflow_run(seed=42):
+            s = np.asarray(sample(d, sample_shape=(50_000,)))
         counts = np.bincount(s.astype(int), minlength=11)
         expected_probs = scipy.stats.binom.pmf(np.arange(11), 10, 0.3)
         _, p = _chi2_discrete(counts, expected_probs)
@@ -286,10 +289,11 @@ class TestDiscreteMoments:
         np.testing.assert_allclose(float(mean(d)), 5.0, rtol=1e-6)
         np.testing.assert_allclose(float(variance(d)), 5.0, rtol=1e-6)
 
-    def test_poisson_samples_chi2(self, key):
+    def test_poisson_samples_chi2(self):
         """Poisson(5) samples must pass a chi-squared test."""
         d = Poisson("x", rate=5.0)
-        s = np.asarray(sample(d, sample_shape=(50_000,)))
+        with workflow_run(seed=42):
+            s = np.asarray(sample(d, sample_shape=(50_000,)))
         max_k = int(s.max()) + 1
         counts = np.bincount(s.astype(int), minlength=max_k)
         expected_probs = scipy.stats.poisson.pmf(np.arange(max_k), 5.0)

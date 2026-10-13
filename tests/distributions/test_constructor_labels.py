@@ -18,6 +18,7 @@ from probpipe import (
     distribution,
 )
 from probpipe.families import BernoulliFamily, KDEDistribution, MixtureDistribution, glm_likelihood
+from tests._families import FAMILIES
 
 _SCALAR = NumericArraySpec(())
 
@@ -30,6 +31,13 @@ class TestAFamily:
             ["mu"],
             "Normal(mu)",
         )
+
+    @pytest.mark.parametrize("make", list(FAMILIES.values()), ids=list(FAMILIES))
+    def test_each_family_defaults_its_label_to_its_class_name(self, make):
+        law = make()
+        name = type(law).__name__
+        assert (law.label, law.notation) == (name, f"{name}(x)")
+        assert "label=" not in repr(law)
 
     def test_a_given_label_names_the_law(self):
         law = Normal("mu", 0.0, 1.0, label="prior")

@@ -18,14 +18,17 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
+import numpy as np
 
+from ..core._batch import Batch, BatchSpec
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._expression import (
     Expression,
     Product,
     Selected,
 )
-from ..core._record_batch import RecordBatch
+from ..core._object_batch import _is_object_array
+from ..core._record_batch import RecordBatch, _batch_over, _stacked_batches
 from ..core._record_spec import RecordSpec
 from ..core._repr import WIDTH, call_repr, format_names, mapping_repr
 from ..core._spec_base import NumericSpec, TermSpec
@@ -33,6 +36,7 @@ from ..core._specs import InputSpec, OutputSpec, _components_record
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import TrackedTerm
 from ..linalg import DenseLinOp, LinOp
 from ._capabilities import (
     SupportsApproximateConditioning,
@@ -461,9 +465,107 @@ def _view_sample(self: FieldView, key: PRNGKey, sample_shape: tuple[int, ...] = 
     """Co-sample: draw ``X`` from the parent with the same key and return ``pi(X)``.
 
     The key and the sample shape pass to the parent unchanged, so views of one
-    parent drawn with one key project one parent draw.
+    parent drawn with one key project one parent draw. The draws take the raw
+    form of the view's own event, which is the raw form of its detached
+    marginal's draws (see :func:`_drawn_form`).
     """
-    return self._project(self._parent._sample(key, sample_shape))
+    drawn = self._project(self._parent._sample(key, sample_shape))
+    return _drawn_form(drawn, self.event_spec.spec, tuple(sample_shape))
+
+
+def _drawn_form(value: Any, spec: TermSpec, sample_shape: tuple[int, ...]) -> Any:
+    """The raw draws *value* of an event that *spec* declares, in the raw form of its draws.
+
+    A batch-valued node has two raw forms. A whole term that is a batch is
+    drawn as its raw values, with the sample axes before the batch axes. A field
+    of a record that is a batch is drawn as one batch per draw: the batch itself
+    for one draw, and an object array of batches over the sample axes otherwise.
+    A field view's node can have the other form in its parent, so the view's
+    draws are converted to the form its own event declares.
+
+    Parameters
+    ----------
+    value : Any
+        The projected draws, with the sample axes leading.
+    spec : TermSpec
+        The view's event type.
+    sample_shape : tuple of int
+        The sample axes that lead *value*.
+
+    Returns
+    -------
+    Any
+        *value* with each batch-valued node in the form its place in *spec*
+        declares, and *value* itself when *spec* holds no batch.
+    """
+    if isinstance(spec, BatchSpec):
+        return _batch_values(value, spec, sample_shape)
+    if not (_holds_batch(spec) and _is_raw_mapping(value)):
+        return value
+    return _with_batch_fields(value, cast(RecordSpec, spec), sample_shape)
+
+
+def _is_raw_mapping(value: Any) -> bool:
+    """Whether *value* is the raw form of record draws: a mapping that is not a tracked term."""
+    return isinstance(value, Mapping) and not isinstance(value, TrackedTerm)
+
+
+def _holds_batch(spec: TermSpec) -> bool:
+    """Whether *spec* is a batch or a record with a batch at some path."""
+    if isinstance(spec, BatchSpec):
+        return True
+    return isinstance(spec, RecordSpec) and any(
+        _holds_batch(child) for child in spec.children.values()
+    )
+
+
+def _with_batch_fields(value: Any, spec: RecordSpec, sample_shape: tuple[int, ...]) -> Any:
+    """The record draws *value* that *spec* declares, with one batch per draw per batch field."""
+    fields = {}
+    for name, child in spec.children.items():
+        node = value[name]
+        if isinstance(child, BatchSpec):
+            node = _batch_per_draw(node, child, sample_shape, name)
+        elif _holds_batch(child) and _is_raw_mapping(node):
+            node = _with_batch_fields(node, cast(RecordSpec, child), sample_shape)
+        fields[name] = node
+    return fields
+
+
+def _is_batch_per_draw(value: Any, sample_shape: tuple[int, ...]) -> bool:
+    """Whether *value* is one batch per draw: a batch, or an object array of batches."""
+    if not sample_shape:
+        return isinstance(value, Batch)
+    return _is_object_array(value) and value.shape == sample_shape
+
+
+def _batch_values(value: Any, spec: BatchSpec, sample_shape: tuple[int, ...]) -> Any:
+    """The draws *value* of a batch that *spec* declares, as raw values after the sample axes."""
+    if not _is_batch_per_draw(value, sample_shape):
+        return value
+    if isinstance(value, Batch):
+        return _raw_record(value) if isinstance(value, RecordBatch) else value.raw()
+    stacked = _stacked_batches(value, spec)
+    return _unflatten_paths(stacked) if isinstance(stacked, Mapping) else stacked
+
+
+def _batch_per_draw(value: Any, spec: BatchSpec, sample_shape: tuple[int, ...], label: str) -> Any:
+    """The draws *value* of a batch that *spec* declares, as one batch per draw labeled *label*."""
+    if _is_batch_per_draw(value, sample_shape):
+        return value
+    if not sample_shape:
+        return _batch_over(value, spec, label)
+    batches = np.empty(sample_shape, dtype=object)
+    for index in np.ndindex(*sample_shape):
+        batches[index] = _batch_over(_entry_at(value, index), spec, label)
+    return batches
+
+
+def _entry_at(value: Any, index: tuple[int, ...]) -> Any:
+    """The entry at *index* of the leading axes of an array or a nested mapping of arrays."""
+    if isinstance(value, Mapping):
+        return {key: _entry_at(entry, index) for key, entry in value.items()}
+    return value[index]
 
 
 def _view_mean(self: FieldView) -> Any:
@@ -2797,7 +2899,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         return complete, pending, slots
 
     def _parent_given(self, given: Any) -> dict[str, Any]:
-        """*given*, a value for every slot of this kernel, translated to the parent's slots.
+        """*given*, values for this kernel's required slots, translated to the parent's slots.
 
         Parameters
         ----------
@@ -2807,18 +2909,19 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
         Returns
         -------
         dict[str, Any]
-            The value of each slot of the parent, keyed by the parent's slot name.
+            The supplied parent slots, keyed by the parent's slot name. Omitted
+            optional slots retain the parent's defaults.
 
         Raises
         ------
         ValueError
-            If *given* leaves a slot of this kernel unbound.
+            If *given* leaves a required slot unbound or supplies only part of a slot.
         """
         complete, pending, _ = self._translated(given)
-        if pending or len(complete) != len(self._parent.given_spec):
+        if pending or not set(self._parent.given_spec.required) <= set(complete):
             raise ValueError(
-                f"cannot bind {self.label!r}: it needs a value for every given slot "
-                f"{list(self.given_spec)}"
+                f"cannot bind {self.label!r}: it needs a value for every required given slot "
+                f"{list(self.given_spec.required)}"
             )
         return complete
 

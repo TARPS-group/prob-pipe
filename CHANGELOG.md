@@ -9,11 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A kernel's conditional methods must be pure.** A joint compiles the
+  function of `conditional_distribution`, and the conditional methods of any
+  `ConditionalDistribution`, when it draws or scores the kernel at many given
+  values, and it keeps the compiled program. A call that reuses the program
+  computes with the values that the globals the function reads had when it
+  was compiled, while a call with new input shapes or a single given value
+  reads their current values. A warning the function issues is issued when a
+  program is compiled. A value that changes between calls belongs in a given
+  slot.
+- `pushforward` and `expectation` validate construction-bound arguments as
+  constants, just as they validate `fixed_args`. Maps annotated `Any` retain
+  their input/output schema checks when pushed forward, including shared
+  symbolic dimensions.
+
+- **`expectation(d, f)` integrates `f` over draws of `d` on every route.**
+  It is `mean(pushforward(d, f))`, so the integrand receives one draw at a
+  time whatever its parameter's annotation. An integrand whose declared input
+  cannot take a draw raises `ApplicabilityError` from the call and from
+  `check()`, on every route: `expectation(Normal("x", 1.0, 2.0), the_law)` for
+  `the_law(law: Distribution)` used to return `1.0`, which is the mean of
+  `the_law(d)`, and now raises. An integrand annotated `Any` receives draws,
+  where it received the whole law. A law or a batch in `fixed_args` raises
+  `ApplicabilityError`, where `closed_form` passed it to the integrand as it
+  is and the evaluation rules lifted it, so the result depended on the route;
+  `mean(function(f)(x=d, a=A))` integrates over both laws.
+- **`expectation`'s routes are `closed_form` and `pushforward_mean`,** which
+  replace `evaluation_rules` and `identity`. A rule name such as
+  `method="sampling_lift"` still selects the rule, and the qualified form is
+  `pushforward_mean/sampling_lift`. The provenance of `pushforward_mean`
+  records the exactness of the rule and of the mean together, while
+  `expectation.check` states a call whose rule is exact as approximate, since
+  the mean's route is chosen only when the call runs. Under `exact_only` both
+  steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
+  that an exact rule built raises `ResolutionError` naming `mean`.
+- **On `closed_form`, `expectation` passes a record atom to the integrand as a
+  `Record`,** as the evaluation rules pass a record draw, where it passed the
+  nested `dict` of the atom's raw leaves. The integrand's open parameter is
+  the one parameter with no default that is neither in `fixed_args` nor bound
+  by the map's `bind`, on every route, so an integrand whose only parameter has
+  a default or is variadic raises `ApplicabilityError` on `closed_form` as on
+  the other routes.
+
 - Remove the experimental `Node`, `Module`, `AbstractModule`,
   `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
   `Function` and `@function` no longer accept `module=`. Use ordinary callables
   and `bind=` for construction-time arguments; call arguments override those
   bindings, followed by Python defaults for omitted arguments.
+- **Lifted empirical laws name their atom level after the output component,**
+  such as `trajectory`, instead of `draw`. Display aliases leave this level as
+  it is. A batch-valued output keeps its event levels after the atom level, and
+  an output component named like one of those levels needs a distinct component
+  in `OutputSpec`. Two lifted laws whose output components differ, such as
+  `double` and `shift`, keep their atoms on different levels, so a function
+  called on both `.atoms` forms their outer product where it paired them on
+  `draw`.
 
 - Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
   expectation, generic laws or kernels, quantile, variance, covariance, and
@@ -1426,6 +1476,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
+  The map receives one draw at a time whatever its parameter's annotation, so
+  a statistic annotated `Distribution` over a random measure receives each
+  draw, and `pushforward(K, f, given=s)` conditions a kernel first. An integrand
+  whose declared input cannot take a draw, and a law or a batch in
+  `fixed_args`, raise `ApplicabilityError` before any route runs.
+- **`@operation(identity_route=...)`** registers a composite route that runs
+  a route of each constituent operation in turn in place of the generic
+  identity route of a derived operation, and provenance records the exactness
+  that route learns when it runs.
+- Distribution-subject operations accept keyword-only `given=` for conditional
+  operands, including sampling, densities, moments, quantiles, expectations,
+  marginals, and conversion. Conditional capabilities serve calls directly;
+  other calls delegate to the operation after conditioning. Batch givens retain
+  their named levels, and given values bind symbolic event dimensions before
+  sampling. `condition_on` can bind individual nodes of a structured given
+  slot while keeping its residual fields available for later binding.
+
 - **`mean`, `variance`, and `quantile` compute each component of a record
   law by its own route.** The new route `by_component` computes each component
   whose view has an exact summary by that view's route, and the other
@@ -2366,9 +2434,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
+- **Functions can lift to empirical laws of whole batches.** Atom counts,
+  weights, exact enumeration, and sampling distinguish atom axes from each
+  event's batch axes. `include_inputs=True` retains each complete batch in
+  the joint record. A subsequent lift receives each batch in its raw form,
+  or as the batch at a parameter annotated with a batch class such as
+  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
+  returns a numeric batch, and a later lift over its law, run in one
+  `jax.vmap`. A batch-valued event with numeric elements has
+  elementwise moments, so the mean of a trajectory law on `time` is a
+  `NumericArrayBatch` on `time`. Nested event batches combine their levels in
+  outer-to-inner order, so bootstrap replicates of trajectories support
+  moments and `include_inputs=True` lifts.
 
 ### Changed
 
+- **A parametric family and a joint's conditional factors reuse their
+  compiled code across calls.** A family samples, scores, and takes quantiles
+  through compiled programs that a later call with the same parameter shapes
+  reuses. A joint draws and scores a conditional factor with numeric givens at
+  all of its given draws through one compiled program, which the factor keeps
+  and which takes new draws, keys, and numeric unmet givens without compiling
+  again.
+  - **Speed:** a warm `sample(model, 50)` of the first tutorial's model drops
+    from about 1.2 s to about 0.005 s.
+  - **Seeded results:** a compiled program fuses its arithmetic differently,
+    which changes the last float32 digit of some draws and densities. A
+    rejection sampler or a discrete family can then return a different value
+    where a parameter differs in its last digit.
+  - **Checks:** a family's checks of its parameter values do not run inside a
+    conditional factor's compiled program, so an invalid parameter, such as a
+    negative mixture weight, gives draws and densities, such as `nan`, rather
+    than an error.
+  - **Uncompiled calls:** a backend that holds a class a user writes, a
+    function such as the model of a `JointDistributionSequential`, or a part
+    built with `validate_args=True` runs uncompiled. So does a factor that does
+    not compile, such as one that converts a given to a Python number, for
+    calls with the same structure of unmet givens.
 - **A dependent joint's mean, variance, and quantiles take `by_component`
   rather than `monte_carlo`** when one of its components has an exact
   summary. The check of such a call lists `by_component (exact)` and
@@ -3269,9 +3371,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helpers ``_default_float_dtype()`` and ``_promote_floats()`` live in
   ``probpipe/_dtype.py``. The float64-truncation warning filter previously
   in ``probpipe/__init__.py`` is removed.
+- **Sweeps over numeric batches with the same levels run as one vectorized
+  call** under `auto` and `jax` dispatch, including several paired arguments.
+  A nested numeric sweep checks once whether its function traces with JAX and
+  shares that check across its cells. Each cell keeps its own check when its
+  swept values must stay fixed or when the sweep is over stored objects.
 
 ### Removed (breaking)
 
+- **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
+  for `X ~ d`, and the direct call `f(v)` replaces every other use:
+  `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
+  that takes the law itself. `evaluate.check(f, v)` becomes `f.check(v)` or
+  `pushforward.check(d, f)`. The bootstrap distribution of a statistic is
+  `pushforward(B, stat)`.
 - **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
   raises `TypeError`, where it warned and used `h`; pass the callable first, as
   `Function(h, label="g")`.
@@ -3307,6 +3420,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A SciPy distribution with a location or scale its family does not hold
+  converts to the same law.** The `scipy` converter used to read a `beta`'s
+  shape arguments alone and drop the location of a `gamma`, `expon`, or
+  `lognorm`, while it reported the conversion as exact.
+  Such a distribution now enters as a `BijectorTransformedDistribution` of the
+  family under the affine map of that location and scale.
+  Its sampling, density, mean, and variance are SciPy's, and it declares the
+  shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
+  The approximate converters read a SciPy source through the same law, so
+  their fits and draws follow the location and scale too.
+- **A SciPy distribution without a family declares the dtype of its draws**:
+  JAX's default integer dtype for a discrete distribution, such as
+  `scipy.stats.poisson`, and the default floating dtype otherwise, which is
+  `float64` under `jax_enable_x64`.
+  It used to declare `float32` in both cases.
+- **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
+  `log_rate`.** It used to raise `ValueError`.
+- **A call over a batch of records and a law lifts the law at each record row.**
+  The call raised `TypeError` for records of several fields, as did a lift with
+  such a record among its other arguments. A record row displays as its own
+  expression, as `f(rows[row=0], mu ~ prior)`, where a row of one field
+  displayed as a dictionary. The JAX trace probe passes each argument it does
+  not map as the call passed it, as the executor does. A body that reads a
+  record's fields therefore runs in one `vmap` under `dispatch="auto"` and
+  `dispatch="jax"`, where the probe converted the record to an array and
+  failed. A pandas Series among the other arguments sends the call to
+  sequential dispatch under `"auto"`, where the JAX executor raised.
+- **Empty sweeps require a concrete output declaration before execution.**
+  Both the call and `Function.check` refuse an omitted declaration, a type hole,
+  or an output dimension that remains unbound after input dimensions bind.
 - **A display warns about a part that storage truncated only when its text
   shows less than the part.** A law selected many times from a posterior
   displays without a warning, and a warning that meets both a collapsed level
@@ -3316,6 +3459,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reusing a term whose label nests 64 levels no longer renders it again on
   each use**, and selecting an element of a batch of objects copies the stored
   term once.
+- **A parameter annotated `numpy.typing.NDArray` receives the raw NumPy array
+  under NumPy 2.5 as well as earlier versions.** NumPy 2.5 defines `NDArray` as
+  a type alias, and every annotation check reads a type alias as the annotation
+  it stands for. A parameter annotated with an alias of `Normal | None`
+  therefore consumes a law as one annotated `Normal | None` does, and one
+  annotated with an alias of `Any` takes its argument as it arrives. A generic
+  alias reads with its arguments in place of its type parameters, so
+  `Maybe[Normal]` reads as `Normal | None` where `type Maybe[T] = T | None`.
+- **A function annotated with a type alias can be replayed.** Its replay
+  identity records each alias by its module, its name, its type parameters,
+  and its value, so a module-level function annotated
+  `numpy.typing.NDArray[np.float64]` under NumPy 2.5, or with any `type`
+  alias, replays where its anchor was unsupported. The identity changes when
+  the alias's value changes, including when `from __future__ import annotations`
+  postpones the annotation. An `Annotated` annotation replays on Python 3.13
+  and later too, and an alias whose value names an undefined name leaves the
+  function unreplayable.
+- **Each cell of a nested sweep over stored objects chooses its own dispatch
+  under `auto`.** A cell reused the dispatch that the first cell chose, which
+  raised `ConcretizationTypeError` when a later cell could not be traced.
+- **A function sweep broadcasts the shapes of each named level by NumPy's
+  rule.** Within a level that the swept batches share, shapes of any rank align
+  from the right and a size-one axis expands. The result carries each level's
+  broadcast shape. Incompatible sizes raise an `ApplicabilityError` that names
+  the level and each argument's shape.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,

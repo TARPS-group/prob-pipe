@@ -479,7 +479,7 @@ class _Scaling:
 class _Routed(Function):
     """A Function realized by one route rather than by its body."""
 
-    def _route_candidates(self, controls: Any) -> tuple[_Scaling, ...]:
+    def _route_candidates(self, controls: Any, values: Any = None) -> tuple[_Scaling, ...]:
         return (_Scaling(),)
 
 

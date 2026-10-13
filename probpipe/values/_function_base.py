@@ -1166,6 +1166,9 @@ class Function(TrackedTerm, Annotated):
             If an argument's kind is not one its parameter accepts, an
             applicability condition fails, or the declarations conflict, as the
             call raises.
+        ValueError
+            If an empty sweep lacks a concrete output declaration after input
+            dimensions bind.
         ResolutionError
             If a conversion has no converter, or the ``method`` control names no
             route of a Function realized by routes.
@@ -1245,12 +1248,16 @@ class Function(TrackedTerm, Annotated):
         """
         return _invoke_engine(self, values, context)
 
-    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[Any, ...] | None:
+    def _route_candidates(
+        self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None
+    ) -> tuple[Any, ...] | None:
         """The routes that may realize one point of a call under *controls*, in selection order.
 
         A Function's body is its one route, so it lists none and the engine
         runs the body. A subclass realized by routes returns them, each with
-        the members :mod:`probpipe.functions._resolution` names.
+        the members :mod:`probpipe.functions._resolution` names. Optional
+        *values* are the already-bound inputs, which an operation may read to
+        include a conditional delegation candidate.
         """
         return None
 
@@ -1288,7 +1295,10 @@ class Function(TrackedTerm, Annotated):
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
         construction and :meth:`with_options`, never from the call's keywords,
-        which bind to the wrapped callable.
+        which bind to the wrapped callable. Swept batches align by level name:
+        within each matching level, shapes align from the right and size-one
+        axes broadcast independently of other levels. The sweep carries each
+        level's resulting broadcast shape.
 
         Parameters
         ----------
@@ -1313,8 +1323,12 @@ class Function(TrackedTerm, Annotated):
         TypeError
             If an argument does not bind to the signature.
         ApplicabilityError
-            If an argument's kind is not one its parameter accepts, or the
-            declarations conflict.
+            If an argument's kind is not one its parameter accepts, the
+            declarations conflict, or matching levels have shapes that cannot
+            broadcast.
+        ValueError
+            If an empty sweep lacks a concrete output declaration after input
+            dimensions bind.
         ResolutionError
             If no route realizes the call.
         ResultKindError, ResultSchemaError

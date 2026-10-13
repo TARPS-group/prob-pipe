@@ -362,8 +362,9 @@ class BootstrapDistribution(RandomMeasure, SupportsSampling, SupportsMean):
 
     A draw is an ``EmpiricalDistribution`` whose atoms are one replicate,
     ``replicate_size`` iid draws of the source on one level, with uniform
-    weights. The bootstrap distribution of a statistic is ``evaluate`` of the
-    statistic over the measure, or over the replicate law
+    weights. The bootstrap distribution of a statistic is
+    ``pushforward(B, stat)`` over the measure ``B``, whose draws the statistic
+    receives as laws, or ``pushforward(R, stat)`` over the replicate law
     :class:`BootstrapReplicateDistribution` for a statistic that reads a
     dataset.
 

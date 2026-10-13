@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import pickle
 
 import jax
@@ -49,6 +50,7 @@ from probpipe.core._repr import (
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.families import BernoulliFamily, MixtureDistribution, glm_likelihood
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
+from tests._families import FAMILIES
 
 
 def _schools() -> RecordBatch:
@@ -335,45 +337,9 @@ class TestDistributions:
 
 
 #: One law of each catalog family with a constructor-call repr, labeled so the label reads too.
-_EVALUABLE = {
-    "Normal": lambda: Normal("x", 0.0, 1.0, label="prior"),
-    "Beta": lambda: probpipe.Beta("x", 2.0, 3.0, label="prior"),
-    "Gamma": lambda: Gamma("x", 2.0, 1.0, label="prior"),
-    "InverseGamma": lambda: probpipe.InverseGamma("x", 2.0, 1.0, label="prior"),
-    "Exponential": lambda: probpipe.Exponential("x", 1.0, label="prior"),
-    "LogNormal": lambda: probpipe.LogNormal("x", 0.0, 1.0, label="prior"),
-    "StudentT": lambda: probpipe.StudentT("x", 3.0, 0.0, 1.0, label="prior"),
-    "Uniform": lambda: probpipe.Uniform("x", -1.0, 2.0, label="prior"),
-    "Cauchy": lambda: probpipe.Cauchy("x", 0.0, 1.0, label="prior"),
-    "Laplace": lambda: probpipe.Laplace("x", 0.0, 1.0, label="prior"),
-    "HalfNormal": lambda: probpipe.HalfNormal("x", 1.0, label="prior"),
-    "HalfCauchy": lambda: probpipe.HalfCauchy("x", 0.5, 1.0, label="prior"),
-    "Pareto": lambda: probpipe.Pareto("x", 2.0, 1.5, label="prior"),
-    "TruncatedNormal": lambda: probpipe.TruncatedNormal("x", 0.0, 1.0, -1.0, 1.0, label="prior"),
-    "Bernoulli": lambda: probpipe.Bernoulli("x", probs=0.3, label="prior"),
-    "Binomial": lambda: probpipe.Binomial("x", 5, probs=0.3, label="prior"),
-    "Poisson": lambda: probpipe.Poisson("x", 2.0, label="prior"),
-    "Categorical": lambda: probpipe.Categorical("x", probs=[0.2, 0.3, 0.5], label="prior"),
-    "NegativeBinomial": lambda: probpipe.NegativeBinomial("x", 5.0, probs=0.3, label="prior"),
-    "MultivariateNormal": lambda: probpipe.MultivariateNormal(
-        "x", jnp.zeros(2), cov=jnp.array([[2.0, 0.5], [0.5, 1.0]]), label="prior"
-    ),
-    "Dirichlet": lambda: probpipe.Dirichlet("x", jnp.ones(3), label="prior"),
-    "Multinomial": lambda: probpipe.Multinomial(
-        "x", 4.0, probs=jnp.array([0.2, 0.3, 0.5]), label="prior"
-    ),
-    "Wishart": lambda: probpipe.Wishart("x", 4.0, scale_tril=jnp.eye(2), label="prior"),
-    "VonMisesFisher": lambda: probpipe.VonMisesFisher(
-        "x", jnp.array([0.0, 1.0]), 2.0, label="prior"
-    ),
+_EVALUABLE = {name: functools.partial(make, label="prior") for name, make in FAMILIES.items()} | {
     "MixtureDistribution": lambda: MixtureDistribution(
         [Normal("x", 0.0, 1.0), Normal("x", 1.0, 2.0)], jnp.array([0.25, 0.75]), label="mix"
-    ),
-    "KDEDistribution": lambda: KDEDistribution(
-        jnp.array([0.0, 1.0, 3.0]), 0.5, component="x", label="prior"
-    ),
-    "KDEDistribution under a rule": lambda: KDEDistribution(
-        jnp.array([0.0, 1.0, 3.0]), weights=jnp.array([0.5, 0.25, 0.25]), component="x"
     ),
 }
 

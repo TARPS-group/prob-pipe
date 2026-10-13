@@ -20,8 +20,12 @@ which reads three declarations from the operation at its steps:
    order for the remaining ties. A route whose exactness is that of the
    implementations it delegates to, as a registry route's is, is ranked twice:
    restricted to its exact implementations among the exact routes, and
-   otherwise among the approximate ones. The ``method`` and ``exact_only``
-   controls restrict the choice, and provenance records the selected route.
+   otherwise among the approximate ones. A derived operation's identity ranks
+   below the direct routes of its exactness, and a composite identity, which
+   runs a route of each constituent in turn, is ranked once: among the exact
+   routes under ``exact_only`` and among the approximate ones otherwise. The
+   ``method`` and ``exact_only`` controls restrict the choice, and provenance
+   records the selected route.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -34,6 +38,7 @@ derived, and its routes in selection order.
 from __future__ import annotations
 
 import ast
+import copy
 import difflib
 import dis
 import inspect
@@ -58,11 +63,17 @@ from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
 from ..distributions._capabilities import _capability_guard, _guard_condition, _requirement
+from ..distributions._distribution import Distribution, DistributionSpec
+from ..distributions._views import _drawn_form
 from ..functions import _broker, _descendants, _result
 from ..functions._call import ApplicabilityError, CallReport
 from ..functions._resolution import PointReport, StandIn
 from ..values import Function, FunctionSpec
-from ..values._binding import values_to_bound_arguments
+from ..values._binding import (
+    make_signature_info_from_signature,
+    resolved_hint,
+    values_to_bound_arguments,
+)
 from ..values._function_base import _COMPLETED_AT_RETURN
 
 __all__ = [
@@ -378,6 +389,9 @@ class _Route:
 
     source: RouteSource
     requires: tuple[type, ...] = ()
+    #: Whether the route realizes a derived operation's identity, which ranks it
+    #: below the operation's direct routes of its exactness (VI.0).
+    realizes_identity: bool = False
 
     def __init__(self, name: str, *, exact: bool | None) -> None:
         if not isinstance(name, str) or not name:
@@ -741,13 +755,15 @@ def _identity_route(
         bound = values_to_bound_arguments(signature, call.operands)
         return declaration(*bound.args, **bound.kwargs)
 
-    return _CheckedRoute(
+    route = _CheckedRoute(
         "identity",
         source=RouteSource.FALLBACK,
         check=feasible,
         execute=evaluate_identity,
         exact=None,
     )
+    route.realizes_identity = True
+    return route
 
 
 # ---------------------------------------------------------------------------
@@ -773,12 +789,13 @@ class _Candidate:
     method: str | None = None
 
     @property
-    def rank(self) -> tuple[int, int, int]:
+    def rank(self) -> tuple[int, int, int, int]:
         """A fallback below every other source whatever its exactness, then exact before
-        approximate, then registration order."""
+        approximate, then a direct route before the identity, then registration order."""
         return (
             1 if self.route.source is RouteSource.FALLBACK else 0,
             0 if self.exact is True else 1,
+            1 if self.route.realizes_identity else 0,
             self.index,
         )
 
@@ -794,6 +811,8 @@ class _Candidate:
             return self.route.name
         if self.method is not None:
             return f"{self.route.name}/{self.method}"
+        if self.route.realizes_identity:
+            return self.route.name
         exactness = "exact" if self.exact else "approximate"
         if isinstance(self.route, _RegistryRoute):
             return f"{self.route.name} ({exactness} methods)"
@@ -827,11 +846,11 @@ class _Candidate:
         """The route's raw result for *call*, by the method *report* selected for a registry route."""
         route = self.route
         if isinstance(route, _DelegatingRoute):
-            selected = isinstance(route, _RegistryRoute) and isinstance(report, MethodInfo)
+            selected = self.method_of(report)
             return route.run(
                 call,
                 result,
-                method=report.method_name if selected else self.method,
+                method=self.method if selected is None else selected,
                 exact_only=call.controls["exact_only"] or self.exact is True,
             )
         return route.execute(call, result)
@@ -852,9 +871,29 @@ class _Candidate:
 
     def method_of(self, report: Feasibility) -> str | None:
         """The registry method a registry route delegates to, as *report* names it."""
-        if isinstance(self.route, _RegistryRoute) and isinstance(report, MethodInfo):
+        if not isinstance(self.route, _RegistryRoute):
+            return None
+        if isinstance(report, MethodInfo):
             return report.method_name
+        if isinstance(report, PointReport):
+            return report.method
         return None
+
+
+def _route_candidates(route: Any, index: int, exact_only: bool) -> list[_Candidate]:
+    """The candidates *route*, registered at *index*, contributes to a call under *exact_only*.
+
+    A delegating route contributes two, restricted to its exact implementations
+    and not, unless it realizes an identity. A composite identity is ranked
+    once: among the approximate routes, and under *exact_only* among the exact
+    ones, since its constituents are then restricted to exact routes (VI.0).
+    Any other route contributes one at its declared exactness.
+    """
+    if isinstance(route, _DelegatingRoute):
+        if route.realizes_identity:
+            return [_Candidate(route, True if exact_only else None, index)]
+        return [_Candidate(route, True, index), _Candidate(route, False, index)]
+    return [_Candidate(route, route.exact, index)]
 
 
 # ---------------------------------------------------------------------------
@@ -930,9 +969,12 @@ def _kinds_for(hint: Any) -> tuple[type[TermSpec], ...]:
     batch of values is swept; one annotated ``Any`` accepts every kind as it
     arrives; a term class accepts its own kind; and any other annotation, such
     as ``str`` for a field path, selects rather than supplies and accepts none.
+    A type alias accepts the kinds of the annotation :func:`resolved_hint`
+    resolves it to.
     """
     if hint is inspect.Parameter.empty:
         return _VALUE_KINDS
+    hint = resolved_hint(hint)
     if hint is Any:
         return (TermSpec,)
     if not isinstance(hint, type):
@@ -999,6 +1041,74 @@ def _kind_names(kinds: Iterable[type]) -> str:
     return ", ".join(kind.__name__ for kind in kinds)
 
 
+class _GivenCandidate:
+    """The conditional identity, deferred until the kernel's law is available.
+
+    Feasibility means the given slots can be bound. Normalization, the resulting
+    law's capability checks, and operation fidelity are deferred, and its exactness is unknown
+    until the delegated operation executes. The kernel is never applied by a
+    check. This candidate is the last fallback, after every route served by the
+    kernel's declared conditional capabilities. A declaration-only given
+    leaves conditioning feasibility unresolved until its values are available.
+    """
+
+    label = route_name = "conditional"
+    methods = None
+
+    def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
+        """Check slot binding without constructing or normalizing the kernel's law."""
+        from ._given import _GivenLaw
+
+        subject = call.operands[call.operation._given_subject]
+        if not isinstance(subject, _GivenLaw):
+            return Feasibility(False, "the operand has no given values")
+        if isinstance(subject.given, StandIn):
+            return Feasibility(None, pending=("conditional delegation needs the given values",))
+        from ._condition import _CURRY, condition_on
+
+        binding = BoundCall(
+            condition_on,
+            MappingProxyType({"d": subject.kernel, "given": subject.given}),
+            call.controls,
+        )
+        report = _CURRY.check(binding)
+        if report.feasible is not True:
+            return report
+        exact = _CURRY.exact(binding)
+        if call.controls["exact_only"] and not exact:
+            return Feasibility(
+                False,
+                "binding the given slots runs approximate conditioning "
+                "(SupportsApproximateConditioning), which exact_only excludes",
+            )
+        return PointReport(
+            True,
+            "delegation is available; the conditioned law's operation capabilities and fidelity are checked at execution",
+            exact=None if exact else False,
+        )
+
+    def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
+        """Condition at execution, then run the original operation under its controls."""
+        from ._condition import condition_on
+
+        subject = call.operands[call.operation._given_subject]
+        law = condition_on.with_options(
+            exact_only=call.controls["exact_only"],
+            method_options=call.controls["method_options"],
+        )(subject.kernel, subject.given)
+        values = {**call.operands, call.operation._given_subject: law}
+        bound = values_to_bound_arguments(call.operation.signature, values)
+        return call.operation.with_options(**dict(call.controls))(*bound.args, **bound.kwargs)
+
+    def exactness(self, report: Feasibility) -> bool | None:
+        """Known approximate conditioning is approximate; otherwise fidelity is deferred."""
+        return report.exact if isinstance(report, PointReport) else None
+
+    def method_of(self, report: Feasibility) -> None:
+        """The delegated operation selects its own method."""
+        return None
+
+
 class Operation(Function):
     """A Function realized by routes, with operand roles, conditions, and a result rule.
 
@@ -1013,6 +1123,21 @@ class Operation(Function):
     :meth:`register_route`, and a derived operation also carries its defining
     identity as a route.
 
+    A subject annotated ``Distribution`` automatically adds keyword-only
+    ``given=None`` unless the declaration already names ``given`` or a role
+    overrides the subject's kind. A complete given supplies a conditional
+    operand's required slots and binds its symbolic dimensions before planning
+    the result. Routes use the kernel's declared conditional twins, including
+    sampling-based fallbacks and derived identities. If no such route applies,
+    delegation applies the operation to ``condition_on(subject, given)`` at execution.
+    A check never constructs that law. The delegation report defers the law's
+    capabilities and fidelity, conservatively reporting open fidelity as
+    approximate. Invalid or incomplete givens raise ``ApplicabilityError``;
+    unavailable capabilities or fidelity controls raise ``ResolutionError``.
+    Record-batch givens sweep at their named levels. Calls without a given
+    keep their ordinary route behavior and require an unconditional subject
+    unless the authored role explicitly admits kernels.
+
     Parameters
     ----------
     declaration : callable
@@ -1025,8 +1150,10 @@ class Operation(Function):
         value, and returns the result's ``OutputSpec``, or ``None`` when the
         declarations leave the result open.
     conditions : iterable of callable
-        Applicability conditions, called like the result rule and before it.
-        Each returns ``True``, ``False``, ``None`` when the answer depends on
+        Applicability conditions, called like the result rule and before it,
+        except that a parameter whose role names ``FunctionSpec`` alone receives
+        the map itself, whose annotations, roles, and ``input_spec`` are declared
+        static information (V.6). Each returns ``True``, ``False``, ``None`` when the answer depends on
         values not yet known, or a ``Feasibility``; the first paragraph of its
         docstring states the condition.
     roles : mapping of str to iterable of TermSpec subclasses, optional
@@ -1039,6 +1166,11 @@ class Operation(Function):
         for ``prob``; the first paragraph of its docstring is the identity
         route's condition. Without it, the identity route admits every call
         that planning admits.
+    identity_route : OperationRoute, optional
+        A derived operation's composite identity route, which replaces the
+        generic route that runs the body. It runs a route of each constituent
+        operation in turn and records their combined exactness, so it is ranked
+        once, as an identity, below the direct routes of its exactness.
     label : callable, optional
         The label rule, called with the call's arguments it names and
         returning the result's label. Without it, the result takes the label
@@ -1050,8 +1182,10 @@ class Operation(Function):
     TypeError
         If *declaration*, *result*, a condition, *identity_check*, or *label*
         is not callable, the result rule, a condition, or the label rule reads
-        a name the declaration does not declare, a role is malformed, or a
-        primitive operation is given an identity check.
+        a name the declaration does not declare, a role is malformed, a
+        primitive operation is given an identity check or an identity route,
+        an identity route is given beside an identity check, or it is not a
+        delegating route.
     """
 
     def __init__(
@@ -1062,15 +1196,60 @@ class Operation(Function):
         conditions: Iterable[Callable[..., Any]] = (),
         roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
         identity_check: Callable[..., Any] | None = None,
+        identity_route: OperationRoute | None = None,
         label: Callable[..., str] | None = None,
     ) -> None:
         if not callable(declaration):
             raise TypeError(f"an operation is declared by a function; got {declaration!r}")
-        super().__init__(
-            declaration,
-            label=declaration.__name__,
-        )
+        if roles is not None:
+            roles = {name: tuple(kinds) for name, kinds in roles.items()}
+        super().__init__(declaration, label=declaration.__name__)
         object.__setattr__(self, "_declaration_name", declaration.__name__)
+        first = next(iter(self.signature.parameters), None)
+        subject = (
+            first if resolved_hint(self._signature_info.hints.get(first)) is Distribution else None
+        )
+        if "given" in self.signature.parameters or (
+            roles is not None and first in roles and DistributionSpec not in roles[first]
+        ):
+            subject = None
+        object.__setattr__(self, "_given_subject", subject)
+        from ..distributions._conditional import ConditionalDistributionSpec
+
+        object.__setattr__(
+            self, "_admits_kernel", ConditionalDistributionSpec in (roles or {}).get(first, ())
+        )
+        if subject is not None:
+            parameter = inspect.Parameter(
+                "given", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=Record
+            )
+            parameters = list(self.signature.parameters.values())
+            index = next(
+                (
+                    i
+                    for i, item in enumerate(parameters)
+                    if item.kind is inspect.Parameter.VAR_KEYWORD
+                ),
+                len(parameters),
+            )
+            parameters.insert(index, parameter)
+            signature = self.signature.replace(parameters=parameters)
+            info = make_signature_info_from_signature(signature, hints=self._signature_info.hints)
+            object.__setattr__(self, "_signature_info", info)
+            object.__setattr__(self, "__signature__", signature)
+            given_doc = (
+                "    given : Record or Mapping[str, Any], optional\n"
+                "        Complete values of a conditional operand's required slots. The\n"
+                "        declared conditional capabilities serve applicable routes; otherwise\n"
+                "        the operation applies after condition_on at execution, and check\n"
+                "        defers the resulting law's capabilities and fidelity. A RecordBatch\n"
+                "        is swept at its named levels. None keeps the authored subject role.\n\n"
+            )
+            object.__setattr__(
+                self,
+                "__doc__",
+                (self.__doc__ or "").replace("    Returns\n", given_doc + "    Returns\n", 1),
+            )
         owner = f"operation {self.label!r}"
         if not callable(result):
             raise TypeError(f"{owner} needs a callable result rule; got {result!r}")
@@ -1096,6 +1275,22 @@ class Operation(Function):
                 )
             if not callable(identity_check):
                 raise TypeError(f"{owner} needs a callable identity check; got {identity_check!r}")
+        if identity_route is not None:
+            if not derived:
+                raise TypeError(
+                    f"{owner} has an empty body, so it cannot take identity_route; only an "
+                    f"operation whose body returns its identity can"
+                )
+            if identity_check is not None:
+                raise TypeError(
+                    f"{owner} cannot take both identity_route and identity_check; the "
+                    f"identity route checks its own feasibility"
+                )
+            if not isinstance(identity_route, _DelegatingRoute):
+                raise TypeError(
+                    f"{owner} needs an identity route that delegates its exactness to the "
+                    f"routes it runs; got {identity_route!r}"
+                )
         set_attribute = object.__setattr__
         set_attribute(self, "_result_rule", result)
         set_attribute(self, "_rule_parameters", _parameter_names(result))
@@ -1110,12 +1305,24 @@ class Operation(Function):
                 _validated_roles(self.signature, self._signature_info.hints, roles, owner)
             ),
         )
+        if subject is not None:
+            from ..distributions._conditional import ConditionalDistributionSpec
+
+            adapted_roles = dict(self._roles)
+            adapted_roles[subject] = (*adapted_roles[subject], ConditionalDistributionSpec)
+            adapted_roles["given"] = (RecordSpec,)
+            set_attribute(self, "_roles", MappingProxyType(adapted_roles))
         set_attribute(self, "_derived", derived)
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
         set_attribute(self, "_expression_rule", None)
-        if derived:
+        if identity_route is not None:
+            # A copy carries the identity's rank, so the caller's route keeps its own.
+            identity_route = copy.copy(identity_route)
+            identity_route.realizes_identity = True
+            self.register_route(identity_route)
+        elif derived:
             self.register_route(_identity_route(declaration, self.signature, identity_check))
 
     # -- identity ----------------------------------------------------------
@@ -1150,6 +1357,15 @@ class Operation(Function):
             The result's expression, or ``None`` when the route's result keeps
             its own.
         """
+        if self._given_subject is not None and values.get("given") is not None:
+            from ._condition import _conditioned_paths
+
+            subject = values[self._given_subject]
+            view = Distribution(subject.event_spec, label=subject.label)
+            view._store_expression(
+                subject._embedded_expression().with_fixed(_conditioned_paths(values["given"]) or ())
+            )
+            values = {**values, self._given_subject: view}
         rule = self._expression_rule
         if rule is not None:
             return rule(**{name: values.get(name) for name in _parameter_names(rule)})
@@ -1215,15 +1431,18 @@ class Operation(Function):
 
         A delegating route is listed where its exact implementations rank, and
         any other route whose exactness is ``None`` where approximate routes
-        rank.
+        rank, as a composite identity does without ``exact_only``. An identity
+        is listed after the direct routes that rank with it.
         """
         indexed = list(enumerate(self._route_table.routes))
 
-        def key(entry: tuple[int, Any]) -> tuple[int, int, int]:
+        def key(entry: tuple[int, Any]) -> tuple[int, int, int, int]:
             index, route = entry
-            exact = route.exact is True or isinstance(route, _DelegatingRoute)
+            exact = route.exact is True or (
+                isinstance(route, _DelegatingRoute) and not route.realizes_identity
+            )
             fallback = route.source is RouteSource.FALLBACK
-            return (0 if exact else 1, 1 if fallback else 0, index)
+            return (0 if exact else 1, 1 if fallback else 0, int(route.realizes_identity), index)
 
         return tuple(route for _, route in sorted(indexed, key=key))
 
@@ -1505,7 +1724,9 @@ class Operation(Function):
 
     # -- the declarations the engine reads ------------------------------------
 
-    def _route_candidates(self, controls: Mapping[str, Any]) -> tuple[_Candidate, ...]:
+    def _route_candidates(
+        self, controls: Mapping[str, Any], values: Mapping[str, Any] | None = None
+    ) -> tuple[_Candidate | _GivenCandidate, ...]:
         """The candidates that may realize one point under *controls*, in selection order.
 
         A ``method`` name resolves as :meth:`_named_candidates` states.
@@ -1515,6 +1736,9 @@ class Operation(Function):
         controls : Mapping of str to Any
             The call's resolved controls, whose ``method`` and ``exact_only``
             entries restrict the candidates.
+        values : Mapping of str to Any or None
+            The bound inputs. A supplied given adds the conditional delegation
+            candidate; ordinary calls retain their existing candidate sequence.
 
         Returns
         -------
@@ -1527,7 +1751,15 @@ class Operation(Function):
             If ``method`` names no route or registry method, matches several, or
             names an approximate route while ``exact_only`` is set.
         """
-        return tuple(self._candidates(controls))
+        candidates = self._candidates(controls)
+        if (
+            self._given_subject is not None
+            and candidates
+            and values is not None
+            and values.get("given") is not None
+        ):
+            return (*candidates, _GivenCandidate())
+        return tuple(candidates)
 
     def _plan_point(
         self, values: Mapping[str, Any], controls: Mapping[str, Any]
@@ -1561,8 +1793,29 @@ class Operation(Function):
         TypeError
             If the result rule returns something other than an OutputSpec or None.
         """
-        call = BoundCall(self, MappingProxyType(dict(values)), controls)
+        point_values = dict(values)
+        if self._given_subject is not None:
+            from ..distributions._conditional import ConditionalDistribution
+            from ._given import _GivenLaw
+
+            given = point_values.pop("given", None)
+            subject = point_values[self._given_subject]
+            if given is not None:
+                if not isinstance(subject, ConditionalDistribution):
+                    raise ApplicabilityError(
+                        f"{self.name}: given requires a ConditionalDistribution operand"
+                    )
+                point_values[self._given_subject] = _GivenLaw(subject, given)
+            elif isinstance(subject, ConditionalDistribution) and not self._admits_kernel:
+                raise ApplicabilityError(
+                    f"{self.name}: ConditionalDistributionSpec requires given values"
+                )
+        call = BoundCall(self, MappingProxyType(point_values), controls)
         result, deferred = self._plan(call)
+        if self._given_subject is not None and values.get("given") is not None:
+            deferred += (
+                "if conditional delegation is selected, the resulting law's capabilities and fidelity are checked at execution",
+            )
         return call, result, deferred
 
     def _plan(self, call: BoundCall) -> tuple[OutputSpec | None, tuple[str, ...]]:
@@ -1590,7 +1843,12 @@ class Operation(Function):
         declarations = call.declarations
         deferred: list[str] = []
         for condition in self._conditions:
-            arguments = {name: declarations[name] for name in _parameter_names(condition)}
+            arguments = {
+                name: call.operands.get(name)
+                if self._roles.get(name) == (FunctionSpec,)
+                else declarations[name]
+                for name in _parameter_names(condition)
+            }
             report = _as_feasibility(
                 condition(**arguments),
                 condition,
@@ -1640,10 +1898,7 @@ class Operation(Function):
         else:
             candidates = []
             for index, route in enumerate(self._route_table.routes):
-                if isinstance(route, _DelegatingRoute):
-                    candidates += [_Candidate(route, True, index), _Candidate(route, False, index)]
-                else:
-                    candidates.append(_Candidate(route, route.exact, index))
+                candidates += _route_candidates(route, index, exact_only)
         if exact_only:
             candidates = [c for c in candidates if c.exact is True or c.method is not None]
         return sorted(candidates, key=lambda candidate: candidate.rank)
@@ -1718,7 +1973,7 @@ class Operation(Function):
         if named:
             index, route = named[0]
             if isinstance(route, _DelegatingRoute):
-                return [_Candidate(route, True, index), _Candidate(route, False, index)]
+                return _route_candidates(route, index, exact_only)
             if exact_only and route.exact is not True:
                 raise ResolutionError(
                     f"{self.label}: route {method!r} is not exact, but exact_only=True"
@@ -1807,7 +2062,9 @@ def _workflow_draws(
     Returns
     -------
     Any
-        The raw draws, as ``d._sample(key, sample_shape)`` returns them.
+        The raw draws, as ``d._sample(key, sample_shape)`` returns them. The
+        draws of a law that reads another law's draws, such as a field view,
+        take the raw form of *d*'s own event.
     """
     captured = _descendants.capture_stochastic_consumer(d)
     key = _broker._resolve_automatic_key(
@@ -1820,7 +2077,10 @@ def _workflow_draws(
             descendant_descriptor=captured.descendant_descriptor,
         ),
     )
-    return _descendants.sample_captured_consumer(captured, key, sample_shape)
+    draws = _descendants.sample_captured_consumer(captured, key, sample_shape)
+    if captured.root is d:
+        return draws
+    return _drawn_form(draws, d.event_spec.spec, sample_shape)
 
 
 # ---------------------------------------------------------------------------
@@ -2066,6 +2326,7 @@ def operation(
     conditions: Iterable[Callable[..., Any]] = (),
     roles: Mapping[str, Iterable[type[TermSpec]]] | None = None,
     identity_check: Callable[..., Any] | None = None,
+    identity_route: OperationRoute | None = None,
     label: Callable[..., str] | None = None,
     registry: OperationRegistry | None = None,
 ) -> Callable[[Callable[..., Any]], Operation]:
@@ -2086,6 +2347,8 @@ def operation(
         Roles that override the kinds the annotations name.
     identity_check : callable, optional
         A derived operation's probe of its identity; see :class:`Operation`.
+    identity_route : OperationRoute, optional
+        A derived operation's composite identity route; see :class:`Operation`.
     label : callable, optional
         The label rule; see :class:`Operation`.
     registry : OperationRegistry, optional
@@ -2111,6 +2374,7 @@ def operation(
             conditions=conditions,
             roles=roles,
             identity_check=identity_check,
+            identity_route=identity_route,
             label=label,
         )
         (operation_registry if registry is None else registry).register(op)
