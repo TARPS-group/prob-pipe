@@ -104,8 +104,12 @@ class Function(TrackedTerm):
                  input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
                  output_label: str | None = None,
-                 differentiable: NumericSpec = ...) -> None: ...
-                 # optional differentiability claim (V.11)
+                 differentiable: NumericSpec | None = None,
+                 bind: Mapping[str, Any] | None = None,
+                 **controls) -> None: ...
+                 # differentiable: an optional differentiability claim (V.11)
+                 # bind: arguments of the wrapped callable fixed at construction (V.3)
+                 # controls: the controls' construction values (V.2)
     @property
     def spec(self) -> FunctionSpec: ...
     @property

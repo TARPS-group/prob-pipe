@@ -90,7 +90,7 @@ A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 â
 
 ### Contract
 
-The arguments bind to the wrapped function's signature by Python's own rules (III.3). Without an `input_spec`, the arguments bind by the signature alone, and the parameter annotations still determine conversion targets (V.4) and lifting (V.5). An argument that is a tracked term becomes a graph **dependency** and any other a plain **input**; the dependencies are the result's provenance parents and the inputs are recorded by parameter name (V.10). *Requires:* every argument binds to a parameter. *On failure:* Python's binding error, naming the parameter.
+The arguments bind to the wrapped function's signature by Python's own rules (III.3). A parameter the call leaves unbound takes its value from the construction bindings `bind`, and otherwise from its default, so a call argument overrides a construction binding. An entry of `bind` that names no parameter goes to the variadic keyword parameter. Without an `input_spec`, the arguments bind by the signature alone, and the parameter annotations still determine conversion targets (V.4) and lifting (V.5). An argument that is a tracked term becomes a graph **dependency** and any other a plain **input**; the dependencies are the result's provenance parents and the inputs are recorded by parameter name (V.10). *Requires:* every argument binds to a parameter. *On failure:* Python's binding error, naming the parameter, and a `TypeError` for an entry of `bind` that names no parameter when the signature has no variadic keyword parameter.
 
 ### Rationale
 
