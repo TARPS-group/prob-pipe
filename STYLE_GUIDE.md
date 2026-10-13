@@ -862,8 +862,8 @@ _ensure_matrix: Required 3 columns. Got 2.
 A must have 3 columns, got shape (3, 2)
 
 # Repeated route name (rule 9)
-curry (exact methods): route 'curry' declined: the conditioned object is not a kernel
-curry (exact methods): Normal is not a ConditionalDistribution
+bind_given_slots (exact methods): route 'bind_given_slots' declined: the conditioned object is not a kernel
+bind_given_slots (exact methods): Normal is not a ConditionalDistribution
 ```
 
 A protocol check that fails raises `TypeError` and names the missing

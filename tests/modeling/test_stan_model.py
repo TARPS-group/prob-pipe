@@ -332,9 +332,9 @@ class TestUnconstrainedStanView:
 
 
 class TestStanModelConditionOn:
-    def test_binding_the_data_curries_then_a_stan_method_normalizes(self, conjugate_stan_file):
+    def test_binding_the_data_then_a_stan_method_normalizes(self, conjugate_stan_file):
         report = condition_on.check(
             StanModel(conjugate_stan_file, label="normal_mean"), {"N": 3, "y": [1.0, 2.0, 3.0]}
         )
-        assert report.route == "curry"
+        assert report.route == "bind_given_slots"
         assert report.method in ("nutpie_nuts", "cmdstan_nuts", "blackjax_rwmh")

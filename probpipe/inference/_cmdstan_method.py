@@ -35,8 +35,8 @@ def _import_cmdstanpy():
 class CmdStanNutsMethod(InferenceMethod):
     """CmdStanPy-backed NUTS, registered as ``cmdstan_nuts`` at priority 82.
 
-    Applies to a Stan program's posterior at its data, the target a
-    ``StanModel`` curries to; cmdstanpy is imported at execution.
+    Applies to a Stan program's posterior at its data, the target that
+    binding a ``StanModel``'s data gives; cmdstanpy is imported at execution.
 
     Notes
     -----

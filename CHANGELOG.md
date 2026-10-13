@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the mean's route is chosen only when the call runs. Under `exact_only` both
   steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
   that an exact rule built raises `ResolutionError` naming `mean`.
+- **`condition_on`'s route that binds given slots is named
+  `bind_given_slots`,** in place of `curry`. The route binds the given slots of
+  a `ConditionalDistribution` and runs no inference; a `check` report, a
+  result's provenance, and an error message now name it, as in
+  `bind_given_slots/nutpie_nuts`, and `method="curry"` no longer selects it.
 - **On `closed_form`, `expectation` passes a record atom to the integrand as a
   `Record`,** as the evaluation rules pass a record draw, where it passed the
   nested `dict` of the atom's raw leaves. The integrand's open parameter is

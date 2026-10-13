@@ -346,11 +346,11 @@ class TestBayesFlowNPE:
         assert npe_model.event_spec == npe_model.prior.event_spec
 
     def test_conditioning_evaluates_it_with_no_inference(self, npe_model):
-        """Conditioning on an observation curries the kernel, which is approximate,
+        """Conditioning on an observation binds the kernel's given slot, which is approximate,
         and returns a law that samples, so no inference method runs."""
         observation = {"observation": _observe(0.5, 0.0, 0)}
         report = condition_on_operation.check(npe_model, observation)
-        assert (report.route, report.method, report.exact) == ("curry", None, False)
+        assert (report.route, report.method, report.exact) == ("bind_given_slots", None, False)
         law = condition_on_operation(npe_model, observation)
         assert isinstance(law, SupportsSampling)
         assert _is_normalized(law)

@@ -226,7 +226,7 @@ class _NamedDensityLaw(_Law, SupportsLogProb):
 
 
 class _RecordingKernel(ConditionalDistribution):
-    """A kernel that records each given it binds and curries over the slots left.
+    """A kernel that records each given it binds and returns a kernel over the slots left.
 
     Binding every slot returns a law over the kernel's event under the kernel's
     label and records the bound values in slot order; binding some returns the kernel over the rest,
@@ -698,23 +698,23 @@ class TestRenamedKernelBinding:
         kernel = _RecordingKernel(
             "k", {"theta": RecordSpec(a=_SCALAR, b=_vector(2))}, OutputSpec(y=_SCALAR)
         )
-        curried = kernel.with_path_names({"theta/a": "a"})._condition_on({"a": 1.0})
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["theta"]
-        assert curried.given_spec["theta"] == RecordSpec(b=_vector(2))
+        rest = kernel.with_path_names({"theta/a": "a"})._condition_on({"a": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["theta"]
+        assert rest.given_spec["theta"] == RecordSpec(b=_vector(2))
         assert kernel.calls == []
-        law = curried._condition_on({"theta": {"b": jnp.zeros(2)}})
+        law = rest._condition_on({"theta": {"b": jnp.zeros(2)}})
         assert isinstance(law, Distribution)
         assert kernel.calls[0]["theta"]["a"] == 1.0
 
-    def test_binding_some_slots_curries_to_the_renamed_kernel_over_the_rest(self):
+    def test_binding_some_slots_returns_the_renamed_kernel_over_the_rest(self):
         kernel = _RecordingKernel("k", {"mu": _SCALAR, "sigma": _SCALAR}, OutputSpec(y=_SCALAR))
         renamed = kernel.with_path_names(mu="loc", sigma="scale", y="obs")
-        curried = renamed._condition_on({"loc": 1.0})
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["scale"]
-        assert list(curried.event_spec.components) == ["obs"]
-        law = curried._condition_on({"scale": 2.0})
+        rest = renamed._condition_on({"loc": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["scale"]
+        assert list(rest.event_spec.components) == ["obs"]
+        law = rest._condition_on({"scale": 2.0})
         assert [dict(given) for given in kernel.calls] == [{"mu": 1.0}, {"sigma": 2.0}]
         assert list(law.event_spec.components) == ["obs"]
 

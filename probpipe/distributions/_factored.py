@@ -2250,7 +2250,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     Its ``given_spec`` is exactly the unmet givens, same-named ones unified into
     one slot, and its event declaration is read as for
     :class:`FactoredDistribution`. Conditioning on every given yields a
-    ``FactoredDistribution``, and conditioning on some curries to a smaller
+    ``FactoredDistribution``, and conditioning on some returns a smaller
     ``FactoredConditionalDistribution``.
 
     Each conditional capability is its unconditional counterpart's on

@@ -1145,17 +1145,17 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import _CURRY, condition_on
+        from ._condition import _BIND_GIVEN_SLOTS, condition_on
 
         binding = BoundCall(
             condition_on,
             MappingProxyType({"d": subject.kernel, "given": subject.given}),
             call.controls,
         )
-        report = _CURRY.check(binding)
+        report = _BIND_GIVEN_SLOTS.check(binding)
         if report.feasible is not True:
             return report
-        exact = _CURRY.exact(binding)
+        exact = _BIND_GIVEN_SLOTS.exact(binding)
         if call.controls["exact_only"] and not exact:
             return Feasibility(
                 False,

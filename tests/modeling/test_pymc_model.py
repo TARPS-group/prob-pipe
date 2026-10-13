@@ -741,7 +741,7 @@ class TestRecordDataUnpacking:
             label="r",
         )
 
-        # X is a covariate: binding it curries the kernel, and the law's
+        # X is a covariate: binding it gives a law, and the law's
         # _pymc_model unpacks y from a Record. The build uses the *real* X
         # and y, not the sentinel of the build without data.
         model = PyMCModel(self._xy_model, label="model")._condition_on(

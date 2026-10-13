@@ -759,7 +759,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
-        """The law ``K(given, ·)``, or a curried kernel for a partial given.
+        """The law ``K(given, ·)``, or the kernel over the rest for a partial given.
 
         Parameters
         ----------
@@ -1115,7 +1115,7 @@ class _FunctionKernel(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
-        """The law the function returns at a value of every given slot, or the curried kernel.
+        """The law the function returns at a value of every given slot, or the kernel over the rest.
 
         Parameters
         ----------
@@ -1150,12 +1150,12 @@ class _FunctionKernel(ConditionalDistribution):
         if set(self.given_spec.required) <= set(values):
             return self._law(values)
         self._check_conformance(values)
-        curried = self._shallow_copy()
-        object.__setattr__(curried, "_provenance", None)
-        object.__setattr__(curried, "_bound", {**self._bound, **self._arguments(values)})
+        rest = self._shallow_copy()
+        object.__setattr__(rest, "_provenance", None)
+        object.__setattr__(rest, "_bound", {**self._bound, **self._arguments(values)})
         left = self.given_spec.without(*values)
-        object.__setattr__(curried, "_spec", ConditionalDistributionSpec(left, self.event_spec))
-        return curried
+        object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
+        return rest
 
     def _given_values(self, given: Any) -> dict[str, Any]:
         """The values *given* holds, by given slot.
@@ -1205,7 +1205,7 @@ class _FunctionKernel(ConditionalDistribution):
         Returns
         -------
         Distribution
-            The law the function returns at the values a curried kernel holds and
+            The law the function returns at the values a partly bound kernel holds and
             at *given*, checked against the kernel's event declaration.
 
         Raises
@@ -1548,7 +1548,7 @@ def conditional_distribution(
     Binding every required slot calls the function with each value as the
     argument of that name, at the kind its slot declares, and with its default
     for each optional slot left unbound, and returns the law the call returns;
-    binding fewer slots curries the kernel over the rest.
+    binding fewer slots returns the kernel over the rest.
 
     The kernel is labeled *label*, or after the function's ``__name__``, and
     ``ℙ`` for a lambda. The call form takes the function first::

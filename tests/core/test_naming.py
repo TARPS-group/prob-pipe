@@ -752,7 +752,7 @@ class TestADefaultedSlotShowsItsDefault:
         assert at.notation == "counts(y | n0=50.0; K, r)"
         assert not hasattr(at, "given_spec")
 
-    def test_a_curried_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
+    def test_a_partly_bound_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
         assert str(condition_on(_counts(), {"K": 300.0})) == "counts(y | r, n0=50.0; K)"
 
     def test_binding_the_defaulted_slot_moves_it_to_the_fixed_paths(self):
