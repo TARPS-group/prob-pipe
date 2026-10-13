@@ -539,7 +539,7 @@ class _GLMLikelihood(
     """The kernel of a GLM, which :func:`glm_likelihood` constructs.
 
     A slot with a fixed value is not a given slot, and its value binds the
-    dimensions it declares. Binding some given slots curries to the kernel of
+    dimensions it declares. Binding some given slots returns the kernel of
     the others. Each conditional capability is the matching capability of the
     law :meth:`_condition_on` returns for a value of every given slot. The law
     carries the kernel's event declaration, whose component is completed once,
@@ -642,7 +642,7 @@ class _GLMLikelihood(
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
-        """The response law at a value of every given slot, or the curried kernel.
+        """The response law at a value of every given slot, or the kernel over the rest.
 
         Parameters
         ----------
@@ -667,10 +667,10 @@ class _GLMLikelihood(
         values = self._given_values(given, kwargs)
         if set(values) == set(self.given_spec):
             return self._law(values)
-        curried = self._shallow_copy()
-        object.__setattr__(curried, "_provenance", None)
-        curried._fix(values)
-        return curried
+        rest = self._shallow_copy()
+        object.__setattr__(rest, "_provenance", None)
+        rest._fix(values)
+        return rest
 
     def _given_values(self, given: Any, kwargs: Mapping[str, Any]) -> dict[str, Array]:
         """The given values by slot name, each slot a known one.

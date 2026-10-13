@@ -130,7 +130,7 @@ class TestStanModel:
         assert not isinstance(model, SupportsConditionalLogProb)
         assert not _kernel_is_normalized(model)
 
-    def test_data_given_at_construction_curry_the_program(self, regression_file):
+    def test_data_given_at_construction_bind_the_program(self, regression_file):
         model = StanModel(regression_file, data={"N": 3, "K": 2}, label="regression")
         assert list(model.given_spec) == ["X", "y"]
         assert model.event_spec.spec["beta"].shape == (2,)

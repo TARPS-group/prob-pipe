@@ -237,7 +237,7 @@ class TestDistributions:
             "Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))"
         )
 
-    def test_a_curried_kernel_shows_its_fixed_slots(self):
+    def test_a_partly_bound_kernel_shows_its_fixed_slots(self):
         def two_slot(beta, sigma):
             return Normal("y", beta, sigma)
 

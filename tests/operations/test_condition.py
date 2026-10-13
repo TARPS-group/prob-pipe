@@ -293,13 +293,13 @@ class _AmortizedKernel(
         return self._condition_on(given)._sample(key, sample_shape)
 
 
-class TestCurry:
+class TestBindGivenSlots:
     def test_binding_every_given_slot_applies_the_kernel(self):
         law = condition_on(_NormalKernel(), {"mu": 1.5})
         assert isinstance(law, Distribution)
         assert law.loc == 1.5
         report = condition_on.check(_NormalKernel(), {"mu": 1.5})
-        assert (report.route, report.method, report.exact) == ("curry", None, True)
+        assert (report.route, report.method, report.exact) == ("bind_given_slots", None, True)
         assert report.result == OutputSpec(DistributionSpec(Kernel().event_spec))
 
     def test_a_record_given_binds_its_fields(self):
@@ -319,17 +319,17 @@ class TestCurry:
 
     def test_binding_some_slots_leaves_a_kernel_over_the_rest(self):
         kernel = _NormalKernel("y", ("a", "b"))
-        curried = condition_on(kernel, {"a": 1.0})
-        assert isinstance(curried, ConditionalDistribution)
-        assert set(curried.given_spec) == {"b"}
+        rest = condition_on(kernel, {"a": 1.0})
+        assert isinstance(rest, ConditionalDistribution)
+        assert set(rest.given_spec) == {"b"}
         assert condition_on.check(kernel, {"a": 1.0}).result == OutputSpec(
             ConditionalDistributionSpec(InputSpec(b=REAL), kernel.event_spec)
         )
-        assert condition_on(curried, {"b": 2.0}).loc == 3.0
+        assert condition_on(rest, {"b": 2.0}).loc == 3.0
 
     def test_binding_part_of_a_structured_slot_leaves_the_rest_of_the_slot(self):
-        curried = condition_on(_StructuredKernel(), {"theta/a": 1.0})
-        assert set(curried.given_spec) == {"theta"}
+        rest = condition_on(_StructuredKernel(), {"theta/a": 1.0})
+        assert set(rest.given_spec) == {"theta"}
 
     def test_given_slots_bind_together_with_produced_fields(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
@@ -400,7 +400,7 @@ class TestSlice:
         declined = _by_name(condition_on.check(joint, {"a": 0.0, "b": 0.0}).routes)
         assert "leaves no field to infer" in declined["slice (exact methods)"].description
 
-    def test_currying_an_approximate_kernel_makes_the_slice_approximate(self):
+    def test_binding_an_approximate_kernel_makes_the_slice_approximate(self):
         joint = _AmortizedKernel() * Gaussian("y")
         report = condition_on.check(joint, {"y": 0.3})
         assert (report.route, report.exact) == ("slice", False)
@@ -525,15 +525,15 @@ class TestTheFixedPaths:
         kernel = _NormalKernel("y", ("beta",)).with_label("glm")
         assert condition_on(kernel, {"beta": 1.5}).notation == "glm(y; beta)"
 
-    def test_a_partial_curry_holds_the_bound_slots_fixed_and_the_others_given(self):
+    def test_a_partial_binding_holds_the_bound_slots_fixed_and_the_others_given(self):
         kernel = _NormalKernel("y", ("beta", "sigma")).with_label("glm")
-        curried = condition_on(kernel, {"beta": 1.5})
-        assert isinstance(curried, ConditionalDistribution)
-        assert _fixed_paths(curried) == ("beta",)
-        assert curried.notation == "glm(y | sigma; beta)"
+        rest = condition_on(kernel, {"beta": 1.5})
+        assert isinstance(rest, ConditionalDistribution)
+        assert _fixed_paths(rest) == ("beta",)
+        assert rest.notation == "glm(y | sigma; beta)"
         assert _fixed_paths(kernel) == ()
 
-    def test_currying_again_appends_the_new_slots(self):
+    def test_binding_again_appends_the_new_slots(self):
         kernel = _NormalKernel("y", ("beta", "sigma")).with_label("glm")
         law = condition_on(condition_on(kernel, {"beta": 1.5}), {"sigma": 2.0})
         assert _fixed_paths(law) == ("beta", "sigma")
@@ -724,7 +724,7 @@ class TestTheInferenceMethodsRoute:
         assert all(route.registry is inference_method_registry for route in normalizing)
 
     def test_a_law_no_route_applies_to_raises_resolution_error(self):
-        with pytest.raises(ResolutionError, match="curry"):
+        with pytest.raises(ResolutionError, match="bind_given_slots"):
             condition_on(Bare("b"), {"b": 0.0})
 
 
@@ -789,37 +789,37 @@ class TestTheNormalizationStage:
         assert condition_on(_NormalKernel(), {"mu": 1.5}).loc == 1.5
         assert exact.targets == approximate.targets == []
 
-    def test_an_unnormalized_curried_law_is_the_target_of_a_method(self, suite_methods):
+    def test_an_unnormalized_bound_law_is_the_target_of_a_method(self, suite_methods):
         exact, _ = suite_methods
         report = condition_on.check(_UnnormalizedKernel(), {"data": 1.0})
-        assert (report.route, report.method) == ("curry", "operations_suite_exact")
+        assert (report.route, report.method) == ("bind_given_slots", "operations_suite_exact")
         assert condition_on(_UnnormalizedKernel(), {"data": 1.0}).loc == 0.5
         (target,) = exact.targets
         assert isinstance(target, Unnormalized)
 
-    def test_the_target_of_a_curried_law_records_the_curry(self, suite_methods):
+    def test_the_target_of_a_bound_law_records_the_binding(self, suite_methods):
         exact, _ = suite_methods
         kernel = _UnnormalizedKernel()
         condition_on(kernel, {"data": 1.0})
         (target,) = exact.targets
         assert target.provenance.operation == "condition_on"
-        assert target.provenance.metadata == {"stage": "exact", "route": "curry"}
+        assert target.provenance.metadata == {"stage": "exact", "route": "bind_given_slots"}
         (parent,) = target.provenance.parents
         assert (parent.type_name, parent.label) == ("_UnnormalizedKernel", kernel.label)
 
-    def test_the_target_of_bayes_rule_records_the_curry_of_its_slots(self, approximate_method):
+    def test_the_target_of_bayes_rule_records_the_binding_of_its_slots(self, approximate_method):
         joint = Kernel("y", ("mu",)) * Kernel("z", ("mu",))
         condition_on(joint, {"mu": 1.0, "y": 0.0})
         (target,) = approximate_method.targets
         assert target.provenance.metadata == {"stage": "exact", "route": "inference_methods"}
         (law,) = target.provenance.parents
-        assert law.provenance.metadata == {"stage": "exact", "route": "curry"}
+        assert law.provenance.metadata == {"stage": "exact", "route": "bind_given_slots"}
 
     def test_check_reports_the_exact_route_and_the_normalization_method(self, suite_methods):
         view = condition_on.using(method="operations_suite_approximate")
-        curried = view.check(_UnnormalizedKernel(), {"data": 1.0})
-        assert (curried.route, curried.method, curried.exact) == (
-            "curry",
+        binding = view.check(_UnnormalizedKernel(), {"data": 1.0})
+        assert (binding.route, binding.method, binding.exact) == (
+            "bind_given_slots",
             "operations_suite_approximate",
             False,
         )
@@ -882,7 +882,7 @@ class TestTheNormalizationStage:
         kernel = condition_on(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
         report = condition_on.check(kernel, {"b": 2.0})
         assert (report.route, report.method, report.exact) == (
-            "curry",
+            "bind_given_slots",
             "operations_suite_factored",
             False,
         )
@@ -904,7 +904,7 @@ class TestTheNormalizationStage:
         kernel = view(_UnnormalizedKernel("theta", ("a", "b")), {"a": 1.0})
         report = condition_on.check(kernel, {"b": 2.0})
         assert (report.route, report.method, report.exact) == (
-            "curry",
+            "bind_given_slots",
             "operations_suite_exact",
             True,
         )
@@ -974,7 +974,7 @@ class TestTheNormalizationStage:
 
 
 class TestAKernelThatDeclaresNothingAboutItsLaws:
-    def test_check_reports_the_curry_unresolved(self, suite_methods):
+    def test_check_reports_the_binding_unresolved(self, suite_methods):
         report = condition_on.check(Kernel(), {"mu": 1.0})
         assert report.feasible is None
         assert (report.route, report.method) == (None, None)
@@ -1007,20 +1007,20 @@ class TestAKernelThatDeclaresNothingAboutItsLaws:
         (target,) = exact.targets
         assert isinstance(target, Unnormalized)
 
-    def test_binding_some_slots_returns_the_curried_kernel(self, suite_methods):
-        curried = condition_on(Kernel("y", ("a", "b")), {"a": 1.0})
-        assert type(curried) is Kernel
-        assert set(curried.given_spec) == {"b"}
-        assert condition_on(curried, {"b": 2.0}).loc == 3.0
+    def test_binding_some_slots_returns_the_kernel_over_the_rest(self, suite_methods):
+        rest = condition_on(Kernel("y", ("a", "b")), {"a": 1.0})
+        assert type(rest) is Kernel
+        assert set(rest.given_spec) == {"b"}
+        assert condition_on(rest, {"b": 2.0}).loc == 3.0
 
 
 class TestApproximateKernels:
     def test_evaluating_an_approximate_kernel_is_approximate(self):
         report = condition_on.check(_AmortizedKernel(), {"y": 0.3})
-        assert (report.route, report.method, report.exact) == ("curry", None, False)
+        assert (report.route, report.method, report.exact) == ("bind_given_slots", None, False)
         assert condition_on(_AmortizedKernel(), {"y": 0.3}).loc == 3.0
 
-    def test_exact_only_excludes_currying_an_approximate_kernel(self):
+    def test_exact_only_excludes_binding_an_approximate_kernel(self):
         with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
             condition_on.using(exact_only=True)(_AmortizedKernel(), {"y": 0.3})
 
@@ -1035,7 +1035,7 @@ class TestTheOperation:
     def test_the_routes_are_listed_in_selection_order(self):
         names = [route.name for route in condition_on.summary().routes]
         assert names == [
-            "curry",
+            "bind_given_slots",
             "slice",
             "exact_conditioning",
             "inference_methods",
@@ -1211,7 +1211,7 @@ class TestEndToEnd:
         beta = jnp.array([0.2, -0.1])
         likelihood = glm_likelihood("y", GaussianFamily(), X=X, dispersion=1.0)
         report = condition_on.check(likelihood, {"beta": beta})
-        assert (report.route, report.method, report.exact) == ("curry", None, True)
+        assert (report.route, report.method, report.exact) == ("bind_given_slots", None, True)
         law = condition_on(likelihood, {"beta": beta})
         assert _is_normalized(law)
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
@@ -1273,7 +1273,7 @@ class TestEndToEnd:
         assert view.check(_unnormalized_pair(), {"b": 1.0}).method == "blackjax_nuts"
 
     @pytest.mark.parametrize("kernel", [_UnnormalizedKernel(), _WholeTermKernel()])
-    def test_a_curried_law_over_a_whole_term_is_normalized_under_that_term(self, kernel):
+    def test_a_bound_law_over_a_whole_term_is_normalized_under_that_term(self, kernel):
         view = condition_on.using(method_options=_MCMC)
         given = dict.fromkeys(kernel.given_spec, 1.0)
         assert view.check(kernel, given).method == "blackjax_nuts"
@@ -1374,7 +1374,7 @@ class TestEndToEnd:
         report = condition_on.check(
             StanModel(str(program), label="mean"), {"N": 3, "y": [1.0, 2.0, 3.0]}
         )
-        assert report.route == "curry"
+        assert report.route == "bind_given_slots"
         stan_methods = {"nutpie_nuts", "cmdstan_nuts"} & set(
             inference_method_registry.list_methods()
         )

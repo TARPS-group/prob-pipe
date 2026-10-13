@@ -2756,7 +2756,7 @@ class _RenamedConditionalDistribution(ConditionalDistribution):
 
     ``ConditionalDistribution.with_path_names`` returns it. Binding translates a
     given value to the parent's slots, moving the fields that a split or a
-    grouping moved, and renames the law or the curried kernel the parent
+    grouping moved, and renames the law or the kernel over the rest the parent
     returns. A binding that completes only part of a parent slot, as binding
     one of the slots a split made does, holds the bound fields until the rest
     of the slot is bound, so every slot of this kernel binds on its own. Each

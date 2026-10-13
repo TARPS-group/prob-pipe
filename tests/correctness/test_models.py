@@ -175,7 +175,7 @@ class TestGLM:
     def test_binding_the_design_and_the_response_gives_the_closed_form_posterior(self):
         """One call binds the design as a given slot and conditions on the response.
 
-        The design is curried first and the response conditioned by Bayes'
+        The design is bound first and the response conditioned by Bayes'
         rule, so the result is the Gaussian closed form; the fit takes a few
         seconds.
         """
@@ -271,7 +271,7 @@ class TestPyMCModel:
     def test_binding_the_covariate_and_the_response_gives_the_closed_form_posterior(self):
         """``beta ~ N(0, 1)`` and ``y ~ N(beta x, 1)`` give ``beta | y ~ N(xᵀy / (1 + xᵀx), 1 / (1 + xᵀx))``.
 
-        The covariate is curried and the response conditioned in one call; the
+        The covariate is bound and the response conditioned in one call; the
         fit runs nutpie, or PyMC's NUTS without it, for a few seconds.
         """
         x = np.linspace(-1.0, 1.0, 6)

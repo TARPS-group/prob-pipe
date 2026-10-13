@@ -213,7 +213,7 @@ def _compile_for_nutpie(model: Any, data: Any) -> tuple[Any, Any | None]:
     from ..families._programs import StanModel, _StanPosterior, _to_numpy
 
     if isinstance(model, StanModel) and isinstance(data, dict):
-        # Binding a Stan program's data curries it to the posterior.
+        # Binding a Stan program's data gives the posterior.
         model, data = model._condition_on(data), None
     if isinstance(model, _StanPosterior):
         import nutpie

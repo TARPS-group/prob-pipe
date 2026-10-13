@@ -57,7 +57,7 @@ def _total(values: Mapping[str, Any]) -> Any:
 class NormalKernel(ConditionalDistribution):
     """``K(given, ·) = Normal(loc(given), 1)``, a law over the kernel's own whole-term event.
 
-    Binding some of the given slots curries to the kernel over the rest, which
+    Binding some of the given slots returns the kernel over the rest, which
     keeps the values bound so far.
     """
 
@@ -330,11 +330,11 @@ class TestOptionalSlots:
             rtol=1e-6,
         )
 
-    def test_binding_only_an_optional_slot_of_a_conditional_joint_curries_it(self):
+    def test_binding_only_an_optional_slot_of_a_conditional_joint_leaves_a_kernel(self):
         joint = self._scaled() * Normal("c", 0.0, 1.0)
-        curried = joint._condition_on({"scale": 3.0})
-        assert isinstance(curried, FactoredConditionalDistribution)
-        assert curried.given_spec.required == ("mu",)
+        rest = joint._condition_on({"scale": 3.0})
+        assert isinstance(rest, FactoredConditionalDistribution)
+        assert rest.given_spec.required == ("mu",)
 
     def test_a_conditional_joint_requires_its_required_slots(self):
         joint = self._scaled() * Normal("c", 0.0, 1.0)
