@@ -954,7 +954,7 @@ class StanModel(
 
     @property
     def data(self) -> Mapping[str, Any]:
-        """The data-block variables bound at construction or by currying."""
+        """The data-block variables bound at construction or by ``condition_on``."""
         return MappingProxyType(self._data)
 
     def _condition_on(
@@ -1282,8 +1282,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     argument that the function passes as an observed variable's ``observed``
     value is an event field, and an observed variable's shape is the one the
     build without its data gives. Any other argument is a given slot, so a
-    model with covariates constructs the kernel over them, whose curried law is
-    a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
+    model with covariates constructs the kernel over them, whose law at given
+    covariates is a ``PyMCModel``. It claims sampling, which draws from the prior predictive,
     and a normalized density. A model with a potential or an improper prior
     claims the unnormalized density alone, since its prior predictive does not
     draw from its law. Conditioning on observed values is Bayes' rule, which the

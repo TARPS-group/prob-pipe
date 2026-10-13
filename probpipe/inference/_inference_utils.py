@@ -304,13 +304,13 @@ def observed_target(model: Any, observed: Any) -> Any:
     A model with no data, and an object that is not a law, is its own target.
     Data keyed by the model's given slots and fields form the exact stage of
     ``condition_on`` (VI.6): a kernel binds the slots its data name first, as
-    currying does, and the data of the fields it produces then form the
+    the ``bind_given_slots`` route does, and the data of the fields it produces then form the
     unnormalized conditional of the result, whose joint and given values a
-    method reads back. A law that currying leaves unnormalized, with no data
+    method reads back. A law that binding leaves unnormalized, with no data
     left, is the target itself. Data that name no field, such as one array for
     a whole program, form the unnormalized conditional of the model at those
     data, from which :func:`observed_parts` reads them back, and so do data
-    that only curry a kernel to a normalized law, which no method normalizes.
+    that only bind a kernel to a normalized law, which no method normalizes.
     """
     if observed is None or not isinstance(model, (Distribution, ConditionalDistribution)):
         return model

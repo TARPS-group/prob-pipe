@@ -30,6 +30,8 @@ The `convert` operation is on [Conversion](conversion.md), the inference methods
 
 ::: probpipe.variance
 
+::: probpipe.standard_deviation
+
 ::: probpipe.cov
 
 ::: probpipe.quantile

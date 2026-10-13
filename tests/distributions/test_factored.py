@@ -5,7 +5,7 @@ rest from them. Its event declaration is an exposed record over the factors'
 components; sampling and the densities are the intersection of the factors'
 capabilities; the moments are present exactly when an edge-free joint's factors
 all have them; and the marginal is exact per path, by the factor graph. A
-conditional joint curries by binding its givens in every factor that names them.
+conditional joint binds its givens in every factor that names them.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def _exp_x(values: Mapping[str, Any]) -> Any:
 class NormalKernel(ConditionalDistribution):
     """``K(given, ·) = Normal(loc(given), scale)``, a law over the kernel's own whole-term event.
 
-    Binding some of the given slots curries to the kernel over the rest, which
+    Binding some of the given slots returns the kernel over the rest, which
     keeps the values bound so far.
     """
 
@@ -1172,19 +1172,19 @@ class TestConditioning:
         bound = joint._condition_on({"sigma": 1.0})
         assert isinstance(bound, FactoredDistribution)
         assert list(bound.event_spec.components) == ["y", "beta"]
-        curried, kept = bound.factors
+        kernel, kept = bound.factors
         assert kept is prior
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["beta"]
+        assert isinstance(kernel, ConditionalDistribution)
+        assert list(kernel.given_spec) == ["beta"]
 
-    def test_binding_some_givens_curries_to_a_smaller_conditional_joint(self):
+    def test_binding_some_givens_returns_a_smaller_conditional_joint(self):
         kernel = NormalKernel("k", {"s1": SCALAR, "s2": SCALAR}, OutputSpec(a=SCALAR))
         bound = (kernel * _law("other", "b"))._condition_on({"s1": 1.0})
         assert isinstance(bound, FactoredConditionalDistribution)
         assert list(bound.given_spec) == ["s2"]
         assert list(bound.event_spec.components) == ["a", "b"]
 
-    def test_currying_then_binding_the_rest_equals_binding_at_once(self):
+    def test_binding_in_two_steps_equals_binding_at_once(self):
         kernel = NormalKernel("k", {"s1": SCALAR, "s2": SCALAR}, OutputSpec(a=SCALAR))
         joint = kernel * _law("other", "b")
         stepwise = joint._condition_on({"s1": 1.0})._condition_on({"s2": 2.0})
@@ -1579,7 +1579,7 @@ class TestRoundTrips:
         joint = make()
         _assert_same_joint(copy.copy(joint), joint)
 
-    def test_a_restored_conditional_joint_still_curries(self):
+    def test_a_restored_conditional_joint_still_binds_some_givens(self):
         _, _, joint = _sigma_model()
         bound = pickle.loads(pickle.dumps(joint))._condition_on({"sigma": 1.0})
         assert isinstance(bound, FactoredDistribution)

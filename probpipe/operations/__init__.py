@@ -24,6 +24,7 @@ from ._moments import (
     expectation,
     mean,
     quantile,
+    standard_deviation,
     variance,
 )
 from ._operation import (
@@ -69,6 +70,7 @@ __all__ = [
     "random_log_prob",
     "random_unnormalized_log_prob",
     "sample",
+    "standard_deviation",
     "unnormalized_log_prob",
     "unnormalized_prob",
     "variance",

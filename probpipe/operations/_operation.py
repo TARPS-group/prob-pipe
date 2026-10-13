@@ -822,6 +822,47 @@ class _IdentityRoute(_Route):
         return self._declaration(*bound.args, **bound.kwargs)
 
 
+#: The instructions that load a module-level name, and those that load a closure's.
+_GLOBAL_LOADS = frozenset({"LOAD_GLOBAL", "LOAD_NAME"})
+_CLOSURE_LOADS = frozenset({"LOAD_DEREF"})
+
+
+def _named_operations(declaration: Callable[..., Any]) -> tuple[Operation, ...]:
+    """The operations *declaration*'s body loads by name, each once.
+
+    A loaded name counts when it is bound to an operation, or to a view of one,
+    in the declaration's module or in its closure, as ``variance`` is in
+    ``jnp.sqrt(variance.using(raw=True)(d))``. The functions nested in
+    the body count too. An attribute that shares an operation's name, as
+    ``mean`` in ``law.mean``, is not a load of it.
+    """
+    code = getattr(declaration, "__code__", None)
+    if code is None:
+        return ()
+    scope = getattr(declaration, "__globals__", {})
+    closure: dict[str, Any] = {}
+    for name, cell in zip(code.co_freevars, declaration.__closure__ or (), strict=False):
+        try:
+            closure[name] = cell.cell_contents
+        except ValueError:  # a cell not yet filled
+            continue
+    found: dict[int, Operation] = {}
+    pending = [code]
+    while pending:
+        current = pending.pop()
+        for instruction in dis.get_instructions(current):
+            if instruction.opname in _GLOBAL_LOADS:
+                value = scope.get(instruction.argval)
+            elif instruction.opname in _CLOSURE_LOADS:
+                value = closure.get(instruction.argval)
+            else:
+                continue
+            if isinstance(value, Operation):
+                found.setdefault(id(value), value)
+        pending += [const for const in current.co_consts if isinstance(const, type(code))]
+    return tuple(found.values())
+
+
 def _unchecked(route: Any) -> bool:
     """Whether *route* is a body route without an identity check, which ``exact_only`` excludes."""
     return isinstance(route, _IdentityRoute) and route.identity_check is None
@@ -1145,17 +1186,17 @@ class _GivenCandidate:
             return Feasibility(False, "the operand has no given values")
         if isinstance(subject.given, StandIn):
             return Feasibility(None, pending=("conditional delegation needs the given values",))
-        from ._condition import _CURRY, condition_on
+        from ._condition import _BIND_GIVEN_SLOTS, condition_on
 
         binding = BoundCall(
             condition_on,
             MappingProxyType({"d": subject.kernel, "given": subject.given}),
             call.controls,
         )
-        report = _CURRY.check(binding)
+        report = _BIND_GIVEN_SLOTS.check(binding)
         if report.feasible is not True:
             return report
-        exact = _CURRY.exact(binding)
+        exact = _BIND_GIVEN_SLOTS.exact(binding)
         if call.controls["exact_only"] and not exact:
             return Feasibility(
                 False,
@@ -1403,6 +1444,7 @@ class Operation(Function):
             set_attribute(self, "_roles", MappingProxyType(adapted_roles))
         set_attribute(self, "_derived", derived)
         set_attribute(self, "_identity", _identity_source(declaration) if derived else None)
+        set_attribute(self, "_body", declaration if derived else None)
         set_attribute(self, "_route_table", _RouteTable())
         set_attribute(self, "_label_rule", label)
         set_attribute(self, "_expression_rule", None)
@@ -2079,8 +2121,8 @@ class Operation(Function):
             return [_Candidate(route, None, index, method) for index, route in holders]
         raise ResolutionError(f"{self.label}: {self._unknown_method(method)}")
 
-    def _unknown_method(self, method: str) -> str:
-        """The message that no route or registry method is named *method*, with those that are."""
+    def _method_names(self) -> tuple[list[str], list[str]]:
+        """The names a ``method`` control can take: the routes, and the registry routes' methods."""
         routes = [route.name for route in self._route_table.routes]
         methods = list(
             dict.fromkeys(
@@ -2090,12 +2132,39 @@ class Operation(Function):
                 for name in route.registry.list_methods()
             )
         )
-        close = difflib.get_close_matches(method, routes + methods, n=1)
-        hint = f". Did you mean {close[0]!r}?" if close else ""
-        return (
-            f"unknown method {method!r}; available routes: {routes}, registry methods: "
-            f"{methods}{hint}"
+        return routes, methods
+
+    def _names_method(self, method: str) -> bool:
+        """Whether the plain name *method* names a route or a registry method of this operation."""
+        routes, methods = self._method_names()
+        return method in routes or method in methods
+
+    def _unknown_method(self, method: str) -> str:
+        """The message that no route or registry method is named *method*, with those that are.
+
+        A derived operation's message adds the fix when *method* names a route
+        or a method of an operation its body calls, since ``method`` is not
+        passed into the identity, whichever route realizes it.
+        """
+        routes, methods = self._method_names()
+        message = (
+            f"unknown method {method!r}; available routes: {routes}, registry methods: {methods}"
         )
+        constituents = _named_operations(self._body) if self._body is not None else ()
+        holders = [
+            constituent
+            for constituent in constituents
+            if constituent is not self and constituent._names_method(method)
+        ]
+        if holders:
+            names = " or ".join(holder.name for holder in holders)
+            calls = " or ".join(f"{holder.name}.using(method={method!r})" for holder in holders)
+            return (
+                f"{message}. {self.label} does not pass method on to {names}, so call "
+                f"{calls} to choose it"
+            )
+        close = difflib.get_close_matches(method, routes + methods, n=1)
+        return f"{message}. Did you mean {close[0]!r}?" if close else message
 
     # -- the summary ---------------------------------------------------------
 

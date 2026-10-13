@@ -76,6 +76,7 @@ _PROSE = {
     "VI.5": (
         "def mean(d): ...",
         "def variance(d): ...",
+        "def standard_deviation(d): ...",
         "def cov(d): ...",
         "def quantile(d, q): ...",
         "def expectation(d, f, fixed_args): ...",

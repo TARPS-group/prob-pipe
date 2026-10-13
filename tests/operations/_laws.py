@@ -295,7 +295,7 @@ def _given_values(given: Any) -> dict[str, Any]:
 class Kernel(ConditionalDistribution):
     """The kernel ``y | slots ~ Normal(offset + sum of the slots, 1)``, whose event is ``y``.
 
-    The component is fixed at construction, so a curried kernel and the law it
+    The component is fixed at construction, so a partly bound kernel and the law it
     returns keep it whatever the kernel's label becomes.
     """
 

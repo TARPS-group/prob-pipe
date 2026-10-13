@@ -216,6 +216,94 @@ class TestSupportCompatibility:
         assert _supports_compatible(interval(0, 1), interval(-1, 2))
         assert not _supports_compatible(interval(-1, 2), interval(0, 1))
 
+    def test_an_interval_against_the_unit_interval(self):
+        assert _supports_compatible(interval(0.0, 1.0), unit_interval)
+        assert _supports_compatible(unit_interval, interval(0.0, 1.0))
+        assert not _supports_compatible(interval(1.0, 3.0), unit_interval)
+
+    @pytest.mark.parametrize("container", [list, tuple])
+    @pytest.mark.parametrize(
+        ("low", "high", "forward", "reverse"),
+        [
+            ([0.0, 0.0], [1.0, 1.0], True, True),
+            ([0.1, 0.2], [0.8, 0.9], True, False),
+            ([-1.0, 0.0], [1.0, 2.0], False, True),
+        ],
+        ids=["equal", "narrower", "wider"],
+    )
+    def test_sequence_bounds_against_the_unit_interval(
+        self, container, low, high, forward, reverse
+    ):
+        low, high = container(low), container(high)
+        source = interval(low, high)
+        assert _supports_compatible(source, unit_interval) is forward
+        assert _supports_compatible(unit_interval, source) is reverse
+        assert source.low is low and source.high is high
+
+    @pytest.mark.parametrize("source_container", [list, tuple])
+    @pytest.mark.parametrize("target_container", [list, tuple])
+    def test_sequence_bounds_compare_each_coordinate(self, source_container, target_container):
+        source = interval(source_container([1.0, 2.0]), source_container([4.0, 5.0]))
+        wider = interval(target_container([0.0, 1.0]), target_container([6.0, 7.0]))
+        partial = interval(target_container([0.0, 3.0]), target_container([6.0, 7.0]))
+        assert _supports_compatible(source, wider)
+        assert not _supports_compatible(wider, source)
+        assert not _supports_compatible(source, partial)
+        assert not _supports_compatible(partial, source)
+
+    def test_scalar_bound_precision_is_preserved(self):
+        source = interval(0.0, 1.0 + 1e-12)
+        # These bounds differ in Python precision but round to the same float32 value.
+        assert not _supports_compatible(source, unit_interval)
+        assert _supports_compatible(unit_interval, source)
+
+    def test_a_half_line_against_a_shifted_half_line(self):
+        assert _supports_compatible(greater_than(1.0), positive)
+        assert not _supports_compatible(positive, greater_than(1.0))
+        assert not _supports_compatible(non_negative, greater_than(1.0))
+        assert _supports_compatible(positive, greater_than(0.0))
+
+    @pytest.mark.parametrize("container", [list, tuple])
+    @pytest.mark.parametrize(
+        ("bounds", "forward", "reverse"),
+        [([0.0, 0.0], True, True), ([1.0, 2.0], True, False), ([-1.0, 1.0], False, False)],
+        ids=["equal", "narrower", "overlapping"],
+    )
+    def test_sequence_bounds_against_the_positive_half_line(
+        self, container, bounds, forward, reverse
+    ):
+        bounds = container(bounds)
+        source = greater_than(bounds)
+        assert _supports_compatible(source, positive) is forward
+        assert _supports_compatible(positive, source) is reverse
+        assert source.lower_bound is bounds
+
+    def test_the_real_line_against_a_bounded_interval(self):
+        assert not _supports_compatible(real, interval(0.0, 1.0))
+        assert not _supports_compatible(real, greater_than(0.0))
+        assert not _supports_compatible(greater_than(-1.0), positive)
+
+    def test_a_traced_bound_is_compatible(self):
+        """A bound that is a traced value cannot be compared, so the test is conservative."""
+
+        @jax.jit
+        def compatible(low):
+            return jnp.asarray(_supports_compatible(interval(low, 1.0), unit_interval))
+
+        assert bool(compatible(2.0))
+
+    @pytest.mark.parametrize("container", [list, tuple])
+    def test_traced_sequence_bounds_are_compatible(self, container):
+        @jax.jit
+        def compatible(low):
+            return jnp.asarray(
+                _supports_compatible(
+                    interval(container([low, 0.0]), container([1.0, 1.0])), unit_interval
+                )
+            )
+
+        assert bool(compatible(2.0))
+
     def test_interval_subset_array_bounds(self):
         # Per-dim bounds: each source dim must lie within the
         # corresponding target dim.

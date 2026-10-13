@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the mean's route is chosen only when the call runs. Under `exact_only` both
   steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
   that an exact rule built raises `ResolutionError` naming `mean`.
+- **`condition_on`'s route that binds given slots is named
+  `bind_given_slots`,** in place of `curry`. The route binds the given slots of
+  a `ConditionalDistribution` and runs no inference; a `check` report, a
+  result's provenance, and an error message now name it, as in
+  `bind_given_slots/nutpie_nuts`, and `method="curry"` no longer selects it.
 - **On `closed_form`, `expectation` passes a record atom to the integrand as a
   `Record`,** as the evaluation rules pass a record draw, where it passed the
   nested `dict` of the atom's raw leaves. The integrand's open parameter is
@@ -1480,6 +1485,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`standard_deviation(d)` returns the standard deviation of a law, the square
+  root of its variance in each coordinate.** A record law's standard deviation
+  is a record with a field per component, as `standard_deviation(mu)`, so
+  `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
+  `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
+  function's is its pointwise standard deviation function, and the result is
+  labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
+  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
+  pass to `variance`.
+- **A derived operation's `method` error names the operation that has the
+  route.** `standard_deviation.using(method="monte_carlo")` raises
+  `ResolutionError` saying that `standard_deviation` does not pass `method` on
+  to `variance` and to call `variance.using(method='monte_carlo')`, and
+  `expectation` names `mean` the same way.
 - **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
   The map receives one draw at a time whatever its parameter's annotation, so
   a statistic annotated `Distribution` over a random measure receives each
@@ -3451,6 +3470,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
   The approximate converters read a SciPy source through the same law, so
   their fits and draws follow the location and scale too.
+- **A moment-matched fit refuses a family whose fixed support differs from
+  the source's.** The subset test on supports used to accept a pair it did not
+  compare, such as `interval(1.0, 3.0)` against `unit_interval`, and accepted
+  `positive` as a subset of `greater_than(1.0)`.
+  So `convert(scipy.stats.beta(2, 3, loc=1, scale=2), Beta)` fit a `Beta` on
+  `[0, 1]` with mean about 0.001 to a law on `[1, 3]` with mean 1.8.
+  Two intervals of the reals now compare by their bounds, so the `moment_match`
+  check reports such a fit infeasible, as for `scipy.stats.gamma(2, loc=1)`
+  to `Gamma` or `Normal`, and `convert` raises `ResolutionError` when no
+  other converter applies.
+  List and tuple bounds compare element-wise, as array bounds do, so a law
+  declared on `interval([0, 0], [1, 1])` can be fit by `Beta`.
+  The converter option `check_support=False` still fits the family on its own
+  support.
+  The same comparison checks a law a `Function` returns against the support its
+  output spec declares, so a returned `Uniform` on `[0, 2]` fails a declared
+  `unit_interval`.
+  The support refusals of `moment_match` at check and at fit read alike, and
+  each names the converter option `check_support=False`.
 - **A SciPy distribution without a family declares the dtype of its draws**:
   JAX's default integer dtype for a discrete distribution, such as
   `scipy.stats.poisson`, and the default floating dtype otherwise, which is

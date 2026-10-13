@@ -65,8 +65,8 @@ class TestCompileForNutpie:
         assert pymc_build is None  # Stan target — no PyMC build to thread
 
     @pytest.mark.usefixtures("_stanc")
-    def test_a_stan_kernel_curries_to_its_posterior_at_the_data(self, tmp_path):
-        """A StanModel given its remaining data curries to the posterior first,
+    def test_binding_a_stan_kernels_data_gives_its_posterior(self, tmp_path):
+        """A StanModel given its remaining data gives the posterior first,
         whose data are the construction data and the conditioning data together."""
         from probpipe.families import StanModel
 

@@ -36,6 +36,7 @@ from probpipe import (
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
     SupportsConditionalUnnormalizedLogProb,
+    SupportsLogProb,
 )
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.operations._condition import condition_on as condition_on_operation
@@ -236,6 +237,25 @@ class TestSurrogateContract:
         np.testing.assert_allclose(
             float(law._log_prob(y_row)),
             float(_score(nle, jnp.array([0.4, -0.3]), y_row)),
+            rtol=1e-6,
+        )
+
+    @pytest.mark.parametrize("which", ["nle", "nre"])
+    def test_binding_some_parameters_returns_the_kernel_over_the_rest(self, which, request):
+        """Binding one parameter leaves a kernel over the other, whose law at it
+        scores as the law at both parameters bound at once."""
+        lik = request.getfixturevalue(which)
+        rest = lik._condition_on({"a": 0.4})
+        assert type(rest) is type(lik)
+        assert list(rest.given_spec) == ["b"]
+        assert list(lik.given_spec) == ["a", "b"]
+        y_row = jnp.array([0.6, -0.1])
+        in_steps = rest._condition_on({"b": -0.3})
+        at_once = lik._condition_on({"a": 0.4, "b": -0.3})
+        score = "_log_prob" if isinstance(at_once, SupportsLogProb) else "_unnormalized_log_prob"
+        np.testing.assert_allclose(
+            float(getattr(in_steps, score)(y_row)),
+            float(getattr(at_once, score)(y_row)),
             rtol=1e-6,
         )
 

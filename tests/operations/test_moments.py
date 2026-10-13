@@ -1,4 +1,4 @@
-"""Contract tests of the distribution functionals: mean, variance, cov, quantile, expectation."""
+"""Contract tests of the distribution functionals: the moments, quantile, and expectation."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import functools
 import inspect
 import math
 import operator
+import re
 from functools import partial
 from typing import Any
 
@@ -23,6 +24,7 @@ from probpipe import (
     NumericRecordBatch,
     Record,
     RecordSpec,
+    factor,
     replay_run,
     workflow_run,
 )
@@ -48,15 +50,18 @@ from probpipe.distributions._capabilities import (
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution
 from probpipe.distributions._empirical import EmpiricalDistribution
+from probpipe.families import GaussianProcess
 from probpipe.functions import _rules
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._moments import (
     _ByComponent,
+    _root,
     cov,
     expectation,
     mean,
     quantile,
+    standard_deviation,
     variance,
 )
 from probpipe.operations._pushforward import pushforward
@@ -345,6 +350,131 @@ class TestVariance:
     def test_a_measure_valued_event_has_no_variance(self):
         with pytest.raises(ApplicabilityError, match="event-typed variance"):
             variance(Measure("m"))
+
+
+def _scaled_rbf(X: jnp.ndarray, Y: jnp.ndarray) -> jnp.ndarray:
+    """The squared-exponential kernel with variance 4, so each point's standard deviation is 2."""
+    return 4.0 * jnp.exp(-0.5 * jnp.sum((X[:, None, :] - Y[None, :, :]) ** 2, axis=-1))
+
+
+class TestStandardDeviation:
+    """``standard_deviation`` is ``sqrt(variance(d))``, taken through the routes of ``variance``."""
+
+    def test_the_closed_form_is_the_square_root_of_the_variance(self):
+        result = standard_deviation(Gaussian("g", 0.0, 2.0))
+        assert isinstance(result, NumericArray)
+        assert result.label == "√𝕍[g ~ g]"
+        assert result.spec == NumericArraySpec((), jnp.float32, non_negative)
+        assert _value(result) == 2.0
+        metadata = result.provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("identity", True)
+
+    def test_check_takes_the_exactness_of_the_route_variance_selects(self):
+        report = standard_deviation.check(Gaussian("g"))
+        assert (report.route, report.exact) == ("identity", True)
+        assert report.result == OutputSpec(
+            **{"standard_deviation(g)": NumericArraySpec((), jnp.float32, non_negative)}
+        )
+        report = standard_deviation.check(Sampler("s"))
+        assert (report.route, report.exact) == ("identity", False)
+
+    def test_a_record_law_has_a_record_with_a_field_per_component(self):
+        result = standard_deviation(Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0))
+        assert isinstance(result, Record)
+        assert result.label == "√𝕍[(mu, tau) ~ mu·tau]"
+        assert result.fields == ("standard_deviation(mu)", "standard_deviation(tau)")
+        assert _value(result["standard_deviation(mu)"]) == 2.0
+        assert _value(result["standard_deviation(tau)"]) == 3.0
+        assert all(result.spec.children[field].support is non_negative for field in result.fields)
+
+    def test_exact_only_keeps_a_closed_form_variance(self):
+        result = standard_deviation.using(exact_only=True)(Gaussian("g", 0.0, 3.0))
+        assert _value(result) == 3.0
+
+    def test_exact_only_refuses_a_law_whose_variance_is_only_estimated(self):
+        with pytest.raises(ResolutionError, match="variance: no route applies with exact_only"):
+            standard_deviation.using(exact_only=True)(Sampler("s"))
+
+    def test_the_fallback_takes_the_calls_sample_count(self):
+        law = Sampler("s", 0.0, 2.0)
+        with workflow_run(seed=3):
+            estimate = standard_deviation.using(n_broadcast_samples=_DRAWS)(law)
+        assert law.shapes == [(_DRAWS,)]
+        assert estimate.provenance.metadata["exact"] is False
+        # Observed across seeds 0-5: errors of 0.005 to 0.027; the standard error is 0.022.
+        np.testing.assert_allclose(_value(estimate), 2.0, atol=0.07, rtol=0)
+
+    def test_the_fallback_takes_the_square_root_of_each_coordinate(self):
+        with workflow_run(seed=3):
+            estimate = standard_deviation.using(n_broadcast_samples=_DRAWS)(Vector("v"))
+        # Observed across seeds 0-5: errors up to 0.022 for the first coordinate
+        # and 0.023 for the second.
+        np.testing.assert_allclose(np.asarray(estimate), [1.0, 2.0], atol=0.06, rtol=0)
+
+    def test_a_dependent_joints_exact_component_keeps_its_closed_form(self):
+        """``mu ~ Normal(2, 1)`` and ``y = mu + 1``: each has standard deviation 1."""
+        with workflow_run(seed=3):
+            result = standard_deviation.using(n_broadcast_samples=_DRAWS)(_dependent_joint())
+        assert result.fields == ("standard_deviation(y)", "standard_deviation(mu)")
+        assert _value(result["standard_deviation(mu)"]) == 1.0
+        assert result.provenance.metadata["exact"] is False
+        # Observed across seeds 0-5: errors of 0.003 to 0.012 for ``y``.
+        np.testing.assert_allclose(_value(result["standard_deviation(y)"]), 1.0, atol=0.04, rtol=0)
+
+    def test_exact_only_takes_by_component_when_every_component_is_exact(self):
+        result = standard_deviation.using(exact_only=True)(_Coupled())
+        assert _value(result["standard_deviation(a)"]) == 1.0
+        assert _value(result["standard_deviation(b)"]) == 1.0
+        assert result.provenance.metadata["exact"] is True
+
+    def test_a_random_function_has_a_pointwise_standard_deviation_function(self):
+        law = GaussianProcess("f", lambda X: jnp.zeros(X.shape[0]), _scaled_rbf)
+        result = standard_deviation(law)
+        assert isinstance(result, Function)
+        assert result.label == "√𝕍[f ~ GaussianProcess]"
+        assert inspect.signature(result.raw()).parameters.keys() == {"X"}
+        points = jnp.linspace(0.0, 1.0, 3)[:, None]
+        np.testing.assert_allclose(np.asarray(result(points)), [2.0, 2.0, 2.0], rtol=1e-6)
+
+    @staticmethod
+    def _grouped() -> Any:
+        """``g`` groups ``mu ~ Normal(0, 2)`` and ``tau ~ Normal(1, 3)``."""
+        joint = Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0)
+        return joint.with_path_names({"mu": "g/mu", "tau": "g/tau"})
+
+    def test_a_record_valued_component_keeps_its_fields(self):
+        result = standard_deviation(self._grouped() * Gaussian("c", 5.0, 4.0))
+        assert result.label == "√𝕍[(g, c) ~ mu·tau·c]"
+        group = result.at_path("standard_deviation(g)")
+        assert group.fields == ("mu", "tau")
+        assert (_value(group["mu"]), _value(group["tau"])) == (2.0, 3.0)
+        assert _value(result["standard_deviation(c)"]) == 4.0
+
+    def test_a_whole_term_record_event_keeps_its_fields(self):
+        """A law over one record-valued term takes the term's fields, unrenamed."""
+        law = factor(self._grouped(), "g")
+        assert not law.event_spec.exposes_record
+        result = standard_deviation(law)
+        assert isinstance(result, Record) and result.fields == ("mu", "tau")
+        assert (_value(result["mu"]), _value(result["tau"])) == (2.0, 3.0)
+        assert tuple(standard_deviation.check(law).result.components) == ("standard_deviation(g)",)
+
+    def test_a_function_whose_signature_cannot_be_read_keeps_a_generic_one(self):
+        with pytest.raises(ValueError):
+            inspect.signature(max)
+        np.testing.assert_allclose(_root(max)(4.0, 9.0), 3.0)
+
+    def test_a_measure_valued_event_has_no_standard_deviation(self):
+        with pytest.raises(ApplicabilityError, match="event-typed variance"):
+            standard_deviation(Measure("m"))
+
+    def test_a_route_of_variance_is_chosen_on_variance(self):
+        message = (
+            "standard_deviation does not pass method on to variance, so call "
+            "variance.using(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            standard_deviation.using(method="monte_carlo")(Gaussian("g"))
 
 
 class TestCov:
@@ -872,6 +1002,14 @@ class TestByComponentPlanning:
 
 
 class TestExpectation:
+    def test_a_route_of_mean_is_chosen_on_mean(self):
+        message = (
+            "expectation does not pass method on to mean, so call "
+            "mean.using(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            expectation.using(method="monte_carlo")(Gaussian("g"), lambda x: x)
+
     def test_a_finite_support_law_takes_the_closed_form(self):
         law = Coin("c", 0.25)
         report = expectation.check(law, lambda x: 2.0 * x)

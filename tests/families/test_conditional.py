@@ -410,22 +410,22 @@ class TestTheLaw:
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
         np.testing.assert_allclose(law._variance(), jnp.full(4, 0.25), rtol=1e-6)
 
-    def test_binding_some_slots_curries(self, X, beta):
+    def test_binding_some_slots_returns_a_kernel_over_the_rest(self, X, beta):
         likelihood = glm_likelihood("y", GaussianFamily())
-        curried = likelihood._condition_on({"X": X})
-        assert isinstance(curried, ConditionalDistribution)
-        assert list(curried.given_spec) == ["beta", "dispersion"]
-        assert curried.given_spec["beta"].shape == (2,)
-        assert curried.event_spec.spec.shape == (4,)
-        law = curried._condition_on({"beta": beta, "dispersion": 0.5})
+        rest = likelihood._condition_on({"X": X})
+        assert isinstance(rest, ConditionalDistribution)
+        assert list(rest.given_spec) == ["beta", "dispersion"]
+        assert rest.given_spec["beta"].shape == (2,)
+        assert rest.event_spec.spec.shape == (4,)
+        law = rest._condition_on({"beta": beta, "dispersion": 0.5})
         np.testing.assert_allclose(law._mean(), X @ beta, rtol=1e-6)
 
     def test_binding_beta_first_binds_the_features(self, X, beta):
-        curried = glm_likelihood("y", BernoulliFamily())._condition_on({"beta": beta})
-        assert list(curried.given_spec) == ["X"]
-        assert curried.given_spec["X"].shape == ("obs", 2)
+        rest = glm_likelihood("y", BernoulliFamily())._condition_on({"beta": beta})
+        assert list(rest.given_spec) == ["X"]
+        assert rest.given_spec["X"].shape == ("obs", 2)
 
-    def test_currying_leaves_the_original_kernel_unchanged(self, X):
+    def test_binding_some_slots_leaves_the_original_kernel_unchanged(self, X):
         likelihood = glm_likelihood("y", BernoulliFamily())
         likelihood._condition_on({"X": X})
         assert list(likelihood.given_spec) == ["X", "beta"]
