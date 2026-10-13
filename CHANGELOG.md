@@ -3451,6 +3451,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
   The approximate converters read a SciPy source through the same law, so
   their fits and draws follow the location and scale too.
+- **A moment-matched fit refuses a family whose fixed support differs from
+  the source's.** The subset test on supports used to accept a pair it did not
+  compare, such as `interval(1.0, 3.0)` against `unit_interval`, and accepted
+  `positive` as a subset of `greater_than(1.0)`.
+  So `convert(scipy.stats.beta(2, 3, loc=1, scale=2), Beta)` fit a `Beta` on
+  `[0, 1]` with mean about 0.001 to a law on `[1, 3]` with mean 1.8.
+  Two intervals of the reals now compare by their bounds, so the `moment_match`
+  check reports such a fit infeasible, as for `scipy.stats.gamma(2, loc=1)`
+  to `Gamma` or `Normal`, and `convert` raises `ResolutionError` when no
+  other converter applies.
+  The converter option `check_support=False` still fits the family on its own
+  support.
+  The same comparison applies where a law is matched against a declared
+  support and where an argument's support is checked against a parameter's,
+  so a law on the real line fails a declared bounded interval there.
 - **A SciPy distribution without a family declares the dtype of its draws**:
   JAX's default integer dtype for a discrete distribution, such as
   `scipy.stats.poisson`, and the default floating dtype otherwise, which is

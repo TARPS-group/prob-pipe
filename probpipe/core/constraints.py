@@ -361,11 +361,34 @@ def _all_supersets() -> dict[type, set[type]]:
     return result
 
 
+def _real_bounds(constraint: Constraint) -> tuple[ArrayLike, ArrayLike] | None:
+    """The lower and upper bounds of an interval of the reals, or ``None`` for another support.
+
+    The real line, the half-lines, the unit interval, and the parameterized
+    intervals are each an interval of the reals, with an infinite bound where
+    it is unbounded.
+    """
+    if isinstance(constraint, _Real):
+        return -jnp.inf, jnp.inf
+    if isinstance(constraint, (_Positive, _NonNegative)):
+        return 0.0, jnp.inf
+    if isinstance(constraint, _UnitInterval):
+        return 0.0, 1.0
+    if isinstance(constraint, _Interval):
+        return constraint.low, constraint.high
+    if isinstance(constraint, _GreaterThan):
+        return constraint.lower_bound, jnp.inf
+    return None
+
+
 def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     """Check whether *source* support is a subset of *target* support.
 
-    Conservative: returns ``True`` when in doubt (e.g. for parameterized
-    constraints that can't be compared structurally).
+    The lattice decides between two supports it orders, such as ``positive``
+    below ``non_negative``. Two other intervals of the reals compare by their
+    bounds alone, element-wise for array-valued bounds. Conservative: returns
+    ``True`` when in doubt (e.g. for constraints that can't be compared
+    structurally, or bounds that are traced values).
     """
     # Fast path for identical instances; parameterized branches below
     # handle the equal-but-distinct case for array-valued bounds.
@@ -384,19 +407,14 @@ def _supports_compatible(source: Constraint, target: Constraint) -> bool:
     if source_type in supersets.get(target_type, set()):
         return False
 
-    # Parameterized constraints: interval/greater_than. Bounds may be
-    # array-valued (per-dim Uniform, TruncatedNormal, ...), so reduce
-    # element-wise comparisons with ``jnp.all``.
-    if isinstance(source, _Interval) and isinstance(target, _Interval):
-        return bool(jnp.all(source.low >= target.low)) and bool(jnp.all(source.high <= target.high))
-    if isinstance(source, _Interval) and isinstance(target, _Real):
-        return True
-    if isinstance(source, _GreaterThan) and isinstance(target, _GreaterThan):
-        return bool(jnp.all(source.lower_bound >= target.lower_bound))
-    if isinstance(source, _GreaterThan) and isinstance(target, _Real):
-        return True
-    if isinstance(source, (_Positive, _NonNegative)) and isinstance(target, _GreaterThan):
-        return True  # (0, inf) or [0, inf) ⊂ (lb, inf) when lb <= 0
+    source_bounds, target_bounds = _real_bounds(source), _real_bounds(target)
+    if source_bounds is not None and target_bounds is not None:
+        try:
+            return bool(jnp.all(source_bounds[0] >= target_bounds[0])) and bool(
+                jnp.all(source_bounds[1] <= target_bounds[1])
+            )
+        except jax.errors.ConcretizationTypeError:
+            return True
     if isinstance(source, _IntegerInterval) and isinstance(target, _IntegerInterval):
         return bool(jnp.all(source.low >= target.low)) and bool(jnp.all(source.high <= target.high))
     if isinstance(source, _IntegerInterval) and isinstance(target, (_NonNegativeInteger, _Real)):

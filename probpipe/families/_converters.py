@@ -1077,8 +1077,9 @@ class _MomentMatching(Converter):
             return ConversionInfo(
                 False,
                 description=(
-                    f"{target_type.__name__} is supported on {fixed}, but {planned.label!r} "
-                    f"declares the support {declared}; set the converter option "
+                    f"{target_type.__name__} is supported on {fixed}, but "
+                    f"{_label(source, planned.law, declaration)!r} "
+                    f"declares the support {declared}. Set the converter option "
                     f"check_support=False to fit it anyway"
                 ),
             )

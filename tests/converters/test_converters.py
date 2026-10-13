@@ -8,6 +8,7 @@ declaration and records the converter in the result's provenance.
 """
 
 import re
+from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
@@ -261,6 +262,64 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
         assert isinstance(
             converter_registry.convert(source, Exponential, check_support=False), Exponential
         )
+
+
+class TestASupportTheFamilyDoesNotShare:
+    """A fit keeps the source's declared support, so a family on another support is refused."""
+
+    @pytest.fixture(autouse=True)
+    def _check_scipy(self):
+        pytest.importorskip("scipy")
+
+    def test_a_shifted_scipy_beta_is_not_fit_by_a_beta(self):
+        import scipy.stats as ss
+
+        source = ss.beta(2.0, 3.0, loc=1.0, scale=2.0)
+        info = converter_registry.check(source, Beta)
+        assert info.feasible is False
+        assert "declares the support interval(1.0, 3.0)" in info.description
+        with pytest.raises(ResolutionError, match="check_support=False"):
+            converter_registry.convert(source, Beta)
+
+    def test_a_law_on_the_positive_half_line_is_not_fit_by_a_normal(self):
+        import scipy.stats as ss
+
+        info = converter_registry.check(ss.gamma(2.0, loc=1.0), Normal)
+        assert info.feasible is False
+        assert "declares the support greater_than(1.0)" in info.description
+
+    def test_a_shifted_half_line_is_not_fit_by_a_family_on_the_positive_half_line(self):
+        import scipy.stats as ss
+
+        info = converter_registry.check(ss.gamma(2.0, loc=1.0), Gamma)
+        assert info.feasible is False
+        assert "Gamma is supported on positive" in info.description
+
+    def test_the_check_refuses_without_drawing(self):
+        import scipy.stats as ss
+
+        with patch(
+            "probpipe.families._converters._draws",
+            side_effect=AssertionError("the check drew from the source"),
+        ):
+            info = converter_registry.check(ss.beta(2.0, 3.0, loc=1.0, scale=2.0), Beta)
+        assert info.feasible is False
+
+    def test_a_law_on_the_unit_interval_is_fit_by_a_beta(self):
+        source = Uniform("x", low=0.0, high=1.0)
+        info = converter_registry.check(source, Beta)
+        assert (info.feasible, info.method_name) == (True, "moment_match")
+        result = converter_registry.convert(source, Beta)
+        assert isinstance(result, Beta)
+        np.testing.assert_allclose(float(result._alpha), 1.0, rtol=1e-4)
+        np.testing.assert_allclose(float(result._beta), 1.0, rtol=1e-4)
+
+    def test_the_refusal_can_be_overridden(self):
+        import scipy.stats as ss
+
+        source = ss.beta(2.0, 3.0, loc=1.0, scale=2.0)
+        result = converter_registry.convert(source, Beta, check_support=False)
+        assert isinstance(result, Beta)
 
 
 class TestARecordSource:

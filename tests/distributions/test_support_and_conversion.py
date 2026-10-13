@@ -216,6 +216,22 @@ class TestSupportCompatibility:
         assert _supports_compatible(interval(0, 1), interval(-1, 2))
         assert not _supports_compatible(interval(-1, 2), interval(0, 1))
 
+    def test_an_interval_against_the_unit_interval(self):
+        assert _supports_compatible(interval(0.0, 1.0), unit_interval)
+        assert _supports_compatible(unit_interval, interval(0.0, 1.0))
+        assert not _supports_compatible(interval(1.0, 3.0), unit_interval)
+
+    def test_a_half_line_against_a_shifted_half_line(self):
+        assert _supports_compatible(greater_than(1.0), positive)
+        assert not _supports_compatible(positive, greater_than(1.0))
+        assert not _supports_compatible(non_negative, greater_than(1.0))
+        assert _supports_compatible(positive, greater_than(0.0))
+
+    def test_the_real_line_against_a_bounded_interval(self):
+        assert not _supports_compatible(real, interval(0.0, 1.0))
+        assert not _supports_compatible(real, greater_than(0.0))
+        assert not _supports_compatible(greater_than(-1.0), positive)
+
     def test_interval_subset_array_bounds(self):
         # Per-dim bounds: each source dim must lie within the
         # corresponding target dim.

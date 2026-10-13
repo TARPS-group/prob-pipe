@@ -190,8 +190,8 @@ class TestTheSupportCheck:
 
     def test_a_family_on_another_support_is_refused(self):
         refusal = (
-            "moment_match: Normal is supported on real, but 'tau' declares the support positive; "
-            "set the converter option check_support=False to fit it anyway"
+            "moment_match: Normal is supported on real, but 'tau' declares the support positive. "
+            "Set the converter option check_support=False to fit it anyway"
         )
         with pytest.raises(ResolutionError, match=re.escape(refusal)):
             convert(_tau(), Normal)
