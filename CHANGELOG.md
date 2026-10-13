@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`with_options` is renamed `using`.** `Function.using(**controls)` and
+  `Operation.using(**controls)` behave as `with_options` did.
+  Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
+  `condition_on.using(method="tfp_nuts")(model, data)`.
 - **A kernel's conditional methods must be pure.** A joint compiles the
   function of `conditional_distribution`, and the conditional methods of any
   `ConditionalDistribution`, when it draws or scores the kernel at many given
@@ -379,7 +383,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields of their names, and a kernel with one given slot, such as an amortized
   posterior's `observation`, takes the one observed field. Without `posterior`,
   each replication fits `model` with
-  `condition_on.with_options(method=method, method_options=method_options)`.
+  `condition_on.using(method=method, method_options=method_options)`.
   A `method` or `method_options` beside `posterior` raises `ValueError`. Each
   replication draws `num_posterior_draws` times from its posterior with
   `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
@@ -446,8 +450,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the workers no longer repeat one another's prior draws and simulations.
 
   Replace
-  `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
-  with `condition_on.with_options(method_options={"num_results": 500})(model, data)`
+  `condition_on.using(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.using(method_options={"num_results": 500})(model, data)`
   inside `workflow_run(seed=0)`, and
   `learn_amortized_posterior(prior, simulator, random_seed=0)` with
   `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
@@ -1029,11 +1033,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
-  `workflow.with_options(...)(...)` is the call-time override API for
+  `workflow.using(...)(...)` is the call-time override API for
   `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
-  ProbPipe controls; use `workflow.with_options(...)(...)` instead.
+  ProbPipe controls; use `workflow.using(...)(...)` instead.
 - **`Function.workflow_kind` and `Module.workflow_kind` now require
   `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
   and `None` are no longer accepted and now raise `TypeError`; use
@@ -1486,9 +1490,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
   pass to `variance`.
 - **A derived operation's `method` error names the operation that has the
-  route.** `standard_deviation.with_options(method="monte_carlo")` raises
+  route.** `standard_deviation.using(method="monte_carlo")` raises
   `ResolutionError` saying that `standard_deviation` does not pass `method` on
-  to `variance` and to call `variance.with_options(method='monte_carlo')`, and
+  to `variance` and to call `variance.using(method='monte_carlo')`, and
   `expectation` names `mean` the same way.
 - **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
   The map receives one draw at a time whatever its parameter's annotation, so
@@ -2492,7 +2496,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   differs from the one `monte_carlo` gave, since they are drawn through their
   view. A component whose summary is known to be undefined, such as the mean
   of a Cauchy root factor, now raises `MathematicalDomainError`, where the
-  fallback returned an estimate. `with_options(method="monte_carlo")` keeps the
+  fallback returned an estimate. `using(method="monte_carlo")` keeps the
   fallback.
 - **A law's fingerprint is computed once.** A distribution keeps its
   fingerprint in a memo that a copy or a pickle leaves out, so the views and
@@ -3435,7 +3439,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **A derived operation passes `exact_only` and `n_broadcast_samples` to the
-  functions its identity calls.** `prob.with_options(exact_only=True)(Normal("x",
+  functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
   density, because the `log_prob` that `prob` calls selects only exact routes.
   `exact_only` restricts the route selection of every operation and plain
@@ -3619,7 +3623,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bootstrap law checks its `level` by the same rule when it is constructed.
 - **`convert` fits a family on another support under `check_support=False`.**
   Passing the option as
-  `convert.with_options(method_options={"check_support": False})` raised
+  `convert.using(method_options={"check_support": False})` raised
   `ResultSchemaError` whenever the source declared a support, as converting a
   `Gamma` law to `Normal` did. The result now has the family's own support, as
   `converter_registry.convert(..., check_support=False)` returns it.
@@ -3629,7 +3633,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result recorded `method="pymc_nuts"`. It now passes `nuts_sampler="pymc"`.
 - **`pymc_nuts` and `pymc_advi` read the `progress_bar` method option.** They
   refused it with `TypeError`, so
-  `condition_on.with_options(method_options={"progress_bar": False})` on a
+  `condition_on.using(method_options={"progress_bar": False})` on a
   `PyMCModel` failed wherever `pymc_nuts` was selected, as it is without
   nutpie, and no option turned off PyMC's progress bars. Each now passes the
   option to PyMC as `progressbar`, `True` unless set, as `nutpie_nuts` does.

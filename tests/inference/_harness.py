@@ -95,7 +95,7 @@ class MethodProfile:
         Whether the method's draws converge to the posterior, which selects the
         contract it is held to.
     method_options : Mapping[str, Any]
-        The ``method_options`` control ``condition_on.with_options`` receives.
+        The ``method_options`` control ``condition_on.using`` receives.
     """
 
     representation: str
@@ -369,10 +369,10 @@ def assert_matches(
         Listing every comparison that fails.
     """
     posterior = independent_draws(posterior)
-    means = mean.with_options(raw=True)(posterior)
-    variances = variance.with_options(raw=True)(posterior)
+    means = mean.using(raw=True)(posterior)
+    variances = variance.using(raw=True)(posterior)
     levels = jnp.asarray(INTERVAL_LEVELS)
-    quantiles = quantile.with_options(raw=True)(posterior, levels)
+    quantiles = quantile.using(raw=True)(posterior, levels)
     comparisons = _Comparisons()
     for path, leaf in reference.leaves.items():
         shape = leaf.mean.shape
@@ -491,7 +491,7 @@ def validate_method(
             pytest.skip(f"{name} is not registered here, since its backend is not installed")
         case = canonical.case(case_name)
         model, data = _model_and_data(case, profile.representation, request)
-        view = condition_on.with_options(method=name, method_options=profile.method_options)
+        view = condition_on.using(method=name, method_options=profile.method_options)
         report = view.check(model, data)
         if report.feasible is not True:
             pytest.skip(f"{name} does not apply to {case_name}: {_skip_reason(report)}")
@@ -542,11 +542,11 @@ def calibration_ranks(
     rows = []
     for replication in range(replications):
         with workflow_run(seed=10_000 + replication):
-            joint_draw = sample.with_options(raw=True)(case.model)
+            joint_draw = sample.using(raw=True)(case.model)
         given = {name: joint_draw[name] for name in observed}
         view = condition_on
         if method is not None:
-            view = condition_on.with_options(method=method, method_options=method_options or {})
+            view = condition_on.using(method=method, method_options=method_options or {})
         with workflow_run(seed=replication):
             posterior = view(case.model, given)
         ranks = []

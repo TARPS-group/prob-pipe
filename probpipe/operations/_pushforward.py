@@ -358,7 +358,7 @@ def pushforward(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     ``Distribution`` receives draws. The draw is presented as V.5 presents one
     draw. The direct call ``f(d)`` instead passes the law whole to such a
     parameter. The evaluation rules realize the pushforward, and
-    ``with_options(method=...)`` names one, such as ``empirical_enumeration`` or
+    ``using(method=...)`` names one, such as ``empirical_enumeration`` or
     ``sampling_lift``.
 
     Parameters
@@ -436,7 +436,7 @@ def _draw_map(
         return f, parameter, dict(fixed)
     hint = f._signature_info.hints.get(parameter)
     direct = operation or hint is None or resolved_hint(hint) is not Any
-    target = f.with_options(exact_only=True) if direct and exact_only else f
+    target = f.using(exact_only=True) if direct and exact_only else f
     call = target if direct else f.apply
     constants = dict(fixed)
 
@@ -529,7 +529,7 @@ class _EvaluationRules(_RegistryRoute):
         forwarded.update(exact_only=exact_only, include_inputs=False)
         if method is not None:
             forwarded["method"] = method
-        return _call_at(mapped.with_options(**forwarded), mapped, parameter, d, fixed)
+        return _call_at(mapped.using(**forwarded), mapped, parameter, d, fixed)
 
 
 pushforward.register_route(_EvaluationRules())

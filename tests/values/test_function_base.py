@@ -685,7 +685,7 @@ class TestFunctionDeclarations:
             output_spec=OutputSpec(value=OpaqueSpec()),
             label="value",
         )
-        view = wrapped.with_options(dispatch="thread", max_workers=2)
+        view = wrapped.using(dispatch="thread", max_workers=2)
         assert view.options["dispatch"] == "thread"
         assert wrapped.options["dispatch"] == "auto"
         assert view.spec is wrapped.spec
@@ -825,7 +825,7 @@ class TestLiftedNames:
         )
         if renamed is not None:
             wrapped = wrapped.with_label(renamed)
-        result = wrapped.with_options(dispatch=dispatch)(rows)
+        result = wrapped.using(dispatch=dispatch)(rows)
         assert isinstance(result, OpaqueBatch)
         assert result.label == "outs"
         assert result.level_names == ("rows",)
@@ -1105,7 +1105,7 @@ class TestCompletedOutputDeclarations:
             label="f",
         )
         with workflow_run(seed=4):
-            joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
+            joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         assert joint.label == "result"
         assert tuple(joint.event_spec.components) == ("x", "component")
         column = joint._rows["component/component" if kind == "record_hole" else "component"]

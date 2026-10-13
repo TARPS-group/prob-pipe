@@ -1107,7 +1107,7 @@ def standard_deviation(d: Distribution):
     ``by_component`` route, and its Monte Carlo fallback. ``exact_only`` and
     ``n_broadcast_samples`` set on this operation pass to ``variance``, but
     ``method`` does not, so a route of ``variance`` is chosen on
-    ``variance.with_options(method=...)``.
+    ``variance.using(method=...)``.
 
     Parameters
     ----------
@@ -1132,7 +1132,7 @@ def standard_deviation(d: Distribution):
     MathematicalDomainError
         If the variance of *d* is known to be undefined, as a Cauchy law's is.
     """
-    return _square_root(variance.with_options(raw=True)(d), d.event_spec)
+    return _square_root(variance.using(raw=True)(d), d.event_spec)
 
 
 @operation(result=_cov_result, conditions=(_numeric_event,))
@@ -1189,7 +1189,7 @@ def quantile(d: Distribution, q: Any):
     are the law's closed form, ``closed_form``; ``by_component``,
     which computes each component of a record event by the route that
     component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
-    which ``with_options(method=...)`` selects among. The fallback's quantile
+    which ``using(method=...)`` selects among. The fallback's quantile
     at a level ``q`` is the generalized
     inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
     an empirical law's is.
@@ -1315,7 +1315,7 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     annotation, on every route. A law claiming ``SupportsExpectation`` computes
     the expectation in closed form, and otherwise the route ``pushforward_mean``
     builds the pushforward by an evaluation rule, which
-    ``with_options(method=...)`` names, and takes its mean. Under ``exact_only``
+    ``using(method=...)`` names, and takes its mean. Under ``exact_only``
     both steps are restricted to exact routes.
 
     Parameters

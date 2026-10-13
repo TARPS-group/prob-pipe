@@ -463,7 +463,7 @@ class TestOptionalSlots:
         y = jnp.array([1.0, 2.0, 0.5, 1.5, 2.5])
         budget = {"num_results": 500, "num_warmup": 500, "num_chains": 2}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(method="blackjax_nuts", method_options=budget)(
+            posterior = condition_on.using(method="blackjax_nuts", method_options=budget)(
                 kernel * Normal("mu", 0.0, 1.0), {"y": y}
             )
         assert list(posterior.event_spec.components) == ["mu"]

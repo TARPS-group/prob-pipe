@@ -291,7 +291,7 @@ class TestArgumentBinding:
 
 
 class TestCallOptions:
-    def test_with_options_controls_broadcast_execution(
+    def test_using_controls_broadcast_execution(
         self,
         identity_func,
         normal_dist,
@@ -305,7 +305,7 @@ class TestCallOptions:
         )
 
         with workflow_run(seed=42):
-            result = wf.with_options(
+            result = wf.using(
                 n_broadcast_samples=6,
                 include_inputs=True,
             )(normal_dist)

@@ -683,7 +683,7 @@ class TestCallerJaxTrace:
 
     def test_an_inference_method_that_jits_its_chains_draws(self):
         prior = Normal("mu", 0.0, 1.0)
-        likelihood = condition_on.with_options(
+        likelihood = condition_on.using(
             method="blackjax_rwmh",
             method_options={"num_results": 20, "num_warmup": 10},
         )

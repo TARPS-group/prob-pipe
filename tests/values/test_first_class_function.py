@@ -1355,7 +1355,7 @@ class TestSymbolicCalls:
         )
 
         with workflow_run(seed=3):
-            joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
+            joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         laws = joint._rows["function"]
 
         assert joint.event_spec.components["function"] == DistributionSpec(
@@ -1764,7 +1764,7 @@ class TestVariadicPlanning:
         )
 
         with workflow_run(seed=11):
-            result = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1), 2.0)
+            result = wrapped.using(include_inputs=True)(Normal("x", 0, 1), 2.0)
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
