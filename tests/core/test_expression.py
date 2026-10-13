@@ -526,7 +526,7 @@ class TestTheWarningFiresWhenATermIsShown:
 
         probpipe.notation_config.max_depth = 1
         with workflow_run(seed=0):
-            law = f.with_options(n_broadcast_samples=4)(_prior())
+            law = f.using(n_broadcast_samples=4)(_prior())
         probpipe.notation_config.max_depth = 8
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -538,7 +538,7 @@ class TestTheWarningFiresWhenATermIsShown:
             return mu + 1.0
 
         with workflow_run(seed=0):
-            law = f.with_options(n_broadcast_samples=4)(_prior())
+            law = f.using(n_broadcast_samples=4)(_prior())
         probpipe.notation_config.max_depth = 1
         with warnings.catch_warnings():
             warnings.simplefilter("error")

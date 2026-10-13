@@ -88,7 +88,7 @@ prediction = predict_impl(theta, x)
 # output component: mean; the inferred return is an array, not a record
 ```
 
-A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call handler**, which is the base's one extension point: on the base it is plain evaluation, and the engine layer (Part V) replaces it once, at import. The base also carries its **controls** (V.2), set at construction and revised functionally by `with_options`; the engine alone interprets them, at call time.
+A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call handler**, which is the base's one extension point: on the base it is plain evaluation, and the engine layer (Part V) replaces it once, at import. The base also carries its **controls** (V.2), set at construction and revised functionally by `using`; the engine alone interprets them, at call time.
 
 A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable.
 
@@ -116,7 +116,7 @@ class Function(TrackedTerm):
     def output_label(self) -> str: ...                             # the results' alias, else the label; outside spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
-    def with_options(self, **controls) -> Self: ...      # functional update
+    def using(self, **controls) -> Self: ...             # functional update
     def apply(self, *args, **kwargs) -> Any: ...
     # evaluate the wrapped callable at a point (input_spec -> output_spec),
     # with no tracking or lifting; the raw map operations build on
@@ -441,7 +441,7 @@ class NumericDistribution(Distribution):   # the event spec is a NumericSpec
 
 **Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path` that holds a reference to its parent. A selection of several paths is one `FieldView`, whose `path` is the tuple of the selected paths. A view displays as the detached marginal at its path does: it is labeled as `marginal` labels that marginal (VI.8), its signature is its own components (II.4), and it holds the paths its parent holds fixed. So `prior["beta"]` is labeled `prior` and exports the component `beta`, `model["y"]` displays as `model(y)`, and `model["mu"]` at the factor `prior` displays as `prior(mu)`. A view of the whole events of several factors displays factor by factor, as `a(a)·b(b)`, and a view at one factor holds the paths that factor holds fixed before its parent's. The view `post["mu"]` of a posterior `post = condition_on(model, {"y": data})` over `mu` and `tau` displays as `model(mu; y)`. The repr names the class `FieldView` and the path, which distinguishes a view from the detached marginal. A view of a view and the marginal of a view are labeled by the parent's factors whose whole events their paths select, and otherwise by the view's label. The capabilities a view offers are derived from its parent's (III.8). Two selected paths with the same final segment raise `ValueError`, as a colliding rename does (II.6), and so does an empty selection, from indexing and from `_marginal` alike. On a view, `with_dim_sizes` and `with_dim_names` apply to the parent and return the view of the result at the same path, since the view's declaration is the parent's schema at that path and a schema is one dimension scope (II.1).
 
-**The flat-vector law.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`, with the map specialized to `d.event_spec.spec` and carrying an explicitly named array output declaration. Its inverse reconstructs that original event, including singleton and nested record packaging. The map claims the inverse and unit-Jacobian capabilities, so the change-of-variables rule preserves an available density (V.7). This changes the event space by a declared isomorphism; an ordinary representation conversion preserves the event declaration (IV.3). An inference method that works on ℝᵈ also applies the reparameterization of V.12.
+**The flat-vector law.** A numeric law's law over its coordinates is `pushforward(d, to_vector)`, with the map specialized to `d.event_spec.spec` and carrying an explicitly named array output declaration. Its inverse reconstructs that original event, including singleton and nested record packaging. The map claims the inverse and unit-Jacobian capabilities, so the change-of-variables rule preserves an available density (V.7). This changes the event space by a declared isomorphism; an ordinary representation conversion preserves the event declaration (IV.3). An inference method that works on ℝᵈ also applies the reparameterization of V.12.
 
 ```python
 class FieldView(Distribution):
@@ -527,7 +527,7 @@ class SupportsMarginals(Protocol):
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...   # the detached marginal of a field or field group
 ```
 
-Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` integrates an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a guard has only the law to inspect, and only a law exact for every integrand claims the capability. The exact expectation of a structured map is computed through `evaluate`, which dispatches on the map's type (VI.5). A law of finite support, such as an empirical law, computes `_expectation(f)` by evaluating `f` at every atom, in one vectorized call when `f` traces, as `auto` dispatch does (V.9), and one atom at a time otherwise.
+Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_expectation` integrates an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a guard has only the law to inspect, and only a law exact for every integrand claims the capability. The exact expectation of a structured map is computed through the evaluation rules of `pushforward`, which dispatch on the map's type (VI.5). A law of finite support, such as an empirical law, computes `_expectation(f)` by evaluating `f` at every atom, in one vectorized call when `f` traces, as `auto` dispatch does (V.9), and one atom at a time otherwise.
 
 `d._marginal(p)` returns a law labeled as `marginal(d, p)` is (VI.8) and declared as the view `d[p]` is (III.7), and at a selection its fields follow the order of the paths.
 

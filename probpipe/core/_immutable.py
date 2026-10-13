@@ -20,7 +20,7 @@ itself.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Hashable, Iterator
 from contextlib import contextmanager
 from typing import Any, ClassVar
 
@@ -100,7 +100,7 @@ def constructing(instance: Any) -> Iterator[Any]:
             del registry[key]
 
 
-def transient_memo(host: Any) -> dict[str, Any]:
+def transient_memo(host: Any) -> dict[Hashable, Any]:
     """The host's ``_memo`` dictionary, created if it has none.
 
     Parameters

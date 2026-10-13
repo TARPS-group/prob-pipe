@@ -1218,7 +1218,7 @@ class TestEndToEndValuesPipeline:
             lambda params: tfd.Independent(tfd.Normal(params, 1.0), 1),
         )
         with workflow_run(seed=42):
-            return condition_on.with_options(
+            return condition_on.using(
                 method_options={
                     "num_results": 500,
                     "num_warmup": 200,

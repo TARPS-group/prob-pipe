@@ -149,12 +149,12 @@ class TestConvert:
         assert isinstance(convert(_Source("s"), _Target), _Target)
 
     def test_method_selects_a_converter(self, suite_converters):
-        view = convert.with_options(method="operations_suite_approximate_converter")
+        view = convert.using(method="operations_suite_approximate_converter")
         assert view.check(_Source("s"), _Target).exact is False
 
     def test_exact_only_refuses_an_approximate_converter(self, suite_converters):
         with pytest.raises(ResolutionError):
-            convert.with_options(exact_only=True)(_Source("s"), _RoughTarget)
+            convert.using(exact_only=True)(_Source("s"), _RoughTarget)
 
     def test_a_converter_that_changes_the_declaration_raises_value_error(self, suite_converters):
         with pytest.raises(ValueError, match="fields"):
@@ -198,11 +198,11 @@ class TestTheSupportCheck:
 
     @pytest.mark.parametrize("options", [{}, {"check_support": True}])
     def test_with_the_check_on_the_planned_support_is_the_source_support(self, options):
-        report = convert.with_options(method_options=options).check(_tau(), LogNormal)
+        report = convert.using(method_options=options).check(_tau(), LogNormal)
         assert report.result == OutputSpec(DistributionSpec(_tau().event_spec))
 
     def test_the_override_fits_the_family_on_its_own_support(self):
-        fitted = convert.with_options(method_options={"check_support": False})(_tau(), Normal)
+        fitted = convert.using(method_options={"check_support": False})(_tau(), Normal)
         assert isinstance(fitted, Normal)
         assert fitted.label == "tau"
         assert fitted.support == real
@@ -215,7 +215,7 @@ class TestTheSupportCheck:
 
     def test_the_override_leaves_the_planned_support_open(self):
         declared = _tau().event_spec.spec
-        report = convert.with_options(method_options={"check_support": False}).check(_tau(), Normal)
+        report = convert.using(method_options={"check_support": False}).check(_tau(), Normal)
         assert report.result == OutputSpec(
             DistributionSpec(OutputSpec(tau=NumericArraySpec(declared.shape, declared.dtype)))
         )
@@ -224,7 +224,7 @@ class TestTheSupportCheck:
         source = EmpiricalDistribution(jnp.array([0.0, 1.0, 2.0, 3.0]), component="x")
         with pytest.raises(ValueError, match="its atoms lie outside that support"):
             convert(source, Exponential)
-        fitted = convert.with_options(method_options={"check_support": False})(source, Exponential)
+        fitted = convert.using(method_options={"check_support": False})(source, Exponential)
         assert isinstance(fitted, Exponential)
         # The fit's mean is the atoms' mean of 1.5.
         np.testing.assert_allclose(float(mean(fitted)), 1.5, rtol=1e-6)

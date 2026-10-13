@@ -3,9 +3,10 @@
 A lifted application, which is the direct call ``f(d)`` or ``f(batch)``,
 resolves among **evaluation rules**: the methods of a binary dispatch registry
 keyed on the map's type and the operand's type. The engine consults the
-registry, the ``evaluate`` operation exposes it, and the families register
-their rules into it at import, so a pair with a closed form or a fused batched
-routine takes it while every other pair resolves through a floor.
+registry, the ``pushforward`` operation exposes its rules on laws, and the
+families register their rules into it at import, so a pair with a closed form
+or a fused batched routine takes it while every other pair resolves through a
+floor.
 
 Three rules are registered here:
 
@@ -118,7 +119,7 @@ def _run_by_name(
     bound = _binding.values_to_bound_arguments(
         f.signature, _call_values(operand, parameter, fixed_args)
     )
-    return f.with_options(**forwarded, method=rule)(*bound.args, **bound.kwargs)
+    return f.using(**forwarded, method=rule)(*bound.args, **bound.kwargs)
 
 
 class _Floor(BinaryDispatchMethod):

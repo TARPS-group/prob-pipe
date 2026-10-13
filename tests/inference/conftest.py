@@ -70,7 +70,7 @@ def conjugate_nuts_posterior(
     """A well-mixed NUTS fit of the conjugate model — the method under validation."""
     m = conjugate_linear_model
     with workflow_run(seed=0):
-        return condition_on.with_options(
+        return condition_on.using(
             method="blackjax_nuts",
             method_options={"num_results": 3000, "num_warmup": 1500, "num_chains": 2},
         )(m.model, {"y": m.data})
@@ -128,7 +128,7 @@ def beta_bernoulli_nuts_posterior(
     """A NUTS fit of the constrained, skewed Beta-Bernoulli posterior."""
     m = beta_bernoulli_model
     with workflow_run(seed=0):
-        return condition_on.with_options(
+        return condition_on.using(
             method="blackjax_nuts",
             method_options={"num_results": 2000, "num_warmup": 1000, "num_chains": 2},
         )(m.model, {"y": m.data})

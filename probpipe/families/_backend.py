@@ -25,14 +25,18 @@ import contextlib
 import contextvars
 import functools
 import inspect
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
 from typing import Any, ClassVar
 
 import jax
 import jax.numpy as jnp
+import numpy as np
+import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from ..core._array_backend import _read_only
+from ..core._compilation import compiled_or_eager
+from ..core._immutable import transient_memo
 from ..core._repr import format_value
 from ..core._specs import NumericArraySpec, OutputSpec
 from ..core.constraints import Constraint
@@ -92,6 +96,115 @@ def _allow_batched_tfp_init() -> Generator[None, None, None]:
 
 
 # ---------------------------------------------------------------------------
+# Compiled calls of the backend
+# ---------------------------------------------------------------------------
+#
+# Called eagerly, a backend whose sampler loops, such as the rejection sampler
+# of a Beta, Gamma, or Poisson, builds a new loop body on every call, so XLA
+# compiles the loop again each time. Each call therefore goes through one
+# module-level jitted function that takes the backend as an argument. A backend
+# is a pytree whose leaves are its parameters, so JAX keys the compiled program
+# by the backend's class, its parameter shapes and dtypes, and the static
+# arguments, and a law with new parameter values of the same shapes reuses it.
+# Within an enclosing transformation, such as a user's ``jax.vmap`` or an MCMC
+# scan, the jitted function is transformed with it and compiles as part of the
+# enclosing program.
+
+
+def _eager_sample(backend: tfd.Distribution, key: PRNGKey, sample_shape: tuple[int, ...]) -> Array:
+    """Draws of *backend*, with *sample_shape* leading."""
+    return backend.sample(seed=key, sample_shape=sample_shape)
+
+
+def _eager_log_prob(backend: tfd.Distribution, value: Array) -> Array:
+    """The normalized log-density of *backend* at *value*."""
+    return backend.log_prob(value)
+
+
+def _eager_quantile(backend: tfd.Distribution, q: Array, event_rank: int) -> Array:
+    """The quantile of each coordinate of *backend* at the probabilities *q*, the axes of *q* leading."""
+    return _coordinates(backend).quantile(jnp.reshape(q, q.shape + (1,) * event_rank))
+
+
+_sample_program = jax.jit(_eager_sample, static_argnums=2)
+_log_prob_program = jax.jit(_eager_log_prob)
+_quantile_program = jax.jit(_eager_quantile, static_argnums=2)
+
+
+def _parameter_values(value: Any) -> Iterator[Any]:
+    """The values in *value*, a parameter of a backend, with lists, tuples, and dicts opened."""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _parameter_values(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _parameter_values(item)
+    else:
+        yield value
+
+
+def _compilable(backend: tfd.Distribution) -> bool:
+    """Whether *backend*, and each distribution and bijector it is built from, is TFP's own and validates nothing.
+
+    A class TFP defines is a pytree that rebuilds from its parameters, and its
+    methods compute from them alone, so a compiled call computes what an eager
+    call computes. Three kinds of part can depend on more than the parameters,
+    so a backend holding one runs eagerly:
+
+    1. a class a user writes, which may keep state outside its parameters or
+       draw with NumPy's generator, and a trace fixes both at their first
+       values;
+    2. a function among the parameters, such as the model of a
+       ``JointDistributionSequential``, which builds parts that the walk
+       cannot inspect;
+    3. a part built with ``validate_args=True``, whose checks of argument
+       values run in Python and are skipped by a trace.
+
+    A class among the parameters, such as a ``dtype``, is not a function.
+    """
+    pending: list[Any] = [backend]
+    while pending:
+        part = pending.pop()
+        if not type(part).__module__.startswith("tensorflow_probability."):
+            return False
+        if getattr(part, "validate_args", False):
+            return False
+        for value in _parameter_values(list(getattr(part, "parameters", {}).values())):
+            if isinstance(value, (tfd.Distribution, tfb.Bijector)):
+                pending.append(value)
+            elif callable(value) and not isinstance(value, type):
+                return False
+    return True
+
+
+def _compiled(
+    law: TFPDistribution,
+    method: str,
+    program: Callable[..., Array],
+    eager: Callable[..., Array],
+    *arguments: Any,
+) -> Array:
+    """*program* at the backend of *law* and *arguments*, or *eager* when the backend runs eagerly.
+
+    A backend that :func:`_compilable` refuses runs *eager*. Otherwise
+    :func:`~probpipe.core._compilation.compiled_or_eager` runs *program* and
+    records in the law's memo, under *method*, a program that does not trace.
+    The record belongs to the law, since a law has one backend.
+    """
+    memo = transient_memo(law)
+    if "compilable" not in memo:
+        memo["compilable"] = _compilable(law._tfp_dist)
+    if not memo["compilable"]:
+        return eager(law._tfp_dist, *arguments)
+    return compiled_or_eager(memo, ("untraced", method), program, eager, law._tfp_dist, *arguments)
+
+
+def _sample_shape(sample_shape: Any) -> tuple[int, ...]:
+    """*sample_shape* as a tuple of Python integers, which a compiled program takes as static."""
+    return tuple(int(n) for n in np.ravel(sample_shape))
+
+
+# ---------------------------------------------------------------------------
 # The capabilities a backend computes
 # ---------------------------------------------------------------------------
 
@@ -138,10 +251,11 @@ def _backend_cov(self: TFPDistribution) -> LinOp:
 
 def _backend_quantile(self: TFPDistribution, q: ArrayLike) -> Array:
     """The quantile of each coordinate at the levels *q*, of shape ``(*q.shape, *event_shape)``."""
-    coordinates = _coordinates(self._tfp_dist)
-    levels = jnp.asarray(q, dtype=coordinates.dtype)
+    probabilities = jnp.asarray(q, dtype=_coordinates(self._tfp_dist).dtype)
     event_rank = len(self.event_spec.spec.shape)
-    return coordinates.quantile(jnp.reshape(levels, levels.shape + (1,) * event_rank))
+    return _compiled(
+        self, "quantile", _quantile_program, _eager_quantile, probabilities, event_rank
+    )
 
 
 #: The method that realizes each capability a family's backend may compute, by name.
@@ -338,11 +452,13 @@ class TFPDistribution(NumericDistribution, SupportsSampling, SupportsLogProb):
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
         """Draws of the backend, with *sample_shape* leading."""
-        return self._tfp_dist.sample(seed=key, sample_shape=sample_shape)
+        return _compiled(
+            self, "sample", _sample_program, _eager_sample, key, _sample_shape(sample_shape)
+        )
 
     def _log_prob(self, value: ArrayLike) -> Array:
         """The backend's normalized log-density, keeping the leading axes of *value*."""
-        return self._tfp_dist.log_prob(jnp.asarray(value))
+        return _compiled(self, "log_prob", _log_prob_program, _eager_log_prob, jnp.asarray(value))
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The arguments the family's constructor was called with, other than the component, the label, and the declaration.

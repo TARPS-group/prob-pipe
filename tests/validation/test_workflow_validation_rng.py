@@ -148,7 +148,7 @@ class _FakeConditionOn:
         self.observations.append(np.asarray(given["y"]))
         return EmpiricalDistribution(jnp.zeros((4, 1)), component="beta")
 
-    def with_options(self, *, method=None, method_options=None):
+    def using(self, *, method=None, method_options=None):
         def fit(d, given):
             self.seeds.append(integer_seed(run_seed("fake")))
             return self(d, given)
@@ -241,7 +241,7 @@ class TestSimulationBasedCalibrationBroker:
             label="posterior",
         )
         with workflow_run(seed=7):
-            first_draw = sample.with_options(raw=True)(self._model(), sample_shape=(3,))
+            first_draw = sample.using(raw=True)(self._model(), sample_shape=(3,))
 
         for posterior in (None, kernel):
             fake_condition_on.observations.clear()
@@ -481,12 +481,12 @@ class TestPosteriorScoreBroker:
         argument = jnp.ones(2) if transform is jax.vmap else 1.0
         law = Normal("z", 0.0, 1.0)
         with workflow_run(seed=7):
-            expected = sample.with_options(raw=True)(law)
+            expected = sample.using(raw=True)(law)
         with workflow_run(seed=7):
             for _ in range(2):
                 with pytest.raises(RuntimeError, match="'score-posterior' operation"):
                     transformed(argument)
-            actual = sample.with_options(raw=True)(law)
+            actual = sample.using(raw=True)(law)
 
         np.testing.assert_array_equal(actual, expected)
 

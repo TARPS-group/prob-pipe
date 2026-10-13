@@ -76,7 +76,7 @@ class TestInferenceMethodRegistry:
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_rwmh",
                 method_options={"num_results": 50, "num_warmup": 20},
             )(simple_model, data)
@@ -85,21 +85,21 @@ class TestInferenceMethodRegistry:
     def test_condition_on_default(self, simple_model, data):
         """Default condition_on should work through the registry."""
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
-                method_options={"num_results": 50, "num_warmup": 20}
-            )(simple_model, data)
+            posterior = condition_on.using(method_options={"num_results": 50, "num_warmup": 20})(
+                simple_model, data
+            )
         assert mean(posterior)["mean(beta)"].shape == (2,)
 
     def test_exact_only_refuses_every_inference_method(self, simple_model, data):
         """Every registered method is approximate, so an exact-only call resolves to nothing."""
         with pytest.raises(ResolutionError):
-            condition_on.with_options(exact_only=True)(simple_model, data)
+            condition_on.using(exact_only=True)(simple_model, data)
         with pytest.raises(ResolutionError):
-            condition_on.with_options(method="blackjax_nuts", exact_only=True)(simple_model, data)
+            condition_on.using(method="blackjax_nuts", exact_only=True)(simple_model, data)
 
     def test_nonexistent_method_raises(self, simple_model, data):
         with pytest.raises(ResolutionError, match="nonexistent"):
-            condition_on.with_options(method="nonexistent")(simple_model, data)
+            condition_on.using(method="nonexistent")(simple_model, data)
 
     def test_infeasible_method_raises(self):
         """Requesting a method that can't handle the dist raises ResolutionError."""
@@ -196,7 +196,7 @@ class TestDefaultBudget:
     def test_an_mcmc_method_runs_four_chains_by_default(self, simple_model, data, method):
         """A fit that sets no chain count runs four chains, so it has an R-hat."""
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method=method,
                 method_options={"num_results": 20, "num_warmup": 20},
             )(simple_model, data)
@@ -289,9 +289,9 @@ class TestUnnormalizedLogProbInference:
     def test_converting_an_unnormalized_law_runs_nuts(self):
         dist = _make_unnormalized_distribution()
         with workflow_run(seed=0):
-            posterior = convert.with_options(
-                method_options={"num_results": 200, "num_warmup": 100}
-            )(dist, EmpiricalDistribution)
+            posterior = convert.using(method_options={"num_results": 200, "num_warmup": 100})(
+                dist, EmpiricalDistribution
+            )
         assert isinstance(posterior, EmpiricalDistribution)
         # Standard normal: posterior mean ~0, std ~1 (loose tolerance —
         # short chain, no thinning). Observed across four workflow seeds:
@@ -303,7 +303,7 @@ class TestUnnormalizedLogProbInference:
     def test_converting_an_unnormalized_law_runs_rwmh(self):
         dist = _make_unnormalized_distribution()
         with workflow_run(seed=0):
-            posterior = convert.with_options(
+            posterior = convert.using(
                 method="blackjax_rwmh",
                 method_options={
                     "num_results": 2000,
@@ -533,7 +533,7 @@ class TestTargets:
         from probpipe.operations._condition import condition_on as condition_on_operation
 
         simulator = Normal("theta", 0.0, 1.0) * Normal("y", 0.0, 1.0)
-        target = condition_on_operation.with_options(method="unnormalized")(
+        target = condition_on_operation.using(method="unnormalized")(
             _WithoutDensity(simulator), {"y": 0.3}
         )
         info = inference_method_registry.get_method("blackjax_nuts").check(target)

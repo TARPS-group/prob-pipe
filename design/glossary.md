@@ -11,7 +11,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **component**: a named part of the interface that an `OutputSpec` declares for one produced term, which is the whole term under one name or each field of an exposed record (II.2). The components of a `MixtureDistribution` are its component laws (VII.3).
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event declaration; a converter is the registered method that carries one out (IV.3).
 - **declaration**: static information an object states before any computation, such as a spec, a claimed capability, or a method's exactness (II.7). In particular, an `InputSpec` declares a map-like kind's input slots, an `OutputSpec` declares the components of one produced term, and a law's event declaration is the `OutputSpec` of a draw (II.2, III.7).
-- **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` or `expectation(d, f) = mean(evaluate(f, d))` (VI.0, VI.4, VI.5).
+- **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` or `expectation(d, f) = mean(pushforward(d, f))` (VI.0, VI.4, VI.5).
 - **description**: the expression a term derives at construction, from its declared fields, its callable's name, or its operands, which its label renders when the caller gives no alias. A term that JAX rebuilds from its leaves has none and displays `<no description>` (II.4).
 - **element**: one object of a batch, at one position of its batch axes (II.5). The scalar values of an array are its entries.
 - **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule, an integration rule, or the sampling lift (V.7).
@@ -38,6 +38,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **packaging**: whether a declaration exposes a record's fields as its components or names one whole term, which the two forms of `OutputSpec` decide (II.2).
 - **path**: a `/`-joined sequence of names that addresses one node of a named tree, either a field or an interior node (II.6); II.2 fixes the paths of a declaration. The occurrence path of a random event is its call's position in the workflow (V.8).
 - **provenance**: the record of how a tracked term was produced, which holds its operation, its tracked parents, its resolved controls, and its plain inputs (II.4).
+- **pushforward**: the law `f♯d` of `f(X)` for `X ~ d`, which the operation `pushforward(d, f)` computes by passing the map draws of `d` whatever its annotation; the direct call `f(d)` is a pushforward when the map's parameter takes draws (V.5, VI.1).
 - **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; `raw()` returns it (Part I, II.4).
 - **registry**: an extensible set of registered entries, discoverable through the registry catalog; a dispatch registry selects one of its methods for a call (II.7).
 - **route**: one implementation of an operation, with a `check`, an `execute`, and an exact flag, from a structural, capability, registry, or fallback source (VI.0).

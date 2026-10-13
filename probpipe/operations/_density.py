@@ -334,7 +334,7 @@ def prob(d: Distribution, value):
     ResolutionError
         If ``log_prob`` has no route for *d*.
     """
-    return jnp.exp(log_prob.with_options(raw=True)(d, value))
+    return jnp.exp(log_prob.using(raw=True)(d, value))
 
 
 @operation(result=_unnormalized_prob_result, identity_check=_unnormalized_log_prob_applies)
@@ -365,7 +365,7 @@ def unnormalized_prob(d: Distribution, value):
     ResolutionError
         If ``unnormalized_log_prob`` has no route for *d*.
     """
-    return jnp.exp(unnormalized_log_prob.with_options(raw=True)(d, value))
+    return jnp.exp(unnormalized_log_prob.using(raw=True)(d, value))
 
 
 @operation(result=_random_log_prob_result)
