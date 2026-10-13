@@ -29,6 +29,7 @@ from probpipe import (
     NumericRecordBatch,
     OpaqueSpec,
     OutputSpec,
+    Poisson,
     Record,
     RecordSpec,
     ResolutionError,
@@ -40,6 +41,7 @@ from probpipe import (
     SupportsSampling,
     SupportsUnnormalizedLogProb,
     SupportsVariance,
+    conditional_distribution,
 )
 from probpipe.core._dispatch import Feasibility
 from probpipe.distributions import (
@@ -71,6 +73,7 @@ from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.distributions._factored import _is_named, _SoleField
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._marginal import marginal as marginal_operation
+from tests._compilation import count_compilations
 from tests._fixed_paths import with_fixed_paths
 
 SCALAR = NumericArraySpec(())
@@ -1778,6 +1781,174 @@ class TestJointDensity:
         value = {"a": jnp.asarray(0.3), "b": jnp.asarray(-0.4)}
         expected = first._log_prob(value["a"]) + second._log_prob(value["b"])
         assert jnp.allclose((first * second)._log_prob(value), expected)
+
+
+def _counts_model() -> FactoredDistribution:
+    """A population path over 8 steps, written with ``lax.scan``, observed as Poisson counts."""
+    prior = Normal("r", 0.4, 0.05) * Normal("K", 100.0, 5.0)
+
+    @conditional_distribution(given_spec=prior.event_spec.spec, label="counts")
+    def counts(r, K, n0=20.0):
+        def step(n, _):
+            following = n * jnp.exp(r * (1.0 - n / K))
+            return following, following
+
+        _, path = jax.lax.scan(step, jnp.full((), n0, jnp.result_type(r)), None, length=8)
+        return Poisson("y", path)
+
+    return counts * prior
+
+
+def _offset_kernel(
+    kernel: type[NormalKernel], spec: Any, offset: Callable[[Any], Any], calls: list
+) -> NormalKernel:
+    """``y | beta, extra ~ Normal(beta + offset(extra), 1e-6)``, recording each call of its location."""
+
+    def location(values: Mapping[str, Any]) -> Any:
+        calls.append(values)
+        return values["beta"] + offset(values["extra"])
+
+    given = {"beta": SCALAR, "extra": spec}
+    return kernel("lik", given, OutputSpec(y=SCALAR), loc=location, scale=1e-6)
+
+
+class _Holder:
+    """A mutable object an unmet given holds."""
+
+    def __init__(self, values: list[float]) -> None:
+        self.values = values
+
+
+class TestCompiledFactorCalls:
+    """A joint maps a kernel over draws through one compiled program, which the kernel keeps."""
+
+    def test_a_warm_draw_compiles_nothing(self):
+        model = _counts_model()
+        keys = jax.random.split(jax.random.PRNGKey(0), 2)
+        model._sample(keys[0], (16,))
+        with count_compilations() as compiled:
+            model._sample(keys[1], (16,))
+        assert compiled.count == 0
+
+    def test_a_warm_density_of_a_batch_compiles_nothing(self):
+        model = _counts_model()
+        first, second = (
+            model._sample(key, (16,)) for key in jax.random.split(jax.random.PRNGKey(1))
+        )
+        model._log_prob(first)
+        with count_compilations() as compiled:
+            model._log_prob(second)
+        assert compiled.count == 0
+
+    def test_the_compiled_draws_and_densities_equal_the_uncompiled_ones(self):
+        model = _counts_model()
+        key = jax.random.PRNGKey(2)
+        draws = model._sample(key, (32,))
+        with jax.disable_jit():
+            uncompiled = model._sample(key, (32,))
+            uncompiled_scores = model._log_prob(draws)
+        # XLA's fusion changes the last float32 digit: observed across 6 seeds, at most a
+        # relative 1.5e-7, and every count equal. A count can change where a rate differs
+        # in its last digit, so most counts, not all, must agree.
+        assert np.mean(np.asarray(draws["y"]) == np.asarray(uncompiled["y"])) >= 0.95
+        for component in ("r", "K"):
+            np.testing.assert_allclose(draws[component], uncompiled[component], rtol=5e-7)
+        np.testing.assert_allclose(model._log_prob(draws), uncompiled_scores, rtol=5e-7)
+
+    @pytest.mark.parametrize("held", [float, jnp.asarray], ids=["number", "array"])
+    def test_each_draw_reads_the_unmet_given_of_its_own_call(self, held):
+        lik = SamplingKernel(
+            "lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR), scale=1e-6
+        )
+        joint = lik * _prior()
+        for sigma in (10.0, -3.0, 0.5):
+            draws = joint._conditional_sample({"sigma": held(sigma)}, jax.random.PRNGKey(3), (4,))
+            np.testing.assert_allclose(draws["y"], draws["beta"] + sigma, atol=1e-4)
+
+    @pytest.mark.parametrize("held", [float, jnp.asarray], ids=["number", "array"])
+    def test_a_new_unmet_given_does_not_trace_the_kernel_again(self, held):
+        calls: list = []
+        joint = _offset_kernel(SamplingKernel, SCALAR, lambda extra: extra, calls) * _prior()
+        joint._conditional_sample({"extra": held(1.0)}, jax.random.PRNGKey(4), (4,))
+        calls.clear()
+        draws = joint._conditional_sample({"extra": held(2.0)}, jax.random.PRNGKey(5), (4,))
+        assert calls == []
+        np.testing.assert_allclose(draws["y"], draws["beta"] + 2.0, atol=1e-4)
+
+    def test_a_string_given_is_a_constant_of_the_program(self):
+        calls: list = []
+        joint = _offset_kernel(SamplingKernel, OpaqueSpec(), len, calls) * _prior()
+        for tag in ("abc", "abcdef", "abc"):
+            draws = joint._conditional_sample({"extra": tag}, jax.random.PRNGKey(6), (4,))
+            np.testing.assert_allclose(draws["y"], draws["beta"] + len(tag), atol=1e-4)
+
+    def test_an_object_given_is_read_at_every_call(self):
+        calls: list = []
+        joint = _offset_kernel(SamplingKernel, OpaqueSpec(), lambda h: sum(h.values), calls)
+        joint = joint * _prior()
+        holder = _Holder([1.0, 2.0])
+        first = joint._conditional_sample({"extra": holder}, jax.random.PRNGKey(7), (4,))
+        holder.values = [10.0, 20.0]
+        second = joint._conditional_sample({"extra": holder}, jax.random.PRNGKey(7), (4,))
+        np.testing.assert_allclose(first["y"], first["beta"] + 3.0, atol=1e-4)
+        np.testing.assert_allclose(second["y"], second["beta"] + 30.0, atol=1e-4)
+
+    def test_a_copy_holding_other_values_draws_with_its_own(self):
+        prior = _prior()
+
+        @conditional_distribution(given_spec={"beta": SCALAR, "shift": SCALAR}, label="lik")
+        def lik(beta, shift):
+            return Normal("y", beta + shift, 1e-6)
+
+        (lik * prior)._conditional_sample({"shift": 0.0}, jax.random.PRNGKey(8), (4,))
+        shifted = lik._condition_on({"shift": jnp.asarray(5.0)})
+        draws = (shifted * prior)._sample(jax.random.PRNGKey(9), (4,))
+        np.testing.assert_allclose(draws["y"], draws["beta"] + 5.0, atol=1e-4)
+
+    @pytest.mark.parametrize(
+        "how",
+        [lambda term: pickle.loads(pickle.dumps(term)), copy.deepcopy],
+        ids=["pickle", "deepcopy"],
+    )
+    def test_a_joint_that_has_drawn_round_trips(self, how):
+        lik = SamplingKernel("lik", {"beta": SCALAR, "sigma": SCALAR}, OutputSpec(y=SCALAR))
+        joint = lik * _prior()
+        key = jax.random.PRNGKey(10)
+        draws = joint._conditional_sample({"sigma": 1.0}, key, (4,))
+        restored = how(joint)._conditional_sample({"sigma": 1.0}, key, (4,))
+        for component in draws:
+            np.testing.assert_array_equal(restored[component], draws[component])
+
+    @pytest.mark.parametrize(
+        "offset",
+        [float, lambda extra: jnp.sum(extra[extra > 0])],
+        ids=["python-number", "boolean-mask"],
+    )
+    def test_a_kernel_that_does_not_trace_draws_uncompiled_and_is_not_traced_again(self, offset):
+        calls: list = []
+        joint = _offset_kernel(SamplingKernel, SCALAR, offset, calls) * _prior()
+        first = joint._conditional_sample({"extra": jnp.asarray(2.0)}, jax.random.PRNGKey(11), (4,))
+        assert len(calls) == 2
+        second = joint._conditional_sample(
+            {"extra": jnp.asarray(3.0)}, jax.random.PRNGKey(11), (4,)
+        )
+        # The first call traces the kernel, which needs the value of the unmet given,
+        # then maps it without compiling; the second call maps it without compiling only.
+        assert len(calls) == 3
+        np.testing.assert_allclose(first["y"], first["beta"] + 2.0, atol=1e-4)
+        np.testing.assert_allclose(second["y"], second["beta"] + 3.0, atol=1e-4)
+
+    def test_a_kernel_density_that_does_not_trace_scores_uncompiled(self):
+        calls: list = []
+        joint = _offset_kernel(ScoringKernel, SCALAR, float, calls) * _prior()
+        values = {"y": jnp.array([0.3, 1.2]), "beta": jnp.array([-0.2, 0.4])}
+        scores = joint._conditional_log_prob({"extra": jnp.asarray(0.5)}, values)
+        joint._conditional_log_prob({"extra": jnp.asarray(0.5)}, values)
+        assert len(calls) == 3
+        expected = norm.logpdf(values["y"], values["beta"] + 0.5, 1e-6) + norm.logpdf(
+            values["beta"]
+        )
+        np.testing.assert_allclose(scores, expected, rtol=1e-5)
 
 
 class TestFusedGiven:

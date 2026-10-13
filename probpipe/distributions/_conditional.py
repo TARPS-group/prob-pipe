@@ -528,6 +528,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
 
+    #: The memo of values computed from the kernel on demand, such as the
+    #: compiled programs of a joint that maps it over draws, which a copy or a
+    #: pickle leaves out. A program calls the kernel it was built for, so a copy
+    #: that holds other bound values must build its own.
+    _transient_state = ("_memo",)
+
     #: Where the constructor takes the component of a whole-term event, which the
     #: repr follows, as for a law.
     _repr_component: ClassVar[str | None] = "first"
@@ -1589,6 +1595,21 @@ def conditional_distribution(
         returned law exposes a record or has more than one component, if
         *event_spec* names other components or another packaging than the
         returned law, or if its type does not unify with the law's.
+
+    Notes
+    -----
+    The function must be pure: the law it returns is determined by its
+    arguments, and it has no side effect that matters. A joint that draws or
+    scores the kernel at many given values compiles the function, vectorized
+    over those values, once for each structure of its inputs, and reuses the
+    compiled program on later calls. A global the function reads, such as
+    ``sigma`` above, is therefore read when the program is compiled, and a later
+    change to it is not seen until the kernel is built again. A family's checks
+    of its parameter values do not run inside the compiled program, so an
+    invalid parameter gives draws and densities, such as ``nan``, rather than
+    an error. A function that does
+    not compile with its unmet givens traced, such as one that converts a given
+    to a Python number, runs without compiling.
     """
     if isinstance(fn, str):
         raise TypeError(label_given_first("conditional_distribution", "function", fn))

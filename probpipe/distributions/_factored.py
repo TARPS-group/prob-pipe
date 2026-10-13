@@ -13,10 +13,12 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.scipy.linalg import block_diag
 
 from ..core._dispatch import Feasibility, ResolutionError
@@ -26,6 +28,7 @@ from ..core._expression import (
     Selected,
     joined_labels,
 )
+from ..core._immutable import transient_memo
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -735,6 +738,120 @@ def _factor_given(
     }
 
 
+#: The kernel method a joint maps over the draws of a factor's givens to draw the factor.
+_DRAW = "_conditional_sample"
+
+
+def _is_numeric_leaf(leaf: Any) -> bool:
+    """Whether *leaf* is a numeric array or a Python number other than a ``bool``."""
+    if isinstance(leaf, jax.Array):
+        return True
+    if isinstance(leaf, (np.ndarray, np.generic)):
+        return leaf.dtype != object
+    return isinstance(leaf, (int, float, complex)) and not isinstance(leaf, bool)
+
+
+def _is_constant(value: Any) -> bool:
+    """Whether *value* is a string, ``None``, a ``bool``, or a tuple of them, which compare equal only when they are the same value."""
+    if isinstance(value, tuple):
+        return all(_is_constant(item) for item in value)
+    return value is None or isinstance(value, (str, bool))
+
+
+def _split_fixed(
+    fixed: Mapping[str, Any],
+) -> tuple[dict[str, Any], tuple[tuple[str, Any], ...]] | None:
+    """The unmet givens in *fixed* a compiled call takes as arguments, and those it takes as constants.
+
+    Returns ``None`` when an unmet given is neither, and the call then runs
+    eagerly. A value whose leaves are numeric arrays or Python numbers is an
+    argument, so a new value of the same shape reuses the program. A string,
+    ``None``, a ``bool``, or a tuple of them is a constant: it is part of the
+    program's identity, and a new value compiles a new program. Any other
+    value, such as an object whose state may change between calls, is neither,
+    since a program would keep the state it had when it was traced.
+    """
+    arguments: dict[str, Any] = {}
+    constants: list[tuple[str, Any]] = []
+    for slot, value in fixed.items():
+        if all(_is_numeric_leaf(leaf) for leaf in jax.tree.leaves(value)):
+            arguments[slot] = value
+        elif _is_constant(value):
+            constants.append((slot, value))
+        else:
+            return None
+    return arguments, tuple(constants)
+
+
+def _at_each_given(
+    factor: ConditionalDistribution,
+    method: str,
+    fixed: Mapping[str, Any],
+    count: int,
+    values: Mapping[str, Any],
+    points: Any,
+) -> Any:
+    """*factor*'s *method* at each of the *count* values along the leading axis of *values*, stacked.
+
+    The *i*-th call binds the factor's givens to the *i*-th entry of *values*
+    and to the unmet givens in *fixed*, and takes the *i*-th entry of *points*:
+    a key when *method* draws, and the factor's part of the joint's value when
+    *method* is a density.
+
+    A call whose givens are numeric runs one compiled program: the factor's
+    method vectorized with ``jax.vmap`` and compiled with ``jax.jit``. The
+    program takes the draws, the keys or the events, and the unmet givens
+    that :func:`_split_fixed` makes arguments, so a later call with new values
+    of the same shapes compiles nothing. The factor's memo holds the program.
+    The program calls the factor it was built for, so a copy of the factor,
+    which may hold other bound values, builds its own.
+
+    The program is traced once for each structure of its inputs, so the
+    factor's method is taken to be pure: a global it reads is read when the
+    program is traced, and a Python side effect, such as a warning, happens at
+    the trace only. A check that a family runs on a concrete parameter value
+    does not run on a value computed in the program, which includes a value
+    computed from an unmet given or a constant of the function.
+
+    The call vectorizes the method with ``jax.vmap`` without compiling it when
+    :func:`_split_fixed` returns ``None``, or when the program raises and the
+    uncompiled call succeeds, as for a method that converts an unmet given to
+    a Python number. In the second case the factor records that the program
+    does not trace, and later calls skip the attempt. When a given is not
+    numeric, the method is called on one value at a time.
+    """
+    fixed = {slot: fixed[slot] for slot in factor.given_spec if slot in fixed}
+    tail = ((),) if method == _DRAW else ()
+
+    def one(fixed: Mapping[str, Any], values: Mapping[str, Any], point: Any) -> Any:
+        return getattr(factor, method)(_factor_given(factor, values, fixed), point, *tail)
+
+    if not _numeric_givens(factor, values):
+        return _each_value(partial(one, fixed), count, values, points, traceable=False)
+    split = _split_fixed(fixed)
+    memo = transient_memo(factor)
+    untraced = ("untraced", method)
+    if split is not None and untraced not in memo:
+        program = memo.get(("mapped", method))
+        if program is None:
+
+            def mapped(
+                arguments: dict[str, Any], constants: tuple, values: Any, points: Any
+            ) -> Any:
+                held = {**arguments, **dict(constants)}
+                return jax.vmap(partial(one, held))(values, points)
+
+            program = memo[("mapped", method)] = jax.jit(mapped, static_argnums=1)
+        try:
+            return program(*split, values, points)
+        except Exception:
+            pass
+        result = _each_value(partial(one, fixed), count, values, points, traceable=True)
+        memo[untraced] = True
+        return result
+    return _each_value(partial(one, fixed), count, values, points, traceable=True)
+
+
 def _conditional_draw(
     factor: ConditionalDistribution,
     drawn: Mapping[str, Any],
@@ -748,19 +865,16 @@ def _conditional_draw(
     those components, one given value per call, each call with its own key.
     """
     inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
-
-    def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return _factor_given(factor, values, fixed)
-
     if not inner or not sample_shape:
-        return factor._conditional_sample(given(inner), key, sample_shape)
+        return factor._conditional_sample(_factor_given(factor, inner, fixed), key, sample_shape)
     count = math.prod(sample_shape)
-    draws = _each_value(
-        lambda values, subkey: factor._conditional_sample(given(values), subkey, ()),
+    draws = _at_each_given(
+        factor,
+        _DRAW,
+        fixed,
         count,
         _flatten_draws(inner, sample_shape),
         jax.random.split(key, count),
-        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(draws, sample_shape)
 
@@ -791,19 +905,11 @@ def _conditional_score(
 ) -> Array:
     """*factor*'s density *method* at *event*, at the given the joint's components supply."""
     inner = {slot: components[slot] for slot in factor.given_spec if slot in graph.producers}
-
-    def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return _factor_given(factor, values, fixed)
-
-    density = getattr(factor, method)
     batch = _batch_axes(factor, inner, event)
     if not batch:
-        return density(given(inner), event)
-    scores = _each_value(
-        lambda values, one: density(given(values), one),
-        math.prod(batch),
-        *_flatten_draws((inner, event), batch),
-        traceable=_numeric_givens(factor, inner),
+        return getattr(factor, method)(_factor_given(factor, inner, fixed), event)
+    scores = _at_each_given(
+        factor, method, fixed, math.prod(batch), *_flatten_draws((inner, event), batch)
     )
     return _unflatten_draws(scores, batch)
 
