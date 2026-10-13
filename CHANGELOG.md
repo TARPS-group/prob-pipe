@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A kernel's conditional methods must be pure.** A joint compiles the
+  function of `conditional_distribution`, and the conditional methods of any
+  `ConditionalDistribution`, when it draws or scores the kernel at many given
+  values, and it keeps the compiled program. A call that reuses the program
+  computes with the values that the globals the function reads had when it
+  was compiled, while a call with new input shapes or a single given value
+  reads their current values. A warning the function issues is issued when a
+  program is compiled. A value that changes between calls belongs in a given
+  slot.
 - Remove the experimental `Node`, `Module`, `AbstractModule`,
   `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
   `Function` and `@function` no longer accept `module=`. Use ordinary callables
@@ -2403,23 +2412,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reuses. A joint draws and scores a conditional factor with numeric givens at
   all of its given draws through one compiled program, which the factor keeps
   and which takes new draws, keys, and numeric unmet givens without compiling
-  again. The details:
+  again.
   - **Speed:** a warm `sample(model, 50)` of the first tutorial's model drops
-    from about 1.3 s to about 0.01 s.
+    from about 1.2 s to about 0.005 s.
   - **Seeded results:** a compiled program fuses its arithmetic differently,
     which changes the last float32 digit of some draws and densities. A
     rejection sampler or a discrete family can then return a different value
     where a parameter differs in its last digit.
-  - **Purity:** the function of `conditional_distribution` must be pure. A
-    global it reads is read when the program is compiled, and a warning it
-    issues is issued once.
   - **Checks:** a family's checks of its parameter values do not run inside a
     conditional factor's compiled program, so an invalid parameter, such as a
     negative mixture weight, gives draws and densities, such as `nan`, rather
     than an error.
-  - **Fallback:** a backend a user subclasses or builds with
-    `validate_args=True`, and a factor that does not compile, such as one that
-    converts a given to a Python number, run without compiling.
+  - **Uncompiled calls:** a backend that holds a class a user writes, a
+    function such as the model of a `JointDistributionSequential`, or a part
+    built with `validate_args=True` runs uncompiled. So does a factor that does
+    not compile, such as one that converts a given to a Python number, for
+    calls with the same structure of unmet givens.
 - **A dependent joint's mean, variance, and quantiles take `by_component`
   rather than `monte_carlo`** when one of its components has an exact
   summary. The check of such a call lists `by_component (exact)` and
