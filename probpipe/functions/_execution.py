@@ -1,8 +1,10 @@
 """Function execution dispatch helpers.
 
 This private module owns ordered execution of plain call dictionaries.
-It deliberately knows nothing about ProbPipe value semantics; callers
-assemble inputs and interpret outputs outside this module.
+It knows nothing about ProbPipe value semantics: callers assemble inputs
+and interpret outputs outside this module. Each worker runs the work
+function under the caller's workflow frame and under the controls that a
+derived operation's identity passes down.
 """
 
 from __future__ import annotations
@@ -121,8 +123,8 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     if _context._workflow_side_effects_forbidden():
         return [request.func(**item.call_values()) for item in request.work_items]
     _broker._record_active_execution_contract(contract)
-    # A worker starts without the caller's context, so the function carries the
-    # controls a derived operation's identity passes down, as it carries the frame.
+    # A worker starts without the caller's context, so the work function carries
+    # the controls a derived operation's identity passes down.
     request = replace(request, func=_carrying_inherited_controls(request.func))
     parent_frame = _context._capture_active_workflow_frame()
     parent_broker = _broker._capture_active_broker()

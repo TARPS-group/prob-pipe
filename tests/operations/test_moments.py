@@ -1236,12 +1236,7 @@ class TestTheExactnessOfBothSteps:
         with pytest.raises(ResolutionError, match=r"^mean: no route applies with exact_only"):
             expectation.with_options(exact_only=True)(Gaussian("g"), lambda x: x)
 
-    def test_the_mean_draws_the_sample_count_the_call_sets(self, exact_to_sampler):
-        with workflow_run(seed=3):
-            expectation.with_options(n_broadcast_samples=33)(Gaussian("g"), lambda x: x)
-        assert exact_to_sampler.pushed.shapes == [(33,)]
-
-    def test_the_mean_draws_its_default_sample_count_otherwise(self, exact_to_sampler):
+    def test_the_mean_draws_its_own_count_when_the_call_sets_none(self, exact_to_sampler):
         with workflow_run(seed=3):
             expectation(Gaussian("g"), lambda x: x)
         assert exact_to_sampler.pushed.shapes == [(mean.options["n_broadcast_samples"],)]

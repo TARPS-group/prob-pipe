@@ -22,18 +22,19 @@ import pytest
 
 import probpipe.functions._broker as broker_mod
 from probpipe import (
+    Distribution,
+    DistributionBatch,
     EmpiricalDistribution,
     Function,
     Normal,
     OutputSpec,
+    ResolutionError,
     WorkflowKind,
+    mean,
     sample,
     workflow_run,
 )
-from probpipe.core._dispatch import ResolutionError
-from probpipe.distributions._batches import DistributionBatch
-from probpipe.distributions._distribution import Distribution
-from probpipe.operations import OperationRegistry, mean, operation
+from probpipe.operations import OperationRegistry, operation
 
 from ..operations._laws import Sampler
 

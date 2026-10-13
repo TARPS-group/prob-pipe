@@ -99,7 +99,6 @@ from ._operation import (
     _call_label,
     _DelegatingRoute,
     _install_expression_rule,
-    _passing_down,
     _subject_name,
     _workflow_draws,
     operation,
@@ -1149,9 +1148,9 @@ class _PushforwardMean(_EvaluationRules):
     """The identity of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
 
     The route runs ``pushforward``'s route and then ``mean`` on the law it
-    returns, so its method names are the evaluation rules'. Both steps run under
-    the ``exact_only`` and ``n_broadcast_samples`` that an identity passes to
-    the calls it makes (VI.0). It ranks once, as an identity: among the approximate routes, and under ``exact_only`` among the
+    returns, so its method names are the evaluation rules'. The engine runs both
+    steps in the scope of an identity (VI.0). The route ranks once, as an
+    identity: among the approximate routes, and under ``exact_only`` among the
     exact ones, with the rule and the mean both restricted to exact routes. The
     mean's route is chosen only once the law exists, so without ``exact_only``
     the probe reports the rule's exactness when it is approximate and leaves it
@@ -1189,9 +1188,8 @@ class _PushforwardMean(_EvaluationRules):
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
         """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
-        with _passing_down(call):
-            law = super().run(call, result, method=method, exact_only=exact_only)
-            averaged = mean(law)
+        law = super().run(call, result, method=method, exact_only=exact_only)
+        averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
         return RouteOutcome(averaged.raw(), exact)

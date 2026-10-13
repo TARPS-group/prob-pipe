@@ -188,7 +188,9 @@ def _no_route(
     """
     restriction = " with exact_only" if controls.get("exact_only") else ""
     if not probed:
-        return f"{label}: no route applies{restriction}; none is registered"
+        if restriction:
+            return f"{label}: no route applies with exact_only, because none of its routes is exact"
+        return f"{label}: no route applies, because none is registered"
     tried = "; ".join(
         f"{candidate.label}: {report.description or 'infeasible'}" for candidate, report in probed
     )

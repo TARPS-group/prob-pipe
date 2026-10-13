@@ -17,8 +17,8 @@ import inspect
 import keyword
 import os
 import warnings
-from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial, wraps
@@ -706,10 +706,10 @@ _DEFAULTED_BY_NONE = frozenset(
     {"n_broadcast_samples", "max_workers", "method", "conversions", "method_options"}
 )
 
-#: The controls a derived operation's identity passes to the Function calls it
-#: runs, or ``None`` outside an identity: ``exact_only``, and
-#: ``n_broadcast_samples``, which is ``None`` below the calls the identity makes
-#: directly.
+#: The controls that the Function calls of the current context inherit from a
+#: derived operation's identity, or ``None`` where they inherit none:
+#: ``exact_only``, and ``n_broadcast_samples``, which is ``None`` where the
+#: derived call sets no count and below the calls the scope makes.
 _INHERITED_CONTROLS: ContextVar[Mapping[str, Any] | None] = ContextVar(
     "probpipe_inherited_controls", default=None
 )
@@ -720,14 +720,33 @@ _EXACT_ONLY_BELOW: Mapping[str, Any] = MappingProxyType(
 )
 
 
+@contextmanager
+def _passing_down(*, exact_only: bool, n_broadcast_samples: int | None) -> Iterator[None]:
+    """A scope whose Function calls inherit *exact_only* and *n_broadcast_samples*.
+
+    :meth:`Function._inheriting` states how a call takes them. A scope that
+    passes neither leaves the context as it is.
+    """
+    if not exact_only and n_broadcast_samples is None:
+        yield
+        return
+    token = _INHERITED_CONTROLS.set(
+        MappingProxyType({"exact_only": exact_only, "n_broadcast_samples": n_broadcast_samples})
+    )
+    try:
+        yield
+    finally:
+        _INHERITED_CONTROLS.reset(token)
+
+
 def _inheriting_controls(method: Callable[..., Any]) -> Callable[..., Any]:
     """*method* of a Function, run under the controls a derived operation's identity passes down.
 
     Inside an identity, the call runs on the view that
     :meth:`Function._inheriting` returns. For the extent of the call the
-    passed sample count is cleared, so only the calls the identity makes
-    directly take it, while an inherited ``exact_only`` stays, so it restricts
-    every call the identity runs.
+    passed sample count is cleared, so it applies only to the calls the scope
+    makes outside any other call, while an inherited ``exact_only`` stays, so
+    it restricts every call within the identity.
     """
 
     @wraps(method)
@@ -907,6 +926,10 @@ class Function(TrackedTerm, Annotated):
           entries when it runs. Empty by default.
         - ``raw`` (bool): whether a call returns its result detached from the
           workflow, False by default.
+
+        A call inside a derived operation's identity also takes the
+        ``exact_only`` and ``n_broadcast_samples`` that the identity passes
+        down (VI.0).
 
     Raises
     ------
@@ -1417,8 +1440,9 @@ class Function(TrackedTerm, Annotated):
         The arguments bind to the signature as in :meth:`apply`, and a law or a
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
-        construction and :meth:`with_options`, never from the call's keywords,
-        which bind to the wrapped callable. Swept batches align by level name:
+        construction and :meth:`with_options`, together with those that a
+        derived operation's identity passes down (VI.0), and the call's
+        keywords bind to the wrapped callable. Swept batches align by level name:
         within each matching level, shapes align from the right and size-one
         axes broadcast independently of other levels. The sweep carries each
         level's resulting broadcast shape.

@@ -302,6 +302,10 @@ class TestDerivedDensities:
         law = Unnormalized("u")
         exact = unnormalized_prob.with_options(exact_only=True)(law, 0.0)
         assert float(jnp.asarray(exact)) == float(jnp.asarray(unnormalized_prob(law, 0.0)))
+        assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
+            "identity",
+            True,
+        )
 
     def test_the_identity_route_states_its_constituent_as_its_condition(self):
         (route,) = prob.summary().routes

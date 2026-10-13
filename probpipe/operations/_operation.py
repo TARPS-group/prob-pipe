@@ -21,27 +21,31 @@ which reads three declarations from the operation at its steps:
    implementations it delegates to, as a registry route's is, is ranked twice:
    restricted to its exact implementations among the exact routes, and
    otherwise among the approximate ones. A derived operation's identity ranks
-   below the direct routes of its exactness, and an identity that restricts
-   the calls it runs, a composite identity or one with an identity check, is
-   ranked once: among the exact routes under ``exact_only`` and among the
-   approximate ones otherwise. The ``method`` and ``exact_only`` controls
-   restrict the choice, and provenance records the selected route.
+   below the direct routes of its exactness and is ranked once, as the next
+   paragraph states. The ``method`` and ``exact_only`` controls restrict the
+   choice, and provenance records the selected route.
 
 A derived operation's **identity** is the route that runs its definition: by
-default the declaration's body, or else a composite route that runs a route of
-each constituent operation in turn. The body and the identity check pass two
-controls of the derived call to the Function calls they run, operations and
-plain Functions alike, and a composite identity runs each of its steps in the
-same scope:
+default the body route, which runs the declaration's body, or else a composite
+route that runs a route of each constituent operation in turn. The engine runs
+the identity's check and the identity itself in a scope that passes two
+controls of the derived call to the Function calls made within it, operations
+and plain Functions alike (VI.0):
 
-- ``exact_only`` restricts every call they run, at any depth, whatever the
-  call sets;
-- ``n_broadcast_samples`` applies to each call they make directly, unless the
-  call's view sets its own.
+- ``exact_only`` restricts the route selection of every call in the scope, at
+  any depth, whatever the call sets;
+- ``n_broadcast_samples``, when the derived call sets it, applies to each call
+  the scope makes outside any other call, unless that call's view sets its own.
 
-Under ``exact_only`` no call within the identity runs an approximate route, so
-a body identity with an identity check is kept and ranks as exact, and one
-without an identity check is excluded.
+The scope covers the calls made in the calling thread and in the workers the
+engine dispatches to. A planned conversion follows its parameter's
+``conversions`` control, as in a direct call. Without ``exact_only`` an
+identity ranks among the approximate routes. Under ``exact_only`` every call in
+the scope selects an exact route, and the identity's check reports under the
+same restriction whether the constituents it probes have one, so a composite
+route and a body route with an identity check rank among the exact routes. A
+body route without an identity check has no such report, and ``exact_only``
+excludes it.
 
 An operation takes no key: each draw a route causes is a workflow-owned random
 event, whose key :func:`_workflow_draws` derives from the workflow scope.
@@ -60,8 +64,8 @@ import dis
 import inspect
 import textwrap
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
@@ -91,7 +95,7 @@ from ..values._binding import (
     resolved_hint,
     values_to_bound_arguments,
 )
-from ..values._function_base import _COMPLETED_AT_RETURN, _INHERITED_CONTROLS
+from ..values._function_base import _COMPLETED_AT_RETURN, _passing_down
 
 __all__ = [
     "BoundCall",
@@ -300,13 +304,9 @@ class OperationRoute(Protocol):
         for a route whose exactness is that of the implementation it delegates
         to, until that implementation is selected. A delegating route, which
         can restrict itself to exact implementations, is ranked twice: among
-        the exact routes and among the approximate ones. An identity that
-        restricts the calls it runs, a composite identity or a route whose
-        ``exact_when_restricted`` is true, as a body identity with an identity
-        check is, is ranked once: among the approximate routes, and under
-        ``exact_only`` among the exact ones, since every call it runs is then
-        restricted to exact routes. ``exact_only`` excludes any other route
-        whose exactness is ``None``.
+        the exact routes and among the approximate ones. A derived operation's
+        identity is ranked once, as the module docstring states.
+        ``exact_only`` excludes any other route whose exactness is ``None``.
     """
 
     name: str
@@ -412,10 +412,6 @@ class _Route:
     #: Whether the route realizes a derived operation's identity, which ranks it
     #: below the operation's direct routes of its exactness (VI.0).
     realizes_identity: bool = False
-    #: Whether a body identity's result is exact whenever it runs under
-    #: ``exact_only``, so ``exact_only`` keeps it, as it keeps every composite
-    #: identity (VI.0).
-    exact_when_restricted: bool = False
 
     def __init__(self, name: str, *, exact: bool | None) -> None:
         if not isinstance(name, str) or not name:
@@ -751,40 +747,26 @@ class _RegistryRoute(_DelegatingRoute):
         )
 
 
-#: The controls a derived call passes to the Function calls its identity runs.
-_PASSED_DOWN = ("exact_only", "n_broadcast_samples")
+def _identity_scope(call: BoundCall) -> AbstractContextManager[None]:
+    """The scope in which an identity route's check and run make their Function calls.
 
-
-@contextmanager
-def _passing_down(call: BoundCall) -> Iterator[None]:
-    """A scope in which the Function calls an identity runs inherit *call*'s controls.
-
-    ``exact_only`` restricts every Function call the identity runs, and the
-    sample count applies to the calls it makes directly, as
-    :meth:`~probpipe.values.Function._inheriting` states.
+    It passes the derived call's ``exact_only``, and its ``n_broadcast_samples``
+    when the call's view sets one, as the module docstring states.
     """
-    token = _INHERITED_CONTROLS.set(
-        MappingProxyType({name: call.controls[name] for name in _PASSED_DOWN})
-    )
-    try:
-        yield
-    finally:
-        _INHERITED_CONTROLS.reset(token)
+    view = call.operation
+    count = call.controls["n_broadcast_samples"] if "n_broadcast_samples" in view._options else None
+    return _passing_down(exact_only=call.controls["exact_only"], n_broadcast_samples=count)
 
 
 class _IdentityRoute(_Route):
-    """The defining identity of a derived operation, as a fallback on its own domain.
+    """The body route, which runs a derived operation's body as a fallback on its own domain.
 
     The route's check calls *identity_check* with the call's arguments, as the
     identity is called, so the route is feasible where the constituent
     operations have routes, and its condition is the identity check's. Its
     exactness is that of the routes the constituents select, so it declares
-    none. The check and the body run in a scope in which every Function call
-    they run inherits the call's ``exact_only``, and each call they make
-    directly inherits its ``n_broadcast_samples``, as
-    :meth:`~probpipe.values.Function._inheriting` states. Under ``exact_only``
-    no call within the identity runs an approximate route, so an identity with
-    an identity check ranks as exact.
+    none. The engine runs the check and the body in the scope of an identity
+    and ranks the route as the module docstring states.
 
     Parameters
     ----------
@@ -795,8 +777,14 @@ class _IdentityRoute(_Route):
     identity_check : callable or None
         The probe of the identity, called as the identity is; the first
         paragraph of its docstring is the route's condition. Without one, the
-        route admits every call that planning admits, and ``exact_only``
-        excludes it.
+        route admits every call that planning admits.
+
+    Notes
+    -----
+    Interim implementation detail: without ``exact_only`` the call records the
+    exactness that the identity check reports, which a check that probes part
+    of the body can overstate. VI.0's target records the exactness of the
+    routes that ran.
     """
 
     source = RouteSource.FALLBACK
@@ -811,34 +799,32 @@ class _IdentityRoute(_Route):
         super().__init__("identity", exact=None)
         self._declaration = declaration
         self._signature = signature
-        self._identity_check = identity_check
-
-    @property
-    def exact_when_restricted(self) -> bool:  # type: ignore[override]
-        """Whether ``exact_only`` keeps the route: whether the identity has an identity check."""
-        return self._identity_check is not None
+        self.identity_check = identity_check
 
     @property
     def condition(self) -> str:
         """The first paragraph of the identity check's docstring."""
-        if self._identity_check is None:
+        if self.identity_check is None:
             return "The constituent operations decide the call when the identity runs."
-        return _guard_condition(self._identity_check)
+        return _guard_condition(self.identity_check)
 
     def check(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """The identity check's report, run under the controls the call passes down."""
-        if self._identity_check is None:
+        """The identity check's report, or a feasible one for a route without a check."""
+        if self.identity_check is None:
             return Feasibility(True)
         bound = values_to_bound_arguments(self._signature, call.operands)
-        with _passing_down(call):
-            report = self._identity_check(*bound.args, **bound.kwargs)
-        return _as_feasibility(report, self._identity_check, f"route {self.name!r}")
+        report = self.identity_check(*bound.args, **bound.kwargs)
+        return _as_feasibility(report, self.identity_check, f"route {self.name!r}")
 
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any:
-        """The identity's value, run under the controls the call passes down."""
+        """The identity's value."""
         bound = values_to_bound_arguments(self._signature, call.operands)
-        with _passing_down(call):
-            return self._declaration(*bound.args, **bound.kwargs)
+        return self._declaration(*bound.args, **bound.kwargs)
+
+
+def _unchecked(route: Any) -> bool:
+    """Whether *route* is a body route without an identity check, which ``exact_only`` excludes."""
+    return isinstance(route, _IdentityRoute) and route.identity_check is None
 
 
 # ---------------------------------------------------------------------------
@@ -906,29 +892,51 @@ class _Candidate:
         return tuple(self.route.registry.list_methods())
 
     def probe(self, call: BoundCall, result: OutputSpec | None) -> Feasibility:
-        """The candidate's report for *call*, without executing anything."""
+        """The candidate's report for *call*, without executing anything.
+
+        An identity's check runs in the scope :func:`_identity_scope` builds.
+        Under ``exact_only`` a body route without an identity check declines,
+        and so does a route whose check reports an approximate result.
+        """
         route = self.route
-        if isinstance(route, _DelegatingRoute):
-            return route.probe(
-                call,
-                result,
-                method=self.method,
-                exact_only=call.controls["exact_only"] or self.exact is True,
+        exact_only = call.controls["exact_only"]
+        if exact_only and _unchecked(route):
+            return Feasibility(
+                False, "the operation declares no identity_check, which exact_only requires"
             )
-        return route.check(call, result)
+        with self._scope(call):
+            if isinstance(route, _DelegatingRoute):
+                report = route.probe(
+                    call, result, method=self.method, exact_only=exact_only or self.exact is True
+                )
+            else:
+                report = route.check(call, result)
+        if exact_only and report.feasible is True and self.exactness(report) is False:
+            return Feasibility(
+                False, "its check reports an approximate result, but exact_only=True"
+            )
+        return report
 
     def run(self, call: BoundCall, result: OutputSpec | None, report: Feasibility) -> Any:
-        """The route's raw result for *call*, by the method *report* selected for a registry route."""
+        """The route's raw result for *call*, by the method *report* selected for a registry route.
+
+        An identity runs in the scope :func:`_identity_scope` builds.
+        """
         route = self.route
-        if isinstance(route, _DelegatingRoute):
-            selected = self.method_of(report)
-            return route.run(
-                call,
-                result,
-                method=self.method if selected is None else selected,
-                exact_only=call.controls["exact_only"] or self.exact is True,
-            )
-        return route.execute(call, result)
+        with self._scope(call):
+            if isinstance(route, _DelegatingRoute):
+                selected = self.method_of(report)
+                return route.run(
+                    call,
+                    result,
+                    method=self.method if selected is None else selected,
+                    exact_only=call.controls["exact_only"] or self.exact is True,
+                )
+            return route.execute(call, result)
+
+    def _scope(self, call: BoundCall) -> AbstractContextManager[None]:
+        """The scope that an identity's check and run take, or no scope for any other route."""
+        return _identity_scope(call) if self.route.realizes_identity else nullcontext()
 
     def exactness(self, report: Feasibility) -> bool | None:
         """The exactness of the implementation the candidate selects, as *report* gives it.
@@ -958,18 +966,13 @@ class _Candidate:
 def _route_candidates(route: Any, index: int, exact_only: bool) -> list[_Candidate]:
     """The candidates *route*, registered at *index*, contributes to a call under *exact_only*.
 
-    A delegating route contributes two, restricted to its exact implementations
-    and not, unless it realizes an identity. An identity that restricts the
-    calls it runs, a composite identity or one whose ``exact_when_restricted``
-    is true, is ranked once: among the approximate routes, and under
-    *exact_only* among the exact ones, since every call it runs is then
-    restricted to exact routes (VI.0). Any other route contributes one at its
-    declared exactness.
+    An identity contributes one, at the rank the module docstring states. A
+    delegating route contributes two, restricted to its exact implementations
+    and not. Any other route contributes one at its declared exactness.
     """
-    delegating = isinstance(route, _DelegatingRoute)
-    if route.realizes_identity and (delegating or getattr(route, "exact_when_restricted", False)):
-        return [_Candidate(route, True if exact_only else None, index)]
-    if delegating:
+    if route.realizes_identity:
+        return [_Candidate(route, True if exact_only and not _unchecked(route) else None, index)]
+    if isinstance(route, _DelegatingRoute):
         return [_Candidate(route, True, index), _Candidate(route, False, index)]
     return [_Candidate(route, route.exact, index)]
 
@@ -1244,13 +1247,14 @@ class Operation(Function):
         for ``prob``; the first paragraph of its docstring is the identity
         route's condition. A check that cannot probe a constituent, because
         its arguments are known only when the identity runs, returns a feasible
-        ``PointReport`` whose ``deferred`` names that check. The check and the
-        identity pass the call's ``exact_only`` to every Function call they
-        run and its ``n_broadcast_samples`` to the calls they make directly, so
-        under ``exact_only`` the identity route is kept and no call within it
-        runs an approximate route. Without a check, the
-        identity route admits every call that planning admits, and
-        ``exact_only`` excludes it.
+        ``PointReport`` whose ``deferred`` names that check. The check runs in
+        the scope of the identity (VI.0), so under ``exact_only`` it reports
+        whether the constituents it probes have exact routes, and
+        ``exact_only`` keeps the identity route of an operation with a check.
+        A constituent's check selects the constituent's route without running
+        it, so a call inside that route that the restriction leaves without a
+        route raises ``ResolutionError`` only when the identity runs. Without a
+        check, the identity route admits every call that planning admits.
     identity_route : OperationRoute, optional
         A derived operation's composite identity route, which replaces the
         generic route that runs the body. It runs a route of each constituent
@@ -1512,14 +1516,12 @@ class Operation(Function):
 
     @property
     def routes(self) -> tuple[OperationRoute, ...]:
-        """The registered routes, in selection order.
+        """The registered routes, in the selection order of a call without ``exact_only``.
 
         A delegating route is listed where its exact implementations rank, and
         any other route whose exactness is ``None`` where approximate routes
-        rank, as an identity does without ``exact_only``. An identity is
-        listed after the direct routes that rank with it. Under ``exact_only``
-        an identity that restricts the calls it runs, a composite identity or
-        one with an identity check, ranks among the exact routes.
+        rank, as an identity does. An identity is listed after the direct
+        routes that rank with it.
         """
         indexed = list(enumerate(self._route_table.routes))
 
@@ -1972,6 +1974,9 @@ class Operation(Function):
             The candidates, sorted by their ``rank``. Without a ``method`` name,
             each route contributes one, and a delegating route two: one
             restricted to its exact implementations and one for the others.
+            Under ``exact_only`` they are the exact candidates, the named
+            registry methods, and the identity, whose probe reports why
+            ``exact_only`` excludes a body route without an identity check.
 
         Raises
         ------
@@ -1987,7 +1992,11 @@ class Operation(Function):
             for index, route in enumerate(self._route_table.routes):
                 candidates += _route_candidates(route, index, exact_only)
         if exact_only:
-            candidates = [c for c in candidates if c.exact is True or c.method is not None]
+            candidates = [
+                c
+                for c in candidates
+                if c.exact is True or c.method is not None or c.route.realizes_identity
+            ]
         return sorted(candidates, key=lambda candidate: candidate.rank)
 
     def _named_candidates(self, method: str, exact_only: bool) -> list[_Candidate]:
@@ -2059,10 +2068,9 @@ class Operation(Function):
             )
         if named:
             index, route = named[0]
-            if isinstance(route, _DelegatingRoute):
-                return _route_candidates(route, index, exact_only)
             candidates = _route_candidates(route, index, exact_only)
-            if exact_only and candidates[0].exact is not True:
+            # An identity's probe reports why exact_only declines it.
+            if exact_only and candidates[0].exact is not True and not route.realizes_identity:
                 raise ResolutionError(
                     f"{self.label}: route {method!r} is not exact, but exact_only=True"
                 )

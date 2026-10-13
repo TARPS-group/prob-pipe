@@ -62,7 +62,6 @@ from probpipe.operations._operation import (
 )
 from probpipe.operations._sample import sample
 from probpipe.values import Function, FunctionSpec
-from probpipe.values._function_base import _INHERITED_CONTROLS
 
 from ._laws import REAL, Bare, Gaussian, GuardedMean, Pair, Sampler
 
@@ -253,229 +252,6 @@ class TestDeclaration:
 # ---------------------------------------------------------------------------
 # Roles and admission
 # ---------------------------------------------------------------------------
-
-
-def _center_applies(d: Any) -> Any:
-    """The center has a route for the law."""
-    return center.check(d)
-
-
-def _body_doubled(body: Any = None, *, check: Any = _center_applies) -> Any:
-    """A fresh derived operation ``doubled(d) = 2 * body(d)`` whose identity runs its body, ``body`` being the raw center.
-
-    *check* is its identity check, and ``None`` declares it without one.
-    """
-    inner = center.with_options(raw=True) if body is None else body
-    options = {} if check is None else {"identity_check": check}
-
-    @operation(result=_event, registry=OperationRegistry(), **options)
-    def doubled(d: Distribution):
-        """Twice the center."""
-        return inner(d) * 2
-
-    return doubled
-
-
-@function
-def _identity_map(x):
-    """Its argument, a plain Function that a law at *x* lifts."""
-    return x
-
-
-def _via_center(*, exact: bool) -> Any:
-    """A fresh primitive operation whose one fallback route calls ``center`` on the law."""
-    via = _toy(result=_event)
-
-    def run_center(call: BoundCall, result: OutputSpec | None) -> Any:
-        return center.with_options(raw=True)(call.operands["d"])
-
-    via.fallback_route(
-        "via_center", check=lambda call, result: True, execute=run_center, exact=exact
-    )
-    return via
-
-
-class TestIdentityControls:
-    def test_exact_only_keeps_an_identity_whose_constituent_selects_an_exact_route(self):
-        doubled = _body_doubled()
-        result = doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
-        assert float(jnp.asarray(result)) == 3.0
-        metadata = result.provenance.metadata
-        assert (metadata["route"], metadata["exact"]) == ("identity", True)
-
-    def test_exact_only_refuses_an_identity_whose_constituent_has_only_an_approximate_route(
-        self,
-    ):
-        view = _body_doubled().with_options(exact_only=True)
-        report = view.check(Sampler("s"))
-        assert report.feasible is False
-        assert "monte_carlo" not in [info.method_name for info in report.routes]
-        with pytest.raises(ResolutionError, match="exact_only"):
-            view(Sampler("s"))
-
-    def test_without_exact_only_the_identity_takes_its_constituents_approximate_route(self):
-        report = _body_doubled().check(Sampler("s"))
-        assert (report.feasible, report.route, report.exact) == (True, "identity", False)
-
-    def test_exact_only_excludes_an_identity_without_an_identity_check(self):
-        doubled = _body_doubled(check=None)
-        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
-        with pytest.raises(ResolutionError, match="exact_only"):
-            doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
-        with pytest.raises(ResolutionError, match="not exact"):
-            doubled.with_options(method="identity", exact_only=True)(Gaussian("g", 1.5))
-
-    def test_naming_the_identity_under_exact_only_keeps_a_checked_identity(self):
-        view = _body_doubled().with_options(method="identity", exact_only=True)
-        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
-
-    def test_exact_only_restricts_a_constituent_that_sets_it_false(self):
-        doubled = _body_doubled(center.with_options(raw=True, exact_only=False))
-        with pytest.raises(ResolutionError, match="exact_only"):
-            doubled.with_options(exact_only=True)(Sampler("s"))
-
-    def test_the_sample_count_passes_to_the_constituent(self):
-        law = Sampler("s")
-        _body_doubled().with_options(n_broadcast_samples=33)(law)
-        assert law.shapes == [(33,)]
-
-    def test_the_sample_count_passes_through_a_nested_derived_operation(self):
-        law = Sampler("s")
-        quadrupled = _body_doubled(_body_doubled().with_options(raw=True))
-        quadrupled.with_options(n_broadcast_samples=33)(law)
-        assert law.shapes == [(33,)]
-
-    def test_a_sample_count_the_constituent_sets_wins(self):
-        law = Sampler("s")
-        doubled = _body_doubled(center.with_options(raw=True, n_broadcast_samples=40))
-        doubled.with_options(n_broadcast_samples=33)(law)
-        assert law.shapes == [(40,)]
-
-    def test_method_does_not_pass_to_the_constituent(self):
-        view = _body_doubled().with_options(method="identity")
-        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
-
-    def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
-        law = Sampler("s")
-        doubled = _body_doubled(_via_center(exact=False).with_options(raw=True))
-        doubled.with_options(n_broadcast_samples=33)(law)
-        assert law.shapes == [(center.options["n_broadcast_samples"],)]
-
-    def test_exact_only_restricts_every_call_the_identity_runs(self):
-        via = _via_center(exact=True)
-        doubled = _body_doubled(via.with_options(raw=True), check=lambda d: via.check(d))
-        assert doubled.with_options(exact_only=True).check(Sampler("s")).feasible is True
-        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
-        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
-            doubled.with_options(exact_only=True)(Sampler("s"))
-
-    def test_exact_only_refuses_a_plain_function_lifted_in_the_identity(self):
-        doubled = _body_doubled(lambda d: _identity_map(d) * 1.0)
-        with pytest.raises(ResolutionError, match="exact_only"):
-            doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
-
-    def test_the_sample_count_passes_to_a_plain_function_lifted_in_the_identity(self):
-        law = Sampler("s")
-        doubled = _body_doubled(lambda d: mean.with_options(raw=True)(_identity_map(d)))
-        with workflow_run(seed=0):
-            doubled.with_options(n_broadcast_samples=33)(law)
-        assert law.shapes == [(33,)]
-
-    def test_each_point_of_a_lifted_call_passes_the_sample_count(self):
-        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
-        _body_doubled().with_options(n_broadcast_samples=33)(_laws(first, second))
-        assert first.shapes == second.shapes == [(33,)]
-
-    def test_the_points_of_a_threaded_call_pass_the_sample_count(self):
-        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
-        view = _body_doubled().with_options(n_broadcast_samples=33, dispatch="thread")
-        view(_laws(first, second))
-        assert first.shapes == second.shapes == [(33,)]
-
-    def test_exact_only_holds_in_the_workers_of_a_threaded_constituent(self):
-        def worker(d: Distribution) -> Any:
-            return center.with_options(raw=True)(d)
-
-        inner = Function(worker).with_options(dispatch="thread", raw=True)
-        doubled = _body_doubled(
-            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
-        )
-        law = Sampler("s")
-        view = doubled.with_options(exact_only=True)
-        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
-            view(law)
-        assert law.shapes == []
-
-    def test_exact_only_holds_in_a_worker_that_receives_a_serialized_function(self, monkeypatch):
-        cloudpickle = pytest.importorskip("cloudpickle")
-
-        def in_fresh_threads(request: Any, *, parent_frame: Any, parent_broker: Any) -> list[Any]:
-            # Stand in for a worker in another process: the work function arrives
-            # serialized, and each item runs in a thread with an empty context.
-            func = cloudpickle.loads(cloudpickle.dumps(request.func))
-            outcomes: list[Any] = []
-
-            def run(item: Any) -> None:
-                try:
-                    outcomes.append(
-                        _execution._execute_work_item(func, item, parent_frame, parent_broker)
-                    )
-                except BaseException as error:
-                    outcomes.append(error)
-
-            for item in request.work_items:
-                worker = threading.Thread(target=run, args=(item,))
-                worker.start()
-                worker.join()
-            for outcome in outcomes:
-                if isinstance(outcome, BaseException):
-                    raise outcome
-            return outcomes
-
-        monkeypatch.setattr(_execution, "execute_many_threaded", in_fresh_threads)
-
-        def worker(d: Distribution) -> Any:
-            return center.with_options(raw=True)(d)
-
-        inner = Function(worker).with_options(dispatch="thread", raw=True)
-        doubled = _body_doubled(
-            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
-        )
-        law = Sampler("s")
-        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
-            doubled.with_options(exact_only=True)(law)
-        assert law.shapes == []
-
-    def test_an_inherited_view_does_not_repeat_its_construction_warnings(self):
-        with pytest.warns(UserWarning, match="max_workers configures only"):
-            shifted = Function(lambda x: x + 1.0, label="shifted", max_workers=2)
-        doubled = _body_doubled(lambda d: shifted(center.with_options(raw=True)(d)))
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            for _ in range(3):
-                doubled.with_options(n_broadcast_samples=50)(Gaussian("g", 1.5))
-
-    def test_an_identity_check_may_defer_a_constituent_to_the_run(self):
-        def center_later(d: Any) -> Any:
-            """The center is checked when the identity runs."""
-            return PointReport(True, deferred=("the center is checked when it runs",))
-
-        doubled = _body_doubled(check=center_later)
-        report = doubled.check(Gaussian("g", 1.5))
-        assert (report.feasible, report.route) == (True, "identity")
-        assert "the center is checked when it runs" in report.deferred
-        assert doubled.with_options(exact_only=True).check(Gaussian("g", 1.5)).exact is True
-        result = doubled(Gaussian("g", 1.5))
-        assert float(jnp.asarray(result)) == 3.0
-        assert result.provenance.metadata["exact"] is None
-
-    def test_the_inherited_controls_are_cleared_after_the_identity_raises(self):
-        with pytest.raises(ResolutionError):
-            _body_doubled().with_options(exact_only=True)(Sampler("s"))
-        assert _INHERITED_CONTROLS.get() is None
-        law = Sampler("s")
-        center(law)
-        assert law.shapes == [(center.options["n_broadcast_samples"],)]
 
 
 class TestRoles:
@@ -1416,6 +1192,299 @@ class TestLiftedChecks:
         means = center.with_options(raw=True)(_laws(Gaussian("g", 1.0), Gaussian("g", 2.0)))
         assert not isinstance(means, TrackedTerm)
         np.testing.assert_array_equal(np.asarray(means), [1.0, 2.0])
+
+
+# ---------------------------------------------------------------------------
+# Controls inside an identity
+# ---------------------------------------------------------------------------
+
+
+def _center_applies(d: Any) -> Any:
+    """The center has a route for the law."""
+    return center.check(d)
+
+
+def _body_doubled(body: Any = None, *, check: Any = _center_applies) -> Any:
+    """A fresh derived operation ``doubled(d) = 2 * body(d)``, whose body defaults to the raw center.
+
+    *check* is its identity check, and ``None`` declares it without one.
+    """
+    inner = center.with_options(raw=True) if body is None else body
+    options = {} if check is None else {"identity_check": check}
+
+    @operation(result=_event, registry=OperationRegistry(), **options)
+    def doubled(d: Distribution):
+        """Twice the center."""
+        return inner(d) * 2
+
+    return doubled
+
+
+@function
+def _identity_map(x):
+    """Its argument, a plain Function that a law at *x* lifts."""
+    return x
+
+
+def _via_center(*, exact: bool) -> Any:
+    """A fresh primitive operation whose one fallback route calls ``center`` on the law."""
+    via = _toy(result=_event)
+
+    def run_center(call: BoundCall, result: OutputSpec | None) -> Any:
+        return center.with_options(raw=True)(call.operands["d"])
+
+    via.fallback_route(
+        "via_center", check=lambda call, result: True, execute=run_center, exact=exact
+    )
+    return via
+
+
+class TestIdentityControls:
+    def test_exact_only_keeps_an_identity_whose_constituent_selects_an_exact_route(self):
+        doubled = _body_doubled()
+        result = doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
+        assert float(jnp.asarray(result)) == 3.0
+        metadata = result.provenance.metadata
+        assert (metadata["route"], metadata["exact"]) == ("identity", True)
+
+    def test_exact_only_refuses_an_identity_whose_constituent_has_only_an_approximate_route(
+        self,
+    ):
+        view = _body_doubled().with_options(exact_only=True)
+        report = view.check(Sampler("s"))
+        assert report.feasible is False
+        ((name, reason),) = [(info.method_name, info.description) for info in report.routes]
+        assert name == "identity"
+        assert reason.startswith("center: no route applies with exact_only")
+        with pytest.raises(
+            ResolutionError, match="identity: center: no route applies with exact_only"
+        ):
+            view(Sampler("s"))
+
+    def test_without_exact_only_the_identity_takes_its_constituents_approximate_route(self):
+        report = _body_doubled().check(Sampler("s"))
+        assert (report.feasible, report.route, report.exact) == (True, "identity", False)
+
+    def test_exact_only_excludes_an_identity_without_an_identity_check(self):
+        doubled = _body_doubled(check=None)
+        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+        reason = "identity: the operation declares no identity_check, which exact_only requires"
+        for options in ({}, {"method": "identity"}):
+            view = doubled.with_options(exact_only=True, **options)
+            with pytest.raises(ResolutionError, match=reason):
+                view(Gaussian("g", 1.5))
+            assert view.check(Gaussian("g", 1.5)).feasible is False
+
+    def test_exact_only_declines_an_identity_whose_check_reports_an_approximate_result(self):
+        view = _body_doubled(check=lambda d: PointReport(True, exact=False)).with_options(
+            exact_only=True
+        )
+        assert view.check(Gaussian("g", 1.5)).feasible is False
+        with pytest.raises(ResolutionError, match="its check reports an approximate result"):
+            view(Gaussian("g", 1.5))
+
+    def test_a_checked_body_route_ranks_below_an_exact_direct_route(self):
+        doubled = _body_doubled()
+        doubled.structural_route("direct", exact=True, **_route(True, 1.0))
+        for options in ({}, {"exact_only": True}):
+            assert doubled.with_options(**options).check(Gaussian("g")).route == "direct"
+
+    def test_under_exact_only_a_checked_body_route_ranks_as_exact(self):
+        doubled = _body_doubled()
+        doubled.structural_route("direct", exact=False, **_route(True, 1.0))
+        assert doubled.check(Gaussian("g")).route == "direct"
+        assert doubled.with_options(exact_only=True).check(Gaussian("g")).route == "identity"
+
+    def test_naming_the_identity_under_exact_only_keeps_a_checked_identity(self):
+        view = _body_doubled().with_options(method="identity", exact_only=True)
+        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_exact_only_restricts_a_constituent_that_sets_it_false(self):
+        law = Sampler("s")
+        doubled = _body_doubled(
+            center.with_options(raw=True, exact_only=False), check=lambda d: True
+        )
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.with_options(exact_only=True)(law)
+        assert law.shapes == []
+
+    def test_the_sample_count_passes_to_the_constituent(self):
+        law = Sampler("s")
+        _body_doubled().with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_the_sample_count_passes_through_a_nested_derived_operation(self):
+        law = Sampler("s")
+        quadrupled = _body_doubled(_body_doubled().with_options(raw=True))
+        quadrupled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    @pytest.mark.parametrize("count", [40, center.options["n_broadcast_samples"]])
+    def test_a_sample_count_the_constituent_sets_wins(self, count):
+        law = Sampler("s")
+        doubled = _body_doubled(center.with_options(raw=True, n_broadcast_samples=count))
+        doubled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(count,)]
+
+    def test_a_constituent_keeps_its_class_default_when_the_derived_call_sets_no_count(self):
+        class TenDraws(Function):
+            DEFAULT_N_BROADCAST_SAMPLES = 10
+
+        ten = TenDraws(lambda x: x, label="ten")
+        doubled = _body_doubled(lambda d: mean.with_options(raw=True)(ten(d)))
+        for options, count in (({}, 10), ({"n_broadcast_samples": 33}, 33)):
+            law = Sampler("s")
+            with workflow_run(seed=0):
+                doubled.with_options(**options)(law)
+            assert law.shapes == [(count,)]
+
+    def test_method_does_not_pass_to_the_constituent(self):
+        view = _body_doubled().with_options(method="identity")
+        assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
+        law = Sampler("s")
+        doubled = _body_doubled(_via_center(exact=False).with_options(raw=True))
+        doubled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+
+    def test_exact_only_restricts_every_call_the_identity_runs(self):
+        via = _via_center(exact=True)
+        doubled = _body_doubled(via.with_options(raw=True), check=lambda d: via.check(d))
+        assert doubled.with_options(exact_only=True).check(Sampler("s")).feasible is True
+        assert float(jnp.asarray(doubled(Gaussian("g", 1.5)))) == 3.0
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.with_options(exact_only=True)(Sampler("s"))
+
+    def test_exact_only_refuses_a_plain_function_lifted_in_the_identity(self):
+        doubled = _body_doubled(lambda d: _identity_map(d) * 1.0)
+        with pytest.raises(ResolutionError, match="_identity_map: no evaluation rule applies"):
+            doubled.with_options(exact_only=True)(Gaussian("g", 1.5))
+
+    def test_the_controls_pass_to_an_apply_in_the_identity(self):
+        law = Sampler("s")
+        _body_doubled(lambda d: center.apply(d)).with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+        doubled = _body_doubled(lambda d: center.apply(d), check=lambda d: True)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.with_options(exact_only=True)(Sampler("s"))
+
+    def test_the_sample_count_passes_to_a_plain_function_lifted_in_the_identity(self):
+        law = Sampler("s")
+        doubled = _body_doubled(lambda d: mean.with_options(raw=True)(_identity_map(d)))
+        with workflow_run(seed=0):
+            doubled.with_options(n_broadcast_samples=33)(law)
+        assert law.shapes == [(33,)]
+
+    def test_each_point_of_a_lifted_call_passes_the_sample_count(self):
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        _body_doubled().with_options(n_broadcast_samples=33)(_laws(first, second))
+        assert first.shapes == second.shapes == [(33,)]
+
+    def test_the_points_of_a_threaded_call_pass_the_sample_count(self):
+        first, second = Sampler("s", 1.0), Sampler("s", 2.0)
+        view = _body_doubled().with_options(n_broadcast_samples=33, dispatch="thread")
+        view(_laws(first, second))
+        assert first.shapes == second.shapes == [(33,)]
+
+    def test_exact_only_holds_in_the_workers_of_a_threaded_constituent(self):
+        def worker(d: Distribution) -> Any:
+            return center.with_options(raw=True)(d)
+
+        inner = Function(worker).with_options(dispatch="thread", raw=True)
+        doubled = _body_doubled(
+            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
+        )
+        law = Sampler("s")
+        view = doubled.with_options(exact_only=True)
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            view(law)
+        assert law.shapes == []
+
+    def test_exact_only_holds_in_a_worker_that_receives_a_serialized_function(self, monkeypatch):
+        cloudpickle = pytest.importorskip("cloudpickle")
+
+        def in_fresh_threads(request: Any, *, parent_frame: Any, parent_broker: Any) -> list[Any]:
+            # Stand in for a worker in another process: the work function arrives
+            # serialized, and each item runs in a thread with an empty context.
+            func = cloudpickle.loads(cloudpickle.dumps(request.func))
+            outcomes: list[Any] = []
+
+            def run(item: Any) -> None:
+                try:
+                    outcomes.append(
+                        _execution._execute_work_item(func, item, parent_frame, parent_broker)
+                    )
+                except BaseException as error:
+                    outcomes.append(error)
+
+            for item in request.work_items:
+                worker = threading.Thread(target=run, args=(item,))
+                worker.start()
+                worker.join()
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException):
+                    raise outcome
+            return outcomes
+
+        monkeypatch.setattr(_execution, "execute_many_threaded", in_fresh_threads)
+
+        def worker(d: Distribution) -> Any:
+            return center.with_options(raw=True)(d)
+
+        inner = Function(worker).with_options(dispatch="thread", raw=True)
+        doubled = _body_doubled(
+            lambda d: jnp.sum(jnp.asarray(inner(_laws(d, d)))), check=lambda d: True
+        )
+        law = Sampler("s")
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            doubled.with_options(exact_only=True)(law)
+        assert law.shapes == []
+
+    def test_an_inherited_view_does_not_repeat_its_construction_warnings(self):
+        with pytest.warns(UserWarning, match="max_workers configures only"):
+            shifted = Function(lambda x: x + 1.0, label="shifted", max_workers=2)
+        doubled = _body_doubled(lambda d: shifted(center.with_options(raw=True)(d)))
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for _ in range(3):
+                doubled.with_options(n_broadcast_samples=50)(Gaussian("g", 1.5))
+
+    def test_an_identity_check_may_defer_a_constituent_to_the_run(self):
+        def center_later(d: Any) -> Any:
+            """The center is checked when the identity runs."""
+            return PointReport(True, deferred=("the center is checked when it runs",))
+
+        doubled = _body_doubled(check=center_later)
+        report = doubled.check(Gaussian("g", 1.5))
+        assert (report.feasible, report.route) == (True, "identity")
+        assert "the center is checked when it runs" in report.deferred
+        assert doubled.with_options(exact_only=True).check(Gaussian("g", 1.5)).exact is True
+        result = doubled(Gaussian("g", 1.5))
+        assert float(jnp.asarray(result)) == 3.0
+        assert result.provenance.metadata["exact"] is None
+
+    def test_the_scope_ends_when_the_identity_raises(self):
+        view = _body_doubled(check=lambda d: True).with_options(
+            exact_only=True, n_broadcast_samples=33
+        )
+        with pytest.raises(ResolutionError, match="center: no route applies with exact_only"):
+            view(Sampler("s"))
+        law = Sampler("s")
+        center(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
+
+    def test_the_scope_ends_when_the_identity_check_raises(self):
+        def failing(d: Any) -> Any:
+            """The check fails."""
+            raise RuntimeError("the check fails")
+
+        view = _body_doubled(check=failing).with_options(exact_only=True, n_broadcast_samples=33)
+        with pytest.raises(RuntimeError, match="the check fails"):
+            view(Sampler("s"))
+        law = Sampler("s")
+        center(law)
+        assert law.shapes == [(center.options["n_broadcast_samples"],)]
 
 
 # ---------------------------------------------------------------------------
