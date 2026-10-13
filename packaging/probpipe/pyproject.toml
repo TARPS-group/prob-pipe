@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "probpipe"
-version = "0.1.0"   # kept in lockstep with probpipe-core (the == pin below)
+version = "0.2.0.dev0"   # kept in lockstep with probpipe-core (the == pin below)
 description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, pyabc, and BayesFlow inference backends included"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,10 +26,10 @@ dependencies = [
   #
   # Exact `==` pin: one repo builds two coordinated dists (the jax/jaxlib model);
   # tests/test_version.py checks that it equals probpipe-core's version.
-  "probpipe-core[pymc,nutpie,pyabc]==0.1.0",
+  "probpipe-core[pymc,nutpie,pyabc]==0.2.0.dev0",
   # BayesFlow caps Python <3.14 while core spans 3.12-3.14, so it is marker-guarded:
   # `pip install probpipe` still resolves on 3.14, just without neural SBI there.
-  "probpipe-core[bayesflow]==0.1.0; python_version < '3.14'",
+  "probpipe-core[bayesflow]==0.2.0.dev0; python_version < '3.14'",
 ]
 
 # Re-export only the user-facing extras NOT already bundled above, so
