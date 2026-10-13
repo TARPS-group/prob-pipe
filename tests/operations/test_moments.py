@@ -51,7 +51,6 @@ from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.functions import _rules
 from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
-from probpipe.operations._evaluate import evaluate
 from probpipe.operations._moments import (
     _ByComponent,
     cov,
@@ -60,6 +59,7 @@ from probpipe.operations._moments import (
     quantile,
     variance,
 )
+from probpipe.operations._pushforward import pushforward
 from probpipe.values import Function, FunctionSpec
 
 from ._laws import (
@@ -206,7 +206,7 @@ def quadrature(monkeypatch):
     ):
         registry.register(rule)
     monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
-    for operation in (expectation, evaluate):
+    for operation in (expectation, pushforward):
         (route,) = [r for r in operation.routes if r.name == "evaluation_rules"]
         monkeypatch.setattr(route, "registry", registry)
     return registry

@@ -12,8 +12,8 @@ from typing import Any
 from ..core._specs import OutputSpec
 from ..distributions._conditional import ConditionalDistribution, ConditionalDistributionSpec
 from ..distributions._distribution import Distribution, DistributionSpec
-from ._evaluate import evaluate
 from ._operation import operation
+from ._pushforward import pushforward
 
 __all__ = ["mixture"]
 
@@ -53,4 +53,4 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     ResolutionError
         If neither the identity nor a direct route applies.
     """
-    return evaluate(_kernel_output_projection(K), K * mixing)
+    return pushforward(K * mixing, _kernel_output_projection(K))

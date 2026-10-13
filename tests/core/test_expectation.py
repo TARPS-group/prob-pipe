@@ -18,9 +18,9 @@ from probpipe import (
     Normal,
     NumericArray,
     OutputSpec,
-    evaluate,
     expectation,
     mean,
+    pushforward,
     set_default_n_broadcast_samples,
     variance,
     workflow_run,
@@ -274,7 +274,7 @@ class TestGlobalDefaults:
         monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
         set_default_n_broadcast_samples(7)
         law = make_dist()
-        assert evaluate(Function(f, output_spec=OutputSpec(integrand=None)), law).num_atoms == 7
+        assert pushforward(law, Function(f, output_spec=OutputSpec(integrand=None))).num_atoms == 7
         assert np.isfinite(float(expectation(law, f)))
 
     @pytest.mark.parametrize(("count", "error"), [(0, ValueError), (2.5, TypeError)])
@@ -320,7 +320,7 @@ def rules(monkeypatch):
     ):
         registry.register(rule)
     monkeypatch.setattr(_rules, "evaluation_rule_registry", registry)
-    for operation in (expectation, evaluate):
+    for operation in (expectation, pushforward):
         (route,) = [r for r in operation._route_table.routes if r.name == "evaluation_rules"]
         monkeypatch.setattr(route, "registry", registry)
     return registry
@@ -357,10 +357,10 @@ class TestExpectationRoutes:
             "evaluation_rules/sampling_lift"
         )
 
-    def test_a_rule_serves_evaluate_and_expectation_alike(self, rules):
+    def test_a_rule_serves_pushforward_and_expectation_alike(self, rules):
         law = Normal("n", 0.0, 1.0)
-        pushforward = evaluate.with_options(method="quadrature_stand_in")(lambda x: x, law)
-        assert float(mean(pushforward)) == -1.0
+        pushed = pushforward.with_options(method="quadrature_stand_in")(law, lambda x: x)
+        assert float(mean(pushed)) == -1.0
 
     def test_a_raised_priority_makes_a_rule_the_default(self, rules):
         law = Normal("n", 0.0, 1.0)

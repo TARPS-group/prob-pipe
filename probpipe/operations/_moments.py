@@ -88,15 +88,6 @@ from ..functions._call import ApplicabilityError
 from ..functions._resolution import PointReport, check_point, selected, settled
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
-from ._evaluate import (
-    _FORWARDED_CONTROLS,
-    NAMELESS_CALLABLE_FIX,
-    _as_function,
-    _bound_parameter,
-    _EvaluationRules,
-    _lifts,
-    evaluate,
-)
 from ._operation import (
     BoundCall,
     RouteSource,
@@ -107,6 +98,13 @@ from ._operation import (
     _subject_name,
     _workflow_draws,
     operation,
+)
+from ._pushforward import (
+    NAMELESS_CALLABLE_FIX,
+    _as_function,
+    _bound_parameter,
+    _EvaluationRules,
+    pushforward,
 )
 from ._sample import _record_batch
 
@@ -1140,15 +1138,15 @@ quantile.register_route(_ByComponent("quantile"))
 quantile.fallback_route("monte_carlo", check=_can_sample, execute=_mc_quantile, exact=False)
 
 
-def _evaluate_applies(d: Any, f: Any, fixed_args: Mapping[str, Any] | None = None) -> Any:
-    """``evaluate`` has a route for the integrand over the law."""
-    return evaluate.check(f, d, fixed_args)
+def _pushforward_applies(d: Any, f: Any, fixed_args: Mapping[str, Any] | None = None) -> Any:
+    """``pushforward`` has a route for the integrand over the law."""
+    return pushforward.check(d, f, fixed_args)
 
 
 @operation(
     result=_expectation_result,
     roles={"f": (FunctionSpec,)},
-    identity_check=_evaluate_applies,
+    identity_check=_pushforward_applies,
 )
 def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = None):
     """The expectation ``𝔼[f(X)]`` for ``X ~ d``, defined as ``mean(evaluate(f, d))``.
@@ -1184,7 +1182,7 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     ResolutionError
         If neither the closed form nor an evaluation rule applies.
     """
-    return mean(evaluate(f, d, fixed_args))
+    return mean(pushforward(d, f, fixed_args))
 
 
 def _integrand(call: BoundCall) -> Callable[[Any], Any]:
@@ -1220,41 +1218,18 @@ expectation.capability_route(
 
 
 class _PushforwardMean(_EvaluationRules):
-    """The mean of the pushforward ``evaluate(f, d)``, by the rule the evaluation-rule registry selects.
+    """The mean of the pushforward ``pushforward(d, f)``, by the rule the evaluation-rule registry selects.
 
-    The route takes ``evaluate``'s rules, rule names, and controls, apart from
-    ``include_inputs``, so the mean is of the integrand's values alone. A map
-    whose parameter takes the law itself, rather than its draws, has nothing
-    to integrate.
+    The route takes ``pushforward``'s rules, rule names, and controls, so the
+    integrand receives draws of the law.
     """
-
-    _forwarded = tuple(name for name in _FORWARDED_CONTROLS if name != "include_inputs")
-
-    def _values(self, call: BoundCall) -> tuple[Function, str, Any, dict[str, Any]]:
-        """The integrand, the parameter a draw binds, the law, and the fixed arguments."""
-        f = _as_function(call.operands["f"], subject="expectation")
-        fixed = dict(call.operands.get("fixed_args") or {})
-        return f, _bound_parameter(f, fixed), call.operands["d"], fixed
-
-    def probe(
-        self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
-    ) -> Feasibility:
-        """The registry's report for the law's draws."""
-        f, parameter, operand, _ = self._values(call)
-        if not _lifts(f, parameter, operand):
-            return Feasibility(
-                False,
-                f"{f.label!r} takes the law itself at {parameter!r}, so it has no draws to "
-                f"integrate",
-            )
-        return super().probe(call, result, method=method, exact_only=exact_only)
 
     def run(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
     ) -> Any:
         """The mean of the pushforward law the selected rule returns."""
-        pushforward = super().run(call, result, method=method, exact_only=exact_only)
-        return mean.with_options(raw=True)(pushforward)
+        law = super().run(call, result, method=method, exact_only=exact_only)
+        return mean.with_options(raw=True)(law)
 
 
 expectation.register_route(_PushforwardMean())
