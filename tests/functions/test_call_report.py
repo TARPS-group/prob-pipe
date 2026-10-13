@@ -12,7 +12,7 @@ from probpipe.core._dispatch import MethodInfo
 from probpipe.core._repr import WIDTH
 from probpipe.functions._call import CallReport
 from probpipe.operations._condition import condition_on
-from probpipe.operations._moments import expectation, mean
+from probpipe.operations._moments import mean
 from probpipe.operations._pushforward import pushforward
 
 
@@ -70,9 +70,11 @@ class TestTheRegistryMethods:
         assert report.methods["evaluation_rules"][-1] == "sampling_lift"
 
     def test_an_entry_that_selects_nothing_reads_at_the_exactness_it_covers(self):
-        report = expectation.check(Normal("mu", 0.0, 5.0), lambda x: x**2)
+        report = pushforward.check(Normal("mu", 0.0, 5.0), lambda x: x**2)
 
-        exact_methods = report.routes[1]
+        (exact_methods,) = [
+            info for info in report.routes if info.method_name == "evaluation_rules (exact methods)"
+        ]
         assert exact_methods.method_name == "evaluation_rules (exact methods)"
         assert exact_methods.feasible is False and exact_methods.exact is True
 

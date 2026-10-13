@@ -23,6 +23,6 @@ def test_the_result_carries_the_kernel_event_declaration():
     )
 
 
-@pytest.mark.pending(reason="the kernel output projection and evaluate realize the identity")
+@pytest.mark.pending(reason="the kernel output projection and pushforward realize the identity")
 def test_the_mixture_is_the_law_of_the_kernel_output():
     assert mixture(Kernel("y", ("mu",)), Gaussian("mu")).event_spec == Kernel().event_spec
