@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- `pushforward` and `expectation` validate construction-bound arguments as
+  constants, just as they validate `fixed_args`. Maps annotated `Any` retain
+  their input/output schema checks when pushed forward, including shared
+  symbolic dimensions.
+
+- **`expectation(d, f)` integrates `f` over draws of `d` on every route.**
+  It is `mean(pushforward(d, f))`, so the integrand receives one draw at a
+  time whatever its parameter's annotation. An integrand whose declared input
+  cannot take a draw raises `ApplicabilityError` from the call and from
+  `check()`, on every route: `expectation(Normal("x", 1.0, 2.0), the_law)` for
+  `the_law(law: Distribution)` used to return `1.0`, which is the mean of
+  `the_law(d)`, and now raises. An integrand annotated `Any` receives draws,
+  where it received the whole law. A law or a batch in `fixed_args` raises
+  `ApplicabilityError`, where `closed_form` passed it to the integrand as it
+  is and the evaluation rules lifted it, so the result depended on the route;
+  `mean(function(f)(x=d, a=A))` integrates over both laws.
+- **`expectation`'s routes are `closed_form` and `pushforward_mean`,** which
+  replace `evaluation_rules` and `identity`. A rule name such as
+  `method="sampling_lift"` still selects the rule, and the qualified form is
+  `pushforward_mean/sampling_lift`. The provenance of `pushforward_mean`
+  records the exactness of the rule and of the mean together, while
+  `expectation.check` states a call whose rule is exact as approximate, since
+  the mean's route is chosen only when the call runs. Under `exact_only` both
+  steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
+  that an exact rule built raises `ResolutionError` naming `mean`.
+- **On `closed_form`, `expectation` passes a record atom to the integrand as a
+  `Record`,** as the evaluation rules pass a record draw, where it passed the
+  nested `dict` of the atom's raw leaves. The integrand's open parameter is
+  the one parameter with no default that is neither in `fixed_args` nor bound
+  by the map's `bind`, on every route, so an integrand whose only parameter has
+  a default or is variadic raises `ApplicabilityError` on `closed_form` as on
+  the other routes.
+
 - Remove the experimental `Node`, `Module`, `AbstractModule`,
   `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
   `Function` and `@function` no longer accept `module=`. Use ordinary callables
@@ -1434,6 +1467,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
+  The map receives one draw at a time whatever its parameter's annotation, so
+  a statistic annotated `Distribution` over a random measure receives each
+  draw, and `pushforward(K, f, given=s)` conditions a kernel first. An integrand
+  whose declared input cannot take a draw, and a law or a batch in
+  `fixed_args`, raise `ApplicabilityError` before any route runs.
+- **`@operation(identity_route=...)`** registers a composite route that runs
+  a route of each constituent operation in turn in place of the generic
+  identity route of a derived operation, and provenance records the exactness
+  that route learns when it runs.
 - Distribution-subject operations accept keyword-only `given=` for conditional
   operands, including sampling, densities, moments, quantiles, expectations,
   marginals, and conversion. Conditional capabilities serve calls directly;
@@ -3305,6 +3348,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
+  for `X ~ d`, and the direct call `f(v)` replaces every other use:
+  `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
+  that takes the law itself. `evaluate.check(f, v)` becomes `f.check(v)` or
+  `pushforward.check(d, f)`. The bootstrap distribution of a statistic is
+  `pushforward(B, stat)`.
 - **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
   raises `TypeError`, where it warned and used `h`; pass the callable first, as
   `Function(h, label="g")`.

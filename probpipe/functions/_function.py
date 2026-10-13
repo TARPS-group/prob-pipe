@@ -30,7 +30,7 @@ import math
 import warnings
 from collections.abc import Callable, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from types import MappingProxyType
 from typing import Any, overload
@@ -606,7 +606,7 @@ def _realized_point(
     """
     point, result, _ = function._plan_point(values, controls)
     candidate, report = _resolution.selected(function.label, controls, candidates, point, result)
-    value = candidate.run(point, result, report)
+    value, _ = _resolution.settled(candidate.run(point, result, report))
     label, expression = _result_identity(function, values, passed)
     term = _result.declared_term(value, result, label, kind_error=kind_error)
     return _expressed(_keeping_route_record(term, value), expression)
@@ -730,11 +730,16 @@ def _run_call(
     # The selected route's result, when it carries a record of its own, which the
     # call's record keeps as a parent under the call's expression.
     route_records: list[TrackedTerm] = []
+    # The exactness the selected route settled when it ran, which the record
+    # takes in place of the one its check reported.
+    settled_exactness: list[bool | None] = []
 
     def invoke_point(**point_values: Any) -> Any:
         if selection is not None:
             point, result, candidate, report = selection
-            value = candidate.run(point, result, report)
+            value, exact = _resolution.settled(candidate.run(point, result, report))
+            if exact is not None:
+                settled_exactness.append(exact)
             term = _expressed(_result.declared_term(value, result, label), expression)
             if (
                 isinstance(value, TrackedTerm)
@@ -1002,6 +1007,9 @@ def _run_call(
         ),
     )
     result = _execution.execute_many(request)[0]
+    if settled_exactness:
+        exact = False if False in settled_exactness else (True if all(settled_exactness) else None)
+        route = replace(route, exact=exact)
     name = function._label
     controls, diagnostics = _recipe.provenance_recipe_fields(None)
     provenance = Provenance.create(
