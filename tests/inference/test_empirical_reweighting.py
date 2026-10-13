@@ -81,9 +81,7 @@ class TestTheRoute:
         assert report.selected.exact is True
 
     def test_exact_only_admits_the_method(self):
-        posterior = condition_on.with_options(exact_only=True)(
-            _normal_kernel() * _grid_prior(), {"y": Y}
-        )
+        posterior = condition_on.using(exact_only=True)(_normal_kernel() * _grid_prior(), {"y": Y})
         assert posterior.provenance.metadata["method"] == "empirical_reweighting"
         assert posterior.provenance.metadata["exact"] is True
 
@@ -184,18 +182,18 @@ class TestThePosterior:
             label="count",
         )
         with pytest.raises(ValueError, match="zero likelihood at every atom"):
-            condition_on.with_options(method="empirical_reweighting")(observe * prior, {"y": -1.0})
+            condition_on.using(method="empirical_reweighting")(observe * prior, {"y": -1.0})
 
 
 class TestWhenItApplies:
     def test_a_parametric_prior_takes_another_method(self):
         model = _normal_kernel() * Normal("mu", 0.0, 1.0)
         info = inference_method_registry.check(
-            condition_on.with_options(method="unnormalized")(model, {"y": Y})
+            condition_on.using(method="unnormalized")(model, {"y": Y})
         )
         assert info.method_name != "empirical_reweighting"
         report = inference_method_registry.get_method("empirical_reweighting").check(
-            condition_on.with_options(method="unnormalized")(model, {"y": Y})
+            condition_on.using(method="unnormalized")(model, {"y": Y})
         )
         assert report.feasible is False
         assert "must be an EmpiricalDistribution" in report.description
@@ -212,7 +210,7 @@ class TestWhenItApplies:
             def _condition_on(self, given: Any, /, **options: Any) -> Any:
                 return Normal("y", float(given["mu"]) * jnp.ones(3), 1.0)
 
-        target = condition_on.with_options(method="unnormalized")(
+        target = condition_on.using(method="unnormalized")(
             _SamplingOnly() * _grid_prior(), {"y": Y}
         )
         report = inference_method_registry.get_method("empirical_reweighting").check(target)

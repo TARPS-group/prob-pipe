@@ -292,9 +292,9 @@ class TestDeclinesToRWMH:
         # No method= → registry auto-selects. ESS (75) declines
         # (non-traceable), NUTS/HMC (gradient) decline, so RWMH (55) wins.
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
-                method_options={"num_results": 50, "num_warmup": 20}
-            )(model, {"y": np.zeros((5, 2))})
+            posterior = condition_on.using(method_options={"num_results": 50, "num_warmup": 20})(
+                model, {"y": np.zeros((5, 2))}
+            )
         assert method_of(posterior) == "blackjax_rwmh"
 
 

@@ -141,7 +141,7 @@ class TestPyABCRecovery:
     @pytest.mark.parametrize("seed", [0, 1])
     def test_recovery_1d_mean_and_spread(self, seed):
         with workflow_run(seed=seed):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 300, "max_populations": 6},
             )(_model(_product("theta")), _observed(2.0))
@@ -151,7 +151,7 @@ class TestPyABCRecovery:
 
     def test_recovery_2d(self):
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 300, "max_populations": 6},
             )(_model(_product("a", "b")), _observed(1.5, -1.0))
@@ -165,7 +165,7 @@ class TestPyABCRecovery:
         vector-valued component."""
         prior = MultivariateNormal("m", loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0)
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 300, "max_populations": 6},
             )(_model(prior), _observed(1.5, -1.0))
@@ -176,9 +176,9 @@ class TestPyABCRecovery:
 
     def test_auto_dispatch(self):
         with workflow_run(seed=0):
-            post = condition_on.with_options(
-                method_options={"n_particles": 200, "max_populations": 4}
-            )(_model(_product("theta")), _observed(2.0))
+            post = condition_on.using(method_options={"n_particles": 200, "max_populations": 4})(
+                _model(_product("theta")), _observed(2.0)
+            )
         assert method_of(post) == "pyabc_smcabc"
         # Observed across four workflow seeds: |mean error| 0.01-0.03.
         assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.2)
@@ -189,7 +189,7 @@ class TestPyABCWeightsAndDraws:
         """SMC-ABC's importance weights are kept, not resampled to a uniform
         chain — so the weighted mean actually means something."""
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 200, "max_populations": 4},
             )(_model(_product("theta")), _observed(2.0))
@@ -201,7 +201,7 @@ class TestPyABCWeightsAndDraws:
         """The kept weights actually change the estimate: the weighted
         posterior mean is not the equal-weight mean of the raw particles."""
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 200, "max_populations": 4},
             )(_model(_product("theta")), _observed(2.0))
@@ -210,7 +210,7 @@ class TestPyABCWeightsAndDraws:
         assert weighted != pytest.approx(float(draws.mean()), abs=1e-6)
 
     def test_reproducible_across_calls(self):
-        smc = condition_on.with_options(
+        smc = condition_on.using(
             method="pyabc_smcabc",
             method_options={"n_particles": 100, "max_populations": 3},
         )
@@ -224,7 +224,7 @@ class TestPyABCWeightsAndDraws:
 
     def test_draws_are_name_keyed(self):
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 80, "max_populations": 3},
             )(_model(_product("theta")), _observed(2.0))
@@ -237,7 +237,7 @@ class TestPyABCWeightsAndDraws:
             return jnp.mean(jnp.atleast_2d(y), axis=-1, keepdims=True)
 
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={
                     "summary_fn": summary_fn,
@@ -257,7 +257,7 @@ class TestPyABCWeightsAndDraws:
             return float(np.linalg.norm(np.asarray(x["y"]) - np.asarray(x0["y"])))
 
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={
                     "distance_fn": distance_fn,
@@ -276,7 +276,7 @@ class TestPyABCDiagnostics:
         diagnostics: one row per generation, a non-increasing epsilon schedule,
         acceptance rates in (0, 1], and the total simulation count."""
         with workflow_run(seed=0):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 100, "max_populations": 4},
             )(_model(_product("theta")), _observed(2.0))
@@ -307,7 +307,7 @@ class TestPyABCDefaults:
 
         monkeypatch.setattr(pyabc, "ABCSMC", spy)
         with pytest.raises(_Stop):
-            condition_on.with_options(
+            condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 10, "max_populations": 1},
             )(_model(_product("theta")), _observed(2.0))
@@ -331,7 +331,7 @@ class TestPyABCDefaults:
         my_eps = pyabc.MedianEpsilon()
         my_transitions = pyabc.MultivariateNormalTransition()
         with pytest.raises(_Stop):
-            condition_on.with_options(
+            condition_on.using(
                 method="pyabc_smcabc",
                 method_options={
                     "eps": my_eps,
@@ -358,7 +358,7 @@ class TestPyABCDefaults:
 
         monkeypatch.setattr(pyabc, "ABCSMC", spy)
         with pytest.raises(_Stop):
-            condition_on.with_options(
+            condition_on.using(
                 method="pyabc_smcabc",
                 method_options={"n_particles": 10, "max_populations": 1},
             )(_model(_product("theta")), _observed(2.0))
@@ -380,7 +380,7 @@ class TestPyABCDefaults:
 
         monkeypatch.setattr(pyabc.ABCSMC, "run", spy_run)
         with pytest.raises(_Stop):
-            condition_on.with_options(
+            condition_on.using(
                 method="pyabc_smcabc",
                 method_options={
                     "n_particles": 10,
@@ -462,17 +462,17 @@ class TestPyABCSupport:
         """A uniform prior's backend density is finite past the bounds, so only the
         coordinates keep a perturbed particle inside them."""
         with workflow_run(seed=0):
-            post = condition_on.with_options(
-                method="pyabc_smcabc", method_options=_SUPPORT_OPTIONS
-            )(_model(Beta("p", 1.0, 1.0)), _observed(0.95))
+            post = condition_on.using(method="pyabc_smcabc", method_options=_SUPPORT_OPTIONS)(
+                _model(Beta("p", 1.0, 1.0)), _observed(0.95)
+            )
         draws = np.asarray(flat_draws(post)["p"]).ravel()
         assert np.all((draws > 0) & (draws < 1))
 
     def test_a_simplex_posterior_stays_on_the_simplex(self):
         with workflow_run(seed=0):
-            post = condition_on.with_options(
-                method="pyabc_smcabc", method_options=_SUPPORT_OPTIONS
-            )(_model(Dirichlet("w", jnp.ones(3))), _observed(0.7, 0.2, 0.1))
+            post = condition_on.using(method="pyabc_smcabc", method_options=_SUPPORT_OPTIONS)(
+                _model(Dirichlet("w", jnp.ones(3))), _observed(0.7, 0.2, 0.1)
+            )
         draws = np.asarray(flat_draws(post)["w"])
         assert draws.shape == (post.num_atoms, 3)
         assert np.all(draws > 0)

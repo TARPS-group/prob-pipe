@@ -1962,5 +1962,5 @@ class TestALiftOfALawValuedFunction:
 
     def test_include_inputs_joins_the_draw_and_the_law(self):
         with workflow_run(seed=0):
-            law = self._kernel().with_options(include_inputs=True)(Normal("x", 0.0, 1.0))
+            law = self._kernel().using(include_inputs=True)(Normal("x", 0.0, 1.0))
         assert tuple(law.event_spec.components) == ("x", "kernel")

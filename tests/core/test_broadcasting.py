@@ -191,7 +191,7 @@ class TestBroadcastingNSamples:
         )
         g = Normal("x", loc=0.0, scale=1.0)
         with workflow_run(seed=6):
-            result = w.with_options(n_broadcast_samples=10)(x=g)
+            result = w.using(n_broadcast_samples=10)(x=g)
         assert result.num_atoms == 10
 
     def test_call_time_override_rejects_non_integer(self):
@@ -202,7 +202,7 @@ class TestBroadcastingNSamples:
         g = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(TypeError, match="n_broadcast_samples must be an integer"):
-            w.with_options(n_broadcast_samples=2.5)(x=g)
+            w.using(n_broadcast_samples=2.5)(x=g)
 
     @pytest.mark.parametrize("n_broadcast_samples", [0, -1])
     def test_call_time_override_rejects_non_positive(self, n_broadcast_samples):
@@ -213,7 +213,7 @@ class TestBroadcastingNSamples:
         g = Normal("x", loc=0.0, scale=1.0)
 
         with pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"):
-            w.with_options(n_broadcast_samples=n_broadcast_samples)(x=g)
+            w.using(n_broadcast_samples=n_broadcast_samples)(x=g)
 
 
 class TestWorkflowControlParameterNames:
@@ -396,7 +396,7 @@ class TestBroadcastingEnumeration:
             dispatch="sequential",
             output_spec=OutputSpec(identity=None),
         )
-        result = w.with_options(include_inputs=True)(x=ed)
+        result = w.using(include_inputs=True)(x=ed)
         assert isinstance(result, EmpiricalDistribution)
         assert "x" in result.event_spec.components
         # Each draw of the array law is an array, and stays one in the joint.
@@ -539,7 +539,7 @@ class TestBroadcastingJAX:
         )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=20):
-            result = w.with_options(include_inputs=True)(x=g)
+            result = w.using(include_inputs=True)(x=g)
         assert isinstance(result, EmpiricalDistribution)
         assert "x" in result.event_spec.components
         assert result._rows["x"].shape[0] == 30
@@ -718,7 +718,7 @@ class TestIncludeInputsArgument:
         )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
-            result = w.with_options(include_inputs=True)(x=g)
+            result = w.using(include_inputs=True)(x=g)
         assert isinstance(result, EmpiricalDistribution)
         assert "x" in result.event_spec.components
 
@@ -753,7 +753,7 @@ class TestIncludeInputsArgument:
         g1 = Normal("a", loc=1.0, scale=0.1)
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=0):
-            result = w.with_options(include_inputs=True)(a=g1, b=g2)
+            result = w.using(include_inputs=True)(a=g1, b=g2)
         assert isinstance(result, EmpiricalDistribution)
         assert list(result.event_spec.components) == ["a", "b", "add_them"]
 
@@ -805,7 +805,7 @@ class TestNamedComponents:
         g1 = Normal("a", loc=1.0, scale=0.1)
         g2 = Normal("b", loc=2.0, scale=0.1)
         with workflow_run(seed=0):
-            result = w.with_options(include_inputs=True)(a=g1, b=g2)
+            result = w.using(include_inputs=True)(a=g1, b=g2)
         assert list(result.event_spec.components) == ["a", "b", "add_them"]
 
     def test_getitem_input(self):
@@ -821,7 +821,7 @@ class TestNamedComponents:
         )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
-            result = w.with_options(include_inputs=True)(x=g)
+            result = w.using(include_inputs=True)(x=g)
         x_marginal = result._marginal("x")
         assert isinstance(x_marginal, EmpiricalDistribution)
         assert x_marginal.num_atoms == 20
@@ -839,7 +839,7 @@ class TestNamedComponents:
         )
         g = Normal("x", loc=1.0, scale=0.5)
         with workflow_run(seed=0):
-            result = w.with_options(include_inputs=True)(x=g)
+            result = w.using(include_inputs=True)(x=g)
         out = result._marginal("double_it")
         assert isinstance(out, EmpiricalDistribution)
         assert out.num_atoms == 20

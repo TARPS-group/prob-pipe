@@ -115,7 +115,8 @@ class PointReport(Feasibility):
     The point is feasible when a route is selected, unresolved when a route
     ranked above every feasible one still needs declarations, and infeasible
     when no route applies. A route's probe may also return one, to report a
-    feasible route of a stated exactness that runs no method.
+    feasible route of a stated exactness that runs no method, or a feasible
+    route whose ``deferred`` names the checks it leaves to its run.
 
     Attributes
     ----------
@@ -135,7 +136,8 @@ class PointReport(Feasibility):
         order. The exactness is the implementation's that the candidate's report
         selects, its route's declaration for a route that states one.
     deferred : tuple of str
-        The checks deferred to the return.
+        The checks deferred to the return: planning's, then those the selected
+        route's report defers.
     """
 
     route: str | None = None
@@ -186,7 +188,9 @@ def _no_route(
     """
     restriction = " with exact_only" if controls.get("exact_only") else ""
     if not probed:
-        return f"{label}: no route applies{restriction}; none is registered"
+        if restriction:
+            return f"{label}: no route applies with exact_only, because none of its routes is exact"
+        return f"{label}: no route applies, because none is registered"
     tried = "; ".join(
         f"{candidate.label}: {report.description or 'infeasible'}" for candidate, report in probed
     )

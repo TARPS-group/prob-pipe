@@ -1088,7 +1088,7 @@ def quantile(d: Distribution, q: Any):
     are the law's closed form, ``closed_form``; ``by_component``,
     which computes each component of a record event by the route that
     component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
-    which ``with_options(method=...)`` selects among. The fallback's quantile
+    which ``using(method=...)`` selects among. The fallback's quantile
     at a level ``q`` is the generalized
     inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
     an empirical law's is.
@@ -1148,7 +1148,8 @@ class _PushforwardMean(_EvaluationRules):
     """The identity of ``expectation``: a rule of ``pushforward`` builds the law ``f♯d``, and ``mean`` averages it.
 
     The route runs ``pushforward``'s route and then ``mean`` on the law it
-    returns, so its method names are the evaluation rules'. It ranks once, as an
+    returns, so its method names are the evaluation rules'. The engine runs both
+    steps in the scope of an identity (VI.0). The route ranks once, as an
     identity: among the approximate routes, and under ``exact_only`` among the
     exact ones, with the rule and the mean both restricted to exact routes. The
     mean's route is chosen only once the law exists, so without ``exact_only``
@@ -1188,10 +1189,7 @@ class _PushforwardMean(_EvaluationRules):
     ) -> Any:
         """The mean of the pushforward law the selected rule returns, with the exactness of both steps."""
         law = super().run(call, result, method=method, exact_only=exact_only)
-        controls: dict[str, Any] = {"exact_only": exact_only}
-        if "n_broadcast_samples" in call.operation._options:
-            controls["n_broadcast_samples"] = call.controls["n_broadcast_samples"]
-        averaged = mean.with_options(**controls)(law)
+        averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
         return RouteOutcome(averaged.raw(), exact)
@@ -1216,7 +1214,7 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
     annotation, on every route. A law claiming ``SupportsExpectation`` computes
     the expectation in closed form, and otherwise the route ``pushforward_mean``
     builds the pushforward by an evaluation rule, which
-    ``with_options(method=...)`` names, and takes its mean. Under ``exact_only``
+    ``using(method=...)`` names, and takes its mean. Under ``exact_only``
     both steps are restricted to exact routes.
 
     Parameters

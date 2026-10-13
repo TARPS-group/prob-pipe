@@ -316,7 +316,7 @@ class TestTheFloorsAgreeWithTheDirectCall:
         self, annotation, operand, controls, swept
     ):
         wrapped, seen = _recording(annotation)
-        wrapped = wrapped.with_options(**controls)
+        wrapped = wrapped.using(**controls)
         value = operand()
 
         info = evaluation_rule_registry.check(
@@ -385,7 +385,7 @@ class TestTheDirectCall:
             return x
 
         with pytest.raises(ResolutionError):
-            identity.with_options(exact_only=True)(standard_normal())
+            identity.using(exact_only=True)(standard_normal())
 
     def test_a_method_that_names_no_route_raises_resolution_error(self):
         @function
@@ -393,7 +393,7 @@ class TestTheDirectCall:
             return x
 
         with pytest.raises(ResolutionError):
-            identity.with_options(method="quadrature")(standard_normal())
+            identity.using(method="quadrature")(standard_normal())
 
     def test_a_lift_with_no_feasible_route_names_the_missing_requirement(self):
         @function

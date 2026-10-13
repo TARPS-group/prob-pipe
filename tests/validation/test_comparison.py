@@ -275,7 +275,7 @@ def _draw_after(run_first) -> float:
     """The draw that follows *run_first* in a workflow scope seeded 7."""
     with workflow_run(seed=7):
         run_first()
-        return float(sample.with_options(raw=True)(Normal("z", 0.0, 1.0)))
+        return float(sample.using(raw=True)(Normal("z", 0.0, 1.0)))
 
 
 class TestScorePosteriorRandomness:

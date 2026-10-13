@@ -57,7 +57,7 @@ def test_function_rng_seed_controls_are_removed():
     wf = Function(identity, label="identity", dispatch="sequential")
 
     assert "seed" not in inspect.signature(Function.__init__).parameters
-    assert "seed" not in inspect.signature(wf.with_options).parameters
+    assert "seed" not in inspect.signature(wf.using).parameters
     with pytest.warns(FutureWarning, match="seed.*ignored"):
         deprecated = Function(identity, label="identity", dispatch="sequential", seed=42)
     assert float(deprecated(3)) == 3
@@ -69,7 +69,7 @@ def test_function_rng_seed_controls_are_removed():
 
     assert float(decorated_identity(3)) == 3
     with pytest.raises(TypeError, match="seed"):
-        wf.with_options(seed=42)
+        wf.using(seed=42)
 
 
 def test_function_construction_seed_warns_without_binding_user_parameter():
@@ -181,7 +181,7 @@ def test_bare_decorator_forms_wrap_functions():
     assert float(bare_parentheses(2.0)) == 2.0
 
 
-def test_with_options_controls_sample_count_and_include_inputs():
+def test_using_controls_sample_count_and_include_inputs():
     def identity(x):
         return x
 
@@ -194,7 +194,7 @@ def test_with_options_controls_sample_count_and_include_inputs():
     )
 
     with workflow_run(seed=0):
-        result = wf.with_options(
+        result = wf.using(
             n_broadcast_samples=6,
             include_inputs=True,
         )(Normal("x", loc=0.0, scale=1.0))
@@ -292,7 +292,7 @@ def test_var_keyword_receives_workflow_control_names():
     normal = Normal("x", loc=0.0, scale=1.0)
 
     with workflow_run(seed=0):
-        result = wf.with_options(n_broadcast_samples=5)(
+        result = wf.using(n_broadcast_samples=5)(
             x=normal,
             seed=42,
             n_broadcast_samples=99,
@@ -343,7 +343,7 @@ def test_bindable_workflow_control_name_does_not_override():
     assert result.num_atoms == 5
 
 
-def test_with_options_clears_workers_and_resets_sample_count():
+def test_using_clears_workers_and_resets_sample_count():
     wrapped = Function(
         lambda x: x,
         dispatch="thread",
@@ -352,11 +352,11 @@ def test_with_options_clears_workers_and_resets_sample_count():
         label="identity",
         output_spec=OutputSpec(identity=None),
     )
-    unchanged = wrapped.with_options(include_inputs=True)
+    unchanged = wrapped.using(include_inputs=True)
     assert unchanged.options["max_workers"] == 2
     assert unchanged.options["n_broadcast_samples"] == 7
 
-    reset = wrapped.with_options(max_workers=None, n_broadcast_samples=None)
+    reset = wrapped.using(max_workers=None, n_broadcast_samples=None)
     defaults = Function(
         lambda x: x,
         dispatch="thread",
@@ -387,8 +387,8 @@ def test_a_view_resets_a_control_that_construction_refuses_as_none(
         dispatch="sequential",
         label="identity",
     )
-    configured = wrapped.with_options(workflow_kind=WorkflowKind.OFF)
-    assert configured.with_options(**{control: None}).options[control] == default
+    configured = wrapped.using(workflow_kind=WorkflowKind.OFF)
+    assert configured.using(**{control: None}).options[control] == default
     with pytest.raises(error, match=message):
         Function(
             lambda x: x,
@@ -397,7 +397,7 @@ def test_a_view_resets_a_control_that_construction_refuses_as_none(
         )
 
 
-@pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "with_options"])
+@pytest.mark.parametrize("entrypoint", ["constructor", "decorator", "using"])
 def test_max_workers_warning_points_to_the_user_call(entrypoint):
     def identity(x):
         return x
@@ -422,7 +422,7 @@ def test_max_workers_warning_points_to_the_user_call(entrypoint):
             decorate(identity)
         else:
             line = frame.f_lineno + 1
-            wrapped.with_options(max_workers=2)
+            wrapped.using(max_workers=2)
     assert len(caught) == 1
     assert caught[0].filename == __file__
     assert caught[0].lineno == line

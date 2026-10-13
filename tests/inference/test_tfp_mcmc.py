@@ -33,7 +33,7 @@ def _model():
 def _adapted_step_size(target_accept_prob: float) -> float:
     """The step size that warmup adapts toward *target_accept_prob*, on one chain."""
     with workflow_run(seed=0):
-        posterior = condition_on.with_options(
+        posterior = condition_on.using(
             method="tfp_nuts",
             method_options={
                 "num_results": 100,
@@ -54,6 +54,6 @@ class TestTheTargetAcceptanceProbability:
     @pytest.mark.parametrize("target_accept_prob", [0.0, 1.0, 1.5])
     def test_a_target_outside_the_open_unit_interval_raises(self, target_accept_prob):
         with pytest.raises(ValueError, match="target_accept_prob"):
-            condition_on.with_options(
+            condition_on.using(
                 method="tfp_nuts", method_options={"target_accept_prob": target_accept_prob}
             )(_model(), {"y": Y})
