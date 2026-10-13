@@ -190,8 +190,8 @@ class TestTheSupportCheck:
 
     def test_a_family_on_another_support_is_refused(self):
         refusal = (
-            "moment_match: Normal is supported on real, but 'tau' declares the support positive; "
-            "set the converter option check_support=False to fit it anyway"
+            "moment_match: Normal is supported on real, but 'tau' declares the support positive. "
+            "Set the converter option check_support=False to fit it anyway"
         )
         with pytest.raises(ResolutionError, match=re.escape(refusal)):
             convert(_tau(), Normal)
@@ -222,7 +222,9 @@ class TestTheSupportCheck:
 
     def test_an_empirical_law_whose_atoms_leave_the_support_converts_under_the_override(self):
         source = EmpiricalDistribution(jnp.array([0.0, 1.0, 2.0, 3.0]), component="x")
-        with pytest.raises(ValueError, match="its atoms lie outside that support"):
+        with pytest.raises(
+            ValueError, match=r"lie outside it\. Set the converter option check_support=False"
+        ):
             convert(source, Exponential)
         fitted = convert.using(method_options={"check_support": False})(source, Exponential)
         assert isinstance(fitted, Exponential)

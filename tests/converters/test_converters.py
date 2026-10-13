@@ -8,6 +8,7 @@ declaration and records the converter in the result's provenance.
 """
 
 import re
+from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
@@ -46,7 +47,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe._dtype import _default_float_dtype
-from probpipe.core.constraints import greater_than, interval
+from probpipe.core.constraints import greater_than, interval, unit_interval
 from probpipe.distributions import ConverterRegistry
 from probpipe.distributions._capabilities import (
     SupportsCovariance,
@@ -261,6 +262,84 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
         assert isinstance(
             converter_registry.convert(source, Exponential, check_support=False), Exponential
         )
+
+    @pytest.mark.parametrize("container", [list, tuple])
+    def test_sequence_bounds_keep_the_fitted_beta_moments(self, container):
+        support = interval(container([0.0, 0.0]), container([1.0, 1.0]))
+        source = EmpiricalDistribution(
+            jnp.array([[0.2, 0.3], [0.4, 0.5], [0.6, 0.7]]),
+            event_spec=OutputSpec(x=NumericArraySpec((2,), support=support)),
+        )
+        info = converter_registry.check(source, Beta)
+        assert (info.feasible, info.method_name, info.samples) == (True, "moment_match", False)
+        fitted = converter_registry.convert(source, Beta)
+        assert isinstance(fitted, Beta)
+        assert fitted.support == unit_interval
+        # The three equally weighted atoms have means 0.4 and 0.5 and variance 0.08 / 3.
+        np.testing.assert_allclose(mean(fitted).raw(), [0.4, 0.5], rtol=1e-6, atol=0)
+        np.testing.assert_allclose(variance(fitted).raw(), [0.08 / 3] * 2, rtol=1e-6, atol=0)
+
+
+class TestASupportTheFamilyDoesNotShare:
+    """A fit keeps the source's declared support, so a family on another support is refused."""
+
+    @pytest.fixture(autouse=True)
+    def _check_scipy(self):
+        pytest.importorskip("scipy")
+
+    def test_a_shifted_scipy_beta_is_not_fit_by_a_beta(self):
+        import scipy.stats as ss
+
+        source = ss.beta(2.0, 3.0, loc=1.0, scale=2.0)
+        info = converter_registry.check(source, Beta)
+        assert info.feasible is False
+        assert "declares the support interval(1.0, 3.0)" in info.description
+        with pytest.raises(ResolutionError, match="check_support=False"):
+            converter_registry.convert(source, Beta)
+
+    def test_a_law_on_the_positive_half_line_is_not_fit_by_a_normal(self):
+        import scipy.stats as ss
+
+        info = converter_registry.check(ss.gamma(2.0, loc=1.0), Normal)
+        assert info.feasible is False
+        assert "declares the support greater_than(1.0)" in info.description
+
+    def test_a_shifted_half_line_is_not_fit_by_a_family_on_the_positive_half_line(self):
+        import scipy.stats as ss
+
+        info = converter_registry.check(ss.gamma(2.0, loc=1.0), Gamma)
+        assert info.feasible is False
+        assert "Gamma is supported on positive" in info.description
+
+    def test_the_check_refuses_without_drawing(self):
+        import scipy.stats as ss
+
+        # The shifted law draws through its base Beta, so any draw of it calls Beta._sample.
+        with patch.object(
+            Beta,
+            "_sample",
+            side_effect=AssertionError("the check drew from the source"),
+        ) as draw:
+            info = converter_registry.check(ss.beta(2.0, 3.0, loc=1.0, scale=2.0), Beta)
+        assert info.feasible is False
+        draw.assert_not_called()
+
+    def test_a_law_on_the_unit_interval_is_fit_by_a_beta(self):
+        source = Uniform("x", low=0.0, high=1.0)
+        info = converter_registry.check(source, Beta)
+        assert (info.feasible, info.method_name) == (True, "moment_match")
+        result = converter_registry.convert(source, Beta)
+        assert isinstance(result, Beta)
+        np.testing.assert_allclose(float(result._alpha), 1.0, rtol=1e-4)
+        np.testing.assert_allclose(float(result._beta), 1.0, rtol=1e-4)
+
+    def test_the_refusal_can_be_overridden(self):
+        import scipy.stats as ss
+
+        source = ss.beta(2.0, 3.0, loc=1.0, scale=2.0)
+        result = converter_registry.convert(source, Beta, check_support=False)
+        assert isinstance(result, Beta)
+        assert result.support == unit_interval
 
 
 class TestARecordSource:
