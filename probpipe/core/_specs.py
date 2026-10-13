@@ -27,7 +27,6 @@ from ._spec_base import (
     _require_hashable,
     _unify_specs,
 )
-from .constraints import _supports_compatible
 from .named_tree import _PATH_SEP
 
 __all__ = [
@@ -687,26 +686,3 @@ def _unnamed_exposed(spec: TermSpec) -> tuple[object, ...]:
         spec.level_names,  # type: ignore[attr-defined]
         _unnamed_exposed(spec.element_spec),  # type: ignore[attr-defined]
     )
-
-
-def _check_output_template(record: RecordSpec, template: RecordSpec, path: str) -> None:
-    """Raise ``ValueError`` unless *record* conforms to a Function's output *template*.
-
-    The fields and shapes must conform, a dtype the template sets admits a
-    same-kind cast, and a support the template sets must hold the record's.
-    Metadata the template leaves unset matches any, so a law's full declaration
-    meets a template that states only shapes.
-    """
-    _unify_specs(template, record, {}, path)
-    for leaf, declared in template.items():
-        actual = record[leaf]
-        if (
-            isinstance(declared, NumericArraySpec)
-            and isinstance(actual, NumericArraySpec)
-            and declared.support is not None
-            and actual.support is not None
-            and not _supports_compatible(actual.support, declared.support)
-        ):
-            raise ValueError(
-                f"{path}/{leaf} support {actual.support!r} does not conform to {declared.support!r}"
-            )
