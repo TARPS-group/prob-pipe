@@ -583,7 +583,7 @@ class TestPrefectImportGuard:
 
 def _mean_of_law(law: Distribution) -> Any:
     """The raw mean of *law*, a constituent that runs in a Prefect task."""
-    return mean.with_options(raw=True)(law)
+    return mean.using(raw=True)(law)
 
 
 class TestInheritedControlsInPrefectTasks:
@@ -596,7 +596,7 @@ class TestInheritedControlsInPrefectTasks:
     def test_exact_only_holds_in_a_prefect_task_constituent(self):
         inner = Function(
             _mean_of_law, workflow_kind=WorkflowKind.TASK, dispatch="sequential"
-        ).with_options(raw=True)
+        ).using(raw=True)
 
         @operation(
             result=lambda d: None, registry=OperationRegistry(), identity_check=lambda d: True
@@ -611,5 +611,5 @@ class TestInheritedControlsInPrefectTasks:
             workflow_run(seed=63),
             pytest.raises(ResolutionError, match="mean: no route applies with exact_only"),
         ):
-            summed_means.with_options(exact_only=True)(law)
+            summed_means.using(exact_only=True)(law)
         assert law.shapes == []

@@ -529,7 +529,7 @@ class TestPyMCModel:
         assert isinstance(kernel, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(kernel, SupportsConditionalSampling)
         assert not _kernel_is_normalized(kernel)
-        law = probpipe.operations._condition.condition_on.with_options(method="unnormalized")(
+        law = probpipe.operations._condition.condition_on.using(method="unnormalized")(
             kernel, {"x": np.linspace(0, 1, 3)}
         )
         assert not _is_normalized(law)

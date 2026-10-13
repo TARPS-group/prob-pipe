@@ -344,7 +344,7 @@ class TestConvert:
     def test_beta_from_uniform(self):
         """Uniform(0,1) -> Beta should work (compatible support)."""
         u = Uniform("u", low=0.0, high=1.0)
-        b = convert.with_options(method_options={"num_samples": 5000})(u, Beta)
+        b = convert.using(method_options={"num_samples": 5000})(u, Beta)
         # Uniform(0,1) has mean=0.5, var=1/12 -> alpha~=beta~=1
         assert float(b.alpha) > 0
         assert float(b.beta) > 0
@@ -404,5 +404,5 @@ class TestConvert:
     # -- empirical from anything --
     def test_empirical_from_normal(self):
         n = Normal("n", loc=0.0, scale=1.0)
-        ed = convert.with_options(method_options={"num_samples": 100})(n, EmpiricalDistribution)
+        ed = convert.using(method_options={"num_samples": 100})(n, EmpiricalDistribution)
         assert ed.num_atoms == 100

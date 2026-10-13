@@ -85,7 +85,7 @@ class TestDistributionBase:
     def test_convert_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution base."""
         # convert returns a Normal source unchanged
-        result = convert.with_options(method_options={"num_samples": 100})(scalar_normal, Normal)
+        result = convert.using(method_options={"num_samples": 100})(scalar_normal, Normal)
         assert isinstance(result, Normal)
 
 

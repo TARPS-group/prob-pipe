@@ -414,7 +414,7 @@ class TestNestedSweepProbes:
             mapped = wrapped(rows, law)
         assert probes == [(True, True)]
         with workflow_run(seed=12):
-            sequential = wrapped.with_options(dispatch="sequential")(rows, law)
+            sequential = wrapped.using(dispatch="sequential")(rows, law)
         for index in range(4):
             np.testing.assert_array_equal(
                 np.asarray(mapped[index].atoms), np.asarray(sequential[index].atoms)
@@ -437,7 +437,7 @@ class TestNestedSweepProbes:
         # with its own shift fixed.
         assert probes == [(True, False), (False, True), (False, True)]
         with workflow_run(seed=12):
-            expected = wrapped.with_options(dispatch="sequential")(rows, law)
+            expected = wrapped.using(dispatch="sequential")(rows, law)
         with workflow_run(seed=12):
             noise = Function(
                 lambda shift, noise: noise,
@@ -479,7 +479,7 @@ class TestNestedSweepProbes:
             logged = [record for record in caplog.records if "not JAX-traceable" in record.message]
             assert len(logged) == 1
             with workflow_run(seed=12):
-                expected = wrapped.with_options(dispatch="sequential")(rows, law)
+                expected = wrapped.using(dispatch="sequential")(rows, law)
             for index in range(5):
                 np.testing.assert_array_equal(
                     np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)
@@ -504,7 +504,7 @@ class TestNestedSweepProbes:
             with workflow_run(seed=12):
                 actual = wrapped(rows, law)
             with workflow_run(seed=12):
-                expected = wrapped.with_options(dispatch="sequential")(rows, law)
+                expected = wrapped.using(dispatch="sequential")(rows, law)
             for index in range(2):
                 np.testing.assert_array_equal(
                     np.asarray(actual[index].atoms), np.asarray(expected[index].atoms)

@@ -19,7 +19,7 @@ Carrying out a probabilistic analysis means translating its mathematics into a c
 In practice you have to choose among algorithms with different trade-offs and convert between the formats that different tools expect.
 ProbPipe streamlines and automates those tasks, so you can:
 
-- **Switch and compare algorithms without rewriting the model.** The `condition_on(...)` operation computes a model posterior with an algorithm it selects, based on that model's capabilities (e.g., log density evaluation or forward sampling). Calling `condition_on.with_options(method=method)(...)` swaps in another algorithm named `method`, such as stochastic-gradient Langevin dynamics (for large data sets) or random-walk Metropolis (for a log density without gradients).
+- **Switch and compare algorithms without rewriting the model.** The `condition_on(...)` operation computes a model posterior with an algorithm it selects, based on that model's capabilities (e.g., log density evaluation or forward sampling). Calling `condition_on.using(method=method)(...)` swaps in another algorithm named `method`, such as stochastic-gradient Langevin dynamics (for large data sets) or random-walk Metropolis (for a log density without gradients).
 - **Use the models and data you already have.** A model written in PyMC or Stan can be wrapped as a ProbPipe object that operations like `condition_on` can be used with. Data can be in pandas or xarray objects.
 - **Push uncertainty through any Python function.** Write a forecast or a decision rule in plain Python as a function of known inputs, such as one value of each parameter, and decorate it with `@function` to make it a ProbPipe-native function. Called on a posterior, or on any other distribution of its inputs, the function returns the distribution of its output, which ProbPipe computes by evaluating the function at draws from that distribution.
 - **Get exact answers when feasible.** ProbPipe computes a result exactly when a formula or an exact algorithm applies, such as the update to a discrete distribution, and approximately otherwise.
@@ -94,7 +94,7 @@ from probpipe.diagnostics import add_mcmc_diagnostics
 print(f"{'method':<15}{'slope mean':>12}{'largest R-hat':>16}")
 for method in ["blackjax_nuts", "tfp_nuts", "blackjax_rwmh"]:
     with workflow_run(seed=0):
-        method_posterior = condition_on.with_options(method=method)(model, {"damage": damage})
+        method_posterior = condition_on.using(method=method)(model, {"damage": damage})
     # Adds R-hat and effective sample size diagnostics to the posterior object.
     add_mcmc_diagnostics(method_posterior)
     mean_slope = float(mean(method_posterior["beta"]).raw()[1])

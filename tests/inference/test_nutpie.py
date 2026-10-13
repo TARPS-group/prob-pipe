@@ -164,7 +164,7 @@ class TestCompileForNutpie:
             "model { y ~ normal(mu, sigma); }"
         )
         posterior = StanModel(str(program), data={"N": 2, "y": [1.0, 2.0]}, label="program")
-        target = condition_on.with_options(method="unnormalized")(posterior, {"mu": 0.3})
+        target = condition_on.using(method="unnormalized")(posterior, {"mu": 0.3})
         report = NutpieNutsMethod().check(target)
         assert report.feasible is False
         assert "parameter" in report.description
@@ -406,7 +406,7 @@ class TestNutpieStanIntegration:
         assert condition_on.check(renamed, data).method == "nutpie_nuts"
         options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(method_options=options)(renamed, data)
+            posterior = condition_on.using(method_options=options)(renamed, data)
         assert list(posterior.event_spec.components) == ["scale_free"]
 
 
@@ -477,9 +477,7 @@ class TestNutpieIntegration:
         from probpipe.operations._condition import condition_on
 
         model = PyMCModel(_gaussian_pymc_fn, label="gaussian")
-        target = condition_on.with_options(method="unnormalized")(
-            model, {"y": np.array([0.0, 1.0])}
-        )
+        target = condition_on.using(method="unnormalized")(model, {"y": np.array([0.0, 1.0])})
         with workflow_run(seed=0):
             result = NutpieNutsMethod().execute(target, num_results=30, num_warmup=30, num_chains=1)
         (parent,) = result.provenance.parents
@@ -501,7 +499,7 @@ class TestNutpieIntegration:
         assert condition_on.check(renamed, data).method == "nutpie_nuts"
         options = {"num_results": 30, "num_warmup": 30, "num_chains": 1}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(method_options=options)(renamed, data)
+            posterior = condition_on.using(method_options=options)(renamed, data)
         assert list(posterior.event_spec.components) == ["location"]
 
     def test_annotations_trace_attached(self):
