@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 import threading
 import warnings
 from typing import Any
@@ -58,6 +59,7 @@ from probpipe.operations._operation import (
     _CheckedRoute,
     _DelegatingRoute,
     _install_expression_rule,
+    _named_operations,
     _workflow_draws,
 )
 from probpipe.operations._sample import sample
@@ -896,6 +898,14 @@ class TestIdentityRoute:
         assert [route.name for route in doubled.routes] == ["composite"]
         assert doubled.summary().identity == "center.using(raw=True)(d) * 2"
 
+    def test_a_method_of_the_constituent_names_the_call_that_takes_it(self):
+        message = (
+            "doubled does not pass method on to center, so call "
+            "center.using(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _doubled(_Composite(settles=True)).using(method="monte_carlo")(Gaussian("g"))
+
     def test_an_operation_without_it_keeps_the_generic_route(self):
         @operation(result=_event, registry=OperationRegistry())
         def doubled(d: Distribution):
@@ -1337,6 +1347,59 @@ class TestIdentityControls:
     def test_method_does_not_pass_to_the_constituent(self):
         view = _body_doubled().using(method="identity")
         assert float(jnp.asarray(view(Gaussian("g", 1.5)))) == 3.0
+
+    def test_a_method_of_the_constituent_names_the_call_that_takes_it(self):
+        message = (
+            "doubled does not pass method on to center, so call "
+            "center.using(method='monte_carlo') to choose it"
+        )
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _body_doubled().using(method="monte_carlo")(Gaussian("g"))
+
+    def test_an_attribute_named_like_an_operation_is_no_constituent(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def shifted(d: Distribution):
+            """The law's center attribute shifted by one, which calls no operation."""
+            return d.center + 1.0
+
+        with pytest.raises(ResolutionError, match="unknown method 'monte_carlo'") as raised:
+            shifted.using(method="monte_carlo")(Gaussian("g"))
+        assert "does not pass method on" not in str(raised.value)
+
+    def test_a_constituent_called_in_a_nested_function_is_found(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center, through a nested function."""
+
+            def twice(law: Distribution) -> Any:
+                return center.using(raw=True)(law) * 2
+
+            return twice(d)
+
+        with pytest.raises(ResolutionError, match=re.escape("center.using")):
+            doubled.using(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_relabeled_constituent_is_named_by_its_operation(self):
+        inner = center.with_label("spread").using(raw=True)
+        message = "call center.using(method='monte_carlo') to choose it"
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _body_doubled(inner).using(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_callable_without_bytecode_names_no_operation(self):
+        assert _named_operations(max) == ()
+
+    def test_a_closure_variable_not_yet_assigned_names_no_operation(self):
+        def body(d: Distribution) -> Any:
+            return later(d)
+
+        assert _named_operations(body) == ()
+        later = center.using(raw=True)
+        assert [operation.name for operation in _named_operations(body)] == ["center"]
+
+    def test_a_method_no_constituent_has_gets_no_constituent_fix(self):
+        with pytest.raises(ResolutionError, match="unknown method 'nope'") as raised:
+            _body_doubled().using(method="nope")(Gaussian("g"))
+        assert "does not pass method on" not in str(raised.value)
 
     def test_the_sample_count_reaches_only_the_calls_the_identity_makes(self):
         law = Sampler("s")

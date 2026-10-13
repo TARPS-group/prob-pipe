@@ -1480,6 +1480,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`standard_deviation(d)` returns the standard deviation of a law, the square
+  root of its variance in each coordinate.** A record law's standard deviation
+  is a record with a field per component, as `standard_deviation(mu)`, so
+  `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
+  `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
+  function's is its pointwise standard deviation function, and the result is
+  labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
+  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
+  pass to `variance`.
+- **A derived operation's `method` error names the operation that has the
+  route.** `standard_deviation.using(method="monte_carlo")` raises
+  `ResolutionError` saying that `standard_deviation` does not pass `method` on
+  to `variance` and to call `variance.using(method='monte_carlo')`, and
+  `expectation` names `mean` the same way.
 - **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
   The map receives one draw at a time whatever its parameter's annotation, so
   a statistic annotated `Distribution` over a random measure receives each

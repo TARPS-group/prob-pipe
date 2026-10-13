@@ -1,24 +1,26 @@
-"""The distribution functionals: ``mean``, ``variance``, ``cov``, ``quantile``, and ``expectation``.
+"""The distribution functionals: the moments, ``quantile``, and ``expectation``.
 
-Each summarizes a distribution by a deterministic value. ``mean``, ``variance``,
-``cov``, and ``quantile`` carry a capability route on their matching protocol,
-``closed_form``, and a Monte Carlo fallback, ``monte_carlo``, on the event kinds
-where the required averaging is defined. A capability returns the law's own
-moment, and a numeric fallback returns that moment of the empirical law of its
-draws. ``mean``, ``variance``, and ``quantile`` are computed coordinate by
-coordinate, so they also carry the structural route ``by_component``: for a
-law whose event is a record, it computes each component that has an exact
-route of its own by that route, on the component's view, and the other
-components together, so a dependent joint's root factors keep their closed
-forms. ``cov`` couples components and has no such route.
+The moments are ``mean``, ``variance``, ``standard_deviation``, and ``cov``.
+Each functional summarizes a distribution by a deterministic value. ``mean``,
+``variance``, ``cov``, and ``quantile`` carry a capability route on their
+matching protocol, ``closed_form``, and a Monte Carlo fallback,
+``monte_carlo``, on the event kinds where the required averaging is defined. A
+capability returns the law's own moment, and a numeric fallback returns that
+moment of the empirical law of its draws. ``mean``, ``variance``, and
+``quantile`` are computed coordinate by coordinate, so they also carry the
+structural route ``by_component``: for a law whose event is a record, it
+computes each component that has an exact route of its own by that route, on
+the component's view, and the other components together, so a dependent joint's
+root factors keep their closed forms. ``cov`` couples components and has no
+such route.
 
 A moment of the event's kind keeps the event's packaging and derives its
 term specs, support included, and it names each component for the moment, so
 the mean of a law over ``mu`` and ``tau`` holds ``mean(mu)`` and ``mean(tau)``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
-``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and the law of a
-function lifted over laws contributes its notation in place of the draw, as
-``𝔼[f(beta ~ model; y)]``.
+``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``√𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and
+the law of a function lifted over laws contributes its notation in place of the
+draw, as ``𝔼[f(beta ~ model; y)]``.
 
 ``expectation(d, f)`` returns ``𝔼[f(X)]`` for ``X ~ d``, labeled
 ``𝔼[f(mu ~ d)]``. It is the derived
@@ -30,6 +32,12 @@ pushforward by an evaluation rule and takes its mean. Its method names are
 therefore the evaluation rules', and an integration rule registered with the
 evaluation-rule registry serves both operations.
 
+``standard_deviation(d)`` is the derived operation ``sqrt(variance(d))``, taken
+coordinate by coordinate. Its one route is the body route of its identity, so
+the call takes the routes of ``variance``, ``by_component`` included, and the
+identity passes the call's ``exact_only`` and ``n_broadcast_samples`` to
+``variance``.
+
 The draws of every Monte Carlo route are workflow-owned random events, and
 their number is the ``n_broadcast_samples`` control.
 """
@@ -38,6 +46,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from math import prod
 from typing import Any, cast
@@ -119,6 +128,7 @@ __all__ = [
     "expectation",
     "mean",
     "quantile",
+    "standard_deviation",
     "variance",
 ]
 
@@ -1034,6 +1044,97 @@ variance.fallback_route(
 )
 
 
+def _standard_deviation_result(d: DistributionSpec) -> OutputSpec:
+    """A value of the event's kind with non-negative floating leaves, each component named ``standard_deviation(...)``."""
+    return _summary_declaration(
+        d.event_spec, "standard_deviation", _variance_term(d.event_spec.spec)
+    )
+
+
+def _root(value: Any) -> Any:
+    """The square root of each coordinate of *value*: of each array leaf, or of a function's values.
+
+    A function's square root takes the function's parameters, where its
+    signature can be read.
+    """
+    if callable(value):
+
+        def root(*args: Any, **kwargs: Any) -> Any:
+            return _root(value(*args, **kwargs))
+
+        # A callable whose signature cannot be read keeps the generic one.
+        with suppress(TypeError, ValueError):
+            root.__signature__ = inspect.signature(value)  # type: ignore[attr-defined]
+        return root
+    return jax.tree.map(jnp.sqrt, value)
+
+
+def _square_root(variance_value: Any, declaration: OutputSpec) -> Any:
+    """The standard deviation of a law whose event is *declaration*, from its raw variance.
+
+    Each coordinate's standard deviation is the square root of its variance.
+    The variance of an exposed record is keyed by its components' variance
+    names, as ``variance(mu)``, and the result by their standard deviation
+    names, as ``standard_deviation(mu)``.
+    """
+    if declaration.exposes_record and isinstance(variance_value, Mapping):
+        by_component = {
+            name: _root(variance_value[_summary_name("variance", [name])])
+            for name in declaration.components
+        }
+        return _named_value(by_component, "standard_deviation", declaration)
+    return _root(variance_value)
+
+
+def _variance_applies(d: Any) -> Any:
+    """``variance`` has a route for the law."""
+    return variance.check(d)
+
+
+@operation(
+    result=_standard_deviation_result,
+    conditions=(_event_typed_variance,),
+    identity_check=_variance_applies,
+)
+def standard_deviation(d: Distribution):
+    """The standard deviation ``sqrt(variance(d))`` of ``X ~ d``, a value shaped like one draw.
+
+    Each coordinate's standard deviation is the square root of its variance,
+    so a record-drawing law's is a ``Record`` with a field for each component,
+    and a random function's is its pointwise standard deviation function.
+
+    The call takes the routes of ``variance``: its closed form, its
+    ``by_component`` route, and its Monte Carlo fallback. ``exact_only`` and
+    ``n_broadcast_samples`` set on this operation pass to ``variance``, but
+    ``method`` does not, so a route of ``variance`` is chosen on
+    ``variance.using(method=...)``.
+
+    Parameters
+    ----------
+    d : Distribution
+        The law, whose variance the call takes.
+
+    Returns
+    -------
+    TrackedTerm
+        The standard deviation at the law's declared event kind, with
+        non-negative leaves, labeled ``√𝕍[(mu, tau) ~ d]``, each component
+        named ``standard_deviation(...)``.
+
+    Raises
+    ------
+    ApplicabilityError
+        If the event is measure-valued, which has no event-typed variance in
+        general.
+    ResolutionError
+        If ``variance`` has no route for *d*, or, under ``exact_only``, no exact
+        route.
+    MathematicalDomainError
+        If the variance of *d* is known to be undefined, as a Cauchy law's is.
+    """
+    return _square_root(variance.using(raw=True)(d), d.event_spec)
+
+
 @operation(result=_cov_result, conditions=(_numeric_event,))
 def cov(d: Distribution):
     """The covariance of the flattened draw of ``X ~ d``, a ``(size, size)`` array.
@@ -1329,6 +1430,7 @@ def _expectation_expression(d: Any, f: Any) -> Expression:
 
 _install_expression_rule(mean, _moment_expression("E"))
 _install_expression_rule(variance, _moment_expression("Var"))
+_install_expression_rule(standard_deviation, _moment_expression("SD"))
 _install_expression_rule(cov, _moment_expression("Cov"))
 _install_expression_rule(quantile, _moment_expression("Q"))
 _install_expression_rule(expectation, _expectation_expression)

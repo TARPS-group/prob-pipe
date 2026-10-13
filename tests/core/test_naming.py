@@ -42,6 +42,7 @@ from probpipe import (
     prob,
     quantile,
     sample,
+    standard_deviation,
     unnormalized_log_prob,
     unnormalized_prob,
     variance,
@@ -264,9 +265,10 @@ class TestAnOperationLabelsItsResultByItsLaw:
         [
             (lambda d: mean(d), "𝔼[height ~ prior]"),
             (lambda d: variance(d), "𝕍[height ~ prior]"),
+            (lambda d: standard_deviation(d), "√𝕍[height ~ prior]"),
             (lambda d: log_prob(d, jnp.asarray(0.0)), "log prior(height)"),
         ],
-        ids=["mean", "variance", "log_prob"],
+        ids=["mean", "variance", "standard_deviation", "log_prob"],
     )
     def test_a_scalar_law_result_is_labeled_over_the_law(self, compute, label):
         assert compute(self.LAW).label == label
@@ -832,6 +834,13 @@ class TestTheLabelsOfValuesComputedFromALaw:
                 "𝕍[(y, mu) ~ model]",
                 ("variance(y)", "variance(mu)"),
                 id="variance",
+            ),
+            pytest.param(
+                standard_deviation,
+                lambda: (_model(),),
+                "√𝕍[(y, mu) ~ model]",
+                ("standard_deviation(y)", "standard_deviation(mu)"),
+                id="standard_deviation",
             ),
             pytest.param(cov, lambda: (_model(),), "ℂ[(y, mu) ~ model]", ("cov(y, mu)",), id="cov"),
             pytest.param(
