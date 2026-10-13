@@ -59,6 +59,7 @@ from probpipe.operations._operation import (
     _CheckedRoute,
     _DelegatingRoute,
     _install_expression_rule,
+    _named_operations,
     _workflow_draws,
 )
 from probpipe.operations._sample import sample
@@ -1383,6 +1384,17 @@ class TestIdentityControls:
         message = "call center.using(method='monte_carlo') to choose it"
         with pytest.raises(ResolutionError, match=re.escape(message)):
             _body_doubled(inner).using(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_callable_without_bytecode_names_no_operation(self):
+        assert _named_operations(max) == ()
+
+    def test_a_closure_variable_not_yet_assigned_names_no_operation(self):
+        def body(d: Distribution) -> Any:
+            return later(d)
+
+        assert _named_operations(body) == ()
+        later = center.using(raw=True)
+        assert [operation.name for operation in _named_operations(body)] == ["center"]
 
     def test_a_method_no_constituent_has_gets_no_constituent_fix(self):
         with pytest.raises(ResolutionError, match="unknown method 'nope'") as raised:
