@@ -168,7 +168,7 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 `Function` keeps ProbPipe controls separate from wrapped-function
 kwargs. Use `@function(...)` for definition-time controls
 such as `dispatch` and `n_broadcast_samples`, and use
-`workflow.with_options(...)` for a copy with revised controls, such as
+`workflow.using(...)` for a copy with revised controls, such as
 `n_broadcast_samples` and `include_inputs`, which every call of the copy reads.
 
 Ordinary workflow calls should treat keyword arguments as user-function
@@ -176,7 +176,7 @@ inputs. Wrapped functions may use names such as `seed`,
 `n_broadcast_samples`, and `include_inputs` when those names are part of
 their own domain API.
 
-`seed` is not a `Function` or `with_options` control. Put reproducible lifted
+`seed` is not a `Function` or `using` control. Put reproducible lifted
 executions inside `with workflow_run(seed=...):`; a wrapped function's own
 parameter named `seed` remains an ordinary domain input.
 

@@ -729,7 +729,7 @@ class TestDerivedLabels:
     )
     def test_an_expectation_is_labeled_over_its_law(self, make_operand, f, label):
         law = make_operand()
-        result = expectation.with_options(n_broadcast_samples=3)(law, f)
+        result = expectation.using(n_broadcast_samples=3)(law, f)
         assert result.label == label
 
 
@@ -1389,7 +1389,7 @@ class TestViewAndWrapperDeclarations:
         def double(*args):
             return args[0] * 2.0
 
-        out = double.with_options(include_inputs=True)(Normal("a", 0.0, 1.0))
+        out = double.using(include_inputs=True)(Normal("a", 0.0, 1.0))
         assert list(out.event_spec.components) == ["*args[0]", "double"]
         assert list(out["*args[0]"].event_spec.components) == ["*args[0]"]
 

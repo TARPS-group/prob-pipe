@@ -157,7 +157,7 @@ class TestStructuralKeys:
 
     def test_there_is_no_framework_key_on_a_call(self):
         with pytest.raises(TypeError, match="unknown Function option"):
-            _lift().with_options(key=jnp.zeros(2, dtype=jnp.uint32))
+            _lift().using(key=jnp.zeros(2, dtype=jnp.uint32))
 
 
 class TestApply:
@@ -226,4 +226,4 @@ class TestReplay:
             recorded = _lift()(law)
 
         with pytest.raises(ReplayCompatibilityError), replay_run(recorded.provenance):
-            _lift().with_options(n_broadcast_samples=9)(law)
+            _lift().using(n_broadcast_samples=9)(law)

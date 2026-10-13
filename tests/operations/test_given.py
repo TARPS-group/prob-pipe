@@ -215,7 +215,7 @@ class TestConditionalOperations:
         options = {"n_broadcast_samples": 64}
         if method is not None:
             options["method"] = "sampling_lift" if operation is expectation else method
-        view = operation.with_options(**options)
+        view = operation.using(**options)
         expected_route = "pushforward_mean" if operation is expectation else "monte_carlo"
         assert view.check(kernel, *args, given={"mu": 2.0}).route == expected_route
         assert not kernel.keys
@@ -249,7 +249,7 @@ class TestConditionalOperations:
                 )
 
         kernel = Unnormalized()
-        report = mean.with_options(exact_only=exact_only).check(kernel, given={"mu": 2.0})
+        report = mean.using(exact_only=exact_only).check(kernel, given={"mu": 2.0})
         assert report.feasible is True
         assert report.route == "conditional"
         assert report.deferred
@@ -257,9 +257,7 @@ class TestConditionalOperations:
 
     def test_an_explicit_method_is_kept_through_delegation(self):
         np.testing.assert_allclose(
-            mean.with_options(method="closed_form", exact_only=True)(
-                _Fallback(), given={"mu": 3.0}
-            ),
+            mean.using(method="closed_form", exact_only=True)(_Fallback(), given={"mu": 3.0}),
             3.0,
         )
 
@@ -337,7 +335,7 @@ class TestConditionalOperations:
         given = distribution(sample=lambda key: {"mu": 2.0}, event_spec=RecordSpec(mu=REAL))
         kernel = _Fallback()
         with workflow_run(seed=42):
-            result = mean.with_options(n_broadcast_samples=8)(kernel, given=given)
+            result = mean.using(n_broadcast_samples=8)(kernel, given=given)
         np.testing.assert_allclose(mean(result), 2.0)
         assert kernel.calls
 
@@ -507,7 +505,7 @@ class TestConditionalOperations:
     def test_exact_only_rejects_approximate_binding_before_it_runs(self):
         kernel = _Approximate()
         with pytest.raises(ResolutionError):
-            mean.with_options(exact_only=True)(kernel, given={"mu": 2.0})
+            mean.using(exact_only=True)(kernel, given={"mu": 2.0})
         assert not kernel.calls
 
     def test_an_unconditional_operand_rejects_given(self):

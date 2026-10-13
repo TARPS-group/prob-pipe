@@ -596,7 +596,7 @@ class TestFunctionHashing:
         b = Function(second)
         assert a.output_spec is None and b.output_spec is None
         with workflow_run(seed=0):
-            laws = [f.with_options(n_broadcast_samples=8)(Normal("x", 0.0, 1.0)) for f in (a, b)]
+            laws = [f.using(n_broadcast_samples=8)(Normal("x", 0.0, 1.0)) for f in (a, b)]
         assert [tuple(law.event_spec.components) for law in laws] == [("first",), ("second",)]
         assert fingerprint(a) == fingerprint(b)
 

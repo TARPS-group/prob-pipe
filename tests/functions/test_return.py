@@ -286,7 +286,7 @@ class TestRaw:
         result = Function(
             lambda: inner,
             label="make",
-        ).with_options(raw=True)()
+        ).using(raw=True)()
 
         assert result is inner
 
@@ -294,7 +294,7 @@ class TestRaw:
         result = Function(
             lambda x: 2.0 * x,
             label="double",
-        ).with_options(raw=True)(jnp.ones(2))
+        ).using(raw=True)(jnp.ones(2))
 
         np.testing.assert_allclose(np.asarray(result), 2.0)
         assert not isinstance(result, NumericArray)
@@ -493,7 +493,7 @@ class TestResultErrors:
             else OutputSpec.default(declaration, component="produce"),
             label="produce",
         )
-        invoke = wrapped.apply if mode == "apply" else wrapped.with_options(raw=mode == "raw")
+        invoke = wrapped.apply if mode == "apply" else wrapped.using(raw=mode == "raw")
 
         with pytest.raises(ValueError if mode == "apply" else ResultKindError, match="output"):
             invoke()

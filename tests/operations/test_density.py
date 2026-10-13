@@ -149,7 +149,7 @@ class TestTheScoredValue:
         self, law, values, dispatch
     ):
         with pytest.raises(ApplicabilityError, match="does not conform"):
-            log_prob.with_options(dispatch=dispatch)(law, values)
+            log_prob.using(dispatch=dispatch)(law, values)
 
 
 class TestABatchOfArraysIsScoredInOneMappedCall:
@@ -200,7 +200,7 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         )
         mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
         mapped = score(mapped_law, points)
-        sequential = score.with_options(dispatch="sequential")(sequential_law, points)
+        sequential = score.using(dispatch="sequential")(sequential_law, points)
         assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
         assert mapped.level_names == sequential.level_names == ("rows", "cols")
         assert mapped.batch_shape == sequential.batch_shape == (2, 4)
@@ -249,7 +249,7 @@ class TestLiftedScores:
 class TestDerivedDensities:
     def test_prob_is_derived_from_log_prob(self):
         assert prob.is_derived
-        assert prob.identity == "jnp.exp(log_prob.with_options(raw=True)(d, value))"
+        assert prob.identity == "jnp.exp(log_prob.using(raw=True)(d, value))"
         (route,) = prob.routes
         assert (route.name, route.source) == ("identity", RouteSource.FALLBACK)
 
@@ -291,7 +291,7 @@ class TestDerivedDensities:
 
     def test_exact_only_admits_prob_where_log_prob_is_exact(self):
         law = Gaussian("g", 0.0, 2.0)
-        exact = prob.with_options(exact_only=True)(law, 0.0)
+        exact = prob.using(exact_only=True)(law, 0.0)
         assert float(jnp.asarray(exact)) == float(jnp.asarray(prob(law, 0.0)))
         assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
             "identity",
@@ -300,7 +300,7 @@ class TestDerivedDensities:
 
     def test_exact_only_admits_unnormalized_prob_where_its_constituent_is_exact(self):
         law = Unnormalized("u")
-        exact = unnormalized_prob.with_options(exact_only=True)(law, 0.0)
+        exact = unnormalized_prob.using(exact_only=True)(law, 0.0)
         assert float(jnp.asarray(exact)) == float(jnp.asarray(unnormalized_prob(law, 0.0)))
         assert (exact.provenance.metadata["route"], exact.provenance.metadata["exact"]) == (
             "identity",

@@ -123,7 +123,7 @@ class TestEmpiricalRecords:
         result = mean(law)
         assert isinstance(result, NumericRecord)
         assert result.spec == _named(SCHEMAS[schema], "mean")
-        raw = mean.with_options(raw=True)(law)
+        raw = mean.using(raw=True)(law)
         for path, values in columns(law.atoms, SCHEMAS[schema]).items():
             np.testing.assert_allclose(
                 _at(raw, path, "mean"), values.mean(axis=0), rtol=1e-5, atol=1e-6
@@ -134,8 +134,8 @@ class TestEmpiricalRecords:
         """Weights shaped like the batch axes weigh the atoms in row-major order."""
         law = _law(schema, layout, weighted=True)
         weights = _weights(law)
-        means = mean.with_options(raw=True)(law)
-        variances = variance.with_options(raw=True)(law)
+        means = mean.using(raw=True)(law)
+        variances = variance.using(raw=True)(law)
         for path, values in columns(law.atoms, SCHEMAS[schema]).items():
             expected_mean = np.tensordot(weights, values, axes=1)
             expected_variance = np.tensordot(weights, (values - expected_mean) ** 2, axes=1)
@@ -152,7 +152,7 @@ class TestEmpiricalRecords:
         """Each leaf's quantiles are ``inf{x : F(x) >= q}`` with the level axes leading."""
         law = _law(schema, layout, weighted=weighted)
         levels = np.array([0.1, 0.5, 0.9])
-        raw = quantile.with_options(raw=True)(law, jnp.asarray(levels))
+        raw = quantile.using(raw=True)(law, jnp.asarray(levels))
         weights = _weights(law)
         for path, values in columns(law.atoms, SCHEMAS[schema]).items():
             node = _at(raw, path, "quantile")
@@ -180,7 +180,7 @@ class TestEmpiricalRecords:
             ],
             axis=1,
         )
-        result = cov.with_options(raw=True)(law)
+        result = cov.using(raw=True)(law)
         dense = np.asarray(result.to_dense() if hasattr(result, "to_dense") else result)
         np.testing.assert_allclose(
             dense, np.cov(flat, rowvar=False, bias=True), rtol=1e-4, atol=1e-5
@@ -207,7 +207,7 @@ class TestEmpiricalRecords:
     @pytest.mark.parametrize(("schema", "layout"), _CASES)
     def test_the_marginal_of_a_group_keeps_the_levels_and_the_weights(self, schema, layout):
         law = _law(schema, layout, weighted=True)
-        parent_mean = mean.with_options(raw=True)(law)
+        parent_mean = mean.using(raw=True)(law)
         for path in group_paths(SCHEMAS[schema]):
             group = marginal(law, path)
             node = _records.node_of(SCHEMAS[schema], path)
@@ -215,7 +215,7 @@ class TestEmpiricalRecords:
             assert group.event_spec == OutputSpec(**{path.rsplit("/", 1)[-1]: node})
             assert group.atoms.level_names == law.atoms.level_names
             np.testing.assert_allclose(_weights(group), _weights(law))
-            group_mean = mean.with_options(raw=True)(group)
+            group_mean = mean.using(raw=True)(group)
             for leaf in leaf_paths(node):
                 np.testing.assert_allclose(
                     _at(group_mean, leaf), _at(parent_mean, f"{path}/{leaf}", "mean"), rtol=1e-6
@@ -227,8 +227,8 @@ class TestEmpiricalRecords:
         assert selection.event_spec == OutputSpec(
             RecordSpec(mu=SCHEMAS["deep"].at_path("model", "theta", "mu"), y=SCHEMAS["deep"]["y"])
         )
-        parent_mean = mean.with_options(raw=True)(law)
-        selected_mean = mean.with_options(raw=True)(selection)
+        parent_mean = mean.using(raw=True)(law)
+        selected_mean = mean.using(raw=True)(selection)
         np.testing.assert_allclose(
             _at(selected_mean, "mu", "mean"), _at(parent_mean, "model/theta/mu", "mean")
         )
@@ -291,8 +291,8 @@ class TestRecordValuedFactors:
 
     def test_the_edge_free_joint_has_each_factors_mean(self):
         hyper = _population_atoms()
-        means = mean.with_options(raw=True)(hyper * Normal("x", 0.5, 1.0))
-        hyper_mean = mean.with_options(raw=True)(hyper)
+        means = mean.using(raw=True)(hyper * Normal("x", 0.5, 1.0))
+        hyper_mean = mean.using(raw=True)(hyper)
         for path in ("population/mu", "population/tau"):
             np.testing.assert_allclose(_at(means, path, "mean"), _at(hyper_mean, path, "mean"))
         assert float(means["mean(x)"]) == pytest.approx(0.5)
@@ -302,8 +302,8 @@ class TestRecordValuedFactors:
         group = marginal(hyper * Normal("x", 0.0, 1.0), "population")
         assert group.event_spec == OutputSpec(population=_POPULATION)
         np.testing.assert_allclose(
-            _at(mean.with_options(raw=True)(group), "mu"),
-            _at(mean.with_options(raw=True)(hyper), "population/mu", "mean"),
+            _at(mean.using(raw=True)(group), "mu"),
+            _at(mean.using(raw=True)(hyper), "population/mu", "mean"),
         )
 
     def test_the_marginal_at_a_nested_path_reduces_its_factor(self):
@@ -311,8 +311,8 @@ class TestRecordValuedFactors:
         leaf = marginal(hyper * Normal("x", 0.0, 1.0), "population/tau")
         assert leaf.event_spec == OutputSpec(tau=_POPULATION["tau"])
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(leaf)),
-            _at(mean.with_options(raw=True)(hyper), "population/tau", "mean"),
+            np.asarray(mean.using(raw=True)(leaf)),
+            _at(mean.using(raw=True)(hyper), "population/tau", "mean"),
         )
 
     def test_a_kernel_given_a_record_draws_with_the_law_of_total_variance(self):
@@ -338,9 +338,7 @@ class TestRecordValuedFactors:
             + scipy.stats.halfcauchy.logpdf(2.0, scale=5.0)
             + scipy.stats.norm.logpdf(0.5)
         )
-        assert float(log_prob.with_options(raw=True)(joint, value)) == pytest.approx(
-            expected, rel=1e-5
-        )
+        assert float(log_prob.using(raw=True)(joint, value)) == pytest.approx(expected, rel=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -412,10 +410,10 @@ class TestNestedViews:
         values = columns(law.atoms, SCHEMAS["two-groups"])
         products = values["population/mu"] * values["population/tau"]
         with workflow_run(seed=11):
-            law_of_product = product.with_options(n_broadcast_samples=DRAWS)(
+            law_of_product = product.using(n_broadcast_samples=DRAWS)(
                 FieldView(law, "population/mu"), FieldView(law, "population/tau")
             )
-        estimate = float(jax.tree.leaves(mean.with_options(raw=True)(law_of_product))[0])
+        estimate = float(jax.tree.leaves(mean.using(raw=True)(law_of_product))[0])
         assert abs(estimate - products.mean()) <= Z * products.std() / np.sqrt(DRAWS)
 
     def test_views_of_a_dependent_joint_keep_its_dependence(self):
@@ -441,15 +439,15 @@ class TestNestedViews:
         view = FieldView(law, path)
         component = path.rsplit("/", 1)[-1]
         for operation in (mean, variance):
-            parent_raw = operation.with_options(raw=True)(law)
-            view_raw = operation.with_options(raw=True)(view)
+            parent_raw = operation.using(raw=True)(law)
+            view_raw = operation.using(raw=True)(view)
             node = _node(parent_raw, path, operation.name)
             np.testing.assert_allclose(
                 np.asarray(jax.tree.leaves(view_raw)), np.asarray(jax.tree.leaves(node))
             )
         levels = jnp.array([0.25, 0.75])
-        parent_q = quantile.with_options(raw=True)(law, levels)
-        view_q = quantile.with_options(raw=True)(view, levels)
+        parent_q = quantile.using(raw=True)(law, levels)
+        view_q = quantile.using(raw=True)(view, levels)
         node = _node(parent_q, path, "quantile")
         assert list(view.event_spec.components) == [component]
         np.testing.assert_allclose(
@@ -486,8 +484,8 @@ class TestSelections:
     def test_the_moments_of_a_selection_are_the_parents_at_its_nodes(self):
         law = _correlated()
         view = FieldView(law, ("population/mu", "groups/theta"))
-        parent = mean.with_options(raw=True)(law)
-        selected = mean.with_options(raw=True)(view)
+        parent = mean.using(raw=True)(law)
+        selected = mean.using(raw=True)(view)
         np.testing.assert_allclose(
             _at(selected, "mu", "mean"), _at(parent, "population/mu", "mean")
         )
@@ -498,11 +496,11 @@ class TestSelections:
     def test_the_covariance_of_a_selection_is_the_parents_block_in_selection_order(self):
         law = _correlated()
         view = FieldView(law, ("groups/theta", "population/mu"))
-        parent = cov.with_options(raw=True)(law)
+        parent = cov.using(raw=True)(law)
         parent = np.asarray(parent.to_dense() if hasattr(parent, "to_dense") else parent)
         # The parent's flat layout is (mu, tau, theta[0:4]); the selection's is (theta, mu).
         order = [2, 3, 4, 5, 0]
-        selected = cov.with_options(raw=True)(view)
+        selected = cov.using(raw=True)(view)
         selected = np.asarray(selected.to_dense() if hasattr(selected, "to_dense") else selected)
         np.testing.assert_allclose(selected, parent[np.ix_(order, order)], rtol=1e-5, atol=1e-6)
 
@@ -549,20 +547,20 @@ class TestRenames:
             )
             for operation in (mean, variance):
                 np.testing.assert_allclose(
-                    _at(operation.with_options(raw=True)(renamed), new, operation.name),
-                    _at(operation.with_options(raw=True)(law), old, operation.name),
+                    _at(operation.using(raw=True)(renamed), new, operation.name),
+                    _at(operation.using(raw=True)(law), old, operation.name),
                 )
             np.testing.assert_allclose(
-                _at(quantile.with_options(raw=True)(renamed, levels), new, "quantile"),
-                _at(quantile.with_options(raw=True)(law, levels), old, "quantile"),
+                _at(quantile.using(raw=True)(renamed, levels), new, "quantile"),
+                _at(quantile.using(raw=True)(law, levels), old, "quantile"),
             )
 
     def test_the_marginal_at_a_new_path_is_the_original_marginal_at_the_old(self):
         law = _two_groups()
         renamed = law.with_path_names({"population/mu": "mu"})
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(marginal(renamed, "mu"))),
-            np.asarray(mean.with_options(raw=True)(marginal(law, "population/mu"))),
+            np.asarray(mean.using(raw=True)(marginal(renamed, "mu"))),
+            np.asarray(mean.using(raw=True)(marginal(law, "population/mu"))),
         )
 
     def test_the_inverse_rename_restores_every_path_and_its_values(self):
@@ -582,15 +580,15 @@ class TestRenames:
                 *path.split("/")
             )
             np.testing.assert_allclose(
-                _at(mean.with_options(raw=True)(round_trip), path, "mean"),
-                _at(mean.with_options(raw=True)(law), path, "mean"),
+                _at(mean.using(raw=True)(round_trip), path, "mean"),
+                _at(mean.using(raw=True)(law), path, "mean"),
             )
 
     def test_a_factored_joint_moves_a_component_into_a_group(self):
         joint = Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0)
         renamed = joint.with_path_names({"a": "g/a"})
         assert set(leaf_paths(renamed.event_spec.spec)) == {"g/a", "b"}
-        assert float(_at(mean.with_options(raw=True)(renamed), "g/a", "mean")) == pytest.approx(0.0)
+        assert float(_at(mean.using(raw=True)(renamed), "g/a", "mean")) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +605,7 @@ def _is_nested_mapping_of_arrays(value) -> bool:
 class TestRawForms:
     @pytest.mark.parametrize("operation", [mean, variance], ids=["mean", "variance"])
     def test_a_record_valued_raw_result_is_a_nested_mapping_of_raw_leaves(self, operation):
-        raw = operation.with_options(raw=True)(_law("deep", "three-levels"))
+        raw = operation.using(raw=True)(_law("deep", "three-levels"))
         assert _is_nested_mapping_of_arrays(raw)
         model, y = (f"{operation.name}({name})" for name in ("model", "y"))
         assert set(raw) == {model, y} and set(raw[model]) == {"theta", "noise"}
@@ -616,14 +614,14 @@ class TestRawForms:
         self,
     ):
         with workflow_run(seed=15):
-            raw = sample.with_options(raw=True)(_law("deep", "two-levels"), sample_shape=(5, 2))
+            raw = sample.using(raw=True)(_law("deep", "two-levels"), sample_shape=(5, 2))
         assert _is_nested_mapping_of_arrays(raw)
         assert np.shape(raw["model"]["theta"]["sd"]) == (5, 2, 2)
         assert np.shape(raw["y"]) == (5, 2, 3)
 
     def test_per_leaf_quantiles_put_the_level_axes_first(self):
         levels = jnp.array([[0.1, 0.5, 0.9], [0.2, 0.4, 0.6]])
-        raw = quantile.with_options(raw=True)(_law("deep", "one-level"), levels)
+        raw = quantile.using(raw=True)(_law("deep", "one-level"), levels)
         assert np.shape(_node(raw, "model/theta/mu", "quantile")) == (2, 3)
         assert np.shape(_node(raw, "model/theta/sd", "quantile")) == (2, 3, 2)
         assert np.shape(_node(raw, "y", "quantile")) == (2, 3, 3)
@@ -634,7 +632,7 @@ class TestRawForms:
         assert _is_nested_mapping_of_arrays(detached)
         np.testing.assert_allclose(
             _at(detached, "population/mu", "mean"),
-            _at(mean.with_options(raw=True)(law), "population/mu", "mean"),
+            _at(mean.using(raw=True)(law), "population/mu", "mean"),
         )
 
 

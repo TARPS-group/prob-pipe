@@ -42,7 +42,7 @@ probpipe/
 │   ├── _numeric_array.py      #   NumericArray (III.1)
 │   ├── _numeric_array_batch.py  #   NumericArrayBatch (III.1)
 │   ├── _opaque.py             #   Opaque (III.2)
-│   ├── _function_base.py      #   Function itself (declared sides, identity, controls and with_options,
+│   ├── _function_base.py      #   Function itself (declared sides, identity, controls and the using method,
 │   │                          #     plain evaluation, install_call_engine), FunctionSpec, the function
 │   │                          #     capabilities, and is_differentiable
 │   ├── _binding.py            #   the frozen signature and the argument binding apply performs
@@ -71,7 +71,7 @@ probpipe/
 │   │                          #     lift and the Monte Carlo fallbacks construct
 │   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)
 ├── functions/                 # Part V — Function and its engine
-│   ├── _function.py           #   the engine installed on Function at import; the decorator; with_options (V.1, V.2)
+│   ├── _function.py           #   the engine installed on Function at import; the decorator; the using method (V.1, V.2)
 │   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (V.3, V.4)
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (V.5, V.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,

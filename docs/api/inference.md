@@ -36,6 +36,6 @@ This page documents the inference methods a user calls directly, the functions o
 
 ## The inference-method registry
 
-`inference_method_registry.list_methods()` names the registered methods, and `condition_on.with_options(method=name)` runs the method of that name instead of the one the registry selects.
+`inference_method_registry.list_methods()` names the registered methods, and `condition_on.using(method=name)` runs the method of that name instead of the one the registry selects.
 
 ::: probpipe.inference_method_registry

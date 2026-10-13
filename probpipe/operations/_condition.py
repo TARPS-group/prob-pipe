@@ -1671,8 +1671,8 @@ def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     The exact stage binds given slots, calls a conditioning capability, or
     forms the unnormalized conditional of the produced fields, and the
     normalization stage passes an unnormalized result to the inference-method
-    registry. ``with_options(method="unnormalized")`` returns the exact stage's
-    result as it is, and ``with_options(exact_only=True)`` raises rather than
+    registry. ``using(method="unnormalized")`` returns the exact stage's
+    result as it is, and ``using(exact_only=True)`` raises rather than
     normalize by an approximate method. A batch of givens is swept: each
     element is conditioned on as one given is, and the results form a batch on
     the givens' levels.

@@ -113,7 +113,7 @@ class TestSequentialLiftingWorkflowRun:
             workflow_run(seed=7),
             pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"),
         ):
-            workflow.with_options(n_broadcast_samples=0)(Normal("x", loc=0.0, scale=1.0))
+            workflow.using(n_broadcast_samples=0)(Normal("x", loc=0.0, scale=1.0))
 
         resolve_dispatch.assert_not_called()
         commit_invocation.assert_not_called()

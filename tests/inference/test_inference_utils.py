@@ -369,7 +369,7 @@ class TestModelFactorsWithOptionalSlots:
         )
         budget = {"num_results": 2000, "num_warmup": 200, "num_chains": 2}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_elliptical_slice", method_options=budget
             )(_shifted() * prior, {"y": Y})
         draws = flat_draws(posterior)
@@ -517,7 +517,7 @@ def _first_draws(method, seed, **options):
     model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
     data = jnp.array([0.3, -0.2, 0.5, 0.1])
     with workflow_run(seed=seed):
-        posterior = condition_on.with_options(
+        posterior = condition_on.using(
             method=method, method_options={"num_results": 8, "num_warmup": 4, **options}
         )(model, {"y": data})
     return np.asarray(flat_chains(posterior)[0])
@@ -551,7 +551,7 @@ class TestRunSeed:
     def test_two_unscoped_runs_differ(self):
         model = _gaussian_mean(Normal("mu", 0.0, 1.0), 4)
         data = {"y": jnp.array([0.3, -0.2, 0.5, 0.1])}
-        run = condition_on.with_options(
+        run = condition_on.using(
             method="blackjax_rwmh", method_options={"num_results": 8, "num_warmup": 4}
         )
         first, second = (np.asarray(flat_chains(run(model, data))[0]) for _ in range(2))

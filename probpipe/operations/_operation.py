@@ -1173,13 +1173,13 @@ class _GivenCandidate:
         from ._condition import condition_on
 
         subject = call.operands[call.operation._given_subject]
-        law = condition_on.with_options(
+        law = condition_on.using(
             exact_only=call.controls["exact_only"],
             method_options=call.controls["method_options"],
         )(subject.kernel, subject.given)
         values = {**call.operands, call.operation._given_subject: law}
         bound = values_to_bound_arguments(call.operation.signature, values)
-        return call.operation.with_options(**dict(call.controls))(*bound.args, **bound.kwargs)
+        return call.operation.using(**dict(call.controls))(*bound.args, **bound.kwargs)
 
     def exactness(self, report: Feasibility) -> bool | None:
         """Known approximate conditioning is approximate; otherwise fidelity is deferred."""
@@ -1762,10 +1762,10 @@ class Operation(Function):
 
     # -- controls ----------------------------------------------------------
 
-    def with_options(self, **controls: Any) -> Operation:
+    def using(self, **controls: Any) -> Operation:
         """Return a view with revised controls.
 
-        The controls are those of :meth:`Function.with_options`: ``method``
+        The controls are those of :meth:`Function.using`: ``method``
         names a route or a method of a registry route's registry,
         ``exact_only`` excludes every approximate route, ``raw`` returns the
         result detached, and ``method_options`` holds the budgets the selected
@@ -1794,10 +1794,10 @@ class Operation(Function):
         unknown = set(controls) - set(self.options)
         if unknown:
             raise TypeError(
-                f"{self.label}.with_options(): "
+                f"{self.label}.using(): "
                 f"{unknown_names('control', sorted(unknown), sorted(self.options))}"
             )
-        return super().with_options(**controls)
+        return super().using(**controls)
 
     def raw(self) -> Callable[..., Any]:
         """The evaluator that realizes one call with no lifting, tracking, or provenance.

@@ -88,7 +88,7 @@ prediction = predict_impl(theta, x)
 # output component: mean; the inferred return is an array, not a record
 ```
 
-A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call handler**, which is the base's one extension point: on the base it is plain evaluation, and the engine layer (Part V) replaces it once, at import. The base also carries its **controls** (V.2), set at construction and revised functionally by `with_options`; the engine alone interprets them, at call time.
+A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call handler**, which is the base's one extension point: on the base it is plain evaluation, and the engine layer (Part V) replaces it once, at import. The base also carries its **controls** (V.2), set at construction and revised functionally by `using`; the engine alone interprets them, at call time.
 
 A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable.
 
@@ -116,7 +116,7 @@ class Function(TrackedTerm):
     def output_label(self) -> str: ...                             # the results' alias, else the label; outside spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
-    def with_options(self, **controls) -> Self: ...      # functional update
+    def using(self, **controls) -> Self: ...             # functional update
     def apply(self, *args, **kwargs) -> Any: ...
     # evaluate the wrapped callable at a point (input_spec -> output_spec),
     # with no tracking or lifting; the raw map operations build on

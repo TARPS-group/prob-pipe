@@ -85,12 +85,12 @@ def _joint():
 
 def _raw_mean(law):
     """The mean of *law* at its one leaf, whatever its packaging."""
-    return np.asarray(jax.tree.leaves(mean.with_options(raw=True)(law))[0])
+    return np.asarray(jax.tree.leaves(mean.using(raw=True)(law))[0])
 
 
 def _raw_variance(law):
     """The variance of *law* at its one leaf, whatever its packaging."""
-    return np.asarray(jax.tree.leaves(variance.with_options(raw=True)(law))[0])
+    return np.asarray(jax.tree.leaves(variance.using(raw=True)(law))[0])
 
 
 # -- Field views ---------------------------------------------------------------
@@ -909,7 +909,7 @@ class TestLifts:
         )
 
         with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
-            result = workflow.with_options(exact_only=True)(exponentiated, root)
+            result = workflow.using(exact_only=True)(exponentiated, root)
 
         assert result.num_atoms == 2
         np.testing.assert_allclose(_raw_mean(result), 0.0, atol=1e-5)

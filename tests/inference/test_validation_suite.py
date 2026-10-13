@@ -33,7 +33,7 @@ class TestSGLDCovarianceBias:
     def test_sgld_overdisperses_vs_nuts(self, conjugate_linear_model, conjugate_nuts_posterior):
         m = conjugate_linear_model
         with workflow_run(seed=0):
-            sgld = condition_on.with_options(
+            sgld = condition_on.using(
                 method="blackjax_sgld",
                 method_options={
                     "batch_size": 20,
