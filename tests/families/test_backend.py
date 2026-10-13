@@ -31,7 +31,7 @@ from probpipe.distributions._capabilities import (
     SupportsVariance,
 )
 from probpipe.families import TFPDistribution, _backend
-from probpipe.families._backend import _allow_batched_tfp_init, _draws
+from probpipe.families._backend import _allow_batched_tfp_init, _eager_sample
 from probpipe.linalg import DiagonalLinOp, LinOp
 from tests._compilation import count_compilations
 
@@ -435,11 +435,20 @@ class TestPickling:
 
 
 class _NumpyNormal(tfd.Normal):
-    """A normal backend that draws with NumPy's global generator, ignoring the key."""
+    """A normal backend that draws with a new NumPy generator, ignoring the key."""
 
     def _sample_n(self, n, seed=None):
-        noise = np.random.default_rng().standard_normal(n).astype(np.float32)
+        shape = (n, *np.shape(self.loc + self.scale))
+        noise = np.random.default_rng().standard_normal(shape).astype(np.float32)
         return self.loc + self.scale * noise
+
+
+def _ran_compiled(law: Distribution) -> bool:
+    """Whether every call of *law* so far ran a compiled program."""
+    memo = law._memo
+    return memo["compilable"] and not any(
+        key[0] == "untraced" for key in memo if isinstance(key, tuple)
+    )
 
 
 #: The families whose quantiles their backend computes, one coordinate per draw.
@@ -467,6 +476,7 @@ class TestCompiledCalls:
         np.testing.assert_allclose(
             law._log_prob(draws), law.raw().log_prob(draws), rtol=2e-6, atol=2e-6
         )
+        assert _ran_compiled(law)
 
     @pytest.mark.parametrize("name", _SCALAR_QUANTILES)
     def test_the_compiled_quantiles_agree_with_the_backend_called_eagerly(self, name):
@@ -474,15 +484,18 @@ class TestCompiledCalls:
         q = jnp.array([0.05, 0.5, 0.95])
         # The tolerance of the draws above, which the quantiles meet.
         np.testing.assert_allclose(law._quantile(q), law.raw().quantile(q), rtol=2e-6, atol=2e-6)
+        assert _ran_compiled(law)
 
     @pytest.mark.parametrize("family", [F.Beta, F.Gamma])
     def test_a_warm_draw_and_quantile_compile_nothing(self, family):
         first, second = family("a", 2.0, 3.0), family("a", 4.0, 1.5)
         keys = jax.random.split(jax.random.PRNGKey(0), 2)
         q = jnp.array([0.1, 0.9])
-        first._sample(keys[0], (10,)), first._quantile(q)
+        first._sample(keys[0], (10,))
+        first._quantile(q)
         with count_compilations() as compiled:
-            second._sample(keys[1], (10,)), second._quantile(q)
+            second._sample(keys[1], (10,))
+            second._quantile(q)
         assert compiled.count == 0
 
     @pytest.mark.parametrize("family", [F.Poisson, F.Binomial])
@@ -496,23 +509,57 @@ class TestCompiledCalls:
         assert compiled.count == 0
 
     @pytest.mark.parametrize(
-        ("eager", "call"),
+        ("program", "eager", "call"),
         [
-            ("_draws", lambda law: law._sample(jax.random.PRNGKey(1), (4,))),
-            ("_log_density", lambda law: law._log_prob(jnp.array([0.5, 1.5]))),
-            ("_quantile", lambda law: law._quantile(jnp.array([0.25, 0.75]))),
+            (
+                "_sample_program",
+                "_eager_sample",
+                lambda law: law._sample(jax.random.PRNGKey(1), (4,)),
+            ),
+            (
+                "_log_prob_program",
+                "_eager_log_prob",
+                lambda law: law._log_prob(jnp.array([0.5, 1.5])),
+            ),
+            (
+                "_quantile_program",
+                "_eager_quantile",
+                lambda law: law._quantile(jnp.array([0.25, 0.75])),
+            ),
         ],
     )
-    def test_a_call_runs_the_compiled_program(self, monkeypatch, eager, call):
-        calls = []
-        uncompiled = getattr(_backend, eager)
-        monkeypatch.setattr(_backend, eager, lambda *args: calls.append(args) or uncompiled(*args))
+    def test_a_call_runs_the_compiled_program(self, monkeypatch, program, eager, call):
+        compiled, uncompiled = [], []
+        for name, record in ((program, compiled), (eager, uncompiled)):
+            original = getattr(_backend, name)
+            monkeypatch.setattr(
+                _backend,
+                name,
+                lambda *args, original=original, record=record: (
+                    record.append(args) or original(*args)
+                ),
+            )
         law = F.Gamma("a", 2.0, 3.0)
-        call(law), call(law)
-        assert calls == []
+        call(law)
+        call(law)
+        assert len(compiled) == 2
+        assert uncompiled == []
 
-    def test_a_backend_a_user_subclasses_runs_eagerly(self):
-        law = TFPDistribution("x", _NumpyNormal(0.0, 1.0))
+    @pytest.mark.parametrize(
+        "backend",
+        [
+            _NumpyNormal(0.0, 1.0),
+            tfd.Independent(_NumpyNormal(jnp.zeros(2), 1.0), 1),
+            tfd.Blockwise(
+                tfd.JointDistributionSequential(
+                    [tfd.Normal(0.0, 1.0), lambda a: _NumpyNormal(a, 1.0)]
+                )
+            ),
+        ],
+        ids=["subclass", "subclass-inside-independent", "subclass-from-a-model-function"],
+    )
+    def test_a_backend_built_from_a_class_a_user_writes_runs_eagerly(self, backend):
+        law = TFPDistribution("x", backend)
         first = law._sample(jax.random.PRNGKey(0), (4,))
         second = law._sample(jax.random.PRNGKey(0), (4,))
         # A compiled program would fix the NumPy draws of its trace.
@@ -555,10 +602,22 @@ class TestCompiledCalls:
 
     def test_an_error_the_eager_call_raises_too_propagates_and_keeps_the_program(self, monkeypatch):
         calls = []
-        monkeypatch.setattr(_backend, "_draws", lambda *args: calls.append(args) or _draws(*args))
+        monkeypatch.setattr(
+            _backend, "_eager_sample", lambda *args: calls.append(args) or _eager_sample(*args)
+        )
         law = F.Gamma("x", 2.0, 3.0)
         with pytest.raises(TypeError, match="invalid PRNG key"):
             law._sample(jnp.zeros(3), (4,))
         calls.clear()
         law._sample(jax.random.PRNGKey(1), (4,))
         assert calls == []
+
+    def test_a_call_inside_a_transformation_the_caller_opens_traces_with_it(self):
+        law = F.Gamma("x", 2.0, 3.0)
+        keys = jax.random.split(jax.random.PRNGKey(0), 3)
+        draws = jax.jit(jax.vmap(lambda key: law._sample(key, (5,))))(keys)
+        assert draws.shape == (3, 5)
+        # The log-density of Gamma(a, b) is (a - 1) log x - b x + const, so its
+        # derivative in x is (a - 1) / x - b, which is -2 at x = 1.
+        slope = jax.grad(lambda x: law._log_prob(x))(1.0)
+        np.testing.assert_allclose(slope, -2.0, rtol=1e-6)

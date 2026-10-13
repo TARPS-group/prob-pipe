@@ -46,7 +46,9 @@ def count_compilations() -> Iterator[Compilations]:
     Compilations
         A counter whose ``count`` is the number of programs XLA compiled in
         the block so far. A program that JAX reuses from its in-memory cache
-        or from the persistent compilation cache is not counted.
+        is not counted. A program that JAX loads from the persistent
+        compilation cache is counted, since JAX times the load as a
+        compilation.
     """
     counter = Compilations()
     _open.append(counter)

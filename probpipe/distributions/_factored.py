@@ -21,6 +21,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax.scipy.linalg import block_diag
 
+from ..core._array_backend import _is_numeric_leaf
+from ..core._compilation import compiled_or_eager
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._expression import (
     Named,
@@ -742,39 +744,41 @@ def _factor_given(
 _DRAW = "_conditional_sample"
 
 
-def _is_numeric_leaf(leaf: Any) -> bool:
-    """Whether *leaf* is a numeric array or a Python number other than a ``bool``."""
-    if isinstance(leaf, jax.Array):
-        return True
-    if isinstance(leaf, (np.ndarray, np.generic)):
-        return leaf.dtype != object
-    return isinstance(leaf, (int, float, complex)) and not isinstance(leaf, bool)
-
-
 def _is_constant(value: Any) -> bool:
-    """Whether *value* is a string, ``None``, a ``bool``, or a tuple of them, which compare equal only when they are the same value."""
+    """Whether *value* is a string, ``None``, a boolean, or a tuple of them.
+
+    Such a value is hashable and compares equal exactly when it is the same
+    value, so a compiled program can take it as a static argument.
+    """
     if isinstance(value, tuple):
         return all(_is_constant(item) for item in value)
-    return value is None or isinstance(value, (str, bool))
+    return value is None or isinstance(value, (str, bool, np.bool_))
 
 
 def _split_fixed(
-    fixed: Mapping[str, Any],
+    factor: ConditionalDistribution, fixed: Mapping[str, Any]
 ) -> tuple[dict[str, Any], tuple[tuple[str, Any], ...]] | None:
     """The unmet givens in *fixed* a compiled call takes as arguments, and those it takes as constants.
 
     Returns ``None`` when an unmet given is neither, and the call then runs
-    eagerly. A value whose leaves are numeric arrays or Python numbers is an
-    argument, so a new value of the same shape reuses the program. A string,
-    ``None``, a ``bool``, or a tuple of them is a constant: it is part of the
-    program's identity, and a new value compiles a new program. Any other
-    value, such as an object whose state may change between calls, is neither,
-    since a program would keep the state it had when it was traced.
+    uncompiled. The three cases:
+
+    1. **Arguments:** a slot that *factor* declares numeric, holding numeric
+       leaves, as :func:`~probpipe.core._array_backend._is_numeric_leaf`
+       decides. A new value of the same shape reuses the program.
+    2. **Constants:** a value that :func:`_is_constant` admits. It is part of
+       the program's identity, so a new value compiles a new program, which
+       the factor keeps.
+    3. **Neither:** any other value, such as an object whose state may change
+       between calls, since a program would keep the state it had when it was
+       traced.
     """
     arguments: dict[str, Any] = {}
     constants: list[tuple[str, Any]] = []
     for slot, value in fixed.items():
-        if all(_is_numeric_leaf(leaf) for leaf in jax.tree.leaves(value)):
+        if isinstance(factor.given_spec[slot], NumericSpec) and all(
+            _is_numeric_leaf(leaf) for leaf in jax.tree.leaves(value)
+        ):
             arguments[slot] = value
         elif _is_constant(value):
             constants.append((slot, value))
@@ -799,26 +803,21 @@ def _at_each_given(
     *method* is a density.
 
     A call whose givens are numeric runs one compiled program: the factor's
-    method vectorized with ``jax.vmap`` and compiled with ``jax.jit``. The
-    program takes the draws, the keys or the events, and the unmet givens
-    that :func:`_split_fixed` makes arguments, so a later call with new values
-    of the same shapes compiles nothing. The factor's memo holds the program.
-    The program calls the factor it was built for, so a copy of the factor,
-    which may hold other bound values, builds its own.
+    method vectorized with ``jax.vmap`` and compiled with ``jax.jit``. It takes
+    the draws, the keys or the events, and the unmet givens as
+    :func:`_split_fixed` sorts them. The factor's memo holds the program, with
+    one compiled form for each set of constants and input shapes. The program
+    calls the factor it was built for, so a copy of the factor, which may hold
+    other bound values, builds its own. ``ConditionalDistribution`` states
+    what the factor's method may read.
 
-    The program is traced once for each structure of its inputs, so the
-    factor's method is taken to be pure: a global it reads is read when the
-    program is traced, and a Python side effect, such as a warning, happens at
-    the trace only. A check that a family runs on a concrete parameter value
-    does not run on a value computed in the program, which includes a value
-    computed from an unmet given or a constant of the function.
-
-    The call vectorizes the method with ``jax.vmap`` without compiling it when
-    :func:`_split_fixed` returns ``None``, or when the program raises and the
-    uncompiled call succeeds, as for a method that converts an unmet given to
-    a Python number. In the second case the factor records that the program
-    does not trace, and later calls skip the attempt. When a given is not
-    numeric, the method is called on one value at a time.
+    The call runs uncompiled, under ``jax.vmap``, when :func:`_split_fixed`
+    returns ``None`` or when the program does not trace, as for a method that
+    converts an unmet given to a Python number.
+    :func:`~probpipe.core._compilation.compiled_or_eager` records a program
+    that does not trace for the structure of the unmet givens, so later calls
+    with that structure skip the attempt. When a given is not numeric, the
+    method is called on one value at a time.
     """
     fixed = {slot: fixed[slot] for slot in factor.given_spec if slot in fixed}
     tail = ((),) if method == _DRAW else ()
@@ -826,30 +825,26 @@ def _at_each_given(
     def one(fixed: Mapping[str, Any], values: Mapping[str, Any], point: Any) -> Any:
         return getattr(factor, method)(_factor_given(factor, values, fixed), point, *tail)
 
+    def uncompiled(*_: Any) -> Any:
+        return _each_value(partial(one, fixed), count, values, points, traceable=True)
+
     if not _numeric_givens(factor, values):
         return _each_value(partial(one, fixed), count, values, points, traceable=False)
-    split = _split_fixed(fixed)
+    split = _split_fixed(factor, fixed)
+    if split is None:
+        return uncompiled()
     memo = transient_memo(factor)
-    untraced = ("untraced", method)
-    if split is not None and untraced not in memo:
-        program = memo.get(("mapped", method))
-        if program is None:
+    program = memo.get(("mapped", method))
+    if program is None:
 
-            def mapped(
-                arguments: dict[str, Any], constants: tuple, values: Any, points: Any
-            ) -> Any:
-                held = {**arguments, **dict(constants)}
-                return jax.vmap(partial(one, held))(values, points)
+        def mapped(arguments: dict[str, Any], constants: tuple, values: Any, points: Any) -> Any:
+            held = {**arguments, **dict(constants)}
+            return jax.vmap(partial(one, held))(values, points)
 
-            program = memo[("mapped", method)] = jax.jit(mapped, static_argnums=1)
-        try:
-            return program(*split, values, points)
-        except Exception:
-            pass
-        result = _each_value(partial(one, fixed), count, values, points, traceable=True)
-        memo[untraced] = True
-        return result
-    return _each_value(partial(one, fixed), count, values, points, traceable=True)
+        program = memo[("mapped", method)] = jax.jit(mapped, static_argnums=1)
+    arguments, constants = split
+    key = ("untraced", method, jax.tree.structure(arguments), constants)
+    return compiled_or_eager(memo, key, program, uncompiled, arguments, constants, values, points)
 
 
 def _conditional_draw(

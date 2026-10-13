@@ -71,6 +71,7 @@ from probpipe.distributions._capabilities import _capability_guard
 from probpipe.distributions._distribution import _fixed_paths
 from probpipe.distributions._empirical import EmpiricalDistribution
 from probpipe.distributions._factored import _is_named, _SoleField
+from probpipe.families import MixtureDistribution
 from probpipe.linalg import DenseLinOp
 from probpipe.operations._marginal import marginal as marginal_operation
 from tests._compilation import count_compilations
@@ -1819,6 +1820,15 @@ class _Holder:
         self.values = values
 
 
+def _ran_uncompiled(joint: FactoredDistribution) -> bool:
+    """Whether a conditional factor of *joint* records a program that does not trace."""
+    return any(
+        isinstance(key, tuple) and key[0] == "untraced"
+        for factor in joint.factors
+        for key in getattr(factor, "_memo", None) or {}
+    )
+
+
 class TestCompiledFactorCalls:
     """A joint maps a kernel over draws through one compiled program, which the kernel keeps."""
 
@@ -1848,12 +1858,15 @@ class TestCompiledFactorCalls:
             uncompiled = model._sample(key, (32,))
             uncompiled_scores = model._log_prob(draws)
         # XLA's fusion changes the last float32 digit: observed across 6 seeds, at most a
-        # relative 1.5e-7, and every count equal. A count can change where a rate differs
-        # in its last digit, so most counts, not all, must agree.
+        # relative 1.5e-7, and every count equal. The tolerance is the family tests', which
+        # a wrong key or parameter, off by order 1, exceeds. A count can change where a
+        # rate differs in its last digit, so most counts, not all, must agree.
         assert np.mean(np.asarray(draws["y"]) == np.asarray(uncompiled["y"])) >= 0.95
         for component in ("r", "K"):
-            np.testing.assert_allclose(draws[component], uncompiled[component], rtol=5e-7)
-        np.testing.assert_allclose(model._log_prob(draws), uncompiled_scores, rtol=5e-7)
+            np.testing.assert_allclose(
+                draws[component], uncompiled[component], rtol=2e-6, atol=2e-6
+            )
+        np.testing.assert_allclose(model._log_prob(draws), uncompiled_scores, rtol=2e-6, atol=2e-6)
 
     @pytest.mark.parametrize("held", [float, jnp.asarray], ids=["number", "array"])
     def test_each_draw_reads_the_unmet_given_of_its_own_call(self, held):
@@ -1881,6 +1894,17 @@ class TestCompiledFactorCalls:
         for tag in ("abc", "abcdef", "abc"):
             draws = joint._conditional_sample({"extra": tag}, jax.random.PRNGKey(6), (4,))
             np.testing.assert_allclose(draws["y"], draws["beta"] + len(tag), atol=1e-4)
+        # One trace for each distinct string: the second "abc" reuses its program.
+        assert len(calls) == 2
+
+    def test_a_string_array_given_runs_uncompiled_and_leaves_the_program_enabled(self):
+        calls: list = []
+        joint = _offset_kernel(SamplingKernel, OpaqueSpec(), len, calls) * _prior()
+        key = jax.random.PRNGKey(6)
+        draws = joint._conditional_sample({"extra": np.array(["a", "b"])}, key, (4,))
+        np.testing.assert_allclose(draws["y"], draws["beta"] + 2.0, atol=1e-4)
+        joint._conditional_sample({"extra": "abc"}, key, (4,))
+        assert not _ran_uncompiled(joint)
 
     def test_an_object_given_is_read_at_every_call(self):
         calls: list = []
@@ -1904,6 +1928,50 @@ class TestCompiledFactorCalls:
         shifted = lik._condition_on({"shift": jnp.asarray(5.0)})
         draws = (shifted * prior)._sample(jax.random.PRNGKey(9), (4,))
         np.testing.assert_allclose(draws["y"], draws["beta"] + 5.0, atol=1e-4)
+        # The copy builds its own program, so the kernel's still traces and compiles.
+        assert shifted._memo is not lik._memo
+        assert not _ran_uncompiled(lik * prior)
+
+    def test_a_warm_density_with_a_new_unmet_given_does_not_trace_the_kernel_again(self):
+        calls: list = []
+        joint = _offset_kernel(ScoringKernel, SCALAR, lambda extra: extra, calls) * _prior()
+        values = {"y": jnp.array([0.3, 1.2]), "beta": jnp.array([-0.2, 0.4])}
+        joint._conditional_log_prob({"extra": jnp.asarray(0.5)}, values)
+        calls.clear()
+        scores = joint._conditional_log_prob({"extra": jnp.asarray(0.7)}, values)
+        assert calls == []
+        expected = norm.logpdf(values["y"], values["beta"] + 0.7, 1e-6) + norm.logpdf(
+            values["beta"]
+        )
+        np.testing.assert_allclose(scores, expected, rtol=1e-5)
+
+    def test_a_family_check_of_a_parameter_computed_in_the_program_does_not_run(self):
+        @conditional_distribution(given_spec={"beta": SCALAR, "w": SCALAR}, label="lik")
+        def lik(beta, w):
+            components = [Normal("y", beta, 1.0), Normal("y", beta + 1.0, 1.0)]
+            return MixtureDistribution(components, jnp.stack([w, 1.0 - w]))
+
+        with pytest.raises(ValueError, match="nonnegative"):
+            lik._condition_on({"beta": 0.0, "w": -0.5})
+        values = {"y": jnp.zeros(3), "beta": jnp.zeros(3)}
+        scores = (lik * _prior())._conditional_log_prob({"w": jnp.asarray(-0.5)}, values)
+        assert np.all(np.isnan(scores))
+
+    def test_a_call_that_reuses_the_program_reads_a_global_as_it_was_compiled(self):
+        shift = {"value": 0.0}
+
+        @conditional_distribution(given_spec={"beta": SCALAR}, label="lik")
+        def lik(beta):
+            return Normal("y", beta + shift["value"], 1e-6)
+
+        joint = lik * _prior()
+        key = jax.random.PRNGKey(12)
+        joint._sample(key, (4,))
+        shift["value"] = 100.0
+        reused = joint._sample(key, (4,))
+        recompiled = joint._sample(key, (5,))
+        np.testing.assert_allclose(reused["y"], reused["beta"], atol=1e-4)
+        np.testing.assert_allclose(recompiled["y"], recompiled["beta"] + 100.0, atol=1e-3)
 
     @pytest.mark.parametrize(
         "how",
@@ -1932,8 +2000,8 @@ class TestCompiledFactorCalls:
         second = joint._conditional_sample(
             {"extra": jnp.asarray(3.0)}, jax.random.PRNGKey(11), (4,)
         )
-        # The first call traces the kernel, which needs the value of the unmet given,
-        # then maps it without compiling; the second call maps it without compiling only.
+        # The first call traces the kernel, which needs the value of the unmet given, and
+        # then maps it uncompiled. The second call maps it uncompiled without tracing it.
         assert len(calls) == 3
         np.testing.assert_allclose(first["y"], first["beta"] + 2.0, atol=1e-4)
         np.testing.assert_allclose(second["y"], second["beta"] + 3.0, atol=1e-4)
