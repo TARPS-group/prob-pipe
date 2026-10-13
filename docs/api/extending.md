@@ -56,7 +56,7 @@ class ImportanceSampling(InferenceMethod):
 inference_method_registry.register(ImportanceSampling())
 ```
 
-`condition_on.with_options(method="my_importance_sampling")` runs the method by name.
+`condition_on.using(method="my_importance_sampling")` runs the method by name.
 The method takes part in automatic selection once it overrides `priority`.
 
 ### Exactness and priority
