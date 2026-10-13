@@ -424,6 +424,16 @@ class _BijectorFactory:
     def describe_entry(self, name: str) -> EntrySummary:
         """The :class:`~probpipe.core._catalog.EntrySummary` of the key named *name*.
 
+        Parameters
+        ----------
+        name : str
+            A registered key's catalog name, such as ``"Positive"``.
+
+        Returns
+        -------
+        EntrySummary
+            The key's summary, as :meth:`entry_summaries` reports it.
+
         Raises
         ------
         KeyError

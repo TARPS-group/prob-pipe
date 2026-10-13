@@ -125,16 +125,6 @@ class SupportsRegistryCataloging(Protocol):
         The registry's kind, such as ``"dispatch"``, ``"operation"``, or
         ``"factory"``. The kind is a string, so a plugin can introduce one.
 
-    Methods
-    -------
-    entry_summaries() -> list[EntrySummary]
-        One summary per entry, in the registry's order: selection order before
-        type specificity for a dispatch registry, registration order for the
-        operation registry, and name order for the bijector factory.
-    describe_entry(name) -> EntrySummary
-        The summary of one entry; raises ``KeyError`` for a name the registry
-        does not hold.
-
     Notes
     -----
     The protocol states a registry's identity and its entries and states
@@ -148,9 +138,37 @@ class SupportsRegistryCataloging(Protocol):
     description: str
     kind: str
 
-    def entry_summaries(self) -> list[EntrySummary]: ...
+    def entry_summaries(self) -> list[EntrySummary]:
+        """One summary per entry, in the registry's order.
 
-    def describe_entry(self, name: str) -> EntrySummary: ...
+        Returns
+        -------
+        list of EntrySummary
+            The entries in selection order before type specificity for a
+            dispatch registry, registration order for the operation registry,
+            and name order for the bijector factory.
+        """
+        ...
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """The summary of the entry named *name*.
+
+        Parameters
+        ----------
+        name : str
+            An entry's name within the registry.
+
+        Returns
+        -------
+        EntrySummary
+            The entry's summary, as :meth:`entry_summaries` reports it.
+
+        Raises
+        ------
+        KeyError
+            If the registry holds no entry named *name*.
+        """
+        ...
 
 
 class RegistryCatalog:
@@ -201,6 +219,16 @@ class RegistryCatalog:
 
     def __getitem__(self, name: str) -> SupportsRegistryCataloging:
         """The registry named *name*.
+
+        Parameters
+        ----------
+        name : str
+            A registered registry name.
+
+        Returns
+        -------
+        SupportsRegistryCataloging
+            The registry itself, not a copy.
 
         Raises
         ------

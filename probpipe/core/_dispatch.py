@@ -325,27 +325,30 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     supplies the four hooks :meth:`_cache_key`,
     :meth:`_validate_supported_types`, :meth:`_distance`, and
     :meth:`_format_key`.
+
+    Parameters
+    ----------
+    name : str
+        The registry's name in the registry catalog; empty for a registry that
+        is not cataloged.
+    description : str
+        A one-line description, which the registry catalog shows.
+
+    Attributes
+    ----------
+    kind : str
+        ``"dispatch"``, the catalog kind of every dispatch registry.
+
+    Notes
+    -----
+    ``name`` and ``description`` are read-only after construction, so the
+    name a registry is cataloged under stays its ``name``.
     """
 
     #: The catalog kind of every dispatch registry.
     kind: ClassVar[str] = "dispatch"
 
     def __init__(self, *, name: str = "", description: str = "") -> None:
-        """Create an empty registry.
-
-        Parameters
-        ----------
-        name : str
-            The registry's name in the registry catalog; empty for a registry
-            that is not cataloged.
-        description : str
-            A one-line description, which the registry catalog shows.
-
-        Notes
-        -----
-        ``name`` and ``description`` are read-only after construction, so the
-        name a registry is cataloged under stays its ``name``.
-        """
         self._name = name
         self._description = description
         self._registrations: list[_Registration[M]] = []
