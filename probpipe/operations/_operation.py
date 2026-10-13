@@ -822,21 +822,44 @@ class _IdentityRoute(_Route):
         return self._declaration(*bound.args, **bound.kwargs)
 
 
-def _named_operations(declaration: Callable[..., Any]) -> tuple[Operation, ...]:
-    """The operations *declaration*'s body names, each once.
+#: The instructions that load a module-level name, and those that load a closure's.
+_GLOBAL_LOADS = frozenset({"LOAD_GLOBAL", "LOAD_NAME"})
+_CLOSURE_LOADS = frozenset({"LOAD_DEREF"})
 
-    A name counts when it is bound to an operation, or to a view of one, in the
-    declaration's module or in its closure, as ``variance`` is in
-    ``jnp.sqrt(variance.with_options(raw=True)(d))``.
+
+def _named_operations(declaration: Callable[..., Any]) -> tuple[Operation, ...]:
+    """The operations *declaration*'s body loads by name, each once.
+
+    A loaded name counts when it is bound to an operation, or to a view of one,
+    in the declaration's module or in its closure, as ``variance`` is in
+    ``jnp.sqrt(variance.with_options(raw=True)(d))``. The functions nested in
+    the body count too. An attribute that shares an operation's name, as
+    ``mean`` in ``law.mean``, is not a load of it.
     """
-    try:
-        names = inspect.getclosurevars(declaration)
-    except TypeError:
+    code = getattr(declaration, "__code__", None)
+    if code is None:
         return ()
+    scope = getattr(declaration, "__globals__", {})
+    closure: dict[str, Any] = {}
+    for name, cell in zip(code.co_freevars, declaration.__closure__ or (), strict=False):
+        try:
+            closure[name] = cell.cell_contents
+        except ValueError:  # a cell not yet filled
+            continue
     found: dict[int, Operation] = {}
-    for value in (*names.nonlocals.values(), *names.globals.values()):
-        if isinstance(value, Operation):
-            found.setdefault(id(value), value)
+    pending = [code]
+    while pending:
+        current = pending.pop()
+        for instruction in dis.get_instructions(current):
+            if instruction.opname in _GLOBAL_LOADS:
+                value = scope.get(instruction.argval)
+            elif instruction.opname in _CLOSURE_LOADS:
+                value = closure.get(instruction.argval)
+            else:
+                continue
+            if isinstance(value, Operation):
+                found.setdefault(id(value), value)
+        pending += [const for const in current.co_consts if isinstance(const, type(code))]
     return tuple(found.values())
 
 
@@ -2134,9 +2157,9 @@ class Operation(Function):
             if constituent is not self and constituent._names_method(method)
         ]
         if holders:
-            names = " or ".join(holder.label for holder in holders)
+            names = " or ".join(holder.name for holder in holders)
             calls = " or ".join(
-                f"{holder.label}.with_options(method={method!r})" for holder in holders
+                f"{holder.name}.with_options(method={method!r})" for holder in holders
             )
             return (
                 f"{message}. {self.label} does not pass method on to {names}, so call "

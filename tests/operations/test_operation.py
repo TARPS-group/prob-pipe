@@ -1359,6 +1359,35 @@ class TestIdentityControls:
         with pytest.raises(ResolutionError, match=re.escape(message)):
             _body_doubled().with_options(method="monte_carlo")(Gaussian("g"))
 
+    def test_an_attribute_named_like_an_operation_is_no_constituent(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def shifted(d: Distribution):
+            """The law's center attribute shifted by one, which calls no operation."""
+            return d.center + 1.0
+
+        with pytest.raises(ResolutionError, match="unknown method 'monte_carlo'") as raised:
+            shifted.with_options(method="monte_carlo")(Gaussian("g"))
+        assert "does not pass method on" not in str(raised.value)
+
+    def test_a_constituent_called_in_a_nested_function_is_found(self):
+        @operation(result=_event, registry=OperationRegistry())
+        def doubled(d: Distribution):
+            """Twice the center, through a nested function."""
+
+            def twice(law: Distribution) -> Any:
+                return center.with_options(raw=True)(law) * 2
+
+            return twice(d)
+
+        with pytest.raises(ResolutionError, match=re.escape("center.with_options")):
+            doubled.with_options(method="monte_carlo")(Gaussian("g"))
+
+    def test_a_relabeled_constituent_is_named_by_its_operation(self):
+        inner = center.with_label("spread").with_options(raw=True)
+        message = "call center.with_options(method='monte_carlo') to choose it"
+        with pytest.raises(ResolutionError, match=re.escape(message)):
+            _body_doubled(inner).with_options(method="monte_carlo")(Gaussian("g"))
+
     def test_a_method_no_constituent_has_gets_no_constituent_fix(self):
         with pytest.raises(ResolutionError, match="unknown method 'nope'") as raised:
             _body_doubled().with_options(method="nope")(Gaussian("g"))

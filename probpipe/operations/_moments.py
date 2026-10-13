@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from math import prod
 from typing import Any, cast
@@ -1053,14 +1054,17 @@ def _standard_deviation_result(d: DistributionSpec) -> OutputSpec:
 def _root(value: Any) -> Any:
     """The square root of each coordinate of *value*: of each array leaf, or of a function's values.
 
-    A function's square root takes the function's parameters.
+    A function's square root takes the function's parameters, where its
+    signature can be read.
     """
     if callable(value):
 
         def root(*args: Any, **kwargs: Any) -> Any:
             return _root(value(*args, **kwargs))
 
-        root.__signature__ = inspect.signature(value)  # type: ignore[attr-defined]
+        # A callable whose signature cannot be read keeps the generic one.
+        with suppress(TypeError, ValueError):
+            root.__signature__ = inspect.signature(value)  # type: ignore[attr-defined]
         return root
     return jax.tree.map(jnp.sqrt, value)
 
@@ -1074,12 +1078,11 @@ def _square_root(variance_value: Any, declaration: OutputSpec) -> Any:
     names, as ``standard_deviation(mu)``.
     """
     if declaration.exposes_record and isinstance(variance_value, Mapping):
-        return {
-            _summary_name("standard_deviation", [name]): _root(
-                variance_value[_summary_name("variance", [name])]
-            )
+        by_component = {
+            name: _root(variance_value[_summary_name("variance", [name])])
             for name in declaration.components
         }
+        return _named_value(by_component, "standard_deviation", declaration)
     return _root(variance_value)
 
 

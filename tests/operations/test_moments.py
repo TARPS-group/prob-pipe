@@ -24,6 +24,7 @@ from probpipe import (
     NumericRecordBatch,
     Record,
     RecordSpec,
+    factor,
     replay_run,
     workflow_run,
 )
@@ -55,6 +56,7 @@ from probpipe.linalg import LinOp
 from probpipe.operations import RouteSource
 from probpipe.operations._moments import (
     _ByComponent,
+    _root,
     cov,
     expectation,
     mean,
@@ -433,6 +435,34 @@ class TestStandardDeviation:
         assert inspect.signature(result.raw()).parameters.keys() == {"X"}
         points = jnp.linspace(0.0, 1.0, 3)[:, None]
         np.testing.assert_allclose(np.asarray(result(points)), [2.0, 2.0, 2.0], rtol=1e-6)
+
+    @staticmethod
+    def _grouped() -> Any:
+        """``g`` groups ``mu ~ Normal(0, 2)`` and ``tau ~ Normal(1, 3)``."""
+        joint = Gaussian("mu", 0.0, 2.0) * Gaussian("tau", 1.0, 3.0)
+        return joint.with_path_names({"mu": "g/mu", "tau": "g/tau"})
+
+    def test_a_record_valued_component_keeps_its_fields(self):
+        result = standard_deviation(self._grouped() * Gaussian("c", 5.0, 4.0))
+        assert result.label == "√𝕍[(g, c) ~ mu·tau·c]"
+        group = result.at_path("standard_deviation(g)")
+        assert group.fields == ("mu", "tau")
+        assert (_value(group["mu"]), _value(group["tau"])) == (2.0, 3.0)
+        assert _value(result["standard_deviation(c)"]) == 4.0
+
+    def test_a_whole_term_record_event_keeps_its_fields(self):
+        """A law over one record-valued term takes the term's fields, unrenamed."""
+        law = factor(self._grouped(), "g")
+        assert not law.event_spec.exposes_record
+        result = standard_deviation(law)
+        assert isinstance(result, Record) and result.fields == ("mu", "tau")
+        assert (_value(result["mu"]), _value(result["tau"])) == (2.0, 3.0)
+        assert tuple(standard_deviation.check(law).result.components) == ("standard_deviation(g)",)
+
+    def test_a_function_whose_signature_cannot_be_read_keeps_a_generic_one(self):
+        with pytest.raises(ValueError):
+            inspect.signature(max)
+        np.testing.assert_allclose(_root(max)(4.0, 9.0), 3.0)
 
     def test_a_measure_valued_event_has_no_standard_deviation(self):
         with pytest.raises(ApplicabilityError, match="event-typed variance"):
