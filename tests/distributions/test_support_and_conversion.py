@@ -232,6 +232,15 @@ class TestSupportCompatibility:
         assert not _supports_compatible(real, greater_than(0.0))
         assert not _supports_compatible(greater_than(-1.0), positive)
 
+    def test_a_traced_bound_is_compatible(self):
+        """A bound that is a traced value cannot be compared, so the test is conservative."""
+
+        @jax.jit
+        def compatible(low):
+            return jnp.asarray(_supports_compatible(interval(low, 1.0), unit_interval))
+
+        assert bool(compatible(2.0))
+
     def test_interval_subset_array_bounds(self):
         # Per-dim bounds: each source dim must lie within the
         # corresponding target dim.
