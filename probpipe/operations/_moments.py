@@ -85,7 +85,7 @@ from ..distributions._distribution import Distribution, DistributionSpec
 from ..distributions._empirical import EmpiricalDistribution
 from ..distributions._factored import _raw_record
 from ..functions._call import ApplicabilityError
-from ..functions._resolution import PointReport, check_point, selected
+from ..functions._resolution import PointReport, check_point, selected, settled
 from ..functions._result import SAMPLE_LEVEL
 from ..values import Function, FunctionSpec
 from ._evaluate import (
@@ -849,8 +849,11 @@ class _ByComponent(_DelegatingRoute):
         point, declared, _ = operation._plan_point(self._values(call, block.view), controls)
         candidates = operation._route_candidates(controls)
         candidate, report = selected(operation.label, controls, candidates, point, declared)
-        exactness = candidate.exactness(report) is True
-        return candidate.run(point, declared, report), candidate.route_name, exactness
+        value, settled_exactness = settled(candidate.run(point, declared, report))
+        exactness = (
+            candidate.exactness(report) if settled_exactness is None else settled_exactness
+        ) is True
+        return value, candidate.route_name, exactness
 
     def probe(
         self, call: BoundCall, result: OutputSpec | None, *, method: str | None, exact_only: bool
