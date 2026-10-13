@@ -130,7 +130,7 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with workflow_run(seed=42):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={
                     "num_results": 20,
@@ -165,7 +165,7 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={
                     "num_results": 50,
@@ -192,7 +192,7 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured, workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={
                     "num_results": 20,
@@ -225,7 +225,7 @@ class TestPyMCModel:
             _captured_pm_sample_kwargs() as captured,
             workflow_run(seed=0),
         ):
-            _ = condition_on.with_options(
+            _ = condition_on.using(
                 method="pymc_nuts",
                 method_options={"num_results": 20, "num_warmup": 10},
             )(model, {"y": data})
@@ -248,7 +248,7 @@ class TestPyMCModel:
             _captured_pm_sample_kwargs() as captured,
             workflow_run(seed=0),
         ):
-            _ = condition_on.with_options(
+            _ = condition_on.using(
                 method="pymc_nuts",
                 method_options={"num_results": 20, "num_warmup": 10},
             )(model, {"y": data})
@@ -356,7 +356,7 @@ class TestRecordSpec:
         y = rng.normal(size=N).astype(np.float32)
         model = PyMCModel(per_observation_effect_model_fn, label="model")
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1},
             )(model, {"X": X, "y": y})
@@ -386,9 +386,9 @@ class TestRecordSpec:
 
         y = np.zeros(8, dtype=np.float32)
         with workflow_run(seed=0):
-            result = condition_on.with_options(
-                method="pymc_advi", method_options={"num_iterations": 200}
-            )(PyMCModel(self._intercept_alpha_model, label="model"), {"y": y})
+            result = condition_on.using(method="pymc_advi", method_options={"num_iterations": 200})(
+                PyMCModel(self._intercept_alpha_model, label="model"), {"y": y}
+            )
         assert isinstance(result, FactoredDistribution)
         assert method_of(result) == "pymc_advi"
         assert tuple(result.event_spec.components) == ("intercept", "alpha")
@@ -453,7 +453,7 @@ class TestRecordSpec:
             return m
 
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_advi",
                 method_options={"num_iterations": 100, "num_results": 10},
             )(PyMCModel(model_fn, label="model"), {"y": np.zeros(3, dtype=np.float32)})
@@ -472,7 +472,7 @@ class TestRecordSpec:
 
         y = np.zeros(8, dtype=np.float32)
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_advi",
                 method_options={
                     "num_iterations": 200,
@@ -576,7 +576,7 @@ class TestRecordSpec:
 
         model = PyMCModel(model_fn, label="model")
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={"num_results": 20, "num_warmup": 10, "num_chains": 1},
             )(model, {"y": np.zeros(5, dtype=np.float32)})
@@ -603,7 +603,7 @@ class TestRecordSpec:
 
         model = PyMCModel(model_fn, label="model")
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={
                     "num_results": 200,
@@ -640,7 +640,7 @@ class TestRecordSpec:
 
         model = PyMCModel(model_fn, label="model")
         with workflow_run(seed=0):
-            result = condition_on.with_options(
+            result = condition_on.using(
                 method="pymc_nuts",
                 method_options={
                     "num_results": 200,
@@ -674,7 +674,7 @@ class TestRecordSpec:
 
         model = PyMCModel(model_fn, label="model")
         with pytest.raises(ValueError, match="free random variables must not change with the data"):
-            condition_on.with_options(
+            condition_on.using(
                 method="pymc_nuts",
                 method_options={
                     "num_results": 5,

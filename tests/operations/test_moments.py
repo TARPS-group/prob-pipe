@@ -235,14 +235,14 @@ class TestDerivedLabelsAreNeverComponents:
     def test_a_monte_carlo_moment_is_labeled_over_the_nested_path(self, moment, label, component):
         held = self._held()
         with workflow_run(seed=0):
-            result = moment.with_options(method="monte_carlo")(held)
+            result = moment.using(method="monte_carlo")(held)
         assert result.label == label
         assert tuple(moment.check(held).result.components) == (component,)
 
     def test_a_monte_carlo_quantile_names_its_component_for_the_law(self):
         held = self._held()
         with workflow_run(seed=0):
-            result = quantile.with_options(method="monte_carlo")(held, jnp.array([0.1, 0.9]))
+            result = quantile.using(method="monte_carlo")(held, jnp.array([0.1, 0.9]))
         assert result.label == "ℚ[g ~ g; y/obs]"
         assert result.level_names == ("quantile",)
         assert tuple(quantile.check(held, 0.5).result.components) == ("quantile(g)",)
@@ -287,33 +287,33 @@ class TestMean:
         report = mean.check(law)
         assert (report.route, report.exact) == ("monte_carlo", False)
         with workflow_run(seed=1):
-            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(law)
+            estimate = mean.using(n_broadcast_samples=_DRAWS)(law)
         assert abs(_value(estimate) - 2.0) < 0.1
 
     def test_the_fallback_takes_a_law_whose_label_is_no_identifier(self):
         """The draws lie on a level named after the law's component, here ``my law``."""
         with workflow_run(seed=1):
-            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(Sampler("my law", 2.0))
+            estimate = mean.using(n_broadcast_samples=_DRAWS)(Sampler("my law", 2.0))
         # Observed across seeds 0-5: errors of 0.001 to 0.020; the standard error is 0.016.
         np.testing.assert_allclose(_value(estimate), 2.0, atol=0.05)
 
     def test_the_fallback_averages_record_draws_per_field(self):
         with workflow_run(seed=2):
-            estimate = mean.with_options(n_broadcast_samples=_DRAWS)(ExactPosterior("post"))
+            estimate = mean.using(n_broadcast_samples=_DRAWS)(ExactPosterior("post"))
         assert isinstance(estimate, Record)
         assert abs(_value(estimate["mean(theta)"])) < 0.1
         assert abs(_value(estimate["mean(y)"])) < 0.1
 
     def test_method_selects_the_fallback_over_the_closed_form(self):
         law = Gaussian("g", -1.0)
-        assert mean.with_options(method="monte_carlo").check(law).route == "monte_carlo"
+        assert mean.using(method="monte_carlo").check(law).route == "monte_carlo"
 
     def test_a_rejecting_guard_passes_to_the_fallback(self):
         assert mean.check(GuardedMean("g", False)).route == "monte_carlo"
 
     def test_exact_only_refuses_a_law_without_a_closed_form(self):
         with pytest.raises(ResolutionError, match="exact_only"):
-            mean.with_options(exact_only=True)(Sampler("s"))
+            mean.using(exact_only=True)(Sampler("s"))
 
     def test_a_law_that_neither_has_a_mean_nor_samples_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="does not sample"):
@@ -337,7 +337,7 @@ class TestVariance:
 
     def test_the_fallback_is_the_sample_variance(self):
         with workflow_run(seed=3):
-            estimate = variance.with_options(n_broadcast_samples=_DRAWS)(Sampler("s", 0.0, 2.0))
+            estimate = variance.using(n_broadcast_samples=_DRAWS)(Sampler("s", 0.0, 2.0))
         assert abs(_value(estimate) - 4.0) < 0.4
 
     def test_a_measure_valued_event_has_no_variance(self):
@@ -354,7 +354,7 @@ class TestCov:
 
     def test_the_fallback_is_the_sample_covariance(self):
         with workflow_run(seed=4):
-            estimate = cov.with_options(n_broadcast_samples=_DRAWS)(Vector("v"))
+            estimate = cov.using(n_broadcast_samples=_DRAWS)(Vector("v"))
         assert estimate.spec.shape == (2, 2)
         np.testing.assert_allclose(np.asarray(estimate), np.diag([1.0, 4.0]), atol=0.3)
 
@@ -392,19 +392,19 @@ class TestQuantile:
 
     def test_the_fallback_is_the_empirical_quantile(self):
         with workflow_run(seed=5):
-            estimate = quantile.with_options(n_broadcast_samples=_DRAWS)(Sampler("s"), 0.5)
+            estimate = quantile.using(n_broadcast_samples=_DRAWS)(Sampler("s"), 0.5)
         assert abs(_value(estimate)) < 0.1
 
     @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
     def test_the_fallback_is_the_inverse_cdf_of_the_draws(self, record):
         # Four draws of x are 0, 1, 2, 3, whose CDF reaches 0.25 at 0.
-        view = quantile.with_options(n_broadcast_samples=4)
+        view = quantile.using(n_broadcast_samples=4)
         estimate = view(_Ramp("ramp", record=record), jnp.array([0.25, 0.5, 1.0]))
         x = estimate["quantile(x)"] if record else estimate.values[:, 0]
         np.testing.assert_array_equal(np.asarray(x), [0.0, 1.0, 3.0])
 
     def test_method_selects_the_fallback_over_the_closed_form(self):
-        view = quantile.with_options(method="monte_carlo")
+        view = quantile.using(method="monte_carlo")
         assert view.check(Gaussian("g"), 0.5).route == "monte_carlo"
 
     def test_one_level_of_a_record_law_is_a_record_of_its_quantiles(self):
@@ -424,7 +424,7 @@ class TestQuantile:
         )
 
     def test_a_raw_record_law_s_levels_are_the_mapping_of_their_columns(self):
-        result = quantile.with_options(raw=True)(_record_empirical(), jnp.array([0.0, 1.0]))
+        result = quantile.using(raw=True)(_record_empirical(), jnp.array([0.0, 1.0]))
         assert isinstance(result, dict) and list(result) == ["quantile(b)", "quantile(a)"]
         assert jnp.shape(result["quantile(b)"]) == (2, 2)
 
@@ -486,15 +486,15 @@ class TestTheFallbacksOnFewDraws:
     def test_the_covariance_divides_by_the_number_of_draws(self, record):
         # The three draws (0, 0), (1, 2), and (2, 4) deviate from their mean (1, 2)
         # by (-1, -2), (0, 0), and (1, 2).
-        estimate = cov.with_options(n_broadcast_samples=3)(_Ramp("ramp", record=record))
+        estimate = cov.using(n_broadcast_samples=3)(_Ramp("ramp", record=record))
         expected = np.array([[2.0, 4.0], [4.0, 8.0]]) / 3.0
         np.testing.assert_allclose(np.asarray(estimate), expected, rtol=1e-6)
 
     @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
     def test_the_variance_is_the_diagonal_of_the_covariance(self, record):
         law = _Ramp("ramp", record=record)
-        spread = variance.with_options(n_broadcast_samples=7)(law)
-        covariance = cov.with_options(n_broadcast_samples=7)(law)
+        spread = variance.using(n_broadcast_samples=7)(law)
+        covariance = cov.using(n_broadcast_samples=7)(law)
         if record:
             values = [_value(spread["variance(x)"]), _value(spread["variance(y)"])]
         else:
@@ -503,7 +503,7 @@ class TestTheFallbacksOnFewDraws:
 
     @pytest.mark.parametrize("record", [False, True], ids=["array", "record"])
     def test_one_draw_has_no_covariance(self, record):
-        estimate = cov.with_options(n_broadcast_samples=1)(_Ramp("ramp", record=record))
+        estimate = cov.using(n_broadcast_samples=1)(_Ramp("ramp", record=record))
         np.testing.assert_array_equal(np.asarray(estimate), np.zeros((2, 2)))
 
 
@@ -512,7 +512,7 @@ class TestTheFallbacksOfAJoint:
 
     def test_the_mean_is_the_average_of_each_component(self):
         with workflow_run(seed=7):
-            estimate = mean.with_options(method="monte_carlo", n_broadcast_samples=_DRAWS)(
+            estimate = mean.using(method="monte_carlo", n_broadcast_samples=_DRAWS)(
                 _dependent_joint()
             )
         assert isinstance(estimate, Record) and estimate.fields == ("mean(y)", "mean(mu)")
@@ -521,7 +521,7 @@ class TestTheFallbacksOfAJoint:
 
     def test_the_variance_is_the_sample_variance_of_each_component(self):
         with workflow_run(seed=8):
-            estimate = variance.with_options(method="monte_carlo", n_broadcast_samples=_DRAWS)(
+            estimate = variance.using(method="monte_carlo", n_broadcast_samples=_DRAWS)(
                 _dependent_joint()
             )
         assert isinstance(estimate, Record)
@@ -530,13 +530,13 @@ class TestTheFallbacksOfAJoint:
 
     def test_the_covariance_couples_the_components(self):
         with workflow_run(seed=9):
-            estimate = cov.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+            estimate = cov.using(n_broadcast_samples=_DRAWS)(_dependent_joint())
         np.testing.assert_allclose(np.asarray(estimate), np.ones((2, 2)), atol=0.15)
 
     def test_several_quantile_levels_give_a_batch_of_records(self):
         levels = jnp.array([0.25, 0.5])
         with workflow_run(seed=10):
-            estimate = quantile.with_options(method="monte_carlo", n_broadcast_samples=_DRAWS)(
+            estimate = quantile.using(method="monte_carlo", n_broadcast_samples=_DRAWS)(
                 _dependent_joint(), levels
             )
         assert (estimate.level_names, estimate.batch_shape) == (("quantile",), (2,))
@@ -582,7 +582,7 @@ class TestByComponent:
     ):
         """``mu ~ Normal(2, 1)`` and ``y = mu + 1``: ``y`` has mean 3 and variance 1."""
         with workflow_run(seed=seed):
-            result = moment.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint())
+            result = moment.using(n_broadcast_samples=_DRAWS)(_dependent_joint())
         name = moment.name
         assert isinstance(result, Record)
         assert result.fields == (f"{name}(y)", f"{name}(mu)")
@@ -596,7 +596,7 @@ class TestByComponent:
     def test_several_quantile_levels_give_a_batch_of_records(self):
         levels = jnp.array([0.25, 0.5])
         with workflow_run(seed=10):
-            result = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
+            result = quantile.using(n_broadcast_samples=_DRAWS)(_dependent_joint(), levels)
         assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
         reference = jax.scipy.special.ndtri(levels)
         np.testing.assert_array_equal(
@@ -607,7 +607,7 @@ class TestByComponent:
 
     def test_one_quantile_level_gives_a_record(self):
         with workflow_run(seed=11):
-            result = quantile.with_options(n_broadcast_samples=_DRAWS)(_dependent_joint(), 0.5)
+            result = quantile.using(n_broadcast_samples=_DRAWS)(_dependent_joint(), 0.5)
         assert isinstance(result, Record)
         assert _value(result["quantile(mu)"]) == 2.0
 
@@ -684,7 +684,7 @@ class TestByComponent:
         law = _Coupled()
         report = mean.check(law)
         assert (report.route, report.exact) == ("by_component", True)
-        result = mean.with_options(exact_only=True)(law)
+        result = mean.using(exact_only=True)(law)
         assert (_value(result["mean(a)"]), _value(result["mean(b)"])) == (1.0, -1.0)
         assert self._blocks(result) == [
             (("a",), "closed_form", True),
@@ -699,18 +699,18 @@ class TestByComponent:
             rf"{name} on the view of each component that does, as {name}\(d\['mu'\]\)"
         )
         with pytest.raises(ResolutionError, match=message):
-            moment.with_options(exact_only=True)(_dependent_joint())
+            moment.using(exact_only=True)(_dependent_joint())
 
     def test_exact_only_says_how_to_compute_the_exact_quantiles(self):
         joint = _dependent_joint()
         with pytest.raises(ResolutionError, match=r"as quantile\(d\['mu'\], q\)$"):
-            quantile.with_options(exact_only=True)(joint, 0.5)
+            quantile.using(exact_only=True)(joint, 0.5)
         # The suggested call, with the original level, computes the quantile exactly.
-        exact = quantile.with_options(exact_only=True)(joint["mu"], 0.5)
+        exact = quantile.using(exact_only=True)(joint["mu"], 0.5)
         assert _value(exact) == 2.0
 
     def test_naming_the_route_under_exact_only_requires_every_component_exact(self):
-        view = mean.with_options(method="by_component", exact_only=True)
+        view = mean.using(method="by_component", exact_only=True)
         assert view.check(_Coupled()).route == "by_component"
         assert view.check(_dependent_joint()).feasible is False
 
@@ -772,7 +772,7 @@ class TestByComponent:
         }
         law = functools.reduce(operator.mul, [factors[c] for c in components])
         with workflow_run(seed=7):
-            result = mean.with_options(method="by_component", n_broadcast_samples=8)(law)
+            result = mean.using(method="by_component", n_broadcast_samples=8)(law)
 
         assert result.fields == tuple(f"mean({c})" for c in components)
         assert [list(components) for components, _, _ in self._blocks(result)] == expected_blocks
@@ -795,7 +795,7 @@ class TestByComponent:
 
     def test_the_raw_result_is_the_named_mapping(self):
         with workflow_run(seed=7):
-            result = mean.with_options(raw=True)(_dependent_joint())
+            result = mean.using(raw=True)(_dependent_joint())
         assert set(result) == {"mean(y)", "mean(mu)"}
         assert float(result["mean(mu)"]) == 2.0
 
@@ -885,28 +885,28 @@ class TestExpectation:
             False,
         )
         with workflow_run(seed=6):
-            estimate = expectation.with_options(n_broadcast_samples=_DRAWS)(law, lambda x: x**2)
+            estimate = expectation.using(n_broadcast_samples=_DRAWS)(law, lambda x: x**2)
         assert abs(_value(estimate) - 1.0) < 0.1
 
     def test_method_selects_the_sampling_lift_for_a_law_with_a_closed_form(self):
-        view = expectation.with_options(method="sampling_lift")
+        view = expectation.using(method="sampling_lift")
         assert view.check(Coin("c"), lambda x: x).method == "sampling_lift"
 
     def test_method_selects_an_opt_in_rule_by_name(self, quadrature):
-        view = expectation.with_options(method="operations_suite_quadrature")
+        view = expectation.using(method="operations_suite_quadrature")
         assert _value(view(Gaussian("g"), lambda x: x)) == 7.0
 
     def test_exact_only_refuses_a_law_without_an_exact_method(self):
         with pytest.raises(ResolutionError):
-            expectation.with_options(exact_only=True)(Gaussian("g"), lambda x: x)
+            expectation.using(exact_only=True)(Gaussian("g"), lambda x: x)
 
     def test_an_unregistered_method_raises_resolution_error(self):
         with pytest.raises(ResolutionError, match="no_such_method"):
-            expectation.with_options(method="no_such_method")(Gaussian("g"), lambda x: x)
+            expectation.using(method="no_such_method")(Gaussian("g"), lambda x: x)
 
     def test_the_sample_count_control_is_the_monte_carlo_budget(self):
         law = Sampler("s")
-        expectation.with_options(n_broadcast_samples=33)(law, lambda x: x)
+        expectation.using(n_broadcast_samples=33)(law, lambda x: x)
         assert law.shapes == [(33,)]
 
     def test_the_result_takes_the_kind_the_integrand_declares(self):

@@ -118,7 +118,7 @@ def _run_by_name(
     bound = _binding.values_to_bound_arguments(
         f.signature, _call_values(operand, parameter, fixed_args)
     )
-    return f.with_options(**forwarded, method=rule)(*bound.args, **bound.kwargs)
+    return f.using(**forwarded, method=rule)(*bound.args, **bound.kwargs)
 
 
 class _Floor(BinaryDispatchMethod):

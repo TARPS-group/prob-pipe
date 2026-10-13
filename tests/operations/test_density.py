@@ -149,7 +149,7 @@ class TestTheScoredValue:
         self, law, values, dispatch
     ):
         with pytest.raises(ApplicabilityError, match="does not conform"):
-            log_prob.with_options(dispatch=dispatch)(law, values)
+            log_prob.using(dispatch=dispatch)(law, values)
 
 
 class TestABatchOfArraysIsScoredInOneMappedCall:
@@ -200,7 +200,7 @@ class TestABatchOfArraysIsScoredInOneMappedCall:
         )
         mapped_law, sequential_law = CountedVector("v"), CountedVector("v")
         mapped = score(mapped_law, points)
-        sequential = score.with_options(dispatch="sequential")(sequential_law, points)
+        sequential = score.using(dispatch="sequential")(sequential_law, points)
         assert len(sequential_law.calls) == 8 > len(mapped_law.calls)
         assert mapped.level_names == sequential.level_names == ("rows", "cols")
         assert mapped.batch_shape == sequential.batch_shape == (2, 4)
@@ -249,7 +249,7 @@ class TestLiftedScores:
 class TestDerivedDensities:
     def test_prob_is_derived_from_log_prob(self):
         assert prob.is_derived
-        assert prob.identity == "jnp.exp(log_prob.with_options(raw=True)(d, value))"
+        assert prob.identity == "jnp.exp(log_prob.using(raw=True)(d, value))"
         (route,) = prob.routes
         assert (route.name, route.source) == ("identity", RouteSource.FALLBACK)
 

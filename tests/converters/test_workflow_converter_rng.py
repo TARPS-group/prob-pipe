@@ -196,7 +196,7 @@ class TestBuiltInConversionRandomness:
             ) as derive,
             workflow_run(seed=7),
         ):
-            result = convert.with_options(method_options={"num_samples": 8})(
+            result = convert.using(method_options={"num_samples": 8})(
                 Normal("x", loc=0.0, scale=1.0), EmpiricalDistribution
             )
 

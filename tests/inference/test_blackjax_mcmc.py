@@ -93,7 +93,7 @@ class TestBlackJAXNuts:
 
     def test_runs_end_to_end(self, small_model):
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={
                     "num_results": 200,
@@ -108,7 +108,7 @@ class TestBlackJAXNuts:
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={
                     "num_results": 400,
@@ -139,7 +139,7 @@ class TestBlackJAXNuts:
         y = jnp.asarray([1.0, 2.0, 3.0])
 
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={
                     "num_results": 2000,
@@ -171,7 +171,7 @@ class TestBlackJAXNuts:
         overwrite it).
         """
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={
                     "num_results": 50,
@@ -200,7 +200,7 @@ class TestObservedDataInRawHosts:
             hosted = pytest.importorskip("xarray").DataArray(y, dims="observation")
         model = _gaussian_mean(Normal("mu", 0.0, 1.0))
         options = {"num_results": 50, "num_warmup": 50, "num_chains": 1}
-        fit = condition_on.with_options(method="blackjax_nuts", method_options=options)
+        fit = condition_on.using(method="blackjax_nuts", method_options=options)
         with workflow_run(seed=0):
             from_host = flat_draws(fit(model, {"y": hosted}))
         with workflow_run(seed=0):
@@ -213,7 +213,7 @@ class TestBlackJAXHmc:
 
     def test_runs_end_to_end(self, small_model):
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_hmc",
                 method_options={
                     "num_results": 200,
@@ -251,7 +251,7 @@ class TestBlackJAXHmc:
         y = jnp.asarray([1.0, 2.0, 3.0])
 
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_hmc",
                 method_options={
                     "num_results": 4000,
@@ -282,7 +282,7 @@ class TestBlackJAXHmc:
         )
         model = _gaussian_mean(prior)
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_hmc",
                 method_options={
                     "num_results": 1000,
@@ -316,7 +316,7 @@ class TestBlackJAXHmc:
         )
         model = _gaussian_mean(prior)
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_hmc",
                 method_options={
                     "num_results": 4000,
@@ -365,7 +365,7 @@ class TestBlackJAXHmc:
         )
         model = _gaussian_mean(prior)
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_hmc",
                 method_options={
                     "num_results": 100,
@@ -397,7 +397,7 @@ class TestSampleStats:
     def test_sample_stats_keys_shapes_and_ranges(self, small_model):
         num_chains, num_results = 2, 200
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={
                     "num_results": num_results,
@@ -442,7 +442,7 @@ class TestSampleStats:
     def test_posterior_has_one_chain_dim_per_chain(self, small_model):
         num_chains = 2
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={
                     "num_results": 100,
@@ -458,7 +458,7 @@ class TestSampleStats:
         """``add_mcmc_diagnostics`` records the sum of ``diverging`` over chains and draws."""
         from probpipe.diagnostics import add_mcmc_diagnostics
 
-        posterior = condition_on.with_options(
+        posterior = condition_on.using(
             method="blackjax_nuts",
             method_options={"num_results": 100, "num_warmup": 100, "num_chains": 2},
         )(small_model, {"y": jnp.zeros((4,))})

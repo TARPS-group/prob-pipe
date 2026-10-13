@@ -802,7 +802,7 @@ class Function(TrackedTerm, Annotated):
         An entry keyed by a name the signature lacks goes to its variadic keyword
         parameter.
     **controls : Any
-        The engine's controls, which ``with_options`` revises:
+        The engine's controls, which ``using`` revises:
 
         - ``workflow_kind`` (WorkflowKind): orchestration selection; DEFAULT,
           the default, inherits the workflow configuration.
@@ -867,7 +867,7 @@ class Function(TrackedTerm, Annotated):
     function label and callable metadata; explicit output aliases and component
     names are preserved. ``str(f)`` returns :attr:`notation`, the label followed
     by the parameters, as ``predict(x, y)``, and the repr keeps the label first.
-    ``with_options`` returns a shallow copy with revised controls. A Function
+    ``using`` returns a shallow copy with revised controls. A Function
     stores only the controls set on it, so ``options`` reads every other
     control's default when it is read.
 
@@ -1086,7 +1086,7 @@ class Function(TrackedTerm, Annotated):
     def options(self) -> Mapping[str, Any]:
         """The effective engine controls, separate from domain arguments.
 
-        A control set at construction or by :meth:`with_options` keeps its value,
+        A control set at construction or by :meth:`using` keeps its value,
         and every other control reports the framework's default as it reads now.
         """
         return MappingProxyType(self._control_defaults() | dict(self._options))
@@ -1095,7 +1095,7 @@ class Function(TrackedTerm, Annotated):
         """Every control's framework default, the class's sample count included."""
         return dict(_CONTROL_DEFAULTS) | {"n_broadcast_samples": self.DEFAULT_N_BROADCAST_SAMPLES}
 
-    def with_options(self, **controls: Any) -> Self:
+    def using(self, **controls: Any) -> Self:
         """Return a copy with revised controls, preserving identity and declarations.
 
         A control given as None resets to its framework default, whatever the
@@ -1137,7 +1137,7 @@ class Function(TrackedTerm, Annotated):
 
         The probe runs the steps a call with the same arguments would run, from
         resolving the controls to selecting the route, and a view from
-        :meth:`with_options` probes under the controls of its call. It executes
+        :meth:`using` probes under the controls of its call. It executes
         nothing and causes no random event: the body and every conversion stay
         unexecuted.
 
@@ -1294,7 +1294,7 @@ class Function(TrackedTerm, Annotated):
         The arguments bind to the signature as in :meth:`apply`, and a law or a
         batch passed where a value is expected lifts the call over it: a law is
         broadcast and a batch is swept (V.5). The controls come from the
-        construction and :meth:`with_options`, never from the call's keywords,
+        construction and :meth:`using`, never from the call's keywords,
         which bind to the wrapped callable. Swept batches align by level name:
         within each matching level, shapes align from the right and size-one
         axes broadcast independently of other levels. The sweep carries each

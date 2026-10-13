@@ -1081,7 +1081,7 @@ def quantile(d: Distribution, q: Any):
     are the law's closed form, ``closed_form``; ``by_component``,
     which computes each component of a record event by the route that
     component's view selects; and the Monte Carlo fallback, ``monte_carlo``,
-    which ``with_options(method=...)`` selects among. The fallback's quantile
+    which ``using(method=...)`` selects among. The fallback's quantile
     at a level ``q`` is the generalized
     inverse ``inf{x : F(x) >= q}`` of each coordinate's CDF over the draws, as
     an empirical law's is.
@@ -1152,7 +1152,7 @@ def expectation(d: Distribution, f: Any, fixed_args: Mapping[str, Any] | None = 
 
     A law claiming ``SupportsExpectation`` computes it in closed form, and
     otherwise the call takes the routes of ``evaluate``: its evaluation rules,
-    which ``with_options(method=...)`` names, and its controls, such as the
+    which ``using(method=...)`` names, and its controls, such as the
     sampling lift's ``n_broadcast_samples``.
 
     Parameters
@@ -1251,7 +1251,7 @@ class _PushforwardMean(_EvaluationRules):
     ) -> Any:
         """The mean of the pushforward law the selected rule returns."""
         pushforward = super().run(call, result, method=method, exact_only=exact_only)
-        return mean.with_options(raw=True)(pushforward)
+        return mean.using(raw=True)(pushforward)
 
 
 expectation.register_route(_PushforwardMean())

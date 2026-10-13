@@ -174,10 +174,10 @@ class TestMomentMatching:
     def test_a_source_under_its_default_label_converts_under_the_targets(self, target, notation):
         """The default label names the source's class, so the result names the target's."""
         with workflow_run(seed=0):
-            result = convert.with_options(method_options={"num_samples": 200})(
+            result = convert.using(method_options={"num_samples": 200})(
                 Laplace("g", 9.0, 1.0), target
             )
-            labeled = convert.with_options(method_options={"num_samples": 200})(
+            labeled = convert.using(method_options={"num_samples": 200})(
                 Laplace("g", 9.0, 1.0, label="lp"), target
             )
         assert str(result) == notation
@@ -902,7 +902,7 @@ class TestConvertDelegation:
 
     def test_convert_cross_family(self):
         t = StudentT("t", df=30.0, loc=9.0, scale=1.0)
-        result = convert.with_options(method_options={"num_samples": 5000})(t, Normal)
+        result = convert.using(method_options={"num_samples": 5000})(t, Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 9.0, atol=0.5)
 
@@ -919,7 +919,7 @@ class TestConvertDelegation:
 
     def test_convert_to_empirical(self):
         n = Normal("x", loc=0.0, scale=1.0)
-        emp = convert.with_options(method_options={"num_samples": 50})(n, EmpiricalDistribution)
+        emp = convert.using(method_options={"num_samples": 50})(n, EmpiricalDistribution)
         assert isinstance(emp, EmpiricalDistribution)
         assert emp.num_atoms == 50
 

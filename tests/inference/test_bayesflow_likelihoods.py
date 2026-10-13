@@ -103,9 +103,7 @@ def _score(lik, theta, rows):
 
 def _posterior(lik, prior, y):
     """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
-    view = condition_on_operation.with_options(
-        method_options={"num_results": 1500, "num_warmup": 500}
-    )
+    view = condition_on_operation.using(method_options={"num_results": 1500, "num_warmup": 500})
     with workflow_run(seed=0):
         return view(lik * prior, {"observation": jnp.asarray(y)})
 
@@ -426,9 +424,9 @@ class TestConditioning:
             ),
         )
         with workflow_run(seed=0):
-            ref_post = condition_on.with_options(
-                method_options={"num_results": 1500, "num_warmup": 500}
-            )(true_likelihood * prior, {"observation": jnp.asarray(y)})
+            ref_post = condition_on.using(method_options={"num_results": 1500, "num_warmup": 500})(
+                true_likelihood * prior, {"observation": jnp.asarray(y)}
+            )
         ref = np.asarray(flat_draws(ref_post)["lam"]).reshape(-1)
         with workflow_run(seed=0):
             lik = learn_amortized_likelihood(

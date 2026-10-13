@@ -262,7 +262,7 @@ class _EvaluationRules(_RegistryRoute):
         forwarded["exact_only"] = exact_only
         if method is not None:
             forwarded["method"] = method
-        return f.with_options(**forwarded)(**{parameter: operand}, **fixed)
+        return f.using(**forwarded)(**{parameter: operand}, **fixed)
 
 
 evaluate.register_route(_EvaluationRules())

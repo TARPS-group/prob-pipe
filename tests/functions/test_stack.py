@@ -112,7 +112,7 @@ class TestTheEngine:
             )
 
         unrestricted = error_of(lambda: add(*misaligned()))
-        restricted = error_of(lambda: add.with_options(**controls)(*misaligned()))
+        restricted = error_of(lambda: add.using(**controls)(*misaligned()))
 
         assert unrestricted is not None
         assert type(restricted) is type(unrestricted)
@@ -160,7 +160,7 @@ class TestCheck:
         def identity(x):
             return x
 
-        identity.with_options(n_broadcast_samples=16).check(standard_normal())
+        identity.using(n_broadcast_samples=16).check(standard_normal())
 
     def test_an_argument_that_does_not_bind_raises_as_the_call_would(self):
         @function

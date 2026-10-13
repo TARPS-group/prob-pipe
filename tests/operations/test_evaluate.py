@@ -70,7 +70,7 @@ def test_a_maps_own_sample_count_survives_evaluate():
     )
     with workflow_run(seed=0):
         assert evaluate(double, Gaussian("g")).num_atoms == 9
-        assert evaluate.with_options(n_broadcast_samples=5)(double, Gaussian("g")).num_atoms == 5
+        assert evaluate.using(n_broadcast_samples=5)(double, Gaussian("g")).num_atoms == 5
 
 
 def test_the_result_takes_the_maps_output_name():
@@ -176,13 +176,9 @@ def _weighted_atoms():
 def test_a_named_rule_runs_as_the_direct_call_runs_it(method):
     square = Function(lambda t: t * t, label="square", output_spec=OutputSpec(square=None))
     with workflow_run(seed=0):
-        evaluated = evaluate.with_options(method=method, n_broadcast_samples=8)(
-            square, _weighted_atoms()
-        )
+        evaluated = evaluate.using(method=method, n_broadcast_samples=8)(square, _weighted_atoms())
     with workflow_run(seed=0):
-        direct = square.with_options(method="sampling_lift", n_broadcast_samples=8)(
-            _weighted_atoms()
-        )
+        direct = square.using(method="sampling_lift", n_broadcast_samples=8)(_weighted_atoms())
     assert evaluated.num_atoms == direct.num_atoms == 8
 
 
@@ -191,7 +187,7 @@ def test_check_reports_the_rule_a_method_names():
         lambda t: t * t,
         label="square",
     )
-    report = evaluate.with_options(method="sampling_lift").check(square, _weighted_atoms())
+    report = evaluate.using(method="sampling_lift").check(square, _weighted_atoms())
     assert (report.route, report.method, report.exact) == (
         "evaluation_rules",
         "sampling_lift",
@@ -205,23 +201,23 @@ def test_a_rule_named_for_a_value_is_refused_as_the_direct_call_refuses_it():
         label="square",
     )
     with pytest.raises(ResolutionError, match="lifts nothing"):
-        square.with_options(method="sampling_lift")(3.0)
+        square.using(method="sampling_lift")(3.0)
     with pytest.raises(ResolutionError, match="lifts nothing"):
-        evaluate.with_options(method="sampling_lift")(square, 3.0)
+        evaluate.using(method="sampling_lift")(square, 3.0)
 
 
 class TestThePushforwardOfAView:
     def test_the_identity_over_a_field_view_gives_one_atom_per_draw(self):
         """The map returns its operand, so the stacked draws' term reaches the result step."""
         view = (Normal("a", 0.0, 1.0) * Normal("b", 0.0, 1.0))["a"]
-        law = evaluate.with_options(n_broadcast_samples=3)(
+        law = evaluate.using(n_broadcast_samples=3)(
             Function(lambda x: x, output_spec=OutputSpec(a=None)), view
         )
         assert law.num_atoms == 3
         assert law.atoms.element_spec.shape == ()
 
     def test_a_plain_callable_is_admitted_as_the_map(self):
-        law = evaluate.with_options(n_broadcast_samples=4)(
+        law = evaluate.using(n_broadcast_samples=4)(
             lambda x: {"doubled": 2.0 * x}, Normal("x", 0.0, 1.0)
         )
         assert law.num_atoms == 4

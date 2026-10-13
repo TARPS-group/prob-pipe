@@ -2,7 +2,7 @@
 
 The engine runs the call stack of design Part V on every call of a Function:
 
-1. configure: the controls a Function carries, resolved by ``with_options``;
+1. configure: the controls a Function carries, resolved by ``using``;
 2. bind: the arguments bind to the signature (:mod:`._call`);
 3. normalize: distribution arguments are converted where their parameter names
    another class (:mod:`._normalization`) and each argument is admitted by its
@@ -141,7 +141,7 @@ def function(
 
     Keyword arguments passed later to the workflow call itself belong to the
     wrapped function whenever they can bind to that function. Use
-    ``workflow.with_options(...)(...)`` for one-call ProbPipe controls.
+    ``workflow.using(...)(...)`` for one-call ProbPipe controls.
 
     A parameter annotated with a class of raw values, such as ``pd.Series`` or
     ``jax.Array``, receives the raw form of an argument, or of each element or

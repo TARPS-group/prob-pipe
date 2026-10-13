@@ -2,9 +2,9 @@
 
 A Function keeps the wrapped function's arguments and the framework's controls
 in two namespaces. Each control resolves from the framework's default, then
-the decorator or constructor, then a ``with_options`` view, which leaves the
+the decorator or constructor, then a ``using`` view, which leaves the
 original unchanged. A control that is unknown or inadmissible raises at the
-decorator or at ``with_options``, before any call.
+decorator or at ``using``, before any call.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ class TestTwoNamespaces:
         )
 
         with pytest.raises(TypeError, match="unknown Function option"):
-            wrapped.with_options(**{name: "x"})
+            wrapped.using(**{name: "x"})
 
     @pytest.mark.parametrize("name", ["seed", "key"])
     def test_there_is_no_framework_key_or_seed_control(self, name):
@@ -93,7 +93,7 @@ class TestTwoNamespaces:
         )
 
         with pytest.raises(TypeError, match="unknown Function option"):
-            wrapped.with_options(**{name: 0})
+            wrapped.using(**{name: 0})
 
     def test_a_wrapped_functions_own_seed_parameter_is_an_ordinary_argument(self):
         @function
@@ -125,7 +125,7 @@ class TestResolution:
         def identity(x):
             return x
 
-        view = identity.with_options(n_broadcast_samples=11)
+        view = identity.using(n_broadcast_samples=11)
 
         assert view.options["n_broadcast_samples"] == 11
         assert identity.options["n_broadcast_samples"] == 7
@@ -142,7 +142,7 @@ class TestResolution:
             return x
 
         with workflow_run(seed=0):
-            result = identity.with_options(n_broadcast_samples=9)(standard_normal())
+            result = identity.using(n_broadcast_samples=9)(standard_normal())
 
         assert result.num_atoms == 9
 
@@ -151,7 +151,7 @@ class TestResolution:
             _identity,
             label="identity",
         )
-        view = wrapped.with_options(raw=True)
+        view = wrapped.using(raw=True)
         monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
 
         assert wrapped.options["n_broadcast_samples"] == 17
@@ -166,7 +166,7 @@ class TestResolution:
         monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
 
         assert wrapped.options["n_broadcast_samples"] == 7
-        assert wrapped.with_options(raw=True).options["n_broadcast_samples"] == 7
+        assert wrapped.using(raw=True).options["n_broadcast_samples"] == 7
 
     def test_the_default_read_at_call_time_governs_the_lift(self, monkeypatch):
         @function(dispatch="sequential", output_spec=OutputSpec(identity=None))
@@ -198,7 +198,7 @@ class TestResolution:
             **{control: value},
             label="identity",
         )
-        reset = wrapped.with_options(**{control: None})
+        reset = wrapped.using(**{control: None})
 
         assert (
             reset.options[control]
@@ -208,14 +208,14 @@ class TestResolution:
             ).options[control]
         )
         other = "exact_only" if control == "raw" else "raw"
-        assert wrapped.with_options(**{other: None}).options[control] == wrapped.options[control]
+        assert wrapped.using(**{other: None}).options[control] == wrapped.options[control]
 
     def test_a_reset_reads_the_default_when_it_is_read(self, monkeypatch):
         reset = Function(
             _identity,
             n_broadcast_samples=7,
             label="identity",
-        ).with_options(n_broadcast_samples=None)
+        ).using(n_broadcast_samples=None)
         monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 17)
 
         assert reset.options["n_broadcast_samples"] == 17
@@ -227,16 +227,16 @@ class TestResolution:
             label="value",
         )
 
-        assert wrapped.with_options(raw=True).output_spec is wrapped.output_spec
+        assert wrapped.using(raw=True).output_spec is wrapped.output_spec
 
 
 class TestAdmissibility:
-    def test_an_unknown_control_raises_at_with_options(self):
+    def test_an_unknown_control_raises_at_the_using_call(self):
         with pytest.raises(TypeError, match="unknown Function option"):
             Function(
                 _identity,
                 label="identity",
-            ).with_options(budget=3)
+            ).using(budget=3)
 
     @pytest.mark.parametrize(
         ("controls", "error"),
@@ -255,14 +255,14 @@ class TestAdmissibility:
             ({"conversions": {"y": {}}}, ValueError),
         ],
     )
-    def test_an_inadmissible_value_raises_at_with_options(self, controls, error):
+    def test_an_inadmissible_value_raises_at_the_using_call(self, controls, error):
         wrapped = Function(
             _identity,
             label="identity",
         )
 
         with pytest.raises(error):
-            wrapped.with_options(**controls)
+            wrapped.using(**controls)
 
     @pytest.mark.parametrize(
         ("controls", "error"),
@@ -276,7 +276,7 @@ class TestAdmissibility:
         view = Function(
             _identity,
             label="identity",
-        ).with_options(conversions={"x": {"exact_only": True}})
+        ).using(conversions={"x": {"exact_only": True}})
 
         assert dict(view.options["conversions"]["x"]) == {"exact_only": True}
         with pytest.raises(TypeError):
@@ -306,7 +306,7 @@ class TestAdmissibility:
             Function(
                 _identity,
                 label="identity",
-            ).with_options(budget=3)
+            ).using(budget=3)
 
     def test_a_differentiability_claim_is_refused_naming_the_keyword(self):
         with pytest.raises(
@@ -345,7 +345,7 @@ class TestAdmissibility:
             Function(
                 _identity,
                 label="identity",
-            ).with_options(max_workers=0)
+            ).using(max_workers=0)
 
     def test_an_argument_binds_at_construction_through_bind(self):
         wrapped = Function(
@@ -397,7 +397,7 @@ class TestAdmissibility:
             method_options={"n_nodes": 32},
             label="identity",
         )
-        wrapped.with_options(method="quadrature")(standard_normal())
+        wrapped.using(method="quadrature")(standard_normal())
 
         assert wrapped.options["method_options"] == {"n_nodes": 32}
         assert seen == [{"n_nodes": 32}]
@@ -429,7 +429,7 @@ class TestControlsThatSelectTheRoute:
             return x
 
         with workflow_run(seed=0):
-            result = identity.with_options(method="sampling_lift")(standard_normal())
+            result = identity.using(method="sampling_lift")(standard_normal())
 
         assert result.num_atoms == 8
 
@@ -439,7 +439,7 @@ class TestControlsThatSelectTheRoute:
             return x
 
         with pytest.raises(ResolutionError):
-            identity.with_options(exact_only=True)(standard_normal())
+            identity.using(exact_only=True)(standard_normal())
 
     def test_conversions_configure_the_conversion_of_their_parameter(self):
         @function(
@@ -451,8 +451,6 @@ class TestControlsThatSelectTheRoute:
             return x
 
         with workflow_run(seed=0):
-            result = identity.with_options(conversions={"x": {"exact_only": True}})(
-                standard_normal()
-            )
+            result = identity.using(conversions={"x": {"exact_only": True}})(standard_normal())
 
         assert result.num_atoms == 8
