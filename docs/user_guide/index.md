@@ -13,7 +13,7 @@ The [tutorials](../tutorials/01_first_analysis.ipynb) instead follow one analysi
 | [Values and records](02_values_and_records.ipynb) | Arrays, records of named fields, non-numeric values, and pandas and xarray data. |
 | [Distributions](03_distributions.ipynb) | The parametric families, the operations on a distribution, and distributions built from a sampler or a density. |
 | [Joint models and conditional distributions](04_joint_models.ipynb) | Conditional distributions, composing a model with `*`, and the fields and marginals of a joint model. |
-| [Functions on values and distributions](05_functions_and_lifting.ipynb) | ProbPipe-native functions, calling them on distributions and batches, `evaluate`, and `expectation`. |
+| [Functions on values and distributions](05_functions_and_lifting.ipynb) | ProbPipe-native functions, calling them on distributions and batches, `pushforward`, and `expectation`. |
 | [Conditioning and inference methods](06_conditioning_and_inference.ipynb) | `condition_on`, exact conditioning, choosing an inference method, existing PyMC models, and simulation-based inference. |
 | [Checking results](07_checking_results.ipynb) | MCMC diagnostics, predictive checks, model comparison, and simulation-based calibration. |
 | [Converting and updating distributions](08_conversion_and_updating.ipynb) | Empirical distributions, `convert`, resampling, and updating a posterior as data arrive. |
