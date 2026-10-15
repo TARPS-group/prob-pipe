@@ -560,12 +560,12 @@ class TestMakePosteriorRecordTarget:
         from probpipe import variance as op_variance
 
         m = op_mean(post)
-        assert m.fields == ("mean(params)", "mean(scale)")
-        assert jnp.shape(m["mean(params)/a"]) == ()
-        assert jnp.shape(m["mean(scale)"]) == ()
+        assert m.fields == ("params", "scale")
+        assert jnp.shape(m["params/a"]) == ()
+        assert jnp.shape(m["scale"]) == ()
         v = op_variance(post)
-        assert v.fields == ("variance(params)", "variance(scale)")
-        assert jnp.shape(v["variance(params)/b"]) == ()
+        assert v.fields == ("params", "scale")
+        assert jnp.shape(v["params/b"]) == ()
         # ``draws()`` walks the full template, nesting included.
         draws = flat_draws(post)
         assert tuple(draws.event_template.children) == expected_fields

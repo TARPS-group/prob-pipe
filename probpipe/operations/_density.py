@@ -13,10 +13,9 @@ log-density function.
 
 A score of a law ``d`` is labeled ``log`` followed by ``d``'s notation, as
 ``log prior(mu)`` or ``log model(mu; y)``, and its component is the
-operation's call over ``d``'s components, as ``log_prob(mu)`` or
-``log_prob(y, mu)``. A density is labeled by ``d``'s notation, as
+operation's name, as ``log_prob``. A density is labeled by ``d``'s notation, as
 ``prior(mu)``, since that notation denotes the density, and its component is
-``prob(mu)``. A batch of scores takes the label of one score.
+``prob``. A batch of scores takes the label of one score.
 """
 
 from __future__ import annotations
@@ -52,12 +51,11 @@ __all__ = [
 def _score_declaration(
     d: DistributionSpec, value: TermSpec, operation_name: str, spec: NumericArraySpec
 ) -> OutputSpec:
-    """The declaration of the score of one *value*: *spec* under the score's call over the components.
+    """The declaration of the score of one *value*: *spec* under the operation's name.
 
-    The component is the operation's call over the law's event components, as
-    ``log_prob(mu)`` or ``log_prob(y, mu)``, as VI.0 names a summary of
-    several components. A batch of values is swept, so the rule reads one
-    element's spec.
+    The component is the operation's name, as ``log_prob``, since a score is a
+    value of the whole event that no one component indexes. A batch of values
+    is swept, so the rule reads one element's spec.
 
     Parameters
     ----------
@@ -67,8 +65,8 @@ def _score_declaration(
         The spec of the value scored, or of one draw where a law at the value
         lifts the call.
     operation_name : str
-        The operation's name, which the component calls and each error message
-        opens with.
+        The operation's name, which names the component and opens each error
+        message.
     spec : NumericArraySpec
         The term spec of one score.
 
@@ -91,8 +89,7 @@ def _score_declaration(
         raise ApplicabilityError(
             f"{operation_name}: the value does not conform to the event declaration: {error}"
         ) from None
-    component = f"{operation_name}({', '.join(d.event_spec.components)})"
-    return OutputSpec(**{component: spec})
+    return OutputSpec(**{operation_name: spec})
 
 
 def _score_expression(d: Any) -> Expression:
@@ -111,7 +108,7 @@ def _random_score_expression(M: Any) -> Expression:
 
 
 def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
-    """A scalar log-density per value, under the component ``log_prob(...)`` of the law's components.
+    """A scalar log-density per value, under the component ``log_prob``.
 
     Parameters
     ----------
@@ -124,8 +121,8 @@ def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The declaration of one scalar under the component that calls
-        ``log_prob`` over the law's components, as ``log_prob(mu)``.
+        The declaration of one scalar under the component
+        ``log_prob``.
 
     Raises
     ------
@@ -136,7 +133,7 @@ def _log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
 
 
 def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
-    """A scalar unnormalized log-density per value, under ``unnormalized_log_prob(...)``.
+    """A scalar unnormalized log-density per value, under the component ``unnormalized_log_prob``.
 
     Parameters
     ----------
@@ -149,9 +146,8 @@ def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> Outpu
     Returns
     -------
     OutputSpec
-        The declaration of one scalar under the component that calls
-        ``unnormalized_log_prob`` over the law's components, as
-        ``unnormalized_log_prob(mu)``.
+        The declaration of one scalar under the component
+        ``unnormalized_log_prob``.
 
     Raises
     ------
@@ -162,7 +158,7 @@ def _unnormalized_log_prob_result(d: DistributionSpec, value: TermSpec) -> Outpu
 
 
 def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
-    """A non-negative scalar density per value, under the component ``prob(...)``.
+    """A non-negative scalar density per value, under the component ``prob``.
 
     Parameters
     ----------
@@ -175,8 +171,8 @@ def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
     Returns
     -------
     OutputSpec
-        The declaration of one non-negative scalar under the component that
-        calls ``prob`` over the law's components, as ``prob(mu)``.
+        The declaration of one non-negative scalar under the component
+        ``prob``.
 
     Raises
     ------
@@ -187,7 +183,7 @@ def _prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
 
 
 def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpec:
-    """A non-negative scalar unnormalized density per value, under ``unnormalized_prob(...)``.
+    """A non-negative scalar unnormalized density per value, under the component ``unnormalized_prob``.
 
     Parameters
     ----------
@@ -200,9 +196,8 @@ def _unnormalized_prob_result(d: DistributionSpec, value: TermSpec) -> OutputSpe
     Returns
     -------
     OutputSpec
-        The declaration of one non-negative scalar under the component that
-        calls ``unnormalized_prob`` over the law's components, as
-        ``unnormalized_prob(mu)``.
+        The declaration of one non-negative scalar under the component
+        ``unnormalized_prob``.
 
     Raises
     ------
@@ -243,7 +238,7 @@ def log_prob(d: Distribution, value):
     NumericArray or NumericArrayBatch
         The log-density, or one per element of a batch value, at its levels,
         labeled ``log`` and *d*'s notation, as ``log prior(mu)``, under the
-        component ``log_prob(mu)``.
+        component ``log_prob``.
 
     Raises
     ------
@@ -277,7 +272,7 @@ def unnormalized_log_prob(d: Distribution, value):
     NumericArray or NumericArrayBatch
         The unnormalized log-density, or one per element of a batch value,
         labeled ``log`` and *d*'s notation, as ``log prior(mu)``, under the
-        component ``unnormalized_log_prob(mu)``.
+        component ``unnormalized_log_prob``.
 
     Raises
     ------
@@ -325,7 +320,7 @@ def prob(d: Distribution, value):
     -------
     NumericArray or NumericArrayBatch
         The density, or one per element of a batch value, labeled by *d*'s
-        notation, as ``prior(mu)``, under the component ``prob(mu)``.
+        notation, as ``prior(mu)``, under the component ``prob``.
 
     Raises
     ------
@@ -356,7 +351,7 @@ def unnormalized_prob(d: Distribution, value):
     NumericArray or NumericArrayBatch
         The unnormalized density, or one per element of a batch value, labeled
         by *d*'s notation, as ``prior(mu)``, under the component
-        ``unnormalized_prob(mu)``.
+        ``unnormalized_prob``.
 
     Raises
     ------

@@ -197,6 +197,6 @@ class TestAMomentReadsTheSameWay:
     def test_a_record_mean_gives_views_of_its_fields(self):
         moment = mean(Normal("a", 0.0, 1.0) * Normal("b", 2.0, 1.0))
 
-        field = moment["mean(b)"]
-        assert isinstance(field, NumericArray) and field.label == "mean(b)"
+        field = moment["b"]
+        assert isinstance(field, NumericArray) and field.label == "b"
         assert float(field) == pytest.approx(2.0)
