@@ -38,6 +38,13 @@ The `convert` operation is on [Conversion](conversion.md), the inference methods
 
 ::: probpipe.expectation
 
+## Summary tables
+
+`summarize` collects several of the moments above for one law in one record, which displays as a table.
+It is a function over the operations, so it has no routes of its own.
+
+::: probpipe.summarize
+
 ## Conditioning
 
 ::: probpipe.condition_on

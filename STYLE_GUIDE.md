@@ -598,7 +598,7 @@ record/        (core/)
      ↑
 inference/     (core/, values/, distributions/, functions/, operations/, families/)
 validation/    (core/, distributions/, functions/, operations/)
-diagnostics/   (distributions/, functions/, validation/)
+diagnostics/   (distributions/, functions/, operations/, validation/)
 ```
 
 The private helper modules (`_array_utils.py`, `_dtype.py`, `_weights.py`)

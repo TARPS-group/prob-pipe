@@ -18,6 +18,7 @@ lazy conversion contract, the flat-vector layout (``to_vector`` /
 
 from __future__ import annotations
 
+import html
 from collections.abc import Mapping
 from math import prod
 from typing import Any
@@ -43,6 +44,7 @@ from ._specs import (
     NumericRecordSpec,
     RecordSpec,
 )
+from ._table import record_table
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .record import Record, _derived_record_name, _not_a_field_mapping, _raw_leaf
 from .tracked import _NO_DESCRIPTION, refuses_label_first
@@ -425,7 +427,18 @@ class NumericRecord(Record, Numeric):
         entries shown are read from the device. Inside a JAX trace, where the
         values are tracers, and for a record with no fields, the repr is the
         summary of the label and the field paths.
+
+        A record whose top-level fields are all records over the same paths, with
+        the same shape at each path, displays as a table under its label instead:
+        one row for each path, or for each element of an array path, as
+        ``y[0]``, and one column for each top-level field. The line below the
+        table states how each column was computed, as its provenance records it:
+        ``exact``, ``Monte Carlo`` with the number of draws, or ``approximate``.
         """
+        table = record_table(self)
+        if table is not None:
+            footer = [table.footer] if table.footer else []
+            return "\n".join([self._displayed_label(), *table.lines(), *footer])
         rows = format_rows(self._value_rows(), indent="  ")
         if not rows:
             return self._repr_header()
@@ -435,19 +448,28 @@ class NumericRecord(Record, Numeric):
     def __str__(self) -> str:
         """The lines of the repr's values alone, one for each field with its path and its value.
 
-        Inside a JAX trace, and for a record with no fields, ``str()`` is the
-        summary of the label and the field paths.
+        A record that displays as a table gives the table without its label and
+        the line below it. Inside a JAX trace, and for a record with no fields,
+        ``str()`` is the summary of the label and the field paths.
         """
+        table = record_table(self)
+        if table is not None:
+            return "\n".join(table.lines())
         rows = format_rows(self._value_rows())
         return rows if rows else self._repr_header()
 
     def _repr_html_(self) -> str | None:
         """The record as a two-column table of its field paths and values, for a notebook.
 
-        Each value is formatted as the repr formats it. Inside a JAX trace, and
-        for a record with no fields, the result is ``None``, so the notebook
-        shows the repr.
+        Each value is formatted as the repr formats it, and a record that the
+        repr shows as a table is an HTML table of the same rows and columns.
+        Inside a JAX trace, and for a record with no fields, the result is
+        ``None``, so the notebook shows the repr.
         """
+        table = record_table(self)
+        if table is not None:
+            label = html.escape(self._displayed_label())
+            return f"<div><b>{label}</b>{table.html()}</div>"
         rows = self._value_rows()
         if not rows:
             return None
