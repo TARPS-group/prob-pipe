@@ -416,11 +416,11 @@ def _output_atoms(
         # that returns its operand returns the stacked draws' own term, whose spec
         # covers every draw, so the element spec is read from one point.
         element = outputs.spec
-        point = tuple(jnp.shape(outputs.value)[1:])
+        point = tuple(jnp.shape(outputs.raw)[1:])
         if tuple(element.shape) != point:
             element = NumericArraySpec(point, element.dtype, element.support)
         atoms: Batch = _record_stored_dtypes(
-            NumericArrayBatch(outputs.value, atom_level, element_spec=element, label=output_label)
+            NumericArrayBatch(outputs.raw, atom_level, element_spec=element, label=output_label)
         )
     else:
         rows = _rows_of(outputs, output_label)
@@ -598,7 +598,7 @@ def _batch_columns(atoms: Batch) -> dict[str, Any]:
     if isinstance(atoms, RecordBatch):
         return dict(atoms._raw_columns())
     if isinstance(atoms, NumericArrayBatch):
-        return {"": atoms.values}
+        return {"": atoms.raw}
     if isinstance(atoms, _ObjectBatch):
         return {"": atoms._store}
     raise TypeError(f"a lifted output of kind {type(atoms).__name__} has no columns")

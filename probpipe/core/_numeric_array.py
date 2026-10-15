@@ -79,7 +79,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     -----
     Construction validates native arrays and NumPy scalars against metadata
     alone, deferring JAX conversion to :meth:`as_jax`. NumPy scalars retain their
-    original precision in :attr:`value` and ``np.asarray(value)``. JAX conversion
+    original precision in :attr:`raw` and ``np.asarray(value)``. JAX conversion
     follows its x64 configuration and can round or overflow; ``float(value)``
     also goes through :meth:`as_jax`.
 
@@ -183,13 +183,8 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     # -- what it holds ------------------------------------------------------
 
     @property
-    def value(self) -> Any:
-        """The stored value, in the form it was given. Untracked."""
-        return self._value
-
-    @property
     def raw(self) -> Any:
-        """The stored array, in the form it was given, as :attr:`value` holds it."""
+        """The stored array, in the form it was given. Untracked."""
         return self._value
 
     def as_jax(self) -> Any:

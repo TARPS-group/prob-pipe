@@ -259,7 +259,7 @@ def _flat_rows(atoms: Batch, event_spec: TermSpec | None = None) -> Any:
 def _stored_values(atoms: Batch) -> Any:
     """The storage of array or object atoms, with the batch axes leading."""
     if isinstance(atoms, NumericArrayBatch):
-        return atoms.values
+        return atoms.raw
     return atoms._store
 
 

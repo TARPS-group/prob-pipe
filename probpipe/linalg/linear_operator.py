@@ -25,6 +25,7 @@ from .._array_utils import (
 )
 from .._messages import unknown_names
 from ..core._repr import format_dtype, format_value, sequence_repr, term_repr
+from ..core.tracked import _check_raw_is_a_property
 from ..custom_types import Array, ArrayLike
 
 
@@ -120,6 +121,22 @@ class LinOp(ABC):
 
     def __init__(self) -> None:
         self._flags: set[str] = set()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse a subclass that defines ``raw`` as a plain method.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The class keywords, passed on to the next class in the MRO.
+
+        Raises
+        ------
+        TypeError
+            If the class body defines ``raw`` as a function.
+        """
+        super().__init_subclass__(**kwargs)
+        _check_raw_is_a_property(cls)
 
     @property
     @abstractmethod

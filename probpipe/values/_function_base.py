@@ -537,7 +537,7 @@ def _validate_output_values(spec: TermSpec, value: Any, path: str) -> None:
                 column = value._raw_column(field)
                 _validate_output_column(child, column, value.batch_shape, f"{path}/{field}")
         elif isinstance(element, NumericArraySpec):
-            _validate_output_column(element, value.values, value.batch_shape, path)
+            _validate_output_column(element, value.raw, value.batch_shape, path)
     elif isinstance(spec, RecordSpec):
         children = getattr(value, "children", value)
         for name, child in spec.children.items():

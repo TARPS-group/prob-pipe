@@ -515,7 +515,7 @@ class TestQuantile:
         result = quantile(Gaussian("g"), jnp.array([0.1, 0.5, 0.9]))
         assert isinstance(result, NumericArrayBatch)
         assert (result.level_names, result.batch_shape) == (("quantile",), (3,))
-        assert _value(result.values[1]) == pytest.approx(0.0, abs=1e-6)
+        assert _value(result.raw[1]) == pytest.approx(0.0, abs=1e-6)
 
     @pytest.mark.parametrize("q", [1.5, -0.1, jnp.array([0.5, 2.0])])
     def test_a_level_outside_the_unit_interval_raises_a_domain_error(self, q):
@@ -532,7 +532,7 @@ class TestQuantile:
         # Four draws of x are 0, 1, 2, 3, whose CDF reaches 0.25 at 0.
         view = quantile.using(n_broadcast_samples=4)
         estimate = view(_Ramp("ramp", record=record), jnp.array([0.25, 0.5, 1.0]))
-        x = estimate["quantile(x)"] if record else estimate.values[:, 0]
+        x = estimate["quantile(x)"] if record else estimate.raw[:, 0]
         np.testing.assert_array_equal(np.asarray(x), [0.0, 1.0, 3.0])
 
     def test_method_selects_the_fallback_over_the_closed_form(self):

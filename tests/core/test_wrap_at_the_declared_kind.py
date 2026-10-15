@@ -70,7 +70,7 @@ class TestARawReturnWrapsIntoItsOwnKind:
         result = label(jnp.asarray(2))
 
         assert isinstance(result, Opaque)
-        assert result.value == "value-2"
+        assert result.raw == "value-2"
 
     def test_the_result_is_named_after_the_function(self):
         @function
@@ -226,7 +226,7 @@ class TestAnEmptyReturnKeepsItsHostsKind:
         result = self._returned(sequence)
 
         assert isinstance(result, Opaque)
-        assert result.value == sequence
+        assert result.raw == sequence
 
     def test_an_empty_array_is_still_an_array(self):
         """Distinct from an empty container: the kind was never in doubt."""
@@ -254,7 +254,7 @@ class TestAReturnedSequenceIsOpaque:
 
         assert isinstance(result, Opaque)
         assert result.label == "f()"
-        assert result.value == value
+        assert result.raw == value
 
     def test_a_declared_batch_takes_the_sequence_as_its_elements(self):
         from probpipe import BatchSpec, NumericArrayBatch, NumericArraySpec
@@ -264,7 +264,7 @@ class TestAReturnedSequenceIsOpaque:
 
         assert isinstance(result, NumericArrayBatch)
         assert (result.batch_shape, result.level_names) == ((3,), ("item",))
-        np.testing.assert_array_equal(np.asarray(result.values), [1.0, 2.0, 3.0])
+        np.testing.assert_array_equal(np.asarray(result.raw), [1.0, 2.0, 3.0])
 
     def test_a_declared_batch_of_opaque_elements_stores_each_one(self):
         from probpipe import BatchSpec, OpaqueBatch, OpaqueSpec
@@ -273,7 +273,7 @@ class TestAReturnedSequenceIsOpaque:
         result = self._returned(["a", "b"], output_spec=OutputSpec(result=declared))
 
         assert isinstance(result, OpaqueBatch)
-        assert [result[0].value, result[1].value] == ["a", "b"]
+        assert [result[0].raw, result[1].raw] == ["a", "b"]
 
 
 class TestAnEmptyRecordHasNoBatch:

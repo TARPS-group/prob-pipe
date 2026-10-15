@@ -654,8 +654,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         A leaf is held in native form, so its raw value is the leaf itself, and a
         tracked term held as a leaf, such as a law, gives its own ``raw``. An
-        interior node gives the nested mapping of the raw leaves beneath it. One
-        field's raw value is its view's, ``record[path].raw``.
+        interior node gives the nested mapping of the raw leaves beneath it. A
+        node's stored form is read from the mapping, as ``record.raw["g"]["x"]``,
+        which also works inside a JAX trace. A field's view has a ``raw`` of its
+        own, ``record["g/x"].raw``, which presents the leaf as the view's kind
+        does, so a Python scalar becomes an array, and inside a trace indexing
+        returns the traced leaf itself, which has no ``raw``.
         """
         return _raw_nested(self)
 
@@ -1425,7 +1429,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
 def _raw_leaf(leaf: Any) -> Any:
     """A stored leaf's raw value: a tracked term's ``raw``, and any other leaf as stored."""
-    return leaf.raw if isinstance(leaf, TrackedTerm) else leaf
+    # A class check, since the protocol metaclass's ``isinstance`` dominates the cost
+    # of a record's raw form, and no tracked kind overrides the check.
+    return leaf.raw if type.__instancecheck__(TrackedTerm, leaf) else leaf
 
 
 def _leaf_value(leaf: Any) -> Any:
@@ -1446,7 +1452,7 @@ def _leaf_value(leaf: Any) -> Any:
 def _raw_nested(record: Record) -> dict[str, Any]:
     """*record* as the nested ``dict`` of its raw leaves, in canonical order."""
     return {
-        name: _raw_nested(child) if isinstance(child, Record) else _raw_leaf(child)
+        name: _raw_nested(child) if type.__instancecheck__(Record, child) else _raw_leaf(child)
         for name, child in record._tree.items()
     }
 

@@ -1885,7 +1885,7 @@ class TestAnEnumerationRunsInOneMappedCall:
         if holds:
             result = wrapped(self._arrays(50))
             assert len(calls) < 5
-            assert bool(jnp.all(jnp.asarray(result.atoms.values) > 0))
+            assert bool(jnp.all(jnp.asarray(result.atoms.raw) > 0))
         else:
             with pytest.raises(ResultSchemaError, match="support positive"):
                 wrapped(self._arrays(50))

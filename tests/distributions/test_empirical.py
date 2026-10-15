@@ -249,7 +249,7 @@ class TestEventCompletion:
     def test_a_bare_array_is_stored_as_a_batch_of_atoms(self):
         law = _array_law()
         assert isinstance(law.atoms, NumericArrayBatch)
-        assert jnp.array_equal(law.atoms.values, _VALUES)
+        assert jnp.array_equal(law.atoms.raw, _VALUES)
 
     def test_a_bare_arrays_level_defaults_to_the_law_component(self):
         assert _array_law().atoms.level_names == ("theta",)
@@ -459,7 +459,7 @@ class TestSampling:
         law = EmpiricalDistribution(jnp.arange(12.0).reshape(4, 3), component="x")
         draws = law._sample(jax.random.PRNGKey(0), (5, 2))
         assert draws.shape == (5, 2, 3)
-        atoms = {tuple(row) for row in np.asarray(law.atoms.values)}
+        atoms = {tuple(row) for row in np.asarray(law.atoms.raw)}
         assert {tuple(row) for row in np.asarray(draws).reshape(-1, 3)} <= atoms
 
     def test_a_record_draw_is_one_atom_whole(self):
@@ -707,7 +707,7 @@ class TestMarginals:
         assert not isinstance(marginal, FieldView)
         assert marginal.label == law.label
         assert marginal.event_spec == OutputSpec(b=_RECORD_SPEC["b"])
-        assert jnp.array_equal(marginal.atoms.values, _B)
+        assert jnp.array_equal(marginal.atoms.raw, _B)
         assert np.allclose(marginal.weights, _RECORD_WEIGHTS)
         assert jnp.allclose(marginal._mean(), law._mean()["b"])
 

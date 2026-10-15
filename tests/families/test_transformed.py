@@ -314,7 +314,7 @@ class TestReplay:
         with replay_run(original.provenance):
             replayed = difference(**operands())
         np.testing.assert_array_equal(
-            np.asarray(replayed.atoms.values), np.asarray(original.atoms.values)
+            np.asarray(replayed.atoms.raw), np.asarray(original.atoms.raw)
         )
 
 

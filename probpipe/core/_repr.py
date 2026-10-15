@@ -221,6 +221,9 @@ def format_value(value: Any) -> str:
     its name, and any other value, a tracked term or an operator among them,
     keeps its own repr.
     """
+    # Interim implementation detail: a ``LinOp`` is not yet a tracked term (III.4), so
+    # a class that defines ``raw`` stands for a tracked term or an operator. The check
+    # reads the class, so it never computes a term's raw form.
     if isinstance(value, bool | int | float | complex | str | type(None)) or hasattr(
         type(value), "raw"
     ):

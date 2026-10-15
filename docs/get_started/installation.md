@@ -117,8 +117,8 @@ with workflow_run(seed=0):
 
 print("ProbPipe version:", probpipe.__version__)
 print("number of draws:", draws.shape[0])
-print("mean of the draws:", round(float(jnp.mean(draws.values)), 2))
-print("standard deviation of the draws:", round(float(jnp.std(draws.values)), 2))
+print("mean of the draws:", round(float(jnp.mean(draws.raw)), 2))
+print("standard deviation of the draws:", round(float(jnp.std(draws.raw)), 2))
 ```
 
 It prints:

@@ -55,7 +55,7 @@ def _two_empirical_draws(offset):
     law = standard_normal()
     first = converter_registry.convert(law, EmpiricalDistribution, num_samples=4)
     second = converter_registry.convert(law, EmpiricalDistribution, num_samples=4)
-    return jnp.stack([first.atoms.values, second.atoms.values]) + offset
+    return jnp.stack([first.atoms.raw, second.atoms.raw]) + offset
 
 
 def _drawing() -> Function:

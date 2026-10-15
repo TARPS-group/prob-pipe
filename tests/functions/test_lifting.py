@@ -206,7 +206,7 @@ class TestTheTrigger:
 
         assert isinstance(result, Batch)
         assert result.level_names == ("row",)
-        np.testing.assert_allclose(np.asarray(result.values), [2.0, 4.0, 6.0])
+        np.testing.assert_allclose(np.asarray(result.raw), [2.0, 4.0, 6.0])
 
     @pytest.mark.parametrize(
         "annotation",
@@ -705,7 +705,7 @@ class TestAlignment:
         result = add(_batch([1.0, 2.0]), _batch([10.0, 20.0]))
 
         assert result.batch_shape == (2,)
-        np.testing.assert_allclose(np.asarray(result.values), [11.0, 22.0])
+        np.testing.assert_allclose(np.asarray(result.raw), [11.0, 22.0])
 
     def test_batches_on_different_levels_form_a_product(self):
         @function(dispatch="sequential")
@@ -736,7 +736,7 @@ class TestAlignment:
 
         assert result.level_names == ("row",)
         assert result.axis_groups == ((2,),)
-        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+        np.testing.assert_allclose(result.raw, [11.0, 21.0], atol=0, rtol=0)
 
 
 @pytest.fixture(params=["auto", "jax", "sequential", "thread"])
@@ -753,7 +753,7 @@ class TestSingletonAlignment:
         result = add(_batch([10.0, 20.0]), _batch([1.0]), _batch([100.0]))
 
         assert result.axis_groups == ((2,),)
-        np.testing.assert_allclose(result.values, [111.0, 121.0], atol=0, rtol=0)
+        np.testing.assert_allclose(result.raw, [111.0, 121.0], atol=0, rtol=0)
 
     def test_multi_axis_levels_broadcast_from_the_right(self, alignment_dispatch):
         @function(dispatch=alignment_dispatch)
@@ -769,7 +769,7 @@ class TestSingletonAlignment:
         assert result.level_names == ("grid",)
         assert result.axis_groups == ((2, 3),)
         np.testing.assert_allclose(
-            result.values, [[11.0, 21.0, 31.0], [12.0, 22.0, 32.0]], atol=0, rtol=0
+            result.raw, [[11.0, 21.0, 31.0], [12.0, 22.0, 32.0]], atol=0, rtol=0
         )
 
     def test_each_level_broadcasts_without_crossing_its_boundary(self, alignment_dispatch):
@@ -789,7 +789,7 @@ class TestSingletonAlignment:
         assert result.level_names == ("chain", "draw")
         assert result.axis_groups == ((1, 2), (2, 3))
         np.testing.assert_allclose(
-            result.values,
+            result.raw,
             np.asarray(right_values) + np.array([1.0, 2.0]).reshape(1, 2, 1, 1),
             atol=0,
             rtol=0,
@@ -817,7 +817,7 @@ class TestSingletonAlignment:
         # at its trailing coordinate b1.
         for a0, a1, b0, b1 in [(0, 0, 0, 0), (2, 1, 0, 3), (1, 2, 2, 1)]:
             np.testing.assert_allclose(
-                result.values[a0, a1, b0, b1],
+                result.raw[a0, a1, b0, b1],
                 data[a1, b0, b1] + data[a0, a1, b1],
                 atol=0,
                 rtol=0,
@@ -832,7 +832,7 @@ class TestSingletonAlignment:
         result = add(records, _batch([10.0, 20.0]))
 
         assert result.axis_groups == ((2,),)
-        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+        np.testing.assert_allclose(result.raw, [11.0, 21.0], atol=0, rtol=0)
 
     def test_a_singleton_batch_of_laws_broadcasts_with_an_array(self, alignment_dispatch):
         @function(dispatch=alignment_dispatch)
@@ -850,7 +850,7 @@ class TestSingletonAlignment:
         result = add(laws, _batch([10.0, 20.0]))
 
         assert result.axis_groups == ((2,),)
-        np.testing.assert_allclose(result.values, [11.0, 21.0], atol=0, rtol=0)
+        np.testing.assert_allclose(result.raw, [11.0, 21.0], atol=0, rtol=0)
 
     def test_an_empty_level_broadcasts_with_one_without_running_the_body(self, alignment_dispatch):
         calls = []
@@ -890,7 +890,7 @@ class TestSingletonAlignment:
 
         assert result.level_names == ("left", "right")
         assert result.axis_groups == ((1,), (2,))
-        np.testing.assert_allclose(result.values, [[11.0, 21.0]], atol=0, rtol=0)
+        np.testing.assert_allclose(result.raw, [[11.0, 21.0]], atol=0, rtol=0)
 
     @pytest.mark.parametrize("dispatch", ["auto", "jax", "sequential"])
     def test_a_nested_broadcast_repeats_singleton_values_per_sweep_cell(self, dispatch):

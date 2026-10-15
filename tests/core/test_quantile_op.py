@@ -170,7 +170,7 @@ class TestRawQuantilesAtTheirLevels:
         )
         assert isinstance(result, NumericArrayBatch)
         assert (result.level_names, result.batch_shape) == (("quantile",), (2,))
-        np.testing.assert_allclose(np.asarray(result.values), [1.0, 4.0])
+        np.testing.assert_allclose(np.asarray(result.raw), [1.0, 4.0])
 
     def test_one_level_of_a_record_law_is_a_record(self):
         result = quantile(self._record_law(), 1.0)

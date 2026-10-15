@@ -423,8 +423,8 @@ class RecordBatch(Batch[Record]):
         """The storage view: the nested mapping of the raw columns.
 
         Each column is its field's raw batch form, the stacked array for an
-        array field and the frozen object array for any other field. One field's
-        column is its view's raw form, ``batch[path].raw``.
+        array field and the frozen object array for any other field. A node's
+        columns are read from the mapping, as ``batch.raw["g"]["x"]``.
         """
         return _unflatten_paths(self._columns)
 

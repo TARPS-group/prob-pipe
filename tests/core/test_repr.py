@@ -48,6 +48,7 @@ from probpipe.core._repr import (
     is_compound,
     is_product,
 )
+from probpipe.core.tracked import TrackedTerm
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.families import BernoulliFamily, MixtureDistribution, glm_likelihood
 from probpipe.linalg import DenseLinOp, DiagonalLinOp
@@ -512,7 +513,10 @@ class TestFunctionsAndOperators:
         assert repr(info) == "MethodInfo(True, method_name='closed_form', exact=True)"
 
     def test_a_term_reads_by_its_repr_without_computing_its_raw_form(self):
-        class Unresolvable:
+        class Unresolvable(TrackedTerm):
+            def __init__(self):
+                self._init_tracked("unresolvable")
+
             @property
             def raw(self):
                 raise RuntimeError("no exact marginal")

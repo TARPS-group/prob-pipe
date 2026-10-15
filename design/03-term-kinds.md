@@ -286,7 +286,7 @@ class Record(NamedTree[Any], TrackedTerm):
     def to_numeric(self) -> NumericRecord: ...  # requires every leaf to be numeric
     @property
     def raw(self) -> dict[str, Any]: ...
-    # the whole record as the nested mapping of raw leaves; one field's is record[path].raw
+    # the whole record as the nested mapping of raw leaves; a node's is record.raw["g"]["x"]
 
     @classmethod
     def from_field_values(cls, template: RecordSpec, values: Iterable[Any], *,
@@ -307,7 +307,7 @@ class Record(NamedTree[Any], TrackedTerm):
 3. a callable field as a `Function`;
 4. a stored term of another kind, such as a law, as a copy of that term.
 
-`record.at_path(path)` gives the field's view at a key and a sub-`Record` view at an interior path (II.6). `record.raw` is the whole record's nested mapping of raw leaves, the record kind's raw host, and a field's raw value is its view's, `record[path].raw`. Like every kind's `raw`, it takes no path, so one field's representation is read through the field's view.
+`record.at_path(path)` gives the field's view at a key and a sub-`Record` view at an interior path (II.6). `record.raw` is the whole record's nested mapping of raw leaves, the record kind's raw host. Like every kind's `raw`, it takes no path, so a node's stored form is read from the mapping, as `record.raw["g"]["x"]`, inside a trace as well. A field's view has its own `raw`, which presents the leaf at the view's kind, so a Python scalar stored in a record reads as an array through `record["x"].raw`.
 
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form, for example a bare array or an `xarray` container, and convert to `jax.Array` only at the compute boundary, which is the pytree flatten that `grad`, `vmap`, and `jit` traverse and `to_vector`; each leaf converts at most once. A `Record` is promoted exactly as its schema is (above): when every leaf is numeric and no explicit non-numeric schema vetoes it, re-derived by every transform. Flat vectorization reads its layout from the schema: `leaf_shapes`, `vector_size`, and the canonical order. Flattening is numeric-only, which is why `NamedTree` itself has no `flatten`.
 
@@ -345,7 +345,7 @@ class RecordBatch(Batch[Record]):
     @property
     def raw(self) -> dict[str, Any]: ...
     # the storage view: the nested mapping of raw columns, each field's raw batch form (II.5);
-    # one field's column is batch[path].raw
+    # a node's columns are batch.raw["g"]["x"]
 
     def __getitem__(self, key: int | slice | tuple[int, ...] | str | tuple[str, ...]) -> Record | RecordBatch | Batch: ...
     # int / slice (or a tuple of ints) -> an element Record or a sub-batch, indexing the batch axes

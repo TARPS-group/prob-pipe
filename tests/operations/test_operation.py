@@ -1139,7 +1139,7 @@ class TestLiftedChecks:
         assert (report.feasible, report.route, report.exact) == (True, "closed_form", True)
         assert report.lifted == ("d",)
         assert report.result == Gaussian("g").event_spec
-        np.testing.assert_array_equal(np.asarray(center(batch).values), [1.0, 2.0])
+        np.testing.assert_array_equal(np.asarray(center(batch).raw), [1.0, 2.0])
 
     def test_an_element_no_route_applies_to_makes_the_check_infeasible(self):
         batch = _laws(Gaussian("g"), Bare("g"))
@@ -1182,7 +1182,7 @@ class TestLiftedChecks:
         assert view.check(laws).route == "monte_carlo"
         with workflow_run(seed=0):
             means = view(laws)
-        np.testing.assert_allclose(np.asarray(means.values), [1.0, 2.0], atol=0.1)
+        np.testing.assert_allclose(np.asarray(means.raw), [1.0, 2.0], atol=0.1)
 
     def test_exact_only_excludes_the_sampling_lift_of_a_value(self):
         @operation(result=_open, registry=OperationRegistry())

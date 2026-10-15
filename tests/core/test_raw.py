@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,12 +17,15 @@ from probpipe import (
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    NumericRecord,
+    NumericRecordBatch,
     Opaque,
     OpaqueBatch,
     Record,
     RecordBatch,
     RecordSpec,
 )
+from probpipe.core._record_spec import NumericRecordSpec
 from probpipe.core.provenance import Provenance
 from probpipe.core.tracked import TrackedTerm
 from probpipe.distributions._batches import _element_source
@@ -34,6 +38,16 @@ from ..operations._laws import Gaussian, Kernel
 class TestTheContract:
     def test_raw_is_abstract_on_tracked_term(self):
         assert "raw" in TrackedTerm.__abstractmethods__
+
+    def test_raw_is_a_property_on_tracked_term(self):
+        assert isinstance(TrackedTerm.__dict__["raw"], property)
+
+    def test_a_kind_that_defines_raw_as_a_method_cannot_be_defined(self):
+        with pytest.raises(TypeError, match="raw is a method, but it must be a property"):
+
+            class Stale(TrackedTerm):
+                def raw(self):
+                    return None
 
     def test_a_kind_that_does_not_define_raw_cannot_be_constructed(self):
         class Bare(TrackedTerm):
@@ -75,15 +89,30 @@ class TestValues:
         assert type(raw) is dict and list(raw) == ["data", "label"]
         assert raw["data"]["effect"] is effect and raw["label"] == "A"
 
-    def test_a_field_view_gives_the_stored_leaf(self):
+    def test_a_subtree_of_the_mapping_is_the_nested_mapping_beneath_it(self):
+        effect = jnp.asarray(28.0)
+        school = Record(
+            {"data": {"effect": effect, "se": 15.0}, "label": "A"},
+            label="school",
+        )
+        assert list(school.raw["data"]) == ["effect", "se"]
+        assert school.raw["data"]["effect"] is effect
+
+    def test_an_array_field_view_gives_the_stored_array(self):
         effect = jnp.asarray(28.0)
         school = Record(
             {"data": {"effect": effect, "se": 15.0}, "label": "A"},
             label="school",
         )
         assert school["data/effect"].raw is effect
-        assert school[("data", "effect")].raw is effect
-        assert list(school.raw["data"]) == ["effect", "se"]
+
+    def test_a_field_is_read_from_the_mapping_inside_a_trace(self):
+        record = NumericRecord(
+            {"x": jnp.ones(2), "g": {"y": jnp.arange(3.0)}},
+            label="r",
+        )
+        total = jax.jit(lambda r: r.raw["x"].sum() + r.raw["g"]["y"].sum())(record)
+        assert float(total) == 5.0
 
     def test_a_law_held_as_a_leaf_is_detached(self):
         law = Normal("theta", 0.0, 1.0)
@@ -94,7 +123,57 @@ class TestValues:
         assert isinstance(record["law"].raw, tfd.Normal)
 
 
+class TestTheRawFormAtAPath:
+    """The internal reader of one node's raw form, which builds no view."""
+
+    def test_a_record_field_is_its_stored_leaf(self):
+        effect = jnp.asarray(28.0)
+        school = Record(
+            {"data": {"effect": effect, "se": 15.0}, "label": "A"},
+            label="school",
+        )
+        assert school._raw_at("data/effect") is effect
+        assert school._raw_at("data") == {"effect": effect, "se": 15.0}
+
+    def test_an_unknown_record_path_raises_key_error(self):
+        with pytest.raises(KeyError):
+            Record(
+                {"x": 1.0},
+                label="r",
+            )._raw_at("y")
+
+    def test_a_batch_field_is_its_column_and_an_interior_node_the_columns_beneath_it(self):
+        batch = _numeric_record_batch()
+        np.testing.assert_array_equal(np.asarray(batch._raw_at("g/a")), np.arange(3.0))
+        node = batch._raw_at("g")
+        assert set(node) == {"a", "b"}
+        np.testing.assert_array_equal(np.asarray(node["b"]), np.ones(3))
+
+    def test_an_unknown_batch_path_names_the_batch_paths(self):
+        with pytest.raises(KeyError, match="g/a"):
+            _numeric_record_batch()._raw_at("g/z")
+
+
+def _numeric_record_batch():
+    return NumericRecordBatch(
+        {"g/a": jnp.arange(3.0), "g/b": jnp.ones(3), "c": jnp.zeros((3, 2))},
+        "draw",
+        element_spec=NumericRecordSpec(g=NumericRecordSpec(a=(), b=()), c=(2,)),
+        label="draws",
+    )
+
+
 class TestBatches:
+    def test_a_record_batch_field_view_gives_its_column(self):
+        np.testing.assert_array_equal(
+            np.asarray(_numeric_record_batch()["g/a"].raw), np.arange(3.0)
+        )
+
+    def test_a_record_batch_interior_view_gives_the_columns_beneath_it(self):
+        node = _numeric_record_batch()["g"].raw
+        assert set(node) == {"a", "b"}
+        np.testing.assert_array_equal(np.asarray(node["b"]), np.ones(3))
+
     def test_an_array_batch_is_its_stored_array(self):
         stored = jnp.zeros((4, 2))
         batch = NumericArrayBatch(
@@ -206,7 +285,7 @@ class TestDistributions:
         law = EmpiricalDistribution(jnp.arange(4.0), component="e")
         detached = law.raw
         assert isinstance(detached, EmpiricalDistribution)
-        np.testing.assert_array_equal(detached.atoms.values, law.atoms.values)
+        np.testing.assert_array_equal(detached.atoms.raw, law.atoms.raw)
 
     def test_the_backend_adapter_is_its_backend_distribution(self):
         assert isinstance(Normal("x", 0.0, 1.0).raw, tfd.Normal)

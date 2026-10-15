@@ -11,11 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`. A
   `Record` and a `RecordBatch` no longer take a path: `record.raw` is the
-  whole nested mapping, and one field's raw value is its view's, so replace
-  `record.raw("x")` with `record["x"].raw`, and a subtree's
-  `record.raw("g")` with `record.raw["g"]`. The `raw` of a `Function`, an
-  `Operation`, or a `Bijector` is a callable, so an old `f.raw()` now calls
-  the wrapped function with no arguments instead of raising.
+  whole nested mapping, so replace `record.raw("x")` with `record.raw["x"]`
+  and `record.raw("g/x")` with `record.raw["g"]["x"]`, which also work inside
+  a JAX trace. The `raw` of a `Function`, an `Operation`, or a `Bijector` is a
+  callable, so an old `f.raw()` now calls the wrapped function with no
+  arguments instead of raising. A subclass of a tracked term or of `LinOp`
+  defines `raw` with `@property`, and a class that defines it as a plain
+  method raises `TypeError` when it is created.
+- **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
+  removed.** Each returned what `raw` returns, so replace `x.value` and
+  `batch.values` with `x.raw` and `batch.raw`.
 - **`with_options` is renamed `using`.** `Function.using(**controls)` and
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
@@ -963,7 +968,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function` swept over a batch collected numeric rows into a single-field
   `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
   reached the column. The aggregate is now the batch form of the rows' own kind,
-  read through `.values`.
+  read through `.raw`.
 
   A row that is itself a batch keeps its levels either way. Only `RecordBatch`
   rows did before, so once a scalar law's `sample` began returning a
@@ -1002,7 +1007,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
   law's `sample` all return a `NumericArray`. **A result is no longer indexable
   by the function's name** — `result["my_func"]` becomes `result` itself, and an
-  opaque result is read through `.value`.
+  opaque result is read through `.raw`.
 
   A callable result is callable because it *is* the function kind, rather than
   because a single-field record forwards `__call__`.
@@ -1740,7 +1745,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns when its declared kind is an `OpaqueSpec`, completing the pair with the
   `OpaqueBatch` that already existed. It adds identity and nothing else: no
   attribute forwarding, no `__call__`, no operators — the wrapped value is
-  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  reached through `.raw`, explicitly. `OpaqueBatch`'s element contract is
   unchanged; it still hands back the object the caller put in rather than
   wrapping it.
 

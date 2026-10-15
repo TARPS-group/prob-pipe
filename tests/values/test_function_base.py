@@ -500,7 +500,7 @@ class TestFunctionDeclarations:
         assert original.output_label == relabeled.output_label == "prediction"
         if lift == "sweep":
             assert result.level_names == ("row",)
-            np.testing.assert_array_equal(np.asarray(result.values), [1.0, 2.0, 3.0])
+            np.testing.assert_array_equal(np.asarray(result.raw), [1.0, 2.0, 3.0])
         else:
             assert tuple(result.event_spec.components) == ("component",)
             assert result.num_atoms == 8
@@ -596,7 +596,7 @@ class TestFunctionDeclarations:
             (wrapped.apply if raw else wrapped)()
         assert stored.element_spec.support is None
         assert stored.label == "stored"
-        np.testing.assert_array_equal(stored.values, values)
+        np.testing.assert_array_equal(stored.raw, values)
         assert wrapped.output_spec.spec == declaration
 
     def test_labels_are_outside_spec_equality(self):
@@ -665,7 +665,7 @@ class TestFunctionDeclarations:
         assert wrapped.apply() is value
         result = wrapped()
         assert result is not value
-        assert result.value is value.value
+        assert result.raw is value.raw
         assert result.label == "loaded"
         assert value.label == "stored"
 
@@ -723,7 +723,7 @@ class TestLiftedNames:
         result = wrapped(rows)
         assert isinstance(result, NumericArrayBatch)
         assert result.label == "doubled"
-        np.testing.assert_array_equal(result.values, [0.0, 2.0, 4.0])
+        np.testing.assert_array_equal(result.raw, [0.0, 2.0, 4.0])
 
     def test_empty_sweep_uses_declared_array_kind(self):
         wrapped = Function(
@@ -831,7 +831,7 @@ class TestLiftedNames:
         assert isinstance(result, OpaqueBatch)
         assert result.label == "outs"
         assert result.level_names == ("rows",)
-        assert [float(value) for value in result[1].value] == [1.0, 2.0]
+        assert [float(value) for value in result[1].raw] == [1.0, 2.0]
 
     def test_the_mapped_dispatch_refuses_a_list_row(self):
         rows = NumericRecordBatch(
@@ -1105,7 +1105,7 @@ class TestCompletedOutputDeclarations:
         # The declaration leaves the dtype open, so completion takes the produced one (II.2).
         completed = NumericArraySpec((2,), dtype=stored.dtype, support=positive)
         assert result.element_spec == wrapped(rows[0]).spec == completed
-        np.testing.assert_array_equal(result.values, np.ones((3, 2)))
+        np.testing.assert_array_equal(result.raw, np.ones((3, 2)))
         assert stored.spec.support is None
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax", "thread"])
@@ -1571,7 +1571,7 @@ def test_a_returned_batch_is_relabeled_as_the_root_of_its_views(sliced, full_pro
     relabeled = result.with_label("display")
     assert relabeled[0].label.startswith("display[")
     assert relabeled.provenance.operation == "with_label"
-    np.testing.assert_array_equal(result.values, stored.values)
+    np.testing.assert_array_equal(result.raw, stored.raw)
 
 
 def test_a_returned_function_is_relabeled_with_its_python_names(full_provenance_mode):

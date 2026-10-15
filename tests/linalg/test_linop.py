@@ -269,6 +269,13 @@ class TestRaw:
     def test_raw_is_abstract_on_the_base(self):
         assert "raw" in LinOp.__abstractmethods__
 
+    def test_an_operator_that_defines_raw_as_a_method_cannot_be_defined(self):
+        with pytest.raises(TypeError, match="raw is a method, but it must be a property"):
+
+            class Stale(LinOp):
+                def raw(self):
+                    return None
+
     def test_a_dense_operator_is_its_matrix(self):
         op = DenseLinOp(jnp.eye(2))
         assert op.raw is op.array

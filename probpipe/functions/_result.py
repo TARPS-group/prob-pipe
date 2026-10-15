@@ -684,7 +684,7 @@ def _record_stored_dtypes(aggregate: Any) -> Any:
     where its declaration states a dtype. Any other aggregate is returned as it is.
     """
     if isinstance(aggregate, NumericArrayBatch):
-        element = _with_stored_dtypes(aggregate.element_spec, aggregate.values, fill=True)
+        element = _with_stored_dtypes(aggregate.element_spec, aggregate.raw, fill=True)
     elif isinstance(aggregate, RecordBatch):
         element = _with_stored_dtypes(aggregate.element_spec, aggregate._raw_columns(), fill=False)
     else:

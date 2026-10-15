@@ -21,6 +21,7 @@ their constructor via :meth:`TrackedTerm._init_tracked`.
 from __future__ import annotations
 
 import functools
+import inspect
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
 
@@ -289,6 +290,29 @@ class _TrackedTermMeta(_ProtocolMeta):
         return instance
 
 
+def _check_raw_is_a_property(cls: type) -> None:
+    """Refuse *cls* when its body defines ``raw`` as a plain method.
+
+    Any attribute named ``raw`` satisfies an abstract ``raw`` property, so a
+    method would make ``term.raw`` a bound method rather than the representation.
+
+    Parameters
+    ----------
+    cls : type
+        The class being created.
+
+    Raises
+    ------
+    TypeError
+        If the class body defines ``raw`` as a function.
+    """
+    if inspect.isfunction(cls.__dict__.get("raw")):
+        raise TypeError(
+            f"Cannot define {cls.__name__}: raw is a method, but it must be a property. "
+            "Decorate it with @property."
+        )
+
+
 class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     """Identity mixin: a :attr:`label` and a write-once :attr:`provenance`.
 
@@ -321,8 +345,10 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     returns a new term. Construction assigns inside the window the metaclass
     opens, so a host's ``__init__`` is written normally.
 
-    :attr:`raw` is the one access to the representation, and it is abstract:
-    each kind defines it, as its section of the design states.
+    :attr:`raw` is the one access to the representation, and it is an abstract
+    property: each kind defines it, as its section of the design states. A
+    subclass that defines ``raw`` as a plain method raises ``TypeError`` when
+    the class is created.
 
     Attributes
     ----------
@@ -353,6 +379,22 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     _expression: Expression
     _provenance: Provenance | None
     __slots__ = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Refuse a subclass that defines ``raw`` as a plain method.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            The class keywords, passed on to the next class in the MRO.
+
+        Raises
+        ------
+        TypeError
+            If the class body defines ``raw`` as a function.
+        """
+        super().__init_subclass__(**kwargs)
+        _check_raw_is_a_property(cls)
 
     def _init_tracked(
         self,

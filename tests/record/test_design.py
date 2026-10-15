@@ -81,7 +81,7 @@ class TestFullFactorial:
         assert not isinstance(ff, NumericRecordBatch)
         assert ff.batch_shape == (4,)
         # Insertion order: method outer, scale inner.
-        assert [element.value for element in ff["method"]] == ["nutpie", "nutpie", "pymc", "pymc"]
+        assert [element.raw for element in ff["method"]] == ["nutpie", "nutpie", "pymc", "pymc"]
         np.testing.assert_allclose(
             np.asarray(ff["scale"]),
             [0.5, 1.0, 0.5, 1.0],
@@ -150,7 +150,7 @@ class TestDesignAsSweep:
         assert out.batch_shape == (6,)
         # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
-            out.values,
+            out.raw,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -171,7 +171,7 @@ class TestDesignAsSweep:
         assert out.batch_shape == (6,)
         # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
-            out.values,
+            out.raw,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -191,7 +191,7 @@ class TestDesignAsSweep:
         out_a = fit_a(p=ff)
         out_b = fit_b(**ff.select_all())
         assert out_a.batch_shape == out_b.batch_shape == (6,)
-        np.testing.assert_allclose(out_a.values, out_b.values)
+        np.testing.assert_allclose(out_a.raw, out_b.raw)
 
     def test_columns_zip_on_the_design_level(self):
         """Two columns of a design (``design["r"]``, ``design["K"]``) are
@@ -207,7 +207,7 @@ class TestDesignAsSweep:
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (6,)
         np.testing.assert_allclose(
-            out.values,
+            out.raw,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -244,7 +244,7 @@ class TestDesignAsSweep:
         # the elements are reached by position rather than by a field name.
         assert isinstance(out, OpaqueBatch)
         assert out.batch_shape == (4,)
-        assert [out[i].value for i in range(4)] == [
+        assert [out[i].raw for i in range(4)] == [
             "nutpie-0.5",
             "nutpie-1.0",
             "pymc-0.5",
