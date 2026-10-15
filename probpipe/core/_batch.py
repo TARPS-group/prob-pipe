@@ -730,6 +730,13 @@ class Batch[E](TrackedTerm, ABC):
     # -- reading ------------------------------------------------------------
 
     def __repr__(self) -> str:
+        """The public class, the label, the levels, and the elements' structure.
+
+        A numeric batch shows its values below them.
+        """
+        return self._repr_header()
+
+    def _repr_header(self) -> str:
         """The public class, the label, the levels as a mapping, and the elements' structure.
 
         A level of one axis reports its size, and a level of several the tuple of
@@ -741,8 +748,8 @@ class Batch[E](TrackedTerm, ABC):
         -----
         No element is read, so the cost is the same on a batch of any size and
         nothing here can raise from storage. That matters beyond convenience:
-        :meth:`TrackedTerm.with_provenance` interpolates the batch into its
-        write-once error, so a ``repr`` that could fail would fail there.
+        :meth:`TrackedTerm.with_provenance` interpolates the summary into its
+        write-once error, so a summary that could fail would fail there.
         """
         levels = ("levels", format_levels(self.level_names, self.axis_groups))
         return term_repr(

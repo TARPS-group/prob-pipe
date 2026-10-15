@@ -1299,6 +1299,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     def __repr__(self) -> str:
         """The label, then the field paths in canonical order, read from the schema."""
+        return self._repr_header()
+
+    def _repr_header(self) -> str:
+        """The label, then the field paths in canonical order, read from the schema."""
         return term_repr(
             public_class_name(type(self)),
             self._displayed_label(),

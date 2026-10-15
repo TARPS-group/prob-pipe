@@ -36,6 +36,7 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
+from ._repr import format_rows, public_class_name, rows_html, term_repr
 from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
@@ -43,7 +44,7 @@ from ._specs import (
     RecordSpec,
 )
 from .named_tree import _PATH_SEP, _unflatten_paths
-from .record import Record, _derived_record_name, _not_a_field_mapping
+from .record import Record, _derived_record_name, _not_a_field_mapping, _raw_leaf
 from .tracked import _NO_DESCRIPTION, refuses_label_first
 
 # ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
@@ -408,6 +409,49 @@ class NumericRecord(Record, Numeric):
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
         return self
+
+    # -- Display ------------------------------------------------------------
+
+    def _value_rows(self) -> list[tuple[str, Any]]:
+        """Each field's path and its stored array, in canonical order."""
+        return [(path, _raw_leaf(leaf)) for path, leaf in self._walk_leaves()]
+
+    def __repr__(self) -> str:
+        """The class and the label, then one line for each field with its path and its value.
+
+        A nested path reads ``population/mu``. NumPy's printing formats each
+        value, so ``np.set_printoptions`` sets the precision and shortens a large
+        array with ``...``, and a shortened value ends with its shape. Only the
+        entries shown are read from the device. Inside a JAX trace, where the
+        values are tracers, and for a record with no fields, the repr is the
+        summary of the label and the field paths.
+        """
+        rows = format_rows(self._value_rows(), indent="  ")
+        if not rows:
+            return self._repr_header()
+        head = term_repr(public_class_name(type(self)), self._displayed_label())
+        return f"{head}\n{rows}"
+
+    def __str__(self) -> str:
+        """The lines of the repr's values alone, one for each field with its path and its value.
+
+        Inside a JAX trace, and for a record with no fields, ``str()`` is the
+        summary of the label and the field paths.
+        """
+        rows = format_rows(self._value_rows())
+        return rows if rows else self._repr_header()
+
+    def _repr_html_(self) -> str | None:
+        """The record as a two-column table of its field paths and values, for a notebook.
+
+        Each value is formatted as the repr formats it. Inside a JAX trace, and
+        for a record with no fields, the result is ``None``, so the notebook
+        shows the repr.
+        """
+        rows = self._value_rows()
+        if not rows:
+            return None
+        return rows_html(term_repr(public_class_name(type(self)), self._displayed_label()), rows)
 
     # -- Single-field scalar-like coercion ---------------------------------
 

@@ -24,7 +24,7 @@ from ._array_backend import (
 )
 from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
-from ._repr import BINARY_SYMBOLS, format_dtype, term_repr
+from ._repr import BINARY_SYMBOLS, format_dtype, format_entries, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import (
@@ -114,6 +114,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     (3,)
     >>> value + 1
     NumericArray('draw + 1', shape=(3,), dtype=float32)
+    [1. 2. 3.]
     """
 
     __slots__ = (
@@ -314,18 +315,35 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         return len(self._value)
 
     def __str__(self) -> str:
-        """The stored value's string, as ``print`` and an f-string show the array."""
-        return str(self._value)
+        """The stored value's entries as NumPy prints them, as ``print`` shows the array.
+
+        Inside a JAX trace, where the value is a tracer, ``str()`` is the
+        repr's summary.
+        """
+        values = format_entries(self._value)
+        return self._repr_header() if values is None else values
 
     def __format__(self, format_spec: str) -> str:
         """The stored value formatted by *format_spec*, as ``f"{x:.2f}"`` formats a scalar."""
         return format(self._value, format_spec)
 
     def __repr__(self) -> str:
+        """A summary of the label, the shape, the dtype, and any support, then the entries below it.
+
+        NumPy's printing formats the entries, so ``np.set_printoptions`` sets
+        their precision and shortens a large array with ``...``, and only the
+        entries shown are read from the device. Inside a JAX trace, where the
+        value is a tracer, the repr is the summary alone.
+        """
+        header = self._repr_header()
+        values = format_entries(self._value)
+        return header if values is None else f"{header}\n{values}"
+
+    def _repr_header(self) -> str:
         """The label, then the declared shape and dtype, and the support when one is declared.
 
-        A declaration with an open dtype shows the stored value's dtype. The repr
-        reads the spec and the value's metadata alone.
+        A declaration with an open dtype shows the stored value's dtype. The
+        summary reads the spec and the value's metadata alone.
         """
         spec = self._spec
         dtype = spec.dtype if spec.dtype is not None else self.dtype

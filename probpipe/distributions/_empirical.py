@@ -972,7 +972,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
 
     def _repr_arguments(self) -> list[tuple[str, str]]:
         """The atoms as stored, and the weights when nonuniform."""
-        fields = [("atoms", repr(self._atoms))]
+        fields = [("atoms", format_value(self._atoms))]
         if self._p is not None:
             fields.append(("weights", format_value(self._p)))
         return fields

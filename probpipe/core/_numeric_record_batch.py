@@ -40,6 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
+from ._repr import format_levels, format_rows, public_class_name, rows_html, term_repr
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
@@ -150,6 +151,39 @@ class NumericRecordBatch(RecordBatch):
     # ``_check_columns`` is not overridden: every field of a numeric template is
     # a ``NumericArraySpec``, so the base already checks each column for a numeric
     # dtype the declaration admits.
+
+    # -- display --------------------------------------------------------------
+
+    def _display_head(self) -> str:
+        """The class, the label, and the levels, which head the values."""
+        levels = ("levels", format_levels(self.level_names, self.axis_groups))
+        return term_repr(public_class_name(type(self)), self._displayed_label(), [levels])
+
+    def __repr__(self) -> str:
+        """The class, the label, and the levels, then one line for each field with its values.
+
+        Each line gives a field's path and its stored column, batch axes
+        leading, as NumPy prints it, so ``np.set_printoptions`` sets the
+        precision and shortens a large column with ``...``, and a shortened
+        column ends with its shape. Only the entries shown are read from the
+        device. Inside a JAX trace, where the columns are tracers, the repr is
+        the summary of the label, the levels, and the field paths.
+        """
+        rows = format_rows(self._columns.items(), indent="  ")
+        return f"{self._display_head()}\n{rows}" if rows else self._repr_header()
+
+    def __str__(self) -> str:
+        """The lines of the repr's values alone, or the summary inside a JAX trace."""
+        rows = format_rows(self._columns.items())
+        return rows if rows else self._repr_header()
+
+    def _repr_html_(self) -> str | None:
+        """The batch as a two-column table of its field paths and columns, for a notebook.
+
+        Each column is formatted as the repr formats it. Inside a JAX trace the
+        result is ``None``, so the notebook shows the repr.
+        """
+        return rows_html(self._display_head(), self._columns.items()) if self._columns else None
 
     # -- single-field coercion ----------------------------------------------
     #
