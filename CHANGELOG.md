@@ -457,18 +457,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside `workflow_run(seed=0)`, and
   `learn_amortized_posterior(prior, simulator, random_seed=0)` with
   `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
-- **A result's component names address its parts.**
-  - `mean`, `variance`, `standard_deviation`, and `quantile` take the law's
-    event components and paths. The mean of a law over `mu` and `tau` is a
-    record whose fields are `mu` and `tau`, and the mean of a law over a
-    record `population` holds `population/mu`. Selection commutes with a
-    summary, so `mean(d)["mu"]` holds the value of `mean(d["mu"])`, and a
-    summary binds where a draw binds, as in `log_prob(d, mean(d))` or
-    `condition_on(model, mean(posterior))`.
-  - `expectation(d, f)` takes the components of `f`'s output declaration.
-  - A value that no one event component indexes takes the operation's name:
-    `cov` is declared under `cov`, and `log_prob`, `unnormalized_log_prob`,
-    `prob`, and `unnormalized_prob` under their own names.
+- **A result's component names address its parts.** A summary taken
+  coordinate by coordinate takes the law's event components and paths, and a
+  value that no one event component indexes, such as a score or a covariance,
+  takes the operation's name.
+  - `quantile` at several levels returns a batch on the level `quantile`
+    under the event's components, where the batch was declared under the
+    single component `quantile`.
+  - `expectation(d, f)` is declared under the components of `f`'s output
+    declaration, where it was declared under `expectation`.
   - A batch of draws is declared under the event's components, where it was
     declared under `sample`.
   - `OutputSpec` takes a positional `DistributionSpec`,
@@ -1486,7 +1483,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
-  is a record with a field per component, as `standard_deviation(mu)`, so
+  is a record with a field per component, as `mu` and `tau`, so
   `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is

@@ -17,15 +17,21 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    Bernoulli,
     InputSpec,
+    Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecordBatch,
     Record,
     RecordSpec,
+    condition_on,
+    conditional_distribution,
     factor,
+    log_prob,
     replay_run,
+    sample,
     workflow_run,
 )
 from probpipe.core import _fingerprint
@@ -488,7 +494,7 @@ class TestCov:
         assert estimate.spec.shape == (2, 2)
         np.testing.assert_allclose(np.asarray(estimate), np.diag([1.0, 4.0]), atol=0.3)
 
-    def test_the_covariance_is_declared_under_the_call_on_every_component(self):
+    def test_the_covariance_is_declared_under_the_operations_name(self):
         assert list(cov.check(Gaussian("g")).result.components) == ["cov"]
         assert list(cov.check(Pair("p")).result.components) == ["cov"]
 
@@ -920,7 +926,7 @@ class TestByComponent:
             replayed = mean(_dependent_joint())
         assert _value(replayed["y"]) == _value(original["y"])
 
-    def test_the_raw_result_is_the_named_mapping(self):
+    def test_the_raw_result_is_the_mapping_keyed_by_the_components(self):
         with workflow_run(seed=7):
             result = mean.using(raw=True)(_dependent_joint())
         assert set(result) == {"y", "mu"}
@@ -1440,6 +1446,8 @@ class TestASummaryTakesTheEventsNames:
         whole = result.at_path(path) if isinstance(result, Record) else result[path]
         part = summary(law[path])
         assert jax.tree.structure(whole.raw()) == jax.tree.structure(part.raw())
+        # Both are exact on the same atoms, so they differ by float32 rounding of
+        # the reductions alone.
         for selected, direct in zip(
             jax.tree.leaves(whole.raw()), jax.tree.leaves(part.raw()), strict=True
         ):
@@ -1449,30 +1457,41 @@ class TestASummaryTakesTheEventsNames:
         f = Function(lambda x: x * x, output_spec=OutputSpec(sq=NumericArraySpec(())), label="f")
         assert tuple(expectation.check(_atoms(), f).result.components) == ("sq",)
 
-    def test_a_covariance_takes_the_operations_name(self):
-        assert list(cov.check(Pair("p")).result.components) == ["cov"]
+    def test_a_law_of_one_whole_term_has_the_terms_summary(self):
+        """The component of a whole-term law is the whole value, so paths below it index the summary."""
+        atoms = NumericRecordBatch(
+            {"a": jnp.array([1.0, 2.0, 3.0]), "b": jnp.array([0.0, 0.0, 3.0])}, "row", label="rows"
+        )
+        law = EmpiricalDistribution(
+            atoms, event_spec=OutputSpec(theta=RecordSpec(a=(), b=())), label="post"
+        )
+        assert mean.check(law).result.components == law.event_spec.components
+        result = mean(law)
+        assert isinstance(result, Record) and result.fields == ("a", "b")
+        # Exact empirical averages of the same three atoms: one float32 rounding.
+        np.testing.assert_allclose(_value(result["a"]), _value(mean(law["theta/a"])), rtol=1e-6)
+        np.testing.assert_allclose(_value(result["b"]), 1.0, rtol=1e-6)
 
 
 class TestASummaryBindsWhereADrawBinds:
     """A summary of a law plugs into the operations a draw of the law plugs into."""
 
-    @staticmethod
-    def _joint() -> Distribution:
-        from probpipe import Normal
-
-        return Normal("mu", 0.5, 1.0) * Normal("tau", 1.0, 2.0)
-
     def test_a_law_scores_its_mean(self):
-        from probpipe import log_prob
-
-        law = self._joint()
+        law = Normal("mu", 0.5, 1.0) * Normal("tau", 1.0, 2.0)
         at_mean = log_prob(law, mean(law))
         at_values = log_prob(law, {"mu": 0.5, "tau": 1.0})
-        assert _value(at_mean) == pytest.approx(_value(at_values))
+        # The closed-form means are the locations, so both calls score the same values.
+        np.testing.assert_allclose(_value(at_mean), _value(at_values), rtol=0, atol=0)
+
+    def test_an_integer_slot_refuses_a_floating_mean(self):
+        """The mean of an integer event is floating, so it does not conform where a draw does."""
+        law = Bernoulli("z", probs=0.3)
+        with workflow_run(seed=0):
+            log_prob(law, sample(law))
+        with pytest.raises(ApplicabilityError, match="float32"):
+            log_prob(law, mean(law))
 
     def test_a_kernel_is_conditioned_on_a_posterior_mean(self):
-        from probpipe import Normal, condition_on, conditional_distribution
-
         def y_given_mu(mu: jax.Array) -> Normal:
             return Normal("y", jnp.full(3, mu), 1.0)
 
@@ -1483,4 +1502,5 @@ class TestASummaryBindsWhereADrawBinds:
             label="posterior",
         )
         predictive = condition_on(likelihood * prior, mean(posterior))
-        np.testing.assert_allclose(np.asarray(mean(predictive)), [2.0, 2.0, 2.0])
+        # The posterior mean of mu is 2, and the kernel's mean is mu in each coordinate.
+        np.testing.assert_allclose(np.asarray(mean(predictive)), [2.0, 2.0, 2.0], rtol=1e-6)

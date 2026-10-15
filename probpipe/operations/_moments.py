@@ -16,10 +16,11 @@ such route.
 
 A moment of the event's kind keeps the event's components and packaging and
 derives its term specs, support included, so the mean of a law over ``mu`` and
-``tau`` is a record whose fields are ``mu`` and ``tau``. Selection commutes
-with a summary: for every event path ``p``, the part of ``mean(d)`` at ``p``
-holds the value of ``mean(d[p])``. ``cov`` is declared under the component
-``cov``.
+``tau`` is a record whose fields are ``mu`` and ``tau``. Selection therefore
+commutes with a summary: for a law whose event exposes a record, the part of
+``mean(d)`` at an event path ``p`` and ``mean(d[p])`` have one estimand, and
+they are equal where both take exact routes. ``cov`` is declared under the
+component ``cov``.
 A moment of ``d`` is labeled by the moment of a draw of ``d``, as
 ``𝔼[(mu, tau) ~ d]``, ``𝕍[...]``, ``√𝕍[...]``, ``ℂ[...]``, or ``ℚ[...]``, and
 the law of a function lifted over laws contributes its notation in place of the
@@ -631,7 +632,7 @@ class _ByComponent(_DelegatingRoute):
     Parameters
     ----------
     summary : str
-        The summary's name, as each component of its result is named:
+        The operation's name, which the route's error messages give:
         ``"mean"``, ``"variance"``, or ``"quantile"``.
     """
 
@@ -840,8 +841,9 @@ class _ByComponent(_DelegatingRoute):
         Returns
         -------
         Any
-            The summary keyed by the law's components, as a term whose provenance records each block's
-            components, route, and exactness; under ``raw``, its raw form.
+            The summary keyed by the law's components, as a term whose
+            provenance records each block's components, route, and exactness;
+            under ``raw``, its raw form.
 
         Raises
         ------
