@@ -389,7 +389,7 @@ class TestFunctionDeclarations:
             label="add",
         )
         assert list(inspect.signature(Function.__init__).parameters)[1:3] == ["fn", "label"]
-        assert wrapped.raw() is add
+        assert wrapped.raw is add
         assert wrapped.apply(3) == 5
         assert inspect.signature(wrapped) == inspect.signature(add)
         assert Function(add).label == "add"
@@ -1415,7 +1415,7 @@ class TestCompletedOutputDeclarations:
         assert result.batch_shape == (3,)
         for marginal in result:
             assert marginal.event_spec.spec == result.event_spec.spec
-            values = marginal.atoms["component"].raw()
+            values = marginal.atoms["component"].raw
             np.testing.assert_array_equal(values[:, 0], values[:, 1])
         assert declaration.free_dims == {"width"}
 
@@ -1610,7 +1610,7 @@ class TestFunctionLabels:
         f = Function(
             lambda x: x + 1, label="predict", output_label="forecast", output_spec=declared
         )
-        g = Function(f.raw(), label="other", output_label="estimate", output_spec=declared)
+        g = Function(f.raw, label="other", output_label="estimate", output_spec=declared)
         assert f.output_spec == g.output_spec
         assert fingerprint(f) == fingerprint(g)
         with workflow_run(seed=42):
@@ -1619,7 +1619,7 @@ class TestFunctionLabels:
             second = g(Normal("temperature", 0, 1))
         assert tuple(first.event_spec.components) == ("prediction",)
         assert tuple(second.event_spec.components) == ("prediction",)
-        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
 
     @pytest.mark.parametrize("transform", [jax.jit, jax.vmap], ids=["jit", "vmap"])
     def test_a_function_applies_to_a_rebuilt_array_in_a_transform(self, transform):
@@ -1655,7 +1655,7 @@ class TestFunctionLabels:
             second = aliased.with_label("other")(Normal("temperature", 0, 1))
         assert tuple(first.event_spec.components) == ("predict",)
         assert tuple(second.event_spec.components) == ("predict",)
-        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
         unnamed = Function(lambda x: x + 1, label="predict", n_broadcast_samples=5)
         assert tuple(unnamed(Normal("temperature", 0, 1)).event_spec.components) == ("f",)
         exposed = Function(lambda x: {"prediction": x + 1}, n_broadcast_samples=5)

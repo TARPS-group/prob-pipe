@@ -1322,7 +1322,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         sequential = self._run(self._returns_a_batch(dispatch="sequential"), dist)
 
         assert mapped.atoms.level_names == sequential.atoms.level_names
-        np.testing.assert_array_equal(mapped.atoms.raw("y"), sequential.atoms.raw("y"))
+        np.testing.assert_array_equal(mapped.atoms["y"].raw, sequential.atoms["y"].raw)
 
     def test_a_body_that_survives_the_transform_still_takes_jax(self, caplog):
         """The probe gained a transform, not a blanket refusal."""

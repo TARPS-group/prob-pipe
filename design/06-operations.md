@@ -95,7 +95,7 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     return pushforward(K * mixing, _kernel_output_projection(K))  # the identity in VI.9
 ```
 
-**Four raw mechanisms, one meaning.** *Raw* always means the representation layer, detached from the workflow; the mechanisms differ only in where they act. Route implementations are *written* over raw forms (II.4); `apply` (III.3) *evaluates* a wrapped callable with no lifting, tracking, or provenance; `using(raw=True)` *skips* the identity an operation would mint; and `raw()` (II.4) *detaches* an existing term.
+**Four raw mechanisms, one meaning.** *Raw* always means the representation layer, detached from the workflow; the mechanisms differ only in where they act. Route implementations are *written* over raw forms (II.4); `apply` (III.3) *evaluates* a wrapped callable with no lifting, tracking, or provenance; `using(raw=True)` *skips* the identity an operation would mint; and `raw` (II.4) *detaches* an existing term.
 
 **Randomness.** Each draw an operation causes is a workflow-owned random event (V.8), whether the operation's contract is a random draw or a deterministic quantity whose route samples.
 

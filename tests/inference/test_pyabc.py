@@ -434,7 +434,7 @@ class TestPyABCDistributionBacking:
     def test_rvs_gives_the_coordinates_of_a_prior_draw(self):
         prior = Beta("p", 2.0, 3.0)  # mean 0.4
         pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
-        onto_support = bijector_for(prior.event_spec.spec.support).raw()
+        onto_support = bijector_for(prior.event_spec.spec.support).raw
         coordinates = jnp.array([pd.rvs()["p0"] for _ in range(2000)])
         draws = np.asarray(jax.vmap(onto_support)(coordinates))
         assert draws.mean() == pytest.approx(0.4, abs=0.03)

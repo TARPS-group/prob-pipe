@@ -221,7 +221,9 @@ def format_value(value: Any) -> str:
     its name, and any other value, a tracked term or an operator among them,
     keeps its own repr.
     """
-    if isinstance(value, bool | int | float | complex | str | type(None)) or hasattr(value, "raw"):
+    if isinstance(value, bool | int | float | complex | str | type(None)) or hasattr(
+        type(value), "raw"
+    ):
         return repr(value)
     if isinstance(value, type):
         return value.__name__

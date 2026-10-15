@@ -187,7 +187,7 @@ class TestAMemoIsRebuiltAfterARoundTrip:
         )
         assert operation(record).to_vector().tolist() == [1.0, 2.0]
         # The native leaf itself survives; only the converted form is rebuilt.
-        assert operation(record).raw("x").dims == ("t",)
+        assert operation(record)["x"].raw.dims == ("t",)
 
 
 class TestDecoupledState:
@@ -389,6 +389,7 @@ class TestTheConstructionWindow:
                 self._init_tracked("t")
                 return "oops"
 
+            @property
             def raw(self):
                 return None
 
@@ -416,6 +417,7 @@ class TestTheConstructionWindow:
                 self.partial = 1
                 raise ValueError("no")
 
+            @property
             def raw(self):
                 return None
 

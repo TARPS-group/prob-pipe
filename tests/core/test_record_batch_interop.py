@@ -256,7 +256,7 @@ class TestOpaqueColumnsAreRearrangedRaw:
         assert isinstance(batch["tag"], OpaqueBatch)
         assert isinstance(batch._raw_column("tag"), np.ndarray)
         # An array field's column batch holds the stored array.
-        assert batch["x"].raw() is batch._raw_column("x")
+        assert batch["x"].raw is batch._raw_column("x")
 
 
 class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
@@ -826,7 +826,7 @@ class TestAnEmpiricalTakesABatch:
 
 def _stored(element):
     """What an object batch's element view holds: an Opaque's value, a Function's callable."""
-    return element.value if isinstance(element, Opaque) else element.raw()
+    return element.value if isinstance(element, Opaque) else element.raw
 
 
 class TestBatchValuedRowAggregation:
@@ -1117,8 +1117,8 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
         column = result._raw_column("y")
         assert column.dtype == object
         assert column.shape == (2,)
-        assert [int(v) for v in result[0].raw("y")] == [1, 2]
-        assert [int(v) for v in result[1].raw("y")] == [2, 3]
+        assert [int(v) for v in result[0]["y"].raw] == [1, 2]
+        assert [int(v) for v in result[1]["y"].raw] == [2, 3]
 
 
 class TestEveryBatchIsAnOperand:

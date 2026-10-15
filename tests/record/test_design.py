@@ -46,7 +46,7 @@ class TestFullFactorial:
         assert ff.event_template.fields == ("r", "K")
         # A numeric marginal's column is a NumericArrayBatch over a ``jnp.ndarray``.
         assert isinstance(ff["r"], NumericArrayBatch)
-        assert isinstance(ff["K"].raw(), jnp.ndarray)
+        assert isinstance(ff["K"].raw, jnp.ndarray)
 
     def test_row_order_is_lexicographic(self):
         """With insertion-order axes ``r`` (outer) and ``K`` (inner),
@@ -212,7 +212,7 @@ class TestDesignAsSweep:
         )
 
     def test_raw_columns_pass_whole(self):
-        """The raw columns (``design["r"].raw()``, ``design["K"].raw()``) are
+        """The raw columns (``design["r"].raw``, ``design["K"].raw``) are
         two bare arrays, so with no type hints the body receives them whole
         and JAX broadcasts the arithmetic to a (6,)-array."""
 
@@ -221,7 +221,7 @@ class TestDesignAsSweep:
             return r * K
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
-        out = product(r=ff["r"].raw(), K=ff["K"].raw())
+        out = product(r=ff["r"].raw, K=ff["K"].raw)
         # A single value carrying the arithmetic result, not a swept batch.
         assert isinstance(out, NumericArray)
         assert out.shape == (6,)

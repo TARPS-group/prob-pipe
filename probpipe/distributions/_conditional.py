@@ -586,6 +586,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
 
     # -- the representation -------------------------------------------------
 
+    @property
     def raw(self) -> ConditionalDistribution:
         """This kernel detached from the workflow, under its label and declarations.
 

@@ -43,6 +43,7 @@ from probpipe.core._repr import (
     format_default,
     format_notation,
     format_signature,
+    format_value,
     grouped_label,
     is_compound,
     is_product,
@@ -509,6 +510,17 @@ class TestFunctionsAndOperators:
     def test_a_report_shows_the_fields_it_sets(self):
         info = MethodInfo(True, method_name="closed_form", exact=True)
         assert repr(info) == "MethodInfo(True, method_name='closed_form', exact=True)"
+
+    def test_a_term_reads_by_its_repr_without_computing_its_raw_form(self):
+        class Unresolvable:
+            @property
+            def raw(self):
+                raise RuntimeError("no exact marginal")
+
+            def __repr__(self):
+                return "Unresolvable()"
+
+        assert format_value(Unresolvable()) == "Unresolvable()"
 
 
 class TestLayout:

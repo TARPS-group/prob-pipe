@@ -264,46 +264,46 @@ def test_logdet_sign_error():
 
 
 class TestRaw:
-    """Design III.4: a structured operator's raw() is its stored parameterization."""
+    """Design III.4: a structured operator's raw is its stored parameterization."""
 
     def test_raw_is_abstract_on_the_base(self):
         assert "raw" in LinOp.__abstractmethods__
 
     def test_a_dense_operator_is_its_matrix(self):
         op = DenseLinOp(jnp.eye(2))
-        assert op.raw() is op.array
+        assert op.raw is op.array
 
     def test_a_diagonal_operator_is_its_diagonal(self):
         op = DiagonalLinOp(jnp.array([1.0, 2.0]))
-        assert op.raw() is op.diagonal
+        assert op.raw is op.diagonal
 
     def test_a_triangular_operator_is_its_triangle(self):
         op = TriangularLinOp(jnp.array([[1.0, 0.0], [2.0, 3.0]]))
-        assert op.raw() is op.tri
+        assert op.raw is op.tri
 
     def test_a_root_operator_is_its_root(self):
         root = DenseLinOp(jnp.array([[1.0, 0.0], [2.0, 3.0]]))
-        assert RootLinOp(root).raw() is root
+        assert RootLinOp(root).raw is root
 
     def test_a_cholesky_operator_is_its_factor(self):
         factor = TriangularLinOp(jnp.array([[1.0, 0.0], [2.0, 3.0]]))
-        assert CholeskyLinOp(factor).raw() is factor
+        assert CholeskyLinOp(factor).raw is factor
 
     def test_a_diagonal_root_operator_is_its_root(self):
         root = DiagonalLinOp(jnp.array([1.0, 2.0]))
-        assert DiagonalRootLinOp(root).raw() is root
+        assert DiagonalRootLinOp(root).raw is root
 
     def test_a_composite_is_its_operand_tuple(self):
         a, b = DenseLinOp(jnp.eye(2)), DiagonalLinOp(jnp.array([1.0, 2.0]))
-        assert ProductLinOp(a, b).raw() == (a, b)
-        assert SumLinOp([a, b]).raw() == (a, b)
-        assert TransposedLinOp(a).raw() == (a,)
-        assert ScaledLinOp(a, 2.0).raw() == (a, 2.0)
+        assert ProductLinOp(a, b).raw == (a, b)
+        assert SumLinOp([a, b]).raw == (a, b)
+        assert TransposedLinOp(a).raw == (a,)
+        assert ScaledLinOp(a, 2.0).raw == (a, 2.0)
 
     def test_a_composite_rebuilds_from_its_operands(self):
         a, b = DenseLinOp(jnp.eye(2)), DiagonalLinOp(jnp.array([1.0, 2.0]))
         product = a @ b
-        assert approx(ProductLinOp(*product.raw()).to_dense(), product.to_dense())
+        assert approx(ProductLinOp(*product.raw).to_dense(), product.to_dense())
 
 
 class TestConstructionMessages:

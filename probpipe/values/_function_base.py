@@ -1339,8 +1339,9 @@ class Function(TrackedTerm, Annotated):
         object.__setattr__(self, "__name__", self._label)
         object.__setattr__(self, "__qualname__", self._label)
 
+    @property
     def raw(self) -> Callable[..., Any]:
-        """Return the wrapped callable, or the raw evaluator of a private payload."""
+        """The wrapped callable, or the raw evaluator of a private payload."""
         if isinstance(self._implementation, _CallableFunctionImplementation):
             return self._implementation.callable
         return self.apply
@@ -1463,7 +1464,7 @@ class Function(TrackedTerm, Annotated):
             returned law or kernel. A broadcast
             returns the law of the results, and a sweep the batch of them on
             the swept levels. Under the ``raw`` control the result is its raw
-            form, as its ``raw()`` gives it.
+            form, as its ``raw`` gives it.
 
         Raises
         ------

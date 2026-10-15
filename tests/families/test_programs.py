@@ -470,12 +470,12 @@ class TestPyMCModel:
             draws = probpipe.sample(PyMCModel(build, label="prior"), sample_shape=(4000,))
         quartiles = np.array([0.25, 0.5, 0.75])
         np.testing.assert_allclose(
-            np.quantile(draws["tau"].raw(), quartiles),
+            np.quantile(draws["tau"].raw, quartiles),
             5.0 * np.tan(np.pi * quartiles / 2),
             rtol=0.15,
         )
         np.testing.assert_allclose(
-            np.quantile(draws["mu"].raw(), quartiles),
+            np.quantile(draws["mu"].raw, quartiles),
             2.0 + 3.0 * np.tan(np.pi * (quartiles - 0.5)),
             atol=0.6,
         )

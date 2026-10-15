@@ -39,7 +39,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **path**: a `/`-joined sequence of names that addresses one node of a named tree, either a field or an interior node (II.6); II.2 fixes the paths of a declaration. The occurrence path of a random event is its call's position in the workflow (V.8).
 - **provenance**: the record of how a tracked term was produced, which holds its operation, its tracked parents, its resolved controls, and its plain inputs (II.4).
 - **pushforward**: the law `f♯d` of `f(X)` for `X ~ d`, which the operation `pushforward(d, f)` computes by passing the map draws of `d` whatever its annotation; the direct call `f(d)` is a pushforward when the map's parameter takes draws (V.5, VI.1).
-- **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; `raw()` returns it (Part I, II.4).
+- **raw form**: the representation layer's presentation of a value, detached from the workflow, such as a backing array or a wrapped callable; `raw` returns it (Part I, II.4).
 - **registry**: an extensible set of registered entries, discoverable through the registry catalog; a dispatch registry selects one of its methods for a call (II.7).
 - **route**: one implementation of an operation, with a `check`, an `execute`, and an exact flag, from a structural, capability, registry, or fallback source (VI.0).
 - **schema**: a `RecordSpec` read as the structure of one structured value, such as a draw or a stored datum (III.5).

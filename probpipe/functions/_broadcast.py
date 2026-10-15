@@ -585,7 +585,7 @@ def _draw_columns(label: str, draws: Any) -> dict[str, Any]:
     if isinstance(draws, RecordBatch):
         return _prefixed(label, draws._raw_columns())
     if isinstance(draws, Record):
-        return _prefixed(label, {path: draws.raw(path) for path in draws.event_template})
+        return _prefixed(label, {path: draws._raw_at(path) for path in draws.event_template})
     if isinstance(draws, Mapping):
         return _prefixed(label, dict(_raw_record(draws)))
     if isinstance(draws, list):
@@ -732,7 +732,7 @@ def _record_columns(draws: Any, label: str, event: Any = None, *, as_batch: bool
             kind="batch-valued input atoms",
         )
     if isinstance(draws, NumericArray):
-        return draws.raw()
+        return draws.raw
     if isinstance(draws, Mapping) and not isinstance(draws, TrackedTerm):
         return Record(_raw_record(draws), label=label)
     return draws
@@ -1195,7 +1195,7 @@ def _index_sample(s: Any, i: int) -> Any:
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact.
-        return Record({p: s.raw(p)[i] for p in s.event_template}, label=s.label)
+        return Record({p: s._raw_at(p)[i] for p in s.event_template}, label=s.label)
     if isinstance(s, Mapping) and not isinstance(s, TrackedTerm):
         # The raw draws of a batch of records: the nested mapping of their columns.
         return _row_at(s, i)

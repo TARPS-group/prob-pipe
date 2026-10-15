@@ -70,7 +70,7 @@ class ResultSchemaError(ValueError):
 
 
 def _detach(result: Any) -> Any:
-    """The result detached from the workflow, as its ``raw()`` returns it."""
+    """The result detached from the workflow, as its ``raw`` returns it."""
     return raw_form(result)
 
 
@@ -341,7 +341,7 @@ def _stack_declared_columns(
     for path in template:
         if isinstance(records, list):
             values = [
-                record.raw(path) if isinstance(record, Record) else record[path]
+                record._raw_at(path) if isinstance(record, Record) else record[path]
                 for record in records
             ]
             # The declared *kind* decides the storage, not what the values happen
@@ -366,7 +366,7 @@ def _stack_declared_columns(
             # stacked the rows itself and a declared-opaque field is whatever
             # shape its values happened to have. The declared kind decides here
             # too, or that shape is read as a second multiplicity.
-            batched = records.raw(path)
+            batched = records._raw_at(path)
             if not isinstance(template[path], NumericArraySpec):
                 batched = _packed_object_column(list(batched))
 
@@ -1080,7 +1080,7 @@ def _stack_rows(
             # is a reason to claim the function kind over the fallback.
             if outs and all(callable(o) for o in outs):
                 return FunctionBatch(object_array, level_names, **shared, label=label)
-            raw_objects = [o.raw() if isinstance(o, Opaque) else o for o in outs]
+            raw_objects = [o.raw if isinstance(o, Opaque) else o for o in outs]
             return OpaqueBatch(
                 _from_iterable(raw_objects, kind="_make_stack").reshape(batch_shape),
                 level_names,
@@ -1145,7 +1145,7 @@ def _stack_rows(
         # Leaf-keyed, so a nested output is one column per leaf and needs no
         # flattening by the caller.
         paths = list(inner_outputs.event_template)
-        resolved = [inner_outputs.raw(path) for path in paths]
+        resolved = [inner_outputs._raw_at(path) for path in paths]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             tpl = output_template or RecordSpec(
                 dict(zip(paths, (v.shape[1:] for v in resolved), strict=True))
@@ -1288,7 +1288,7 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
         value = Record({**value}, label=label)
     if isinstance(value, Record):
         template = value.event_template
-        columns = {path: value.raw(path) for path in template}
+        columns = {path: value._raw_at(path) for path in template}
         for column in columns.values():
             require_leading(tuple(_event_shape_of(column)))
         element = _reshaped_template(template, lambda shape: shape[n_axes:])
@@ -1335,8 +1335,8 @@ def _batch_at(value: Any, spec: BatchSpec, label: str) -> Any:
 
 
 def raw_form(term: Any) -> Any:
-    """*term*'s representation, detached from the workflow, as its kind's ``raw()`` gives it.
+    """*term*'s representation, detached from the workflow, as its kind's ``raw`` gives it.
 
     A value that is not a tracked term is already raw and is returned as it is.
     """
-    return term.raw() if isinstance(term, TrackedTerm) else term
+    return term.raw if isinstance(term, TrackedTerm) else term

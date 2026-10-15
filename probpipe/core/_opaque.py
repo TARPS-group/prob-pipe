@@ -118,6 +118,7 @@ class Opaque(TrackedTerm, Annotated):
         """The wrapped value, untracked."""
         return self._value
 
+    @property
     def raw(self) -> Any:
         """The wrapped value, as :attr:`value` holds it."""
         return self._value

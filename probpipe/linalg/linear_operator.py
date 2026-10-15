@@ -134,6 +134,7 @@ class LinOp(ABC):
         ...
 
     # ---- The representation ----
+    @property
     @abstractmethod
     def raw(self) -> Any:
         """The stored parameterization, such as a dense operator's matrix or a lazy composite's operands."""
@@ -336,8 +337,9 @@ class ProductLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp, LinOp]:
         """The operands ``(A, B)`` of ``A @ B``."""
         return (self.A, self.B)
@@ -401,8 +403,9 @@ class SumLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp, ...]:
         """The summands, in order."""
         return tuple(self.ops)
@@ -504,8 +507,9 @@ class ScaledLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp, float | Array]:
         """The operands ``(A, c)`` of ``c * A``, in the constructor's order."""
         return (self.op, self.scalar)
@@ -562,8 +566,9 @@ class TransposedLinOp(LinOp):
 
     def _operand_repr_arguments(self) -> list[tuple[str, str]]:
         """The operands, in the constructor's order."""
-        return [("operands", sequence_repr(format_value(operand) for operand in self.raw()))]
+        return [("operands", sequence_repr(format_value(operand) for operand in self.raw))]
 
+    @property
     def raw(self) -> tuple[LinOp]:
         """The one operand ``A`` of ``A.T``."""
         return (self.op,)
@@ -612,6 +617,7 @@ class DenseLinOp(LinOp):
         self._dtype = self.array.dtype
         self.add_flag("dense")
 
+    @property
     def raw(self) -> Array:
         """The stored matrix."""
         return self.array
@@ -654,6 +660,7 @@ class DiagonalLinOp(LinOp):
         if jnp.all(self.diagonal > 0):
             self.add_flag("positive_definite")
 
+    @property
     def raw(self) -> Array:
         """The stored diagonal."""
         return self.diagonal
@@ -745,6 +752,7 @@ class TriangularLinOp(LinOp):
         if jnp.allclose(jnp.diag(self.tri), 1.0):
             self.add_flag("unit_diagonal")
 
+    @property
     def raw(self) -> Array:
         """The stored triangular matrix; its flags state which triangle it is."""
         return self.tri
@@ -804,6 +812,7 @@ class RootLinOp(LinOp):
         self._n = self.root.shape[0]
         self.add_flag("symmetric")
 
+    @property
     def raw(self) -> LinOp:
         """The stored root ``S`` of ``A = S @ S.T``, an operator."""
         return self.root
@@ -879,6 +888,7 @@ class CholeskyLinOp(RootLinOp):
         super().__init__(root)
         self.add_flag("positive_definite")
 
+    @property
     def raw(self) -> TriangularLinOp:
         """The stored Cholesky factor, ``L`` of ``A = L @ L.T`` or ``U`` of ``A = U.T @ U``."""
         return self.root
@@ -965,6 +975,7 @@ class DiagonalRootLinOp(DiagonalLinOp):
         super().__init__(root.diagonal**2)
         self.root = root
 
+    @property
     def raw(self) -> DiagonalLinOp:
         """The stored diagonal root ``S`` of ``A = S @ S.T``, an operator."""
         return self.root

@@ -195,7 +195,7 @@ class TestTheTrigger:
         def double(x: Function):
             return 2.0 * x
 
-        np.testing.assert_array_equal(double(_batch([1.0, 2.0])).raw(), [2.0, 4.0])
+        np.testing.assert_array_equal(double(_batch([1.0, 2.0])).raw, [2.0, 4.0])
 
     def test_a_batch_where_one_element_is_expected_is_swept(self):
         @function(dispatch="sequential")

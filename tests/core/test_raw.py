@@ -1,4 +1,4 @@
-"""Every kind defines ``raw()``, its representation detached from the workflow (design II.4)."""
+"""Every kind defines ``raw``, its representation detached from the workflow (design II.4)."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class TestValues:
             NumericArray(
                 stored,
                 label="x",
-            ).raw()
+            ).raw
             is stored
         )
 
@@ -61,7 +61,7 @@ class TestValues:
             Opaque(
                 wrapped,
                 label="source",
-            ).raw()
+            ).raw
             is wrapped
         )
 
@@ -71,26 +71,19 @@ class TestValues:
             {"data": {"effect": effect, "se": 15.0}, "label": "A"},
             label="school",
         )
-        raw = school.raw()
+        raw = school.raw
         assert type(raw) is dict and list(raw) == ["data", "label"]
         assert raw["data"]["effect"] is effect and raw["label"] == "A"
 
-    def test_a_record_path_is_one_node(self):
+    def test_a_field_view_gives_the_stored_leaf(self):
         effect = jnp.asarray(28.0)
         school = Record(
             {"data": {"effect": effect, "se": 15.0}, "label": "A"},
             label="school",
         )
-        assert school.raw("data/effect") is effect
-        assert school.raw(("data", "effect")) is effect
-        assert list(school.raw("data")) == ["effect", "se"]
-
-    def test_a_record_path_that_is_not_one_raises_key_error(self):
-        with pytest.raises(KeyError):
-            Record(
-                {"x": 1.0},
-                label="r",
-            ).raw("y")
+        assert school["data/effect"].raw is effect
+        assert school[("data", "effect")].raw is effect
+        assert list(school.raw["data"]) == ["effect", "se"]
 
     def test_a_law_held_as_a_leaf_is_detached(self):
         law = Normal("theta", 0.0, 1.0)
@@ -98,7 +91,7 @@ class TestValues:
             {"law": law, "x": 1.0},
             label="r",
         )
-        assert isinstance(record.raw("law"), tfd.Normal)
+        assert isinstance(record["law"].raw, tfd.Normal)
 
 
 class TestBatches:
@@ -110,7 +103,7 @@ class TestBatches:
             element_spec=NumericArraySpec((2,)),
             label="x",
         )
-        assert batch.raw() is stored
+        assert batch.raw is stored
 
     def test_a_record_batch_is_the_nested_mapping_of_its_columns(self):
         effects = jnp.arange(3.0)
@@ -128,7 +121,7 @@ class TestBatches:
             ),
             label="schools",
         )
-        raw = batch.raw()
+        raw = batch.raw
         assert list(raw) == ["data", "label"]
         assert raw["data"]["effect"] is effects
         assert raw["label"].dtype == object and list(raw["label"]) == ["A", "B", "C"]
@@ -139,7 +132,7 @@ class TestBatches:
             "site",
             label="labels",
         )
-        raw = batch.raw()
+        raw = batch.raw
         assert raw.dtype == object and list(raw) == ["north", "south"]
         assert not raw.flags.writeable
 
@@ -152,7 +145,7 @@ class TestBatches:
                 [double],
                 "variant",
                 label="f",
-            ).raw()[0]
+            ).raw[0]
             is double
         )
 
@@ -162,7 +155,7 @@ class TestBatches:
             [law, Gaussian("g", 2.0)],
             "law",
             label="laws",
-        ).raw()
+        ).raw
         assert raw.dtype == object and raw[0] is law
 
     def test_a_sub_batch_is_a_view_of_the_same_store(self):
@@ -173,7 +166,7 @@ class TestBatches:
             element_spec=NumericArraySpec(()),
             label="x",
         )
-        np.testing.assert_array_equal(batch[2:4].raw(), stored[2:4])
+        np.testing.assert_array_equal(batch[2:4].raw, stored[2:4])
 
 
 class TestFunctions:
@@ -185,7 +178,7 @@ class TestFunctions:
             Function(
                 add,
                 label="add",
-            ).raw()
+            ).raw
             is add
         )
 
@@ -194,7 +187,7 @@ class TestDistributions:
     def test_a_law_is_itself_detached(self):
         law = Gaussian("g", 1.0).with_provenance(Provenance.create("made", parents=[]))
         object.__setattr__(law, "_annotations", {"diagnostics": {"n_eff": 42}})
-        detached = law.raw()
+        detached = law.raw
         assert isinstance(detached, Distribution) and detached is not law
         assert (detached.label, detached.spec) == (law.label, law.spec)
         assert detached.provenance is None and detached.annotations is None
@@ -207,20 +200,20 @@ class TestDistributions:
             label="laws",
         )[1]
         assert _element_source(element) is not None
-        assert _element_source(element.raw()) is None
+        assert _element_source(element.raw) is None
 
     def test_an_empirical_law_keeps_its_atoms(self):
         law = EmpiricalDistribution(jnp.arange(4.0), component="e")
-        detached = law.raw()
+        detached = law.raw
         assert isinstance(detached, EmpiricalDistribution)
         np.testing.assert_array_equal(detached.atoms.values, law.atoms.values)
 
     def test_the_backend_adapter_is_its_backend_distribution(self):
-        assert isinstance(Normal("x", 0.0, 1.0).raw(), tfd.Normal)
+        assert isinstance(Normal("x", 0.0, 1.0).raw, tfd.Normal)
 
     def test_a_kernel_is_itself_detached(self):
         kernel = Kernel("k")
-        detached = kernel.raw()
+        detached = kernel.raw
         assert isinstance(detached, ConditionalDistribution) and detached is not kernel
         assert (detached.label, detached.spec) == (kernel.label, kernel.spec)
         assert detached.provenance is None

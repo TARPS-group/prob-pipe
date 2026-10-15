@@ -693,6 +693,7 @@ class Distribution(TrackedTerm, Annotated, ABC, metaclass=_DistributionMeta):
 
     # -- the representation ---------------------------------------------------
 
+    @property
     def raw(self) -> Distribution:
         """This law detached from the workflow, under its label and declaration.
 

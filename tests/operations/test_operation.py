@@ -1626,7 +1626,7 @@ class TestRawResults:
         assert type(result) is dict and _untracked(result)
 
     def test_the_raw_evaluator_returns_the_raw_array(self):
-        result = mean.raw()(Gaussian("g", 2.0))
+        result = mean.raw(Gaussian("g", 2.0))
         assert not isinstance(result, TrackedTerm)
         assert float(result) == 2.0
 

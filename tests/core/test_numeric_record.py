@@ -120,8 +120,8 @@ class TestConstruction:
             {"a": 1.0, "b": 2},
             label="nr",
         )
-        assert isinstance(nr.raw("a"), jnp.ndarray)
-        assert isinstance(nr.raw("b"), jnp.ndarray)
+        assert isinstance(nr["a"].raw, jnp.ndarray)
+        assert isinstance(nr["b"].raw, jnp.ndarray)
 
     def test_numpy_stored_native_converted_at_boundary(self):
         arr = np.array([1.0, 2.0])
@@ -129,9 +129,9 @@ class TestConstruction:
             {"x": arr},
             label="nr",
         )
-        # Native storage: raw() returns the numpy leaf verbatim; the
+        # Native storage: raw returns the numpy leaf verbatim; the
         # compute boundary (to_vector) converts to jax.
-        assert nr.raw("x") is arr
+        assert nr["x"].raw is arr
         vec = nr.to_vector()
         assert isinstance(vec, jnp.ndarray)
         np.testing.assert_allclose(vec, [1.0, 2.0])
@@ -143,7 +143,7 @@ class TestConstruction:
             {"x": arr},
             label="nr",
         )
-        assert nr.raw("x") is arr
+        assert nr["x"].raw is arr
 
     def test_xarray_accepted_and_stored_native(self):
         """xarray.DataArray wraps numeric data and is accepted **verbatim**:
@@ -159,8 +159,8 @@ class TestConstruction:
             {"y": da},
             label="nr",
         )
-        assert nr.raw("y") is da
-        assert nr.raw("y").dims == ("time",)
+        assert nr["y"].raw is da
+        assert nr["y"].raw.dims == ("time",)
         np.testing.assert_allclose(nr.to_vector(), [1.0, 2.0, 3.0])
 
     # Regression: previous ``_is_numeric_leaf`` short-circuited True on
@@ -213,7 +213,7 @@ class TestConstruction:
                 label="nr",
             )
             # Stored verbatim (native form); the boundary converts on demand.
-            assert nr.raw("x") is arr, f"failed for dtype {dt}"
+            assert nr["x"].raw is arr, f"failed for dtype {dt}"
 
     def test_numeric_dtype_predicate_shared(self):
         """Every numeric gate must agree on what counts as numeric by consuming

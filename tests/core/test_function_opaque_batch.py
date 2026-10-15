@@ -417,6 +417,7 @@ class TestElements:
             def __init__(self, label):
                 self._init_tracked(label)
 
+            @property
             def raw(self):
                 return self
 

@@ -90,7 +90,7 @@ class NumericRecord(Record, Numeric):
     **Aliasing and mutation.** Native leaves are stored **by reference**, exactly as a
     plain :class:`Record` stores opaque leaves, and construction marks a NumPy
     array leaf read-only in place, so a write through the caller's handle or
-    through :meth:`~Record.raw` raises ``ValueError``. A ``pandas`` or ``xarray``
+    through :attr:`~Record.raw` raises ``ValueError``. A ``pandas`` or ``xarray``
     container carries no such flag, so mutating it in place after construction
     changes the record. Once that leaf has crossed a compute boundary,
     navigation and compute can disagree: navigation reflects the mutation, but

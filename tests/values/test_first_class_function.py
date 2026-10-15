@@ -215,7 +215,7 @@ class TestApplyContract:
         result = structured()
 
         assert result is not returned
-        assert result.raw("y") is value
+        assert result["y"].raw is value
         assert result.event_template == template
         assert returned.event_template != template
 
@@ -1333,7 +1333,7 @@ class TestSymbolicCalls:
         assert result.atoms["stats/value"].shape == (8,)
         np.testing.assert_allclose(
             result.atoms["stats/doubled"],
-            result.atoms["stats/value"].raw() * 2,
+            result.atoms["stats/value"].raw * 2,
         )
         averaged = mean(result)
         assert averaged.event_template == RecordSpec(

@@ -648,18 +648,24 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- The representation -------------------------------------------------
 
-    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
-        """The stored representation: the nested mapping of raw leaves, or one node's.
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The stored representation: the nested mapping of raw leaves.
 
         A leaf is held in native form, so its raw value is the leaf itself, and a
-        tracked term held as a leaf, such as a law, gives its own ``raw()``. An
-        interior node gives the nested mapping of the raw leaves beneath it.
+        tracked term held as a leaf, such as a law, gives its own ``raw``. An
+        interior node gives the nested mapping of the raw leaves beneath it. One
+        field's raw value is its view's, ``record[path].raw``.
+        """
+        return _raw_nested(self)
+
+    def _raw_at(self, path: str | tuple[str, ...]) -> Any:
+        """The raw value of the node at *path*, without building its view.
 
         Parameters
         ----------
-        path : str or tuple of str, optional
-            The path of one node, a field or a subtree. Omitted, the whole
-            record.
+        path : str or tuple of str
+            The path of one node, a field or a subtree.
 
         Returns
         -------
@@ -671,7 +677,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         KeyError
             If *path* is not a path of the record.
         """
-        node = self if path is None else self._node_at(path)
+        node = self._node_at(path)
         if isinstance(node, Record):
             return _raw_nested(node)
         return _raw_leaf(node)
@@ -703,7 +709,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         representation inside a JAX trace (II.4), so a traced field is its
         stored leaf. A leaf that is no value of the field's declared kind, as a
         transform leaves when it maps the leaves to ``None``, is returned as it
-        is, and :meth:`raw` returns the stored leaf.
+        is, and :attr:`raw` returns the stored leaf.
 
         Parameters
         ----------
@@ -1418,8 +1424,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
 
 def _raw_leaf(leaf: Any) -> Any:
-    """A stored leaf's raw value: a tracked term's ``raw()``, and any other leaf as stored."""
-    return leaf.raw() if isinstance(leaf, TrackedTerm) else leaf
+    """A stored leaf's raw value: a tracked term's ``raw``, and any other leaf as stored."""
+    return leaf.raw if isinstance(leaf, TrackedTerm) else leaf
 
 
 def _leaf_value(leaf: Any) -> Any:
@@ -1434,7 +1440,7 @@ def _leaf_value(leaf: Any) -> Any:
     from ._numeric_array import NumericArray
     from ._opaque import Opaque
 
-    return leaf.raw() if isinstance(leaf, NumericArray | Opaque | Function) else leaf
+    return leaf.raw if isinstance(leaf, NumericArray | Opaque | Function) else leaf
 
 
 def _raw_nested(record: Record) -> dict[str, Any]:

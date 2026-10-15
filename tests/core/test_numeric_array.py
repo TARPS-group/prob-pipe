@@ -336,7 +336,7 @@ class TestNumericArrayComputesAsAnArray:
 
         assert isinstance(result, NumericArray)
         assert result.label == label
-        assert isinstance(result.raw(), jax.Array)
+        assert isinstance(result.raw, jax.Array)
 
     @pytest.mark.parametrize(
         ("compute", "label"),
@@ -426,8 +426,8 @@ class TestNumericArrayComputesAsAnArray:
             + 1
         )
 
-        assert isinstance(result.raw(), np.ndarray)
-        assert not isinstance(result.raw(), jax.Array)
+        assert isinstance(result.raw, np.ndarray)
+        assert not isinstance(result.raw, jax.Array)
 
     def test_it_computes_the_same_values_as_the_array_it_holds(self):
         raw = jnp.arange(3.0)
@@ -1406,4 +1406,4 @@ class TestARebuiltValueComputes:
         rebuilt = jax.jit(lambda x: x)(value)
         assert rebuilt.label == _NO_DESCRIPTION
         assert rebuilt.spec == value.spec
-        np.testing.assert_array_equal(jax.jit(lambda x: x)(rebuilt).raw(), value.raw())
+        np.testing.assert_array_equal(jax.jit(lambda x: x)(rebuilt).raw, value.raw)

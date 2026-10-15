@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`. A
+  `Record` and a `RecordBatch` no longer take a path: `record.raw` is the
+  whole nested mapping, and one field's raw value is its view's, so replace
+  `record.raw("x")` with `record["x"].raw`, and a subtree's
+  `record.raw("g")` with `record.raw["g"]`. The `raw` of a `Function`, an
+  `Operation`, or a `Bijector` is a callable, so an old `f.raw()` now calls
+  the wrapped function with no arguments instead of raising.
 - **`with_options` is renamed `using`.** `Function.using(**controls)` and
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
@@ -278,8 +285,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
 - **`raw()` of a field view returns the raw form of the marginal at its path.**
-  `d[p].raw()` returns the TFP distribution where the marginal at `p` is a
-  parametric family, so `model["mu"].raw()` for a `Normal` prior over `mu` is
+  `d[p].raw` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw` for a `Normal` prior over `mu` is
   the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
   labeled as `marginal(d, p)` labels it, where it was always a detached law
   under the view's label. A parameter annotated with a TFP class, such as
@@ -351,7 +358,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A term marks each NumPy array it stores read-only.** Constructing a term
   from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
   family, sets the array's `writeable` flag to `False` in place. A write into
-  that array afterwards, through the caller's handle or through `.raw()`,
+  that array afterwards, through the caller's handle or through `.raw`,
   raises `ValueError: assignment destination is read-only`, where it used to
   change the term. To keep a writable array, pass a copy,
   as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
@@ -865,7 +872,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   references to use `NumericArraySpec`. The bare backend-array alias remains
   `Array`. The design baseline now gives each raw value kind a corresponding
   tracked term and batch form, including `NumericArray` / `NumericArrayBatch`
-  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw()` as a shared storage
+  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw` as a shared storage
   view. Runtime implementations of those design contracts land in the
   subsequent stack.
 

@@ -368,7 +368,7 @@ class TestColumnBatchForms:
         batch = nested_batch()
         column = batch["m"]
         assert isinstance(column, NumericArrayBatch)
-        assert column.raw() is batch._columns["m"]
+        assert column.raw is batch._columns["m"]
         assert column.level_names == batch.level_names
 
     def test_a_callable_field_yields_a_function_batch(self):
@@ -845,7 +845,7 @@ class TestPlainRecordBatch:
             label="design",
         )
         assert type(batch[0]) is Record
-        assert [element.raw("site") for element in batch] == ["north", "south"]
+        assert [element["site"].raw for element in batch] == ["north", "south"]
 
     def test_it_has_no_flat_layout(self):
         batch = RecordBatch(
@@ -1625,8 +1625,8 @@ class TestStack:
         batch = RecordBatch.stack(records, level_name="draw")
         assert isinstance(batch["tag"], OpaqueBatch)
         assert batch["tag"][1].value == 1
-        assert batch[0].raw("tag") == 0
-        assert not isinstance(batch[0].raw("tag"), jnp.ndarray)
+        assert batch[0]["tag"].raw == 0
+        assert not isinstance(batch[0]["tag"].raw, jnp.ndarray)
 
     def test_stack_refuses_an_empty_list(self):
         with pytest.raises(ValueError, match="at least one record"):
@@ -2243,4 +2243,4 @@ class TestARebuiltBatchComputes:
         assert rebuilt.label == _NO_DESCRIPTION
         assert rebuilt.spec == value.spec
         result = jax.jit(lambda x: x)(rebuilt)
-        np.testing.assert_array_equal(result["temperature"].raw(), value["temperature"].raw())
+        np.testing.assert_array_equal(result["temperature"].raw, value["temperature"].raw)

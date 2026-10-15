@@ -432,7 +432,7 @@ class TestStandardDeviation:
         result = standard_deviation(law)
         assert isinstance(result, Function)
         assert result.label == "√𝕍[f ~ GaussianProcess]"
-        assert inspect.signature(result.raw()).parameters.keys() == {"X"}
+        assert inspect.signature(result.raw).parameters.keys() == {"X"}
         points = jnp.linspace(0.0, 1.0, 3)[:, None]
         np.testing.assert_allclose(np.asarray(result(points)), [2.0, 2.0, 2.0], rtol=1e-6)
 

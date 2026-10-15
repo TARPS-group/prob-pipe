@@ -804,7 +804,7 @@ class TestMarginals:
         law._store_expression(law._expression.with_fixed(("y",)))
         assert marginal(law, "a").notation == "post(a; y)"
         assert law["a"].notation == "post(a; y)"
-        assert law["a"].raw().notation == "post(a; y)"
+        assert law["a"].raw.notation == "post(a; y)"
 
 
 # -- Renaming -----------------------------------------------------------------

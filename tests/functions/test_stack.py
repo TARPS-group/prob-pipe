@@ -36,7 +36,7 @@ class TestTheFunction:
 
         assert isinstance(wrapped, Function)
         assert wrapped.label == "predict"
-        assert wrapped.raw() is predict
+        assert wrapped.raw is predict
 
     def test_the_decorator_takes_construction_time_controls(self):
         @function(n_broadcast_samples=500, dispatch="jax")

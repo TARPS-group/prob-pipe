@@ -55,7 +55,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
         their native form and dtype. A NumPy array is marked read-only in place,
-        so a write through the caller's handle or through :meth:`raw` raises
+        so a write through the caller's handle or through :attr:`raw` raises
         ``ValueError``.
     label : str
         The value's required semantic name. A value carries no fields to describe it,
@@ -187,6 +187,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         """The stored value, in the form it was given. Untracked."""
         return self._value
 
+    @property
     def raw(self) -> Any:
         """The stored array, in the form it was given, as :attr:`value` holds it."""
         return self._value

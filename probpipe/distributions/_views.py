@@ -544,7 +544,7 @@ def _batch_values(value: Any, spec: BatchSpec, sample_shape: tuple[int, ...]) ->
     if not _is_batch_per_draw(value, sample_shape):
         return value
     if isinstance(value, Batch):
-        return _raw_record(value) if isinstance(value, RecordBatch) else value.raw()
+        return _raw_record(value) if isinstance(value, RecordBatch) else value.raw
     stacked = _stacked_batches(value, spec)
     return _unflatten_paths(stacked) if isinstance(stacked, Mapping) else stacked
 
@@ -1021,8 +1021,8 @@ class FieldView(Distribution):
     ``_marginal_capabilities``, and a parent that defines none reports its own
     claims; the view reads the report once, at construction.
 
-    The view's ``raw()`` is the raw form of the parent's marginal at the path,
-    ``parent._marginal(path).raw()``: the backend object where the marginal
+    The view's ``raw`` is the raw form of the parent's marginal at the path,
+    ``parent._marginal(path).raw``: the backend object where the marginal
     has one, such as the TFP distribution of a TFP family, and the detached
     law otherwise. ``with_dim_sizes`` and ``with_dim_names`` apply to the
     parent and return the view of the result at the same path.
@@ -1223,8 +1223,9 @@ class FieldView(Distribution):
         view._store_expression(_marginal_expression_at(self, key))
         return view
 
+    @property
     def raw(self) -> Any:
-        """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw()``.
+        """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw``.
 
         Returns
         -------
@@ -1252,7 +1253,7 @@ class FieldView(Distribution):
             raise ResolutionError(
                 f"{parent.label!r} has no exact marginal at {self._path!r}: {reason}"
             )
-        raw = parent._marginal(self._path).raw()
+        raw = parent._marginal(self._path).raw
         if not isinstance(raw, Distribution):
             return raw
         return _carrying(raw, self._expression)

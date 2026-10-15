@@ -418,32 +418,35 @@ class RecordBatch(Batch[Record]):
 
     # -- field access -------------------------------------------------------
 
-    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
-        """The storage view: the nested mapping of the raw columns, or one node's.
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The storage view: the nested mapping of the raw columns.
 
         Each column is its field's raw batch form, the stacked array for an
-        array field and the frozen object array for any other field. With
-        *path*, a field gives its column and an interior node the nested mapping
-        of the columns beneath it, as a record's ``raw(path)`` does.
+        array field and the frozen object array for any other field. One field's
+        column is its view's raw form, ``batch[path].raw``.
+        """
+        return _unflatten_paths(self._columns)
+
+    def _raw_at(self, path: str | tuple[str, ...]) -> Any:
+        """The raw form of the node at *path*, without building its view.
 
         Parameters
         ----------
-        path : str or tuple of str, optional
-            The node's path, as a ``/``-joined string or a tuple of names. ``None``
-            selects the whole batch.
+        path : str or tuple of str
+            The node's path, as a ``/``-joined string or a tuple of names.
 
         Returns
         -------
         Any
-            A column, or a nested ``dict`` of columns.
+            A field's column, or the nested ``dict`` of the columns beneath an
+            interior node.
 
         Raises
         ------
         KeyError
             If *path* addresses no node of the batch's records.
         """
-        if path is None:
-            return _unflatten_paths(self._columns)
         key = _PATH_SEP.join(path) if isinstance(path, tuple) else path
         if key in self._columns:
             return self._columns[key]
@@ -995,7 +998,7 @@ def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
     if element_spec is not None and not isinstance(element_spec, NumericRecordSpec):
         return False
     return all(
-        _is_numeric_field_value(column.raw() if isinstance(column, Batch) else column)
+        _is_numeric_field_value(column.raw if isinstance(column, Batch) else column)
         for column in fields.values()
     )
 
@@ -1045,10 +1048,10 @@ def _stacked_batches(entries: np.ndarray, event: BatchSpec) -> Any:
     batches = list(entries.flat)
     if isinstance(element, RecordSpec):
         return {
-            path: _stacked_leaf([batch.raw(path) for batch in batches], shape, element[path])
+            path: _stacked_leaf([batch._raw_at(path) for batch in batches], shape, element[path])
             for path in element
         }
-    values = _stacked_leaf([batch.raw() for batch in batches], shape, element)
+    values = _stacked_leaf([batch.raw for batch in batches], shape, element)
     return _frozen_object_column(values) if _is_object_array(values) else values
 
 
@@ -1323,7 +1326,7 @@ def _shared_opaque_types(spec: RecordSpec, records: list[Record]) -> RecordSpec:
     for key in spec:
         field = spec[key]
         if isinstance(field, OpaqueSpec) and key in records[0]:
-            shared = _opaque_spec_of(record.raw(key) for record in records if key in record)
+            shared = _opaque_spec_of(record._raw_at(key) for record in records if key in record)
             field = OpaqueSpec(type=shared.type, meta=field.meta)
         fields[key] = field
     return spec if fields == dict(spec.items()) else RecordSpec(fields)
@@ -1827,7 +1830,7 @@ class _MappedBatchColumns:
         """
         return cls(
             record._label,
-            {path: record.raw(path) for path in record.event_template},
+            {path: record._raw_at(path) for path in record.event_template},
             element_spec=record.spec,
             level_names=(),
             axis_groups=(),

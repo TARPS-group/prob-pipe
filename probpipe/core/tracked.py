@@ -256,7 +256,7 @@ class _TrackedTermMeta(_ProtocolMeta):
     ``ABCMeta``) so ``TrackedTerm`` hosts can mix in ``@runtime_checkable``
     protocols (``SupportsSampling``, ``SupportsLogProb``, …) without a
     metaclass conflict. ``_ProtocolMeta`` is itself an ``ABCMeta``
-    subclass, so an abstract method such as :meth:`TrackedTerm.raw` keeps a class
+    subclass, so an abstract member such as :attr:`TrackedTerm.raw` keeps a class
     that does not define it from being instantiated.
     """
 
@@ -321,7 +321,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     returns a new term. Construction assigns inside the window the metaclass
     opens, so a host's ``__init__`` is written normally.
 
-    :meth:`raw` is the one access to the representation, and it is abstract:
+    :attr:`raw` is the one access to the representation, and it is abstract:
     each kind defines it, as its section of the design states.
 
     Attributes
@@ -545,6 +545,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     # -- the representation --------------------------------------------------
 
+    @property
     @abstractmethod
     def raw(self) -> Any:
         """The term's representation, detached from the workflow.

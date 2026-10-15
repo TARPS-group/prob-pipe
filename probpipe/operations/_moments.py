@@ -480,7 +480,7 @@ def _empirical_of(call: BoundCall, draws: Any) -> EmpiricalDistribution:
         if isinstance(draws, (RecordBatch, Mapping)):
             raw = _raw_record(draws)
         else:
-            raw = jnp.asarray(draws.raw() if isinstance(draws, Batch) else draws)
+            raw = jnp.asarray(draws.raw if isinstance(draws, Batch) else draws)
         level = name
         while level in _flat_batch_spec(event).level_names:
             level += "_"
@@ -529,7 +529,7 @@ def _mc_mean(call: BoundCall, result: OutputSpec | None) -> Any:
     if _mixture_factory is None:
         raise RuntimeError("the mixture family is not installed; import probpipe")
     draws = _monte_carlo_draws(call, "mean")
-    stored = draws.raw() if isinstance(draws, Batch) else draws
+    stored = draws.raw if isinstance(draws, Batch) else draws
     laws = list(np.asarray(stored, dtype=object).reshape(-1))
     return _mixture_factory(laws, jnp.full(len(laws), 1.0 / len(laws)), label=_call_label(call))
 
@@ -1293,7 +1293,7 @@ class _PushforwardMean(_EvaluationRules):
         averaged = mean(law)
         steps = (_recorded_exactness(law), _recorded_exactness(averaged))
         exact = False if False in steps else (True if steps == (True, True) else None)
-        return RouteOutcome(averaged.raw(), exact)
+        return RouteOutcome(averaged.raw, exact)
 
 
 def _recorded_exactness(term: Any) -> bool | None:
@@ -1368,7 +1368,7 @@ def _integrand(call: BoundCall) -> Callable[[Any], Any]:
     fixed = dict(call.operands.get("fixed_args") or {})
     parameter = _bound_parameter(f, fixed, subject="expectation")
     operation = isinstance(f, Operation)
-    body = f if operation else f.raw()
+    body = f if operation else f.raw
     constants = {**({} if operation else f._bind), **fixed}
     if constants:
         constants = dict(presented_arguments(f._signature_info, constants))
