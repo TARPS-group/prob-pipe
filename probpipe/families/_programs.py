@@ -19,6 +19,7 @@ inference-method registry.
 from __future__ import annotations
 
 import functools
+import importlib.metadata
 import inspect
 import json
 import re
@@ -26,7 +27,7 @@ import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Any, ClassVar, NamedTuple
 
 import jax
@@ -1022,6 +1023,53 @@ class StanModel(
 # PyMC programs
 # ---------------------------------------------------------------------------
 
+#: The oldest PyMC release ProbPipe works with, which is the floor of the
+#: ``pymc`` extra in ``pyproject.toml``. PyMC 6 is the first release that works
+#: with ArviZ 1.x, which ProbPipe requires.
+_PYMC_FLOOR = (6, 2)
+
+
+def _release(version: str) -> tuple[int, ...]:
+    """The first three numbers of the release *version*, such as ``(5, 28, 5)`` for ``"5.28.5"``."""
+    return tuple(int(number) for number in re.findall(r"\d+", version.split("+")[0])[:3])
+
+
+def _import_pymc() -> ModuleType:
+    """PyMC, imported after checking that its installed release is one ProbPipe works with.
+
+    Google Colab preinstalls PyMC 5, which an install of ``probpipe-core``
+    without the ``pymc`` extra leaves in place while it upgrades ArviZ to 1.x,
+    so PyMC 5 then fails on import with an error about ArviZ. The check names
+    the upgrade that fixes it.
+
+    Returns
+    -------
+    ModuleType
+        The ``pymc`` module.
+
+    Raises
+    ------
+    ImportError
+        If PyMC is not installed, or if its release is older than
+        :data:`_PYMC_FLOOR`.
+    """
+    try:
+        installed = importlib.metadata.version("pymc")
+    except importlib.metadata.PackageNotFoundError:
+        raise ImportError(
+            'PyMC is not installed. Install the pymc extra: pip install "probpipe-core[pymc]"'
+        ) from None
+    if _release(installed) < _PYMC_FLOOR:
+        floor = ".".join(str(number) for number in _PYMC_FLOOR)
+        raise ImportError(
+            f"ProbPipe needs PyMC {floor} or later, which works with ArviZ 1.x, but PyMC "
+            f'{installed} is installed. Upgrade it with pip install -U "pymc>={floor}", then '
+            f"restart the Python session"
+        )
+    import pymc
+
+    return pymc
+
 
 def _to_numpy(value: Any) -> Any:
     """*value* as a numpy array when it is array-like, for PyMC's tensor backend."""
@@ -1059,6 +1107,7 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     support ProbPipe declares, a bound that is not a constant, and a discrete
     variable leave the support undeclared.
     """
+    _import_pymc()
     from pymc.distributions import transforms
     from pymc.logprob import transforms as logprob
 
@@ -1206,6 +1255,7 @@ class _PyMCProgram:
 
     def log_density(self) -> Callable[..., Any]:
         """The compiled joint log-density of the free variables, in their constrained space."""
+        _import_pymc()
         import pytensor
         import pytensor.tensor as pt
         from pymc.logprob.basic import conditional_logp
@@ -1247,7 +1297,7 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
     One draw for ``sample_shape=()``; otherwise each field carries the sample
     axes before its shape. The key seeds PyMC's sampler.
     """
-    import pymc as pm
+    pm = _import_pymc()
 
     n = int(np.prod(sample_shape)) if sample_shape else 1
     seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
@@ -1268,6 +1318,7 @@ class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
     def __call__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
+        _import_pymc()
         label = _given_label(label, "PyMCModel")
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         if program.given:
@@ -1300,7 +1351,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     Raises
     ------
     ImportError
-        If ``pymc`` is not installed.
+        If PyMC is not installed, or if its release is older than 6.2.
     TypeError
         If *model_fn* cannot be built with its arguments' defaults.
     """
@@ -1330,12 +1381,6 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         return object.__new__(_capability_subclass(PyMCModel, claimed))
 
     def __init__(self, model_fn: Callable[..., Any], *, label: str | None = None) -> None:
-        try:
-            import pymc  # noqa: F401
-        except ImportError as e:
-            raise ImportError(
-                "pymc is required for PyMCModel. Install it with: pip install pymc"
-            ) from e
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         super().__init__(
             OutputSpec(program.event_record(symbolic=False)),
@@ -1390,7 +1435,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         fixed = {name: _to_numpy(values[name]) for name in self._param_names if name in values}
         if not fixed:
             return model
-        import pymc as pm
+        pm = _import_pymc()
 
         return pm.observe(model, fixed)
 
