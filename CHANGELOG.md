@@ -247,15 +247,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `x + (-1.0)`. Replace a comparison of such a result's label with
   its law's label by one with the new label, or set a label with
   `with_label`.
-- **A score's component names the scored components.** `log_prob(d, x)` for a
-  law over `mu` declares its result under the component `log_prob(mu)`, and
-  for a law over `y` and `mu` under `log_prob(y, mu)`, where it was
-  `log_prob`. `unnormalized_log_prob`, `prob`, and `unnormalized_prob` follow,
-  as `prob(mu)`. The law of an operation lifted over a law, such as
-  `log_prob(prior, q)` for a law `q` of values, declares the component that one
-  point's result declares, as `log_prob(mu)`, where it took the label of the
-  scored law. Replace a lookup of the component `log_prob` by one of
-  `log_prob(mu)`.
+- **The law of a lifted score declares the score's component.** The law of
+  an operation lifted over a law, such as `log_prob(prior, q)` for a law `q`
+  of values, declares the component that one point's result declares, which
+  is the operation's name, as `log_prob`, where it took the label of the
+  scored law. Replace a lookup of the scored law's label by one of
+  `log_prob`.
 - **The atoms of a posterior are labeled by its components.** The atoms of the
   empirical law that `condition_on` or an inference method returns are labeled
   by the law's components, as `beta` or `(K, r, phi)`, where they were labeled
@@ -478,16 +475,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside `workflow_run(seed=0)`, and
   `learn_amortized_posterior(prior, simulator, random_seed=0)` with
   `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
-- **A result names each component by what its value means.**
-  - `mean`, `variance`, and `quantile` name each component of the law's event
-    by their call. The mean of a law over `mu` and `tau` is a record whose
-    fields are `mean(mu)` and `mean(tau)`, and the mean of a law over `theta` is
-    declared under `mean(theta)`: replace `mean(posterior)["mu"]` with
-    `mean(posterior)["mean(mu)"]`. A plug-in call such as
-    `predict(**mean(posterior))` names its keywords instead.
-  - `cov` is declared under the call on every component of the event, as
-    `cov(mu, tau)`, and `expectation(d, f)` under `mean(c)` for each component
-    `c` of `f`'s output declaration.
+- **A result's component names address its parts.** A summary taken
+  coordinate by coordinate takes the law's event components and paths, and a
+  value that no one event component indexes, such as a score or a covariance,
+  takes the operation's name.
+  - `quantile` at several levels returns a batch on the level `quantile`
+    under the event's components, where the batch was declared under the
+    single component `quantile`.
+  - `expectation(d, f)` is declared under the components of `f`'s output
+    declaration, where it was declared under `expectation`.
   - A batch of draws is declared under the event's components, where it was
     declared under `sample`.
   - `OutputSpec` takes a positional `DistributionSpec`,
@@ -498,9 +494,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     each was declared under the operation's name. `factor`, `joint`,
     `random_log_prob`, `random_unnormalized_log_prob`, and the Bayes stage of
     `condition_on` declare none, and the returned law carries its own.
-  - A repr writes names that are no Python identifiers, such as `mean(mu)`,
+  - A repr writes names that are no Python identifiers, such as `my model`,
     in order inside one `**{...}` mapping, as in
-    `OutputSpec(**{'mean(theta)': NumericArraySpec(shape=())})`.
+    `OutputSpec(**{'my model': NumericArraySpec(shape=())})`.
 - **`predictive_check`, `score_posterior`, and `add_ppc` take their randomness
   from the workflow scope.** The three drop their `key` parameter, and a `key=`
   keyword raises `TypeError`. A call claims one workflow-owned random event of
@@ -1505,7 +1501,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
-  is a record with a field per component, as `standard_deviation(mu)`, so
+  is a record with a field per component, as `mu` and `tau`, so
   `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
   `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
   function's is its pointwise standard deviation function, and the result is
