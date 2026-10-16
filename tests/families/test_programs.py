@@ -598,8 +598,8 @@ class TestThePyMCRelease:
         self._unimportable(monkeypatch, None)
         with pytest.raises(
             ImportError,
-            match=r"^PyMC is not installed, and PyMCModel requires it\. Install it with "
-            r'pip install "pymc>=6\.2"\.$',
+            match=r"^PyMC is not installed, and PyMCModel requires PyMC 6\.2 or later\. Install it "
+            r'with pip install "pymc>=6\.2"\.$',
         ):
             _programs._import_pymc("PyMCModel")
 

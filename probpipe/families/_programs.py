@@ -1092,18 +1092,18 @@ def _import_pymc(api: str) -> ModuleType:
             installed = importlib.metadata.version("pymc")
         except importlib.metadata.PackageNotFoundError:
             raise ImportError(
-                f"PyMC is not installed, and {api} requires it. Install it with "
-                f'pip install "pymc>={floor}".'
+                f"PyMC is not installed, and {api} requires PyMC {floor} or later. Install it "
+                f'with pip install "pymc>={floor}".'
             ) from error
         if not _older_than_floor(installed):
             raise
-        raise ImportError(_too_old(api, installed, floor)) from error
+        raise ImportError(_pymc_too_old(api, installed, floor)) from error
     if _older_than_floor(pymc.__version__):
-        raise ImportError(_too_old(api, pymc.__version__, floor))
+        raise ImportError(_pymc_too_old(api, pymc.__version__, floor))
     return pymc
 
 
-def _too_old(api: str, installed: str, floor: str) -> str:
+def _pymc_too_old(api: str, installed: str, floor: str) -> str:
     """The message for a PyMC release *installed* older than *floor*, which *api* requires."""
     return (
         f"PyMC {installed} is installed, but {api} requires PyMC {floor} or later. Upgrade it "
