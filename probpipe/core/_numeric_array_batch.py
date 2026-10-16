@@ -32,7 +32,7 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
-from ._repr import format_entries
+from ._repr import VALUE_INDENT, format_entries
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
@@ -235,14 +235,15 @@ class NumericArrayBatch(Batch[NumericArray]):
     def __repr__(self) -> str:
         """The summary of the label, the levels, and the element spec, then the stored entries.
 
-        NumPy's printing formats the stored array, batch axes leading, so
+        Each line of the entries is indented by two spaces, as a record's lines
+        are. NumPy's printing formats the stored array, batch axes leading, so
         ``np.set_printoptions`` sets the precision and shortens a large batch
         with ``...``, and only the entries shown are read from the device.
         Inside a JAX trace, where the store is a tracer, the repr is the summary
         alone.
         """
         header = self._repr_header()
-        values = format_entries(self._values)
+        values = format_entries(self._values, VALUE_INDENT)
         return header if values is None else f"{header}\n{values}"
 
     def __str__(self) -> str:

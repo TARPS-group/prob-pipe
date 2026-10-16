@@ -36,7 +36,7 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
-from ._repr import format_rows, public_class_name, rows_html, term_repr
+from ._repr import VALUE_INDENT, format_rows, public_class_name, rows_html, term_repr
 from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
@@ -426,7 +426,7 @@ class NumericRecord(Record, Numeric):
         values are tracers, and for a record with no fields, the repr is the
         summary of the label and the field paths.
         """
-        rows = format_rows(self._value_rows(), indent="  ")
+        rows = format_rows(self._value_rows(), indent=VALUE_INDENT)
         if not rows:
             return self._repr_header()
         head = term_repr(public_class_name(type(self)), self._displayed_label())

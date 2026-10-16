@@ -40,7 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
-from ._repr import format_levels, format_rows, public_class_name, rows_html, term_repr
+from ._repr import VALUE_INDENT, format_levels, format_rows, public_class_name, rows_html, term_repr
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
@@ -169,7 +169,7 @@ class NumericRecordBatch(RecordBatch):
         device. Inside a JAX trace, where the columns are tracers, the repr is
         the summary of the label, the levels, and the field paths.
         """
-        rows = format_rows(self._columns.items(), indent="  ")
+        rows = format_rows(self._columns.items(), indent=VALUE_INDENT)
         return f"{self._display_head()}\n{rows}" if rows else self._repr_header()
 
     def __str__(self) -> str:

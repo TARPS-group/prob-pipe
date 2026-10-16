@@ -16,13 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```text
   >>> mean(Normal("mu", 0.25, 1.0, label="prior"))
   NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)
-  0.25
+    0.25
   ```
 
   NumPy's printing formats the values, so `np.set_printoptions` sets the
   precision and shortens a large array with `...`, and only the entries shown
-  are read from the device. A record shows one line for each field path, such
-  as `population/mu`, and its summary leaves out `fields=`. `str()` of a record
+  are read from the device. The values are indented by two spaces under the
+  summary. A record shows one line for each field path, such as
+  `population/mu`, and its summary leaves out `fields=`. `str()` of a record
   or a batch gave its repr before. In a notebook a record and a batch of records
   display as a two-column table of paths and values. Inside `jax.jit`, and
   inside another term's repr such as a law's atoms, a term shows its summary
