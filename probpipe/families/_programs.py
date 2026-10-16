@@ -1024,23 +1024,47 @@ class StanModel(
 # ---------------------------------------------------------------------------
 
 #: The oldest PyMC release ProbPipe works with, which is the floor of the
-#: ``pymc`` extra in ``pyproject.toml``. PyMC 6 is the first release that works
-#: with ArviZ 1.x, which ProbPipe requires.
+#: ``pymc`` extra in ``pyproject.toml``. A test keeps the two equal.
 _PYMC_FLOOR = (6, 2)
 
+#: A suffix that orders a release before the release it names, as ``rc1`` in
+#: ``6.2rc1`` or ``.dev0`` in ``6.2.dev0``.
+_PRE_RELEASE = re.compile(r"[-_.]?(a|alpha|b|beta|c|rc|pre|preview|dev)", re.IGNORECASE)
 
-def _release(version: str) -> tuple[int, ...]:
-    """The first three numbers of the release *version*, such as ``(5, 28, 5)`` for ``"5.28.5"``."""
-    return tuple(int(number) for number in re.findall(r"\d+", version.split("+")[0])[:3])
+
+def _release(version: str) -> tuple[tuple[int, ...], bool]:
+    """The release numbers of *version*, and whether it is a final release.
+
+    The numbers are the leading release segment without its trailing zeros, so
+    ``"6.2.0"`` reads as ``(6, 2)``. A pre-release or a development release,
+    such as ``"6.2rc1"``, is not final. A version without a leading release
+    segment reads as ``((), False)``.
+    """
+    match = re.match(r"(\d+(?:\.\d+)*)(.*)", version)
+    if match is None:
+        return (), False
+    numbers = [int(number) for number in match.group(1).split(".")]
+    while numbers and numbers[-1] == 0:
+        numbers.pop()
+    return tuple(numbers), _PRE_RELEASE.match(match.group(2)) is None
 
 
-def _import_pymc() -> ModuleType:
-    """PyMC, imported after checking that its installed release is one ProbPipe works with.
+def _older_than_floor(version: str) -> bool:
+    """Whether *version* orders before :data:`_PYMC_FLOOR`, as pip orders releases.
 
-    Google Colab preinstalls PyMC 5, which an install of ``probpipe-core``
-    without the ``pymc`` extra leaves in place while it upgrades ArviZ to 1.x,
-    so PyMC 5 then fails on import with an error about ArviZ. The check names
-    the upgrade that fixes it.
+    A pre-release of the floor, such as ``"6.2rc1"``, orders before it.
+    """
+    numbers, final = _release(version)
+    return numbers < _PYMC_FLOOR or (numbers == _PYMC_FLOOR and not final)
+
+
+def _import_pymc(api: str) -> ModuleType:
+    """The ``pymc`` module, whose release is no older than :data:`_PYMC_FLOOR`.
+
+    Parameters
+    ----------
+    api : str
+        What requires PyMC, which the error names, such as ``"PyMCModel"``.
 
     Returns
     -------
@@ -1050,25 +1074,41 @@ def _import_pymc() -> ModuleType:
     Raises
     ------
     ImportError
-        If PyMC is not installed, or if its release is older than
-        :data:`_PYMC_FLOOR`.
-    """
-    try:
-        installed = importlib.metadata.version("pymc")
-    except importlib.metadata.PackageNotFoundError:
-        raise ImportError(
-            'PyMC is not installed. Install the pymc extra: pip install "probpipe-core[pymc]"'
-        ) from None
-    if _release(installed) < _PYMC_FLOOR:
-        floor = ".".join(str(number) for number in _PYMC_FLOOR)
-        raise ImportError(
-            f"ProbPipe needs PyMC {floor} or later, which works with ArviZ 1.x, but PyMC "
-            f'{installed} is installed. Upgrade it with pip install -U "pymc>={floor}", then '
-            f"restart the Python session"
-        )
-    import pymc
+        If PyMC is not installed, or if the installed release is older than
+        :data:`_PYMC_FLOOR`. Another failure to import PyMC propagates as it is.
 
+    Notes
+    -----
+    Google Colab preinstalls PyMC 5. An install of ``probpipe-core`` without the
+    ``pymc`` extra keeps it while it upgrades ArviZ to 1.x, so PyMC 5 then fails
+    on import with an error about ArviZ, and this error names the upgrade in its
+    place.
+    """
+    floor = ".".join(str(number) for number in _PYMC_FLOOR)
+    try:
+        import pymc
+    except ImportError as error:
+        try:
+            installed = importlib.metadata.version("pymc")
+        except importlib.metadata.PackageNotFoundError:
+            raise ImportError(
+                f"PyMC is not installed, and {api} requires it. Install it with "
+                f'pip install "pymc>={floor}".'
+            ) from error
+        if not _older_than_floor(installed):
+            raise
+        raise ImportError(_too_old(api, installed, floor)) from error
+    if _older_than_floor(pymc.__version__):
+        raise ImportError(_too_old(api, pymc.__version__, floor))
     return pymc
+
+
+def _too_old(api: str, installed: str, floor: str) -> str:
+    """The message for a PyMC release *installed* older than *floor*, which *api* requires."""
+    return (
+        f"PyMC {installed} is installed, but {api} requires PyMC {floor} or later. Upgrade it "
+        f'with pip install -U "pymc>={floor}", then restart the Python session.'
+    )
 
 
 def _to_numpy(value: Any) -> Any:
@@ -1107,7 +1147,6 @@ def _pymc_support(model: Any, rv: Any) -> Constraint | None:
     support ProbPipe declares, a bound that is not a constant, and a discrete
     variable leave the support undeclared.
     """
-    _import_pymc()
     from pymc.distributions import transforms
     from pymc.logprob import transforms as logprob
 
@@ -1255,7 +1294,6 @@ class _PyMCProgram:
 
     def log_density(self) -> Callable[..., Any]:
         """The compiled joint log-density of the free variables, in their constrained space."""
-        _import_pymc()
         import pytensor
         import pytensor.tensor as pt
         from pymc.logprob.basic import conditional_logp
@@ -1297,7 +1335,7 @@ def _pymc_sample(self: PyMCModel, key: Any, sample_shape: tuple[int, ...] = ()) 
     One draw for ``sample_shape=()``; otherwise each field carries the sample
     axes before its shape. The key seeds PyMC's sampler.
     """
-    pm = _import_pymc()
+    import pymc as pm
 
     n = int(np.prod(sample_shape)) if sample_shape else 1
     seed = int(jax.random.randint(key, (), 0, 2**31 - 1))
@@ -1318,7 +1356,7 @@ class _PyMCModelMeta(type(Distribution)):
     """The metaclass of ``PyMCModel``: a function with a given slot defines a kernel."""
 
     def __call__(cls, model_fn: Callable[..., Any], *, label: str | None = None) -> Any:
-        _import_pymc()
+        _import_pymc("PyMCModel")
         label = _given_label(label, "PyMCModel")
         program = model_fn if isinstance(model_fn, _PyMCProgram) else _PyMCProgram(model_fn)
         if program.given:
@@ -1351,7 +1389,8 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
     Raises
     ------
     ImportError
-        If PyMC is not installed, or if its release is older than 6.2.
+        If PyMC is not installed, or if its release is older than the floor of
+        the ``pymc`` extra.
     TypeError
         If *model_fn* cannot be built with its arguments' defaults.
     """
@@ -1435,7 +1474,7 @@ class PyMCModel(Distribution, metaclass=_PyMCModelMeta):
         fixed = {name: _to_numpy(values[name]) for name in self._param_names if name in values}
         if not fixed:
             return model
-        pm = _import_pymc()
+        import pymc as pm
 
         return pm.observe(model, fixed)
 
