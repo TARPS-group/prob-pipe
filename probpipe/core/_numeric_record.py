@@ -37,7 +37,7 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
-from ._repr import format_rows, public_class_name, rows_html, term_repr
+from ._repr import VALUE_INDENT, format_rows, public_class_name, rows_html, term_repr
 from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
@@ -431,15 +431,17 @@ class NumericRecord(Record, Numeric):
         A record whose top-level fields are all records over the same paths, with
         the same shape at each path, displays as a table under its label instead:
         one row for each path, or for each element of an array path, as
-        ``y[0]``, and one column for each top-level field. The line below the
+        ``y[0]``, and one column for each top-level field. The table's lines are
+        indented by two spaces, as a record's lines are. The line below the
         table states how each column was computed, as its provenance records it:
         ``exact``, ``Monte Carlo`` with the number of draws, or ``approximate``.
         """
         table = record_table(self)
         if table is not None:
             footer = [table.footer] if table.footer else []
-            return "\n".join([self._displayed_label(), *table.lines(), *footer])
-        rows = format_rows(self._value_rows(), indent="  ")
+            lines = table.lines(VALUE_INDENT)
+            return "\n".join([self._displayed_label(), *lines, *footer])
+        rows = format_rows(self._value_rows(), indent=VALUE_INDENT)
         if not rows:
             return self._repr_header()
         head = term_repr(public_class_name(type(self)), self._displayed_label())

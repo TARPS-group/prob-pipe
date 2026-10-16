@@ -40,7 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
-from ._repr import format_levels, format_rows, public_class_name, rows_html, term_repr
+from ._repr import VALUE_INDENT, format_levels, format_rows, public_class_name, rows_html, term_repr
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from ._table import batch_tables_html, batch_tables_text, record_table_shape
@@ -173,13 +173,14 @@ class NumericRecordBatch(RecordBatch):
         A batch whose elements display as tables, as a record's repr states,
         shows one table for each element under a title that gives its levels, as
         ``law=0``, shortened past NumPy's ``threshold`` to ``edgeitems`` elements
-        at each end.
+        at each end. Each title is indented by two spaces and each table by
+        four.
         """
         head = self._display_head()
         tables = batch_tables_text(self, head) if record_table_shape(self.element_spec) else None
         if tables is not None:
             return tables
-        rows = format_rows(self._columns.items(), indent="  ")
+        rows = format_rows(self._columns.items(), indent=VALUE_INDENT)
         return f"{head}\n{rows}" if rows else self._repr_header()
 
     def __str__(self) -> str:

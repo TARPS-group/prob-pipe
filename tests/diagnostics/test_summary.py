@@ -136,7 +136,7 @@ class TestTheDefaultColumns:
         summary = summarize(law)
 
         np.testing.assert_allclose(np.asarray(summary["sd/y"]), [1.0, 2.0, 3.0], **TOLERANCE)
-        rows = [line.split("  ")[0] for line in repr(summary).splitlines()[2:-1]]
+        rows = [line.strip().split("  ")[0] for line in repr(summary).splitlines()[2:-1]]
         assert rows == ["y[0]", "y[1]", "y[2]"]
 
     def test_a_nested_law_keeps_its_paths(self):
@@ -149,7 +149,7 @@ class TestTheDefaultColumns:
 
         assert summary.at_path("mean").keys() == ("population/mu", "population/tau", "x")
         np.testing.assert_allclose(float(summary["sd/population/tau"]), np.sqrt(2.0), **TOLERANCE)
-        rows = [line.split("  ")[0] for line in repr(summary).splitlines()[2:-1]]
+        rows = [line.strip().split("  ")[0] for line in repr(summary).splitlines()[2:-1]]
         assert rows == ["population/mu", "population/tau", "x"]
 
 
@@ -373,7 +373,7 @@ class TestABatchOfLaws:
                     np.asarray(element[path].raw()),
                     **TOLERANCE,
                 )
-        assert repr(summary).splitlines()[1] == "law=0"
+        assert repr(summary).splitlines()[1] == "  law=0"
 
 
 class TestATableForPandas:

@@ -31,8 +31,19 @@ class TestARecordOfRecordsIsATable:
         record = Record({"mean": mean(model), "sd": standard_deviation(model)}, label="moments")
 
         assert repr(record) == (
-            "moments\n     mean         sd\nmu     0.  2.\ntau    2.  1.4142135\nmean, sd: exact."
+            "moments\n"
+            "       mean         sd\n"
+            "  mu     0.  2.\n"
+            "  tau    2.  1.4142135\n"
+            "mean, sd: exact."
         )
+
+    def test_the_tables_lines_are_indented_as_a_records_lines_are(self, model):
+        table = Record({"mean": mean(model)}, label="moments")
+        lines = Record({"mu": mean(model["mu"])}, label="lines")
+
+        assert all(line.startswith("  ") for line in repr(table).splitlines()[1:-1])
+        assert repr(lines).splitlines()[1].startswith("  mu")
 
     def test_str_is_the_table_without_its_label_and_footer(self, model):
         record = Record({"mean": mean(model), "sd": standard_deviation(model)}, label="moments")
@@ -117,7 +128,7 @@ class TestTheFooterReadsEachColumnsProvenance:
     def test_columns_without_provenance_give_no_footer(self):
         record = Record({"a": {"x": 1.0}, "b": {"x": 2.0}}, label="r")
 
-        assert repr(record) == "r\n    a   b\nx  1.  2."
+        assert repr(record) == "r\n      a   b\n  x  1.  2."
 
     def test_a_monte_carlo_column_states_its_draws(self):
         law = Normal("mu", 0.0, 2.0) * Poisson("count", 4.0)
@@ -152,12 +163,12 @@ class TestABatchOfTablesShowsATablePerElement:
 
         assert repr(batch) == (
             "NumericRecordBatch('b', levels={'law': 2})\n"
-            "law=0\n"
-            "    m   s\n"
-            "x  0.  2.\n"
-            "law=1\n"
-            "    m   s\n"
-            "x  1.  3."
+            "  law=0\n"
+            "        m   s\n"
+            "    x  0.  2.\n"
+            "  law=1\n"
+            "        m   s\n"
+            "    x  1.  3."
         )
 
     def test_str_is_the_tables_without_the_head(self):
@@ -174,7 +185,8 @@ class TestABatchOfTablesShowsATablePerElement:
 
         with np.printoptions(threshold=4, edgeitems=1):
             lines = repr(batch).splitlines()
-        titles = [line for line in lines if line.startswith("chain=") or line == "..."]
+        stripped = [line.strip() for line in lines]
+        titles = [line for line in stripped if line.startswith("chain=") or line == "..."]
 
         assert titles == ["chain=0, draw=0", "...", "chain=1, draw=2"]
 

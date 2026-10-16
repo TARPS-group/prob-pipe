@@ -85,13 +85,13 @@ def _two_fields() -> NumericRecordBatch:
 class TestValuesAndBatches:
     def test_an_array_reads_by_its_label_shape_and_dtype(self):
         assert repr(NumericArray(jnp.zeros(3), label="x")) == (
-            "NumericArray('x', shape=(3,), dtype=float32)\n[0. 0. 0.]"
+            "NumericArray('x', shape=(3,), dtype=float32)\n  [0. 0. 0.]"
         )
 
     def test_a_declared_support_is_shown(self):
         spec = NumericArraySpec((), jnp.float32, positive)
         assert repr(NumericArray(jnp.asarray(1.5), spec=spec, label="tau")) == (
-            "NumericArray('tau', shape=(), dtype=float32, support=positive)\n1.5"
+            "NumericArray('tau', shape=(), dtype=float32, support=positive)\n  1.5"
         )
 
     def test_an_opaque_value_reads_by_its_type(self):
@@ -143,14 +143,22 @@ class TestANumericTermShowsItsValues:
         m = mean(Normal("mu", 0.25, 1.0, label="prior"))
 
         assert repr(m) == (
-            "NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)\n0.25"
+            "NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)\n  0.25"
         )
         assert str(m) == "0.25"
+
+    def test_each_line_of_an_array_is_indented_as_a_records_lines_are(self):
+        m = NumericArray(jnp.arange(6.0).reshape(2, 3), label="m")
+
+        assert repr(m) == (
+            "NumericArray('m', shape=(2, 3), dtype=float32)\n  [[0. 1. 2.]\n   [3. 4. 5.]]"
+        )
+        assert str(m) == "[[0. 1. 2.]\n [3. 4. 5.]]"
 
     def test_a_vector_shows_its_entries(self):
         v = NumericArray(jnp.array([1.0, 2.5, -3.0]), label="v")
 
-        assert repr(v) == "NumericArray('v', shape=(3,), dtype=float32)\n[ 1.   2.5 -3. ]"
+        assert repr(v) == "NumericArray('v', shape=(3,), dtype=float32)\n  [ 1.   2.5 -3. ]"
 
     def test_numpys_print_options_set_the_precision_and_the_shortening(self):
         third = NumericArray(jnp.asarray(1.0 / 3.0), label="third")
@@ -174,7 +182,8 @@ class TestANumericTermShowsItsValues:
         text = repr(NumericArray(jnp.asarray(values), label="x"))
 
         assert text == (
-            "NumericArray('x', shape=(400, 50), dtype=float32)\n" + np.array2string(values)
+            "NumericArray('x', shape=(400, 50), dtype=float32)\n  "
+            + np.array2string(values, prefix="  ")
         )
         assert "..." in text
         # Three entries at each end of both axes, and one more that NumPy shows as "...".
@@ -220,8 +229,8 @@ class TestANumericTermShowsItsValues:
             "    levels={'chain': 2, 'draw': 3},\n"
             "    element_spec=NumericArraySpec(shape=(), dtype=float32),\n"
             ")\n"
-            "[[0. 1. 2.]\n"
-            " [3. 4. 5.]]"
+            "  [[0. 1. 2.]\n"
+            "   [3. 4. 5.]]"
         )
         assert str(batch) == "[[0. 1. 2.]\n [3. 4. 5.]]"
 

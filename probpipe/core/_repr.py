@@ -42,6 +42,7 @@ from ._array_backend import _event_shape_of, _take_at, _to_numpy_array
 
 __all__ = [
     "ELLIPSIS",
+    "VALUE_INDENT",
     "WIDTH",
     "call_repr",
     "format_components",
@@ -270,6 +271,9 @@ def format_value(value: Any) -> str:
 #: The space between a path and its value on a line of a record's values.
 _GAP = "   "
 
+#: The indent of the values that a numeric term's repr shows below its summary.
+VALUE_INDENT = "  "
+
 
 def _shown_entries(value: Any) -> tuple[np.ndarray, bool]:
     """The entries of *value* that NumPy's printing shows, on the host, and whether it shortens them.
@@ -328,24 +332,29 @@ def _row_text(value: Any, column: int) -> str | None:
     return f"{entries}{_GAP}shape={tuple(_event_shape_of(value))}" if shortened else entries
 
 
-def format_entries(value: Any) -> str | None:
-    """The entries of the numeric array *value* as NumPy prints them.
+def format_entries(value: Any, indent: str = "") -> str | None:
+    """The entries of the numeric array *value* as NumPy prints them, each line indented.
 
     NumPy's print options set the precision, the line width, and the size past
-    which an array is shortened with ``...``.
+    which an array is shortened with ``...``. Every line starts with *indent*,
+    so the lines of a value that NumPy prints over several lines stay aligned,
+    and the line width counts the indent.
 
     Parameters
     ----------
     value : array-like
         A numeric array in any registered array backend.
+    indent : str, optional
+        The text each line starts with, such as :data:`VALUE_INDENT` under a
+        repr's summary.
 
     Returns
     -------
     str or None
         The entries, or ``None`` when they cannot be read, as for a tracer.
     """
-    text = _entries_text(value, 0)
-    return None if text is None else text[0]
+    text = _entries_text(value, len(indent))
+    return None if text is None else indent + text[0]
 
 
 def format_rows(rows: Iterable[tuple[str, Any]], indent: str = "") -> str | None:

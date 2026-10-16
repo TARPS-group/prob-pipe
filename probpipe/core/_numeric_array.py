@@ -24,7 +24,7 @@ from ._array_backend import (
 )
 from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
-from ._repr import BINARY_SYMBOLS, format_dtype, format_entries, term_repr
+from ._repr import BINARY_SYMBOLS, VALUE_INDENT, format_dtype, format_entries, term_repr
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import (
@@ -114,7 +114,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     (3,)
     >>> value + 1
     NumericArray('draw + 1', shape=(3,), dtype=float32)
-    [1. 2. 3.]
+      [1. 2. 3.]
     """
 
     __slots__ = (
@@ -330,13 +330,14 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
     def __repr__(self) -> str:
         """A summary of the label, the shape, the dtype, and any support, then the entries below it.
 
-        NumPy's printing formats the entries, so ``np.set_printoptions`` sets
+        Each line of the entries is indented by two spaces, as a record's lines
+        are. NumPy's printing formats the entries, so ``np.set_printoptions`` sets
         their precision and shortens a large array with ``...``, and only the
         entries shown are read from the device. Inside a JAX trace, where the
         value is a tracer, the repr is the summary alone.
         """
         header = self._repr_header()
-        values = format_entries(self._value)
+        values = format_entries(self._value, VALUE_INDENT)
         return header if values is None else f"{header}\n{values}"
 
     def _repr_header(self) -> str:

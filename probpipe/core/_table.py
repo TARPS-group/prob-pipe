@@ -31,6 +31,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ._array_backend import _event_shape_of, _to_numpy_array
+from ._repr import VALUE_INDENT
 from .tracked import TrackedTerm
 
 __all__ = [
@@ -75,8 +76,19 @@ class RecordTable:
     cells: tuple[tuple[str, ...], ...]
     footer: str
 
-    def lines(self) -> list[str]:
-        """The header line of column names and one line for each row, aligned."""
+    def lines(self, indent: str = "") -> list[str]:
+        """The header line of column names and one line for each row, aligned and indented.
+
+        Parameters
+        ----------
+        indent : str, optional
+            The text each line starts with.
+
+        Returns
+        -------
+        list of str
+            The lines, without the footer.
+        """
         label_width = max((len(row) for row in self.rows), default=0)
         widths = [
             max(len(name), *(len(cell) for cell in column))
@@ -85,13 +97,13 @@ class RecordTable:
         header = " " * label_width + "".join(
             f"{_GAP}{name:>{width}}" for name, width in zip(self.columns, widths, strict=True)
         )
-        lines = [header.rstrip()]
+        lines = [indent + header.rstrip()]
         for index, row in enumerate(self.rows):
             entries = "".join(
                 f"{_GAP}{column[index]:>{width}}"
                 for column, width in zip(self.cells, widths, strict=True)
             )
-            lines.append(f"{row:<{label_width}}{entries}".rstrip())
+            lines.append(f"{indent}{row:<{label_width}}{entries}".rstrip())
         return lines
 
     def html(self) -> str:
@@ -348,8 +360,10 @@ def _element_titles(batch: Any) -> Iterable[tuple[tuple[int, ...] | None, str]]:
 def batch_tables_text(batch: Any, head: str | None) -> str | None:
     """A batch of records as one table for each element, under *head*, or ``None``.
 
-    Each element's table is titled by its levels. The result is ``None`` when the
-    elements do not display as tables or their entries cannot be read.
+    Each element's table is titled by its levels. Under *head* each title is
+    indented by two spaces and each table by four, and without one both start
+    at the margin. The result is ``None`` when the elements do not display as
+    tables or their entries cannot be read.
 
     Parameters
     ----------
@@ -364,15 +378,17 @@ def batch_tables_text(batch: Any, head: str | None) -> str | None:
         The lines of the display.
     """
     lines = [] if head is None else [head]
+    indent = "" if head is None else VALUE_INDENT
+    table_indent = "" if head is None else VALUE_INDENT * 2
     for index, title in _element_titles(batch):
         if index is None:
-            lines.append(title)
+            lines.append(indent + title)
             continue
         table = record_table(batch[index])
         if table is None:
             return None
-        lines.append(title)
-        lines.extend(table.lines())
+        lines.append(indent + title)
+        lines.extend(table.lines(table_indent))
     return "\n".join(lines)
 
 
