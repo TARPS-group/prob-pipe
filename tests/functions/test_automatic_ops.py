@@ -151,7 +151,7 @@ class TestAutomaticExpectation:
         dist = _RecordingNormal(calls)
 
         with workflow_run(seed=7):
-            result = expectation.using(n_broadcast_samples=32)(dist, lambda value: value)
+            result = expectation.using(num_samples=32)(dist, lambda value: value)
 
         assert jnp.asarray(result).shape == ()
         assert [(shape) for _key, shape in calls] == [(32,)]
@@ -163,7 +163,7 @@ class TestAutomaticExpectation:
             workflow_run(seed=7),
             pytest.raises((TypeError, ValueError)),
         ):
-            expectation.using(n_broadcast_samples=num_evaluations)(
+            expectation.using(num_samples=num_evaluations)(
                 Normal("x", loc=0.0, scale=1.0), lambda value: value
             )
 

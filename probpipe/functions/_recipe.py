@@ -13,7 +13,7 @@ from ._rng import RandomEventIdentity, encode_random_event
 
 _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
-_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
+_STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v2"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
 
@@ -113,7 +113,11 @@ def provenance_recipe_fields(
 def serialize_stochastic_plan(
     plan: _plan.StochasticPlan | None,
 ) -> dict[str, Any]:
-    """Serialize only canonical plan fields under the version-1 plan ABI."""
+    """Serialize only canonical plan fields under the version-2 plan ABI.
+
+    Version 2 records the lift's count as ``max_evaluations``, a field that
+    version 1 named ``n_broadcast_samples``.
+    """
     if plan is None:
         return {
             "kind": "direct_operation",
@@ -121,7 +125,7 @@ def serialize_stochastic_plan(
             "arg_refs": [],
             "source_groups": [],
             "logical_units": [],
-            "n_broadcast_samples": None,
+            "max_evaluations": None,
             "sample_shape": None,
             "exact_group_order": [],
             "exact_combination_order": [],
@@ -160,7 +164,7 @@ def serialize_stochastic_plan(
             }
             for unit in plan.logical_units
         ],
-        "n_broadcast_samples": plan.n_broadcast_samples,
+        "max_evaluations": plan.max_evaluations,
         "sample_shape": _json_value(plan.sample_shape),
         "exact_group_order": list(plan.exact_group_order),
         "exact_combination_order": _json_value(plan.exact_combination_order),

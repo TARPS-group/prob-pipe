@@ -303,7 +303,7 @@ class TrackedTerm(ABC):
 class Provenance:
     operation: str                       # the operation that produced the object
     parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
-    controls:  Mapping[str, Any]         # the resolved controls, and the derived key of each draw: sample count, selected method, ...
+    controls:  Mapping[str, Any]         # the resolved controls, and the derived key of each draw: the counts, selected method, ...
     inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
 
 class ParentInfo:

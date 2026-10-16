@@ -54,7 +54,7 @@ def _lifted_draw(seed: int = 7):
         replayable_identity,
         label="replayable_identity",
         dispatch="sequential",
-        n_broadcast_samples=5,
+        max_evaluations=5,
         output_spec=OutputSpec(replayable_identity=None),
     )
     with workflow_run(seed=seed):
@@ -226,7 +226,7 @@ class TestReplayScope:
 
     def test_caught_failed_root_is_rejected_when_scope_exits(self):
         original = _draw()
-        changed = Function(replayable_affine, label="replayable_affine", n_broadcast_samples=5)
+        changed = Function(replayable_affine, label="replayable_affine", max_evaluations=5)
 
         with (
             pytest.raises(ReplayCompatibilityError, match="did not complete"),
@@ -292,6 +292,47 @@ class TestReplayAdmission:
             replay_run(Provenance.from_dict(payload)),
         ):
             raise AssertionError("An unknown callable ABI was admitted")
+
+    def test_a_version_one_plan_that_records_n_broadcast_samples_is_refused_by_its_schema(self):
+        """The plan of version 2 records the lift's count as ``max_evaluations``."""
+        payload = _lifted_draw().provenance.to_dict()
+        plan = payload["controls"]["replay"]["plan"]
+        assert plan["schema"] == "probpipe.stochastic_plan/v2"
+        plan["schema"] = "probpipe.stochastic_plan/v1"
+        fields = plan["canonical_fields"]
+        fields["n_broadcast_samples"] = fields.pop("max_evaluations")
+        with (
+            patch(
+                "probpipe.functions._context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=(
+                    r"cannot replay: this provenance has replay\.plan\.schema "
+                    r"'probpipe\.stochastic_plan/v1', but this ProbPipe version needs "
+                    r"'probpipe\.stochastic_plan/v2'\. Record the call again"
+                ),
+            ),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("a version-1 plan was admitted")
+
+    def test_a_version_two_plan_that_records_n_broadcast_samples_is_malformed(self):
+        payload = _lifted_draw().provenance.to_dict()
+        fields = payload["controls"]["replay"]["plan"]["canonical_fields"]
+        fields["n_broadcast_samples"] = fields.pop("max_evaluations")
+        with (
+            pytest.raises(
+                ReplayCompatibilityError,
+                match=(
+                    r"canonical_fields lacks fields \['max_evaluations'\] and has unexpected "
+                    r"fields \['n_broadcast_samples'\]"
+                ),
+            ),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("a malformed plan was admitted")
 
     def test_an_anchor_that_names_its_declarations_signature_and_templates_is_refused(self):
         payload = _draw().provenance.to_dict()
@@ -927,7 +968,7 @@ class TestReplayAdmission:
         unsupported = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
         with workflow_run(seed=3):
@@ -969,7 +1010,7 @@ class TestReplayPreflight:
     @pytest.mark.parametrize(
         ("path", "replacement"),
         [
-            (("n_broadcast_samples",), 5.0),
+            (("max_evaluations",), 5.0),
             (("logical_units", 0, "flat_index"), False),
         ],
         ids=["float", "bool"],
@@ -978,7 +1019,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1006,7 +1047,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1014,7 +1055,7 @@ class TestReplayPreflight:
         changed = Function(
             replayable_affine,
             label="replayable_affine",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_affine=None),
         )
 
@@ -1031,7 +1072,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1039,7 +1080,7 @@ class TestReplayPreflight:
         changed = Function(
             lambda value: value,
             label="function",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(function=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
@@ -1055,7 +1096,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1074,7 +1115,7 @@ class TestReplayPreflight:
         changed = Function(
             changed_identity,
             label="changed_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(changed_identity=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
@@ -1108,7 +1149,7 @@ class TestReplayPreflight:
             return Function(
                 replayable_identity,
                 label="replayable_identity",
-                n_broadcast_samples=5,
+                max_evaluations=5,
                 **options,
             )
 
@@ -1130,7 +1171,7 @@ class TestReplayPreflight:
             return Function(
                 replayable_identity,
                 label="replayable_identity",
-                n_broadcast_samples=5,
+                max_evaluations=5,
                 output_spec=OutputSpec(replayable_identity=None),
             )
 
@@ -1153,7 +1194,7 @@ class TestReplayPreflight:
             output_label="result",
             output_spec=declaration,
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="identity",
         )
         law = Normal("left", 0.0, 1.0) * Normal("right", 0.0, 1.0)
@@ -1170,7 +1211,7 @@ class TestReplayPreflight:
             output_label="result",
             output_spec=declarations[change],
             dispatch="sequential",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             label="identity",
         )
         with (
@@ -1186,7 +1227,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=4):
@@ -1194,14 +1235,14 @@ class TestReplayPreflight:
         changed = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             output_spec=OutputSpec(replayable_identity=None),
         )
         candidate = Normal("value", loc=0.0, scale=1.0)
 
         with (
             patch.object(type(candidate), "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="n_broadcast_samples is 6, recorded 5"),
+            pytest.raises(ReplayCompatibilityError, match="max_evaluations is 6, recorded 5"),
             replay_run(original.provenance),
         ):
             changed(value=candidate)
@@ -1233,14 +1274,14 @@ class TestReplayPreflight:
         original_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=9,
+            max_evaluations=9,
             dispatch="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=9,
+            max_evaluations=9,
             dispatch="thread",
             max_workers=3,
             output_spec=OutputSpec(replayable_identity=None),
@@ -1301,7 +1342,7 @@ class TestReplayPreflight:
         workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             output_spec=OutputSpec(replayable_identity=None),
         )
         with workflow_run(seed=8):
@@ -1361,14 +1402,14 @@ class TestReplayPreflight:
         original_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=7,
+            max_evaluations=7,
             dispatch="jax",
             output_spec=OutputSpec(replayable_identity=None),
         )
         replay_workflow = Function(
             replayable_identity,
             label="replayable_identity",
-            n_broadcast_samples=7,
+            max_evaluations=7,
             dispatch="sequential",
             output_spec=OutputSpec(replayable_identity=None),
         )
@@ -1592,7 +1633,7 @@ class TestReplayEventRegistry:
         workflow = Function(
             replayable_optional_nested,
             label="replayable_optional_nested",
-            n_broadcast_samples=5,
+            max_evaluations=5,
             dispatch="thread",
             max_workers=2,
             output_spec=OutputSpec(replayable_optional_nested=None),

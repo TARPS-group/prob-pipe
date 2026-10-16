@@ -18,10 +18,10 @@ from probpipe import (
     Normal,
     NumericArray,
     OutputSpec,
+    config,
     expectation,
     mean,
     pushforward,
-    set_default_n_broadcast_samples,
     variance,
     workflow_run,
 )
@@ -39,7 +39,7 @@ class TestExpectationReturnsArray:
 
     def test_return_dist_false_returns_array(self):
         d = Normal("x", loc=3.0, scale=1.0)
-        result = expectation.using(n_broadcast_samples=1000)(d, lambda x: x)
+        result = expectation.using(num_samples=1000)(d, lambda x: x)
         assert isinstance(result, NumericArray)
         assert isinstance(jnp.asarray(result), jnp.ndarray)
 
@@ -83,13 +83,13 @@ class TestExpectationSampleBased:
 
     def test_normal_mean(self):
         d = Normal("x", loc=3.0, scale=1.0)
-        result = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x)
+        result = expectation.using(num_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), 3.0, atol=0.05)
 
     def test_normal_second_moment(self):
         loc, scale = 2.0, 1.5
         d = Normal("x", loc=loc, scale=scale)
-        result = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x**2)
+        result = expectation.using(num_samples=10_000)(d, lambda x: x**2)
         expected = loc**2 + scale**2
         # Second moment has higher variance than first moment (kurtosis effect)
         np.testing.assert_allclose(float(result), expected, atol=0.15)
@@ -97,41 +97,41 @@ class TestExpectationSampleBased:
     def test_normal_variance_from_moments(self):
         loc, scale = 1.0, 2.0
         d = Normal("x", loc=loc, scale=scale)
-        ex = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x)
-        ex2 = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x**2)
+        ex = expectation.using(num_samples=10_000)(d, lambda x: x)
+        ex2 = expectation.using(num_samples=10_000)(d, lambda x: x**2)
         var_est = float(ex2) - float(ex) ** 2
         np.testing.assert_allclose(var_est, scale**2, atol=0.15)
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
         d = Gamma("x", concentration=conc, rate=rate)
-        result = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x)
+        result = expectation.using(num_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), conc / rate, atol=0.05)
 
     def test_gamma_log_sufficient_statistic(self):
         conc, rate = 3.0, 2.0
         d = Gamma("x", concentration=conc, rate=rate)
-        result = expectation.using(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
+        result = expectation.using(num_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_beta_mean(self):
         a, b = 2.0, 5.0
         d = Beta("x", alpha=a, beta=b)
-        result = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x)
+        result = expectation.using(num_samples=10_000)(d, lambda x: x)
         np.testing.assert_allclose(float(result), a / (a + b), atol=0.03)
 
     def test_beta_log_sufficient_statistic(self):
         a, b = 2.0, 5.0
         d = Beta("x", alpha=a, beta=b)
-        result = expectation.using(n_broadcast_samples=20_000)(d, lambda x: jnp.log(x))
+        result = expectation.using(num_samples=20_000)(d, lambda x: jnp.log(x))
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
     def test_exponential_second_moment(self):
         rate = 3.0
         d = Exponential("x", rate=rate)
-        result = expectation.using(n_broadcast_samples=10_000)(d, lambda x: x**2)
+        result = expectation.using(num_samples=10_000)(d, lambda x: x**2)
         np.testing.assert_allclose(float(result), 2.0 / rate**2, atol=0.03)
 
 
@@ -248,8 +248,7 @@ class TestMCFallbackMethods:
 # ---------------------------------------------------------------------------
 
 
-# Estimators that fall back to the default sample count when a call omits
-# ``num_evaluations``.
+# Estimators that fall back to the session's counts when a call sets none.
 _DEFAULT_SIZE_ESTIMATORS = [
     pytest.param(lambda: Normal("x", loc=0.0, scale=1.0), lambda x: x, id="tfp"),
     pytest.param(
@@ -263,24 +262,21 @@ _DEFAULT_SIZE_ESTIMATORS = [
 
 
 class TestGlobalDefaults:
-    def test_the_setter_sets_the_default_sample_count(self, monkeypatch):
-        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
-        set_default_n_broadcast_samples(512)
-        assert Function.DEFAULT_N_BROADCAST_SAMPLES == 512
-
     @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
-    def test_the_default_sample_count_sets_the_estimate_size(self, monkeypatch, make_dist, f):
-        """An estimator reads the current default sample count, not a copy taken at import."""
-        monkeypatch.setattr(Function, "DEFAULT_N_BROADCAST_SAMPLES", 256)
-        set_default_n_broadcast_samples(7)
+    def test_the_session_evaluation_count_sets_the_pushforward_size(self, make_dist, f):
+        """A pushforward reads the current setting, not a copy taken at import."""
+        config.sampling.max_evaluations = 7
         law = make_dist()
         assert pushforward(law, Function(f, output_spec=OutputSpec(integrand=None))).num_atoms == 7
-        assert np.isfinite(float(expectation(law, f)))
 
-    @pytest.mark.parametrize(("count", "error"), [(0, ValueError), (2.5, TypeError)])
-    def test_an_inadmissible_default_raises(self, count, error):
-        with pytest.raises(error):
-            set_default_n_broadcast_samples(count)
+    @pytest.mark.parametrize(("make_dist", "f"), _DEFAULT_SIZE_ESTIMATORS)
+    def test_the_session_draw_count_sets_the_expectation_size(self, make_dist, f):
+        """An expectation spends the current ``num_samples`` and ignores ``max_evaluations``."""
+        config.sampling.num_samples = 7
+        config.sampling.max_evaluations = 11
+        estimate = expectation(make_dist(), f)
+        assert np.isfinite(float(estimate))
+        assert estimate.provenance.metadata["num_samples"] == 7
 
 
 # ---------------------------------------------------------------------------
@@ -382,10 +378,10 @@ class TestExpectationRoutes:
         assert report.selected.method_name == "closed_form"
 
     @pytest.mark.parametrize("bad", [0, -3])
-    def test_monte_carlo_refuses_a_nonpositive_sample_count(self, bad):
+    def test_monte_carlo_refuses_a_nonpositive_num_samples(self, bad):
         with pytest.raises(ValueError, match="positive"):
-            expectation.using(n_broadcast_samples=bad)(Normal("n", 0.0, 1.0), lambda x: x)
+            expectation.using(num_samples=bad)(Normal("n", 0.0, 1.0), lambda x: x)
 
-    def test_monte_carlo_refuses_a_non_integer_sample_count(self):
+    def test_monte_carlo_refuses_a_non_integer_num_samples(self):
         with pytest.raises(TypeError, match="integer"):
-            expectation.using(n_broadcast_samples=2.5)(Normal("n", 0.0, 1.0), lambda x: x)
+            expectation.using(num_samples=2.5)(Normal("n", 0.0, 1.0), lambda x: x)

@@ -66,8 +66,8 @@ def _plan(values):
     return build_broadcast_plan(values=values, signature_info=signature_info)
 
 
-def _stochastic_plan(values, n_broadcast_samples):
-    return build_stochastic_plan(values, _plan(values), n_broadcast_samples)
+def _stochastic_plan(values, max_evaluations):
+    return build_stochastic_plan(values, _plan(values), max_evaluations)
 
 
 def _unexpected_distribution_broadcast(*args, **kwargs):
@@ -315,7 +315,7 @@ class TestExecuteSweep:
             },
         ]
         assert result.provenance.operation == "workflow.nested"
-        assert result.provenance.metadata["k"] == 7
+        assert result.provenance.metadata["max_evaluations"] == 7
 
 
 class TestPairedNumericSweeps:
@@ -408,7 +408,7 @@ class TestNestedSweepProbes:
             lambda shift, noise: shift + noise,
             label="shift",
             dispatch=dispatch,
-            n_broadcast_samples=7,
+            max_evaluations=7,
         )
         with workflow_run(seed=12):
             mapped = wrapped(rows, law)
@@ -430,7 +430,7 @@ class TestNestedSweepProbes:
 
         rows = NumericArrayBatch(jnp.array([-1.0, 2.0]), "row", label="shift")
         law = Normal("noise", 0.0, 1.0)
-        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        wrapped = Function(body, label="branch", dispatch=dispatch, max_evaluations=7)
         with workflow_run(seed=12):
             actual = wrapped(rows, law)
         # The branch fails the probe with dynamic shifts, and each cell traces
@@ -443,7 +443,7 @@ class TestNestedSweepProbes:
                 lambda shift, noise: noise,
                 label="noise",
                 dispatch="sequential",
-                n_broadcast_samples=7,
+                max_evaluations=7,
             )(rows, law)
         # The else branch adds 1 at the shift -1, and the if branch adds 2 at the shift 2.
         for index, offset in enumerate([1.0, 2.0]):
@@ -465,7 +465,7 @@ class TestNestedSweepProbes:
             lambda shift, noise: float(noise) + float(shift),
             label="untraceable",
             dispatch=dispatch,
-            n_broadcast_samples=7,
+            max_evaluations=7,
         )
         if dispatch == "jax":
             with pytest.raises(ValueError, match="failed while tracing"):
@@ -496,7 +496,7 @@ class TestNestedSweepProbes:
 
         rows = OpaqueBatch(["mapped", "python"], "row", label="mode")
         law = Normal("noise", 0.0, 1.0)
-        wrapped = Function(body, label="branch", dispatch=dispatch, n_broadcast_samples=7)
+        wrapped = Function(body, label="branch", dispatch=dispatch, max_evaluations=7)
         if dispatch == "jax":
             with pytest.raises(ValueError, match="failed while tracing"):
                 wrapped(rows, law)
@@ -1248,9 +1248,9 @@ class TestANestedSweepOfRecordRows:
     def test_a_mapped_dispatch_draws_the_atoms_sequential_dispatch_draws(self, dispatch):
         def lift(dispatch):
             with workflow_run(seed=0):
-                return Function(
-                    self._shift, label="shift", dispatch=dispatch, n_broadcast_samples=6
-                )(self._rows(), Normal("mu", 0.0, 1.0))
+                return Function(self._shift, label="shift", dispatch=dispatch, max_evaluations=6)(
+                    self._rows(), Normal("mu", 0.0, 1.0)
+                )
 
         mapped, sequential = lift(dispatch), lift("sequential")
 
@@ -1335,7 +1335,7 @@ class TestARecordedDtypeIsTheStoredDtype:
             lambda x: np.arange(3.0),
             output_spec=OutputSpec.default(declaration, component="f"),
             dispatch=dispatch,
-            n_broadcast_samples=5,
+            max_evaluations=5,
             label="f",
         )
         result = wrapped(EmpiricalDistribution(jnp.arange(3.0), component="x"))

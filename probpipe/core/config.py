@@ -7,6 +7,8 @@ Provides:
   (``provenance_config``) controlling how much lineage history is retained.
 - ``NotationConfig`` singleton (``notation_config``) setting how many nested
   levels a label or a notation shows.
+- ``Config`` singleton (``config``), whose section ``config.sampling``, a
+  ``SamplingConfig``, sets the default evaluation and draw counts.
 
 Users import from the top-level package::
 
@@ -16,6 +18,7 @@ Users import from the top-level package::
     probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
     probpipe.provenance_config.mode = ProvenanceMode.FULL
     probpipe.notation_config.max_depth = 12
+    probpipe.config.sampling.num_samples = 4096
 """
 
 from __future__ import annotations
@@ -23,11 +26,14 @@ from __future__ import annotations
 import os
 
 __all__ = [
+    "Config",
     "NotationConfig",
     "PrefectConfig",
     "ProvenanceConfig",
     "ProvenanceMode",
+    "SamplingConfig",
     "WorkflowKind",
+    "config",
     "notation_config",
     "prefect_config",
     "provenance_config",
@@ -454,3 +460,194 @@ class NotationConfig:
 # Module-level singleton
 notation_config = NotationConfig()
 """The global notation settings, an instance of ``NotationConfig``."""
+
+
+# ---------------------------------------------------------------------------
+# SamplingConfig and the config container
+# ---------------------------------------------------------------------------
+
+_MAX_EVALUATIONS_ENV_VAR = "PROBPIPE_SAMPLING_MAX_EVALUATIONS"
+_NUM_SAMPLES_ENV_VAR = "PROBPIPE_SAMPLING_NUM_SAMPLES"
+
+#: The maximum number of evaluations of a lifted function by default.
+_DEFAULT_MAX_EVALUATIONS = 256
+
+#: The number of Monte Carlo draws of a summary or an approximate conversion by default.
+_DEFAULT_NUM_SAMPLES = 1024
+
+
+def _checked_count(value: Any, source: str) -> int:
+    """*value* as a count of evaluations or draws, a positive integer.
+
+    Every check of the controls ``max_evaluations`` and ``num_samples``, and of
+    their session defaults, words its message here.
+
+    Parameters
+    ----------
+    value : Any
+        The candidate count.
+    source : str
+        The name of the control or the setting, which the error messages open with.
+
+    Returns
+    -------
+    int
+        *value*.
+
+    Raises
+    ------
+    TypeError
+        If *value* is not an integer, a bool included.
+    ValueError
+        If *value* is less than 1.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{source} must be an integer, got {value!r}")
+    if value < 1:
+        raise ValueError(f"{source} must be a positive integer, got {value!r}")
+    return value
+
+
+def _initial_count(env_var: str, default: int) -> int:
+    """Resolve the initial value of a count from the environment variable *env_var*.
+
+    Unset gives *default*, and a value that is not a positive integer raises
+    ``ValueError``, so a typo in a deployment's configuration raises at import.
+    """
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{env_var} must be a positive integer, got {raw!r}") from None
+    return _checked_count(value, env_var)
+
+
+class SamplingConfig:
+    """The session's defaults of the evaluation count of a lift and the draw count of an estimate.
+
+    Every ``Function`` and operation has two count controls, which
+    ``using`` sets for one view:
+
+    1. ``max_evaluations``: the maximum number of times a function lifted over
+       laws is evaluated, 256 by default.
+    2. ``num_samples``: the number of Monte Carlo draws of a summary, such as a
+       ``mean`` with no closed form, or of an approximate conversion, 1024 by
+       default.
+
+    A view that sets neither reads the defaults here when it runs, so a
+    setting governs the functions constructed before it::
+
+        import probpipe
+
+        probpipe.config.sampling.max_evaluations = 1000
+        probpipe.config.sampling.num_samples = 4096
+
+    The settings are global to the process. Their initial values can also be
+    set by the environment variables ``PROBPIPE_SAMPLING_MAX_EVALUATIONS`` and
+    ``PROBPIPE_SAMPLING_NUM_SAMPLES``.
+
+    Raises
+    ------
+    ValueError
+        On construction, which reads the two environment variables, if either is
+        set to anything but a positive integer. The singleton
+        ``probpipe.config.sampling`` is constructed when ``probpipe`` is
+        imported, so the import raises.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        """Restore both settings to their defaults, reading their environment variables again.
+
+        Raises
+        ------
+        ValueError
+            If ``PROBPIPE_SAMPLING_MAX_EVALUATIONS`` or
+            ``PROBPIPE_SAMPLING_NUM_SAMPLES`` is set to anything but a positive
+            integer.
+        """
+        self._max_evaluations: int = _initial_count(
+            _MAX_EVALUATIONS_ENV_VAR, _DEFAULT_MAX_EVALUATIONS
+        )
+        self._num_samples: int = _initial_count(_NUM_SAMPLES_ENV_VAR, _DEFAULT_NUM_SAMPLES)
+
+    @property
+    def max_evaluations(self) -> int:
+        """The default of the ``max_evaluations`` control, 256 unless the environment sets another.
+
+        :class:`~probpipe.Function` states how a lift spends the count.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not an integer, a bool included.
+        ValueError
+            On assignment of an integer less than 1.
+        """
+        return self._max_evaluations
+
+    @max_evaluations.setter
+    def max_evaluations(self, value: int) -> None:
+        self._max_evaluations = _checked_count(value, "max_evaluations")
+
+    @property
+    def num_samples(self) -> int:
+        """The default of the ``num_samples`` control, 1024 unless the environment sets another.
+
+        A converter that draws, such as moment matching, takes the converting
+        call's ``num_samples`` unless its own ``num_samples`` option is given.
+
+        Raises
+        ------
+        TypeError
+            On assignment of a value that is not an integer, a bool included.
+        ValueError
+            On assignment of an integer less than 1.
+        """
+        return self._num_samples
+
+    @num_samples.setter
+    def num_samples(self, value: int) -> None:
+        self._num_samples = _checked_count(value, "num_samples")
+
+
+class Config:
+    """The global settings of ProbPipe, grouped in sections.
+
+    The one section is :attr:`sampling`, a :class:`SamplingConfig`::
+
+        import probpipe
+
+        probpipe.config.sampling.num_samples = 4096
+        probpipe.config.reset()
+
+    The settings are global to the process.
+    """
+
+    def __init__(self) -> None:
+        self._sampling = SamplingConfig()
+
+    @property
+    def sampling(self) -> SamplingConfig:
+        """The default evaluation count of a lift and the default draw count of an estimate."""
+        return self._sampling
+
+    def reset(self) -> None:
+        """Restore every section to its defaults, reading the environment variables again.
+
+        Raises
+        ------
+        ValueError
+            If an environment variable that a section reads is set to an
+            inadmissible value, as :meth:`SamplingConfig.reset` states.
+        """
+        self._sampling.reset()
+
+
+# Module-level singleton
+config = Config()
+"""The global settings of ProbPipe, an instance of ``Config``."""

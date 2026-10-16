@@ -410,7 +410,7 @@ class TestNestedViews:
         values = columns(law.atoms, SCHEMAS["two-groups"])
         products = values["population/mu"] * values["population/tau"]
         with workflow_run(seed=11):
-            law_of_product = product.using(n_broadcast_samples=DRAWS)(
+            law_of_product = product.using(max_evaluations=DRAWS)(
                 FieldView(law, "population/mu"), FieldView(law, "population/tau")
             )
         estimate = float(jax.tree.leaves(mean.using(raw=True)(law_of_product))[0])

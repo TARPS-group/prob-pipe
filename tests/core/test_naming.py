@@ -874,7 +874,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
 
         renamed = square.with_label("g")
         with workflow_run(seed=0):
-            lifted = mean(renamed.using(n_broadcast_samples=8)(_prior()))
+            lifted = mean(renamed.using(max_evaluations=8)(_prior()))
             assert expectation(_prior(), renamed).label == lifted.label == "𝔼[sq(mu ~ prior)]"
 
     def test_a_draw_and_a_score_of_a_posterior_list_its_fixed_paths(self):
@@ -986,7 +986,7 @@ class TestTheLabelsOfALiftedFunction:
             label="tau",
         )
         with workflow_run(seed=0):
-            laws = shifted.using(n_broadcast_samples=8)(Normal("mu", 0.0, 1.0, label="prior"), taus)
+            laws = shifted.using(max_evaluations=8)(Normal("mu", 0.0, 1.0, label="prior"), taus)
             means = mean(laws)
         assert laws.label == "shifted"
         assert laws[1].label == "shifted[tau=1]"
@@ -1004,9 +1004,7 @@ class TestTheLabelsOfALiftedFunction:
             label="tau",
         )
         with workflow_run(seed=0):
-            laws = effect_of.using(n_broadcast_samples=8)(
-                Normal("mu", 0.0, 1.0, label="prior"), taus
-            )
+            laws = effect_of.using(max_evaluations=8)(Normal("mu", 0.0, 1.0, label="prior"), taus)
             element = laws[3]
             assert mean(element).label == "𝔼[effect_of(mu ~ prior, 4.0)]"
             assert sample(element).label == "effect_of(mu ~ prior, 4.0)"
@@ -1038,7 +1036,7 @@ class TestTheLabelsOfALiftedFunction:
         def scaled(x: jax.Array, scale: float = 2.0) -> jax.Array:
             return x * scale
 
-        lift = scaled.using(n_broadcast_samples=4)
+        lift = scaled.using(max_evaluations=4)
         with workflow_run(seed=0):
             prior = Normal("mu", 0.0, 1.0, label="prior")
             assert lift(prior).notation == "scaled(mu ~ prior)"
@@ -1051,7 +1049,7 @@ class TestTheLabelsOfALiftedFunction:
         def scaled(x: jax.Array, scale: float = 2.0) -> jax.Array:
             return x * scale
 
-        lift = scaled.using(n_broadcast_samples=4)
+        lift = scaled.using(max_evaluations=4)
         with workflow_run(seed=0):
             prior = Normal("mu", 0.0, 1.0, label="prior")
             assert lift(prior, scale=scale).notation == "scaled(mu ~ prior, 2.0)"

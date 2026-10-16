@@ -34,6 +34,7 @@ from probpipe import (
     RecordSpec,
     ResultKindError,
     ResultSchemaError,
+    config,
     function,
     workflow_run,
 )
@@ -156,7 +157,7 @@ class TestLabelAndProvenance:
         wrapped = Function(
             lambda x: 2.0 * x,
             output_label="prediction",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch="sequential",
             label="predict",
             output_spec=OutputSpec(prediction=None),
@@ -275,7 +276,7 @@ class TestLabelAndProvenance:
         controls = wrapped(1.0, 2.0).provenance.controls
 
         assert controls.get("dispatch") == "sequential"
-        assert controls.get("n_broadcast_samples") == Function.DEFAULT_N_BROADCAST_SAMPLES
+        assert controls.get("max_evaluations") == config.sampling.max_evaluations
 
 
 class TestRaw:
@@ -326,7 +327,7 @@ class TestResultErrors:
             lambda x: jnp.ones(3),
             output_spec=OutputSpec(f=NumericArraySpec((2,))),
             dispatch=dispatch,
-            n_broadcast_samples=6,
+            max_evaluations=6,
             label="f",
         )
         operand = (
@@ -401,7 +402,7 @@ class TestResultErrors:
             lambda x: jnp.ones((), dtype=jnp.int32),
             output_spec=OutputSpec(f=NumericArraySpec((), jnp.float32)),
             dispatch=dispatch,
-            n_broadcast_samples=6,
+            max_evaluations=6,
             label="f",
         )
 
@@ -506,7 +507,7 @@ class TestResultErrors:
             lambda x: {"y": x},
             output_spec=OutputSpec.default(SCALAR, component="produce"),
             dispatch=dispatch,
-            n_broadcast_samples=6,
+            max_evaluations=6,
             raw=raw,
             label="produce",
         )
