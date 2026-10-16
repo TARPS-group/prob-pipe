@@ -67,13 +67,15 @@ This makes `C1 – Uniform interface to functions, distributions, and values` an
 
 A `Function` keeps two namespaces apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which select realization, execution, or presentation. The construction metadata `label`, `output_label`, and `output_spec` are fixed at construction, apart from the controls. The controls are `max_evaluations`, `num_samples`, `include_inputs`, `method`, `exact_only`, the per-parameter `conversions`, `method_options`, `raw`, and the dispatch and orchestration selectors. `method_options` is one mapping of the numerical budgets the selected method reads, such as an MCMC method's warmup and draw counts, and the selected method validates its entries when it runs. The name that `method` gives resolves among an operation's routes and the methods of its registry routes (VI.0). Every ProbPipe-caused draw's key comes from the workflow scope (V.8), so a call takes no framework key or seed. A wrapped function's own `key` or `seed` parameter binds as an ordinary argument.
 
-**Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then the view that `using` returns. The view leaves the original `Function` unchanged. A call inside a derived operation's identity also takes the `exact_only`, `max_evaluations`, and `num_samples` that the identity passes down, as **Controls inside an identity** in VI.0 states. Every control has a default, and a view that sets a control to `None` resets it to the framework's default, whatever the decorator set. Per-call controls go through `using` for both ordinary functions and operations, and direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
+**Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then the view that `using` returns. A default that `config` holds, as the two counts' defaults are, is the value of the innermost active `config.using` block, or else the session's value. The view leaves the original `Function` unchanged. A call inside a derived operation's identity also takes the `exact_only`, `max_evaluations`, and `num_samples` that the identity passes down, as **Controls inside an identity** in VI.0 states. Every control has a default, and a view that sets a control to `None` resets it to the framework's default, whatever the decorator set. Per-call controls go through `using` for both ordinary functions and operations, and direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
 
 **The two counts.** Two controls count the work of an approximation, and each has one role:
 1. `max_evaluations` is the maximum number of times a call lifted over laws evaluates its function (V.5). The lift enumerates the empirical arguments whose combinations of atoms number at most `max_evaluations` (V.7), and it draws the other arguments jointly: `max_evaluations` draws when it enumerates none, and otherwise `max_evaluations // n` draws for each of the `n` combinations, at least one. Its default is 256.
 2. `num_samples` is the number of Monte Carlo draws that a route estimating a summary takes, as the Monte Carlo `mean` does (VI.5), and that a converter takes where it draws, unless the converter's own `num_samples` option is given (VI.10). The call's provenance records it whenever a route of the call draws it. Its default is 1024.
 
 The session's defaults of the two counts are the fields of `config.sampling`, which a call reads when it runs, so a setting governs the functions constructed before it. The environment variables `PROBPIPE_SAMPLING_MAX_EVALUATIONS` and `PROBPIPE_SAMPLING_NUM_SAMPLES` set their initial values.
+
+**The settings.** `config` holds the global settings in four sections: `sampling` for the two counts, `notation` for the depth a rendering shows (II.4), `provenance` for the provenance mode, and `prefect` for the orchestration selector and the Prefect task runner. Assigning a setting sets the session's value. A `using` block sets temporary values, for one section as `config.sampling.using(num_samples=4096)` and for several as `config.using(sampling={...}, notation={...})`. `f.using(...)` returns a reusable configured copy of `f`, while `config.using(...)` is a context manager. A block applies to every read inside it, by the work a call dispatches to worker threads or Prefect workers included, and to no other thread. Blocks nest, an inner value wins, and the enclosing values apply again when a block exits, an error included. An assignment or a `reset` inside a block changes the session's values, which apply once the block exits. A setting read while JAX traces a function is its value at trace time. *Requires:* each name a block gives is a section or a setting of its section, and each value is admissible as an assignment admits it. *On failure:* a `TypeError` naming the sections or the settings, or the assignment's error, at the call of `using`.
 
 ```python
 class SamplingConfig:                         # the session's defaults of the two counts
@@ -82,10 +84,18 @@ class SamplingConfig:                         # the session's defaults of the tw
     @property
     def num_samples(self) -> int: ...         # 1024 unless PROBPIPE_SAMPLING_NUM_SAMPLES sets another
     def reset(self) -> None: ...              # the defaults, reading both variables again
+    def using(self, **settings: Any) -> AbstractContextManager[SamplingConfig]: ...   # every section has one
 
 class Config:                                 # the global settings, grouped in sections
     @property
     def sampling(self) -> SamplingConfig: ...
+    @property
+    def notation(self) -> NotationConfig: ...     # II.4
+    @property
+    def provenance(self) -> ProvenanceConfig: ... # its mode is a ProvenanceMode
+    @property
+    def prefect(self) -> PrefectConfig: ...       # its workflow_kind is a WorkflowKind
+    def using(self, **sections: Mapping[str, Any]) -> AbstractContextManager[Config]: ...
     def reset(self) -> None: ...              # every section's defaults
 
 config: Config                                # the settings in effect, exported as probpipe.config

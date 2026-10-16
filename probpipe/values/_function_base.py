@@ -38,7 +38,8 @@ from ..core._record_spec import RecordSpec
 from ..core._repr import format_default, format_names, public_class_name, term_repr, type_name
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec, _unify_specs
 from ..core._specs import InputSpec, OpaqueSpec, OutputSpec
-from ..core.config import WorkflowKind, _checked_count, config
+from ..core.config import WorkflowKind, _checked_count, _temporary_settings, config
+from ..core.config import _applying as _applying_settings
 from ..core.tracked import Annotated, TrackedTerm, _callable_label, _callable_name
 from ._binding import (
     FunctionSignatureInfo,
@@ -867,14 +868,16 @@ def _recording_monte_carlo(num_samples: int) -> Iterator[_MonteCarloRecord]:
         parent.counts |= record.counts
 
 
-class _CarriedControls:
-    """A work function that runs under the inherited controls and the record of the context that made it.
+class _CarriedContext:
+    """A work function that runs under the call context of the code that dispatched it.
 
-    It holds the function, the controls, and the record as plain data, so it
+    The call context is the controls a derived operation's identity passes
+    down, the Monte Carlo record of the dispatching call, and the active
+    ``config.using`` blocks. The wrapper holds them as plain data, so it
     pickles wherever the function does, and a worker in another thread or
-    process runs the function under the same controls. A worker thread notes
-    its Monte Carlo draws in the calling call's record, and a worker process in
-    a copy of it, whose counts the call does not receive.
+    process runs the function under the same controls and settings. A worker
+    thread notes its Monte Carlo draws in the dispatching call's record, and a
+    worker process in a copy of it, whose counts the call does not receive.
 
     Parameters
     ----------
@@ -884,6 +887,8 @@ class _CarriedControls:
         The inherited controls to restore while *func* runs.
     record : _MonteCarloRecord or None
         The record of the call that dispatches *func*.
+    settings : Mapping of str to Mapping
+        The values of the active ``config.using`` blocks, by section and setting.
     """
 
     def __init__(
@@ -891,13 +896,15 @@ class _CarriedControls:
         func: Callable[..., Any],
         inherited: Mapping[str, Any] | None,
         record: _MonteCarloRecord | None,
+        settings: Mapping[str, Mapping[str, Any]],
     ) -> None:
         self.func = func
         self.inherited = None if inherited is None else dict(inherited)
         self.record = record
+        self.settings = {name: dict(values) for name, values in settings.items()}
 
     def __call__(self, /, *args: Any, **kwargs: Any) -> Any:
-        """*func*'s result, computed under the carried controls and record.
+        """*func*'s result, computed under the carried controls, record, and settings.
 
         ``self`` is positional-only, so a work function's own parameter named
         ``self`` binds as a keyword argument.
@@ -906,27 +913,30 @@ class _CarriedControls:
         token = _INHERITED_CONTROLS.set(inherited)
         record_token = _MONTE_CARLO.set(self.record)
         try:
-            return self.func(*args, **kwargs)
+            with _applying_settings(self.settings):
+                return self.func(*args, **kwargs)
         finally:
             _MONTE_CARLO.reset(record_token)
             _INHERITED_CONTROLS.reset(token)
 
 
-def _carrying_inherited_controls(func: Callable[..., Any]) -> Callable[..., Any]:
-    """*func*, run under the inherited controls and the record of the calling context, in whatever worker runs it.
+def _carrying_call_context(func: Callable[..., Any]) -> Callable[..., Any]:
+    """*func*, run under the call context of the calling code, in whatever worker runs it.
 
     A worker thread starts without the calling thread's context, and a worker
-    process without the calling process's, so a call dispatched to a worker
+    process without the calling process's. A call dispatched to a worker
     inside a derived operation's identity would otherwise lose an inherited
-    ``exact_only``, and a route run in a worker would note its Monte Carlo
-    draws in no record. Outside every call and every identity *func* is
-    returned as it is.
+    ``exact_only``, a route run in a worker would note its Monte Carlo draws in
+    no record, and a body run in a worker would read the session's settings in
+    place of an active ``config.using`` block. Outside every call, identity, and
+    block, *func* is returned as it is.
     """
     inherited = _INHERITED_CONTROLS.get()
     record = _MONTE_CARLO.get()
-    if inherited is None and record is None:
+    settings = _temporary_settings()
+    if inherited is None and record is None and not settings:
         return func
-    return _CarriedControls(func, inherited, record)
+    return _CarriedContext(func, inherited, record, settings)
 
 
 #: Removed construction keywords, each with the warning it raises, which are ignored.
@@ -1306,7 +1316,7 @@ class Function(TrackedTerm, Annotated):
         """The orchestration mode a call of this function runs under.
 
         The ``workflow_kind`` control decides it, and ``DEFAULT`` defers to the
-        global ``prefect_config.workflow_kind``, read each time the property is
+        global ``config.prefect.workflow_kind``, read each time the property is
         read. When both are ``DEFAULT``, orchestration is ``OFF``. A requested
         ``TASK`` or ``FLOW`` falls back to ``OFF`` when Prefect is not
         installed. Until the call engine is installed, a call evaluates plainly,
@@ -1626,7 +1636,7 @@ class Function(TrackedTerm, Annotated):
         ``predict(x, scale=1.0)``, when the default is a number, a string,
         ``None``, or an array of no axes, and ``name=…`` for any other default.
         The notation is rendered each time it is shown, at the current
-        ``notation_config.max_depth``. No operation reads the notation.
+        ``config.notation.max_depth``. No operation reads the notation.
         """
         return self._expression.render_notation(self._own_signature(), warn=True)
 

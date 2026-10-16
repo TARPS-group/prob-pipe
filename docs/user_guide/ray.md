@@ -17,7 +17,7 @@ The current execution path is:
 1. A `Function` receives distribution-valued or array-valued inputs.
 2. ProbPipe expands the call into mapped work with `Prefect task.map()` inside a
    lightweight flow.
-3. `probpipe.prefect_config.task_runner` supplies the Prefect task runner.
+3. `probpipe.config.prefect.task_runner` supplies the Prefect task runner.
 4. `RayTaskRunner` submits the mapped tasks to Ray.
 5. Ray runs each task in worker processes and returns the results to Prefect.
 
@@ -73,8 +73,8 @@ from prefect_ray import RayTaskRunner
 import probpipe
 from probpipe import WorkflowKind
 
-probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
-probpipe.prefect_config.task_runner = RayTaskRunner(address="auto")
+probpipe.config.prefect.workflow_kind = WorkflowKind.TASK
+probpipe.config.prefect.task_runner = RayTaskRunner(address="auto")
 ```
 
 `WorkflowKind.TASK` is still a Prefect orchestration mode. Provenance records the

@@ -314,7 +314,7 @@ ways to opt in:
 ```python
 # Per-process (notebook, REPL, script):
 import probpipe
-probpipe.prefect_config.workflow_kind = probpipe.WorkflowKind.TASK
+probpipe.config.prefect.workflow_kind = probpipe.WorkflowKind.TASK
 ```
 
 ```bash

@@ -788,13 +788,13 @@ class TestFingerprintInProvenance:
         import probpipe
         from probpipe import ProvenanceMode
 
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         try:
             n = Normal("prior", loc=0.0, scale=1.0)
             prov = Provenance.create("op", parents=[n])
             assert prov is None
         finally:
-            probpipe.provenance_config.reset()
+            probpipe.config.provenance.reset()
 
     def test_fingerprint_error_logs_warning(self, monkeypatch, caplog):
         """A fingerprint failure emits a warning and sets fingerprint=None."""

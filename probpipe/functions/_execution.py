@@ -21,7 +21,7 @@ try:
 except ImportError:
     task = flow = None
 
-from ..values._function_base import _carrying_inherited_controls
+from ..values._function_base import _carrying_call_context
 from . import _broker, _context, _execution_contract
 from ._managed import (
     ManagedAttemptState,
@@ -124,8 +124,9 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
         return [request.func(**item.call_values()) for item in request.work_items]
     _broker._record_active_execution_contract(contract)
     # A worker starts without the caller's context, so the work function carries
-    # the controls a derived operation's identity passes down.
-    request = replace(request, func=_carrying_inherited_controls(request.func))
+    # the controls a derived operation's identity passes down, the call's
+    # Monte Carlo record, and the active config.using blocks.
+    request = replace(request, func=_carrying_call_context(request.func))
     parent_frame = _context._capture_active_workflow_frame()
     parent_broker = _broker._capture_active_broker()
     if parent_broker is not None:

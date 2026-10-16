@@ -27,7 +27,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config
+from probpipe.core.config import ProvenanceMode, WorkflowKind, config
 
 
 def add_one(x):
@@ -218,16 +218,16 @@ def make_remote_effect(
 
 @pytest.fixture(autouse=True)
 def _reset_fakes():
-    prefect_config.workflow_kind = WorkflowKind.OFF
-    prefect_config.task_runner = None
+    config.prefect.workflow_kind = WorkflowKind.OFF
+    config.prefect.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     FakeMappedTask.reverse_results = False
     FakeMappedTask.map_calls = 0
     RecordingFlow.calls.clear()
     yield
-    prefect_config.workflow_kind = WorkflowKind.OFF
-    prefect_config.task_runner = None
+    config.prefect.workflow_kind = WorkflowKind.OFF
+    config.prefect.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
     FakeMappedTask.reverse_results = False
@@ -2753,7 +2753,7 @@ class TestFunctionExecutionConfig:
         # (effective_workflow_kind also gates on node_mod.flow, not just task).
         pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
-        prefect_config.workflow_kind = WorkflowKind.FLOW
+        config.prefect.workflow_kind = WorkflowKind.FLOW
         with pytest.warns(UserWarning, match="max_workers configures only"):
             wf = Function(
                 add_one,
