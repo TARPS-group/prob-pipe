@@ -605,8 +605,10 @@ class TestThePyMCRelease:
 
     def test_another_import_failure_of_a_current_release_propagates(self, monkeypatch):
         self._unimportable(monkeypatch, "6.3.2")
-        with pytest.raises(ImportError, match="halted"):
+        with pytest.raises(ImportError) as failure:
             _programs._import_pymc("PyMCModel")
+        assert "PyMCModel" not in str(failure.value)
+        assert failure.value.__cause__ is None
 
     @pytest.mark.parametrize("version", ["6.2", "6.2.0", "6.3.2"])
     def test_a_release_at_or_above_the_floor_returns_pymc(self, monkeypatch, version):
@@ -633,7 +635,7 @@ class TestThePyMCRelease:
             if entry.startswith("pymc")
         )
         floor = re.fullmatch(r"pymc>=([\d.]+)", requirement).group(1)
-        assert _programs._release(floor) == (_programs._PYMC_FLOOR, True)
+        assert floor == _programs._PYMC_FLOOR
 
     @pytest.mark.parametrize(
         ("version", "older"),

@@ -28,7 +28,8 @@ To install the smallest set, run this in a code cell:
 %pip install "probpipe-core[pymc] @ git+https://github.com/TARPS-group/prob-pipe.git@dev/overhaul"
 ```
 
-Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires, so the command installs the `pymc` extra, which upgrades PyMC.
+Colab comes with PyMC 5, which does not work with the ArviZ 1.x that ProbPipe requires.
+The command therefore installs the `pymc` extra, and the extra upgrades PyMC.
 
 To install the set the tutorials use, run this instead:
 

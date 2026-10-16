@@ -1025,7 +1025,7 @@ class StanModel(
 
 #: The oldest PyMC release ProbPipe works with, which is the floor of the
 #: ``pymc`` extra in ``pyproject.toml``. A test keeps the two equal.
-_PYMC_FLOOR = (6, 2)
+_PYMC_FLOOR = "6.2"
 
 #: A suffix that orders a release before the release it names, as ``rc1`` in
 #: ``6.2rc1`` or ``.dev0`` in ``6.2.dev0``.
@@ -1055,7 +1055,8 @@ def _older_than_floor(version: str) -> bool:
     A pre-release of the floor, such as ``"6.2rc1"``, orders before it.
     """
     numbers, final = _release(version)
-    return numbers < _PYMC_FLOOR or (numbers == _PYMC_FLOOR and not final)
+    floor, _ = _release(_PYMC_FLOOR)
+    return numbers < floor or (numbers == floor and not final)
 
 
 def _import_pymc(api: str) -> ModuleType:
@@ -1084,7 +1085,6 @@ def _import_pymc(api: str) -> ModuleType:
     on import with an error about ArviZ, and this error names the upgrade in its
     place.
     """
-    floor = ".".join(str(number) for number in _PYMC_FLOOR)
     try:
         import pymc
     except ImportError as error:
@@ -1092,22 +1092,22 @@ def _import_pymc(api: str) -> ModuleType:
             installed = importlib.metadata.version("pymc")
         except importlib.metadata.PackageNotFoundError:
             raise ImportError(
-                f"PyMC is not installed, and {api} requires PyMC {floor} or later. Install it "
-                f'with pip install "pymc>={floor}".'
+                f"PyMC is not installed, and {api} requires PyMC {_PYMC_FLOOR} or later. "
+                f'Install it with pip install "pymc>={_PYMC_FLOOR}".'
             ) from error
         if not _older_than_floor(installed):
             raise
-        raise ImportError(_pymc_too_old(api, installed, floor)) from error
+        raise ImportError(_pymc_too_old(api, installed)) from error
     if _older_than_floor(pymc.__version__):
-        raise ImportError(_pymc_too_old(api, pymc.__version__, floor))
+        raise ImportError(_pymc_too_old(api, pymc.__version__))
     return pymc
 
 
-def _pymc_too_old(api: str, installed: str, floor: str) -> str:
-    """The message for a PyMC release *installed* older than *floor*, which *api* requires."""
+def _pymc_too_old(api: str, installed: str) -> str:
+    """The message for a PyMC release *installed* older than :data:`_PYMC_FLOOR`, which *api* requires."""
     return (
-        f"PyMC {installed} is installed, but {api} requires PyMC {floor} or later. Upgrade it "
-        f'with pip install -U "pymc>={floor}", then restart the Python session.'
+        f"PyMC {installed} is installed, but {api} requires PyMC {_PYMC_FLOOR} or later. "
+        f'Upgrade it with pip install -U "pymc>={_PYMC_FLOOR}", then restart the Python session.'
     )
 
 
