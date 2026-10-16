@@ -59,7 +59,7 @@ from ..core._expression import (
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._spec_base import NumericArraySpec, NumericSpec, TermSpec
 from ..core._specs import InputSpec, NumericRecordSpec, OutputSpec
-from ..core.config import ProvenanceMode, WorkflowKind, prefect_config
+from ..core.config import ProvenanceMode, WorkflowKind, config
 from ..core.named_tree import _unflatten_paths
 from ..core.provenance import Provenance
 from ..core.record import Record
@@ -222,7 +222,7 @@ def effective_workflow_kind(function: Function) -> WorkflowKind:
     """
     raw = function.options["workflow_kind"]
 
-    kind = raw if raw is not WorkflowKind.DEFAULT else prefect_config.workflow_kind
+    kind = raw if raw is not WorkflowKind.DEFAULT else config.prefect.workflow_kind
 
     if kind is WorkflowKind.DEFAULT:
         kind = WorkflowKind.OFF
@@ -274,7 +274,7 @@ def _make_execution_config(
         mode=mode,
         max_workers=function.options["max_workers"] if mode == "thread" else None,
         name=function._label,
-        prefect_task_runner=(prefect_config.resolve_task_runner() if is_prefect else None),
+        prefect_task_runner=(config.prefect.resolve_task_runner() if is_prefect else None),
     )
 
 

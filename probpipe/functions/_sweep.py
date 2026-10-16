@@ -34,7 +34,7 @@ from ..core._opaque import Opaque
 from ..core._record_batch import RecordBatch, _MappedBatchColumns
 from ..core._repr import type_name
 from ..core._specs import OutputSpec, RecordSpec
-from ..core.config import WorkflowKind, prefect_config
+from ..core.config import WorkflowKind, config
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..core.tracked import TrackedTerm
@@ -505,7 +505,7 @@ def execute_sweep_rows_jax(
         if workflow_kind is WorkflowKind.TASK:
             run_vmap = task(name=f"{function_name}_vmap")(run_vmap)
         else:
-            runner = prefect_config.resolve_task_runner()
+            runner = config.prefect.resolve_task_runner()
             run_vmap = flow(
                 name=f"{function_name}_vmap",
                 **({"task_runner": runner} if runner is not None else {}),

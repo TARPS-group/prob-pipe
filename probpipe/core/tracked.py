@@ -386,7 +386,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """Store *expression* and the label it renders, on a term that no caller holds yet.
 
         The label is rendered once, now, at the current
-        ``notation_config.max_depth``, and the term keeps it, together with
+        ``config.notation.max_depth``, and the term keeps it, together with
         what its rendering left out, which a display of the label warns about.
         A kind whose state derives from its label overrides this, so the state
         follows the expression.
@@ -435,7 +435,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """Human-readable label of this object.
 
         The label is rendered from the term's expression once, when the term is
-        built, and shows at most the ``notation_config.max_depth`` levels set
+        built, and shows at most the ``config.notation.max_depth`` levels set
         then. A later setting changes the labels of terms built afterwards, and
         the notation of a law, a kernel, or a function, which is rendered each
         time it is shown.

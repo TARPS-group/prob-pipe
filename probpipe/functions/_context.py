@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import jax
 import jax.extend.core
 
-from ..core.config import ProvenanceMode, provenance_config
+from ..core.config import ProvenanceMode, config
 from ..custom_types import PRNGKey
 from ._errors import UnmanagedConcurrentWorkflowEntryError
 from ._rng import (
@@ -142,7 +142,7 @@ _ACTIVE_WORKFLOW_FRAME: ContextVar[_WorkflowFrame | None] = ContextVar(
 def _active_provenance_mode() -> ProvenanceMode:
     """Return the provenance mode fixed for the active workflow run."""
     frame = _ACTIVE_WORKFLOW_FRAME.get()
-    return provenance_config.mode if frame is None else frame.provenance_mode
+    return config.provenance.mode if frame is None else frame.provenance_mode
 
 
 @dataclass(slots=True)
@@ -222,7 +222,7 @@ class _WorkflowRunScope:
         frame = _WorkflowFrame(
             kind=kind,
             seed_words=seed_words,
-            provenance_mode=(provenance_config.mode if parent is None else parent.provenance_mode),
+            provenance_mode=(config.provenance.mode if parent is None else parent.provenance_mode),
             parent=parent,
             owner=_current_workflow_owner(),
             state=_WorkflowFrameState(path_prefix=() if parent is None else None),
@@ -634,7 +634,7 @@ def _replay_workflow_frame(root_words: tuple[int, int]) -> Generator[None, None,
     frame = _WorkflowFrame(
         kind="replay",
         seed_words=None,
-        provenance_mode=provenance_config.mode,
+        provenance_mode=config.provenance.mode,
         parent=None,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(path_prefix=(), root_words=root_words),

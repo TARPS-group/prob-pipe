@@ -1613,7 +1613,7 @@ class TestDynamicImplementation:
 
 class TestReentrancyAndProvenance:
     def test_seeded_runs_are_repeatable_across_sequential_and_concurrent_calls(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         wrapped = Function(
             lambda x: x + 1,
             label="function",
@@ -1706,7 +1706,7 @@ class TestReentrancyAndProvenance:
             assert "result" not in stored.annotations
 
     def test_off_mode_still_copies_a_tracked_return(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         stored = NumericRecord(
             {"value": 1.0},
             label="stored",
@@ -1723,7 +1723,7 @@ class TestReentrancyAndProvenance:
 
     @pytest.mark.parametrize("mode", [ProvenanceMode.FULL, ProvenanceMode.LIGHTWEIGHT])
     def test_dynamic_training_lineage_is_reachable_through_function_parent(self, mode):
-        probpipe.provenance_config.mode = mode
+        probpipe.config.provenance.mode = mode
         training_data = Record(
             {"x": 1.0},
             label="training",
@@ -1743,7 +1743,7 @@ class TestReentrancyAndProvenance:
         assert [ancestor.label for ancestor in ancestors] == ["fitted", "training"]
 
     def test_off_mode_attaches_no_call_provenance(self):
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
 
         result = Function(
             lambda x: x + 1,

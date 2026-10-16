@@ -947,7 +947,7 @@ class TestProvenanceDag:
 
 class TestProvenanceModes:
     def test_lightweight_is_default(self):
-        assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT
+        assert probpipe.config.provenance.mode is ProvenanceMode.LIGHTWEIGHT
 
     def test_lightweight_stores_parent_info(self):
         """LIGHTWEIGHT mode stores ParentInfo descriptors, not live refs."""
@@ -1081,7 +1081,7 @@ class TestProvenanceModes:
 
     def test_off_mode_no_provenance(self):
         """OFF mode attaches no provenance to workflow results."""
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("input", loc=0.0, scale=1.0)
 
         def identity(x: float) -> float:
@@ -1100,12 +1100,12 @@ class TestProvenanceModes:
 
     def test_mode_setter_rejects_non_enum(self):
         with pytest.raises(TypeError, match="ProvenanceMode"):
-            probpipe.provenance_config.mode = "full"
+            probpipe.config.provenance.mode = "full"
 
     def test_reset_restores_lightweight(self):
-        probpipe.provenance_config.mode = ProvenanceMode.FULL
-        probpipe.provenance_config.reset()
-        assert probpipe.provenance_config.mode is ProvenanceMode.LIGHTWEIGHT
+        probpipe.config.provenance.mode = ProvenanceMode.FULL
+        probpipe.config.provenance.reset()
+        assert probpipe.config.provenance.mode is ProvenanceMode.LIGHTWEIGHT
 
     def test_lightweight_parent_is_garbage_collected(self):
         """LIGHTWEIGHT mode does not prevent the parent from being GC'd."""
@@ -1147,7 +1147,7 @@ class TestProvenanceModes:
 
     def test_off_mode_ancestors_empty(self):
         """In OFF mode provenance_ancestors returns an empty list."""
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("input", loc=0.0, scale=1.0)
 
         def identity(x: float) -> float:
@@ -1167,7 +1167,7 @@ class TestProvenanceModes:
     def test_off_mode_dag_single_node(self):
         """In OFF mode provenance_dag renders only the root node with no edges."""
         pytest.importorskip("graphviz")
-        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        probpipe.config.provenance.mode = ProvenanceMode.OFF
         n = Normal("input", loc=0.0, scale=1.0)
 
         def identity(x: float) -> float:
