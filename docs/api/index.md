@@ -16,7 +16,7 @@ A name whose heading is a dotted path, such as `probpipe.families.GaussianProces
 | [Operations](operations.md) | The operations, such as `sample`, `mean`, and `condition_on`, and the errors of their resolution. |
 | [Inference methods](inference.md) | The inference methods, the functions of amortized and sequential inference, and the inference-method registry. |
 | [Conversion](conversion.md) | The `convert` operation and the converter registry. |
-| [Workflows and reproducibility](workflows.md) | Workflow scopes and replay, the orchestration settings, and the default sample count. |
+| [Workflows and reproducibility](workflows.md) | Workflow scopes and replay, the orchestration settings, and the default counts in `config.sampling`. |
 | [Labels and provenance](provenance.md) | The identity of a tracked term, its provenance record, the provenance settings, and the notation settings. |
 | [Diagnostics](diagnostics.md) | The MCMC, predictive, and leave-one-out diagnostics, and the views that read them. |
 | [Validation](validation.md) | Predictive checks, scores against a reference posterior, and calibration. |

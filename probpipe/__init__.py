@@ -217,7 +217,6 @@ from probpipe.values import (
     SupportsLogDetJacobian,
     is_differentiable,
     is_invertible,
-    set_default_n_broadcast_samples,
 )
 
 __all__ = [
@@ -380,7 +379,6 @@ __all__ = [
     "replay_run",
     "rwmh",
     "sample",
-    "set_default_n_broadcast_samples",
     "simplex",
     "sphere",
     "standard_deviation",

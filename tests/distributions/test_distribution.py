@@ -729,7 +729,7 @@ class TestDerivedLabels:
     )
     def test_an_expectation_is_labeled_over_its_law(self, make_operand, f, label):
         law = make_operand()
-        result = expectation.using(n_broadcast_samples=3)(law, f)
+        result = expectation.using(num_samples=3)(law, f)
         assert result.label == label
 
 

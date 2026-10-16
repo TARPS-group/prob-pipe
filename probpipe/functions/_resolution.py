@@ -20,7 +20,10 @@ A candidate has the members the engine reads:
 4. ``exactness(report)`` and ``method_of(report)``: the exactness of the
    implementation its report selected, and the registry method, if any;
 5. ``methods``: the methods of its route's registry, or ``None`` for a route
-   that delegates to none.
+   that delegates to none;
+6. ``collects_calls``: whether the calls its run makes directly report their
+   Monte Carlo draws to the call it realizes, as the calls of a derived
+   operation's identity do (:class:`~probpipe.values._function_base._MonteCarloRecord`).
 
 The check of a call the engine lifts is made at each of its points: a swept
 batch at each element, and a law the call broadcasts at a stand-in for its

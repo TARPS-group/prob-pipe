@@ -187,23 +187,23 @@ class TestWorkflowCallHelpers:
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
-            _resolve_call(identity_func, "value", n_broadcast_samples=6)
+            _resolve_call(identity_func, "value", max_evaluations=6)
 
     def test_control_like_names_bind_when_declared(self):
-        def identity(x, n_broadcast_samples, include_inputs, seed):
+        def identity(x, max_evaluations, include_inputs, seed):
             return x
 
         call = _resolve_call(
             identity,
             "value",
-            n_broadcast_samples=6,
+            max_evaluations=6,
             include_inputs=True,
             seed=123,
         )
 
         assert call == {
             "x": "value",
-            "n_broadcast_samples": 6,
+            "max_evaluations": 6,
             "include_inputs": True,
             "seed": 123,
         }
@@ -299,14 +299,14 @@ class TestCallOptions:
         wf = Function(
             identity_func,
             label="identity_func",
-            n_broadcast_samples=20,
+            max_evaluations=20,
             dispatch="sequential",
             output_spec=OutputSpec(identity_func=None),
         )
 
         with workflow_run(seed=42):
             result = wf.using(
-                n_broadcast_samples=6,
+                max_evaluations=6,
                 include_inputs=True,
             )(normal_dist)
 
@@ -322,7 +322,7 @@ class TestCallOptions:
         wf = Function(
             identity_func,
             label="identity_func",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(identity_func=None),
         )

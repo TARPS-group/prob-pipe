@@ -259,7 +259,7 @@ def test_the_monte_carlo_mean_of_a_law_over_laws_is_the_mixture_of_its_draws():
         component="laws",
     )
     with workflow_run(seed=0):
-        estimate = mean.using(n_broadcast_samples=60)(laws)
+        estimate = mean.using(num_samples=60)(laws)
     assert isinstance(estimate, SupportsMean)
     assert estimate.event_spec == atoms[0].event_spec
     assert 0.0 <= float(jnp.asarray(estimate._mean())) <= 2.0

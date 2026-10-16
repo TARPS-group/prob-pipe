@@ -46,7 +46,7 @@ def _rate_function() -> Function:
 
 
 def _lifted_rate() -> Function:
-    @function(output_spec=_RATE, n_broadcast_samples=6, dispatch="sequential")
+    @function(output_spec=_RATE, max_evaluations=6, dispatch="sequential")
     def rate(x, z):
         return jnp.exp(x + z)
 
@@ -115,7 +115,7 @@ class TestTheResultOfALift:
         assert result.event_spec.spec.support is positive
 
     def test_an_undeclared_array_return_lifts_to_a_whole_term_under_output_name(self):
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -126,7 +126,7 @@ class TestTheResultOfALift:
         assert not result.event_spec.exposes_record
 
     def test_the_sampling_lift_constructs_an_empirical_approximation(self):
-        @function(n_broadcast_samples=6, dispatch="sequential", output_spec=OutputSpec(square=None))
+        @function(max_evaluations=6, dispatch="sequential", output_spec=OutputSpec(square=None))
         def square(x):
             return x * x
 
@@ -210,7 +210,7 @@ class TestIncludingTheInputs:
             output_label="prediction",
             output_spec=OutputSpec(mean=None),
             include_inputs=True,
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch="sequential",
         )
         def predict(theta, x):
@@ -240,7 +240,7 @@ class TestIncludingTheInputs:
     def test_a_one_field_record_draw_remains_nested(self):
         @function(
             include_inputs=True,
-            n_broadcast_samples=6,
+            max_evaluations=6,
             dispatch="sequential",
             output_spec=OutputSpec(weigh=None),
         )
@@ -254,7 +254,7 @@ class TestIncludingTheInputs:
         assert isinstance(theta, RecordSpec) and set(theta) == {"beta"}
 
     def test_a_parameter_named_like_an_output_component_raises(self):
-        @function(include_inputs=True, n_broadcast_samples=6, dispatch="sequential")
+        @function(include_inputs=True, max_evaluations=6, dispatch="sequential")
         def x(x):
             return x
 

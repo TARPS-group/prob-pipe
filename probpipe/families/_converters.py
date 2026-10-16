@@ -65,7 +65,7 @@ from ..distributions._empirical import EmpiricalDistribution, _batch_form
 from ..functions import _broker
 from ..functions._result import SAMPLE_LEVEL
 from ..operations._operation import _workflow_draws
-from ..values import Function
+from ..values._function_base import _current_num_samples, _note_monte_carlo
 from ._backend import TFPDistribution
 from ._continuous import (
     Beta,
@@ -142,9 +142,12 @@ def _refuse_unread(converter: str, options: dict[str, Any], reads: tuple[str, ..
 
 
 def _sample_count(options: dict[str, Any]) -> int:
-    """The ``num_samples`` option as a positive integer, or the default sample count without it.
+    """The ``num_samples`` option as a positive integer, or the converting call's ``num_samples`` without it.
 
-    The default is the one :func:`~probpipe.set_default_n_broadcast_samples` sets.
+    The converting call is the ``convert`` call, or the call whose argument is
+    converted, and its ``num_samples`` control defaults to
+    ``config.sampling.num_samples``, which a conversion outside every call
+    takes.
 
     Parameters
     ----------
@@ -163,7 +166,7 @@ def _sample_count(options: dict[str, Any]) -> int:
     ValueError
         If the count is not positive.
     """
-    value = options.get("num_samples", Function.DEFAULT_N_BROADCAST_SAMPLES)
+    value = options.get("num_samples", _current_num_samples())
     if isinstance(value, bool):
         raise TypeError(f"num_samples must be an integer, got {value!r}")
     try:
@@ -443,8 +446,11 @@ def _draws(source: Any, law: Distribution | None, count: int) -> Any:
     """*count* draws of *source*, the draw axis leading, from a workflow-owned key.
 
     A law draws through its ``_sample``. A SciPy frozen distribution with no
-    family draws through SciPy, from a generator seeded by the derived key.
+    family draws through SciPy, from a generator seeded by the derived key. The
+    count is noted in the converting call's record, so the call's provenance
+    records it as ``num_samples``.
     """
+    _note_monte_carlo(count)
     if law is not None:
         return _workflow_draws(law, (count,), operation_kind="convert", execution_mode="sampled")
     key = _broker._resolve_automatic_key(

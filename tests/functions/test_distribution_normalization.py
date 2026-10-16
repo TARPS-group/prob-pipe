@@ -246,7 +246,7 @@ class TestUnhintedExternalDistribution:
         wf = Function(
             double,
             label="double",
-            n_broadcast_samples=8,
+            max_evaluations=8,
             dispatch="sequential",
             output_spec=OutputSpec(double=None),
         )
@@ -285,7 +285,7 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
     wrapped = Function(
         consume,
         label="consume",
-        n_broadcast_samples=8,
+        max_evaluations=8,
         dispatch="sequential",
         output_spec=OutputSpec(consume=None),
     )
@@ -324,7 +324,7 @@ def test_capability_annotation_passes_the_law_through(capability):
 
     consume.__annotations__ = {"law": capability}
     law = _law_claiming(capability)
-    wrapped = Function(consume, label="consume", n_broadcast_samples=8, dispatch="sequential")
+    wrapped = Function(consume, label="consume", max_evaluations=8, dispatch="sequential")
 
     wrapped(law)
 

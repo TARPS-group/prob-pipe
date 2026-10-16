@@ -3,7 +3,7 @@
 import pytest
 
 import probpipe
-from probpipe import config
+from probpipe import Function, Normal, config, mean, workflow_run
 from probpipe.core._expression import _STORED_DEPTH
 from probpipe.core.config import (
     _MAX_EVALUATIONS_ENV_VAR,
@@ -177,3 +177,15 @@ class TestSamplingConfig:
         config.sampling.num_samples = 6
         config.reset()
         assert (config.sampling.max_evaluations, config.sampling.num_samples) == (256, 1024)
+
+    def test_a_function_reads_the_settings_when_it_runs(self):
+        """A setting governs the functions constructed before it."""
+        identity = Function(lambda x: x, label="identity", dispatch="sequential")
+        config.sampling.max_evaluations = 9
+        config.sampling.num_samples = 13
+        assert identity.options["max_evaluations"] == 9
+        assert mean.options["num_samples"] == 13
+        with workflow_run(seed=0):
+            assert identity(Normal("x", 0.0, 1.0)).num_atoms == 9
+            estimate = mean.using(method="monte_carlo")(Normal("x", 0.0, 1.0))
+        assert estimate.provenance.metadata["num_samples"] == 13

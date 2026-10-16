@@ -38,7 +38,7 @@ def _lift() -> Function:
     """A lifted call of a module-level def, which replay can anchor."""
     return Function(
         _shift,
-        n_broadcast_samples=8,
+        max_evaluations=8,
         dispatch="sequential",
         label="shift",
         output_spec=OutputSpec(shift=None),
@@ -226,4 +226,4 @@ class TestReplay:
             recorded = _lift()(law)
 
         with pytest.raises(ReplayCompatibilityError), replay_run(recorded.provenance):
-            _lift().using(n_broadcast_samples=9)(law)
+            _lift().using(max_evaluations=9)(law)

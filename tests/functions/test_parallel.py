@@ -2799,7 +2799,7 @@ class TestFunctionExecutionConfig:
                 dispatch="jax",
                 workflow_kind=WorkflowKind.OFF,
                 max_workers=3,
-                n_broadcast_samples=8,
+                max_evaluations=8,
                 output_spec=OutputSpec(add_one=None),
             )
 
