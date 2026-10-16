@@ -62,6 +62,7 @@ from probpipe.core._specs import (
 from probpipe.core.config import (
     ProvenanceMode,
     WorkflowKind,
+    config,
     notation_config,
     prefect_config,
     provenance_config,
@@ -330,6 +331,7 @@ __all__ = [
     "condition_on",
     "condition_on_nutpie",
     "conditional_distribution",
+    "config",
     "convert",
     "converter_registry",
     "cov",
