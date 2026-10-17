@@ -59,6 +59,9 @@ BijectorFactory = Callable[[Constraint], "Function | tfb.Bijector"]
 #: The registered factories, keyed by a constraint type or by one constraint.
 _CONSTRAINT_BIJECTOR_REGISTRY: dict[type | Constraint, BijectorFactory] = {}
 
+#: The one-line description of each registered key, which the registry catalog shows.
+_BIJECTOR_DESCRIPTIONS: dict[type | Constraint, str] = {}
+
 #: The support each backend bijector without parameters maps the real line onto.
 _BACKEND_IMAGES: dict[type, Constraint] = {
     tfb.Exp: positive,
@@ -202,7 +205,9 @@ def _as_bijector(value: Any, image: Constraint | None = None) -> Function:
     raise TypeError(f"bijector must be a Function or a TFP bijector; got {type_name(value)}")
 
 
-def register_bijector(key: type[Constraint] | Constraint, factory: BijectorFactory) -> None:
+def register_bijector(
+    key: type[Constraint] | Constraint, factory: BijectorFactory, *, description: str = ""
+) -> None:
     """Register a bijector factory for a constraint type or one constraint.
 
     Parameters
@@ -216,14 +221,25 @@ def register_bijector(key: type[Constraint] | Constraint, factory: BijectorFacto
         inverse and the log-determinant of its Jacobian, or a backend bijector,
         which enters as such a ``Function``. It receives the constraint, so it
         can read the constraint's parameters.
+    description : str, optional
+        A one-line description of the bijector, which the registry catalog
+        shows under ``"bijectors"``; empty by default.
+
+    Raises
+    ------
+    TypeError
+        If *description* is not a ``str``.
 
     Notes
     -----
-    Registering a key again replaces its factory. A registration for
-    ``Constraint`` itself would cover every constraint without a registration
-    of its own.
+    Registering a key again replaces its factory and its description. A
+    registration for ``Constraint`` itself would cover every constraint
+    without a registration of its own.
     """
+    if not isinstance(description, str):
+        raise TypeError(f"bijector description must be a str, got {description!r}")
     _CONSTRAINT_BIJECTOR_REGISTRY[key] = factory
+    _BIJECTOR_DESCRIPTIONS[key] = description
 
 
 def bijector_for(constraint: Constraint) -> Function:
@@ -331,44 +347,63 @@ class _SimplexBijector(tfb.SoftmaxCentered):
         return super()._inverse_log_det_jacobian(y) + 0.5 * jnp.log(float(y.shape[-1]))
 
 
-register_bijector(_Real, lambda c: tfb.Identity())
-register_bijector(_Positive, lambda c: tfb.Exp())
+register_bijector(_Real, lambda c: tfb.Identity(), description="The identity on the real line.")
+register_bijector(_Positive, lambda c: tfb.Exp(), description="exp, onto the positive half-line.")
 # Softplus is defined at zero, which the boundary of the non-negative half-line includes.
-register_bijector(_NonNegative, lambda c: tfb.Softplus())
-register_bijector(_UnitInterval, lambda c: tfb.Sigmoid())
-register_bijector(_Interval, lambda c: tfb.Sigmoid(low=c.low, high=c.high))
-register_bijector(_GreaterThan, lambda c: tfb.Chain([tfb.Shift(c.lower_bound), tfb.Exp()]))
-register_bijector(_Simplex, lambda c: _SimplexBijector())
+register_bijector(
+    _NonNegative, lambda c: tfb.Softplus(), description="softplus, onto the non-negative half-line."
+)
+register_bijector(
+    _UnitInterval, lambda c: tfb.Sigmoid(), description="The sigmoid, onto the unit interval."
+)
+register_bijector(
+    _Interval,
+    lambda c: tfb.Sigmoid(low=c.low, high=c.high),
+    description="A sigmoid scaled onto the interval's bounds.",
+)
+register_bijector(
+    _GreaterThan,
+    lambda c: tfb.Chain([tfb.Shift(c.lower_bound), tfb.Exp()]),
+    description="exp shifted to the lower bound.",
+)
+register_bijector(
+    _Simplex,
+    lambda c: _SimplexBijector(),
+    description="The centered softmax from R^(K-1) onto the K-simplex.",
+)
 # ℝ^{n(n+1)/2} to a lower-triangular L, then to L Lᵀ; Chain applies its last bijector first.
 register_bijector(
-    _PositiveDefinite, lambda c: tfb.Chain([tfb.CholeskyOuterProduct(), tfb.FillScaleTriL()])
+    _PositiveDefinite,
+    lambda c: tfb.Chain([tfb.CholeskyOuterProduct(), tfb.FillScaleTriL()]),
+    description="A lower-triangular L filled from a vector, then L Lᵀ.",
 )
 
 
-def _no_smooth_bijector(reason: str) -> BijectorFactory:
-    """A factory that raises for a support onto which no smooth bijector exists."""
+def _register_no_smooth_bijector(key: type[Constraint], reason: str) -> None:
+    """Register for *key* a factory that raises, since no smooth bijector maps onto its support.
+
+    The catalog describes the entry by the same *reason* the factory raises
+    with, so the listing does not suggest that :func:`bijector_for` returns a
+    bijector for it.
+    """
 
     def _raise(constraint: Constraint) -> Function:
         raise MathematicalDomainError(f"{constraint!r} has no smooth bijector: {reason}")
 
-    return _raise
+    register_bijector(key, _raise, description=f"No smooth bijector: {reason}.")
 
 
-register_bijector(
+_register_no_smooth_bijector(
     _Sphere,
-    _no_smooth_bijector(
-        "no smooth global chart maps ℝⁿ onto the unit sphere; a stereographic projection "
-        "covers all but one point"
-    ),
+    "no smooth global chart maps ℝⁿ onto the unit sphere; a stereographic projection "
+    "covers all but one point",
 )
-register_bijector(
-    _Boolean,
-    _no_smooth_bijector("the support is discrete; a continuous relaxation can stand in"),
+_register_no_smooth_bijector(
+    _Boolean, "the support is discrete; a continuous relaxation can stand in"
 )
-register_bijector(_NonNegativeInteger, _no_smooth_bijector("the support is discrete"))
-register_bijector(
-    _IntegerInterval,
-    _no_smooth_bijector("the support is discrete; a continuous relaxation can stand in"),
+_register_no_smooth_bijector(_NonNegativeInteger, "the support is discrete")
+_register_no_smooth_bijector(
+    _IntegerInterval, "the support is discrete; a continuous relaxation can stand in"
 )
 
 
@@ -398,8 +433,9 @@ class _BijectorFactory:
     This object implements
     :class:`~probpipe.core._catalog.SupportsRegistryCataloging` over those
     registrations, with one entry per registered key in name order, and it is
-    cataloged as ``"bijectors"``. The factory does not rank its entries, so
-    each entry's ``priority`` and ``exact`` are ``None``.
+    cataloged as ``"bijectors"``. Each entry's description is the one
+    :func:`register_bijector` received. The factory does not rank its entries,
+    so each entry's ``priority`` and ``exact`` are ``None``.
     """
 
     name = "bijectors"
@@ -415,6 +451,7 @@ class _BijectorFactory:
                 name=_entry_name(key),
                 priority=None,
                 supported_types=(key,),
+                description=_BIJECTOR_DESCRIPTIONS.get(key, ""),
                 module_path=key.__module__ if isinstance(key, type) else type(key).__module__,
             )
             for key in _CONSTRAINT_BIJECTOR_REGISTRY

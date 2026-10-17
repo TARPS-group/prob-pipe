@@ -2,19 +2,15 @@
 
 A dispatch registry holds named implementations of one operation and
 selects among them by the types of the arguments and their relative
-priorities. Every method declares whether it is **exact**. Selection order
-is based on four criteria, in decreasing precedence:
-
-1. exact methods before approximate ones;
-2. priority among methods of the same exactness, higher first;
-3. specificity, favoring the method whose declared types are closest to
-   the arguments' classes in method-resolution order;
-4. registration order.
+priorities. Every method declares whether it is **exact** and whether it is a
+**floor**, a fallback that ranks after every method that is not one, and
+:class:`BaseDispatchRegistry` states the selection order these declarations
+and the priority decide.
 
 A method whose ``priority`` is ``None`` is **opt-in-only**: automatic
 selection skips it and it runs only when named through ``method="..."``.
 ``set_priorities`` re-ranks at runtime but never changes a method's
-exactness.
+exactness or whether it is a floor.
 
 A method's ``check`` returns a :class:`Feasibility`: whether the call is
 feasible, if not then why, and which declarations are pending. The
@@ -37,7 +33,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
 from .._messages import unknown_names
 from ._catalog import EntrySummary
@@ -205,15 +201,17 @@ class BaseDispatchMethod[SupportedTypesT](ABC):
 
     A subclass declares a unique ``name``, whether it is ``exact``, the
     ``supported_types`` the registry's structural pre-filter admits, and
-    ``check`` / ``execute``; ``priority`` and ``description`` have defaults.
-    The type parameter is the shape of ``supported_types``.
+    ``check`` / ``execute``; ``priority``, ``is_floor``, and ``description``
+    have defaults. The type parameter is the shape of ``supported_types``.
     :class:`UnaryDispatchMethod` and :class:`BinaryDispatchMethod` fix it, so
     an implementation subclasses one of those and never spells the
     parameter.
-    """
 
-    #: A one-line description, which the registry catalog shows.
-    description: ClassVar[str] = ""
+    A subclass overrides each declaration as a property, and a declaration
+    may differ between instances, as when one class registers two methods
+    under names, priorities, and descriptions its constructor receives. A
+    registry reads every declaration once, when the method is registered.
+    """
 
     @property
     @abstractmethod
@@ -256,12 +254,29 @@ class BaseDispatchMethod[SupportedTypesT](ABC):
 
     @property
     def priority(self) -> int | None:
-        """Rank among methods of the same exactness, higher first.
+        """Rank among the methods of the same exactness and floor status, higher first.
 
         ``None``, the default, is opt-in-only: excluded from automatic selection
         and reachable only by name.
         """
         return None
+
+    @property
+    def is_floor(self) -> bool:
+        """Whether the method is a floor, a fallback ranked after every method that is not one.
+
+        A floor ranks after every other method its registry admits for a
+        call, whatever their exactness and priority; among the floors,
+        exactness, priority, specificity, and registration order apply as
+        they do among the other methods. ``False`` by default. Declared once
+        and fixed for the method's life, as ``exact`` is.
+        """
+        return False
+
+    @property
+    def description(self) -> str:
+        """A one-line description, which the registry catalog shows; empty by default."""
+        return ""
 
 
 class UnaryDispatchMethod(BaseDispatchMethod[UnarySupportedTypes]):
@@ -292,7 +307,8 @@ class _Registration[M]:
     priority: int | None
     supported_types: Any
     index: int
-    description: str = ""
+    is_floor: bool
+    description: str
 
 
 def _validated_priority(name: str, priority: Any) -> int | None:
@@ -309,9 +325,35 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     would run, :meth:`execute` runs it, :meth:`set_priorities` re-ranks at
     runtime, and :meth:`list_methods` lists the methods in selection order.
     The registry reads a method's ``name``, ``exact``, ``priority``,
-    ``supported_types()``, and ``description`` once, at registration, and
-    validates them before it changes; ranking, filtering, and reporting then
-    use that registration, so a method mutated afterwards changes nothing.
+    ``is_floor``, ``supported_types()``, and ``description`` once, at
+    registration, and validates them before it changes; ranking, filtering,
+    and reporting then use that registration, so a method mutated afterwards
+    changes nothing.
+
+    Automatic selection admits the methods whose ``supported_types()`` admit
+    the call's arguments and whose priority is not ``None``, keeps only the
+    exact ones under ``exact_only=True``, and runs the first whose ``check``
+    establishes feasibility, in this **selection order**:
+
+    1. every method that is not a floor before every floor;
+    2. exact methods before approximate ones;
+    3. priority among methods that agree on the first two criteria, higher
+       first;
+    4. specificity: the smaller distance :meth:`_distance` reports, which
+       favors the method whose declared types are closest to the arguments'
+       classes in method-resolution order;
+    5. registration order.
+
+    A **floor** is a method that declares ``is_floor``: a fallback on its
+    supported types, which a call tries only after every other candidate,
+    whatever their exactness and priority. The other four criteria order the
+    floors among themselves as they order the other methods. Since
+    :meth:`set_priorities` changes neither exactness nor floor status, it
+    moves a method only among the methods that agree with it on both.
+
+    The first three criteria are the method's rank, which :meth:`_rank`
+    computes and :meth:`list_methods` follows; specificity depends on the
+    call's arguments, so only a call applies it.
 
     A registry implements
     :class:`~probpipe.core._catalog.SupportsRegistryCataloging` through
@@ -334,19 +376,11 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     description : str
         A one-line description, which the registry catalog shows.
 
-    Attributes
-    ----------
-    kind : str
-        ``"dispatch"``, the catalog kind of every dispatch registry.
-
     Notes
     -----
     ``name`` and ``description`` are read-only after construction, so the
     name a registry is cataloged under stays its ``name``.
     """
-
-    #: The catalog kind of every dispatch registry.
-    kind: ClassVar[str] = "dispatch"
 
     def __init__(self, *, name: str = "", description: str = "") -> None:
         self._name = name
@@ -367,6 +401,11 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         """A one-line description of the registry, which the registry catalog shows."""
         return self._description
 
+    @property
+    def kind(self) -> str:
+        """``"dispatch"``, the catalog kind of every dispatch registry."""
+        return "dispatch"
+
     # -- registration -------------------------------------------------------
 
     def _unknown(self, name: str) -> str:
@@ -376,9 +415,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def register(self, method: M) -> None:
         """Register a method.
 
-        The method's ``name``, ``exact``, ``priority``, ``supported_types()``,
-        and ``description`` are read here, once, and validated before the
-        registry changes, so a rejected method leaves it as it was.
+        The method's ``name``, ``exact``, ``priority``, ``is_floor``,
+        ``supported_types()``, and ``description`` are read here, once, and
+        validated before the registry changes, so a rejected method leaves it
+        as it was.
 
         Parameters
         ----------
@@ -388,9 +428,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         Raises
         ------
         TypeError
-            If ``method.name`` is not a ``str``; if ``method.exact`` is not a
-            ``bool``; if ``method.priority`` is not an ``int`` or ``None``, a
-            ``bool`` included; if ``method.supported_types()`` does not
+            If ``method.name`` is not a ``str``; if ``method.exact`` or
+            ``method.is_floor`` is not a ``bool``; if ``method.priority`` is
+            not an ``int`` or ``None``, a ``bool`` included; if
+            ``method.supported_types()`` does not
             have the registry's arity shape, or lists a class whose
             membership follows an instance's declaration rather than its class,
             such as ``NumericDistribution``, which matching by class would miss;
@@ -409,20 +450,24 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         if type(exact) is not bool:
             raise TypeError(f"method {name!r} must declare exact as a bool, got {exact!r}")
         priority = _validated_priority(name, method.priority)
+        is_floor = method.is_floor
+        if type(is_floor) is not bool:
+            raise TypeError(f"method {name!r} must declare is_floor as a bool, got {is_floor!r}")
         supported_types = method.supported_types()
         self._validate_supported_types(name, supported_types)
         _refuse_declaration_markers(name, supported_types)
         description = method.description
         if not isinstance(description, str):
-            raise TypeError(f"Method {name!r} description must be a str; got {description!r}")
+            raise TypeError(f"method {name!r} description must be a str, got {description!r}")
         registration = _Registration(
-            method,
-            name,
-            exact,
-            priority,
-            supported_types,
-            len(self._registrations),
-            description,
+            method=method,
+            name=name,
+            exact=exact,
+            priority=priority,
+            supported_types=supported_types,
+            index=len(self._registrations),
+            is_floor=is_floor,
+            description=description,
         )
         self._registrations.append(registration)
         self._by_name[name] = registration
@@ -433,12 +478,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def _effective_priority(self, registration: _Registration[M]) -> int | None:
         return self._priority_overrides.get(registration.name, registration.priority)
 
-    def _rank(self, registration: _Registration[M]) -> tuple[int, int, int]:
-        """Exactness, then opt-in status, then priority: the selection key that needs no call."""
-        priority = self._effective_priority(registration)
-        return (0 if registration.exact else 1, 1 if priority is None else 0, -(priority or 0))
+    def _rank(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+        """The part of the selection order that needs no call, smallest first.
 
-    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+        Floor status, then exactness, then opt-in status, then priority. The
+        opt-in key places an opt-in-only method after the ranked methods of
+        its group in :meth:`list_methods`; automatic selection never tries
+        it, since it skips opt-in-only methods.
+        """
+        priority = self._effective_priority(registration)
+        return (
+            1 if registration.is_floor else 0,
+            0 if registration.exact else 1,
+            1 if priority is None else 0,
+            -(priority or 0),
+        )
+
+    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int, int]:
         return (*self._rank(registration), registration.index)
 
     def _sort_registrations(self) -> None:
@@ -454,8 +510,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         """Override the rank of one or more methods.
 
         Overrides are recorded on the registry and never mutate a method. An
-        override cannot change exactness, so it never lifts an approximate
-        method above an exact one. A move between ``None`` and an integer
+        override changes neither exactness nor floor status, so it never lifts
+        an approximate method above an exact one or a floor above a method
+        that is not one. A move between ``None`` and an integer
         emits a ``UserWarning``, since it changes whether the method
         participates in automatic selection. When an error is raised, nothing
         is applied.
@@ -542,15 +599,16 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             raise ResolutionError(self._unknown(name)) from None
 
     def list_methods(self) -> list[str]:
-        """Every registered method name, ranked by exactness, priority, and registration order.
+        """Every registered method name, ranked by floor status, exactness, priority, and registration order.
 
         Returns
         -------
         list of str
             The names in the order automatic selection considers them before
-            type specificity, which depends on the arguments; opt-in-only
-            methods are included at their rank. The listing does not say what
-            a call would run; :meth:`check` does.
+            type specificity, which depends on the arguments; an opt-in-only
+            method follows the ranked methods of its floor status and
+            exactness. The listing does not say what a call would run;
+            :meth:`check` does.
         """
         return [registration.name for registration in self._registrations]
 
@@ -560,9 +618,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         Returns
         -------
         list of EntrySummary
-            Each method's registered name, exactness, ``supported_types()``,
-            and description, its defining module, and its effective priority,
-            a :meth:`set_priorities` override included.
+            Each method's registered name, exactness, floor status,
+            ``supported_types()``, and description, its defining module, and
+            its effective priority, a :meth:`set_priorities` override
+            included.
         """
         return [self._summary(registration) for registration in self._registrations]
 
@@ -598,6 +657,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             description=registration.description,
             module_path=type(registration.method).__module__,
             exact=registration.exact,
+            is_floor=registration.is_floor,
         )
 
     def _is_auto_dispatchable(self, registration: _Registration[M]) -> bool:
@@ -830,7 +890,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             self._type_cache.clear()
             self._cache_token = token
         if key not in self._type_cache:
-            ranked: list[tuple[tuple[int, int, int], int, int, _Registration[M]]] = []
+            ranked: list[tuple[tuple[int, int, int, int], int, int, _Registration[M]]] = []
             for registration in self._registrations:
                 if not self._is_auto_dispatchable(registration):
                     continue

@@ -7,23 +7,30 @@ Covers:
 3. construction: a registry joins the catalog only through ``register``;
 4. the built-in registries: the bijector factory, the converters, the
    evaluation rules, the inference methods, and the operations;
-5. a dispatch registry's entries: the fields, selection order, overrides, and
-   the registration snapshot;
-6. agreement with the catalog's code block in design II.7.
+5. a dispatch registry's entries: the fields, selection order, floors,
+   overrides, and the registration snapshot;
+6. agreement with the code blocks of design II.7, through
+   ``scripts/design/design_blocks.py``.
 """
 
 from __future__ import annotations
 
-import ast
+import importlib.util
 import re
+import sys
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from probpipe import converter_registry, inference_method_registry, operation_registry
-from probpipe.core import _catalog
+from probpipe import (
+    converter_registry,
+    inference_method_registry,
+    operation_registry,
+    register_bijector,
+)
+from probpipe.core import _catalog, _dispatch
 from probpipe.core._catalog import (
     EntrySummary,
     RegistryCatalog,
@@ -68,16 +75,23 @@ class _StubMethodWithDescription(UnaryDispatchMethod):
     """Stub method that carries a non-default :attr:`description`.
 
     Used by :class:`TestDispatchRegistryEntrySummaries` to verify that
-    the description class attribute on :class:`BaseDispatchMethod`
-    propagates through to :class:`EntrySummary` records.
+    the ``description`` property of :class:`BaseDispatchMethod` propagates
+    through to :class:`EntrySummary` records.
     """
 
-    description = "stub method for catalog tests"
+    _description: Any = "stub method for catalog tests"
 
-    def __init__(self, name: str, priority: int | None, exact: bool = False) -> None:
+    @property
+    def description(self) -> str:
+        return self._description
+
+    def __init__(
+        self, name: str, priority: int | None, exact: bool = False, is_floor: bool = False
+    ) -> None:
         self._name = name
         self._priority = priority
         self._exact = exact
+        self._is_floor = is_floor
 
     @property
     def name(self) -> str:
@@ -90,6 +104,10 @@ class _StubMethodWithDescription(UnaryDispatchMethod):
     @property
     def priority(self) -> int | None:
         return self._priority
+
+    @property
+    def is_floor(self) -> bool:
+        return self._is_floor
 
     def supported_types(self) -> tuple[type, ...]:
         return (object,)
@@ -127,13 +145,23 @@ class TestRegistration:
     def test_duplicate_name_raises(self) -> None:
         cat = RegistryCatalog()
         cat.register(_StubRegistry("a"))
-        with pytest.raises(ValueError, match="already registered"):
+        with pytest.raises(
+            ValueError,
+            match=r"^cannot catalog a second registry named 'a': the catalog already holds one",
+        ):
             cat.register(_StubRegistry("a"))
 
     def test_empty_name_raises(self) -> None:
         cat = RegistryCatalog()
-        with pytest.raises(ValueError, match="without a name"):
+        with pytest.raises(
+            ValueError, match=r'^cannot catalog a registry whose name is empty; pass name="\.\.\."'
+        ):
             cat.register(_StubRegistry(""))
+
+    def test_a_reload_of_a_registering_module_raises(self) -> None:
+        """The catalog has no removal, so registering a built-in registry again raises."""
+        with pytest.raises(ValueError, match="second registry named 'inference'"):
+            registry_catalog.register(registry_catalog["inference"])
 
     def test_missing_lookup_raises(self) -> None:
         cat = RegistryCatalog()
@@ -188,6 +216,42 @@ class TestQuery:
         assert "Auto-dispatched" not in out
         # Only a dispatch registry ranks its entries, so only it has opt-in entries.
         assert "Opt-in only" not in out
+        # No entry has a priority, so no priority column is printed.
+        assert re.search(r"^    one$", out, re.M)
+        assert "-" not in out
+
+    def test_describe_lists_floors_after_the_other_entries(self) -> None:
+        cat = RegistryCatalog()
+        a = _StubRegistry("a", kind="dispatch")
+        a.add(EntrySummary(name="rule", priority=5, exact=False))
+        a.add(EntrySummary(name="exact_floor", priority=0, exact=True, is_floor=True))
+        a.add(EntrySummary(name="approx_floor", priority=0, exact=False, is_floor=True))
+        a.add(EntrySummary(name="opt_in_floor", priority=None, exact=True, is_floor=True))
+        cat.register(a)
+        out = cat.describe("a")
+        auto = out.index("Auto-dispatched, in selection order:")
+        fallbacks = out.index("Fallbacks, after every other entry:")
+        opt_in = out.index("Opt-in only")
+        assert auto < out.index("rule") < fallbacks
+        assert fallbacks < out.index("exact_floor") < out.index("approx_floor") < opt_in
+        assert opt_in < out.index("opt_in_floor")
+
+    def test_describe_has_no_fallback_section_without_floors(self) -> None:
+        cat = RegistryCatalog()
+        a = _StubRegistry("a", kind="dispatch")
+        a.add(EntrySummary(name="rule", priority=5))
+        cat.register(a)
+        assert "Fallbacks" not in cat.describe("a")
+
+    def test_describe_keeps_the_priority_column_when_any_entry_is_ranked(self) -> None:
+        cat = RegistryCatalog()
+        a = _StubRegistry("a", kind="dispatch")
+        a.add(EntrySummary(name="ranked", priority=10))
+        a.add(EntrySummary(name="opt_in", priority=None))
+        cat.register(a)
+        out = cat.describe("a")
+        assert re.search(r"^    10  ranked$", out, re.M)
+        assert re.search(r"^     -  opt_in$", out, re.M)
 
     def test_describe_shows_exactness_when_declared(self) -> None:
         cat = RegistryCatalog()
@@ -211,10 +275,10 @@ class TestQuery:
         cat = RegistryCatalog()
         a = _StubRegistry("a", kind="dispatch")
         a.add(EntrySummary(name="ranked", priority=5))
-        a.add(EntrySummary(name="floor", priority=-(2**31)))
+        a.add(EntrySummary(name="wide", priority=-(2**31)))
         cat.register(a)
         lines = [
-            line for line in cat.describe("a").splitlines() if line.endswith(("ranked", "floor"))
+            line for line in cat.describe("a").splitlines() if line.endswith(("ranked", "wide"))
         ]
         assert len(lines) == 2
         assert len({line.index(line.split()[-1]) for line in lines}) == 1
@@ -325,7 +389,7 @@ class TestConstruction:
         ]
 
     def test_unnamed_registry_cannot_be_cataloged(self) -> None:
-        with pytest.raises(ValueError, match="without a name"):
+        with pytest.raises(ValueError, match="name is empty"):
             RegistryCatalog().register(UnaryDispatchRegistry())
 
     @pytest.mark.parametrize("attribute", ["name", "description"])
@@ -401,9 +465,29 @@ class TestBuiltinPopulation:
             assert out.index("Opt-in only") < out.index(f"  {name}")
 
     def test_the_evaluation_floors_follow_the_other_rules(self) -> None:
-        """The catalog lists the floors last, as the registry's tiered selection order ranks them."""
-        names = [s.name for s in registry_catalog["evaluation_rules"].entry_summaries()]
-        assert names[-2:] == ["elementwise_sweep", "sampling_lift"]
+        """The catalog lists the floors last and apart, as selection order ranks them."""
+        summaries = registry_catalog["evaluation_rules"].entry_summaries()
+        floors = [s.name for s in summaries if s.is_floor]
+        assert floors == ["elementwise_sweep", "sampling_lift"]
+        assert [s.name for s in summaries][-2:] == floors
+        out = registry_catalog.describe("evaluation_rules")
+        fallbacks = out.index("Fallbacks, after every other entry:")
+        assert out.index("empirical_enumeration") < fallbacks
+        assert all(fallbacks < out.index(f"  {name}") for name in floors)
+        assert str(-(2**31)) not in out
+
+    @pytest.mark.parametrize("name", ["converters", "evaluation_rules", "inference"])
+    def test_each_shipped_dispatch_method_describes_itself(self, name: str) -> None:
+        for s in registry_catalog[name].entry_summaries():
+            assert s.description, f"{name} method {s.name!r} declares no description"
+            assert "\n" not in s.description
+
+    def test_methods_of_one_class_describe_themselves_apart(self) -> None:
+        """``blackjax_nuts`` and ``blackjax_hmc`` share a class but not a description."""
+        nuts = inference_method_registry.describe_entry("blackjax_nuts")
+        hmc = inference_method_registry.describe_entry("blackjax_hmc")
+        assert nuts.module_path == hmc.module_path
+        assert nuts.description != hmc.description
 
 
 # ---------------------------------------------------------------------------
@@ -417,12 +501,9 @@ class TestConverterEntries:
             source_types, target_types = s.supported_types
             assert all(isinstance(t, type) for t in (*source_types, *target_types))
 
-    def test_each_shipped_converter_describes_itself(self) -> None:
+    def test_the_shipped_converters_are_cataloged(self) -> None:
         summaries = converter_registry.entry_summaries()
         assert {s.name for s in summaries} >= {"tfp", "empirical", "moment_match", "kde"}
-        for s in summaries:
-            assert s.description, f"converter {s.name!r} declares no description"
-            assert "\n" not in s.description
 
     def test_describe_entry_round_trips(self) -> None:
         [first, *_] = converter_registry.entry_summaries()
@@ -439,22 +520,55 @@ class TestOperationEntries:
         assert summaries
         for s in summaries:
             assert isinstance(s, EntrySummary)
-            assert (s.priority, s.exact) == (None, None)
+            assert (s.priority, s.exact, s.is_floor) == (None, None, False)
 
     def test_describe_lists_the_operations_together(self) -> None:
         out = registry_catalog.describe("operations")
         assert "Entries:" in out
         assert "Opt-in only" not in out
-        assert "  sample  — " in out
+        assert re.search(r"^    sample  — ", out, re.M)
 
 
 class TestBijectorEntries:
-    def test_entries_are_unranked_and_name_ordered(self) -> None:
+    def test_entries_are_unranked_described_and_name_ordered(self) -> None:
         summaries = registry_catalog["bijectors"].entry_summaries()
         assert [s.name for s in summaries] == sorted(s.name for s in summaries)
         for s in summaries:
-            assert (s.priority, s.exact, s.description) == (None, None, "")
+            assert (s.priority, s.exact) == (None, None)
+            assert s.description, f"bijector entry {s.name!r} has no description"
             assert len(s.supported_types) == 1
+
+    @pytest.mark.parametrize("name", ["Boolean", "IntegerInterval", "NonNegativeInteger", "Sphere"])
+    def test_an_entry_without_a_bijector_says_so(self, name: str) -> None:
+        description = registry_catalog["bijectors"].describe_entry(name).description
+        assert description.startswith("No smooth bijector: ")
+
+    def test_register_bijector_records_its_description(self) -> None:
+        from probpipe.core.constraints import _Positive
+        from probpipe.functions import _reparameterization as module
+
+        saved = (
+            dict(module._CONSTRAINT_BIJECTOR_REGISTRY),
+            dict(module._BIJECTOR_DESCRIPTIONS),
+        )
+        try:
+            register_bijector(_Positive(), lambda c: None, description="an instance key")
+            entry = registry_catalog["bijectors"].describe_entry(repr(_Positive()))
+            assert entry.description == "an instance key"
+        finally:
+            for registry, contents in zip(
+                (module._CONSTRAINT_BIJECTOR_REGISTRY, module._BIJECTOR_DESCRIPTIONS),
+                saved,
+                strict=True,
+            ):
+                registry.clear()
+                registry.update(contents)
+
+    def test_register_bijector_rejects_a_non_string_description(self) -> None:
+        from probpipe.core.constraints import _Positive
+
+        with pytest.raises(TypeError, match="bijector description must be a str, got 3"):
+            register_bijector(_Positive, lambda c: None, description=3)  # type: ignore[arg-type]
 
     def test_describe_entry_known(self) -> None:
         assert registry_catalog["bijectors"].describe_entry("Real").name == "Real"
@@ -510,6 +624,9 @@ class TestProtocol:
     def test_entry_summary_exact_defaults_to_none(self) -> None:
         assert EntrySummary(name="x", priority=1).exact is None
 
+    def test_entry_summary_is_floor_defaults_to_false(self) -> None:
+        assert EntrySummary(name="x", priority=1).is_floor is False
+
 
 # ---------------------------------------------------------------------------
 # entry_summaries / describe_entry on a dispatch registry directly
@@ -547,6 +664,7 @@ class TestDispatchRegistryEntrySummaries:
         assert s.supported_types == (object,)
         assert s.description == "stub method for catalog tests"
         assert s.exact is False
+        assert s.is_floor is False
         # ``module_path`` is the test module name.
         assert s.module_path == __name__
 
@@ -563,6 +681,25 @@ class TestDispatchRegistryEntrySummaries:
         )
         assert reg.describe_entry("opt_in").is_opt_in_only
 
+    def test_entry_summaries_list_floors_after_the_other_methods(self) -> None:
+        reg = UnaryDispatchRegistry()
+        reg.register(_StubMethodWithDescription("floor", 100, exact=True, is_floor=True))
+        reg.register(_StubMethodWithDescription("approx", 1))
+        assert [(s.name, s.is_floor) for s in reg.entry_summaries()] == [
+            ("approx", False),
+            ("floor", True),
+        ]
+
+    def test_description_may_differ_between_instances(self) -> None:
+        first = _StubMethodWithDescription("one", 10)
+        first._description = "first"
+        second = _StubMethodWithDescription("two", 10)
+        second._description = "second"
+        reg = UnaryDispatchRegistry()
+        reg.register(first)
+        reg.register(second)
+        assert [s.description for s in reg.entry_summaries()] == ["first", "second"]
+
     def test_opt_in_move_is_reported(self) -> None:
         reg = self._registry_with(("m", 10))
         with pytest.warns(UserWarning, match="now runs only when requested"):
@@ -575,16 +712,16 @@ class TestDispatchRegistryEntrySummaries:
         reg = UnaryDispatchRegistry()
         reg.register(method)
         method._priority = 99
-        method.description = "changed"  # type: ignore[misc]
+        method._description = "changed"
         s = reg.describe_entry("m")
         assert s.priority == 10
         assert s.description == "stub method for catalog tests"
 
     def test_non_string_description_rejected(self) -> None:
         method = _StubMethodWithDescription("m", 10)
-        method.description = 3  # type: ignore[assignment,misc]
+        method._description = 3
         reg = UnaryDispatchRegistry()
-        with pytest.raises(TypeError, match="description must be a str"):
+        with pytest.raises(TypeError, match=r"^method 'm' description must be a str, got 3$"):
             reg.register(method)
         assert reg.list_methods() == []
 
@@ -653,64 +790,60 @@ class TestDispatchRegistryEntrySummaries:
 # Agreement with design II.7
 # ---------------------------------------------------------------------------
 
-_DESIGN = Path(__file__).resolve().parents[2] / "design" / "02-shared-abstractions.md"
+_ROOT = Path(__file__).resolve().parents[2]
+_TOOL = _ROOT / "scripts" / "design" / "design_blocks.py"
+
+#: The modules a name II.7 declares is looked up in, first match winning.
+_MODULES = (_catalog, _dispatch)
 
 
-def _catalog_block() -> str:
-    """The II.7 code block that declares the catalog (the one naming ``EntrySummary``)."""
-    text = _DESIGN.read_text()
-    section = text[text.index("## II.7 ") :]
-    section = section[: section.index("\n### Rationale")]
-    blocks = re.findall(r"```python\n(.*?)```", section, re.S)
-    [block] = [b for b in blocks if "class EntrySummary" in b]
-    return block
+def _tool():
+    if "design_blocks" in sys.modules:
+        return sys.modules["design_blocks"]
+    spec = importlib.util.spec_from_file_location("design_blocks", _TOOL)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["design_blocks"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def _class_section(block: str, name: str) -> str:
-    header = re.search(rf"^class {name}\b.*$", block, re.M)
-    assert header is not None, name
-    section = block[header.end() :]
-    following = re.search(r"^\S", section, re.M)
-    return section[: following.start()] if following else section
+def _resolve(name: str) -> Any:
+    for module in _MODULES:
+        if hasattr(module, name):
+            return getattr(module, name)
+    return None
 
 
-@pytest.mark.skipif(not _DESIGN.exists(), reason="design reference not checked out")
+def _declarations() -> list:
+    return _tool().declarations(("II.7",)) if _TOOL.exists() else []
+
+
+def _declared_name(declaration: Any) -> str:
+    member = getattr(declaration, "member", None)
+    return member.name if member is not None else declaration.name
+
+
+@pytest.mark.skipif(
+    not (_ROOT / "design").is_dir() or not _TOOL.exists(),
+    reason="the design reference is not checked out",
+)
 class TestDesignAgreement:
-    def test_declared_classes_exist(self) -> None:
-        names = re.findall(r"^class (\w+)", _catalog_block(), re.M)
-        assert names
-        for name in names:
-            assert hasattr(_catalog, name), f"{name} is declared in II.7 but not implemented"
+    @pytest.mark.parametrize(
+        "declaration",
+        [pytest.param(d, id=f"{d.section}-{_declared_name(d)}") for d in _declarations()],
+    )
+    def test_the_declaration_matches_the_implementation(self, declaration: Any) -> None:
+        findings = _tool().check([declaration], _resolve)
+        assert not findings, "; ".join(f"{f.name} {f.problem}" for f in findings)
 
-    def test_every_public_name_is_declared(self) -> None:
-        block = _catalog_block()
-        declared = set(re.findall(r"^class (\w+)", block, re.M))
-        declared |= set(re.findall(r"^(\w+) = ", block, re.M))
+    def test_every_public_name_of_the_catalog_is_declared(self) -> None:
+        declared = {_declared_name(d) for d in _declarations()}
         assert set(_catalog.__all__) <= declared, set(_catalog.__all__) - declared
 
     @pytest.mark.parametrize("record_cls", [EntrySummary, RegistryInfo])
-    def test_record_fields_match(self, record_cls: type) -> None:
-        section = _class_section(_catalog_block(), record_cls.__name__)
-        declared = re.findall(
-            r"^\s+(\w+):\s+([^=#\n]+?)\s*(?:=\s*([^#\n]+?))?\s*(?:#.*)?$", section, re.M
-        )
-        implemented = fields(record_cls)
-        assert [name for name, _, _ in declared] == [f.name for f in implemented]
-        for (name, annotation, default), field_ in zip(declared, implemented, strict=True):
-            assert annotation.replace(" ", "") == str(field_.type).replace(" ", ""), name
-            if default:
-                assert ast.literal_eval(default) == field_.default, name
-
-    def test_protocol_members_match(self) -> None:
-        section = _class_section(_catalog_block(), "SupportsRegistryCataloging")
-        attributes = re.findall(r"^\s+(\w+):", section, re.M)
-        methods = re.findall(r"^\s+def (\w+)\(", section, re.M)
-        for name in (*attributes, *methods):
-            assert name in SupportsRegistryCataloging.__protocol_attrs__, name
-        assert set(attributes) | set(methods) == set(SupportsRegistryCataloging.__protocol_attrs__)
-
-    def test_catalog_methods_match(self) -> None:
-        section = _class_section(_catalog_block(), "RegistryCatalog")
-        declared = set(re.findall(r"^\s+def (\w+)\(", section, re.M))
-        for name in declared:
-            assert callable(getattr(RegistryCatalog, name, None)), name
+    def test_record_fields_match_in_order(self, record_cls: type) -> None:
+        [declaration] = [d for d in _declarations() if _declared_name(d) == record_cls.__name__]
+        declared = [(f.name, f.annotation.replace(" ", "")) for f in declaration.fields]
+        implemented = [(f.name, str(f.type).replace(" ", "")) for f in fields(record_cls)]
+        assert declared == implemented

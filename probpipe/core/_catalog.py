@@ -1,7 +1,8 @@
 """The registry catalog, which lists every registry and its entries.
 
 :data:`registry_catalog` lists the registries in the process, their entries
-with each entry's exactness and priority, and a one-line description of each,
+with each entry's exactness, priority, and floor status, and a one-line
+description of each,
 so a user can see which implementations exist and how a call resolves. An
 **entry** is one registered item of a registry, such as an inference method, a
 converter, an operation, or a bijector factory.
@@ -47,10 +48,11 @@ class EntrySummary:
     name : str
         The entry's name, unique within its registry.
     priority : int or None
-        The entry's effective rank among the entries of the same exactness,
-        higher first. In a dispatch registry ``None`` is opt-in-only. A
-        registry that does not rank its entries, such as the bijector factory
-        or the operation registry, reports ``None`` for every entry.
+        The entry's effective rank among the entries of the same floor status
+        and exactness, higher first. In a dispatch registry ``None`` is
+        opt-in-only. A registry that does not rank its entries, such as the
+        bijector factory or the operation registry, reports ``None`` for every
+        entry.
     supported_types : tuple
         What the entry admits, in its registry's form: a tuple of classes for a
         unary dispatch registry, a ``(left_types, right_types)`` pair for a
@@ -63,6 +65,10 @@ class EntrySummary:
     exact : bool or None
         The entry's declared exactness, or ``None`` when its registry declares
         no exactness per entry.
+    is_floor : bool
+        Whether the entry is a floor, a fallback that its registry ranks after
+        every entry that is not one, whatever their exactness and priority.
+        ``False`` for an entry of a registry that has no floors.
     """
 
     name: str
@@ -71,6 +77,7 @@ class EntrySummary:
     description: str = ""
     module_path: str = ""
     exact: bool | None = None
+    is_floor: bool = False
 
     @property
     def is_opt_in_only(self) -> bool:
@@ -115,15 +122,8 @@ class RegistryInfo:
 class SupportsRegistryCataloging(Protocol):
     """The members a registry implements to be cataloged.
 
-    Attributes
-    ----------
-    name : str
-        The registry's name, unique within the catalog.
-    description : str
-        A one-line description of the registry.
-    kind : str
-        The registry's kind, such as ``"dispatch"``, ``"operation"``, or
-        ``"factory"``. The kind is a string, so a plugin can introduce one.
+    ``name``, ``description``, and ``kind`` are read-only, so a registry may
+    implement each as a property or as a plain class attribute.
 
     Notes
     -----
@@ -134,9 +134,23 @@ class SupportsRegistryCataloging(Protocol):
     place a registry in the catalog; :meth:`RegistryCatalog.register` does.
     """
 
-    name: str
-    description: str
-    kind: str
+    @property
+    def name(self) -> str:
+        """The registry's name, unique within the catalog."""
+        ...
+
+    @property
+    def description(self) -> str:
+        """A one-line description of the registry."""
+        ...
+
+    @property
+    def kind(self) -> str:
+        """The registry's kind, such as ``"dispatch"``, ``"operation"``, or ``"factory"``.
+
+        The kind is a string, so a plugin can introduce one.
+        """
+        ...
 
     def entry_summaries(self) -> list[EntrySummary]:
         """One summary per entry, in the registry's order.
@@ -193,6 +207,12 @@ class RegistryCatalog:
     def register(self, registry: SupportsRegistryCataloging) -> None:
         """Add *registry* to the catalog under its ``name``.
 
+        The catalog has no removal, so a name stays registered for the life of
+        the process. A module that registers a registry when it is imported
+        therefore raises when it is reloaded, as ``importlib.reload`` or
+        IPython's ``%autoreload`` does after an edit; restart the process
+        instead.
+
         Parameters
         ----------
         registry : SupportsRegistryCataloging
@@ -206,14 +226,13 @@ class RegistryCatalog:
         name = registry.name
         if not name:
             raise ValueError(
-                f"Cannot catalog a registry without a name; got {name!r} "
-                f"for {type(registry).__name__}"
+                "cannot catalog a registry whose name is empty; "
+                'pass name="..." when you construct the registry'
             )
         if name in self._registries:
-            existing = type(self._registries[name]).__name__
             raise ValueError(
-                f"Registry name {name!r} is already registered "
-                f"(existing: {existing}, new: {type(registry).__name__})"
+                f"cannot catalog a second registry named {name!r}: "
+                "the catalog already holds one under that name"
             )
         self._registries[name] = registry
 
@@ -268,11 +287,17 @@ class RegistryCatalog:
         The first line names the registry, its kind, and its description, and
         each entry follows on a line of its own: its priority, or ``-`` for
         ``None``; its exactness, where the registry declares one; its name; its
-        description; and its module. The entries follow the registry's
+        description; and its module. The priority column is left out when
+        every entry's priority is ``None``, as in a registry that does not
+        rank its entries, and the exactness column when no entry declares
+        one.
+
+        The entries follow the registry's
         :meth:`~SupportsRegistryCataloging.entry_summaries` order, which for a
         dispatch registry is its selection order before type specificity. A
-        dispatch registry's opt-in-only entries are listed in a section of
-        their own, and any other registry's entries are listed together.
+        dispatch registry's entries are listed in up to three sections: the
+        ranked entries that are not floors, the ranked floors, and the
+        opt-in-only entries. Any other registry's entries are listed together.
 
         Parameters
         ----------
@@ -292,16 +317,24 @@ class RegistryCatalog:
         registry = self[name]
         summaries = registry.entry_summaries()
         show_exactness = any(summary.exact is not None for summary in summaries)
-        priority_width = max((len(_priority_text(s)) for s in summaries), default=1)
+        if any(summary.priority is not None for summary in summaries):
+            priority_width = max(len(_priority_text(summary)) for summary in summaries)
+        else:
+            priority_width = 0
         if registry.kind == "dispatch":
+            ranked = [summary for summary in summaries if not summary.is_opt_in_only]
             sections = [
                 (
                     "Auto-dispatched, in selection order:",
-                    [s for s in summaries if not s.is_opt_in_only],
+                    [summary for summary in ranked if not summary.is_floor],
+                ),
+                (
+                    "Fallbacks, after every other entry:",
+                    [summary for summary in ranked if summary.is_floor],
                 ),
                 (
                     "Opt-in only (run by method=...):",
-                    [s for s in summaries if s.is_opt_in_only],
+                    [summary for summary in summaries if summary.is_opt_in_only],
                 ),
             ]
         else:
@@ -362,8 +395,14 @@ def _priority_text(summary: EntrySummary) -> str:
 
 
 def _format_entry_line(summary: EntrySummary, show_exactness: bool, priority_width: int) -> str:
-    """One entry as :meth:`RegistryCatalog.describe` prints it, its priority right-aligned."""
-    line = f"    {_priority_text(summary):>{priority_width}}  "
+    """One entry as :meth:`RegistryCatalog.describe` prints it.
+
+    The priority is right-aligned in a column *priority_width* wide, and a
+    width of 0 leaves the column out.
+    """
+    line = "    "
+    if priority_width:
+        line += f"{_priority_text(summary):>{priority_width}}  "
     if show_exactness:
         exactness = "" if summary.exact is None else ("exact" if summary.exact else "approx")
         line += f"{exactness:<6}  "

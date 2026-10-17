@@ -159,7 +159,7 @@ An operation registers its routes after construction, with `register_route` for 
 A call `f(d)` of a function at a distribution or a batch resolves among the evaluation rules, and a rule realizes the call for a pair of a map type and an operand type, as a closed form or a batched routine does.
 A rule is a `BinaryDispatchMethod` whose `supported_types` is a pair of the map types and the operand types.
 Its `check` and `execute` take the map and the operand positionally and the keywords `parameter`, `fixed_args`, and `controls`, and `evaluation_rule_registry.register` registers an instance.
-The registry ships three rules: the sampling lift and the elementwise sweep, which rank below every other rule, and the exact enumeration of empirical laws.
+The registry ships three rules: the sampling lift and the elementwise sweep, which are floors and so rank below every other rule, and the exact enumeration of empirical laws.
 
 ::: probpipe.evaluation_rule_registry
 
@@ -182,14 +182,16 @@ The registry ships three rules: the sampling lift and the elementwise sweep, whi
 ## Dispatch registries
 
 A dispatch registry holds named methods and selects one for a call by the types of its arguments.
-It ranks the methods that admit a call by four criteria, in decreasing precedence:
+It ranks the methods that admit a call by five criteria, in decreasing precedence:
 
-1. Exactness: exact methods rank before approximate ones.
-2. Priority: a higher priority ranks first among methods of the same exactness, and a method whose priority is `None` runs only when a call names it.
-3. Specificity: the method whose declared types are closest to the arguments' classes ranks first.
-4. Registration order: the method registered first ranks first.
+1. Floor status: a method that declares `is_floor` is a fallback, and it ranks after every method that does not, whatever their exactness and priority.
+2. Exactness: exact methods rank before approximate ones.
+3. Priority: a higher priority ranks first among methods of the same floor status and exactness, and a method whose priority is `None` runs only when a call names it.
+4. Specificity: the method whose declared types are closest to the arguments' classes ranks first.
+5. Registration order: the method registered first ranks first.
 
-`set_priorities` re-ranks the methods of a registry at runtime and keeps each method's exactness.
+The registry runs the first method in this order whose `check` reports the call feasible.
+`set_priorities` re-ranks the methods of a registry at runtime and keeps each method's exactness and floor status.
 
 ::: probpipe.inference.BaseDispatchRegistry
     options:
@@ -237,7 +239,7 @@ It ranks the methods that admit a call by four criteria, in decreasing precedenc
 It answers three queries:
 
 - `print(registry_catalog)`: one row per registry, with its kind, its entry count, and its description;
-- `registry_catalog.describe("inference")`: one registry's entries in its own order, each with its priority and, where the registry declares it, its exactness, with a dispatch registry's opt-in-only methods in a section of their own;
+- `registry_catalog.describe("inference")`: one registry's entries in its own order, each with its priority where the registry ranks its entries and its exactness where the registry declares it, with a dispatch registry's floors and its opt-in-only methods each in a section of their own;
 - `registry_catalog["inference"].describe_entry("blackjax_nuts")`: one entry, as an `EntrySummary`.
 
 The catalog holds five registries:
@@ -250,6 +252,7 @@ The catalog holds five registries:
 
 A registry joins the catalog by implementing `SupportsRegistryCataloging` and by an explicit `registry_catalog.register(registry)`, which rejects an empty or duplicate name.
 Constructing a registry does not catalog it, so a registry that a test builds stays out of the catalog.
+The catalog has no removal, so reloading a module that registers a registry, as `importlib.reload` or IPython's `%autoreload` does, raises `ValueError`; restart the process instead.
 A dispatch registry implements the protocol already, and it takes its catalog name and description at construction:
 
 ```python
@@ -260,7 +263,8 @@ kl_registry = BinaryDispatchRegistry(name="kl", description="KL divergence betwe
 registry_catalog.register(kl_registry)
 ```
 
-A dispatch method may declare a one-line `description` class attribute, which the registry reads at registration and the catalog shows.
+A dispatch method may declare a one-line `description` property, as it declares its `name`, which the registry reads at registration and the catalog shows.
+`register_bijector` takes a `description` keyword for the same purpose.
 
 ::: probpipe.registry_catalog
 

@@ -1622,23 +1622,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and their entries, so a user can see which implementations exist and how a
   call resolves. `print(registry_catalog)` gives one row per registry, and
   `registry_catalog.describe(name)` lists one registry's entries, each with
-  its priority, exactness, and description. An entry is one registered item of
-  a registry, such as an inference method or a converter.
+  its priority, exactness, and description, a dispatch registry's floors and
+  opt-in-only methods each in a section of their own. An entry is one
+  registered item of a registry, such as an inference method or a converter.
   - **Membership:** a registry is cataloged by implementing
-    `SupportsRegistryCataloging` (`name`, `description`, `kind`,
-    `entry_summaries()`, and `describe_entry()`) and by an explicit
+    `SupportsRegistryCataloging` (the read-only `name`, `description`, and
+    `kind`, and `entry_summaries()` and `describe_entry()`) and by an explicit
     `registry_catalog.register(registry)`, which rejects an empty or duplicate
-    name. Constructing a registry does not catalog it.
+    name. Constructing a registry does not catalog it, and the catalog has no
+    removal, so reloading a module that registers a registry raises.
   - **The built-in registries:** the bijector factories, the converters, the
     evaluation rules, the inference methods, and the operations, each under
-    its own name.
+    its own name, and each entry with a one-line description.
   - **Dispatch registries:** `BaseDispatchRegistry` takes keyword-only `name`
-    and `description`, which are read-only, and has `kind = "dispatch"`. Its `entry_summaries()`
-    reports each method's registered name, exactness, effective priority,
-    supported types, and description as an `EntrySummary`, in `list_methods()`
-    order. A method may declare a one-line `description`, which registration
-    reads and validates with its other declarations, and each shipped converter
-    declares one.
+    and `description`, which are read-only, and its `kind` is `"dispatch"`.
+    Its `entry_summaries()` reports each method's registered name, exactness,
+    floor status, effective priority, supported types, and description as an
+    `EntrySummary`, in `list_methods()` order. A method may declare a one-line
+    `description` property, which registration reads and validates with its
+    other declarations.
+  - **Floors:** a dispatch method declares `is_floor`, `False` by default, and
+    every registry ranks a floor after each method that is not one, whatever
+    their exactness and priority. Floor status is the first criterion of
+    selection order, before exactness, priority, specificity, and
+    registration order, and `set_priorities` cannot change it. The sampling
+    lift and the elementwise sweep declare it, so the evaluation rules rank
+    them as before, and `FLOOR_PRIORITY`, their priority, is now 0.
+  - **Bijectors:** `register_bijector` takes a keyword-only `description`,
+    which the catalog shows, and each constraint with no smooth bijector is
+    described by the reason.
   - **Operations:** `OperationSummary` is an `EntrySummary`, and
     `OperationRegistry` implements `SupportsRegistryCataloging`.
   - **Exports:** `probpipe` exports `registry_catalog` and the four classes

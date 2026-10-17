@@ -22,9 +22,10 @@ Three rules are registered here:
    laws. A group enumerates through its root, so a view of an empirical law
    enumerates as the law does.
 
-A **floor** is the fallback on its stated domain. The registry ranks the floors
-in a tier of their own, below every other rule whatever its exactness and
-priority, and orders each tier as every dispatch registry does. A floor's check
+A **floor** is the fallback on its stated domain. Each floor declares
+``is_floor``, so the registry ranks it after every other rule whatever that
+rule's exactness and priority, and orders the floors among themselves as every
+dispatch registry orders its methods (II.7). A floor's check
 applies the test the planner applies to the argument at its parameter, its
 role included, so the floor is feasible where the direct call takes it and
 nowhere else.
@@ -53,7 +54,6 @@ from ..core._dispatch import (
     BinaryDispatchMethod,
     BinaryDispatchRegistry,
     Feasibility,
-    _Registration,
 )
 from ..distributions._capabilities import SupportsSampling
 from ..distributions._distribution import Distribution
@@ -63,8 +63,9 @@ from . import _descendants, _plan
 
 __all__ = ["FLOOR_PRIORITY", "evaluation_rule_registry"]
 
-#: The priority each floor registers with, which orders the floors among themselves.
-FLOOR_PRIORITY = -(2**31)
+#: The priority each floor registers with, which orders the floors among themselves;
+#: ``is_floor`` alone places them after every other rule.
+FLOOR_PRIORITY = 0
 
 #: The engine controls an engine-realized rule forwards when it calls the map.
 _FORWARDED_CONTROLS = (
@@ -126,6 +127,10 @@ def _run_by_name(
 class _Floor(BinaryDispatchMethod):
     """A fallback on its stated domain, ranked below every other rule there."""
 
+    @property
+    def is_floor(self) -> bool:
+        return True
+
 
 class _SamplingLift(_Floor):
     """The floor on distribution operands: draws from the operand pushed through the map.
@@ -133,6 +138,10 @@ class _SamplingLift(_Floor):
     The result is an empirical law over the outputs, so the rule is approximate.
     A view samples through its parent, which must itself sample.
     """
+
+    @property
+    def description(self) -> str:
+        return "Draws of the operand pushed through the map, as an empirical law."
 
     @property
     def name(self) -> str:
@@ -217,6 +226,10 @@ class _ElementwiseSweep(_Floor):
     """
 
     @property
+    def description(self) -> str:
+        return "The map applied to each element of a batch operand."
+
+    @property
     def name(self) -> str:
         return "elementwise_sweep"
 
@@ -298,6 +311,10 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
     distribution operand, since a view of an empirical law lifts through its
     root, and its check decides from the groups' roots.
     """
+
+    @property
+    def description(self) -> str:
+        return "The map at every combination of empirical atoms, with their weights multiplied."
 
     @property
     def name(self) -> str:
@@ -395,22 +412,7 @@ class _EmpiricalEnumeration(BinaryDispatchMethod):
 _ENGINE_RULES = frozenset({"sampling_lift", "elementwise_sweep", "empirical_enumeration"})
 
 
-class _EvaluationRuleRegistry(BinaryDispatchRegistry[BinaryDispatchMethod]):
-    """A binary dispatch registry whose floors rank in a tier below every other rule.
-
-    Within each tier, selection follows the order of every dispatch registry:
-    exactness, then priority, then specificity, then registration order. A
-    priority override therefore moves a floor only among the floors.
-    """
-
-    def _rank(self, registration: _Registration[BinaryDispatchMethod]) -> tuple[int, int, int]:
-        exactness, opt_in, priority = super()._rank(registration)
-        # The floor tier follows both exactness classes of the other rules.
-        tier = 2 if isinstance(registration.method, _Floor) else 0
-        return (tier + exactness, opt_in, priority)
-
-
-evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = _EvaluationRuleRegistry(
+evaluation_rule_registry: BinaryDispatchRegistry[BinaryDispatchMethod] = BinaryDispatchRegistry(
     name="evaluation_rules",
     description="Evaluation rules for a map applied to a law or a batch, keyed on both types.",
 )

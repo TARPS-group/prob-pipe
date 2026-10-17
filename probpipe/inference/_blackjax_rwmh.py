@@ -865,6 +865,10 @@ class BlackJAXRWMHMethod(InferenceMethod):
     )
 
     @property
+    def description(self) -> str:
+        return "Gradient-free random-walk Metropolis-Hastings through BlackJAX."
+
+    @property
     def name(self) -> str:
         return "blackjax_rwmh"
 

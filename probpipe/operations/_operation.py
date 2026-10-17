@@ -2366,9 +2366,20 @@ class OperationRegistry(SupportsRegistryCataloging):
     :meth:`describe_entry`, and it is cataloged as ``"operations"``.
     """
 
-    name = "operations"
-    description = "The operations, with their operands and their routes in selection order"
-    kind = "operation"
+    @property
+    def name(self) -> str:
+        """``"operations"``, the registry's name in the registry catalog."""
+        return "operations"
+
+    @property
+    def description(self) -> str:
+        """A one-line description of the registry, which the registry catalog shows."""
+        return "The operations, with their operands and their routes in selection order."
+
+    @property
+    def kind(self) -> str:
+        """``"operation"``, the registry's catalog kind."""
+        return "operation"
 
     def __init__(self) -> None:
         self._operations: dict[str, Operation] = {}
