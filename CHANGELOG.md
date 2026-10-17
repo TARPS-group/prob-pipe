@@ -3479,11 +3479,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **An installed PyMC older than 6.2 raises an `ImportError` that names the
-  upgrade,** as `ProbPipe needs PyMC 6.2 or later, which works with ArviZ 1.x,
-  but PyMC 5.28.5 is installed`, where PyMC 5 failed on import with an error
-  about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
-  install cell, and the minimal Colab command of the installation page, also
-  installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
+  upgrade,** as `PyMC 5.28.5 is installed, but PyMCModel requires PyMC 6.2 or
+  later`, where PyMC 5 failed on import with an error about ArviZ. A missing
+  PyMC names the API and the release it requires, and the command that
+  installs it. Google Colab preinstalls PyMC 5, so every notebook's Colab
+  install cell, and the smallest Colab command of the installation page,
+  installs the `pymc` extra, and pip no longer reports a dependency conflict.
 - **A derived operation passes `exact_only` and `n_broadcast_samples` to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
