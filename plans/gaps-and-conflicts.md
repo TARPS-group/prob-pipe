@@ -305,7 +305,7 @@ A shim is the kind of bridging code that directive 8 of the README forbids for d
 
 **Blocks:** S2, S3, E3.
 
-**Status:** open; confirm with jhuggins.
+**Status:** ✅ settled 2026-10-17: option 1. Every rename and removal in the push is a clean break with no alias or warning, recorded under `### Changed (breaking)` in the CHANGELOG, and 0.2.0 is released after the push.
 
 ---
 
@@ -325,7 +325,7 @@ Each is explained from scratch in the plan's section 9, so here each gets its co
 | Q16 | Names that collide with ProbPipe's vocabulary | *probe result* for a stored probe outcome; "the point's random key" with no separate name; `functions/_work_scope.py` as the name of the module that holds the workflow scope work enters. #524 plans to merge `_managed.py` into the existing key broker `functions/_broker.py`, so this renames that module. | E2, E3 |
 | Q15 | The executor class's name | `PointExecutor`, since users often import `concurrent.futures.Executor` too | E3 |
 | Q3 | Which callables an executor named on an operation applies to. `condition_on.using(executor="slurm")` must send the simulator to the cluster without the user rebuilding the model. | Every opaque callable inside the call. An executor set on a `Function` itself wins, so a cheap statistic can stay local. A mapping by label can come later. | E3 |
-| Q2 | When `dispatch` and `max_workers` go | Removed outright before 0.2.0, provided the controls and the executor registry merge before #549 does (item D5) | E3 |
+| Q2 | When `dispatch` and `max_workers` go | ✅ Settled by D5: removed outright, and 0.2.0 waits for the push | E3 |
 | Q8 | Which executor a ProbPipe call made inside a point uses | Automatic selection, unless the call names one, so a cluster job does not submit cluster jobs | E3, E5 |
 | Q4 | Host callbacks, staged execution, or both. Staged execution stores `G(θ)` as a deterministic field of a joint. | Callbacks now. Deterministic fields change what a joint's event holds, so they go to a separate issue (L5 below). | E4 |
 | Q7 | What a failed point means | The call raises once its point set completes, naming the point, and a compiled program stops at once. Dropping failed points is opt-in, after the workshop, for point sets built in Python only. | E4 |
