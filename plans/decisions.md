@@ -19,7 +19,8 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
-| 2026-10-17 | The execution plan's recommendations for Q3, Q4, Q5, Q7, Q8, Q13, Q14, Q15, Q16 (apart from the module name), and Q18 are accepted, as `gaps-and-conflicts.md` D6 states them. | execution | maintainer |
+| 2026-10-17 | "Point" replaces "managed work item" everywhere: in V.8, the glossary, the code, and its names. The module that `_managed.py` and `_broker.py` merge into is `functions/_point_keys.py`. | execution | maintainer |
+| 2026-10-17 | The execution plan's recommendations for Q3, Q4, Q5, Q7, Q8, Q13, Q14, Q15, Q16, and Q18 are accepted, as `gaps-and-conflicts.md` D6 states them. | execution | maintainer |
 | 2026-10-17 | Every rename and removal in the push is a clean break: no alias, no deprecation warning, and a `### Changed (breaking)` CHANGELOG entry. This answers the execution plan's Q2: `dispatch` and `max_workers` are removed outright. Release 0.2.0 (#549) follows the push. | process | maintainer |
 | 2026-10-17 | Grammar B, not B′: a declaration is whole exactly when its spec is a base spec, with no flag. | addressing | maintainer |
 | 2026-10-17 | A view at or below a field that holds a law or a function wraps, keeping the field's name; #571's rule that a law's event is whole or an exposed record stands unchanged. | addressing | maintainer |
