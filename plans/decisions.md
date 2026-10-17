@@ -19,7 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
-| 2026-10-17 | The text fixes T1–T5 are accepted; the execution plan says **requester** for the code that asks for a point set. | process | maintainer |
+| 2026-10-17 | The text fixes T1–T6 are accepted; the execution plan says **requester** for the code that asks for a point set. | process | maintainer |
 | 2026-10-17 | Steps run in the order of gaps F1: S1 with E2; S2 announced; E3's `core/` part alongside S2 and its `_broadcast`/`_sweep` rewrite after; S3 announced; E4 and E5 after S2 and S3; S4 after E3. | process | maintainer |
 | 2026-10-17 | The tutorials notebook check is advisory until the rewritten tutorials merge; the User Guide stays blocking, and each step updates the User Guide notebooks it breaks, mechanically. | process | maintainer |
 | 2026-10-17 | The execution plan's verification scripts stay outside the repository; each step ports what it needs into `tests/`. The Claude Docs point to `plans/` and are no longer edited. CONTRIBUTING names `plans/` as the exception to keeping planning files off branches. | process | maintainer |
@@ -44,11 +44,11 @@ Newest first.
 | 2026-10-17 | `/review-all` runs only at checkpoints, never after each PR. | process | maintainer |
 | 2026-10-17 | A session that opens a PR creates a handoff chip for each step it unblocks; the next session checks that its dependencies have merged before it starts. | process | maintainer |
 | 2026-10-17 | `docs/tutorials/` is out of scope for the push; the maintainer rewrites it separately. | process | maintainer |
-| 2026-10-16 | Grammar B is adopted for the addressing plan: a whole declaration names only a base spec. jhuggins's final ruling between B and B′ is still open (gaps D4). | addressing | maintainer |
+| 2026-10-16 | Grammar B is adopted for the addressing plan: a whole declaration names only a base spec. jhuggins's final ruling between B and B′ is still open (gaps D4). *Superseded 2026-10-17: B, not B′.* | addressing | maintainer |
 | 2026-10-16 | Paths go through a law, a function, or a batch held in a field. | addressing | maintainer |
-| 2026-10-16 | The addressing plan writes composition as `&`; the operator itself is #571's decision (gaps D2). | addressing | maintainer |
+| 2026-10-16 | The addressing plan writes composition as `&`; the operator itself is #571's decision (gaps D2). *Superseded 2026-10-17: `&` replaces `*`.* | addressing | maintainer |
 | 2026-10-16 | Before the workshop, the execution core is executor dispatch for traceable and opaque functions, and the public target interface. | execution | maintainer, review 1 |
-| 2026-10-16 | Q17: inside one call, an opaque `Function` runs at most once per distinct point, by default, and this is in the core. | execution | maintainer, review 2 |
+| 2026-10-16 | Q17: inside one call, an opaque `Function` runs at most once per distinct point, by default, and this is in the core. *Refined 2026-10-17: E7 is in the core but is second in the cut order.* | execution | maintainer, review 2 |
 | 2026-10-16 | Q12, an exact result lost to a budget, is a general rule of route resolution, tracked in #585 and outside the execution design. | execution | maintainer, review 2 |
 | 2026-10-16 | "Key" may mean a random key; the collision with a mapping's keys is tolerated, and "random key" is written only where it could be ambiguous. | execution | maintainer, review 2 |
 | 2026-10-16 | Q1: the selected runner is an **executor**, chosen with `executor=` and `executor_options=`. | execution | maintainer, review 1 |

@@ -1,7 +1,7 @@
 # Gaps and conflicts across the plans
 
 This file lists every place where the three plans disagree with each other, are out of date, or leave a decision open that implementation needs.
-The `plans/` PR merges once each item here is settled and the plans are updated to match.
+The `plans/` PR merges once each item here except D7 is settled, together with the open points O1–O11 of `declarations-and-addressing.md`, and the plans are updated to match (README § Steps, step PL). D7 gates the execution steps that need the call context, not this PR.
 Settled items move to [`decisions.md`](decisions.md), and the plan texts change in the same commit.
 
 Each item has the same parts:
@@ -361,13 +361,13 @@ Inside a compiled program it cannot, for two reasons its verification found:
 So the plan passes a **call token** into every program as an argument, and the host looks the call's settings up by token (principle P11: per-call values are data at every boundary).
 
 **The problem.** Three things need to fit together.
-1. **Callbacks cannot see the carried context.** An embedded call's host side finds its settings by token. Unless the call context registered under the token also holds the active `config` blocks and the Monte Carlo record, a callback on an XLA thread reads the session values instead of the block's, and its draws go unrecorded.
+1. **Callbacks cannot see the carried context.** An embedded call's host side finds its settings by token. Unless the call context registered under the token also holds the active `config` blocks and the Monte Carlo draw counts, a callback on an XLA thread reads the session values instead of the block's, and its draws go unrecorded.
 2. **"Its value at trace time" meets program reuse.** A program store reuses one compiled program across calls. A setting read inside a traced function and baked in would then leak from one call into the next. A setting that changes what a compiled program computes must be part of the program's cache key or be passed as an argument.
 3. **Where executor settings are kept.** #587 adds `config.prefect`, which holds the Prefect task runner and auto-detects Ray or Dask. The execution plan's Q9 retires that auto-detection and turns Prefect's runners into a `prefect` executor, after the workshop. It is also open whether `executor` and `executor_options` get a `config.execution` section for session defaults.
 4. **When Prefect's auto-detection goes.** Step E3 replaces the dispatch modes before the workshop, while the `prefect` executor comes after it. Retiring the auto-detection in E3 would remove behaviour before its replacement exists, which directive 8 rules out.
 
 **Options.**
-1. One call context, the execution plan's, that captures #587's carried context (its active blocks and its Monte Carlo record) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the program-store key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
+1. One call context, the execution plan's, that captures #587's carried context (its active blocks and its Monte Carlo draw counts) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the program-store key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
 2. Two mechanisms side by side.
 
 **Recommendation.** Option 1, agreed with jhuggins before step E3 starts.
@@ -413,7 +413,7 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 | Step | What | Before the workshop? |
 |---|---|---|
 | S1 | One subscript reader: a `str` is one path, a list or tuple is a list of paths that keep their paths, `[]` returns groups, `in`, `marginal(d, paths)` | yes |
-| S2 | `OutputSpec` as a mapping, `term_spec`, `project` and `without`, one reading of slots, the size shorthand, `InputSpec.merge` | yes |
+| S2 | `OutputSpec` as a mapping, `term_spec`, `project` and `without`, one reading of slots, the size shorthand, `&` on `InputSpec` and `OutputSpec` (now split into S2a and S2b) | yes |
 | S3 | `&` and the two renames, one mechanical PR | yes, if D2 is settled |
 | S4 | Batches store their element declaration | yes |
 | G1 | Grammar B for the kinds the workshop uses | yes (D4) |
@@ -504,9 +504,11 @@ Run in the wrong order, each rebase redoes the other's work.
 | Module | Steps that edit it |
 |---|---|
 | `functions/_broadcast.py`, `functions/_sweep.py`, `functions/_execution.py` | S2 (the renames: `_broadcast.py` reads `_component_name` 17 times), E3 (executors replace the dispatch modes), E5 (`map_points` in lifting and sweeps), S4 (sweeps store their element declaration), G1 (defaults by kind) |
-| about 41 modules that read `.spec`, `components`, `exposes_record`, or `_component_name` | S2 |
+| about 50 modules that read `.spec`, `components`, `exposes_record`, or `_component_name` | S2a |
+| `inference/` (the chain runners; `run_seed` in 10 modules) | E4 (the runners take the token), E6 (the run key replaces `run_seed`) |
+| `design/glossary.md`, V.2, VI.0 | S0, E1, and #587 (call-context § 7.2). Each term has one owner: "call context" is added by #587 or the follow-up PR, the execution terms by E1, and the declaration and path terms by S0 |
 | `core/_specs.py` | S2 (most of it, including `project`), S3 (`&` on declarations) |
-| `core/_shapes.py`, `named_tree.py`, `Record`, `RecordSpec`, and the 9 modules that define their own `_PATH_SEP` | S1 |
+| `core/_shapes.py`, `named_tree.py`, `Record`, `RecordSpec`, and the 8 modules besides `named_tree.py` that define their own `_PATH_SEP` | S1 |
 | `core/_batch.py` | S1, S4 |
 | `distributions/_distribution.py` (`__mul__`) | S3 |
 | `distributions/_conditional.py` | S1 (`_PATH_SEP`), S2 (one reading of slots: `_slots_of`, `_complete_given_spec`), S3 (`&` replaces `__mul__`), E2 (its construction probe), E4 (building a kernel over an embedded call) |
@@ -517,7 +519,7 @@ Run in the wrong order, each rebase redoes the other's work.
 
 **Proposed order.**
 1. S1 and E2 together. They share only `_conditional.py`, where S1 changes one constant and E2 the construction probe.
-2. S2, announced in advance like S3, since its renames change about 41 modules.
+2. S2, announced in advance like S3, since its renames change about 50 modules. (README § Steps now splits S2 into the mechanical S2a and the behaviour S2b, and E3 into E3a and E3b; it owns the order.)
 3. E3 in two parts: the point sets and the registry in `core/` start alongside S2, and the rewrite of the dispatch in `_broadcast.py` and `_sweep.py` starts after S2 merges.
 4. S3 at an announced time, after S2, so every open branch rebases once.
 5. E4 and E5 after S2 and S3, since both edit `_conditional.py` and `_factored.py`.
