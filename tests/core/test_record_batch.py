@@ -1821,14 +1821,27 @@ class TestEqualityAndCopying:
         with pytest.raises(TypeError):
             hash(nested_batch())
 
-    def test_repr_reports_the_levels_without_reading_a_column(self):
+    def test_repr_reports_the_levels_then_each_column(self):
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3))},
+            ("chain", "draw"),
+            element_spec=RecordSpec(x=()),
+            label="post",
+        )
+        assert repr(batch) == (
+            "NumericRecordBatch('post', levels={'chain': 2, 'draw': 3})\n"
+            "  x   [[0. 0. 0.]\n"
+            "       [0. 0. 0.]]"
+        )
+
+    def test_the_summary_in_another_repr_reports_the_levels_without_reading_a_column(self):
         batch = NumericRecordBatch(
             {"x": jnp.zeros((4, 100))},
             ("chain", "draw"),
             element_spec=RecordSpec(x=()),
             label="post",
         )
-        assert repr(batch) == (
+        assert batch._repr_summary() == (
             "NumericRecordBatch('post', levels={'chain': 4, 'draw': 100}, fields=('x',))"
         )
 
