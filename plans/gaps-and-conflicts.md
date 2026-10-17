@@ -16,7 +16,7 @@ The items fall into five groups:
 | Group | What it holds | Items |
 |---|---|---|
 | D | Decisions needed before implementation can start | D1–D9 |
-| T | Text fixes that need no new decision | T1–T5 |
+| T | Text fixes that need no new decision | T1–T6 |
 | F | Steps that edit the same files, and the order that avoids collisions | F1 |
 | W | Gaps in how the push itself works | W1–W5 |
 | L | Known gaps that can wait until after the workshop | L1–L6 |
@@ -334,7 +334,7 @@ Each is explained from scratch in the plan's section 9, so here each gets its co
 
 Questions Q6 (the memo across calls), Q9 (Prefect), Q10 (a Gibbs method), and Q11 (who owns the differentiability claim) belong to post-workshop steps.
 
-**Status:** open; your decision on each, with jhuggins on Q5 and Q14.
+**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, Q5 and Q14 included. One part of Q16 stays open: the name of the module that `_managed.py` and `_broker.py` merge into, since `_work_scope.py` is too vague (T6).
 
 ---
 
@@ -467,6 +467,14 @@ Grammar B's "defaults by kind" changes the rule for specs with parts: a bare law
 jhuggins's Rocq model finds that a chain of kernels is associative with or without IV.2's rule that the right operand's slots avoid the left operand's components.
 That rule keeps the joint well formed, which is a different reason.
 **Fix:** the design text of step S2 or S3 corrects IV.2's rationale.
+
+### T6. A point and a managed work item name the same thing
+
+V.8 keys every draw made inside a **managed work item**: a point evaluation, a cell of a sweep, or one evaluation of a lifted call (`functions/_managed.py`, `make_managed_work_items`).
+Each work item adds a segment to the occurrence path, so a draw inside it gets the same key wherever the item runs.
+The execution plan calls these same units **points**, and gathers them into point sets that an executor runs.
+Once step E3 lands, every managed work item is a point, so the design would have two words for one thing.
+**Fix:** the execution design text (step E1) replaces "managed work item" with "point" in V.8 and the glossary, and the module that merges `_managed.py` and `_broker.py` is named after what it does for a point (D6, Q16).
 
 ---
 
