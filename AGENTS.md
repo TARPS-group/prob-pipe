@@ -13,6 +13,7 @@ The design reference in `design/` describes the target state, and the documents 
 | Task | Document that owns its rules |
 |---|---|
 | Any change to `probpipe/` | `CONTRACTS.md`: the contract directives every PR follows |
+| A step of the contracts push of October 2026 | `plans/README.md`: its directives, steps, and handoffs |
 | A coding convention, such as naming, imports, or test layout | `STYLE_GUIDE.md` |
 | The contract of an abstraction or an operation | its section of `design/`, listed in `design/README.md` |
 | A term of art, or the canonical name of a recurring concept | `design/glossary.md` |
