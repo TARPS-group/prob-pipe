@@ -119,7 +119,7 @@ def _forward(bijector: Function) -> Callable[[Array], Array]:
     engine refuses inside ``replay_run``, so a transformed law builds, samples,
     and pushes its moments forward in a replayed call as in the recorded one.
     """
-    return bijector.raw()
+    return bijector.raw
 
 
 def _per_point(function: Any, value: Array, rank: int) -> Array:

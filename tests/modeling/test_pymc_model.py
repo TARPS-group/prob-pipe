@@ -394,8 +394,8 @@ class TestRecordSpec:
         assert tuple(result.event_spec.components) == ("intercept", "alpha")
         with workflow_run(seed=0):
             draws = sample(result, sample_shape=(25,))
-        assert jnp.asarray(draws["intercept"].values).shape == (25,)
-        assert jnp.asarray(draws["alpha"].values).shape == (25, 3)
+        assert jnp.asarray(draws["intercept"].raw).shape == (25,)
+        assert jnp.asarray(draws["alpha"].raw).shape == (25, 3)
 
     def test_the_mean_field_family_is_the_fitted_approximation(self):
         """The family's density is the fitted Gaussian at PyMC's unconstrained value

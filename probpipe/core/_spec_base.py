@@ -742,8 +742,8 @@ def _known_type(first: OpaqueSpec, second: OpaqueSpec) -> OpaqueSpec:
 
 def _opaque_value(value: Any) -> Any:
     """*value*, or the value it wraps when it is a tracked opaque value, an ``Opaque``."""
-    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(value, "value"):
-        return value.value
+    if isinstance(getattr(value, "spec", None), OpaqueSpec) and hasattr(type(value), "raw"):
+        return value.raw
     return value
 
 

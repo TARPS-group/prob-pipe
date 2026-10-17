@@ -79,8 +79,8 @@ class TestPredictiveCheck:
             result = predictive_check(likelihood, prior, sample_mean, num_replications=50)
         assert result["replicated_statistics"].num_atoms == 50
         # The law is labeled by the statistic, and the record's field view by its key.
-        assert str(result.raw()["replicated_statistics"]) == "sample_mean(replicated_statistics)"
-        assert result["test_fn_name"].value == "sample_mean"
+        assert str(result.raw["replicated_statistics"]) == "sample_mean(replicated_statistics)"
+        assert result["test_fn_name"].raw == "sample_mean"
         assert "observed_statistic" not in result
         assert "p_value" not in result
 
@@ -98,8 +98,8 @@ class TestPredictiveCheck:
             result = predictive_check(
                 likelihood, prior, [sample_mean, sample_max], observed_data, num_replications=30
             )
-        assert result["sample_mean/test_fn_name"].value == "sample_mean"
-        assert result["sample_max/test_fn_name"].value == "sample_max"
+        assert result["sample_mean/test_fn_name"].raw == "sample_mean"
+        assert result["sample_max/test_fn_name"].raw == "sample_max"
         assert result.at_path("sample_max")["replicated_statistics"].num_atoms == 30
         assert float(result["sample_max/observed_statistic"]) == pytest.approx(
             float(observed_data.max())
@@ -113,8 +113,8 @@ class TestPredictiveCheck:
             result = predictive_check(
                 likelihood, prior, [sample_mean, sample_sum], num_replications=40
             )
-        means = np.asarray(result["sample_mean/replicated_statistics"].atoms.values)
-        sums = np.asarray(result["sample_sum/replicated_statistics"].atoms.values)
+        means = np.asarray(result["sample_mean/replicated_statistics"].atoms.raw)
+        sums = np.asarray(result["sample_sum/replicated_statistics"].atoms.raw)
         np.testing.assert_allclose(sums, N * means, rtol=1e-5)
 
     def test_a_statistic_jax_cannot_trace_is_computed_in_a_loop(self, prior, likelihood):
@@ -126,8 +126,8 @@ class TestPredictiveCheck:
                 likelihood, prior, [sample_mean, host_mean], num_replications=25
             )
         np.testing.assert_allclose(
-            np.asarray(result["host_mean/replicated_statistics"].atoms.values),
-            np.asarray(result["sample_mean/replicated_statistics"].atoms.values),
+            np.asarray(result["host_mean/replicated_statistics"].atoms.raw),
+            np.asarray(result["sample_mean/replicated_statistics"].atoms.raw),
             rtol=1e-6,
         )
 
@@ -419,8 +419,8 @@ class TestForms:
                 )
         assert float(results[0]["p_value"]) == float(results[1]["p_value"])
         np.testing.assert_array_equal(
-            results[0]["replicated_statistics"].atoms.values,
-            results[1]["replicated_statistics"].atoms.values,
+            results[0]["replicated_statistics"].atoms.raw,
+            results[1]["replicated_statistics"].atoms.raw,
         )
 
     def test_a_numeric_record_of_draws_is_checked_as_its_rows(self, observed_data):
@@ -447,7 +447,7 @@ class TestForms:
             result = predictive_check(
                 _location_kernel(law, n=10, scale=1e-4), law, sample_mean, num_replications=20
             )
-        means = np.asarray(result["replicated_statistics"].atoms.values)
+        means = np.asarray(result["replicated_statistics"].atoms.raw)
         nearest = np.abs(means[:, None] - atoms).argmin(axis=1)
         # The kernel's scale of 1e-4 puts each replication's mean within 1e-4 of its atom.
         np.testing.assert_allclose(means, atoms[nearest], rtol=0, atol=2e-4)
@@ -505,7 +505,7 @@ class TestRandomness:
     @staticmethod
     def _replications(likelihood, prior):
         check = predictive_check(likelihood, prior, sample_mean, num_replications=20)
-        return np.asarray(check["replicated_statistics"].atoms.values)
+        return np.asarray(check["replicated_statistics"].atoms.raw)
 
     def test_a_seed_reproduces_the_replications_and_another_seed_changes_them(
         self, prior, likelihood

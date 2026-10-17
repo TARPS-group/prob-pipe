@@ -288,6 +288,7 @@ class _ObjectBatch[E](Batch[E]):
         batch._init_batch(spec, label=label)
         return batch
 
+    @property
     def raw(self) -> np.ndarray:
         """The storage view: the frozen object array of the stored elements, batch axes leading."""
         return self._store

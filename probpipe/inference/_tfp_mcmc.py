@@ -152,14 +152,25 @@ class _TFPGradientMethod(InferenceMethod):
         "target_accept_prob",
     )
 
-    def __init__(self, algorithm: str, method_name: str, method_priority: int | None):
+    def __init__(
+        self,
+        algorithm: str,
+        method_name: str,
+        method_priority: int | None,
+        method_description: str,
+    ):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority
+        self._method_description = method_description
 
     @property
     def name(self) -> str:
         return self._method_name
+
+    @property
+    def description(self) -> str:
+        return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
         return (Distribution,)
@@ -270,4 +281,9 @@ def TFPNutsMethod() -> _TFPGradientMethod:
     -----
     Kept for bit-pattern regression and side-by-side backend comparison.
     """
-    return _TFPGradientMethod("nuts", "tfp_nuts", None)
+    return _TFPGradientMethod(
+        "nuts",
+        "tfp_nuts",
+        None,
+        "NUTS through TensorFlow Probability, for a JAX-traceable log-density.",
+    )

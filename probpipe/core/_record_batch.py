@@ -62,7 +62,13 @@ from ._spec_base import OpaqueSpec, _opaque_spec_of
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec, TermSpec
 from .named_tree import _PATH_SEP, _unflatten_paths
 from .provenance import Provenance
-from .record import Record, _derived_record_name, _is_numeric_field_value
+from .record import (
+    Record,
+    _derived_record_name,
+    _fresh_dicts,
+    _is_numeric_field_value,
+    _RawNode,
+)
 from .tracked import _NO_DESCRIPTION, refuse_label_first
 
 __all__ = ["RecordBatch"]
@@ -186,7 +192,11 @@ class RecordBatch(Batch[Record]):
 
     _columns: dict[str, Any]
 
-    __slots__ = ("_columns",)
+    __slots__ = ("_columns", "_raw_cache")
+
+    #: The nested mapping of the columns, kept for later reads of :attr:`raw`. A
+    #: memo over the columns, so ``copy`` and ``pickle`` leave it behind.
+    _transient_state = ("_raw_cache",)
 
     #: The element hook builds a new record per selection.
     _fresh_elements = True
@@ -418,41 +428,52 @@ class RecordBatch(Batch[Record]):
 
     # -- field access -------------------------------------------------------
 
-    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
-        """The storage view: the nested mapping of the raw columns, or one node's.
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The storage view: the nested mapping of the raw columns.
 
         Each column is its field's raw batch form, the stacked array for an
-        array field and the frozen object array for any other field. With
-        *path*, a field gives its column and an interior node the nested mapping
-        of the columns beneath it, as a record's ``raw(path)`` does.
+        array field and the frozen object array for any other field. A node's
+        columns are read from the mapping, as ``batch.raw["g"]["x"]``.
+
+        The nesting is built on the first read and kept, and each read returns
+        a new ``dict`` over the columns that the caller may change. A batch
+        holding a traced column keeps nothing.
+        """
+        cached = getattr(self, "_raw_cache", None)
+        if cached is None:
+            cached = _raw_column_tree(self._columns)
+            if not any(isinstance(column, jax.core.Tracer) for column in self._columns.values()):
+                object.__setattr__(self, "_raw_cache", cached)
+        return _fresh_dicts(cached)
+
+    def _raw_at(self, path: str) -> Any:
+        """The raw form of the node at *path*, without building its view.
 
         Parameters
         ----------
-        path : str or tuple of str, optional
-            The node's path, as a ``/``-joined string or a tuple of names. ``None``
-            selects the whole batch.
+        path : str
+            The node's ``/``-joined path.
 
         Returns
         -------
         Any
-            A column, or a nested ``dict`` of columns.
+            A field's column, or the nested ``dict`` of the columns beneath an
+            interior node.
 
         Raises
         ------
         KeyError
             If *path* addresses no node of the batch's records.
         """
-        if path is None:
-            return _unflatten_paths(self._columns)
-        key = _PATH_SEP.join(path) if isinstance(path, tuple) else path
-        if key in self._columns:
-            return self._columns[key]
-        prefix = key + _PATH_SEP
+        if path in self._columns:
+            return self._raw_column(path)
+        prefix = path + _PATH_SEP
         beneath = {
             p[len(prefix) :]: column for p, column in self._columns.items() if p.startswith(prefix)
         }
         if not beneath:
-            raise KeyError(unknown_names("field", [key], self._columns))
+            raise KeyError(unknown_names("field", [path], self._columns))
         return _unflatten_paths(beneath)
 
     def _raw_column(self, path: str) -> Any:
@@ -995,7 +1016,7 @@ def _columns_promote(args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> bool:
     if element_spec is not None and not isinstance(element_spec, NumericRecordSpec):
         return False
     return all(
-        _is_numeric_field_value(column.raw() if isinstance(column, Batch) else column)
+        _is_numeric_field_value(column.raw if isinstance(column, Batch) else column)
         for column in fields.values()
     )
 
@@ -1045,10 +1066,10 @@ def _stacked_batches(entries: np.ndarray, event: BatchSpec) -> Any:
     batches = list(entries.flat)
     if isinstance(element, RecordSpec):
         return {
-            path: _stacked_leaf([batch.raw(path) for batch in batches], shape, element[path])
+            path: _stacked_leaf([batch._raw_at(path) for batch in batches], shape, element[path])
             for path in element
         }
-    values = _stacked_leaf([batch.raw() for batch in batches], shape, element)
+    values = _stacked_leaf([batch.raw for batch in batches], shape, element)
     return _frozen_object_column(values) if _is_object_array(values) else values
 
 
@@ -1323,7 +1344,7 @@ def _shared_opaque_types(spec: RecordSpec, records: list[Record]) -> RecordSpec:
     for key in spec:
         field = spec[key]
         if isinstance(field, OpaqueSpec) and key in records[0]:
-            shared = _opaque_spec_of(record.raw(key) for record in records if key in record)
+            shared = _opaque_spec_of(record._raw_at(key) for record in records if key in record)
             field = OpaqueSpec(type=shared.type, meta=field.meta)
         fields[key] = field
     return spec if fields == dict(spec.items()) else RecordSpec(fields)
@@ -1827,7 +1848,7 @@ class _MappedBatchColumns:
         """
         return cls(
             record._label,
-            {path: record.raw(path) for path in record.event_template},
+            {path: record._raw_at(path) for path in record.event_template},
             element_spec=record.spec,
             level_names=(),
             axis_groups=(),
@@ -1861,3 +1882,15 @@ def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
 jax.tree_util.register_pytree_node(
     _MappedBatchColumns, _mapped_batch_columns_flatten, _mapped_batch_columns_unflatten
 )
+
+
+def _raw_column_tree(columns: Mapping[str, Any]) -> _RawNode:
+    """The columns keyed by path, nested under :class:`~probpipe.core.record._RawNode` interiors."""
+    root = _RawNode()
+    for path, column in columns.items():
+        *parents, name = path.split(_PATH_SEP)
+        node = root
+        for parent in parents:
+            node = node.setdefault(parent, _RawNode())
+        node[name] = column
+    return root

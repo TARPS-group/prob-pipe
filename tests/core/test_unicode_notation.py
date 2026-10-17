@@ -67,7 +67,7 @@ class TestUnicodeNotation:
 
     def test_anonymous_display_is_independent_of_schema_and_random_stream(self):
         automatic = Function(lambda x: x + 1, n_broadcast_samples=5)
-        fn = automatic.raw()
+        fn = automatic.raw
         ascii_alias = Function(fn, label="f", n_broadcast_samples=5)
         assert fingerprint(automatic) == fingerprint(ascii_alias)
         with workflow_run(seed=42):
@@ -76,6 +76,6 @@ class TestUnicodeNotation:
             second = ascii_alias(Normal("mu", 0, 1))
         assert tuple(first.event_spec.components) == ("f",)
         assert tuple(second.event_spec.components) == ("f",)
-        np.testing.assert_array_equal(first.atoms.raw(), second.atoms.raw())
+        np.testing.assert_array_equal(first.atoms.raw, second.atoms.raw)
         typed = Function(fn, output_spec=NumericArraySpec(()))
         assert typed.output_spec == OutputSpec(f=NumericArraySpec(()))

@@ -64,7 +64,7 @@ class TestPredictiveCheckBroker:
                 result = predictive_check(
                     likelihood, prior, jnp.mean, num_replications=num_replications
                 )
-            return np.asarray(result["replicated_statistics"].atoms.values), derive
+            return np.asarray(result["replicated_statistics"].atoms.raw), derive
 
         first, first_derive = run(8)
         second, second_derive = run(8)

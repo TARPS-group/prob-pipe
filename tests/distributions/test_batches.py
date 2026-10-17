@@ -756,7 +756,7 @@ class TestOperationsSweepTheLaws:
                 ),
                 sample_shape=(200,),
             )
-        np.testing.assert_allclose(drawn.values.mean(axis=-1), [0.0, 100.0, 200.0], atol=0.2)
+        np.testing.assert_allclose(drawn.raw.mean(axis=-1), [0.0, 100.0, 200.0], atol=0.2)
 
     def test_several_levels_stay_in_front_of_the_sample_level(self):
         batch = DistributionBatch(
@@ -790,8 +790,8 @@ class TestOperationsSweepTheLaws:
         )
         means, variances = mean(batch), variance(batch)
         assert isinstance(means, NumericArrayBatch) and means.batch_shape == (3,)
-        np.testing.assert_allclose(means.values, [0.0, 1.0, 2.0])
-        np.testing.assert_allclose(variances.values, [1.0, 4.0, 9.0])
+        np.testing.assert_allclose(means.raw, [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(variances.raw, [1.0, 4.0, 9.0])
 
     def test_the_mean_of_each_record_law_is_a_record_batch(self):
         means = mean(
@@ -817,4 +817,4 @@ class TestOperationsSweepTheLaws:
         )
         assert isinstance(scores, NumericArrayBatch) and scores.batch_shape == (3,)
         expected = [float(law._log_prob(0.0)) for law in laws]
-        np.testing.assert_allclose(scores.values, expected, rtol=1e-5)
+        np.testing.assert_allclose(scores.raw, expected, rtol=1e-5)

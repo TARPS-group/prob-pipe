@@ -492,7 +492,7 @@ def _declared_vector(law: Any, draw: Record | Mapping[str, Any]) -> Array:
             label="draw",
         )
     )
-    return jnp.concatenate([jnp.ravel(jnp.asarray(value.raw(path))) for path in record])
+    return jnp.concatenate([jnp.ravel(jnp.asarray(value._raw_at(path))) for path in record])
 
 
 class ModelFactors(NamedTuple):
@@ -1020,7 +1020,7 @@ def _coordinates(maps: list[_LeafMap]) -> UnconstrainedCoordinates:
             if leaf.bijector is None:
                 parts.append(segment)
                 continue
-            value = leaf.bijector.raw()(jnp.reshape(segment, leaf.unconstrained_shape))
+            value = leaf.bijector.raw(jnp.reshape(segment, leaf.unconstrained_shape))
             parts.append(jnp.reshape(value, (leaf.size,)))
         return jnp.concatenate(parts)
 

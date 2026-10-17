@@ -146,7 +146,7 @@ class TestTheBijectorTransform:
 
     def test_the_log_density_matches_the_backend_transform(self, standard):
         transformed = BijectorTransformedDistribution("td", standard, tfb.Exp())
-        reference = tfd.TransformedDistribution(distribution=standard.raw(), bijector=tfb.Exp())
+        reference = tfd.TransformedDistribution(distribution=standard.raw, bijector=tfb.Exp())
         ys = jnp.array([0.1, 1.0, 5.0])
         np.testing.assert_allclose(
             transformed._log_prob(ys), reference.log_prob(ys), rtol=1e-5, atol=1e-6
@@ -314,7 +314,7 @@ class TestReplay:
         with replay_run(original.provenance):
             replayed = difference(**operands())
         np.testing.assert_array_equal(
-            np.asarray(replayed.atoms.values), np.asarray(original.atoms.values)
+            np.asarray(replayed.atoms.raw), np.asarray(original.atoms.raw)
         )
 
 

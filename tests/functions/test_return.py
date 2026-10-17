@@ -105,7 +105,7 @@ class TestTheKindDirectedWrap:
 
         assert isinstance(result, NumericArrayBatch)
         assert result.level_names == ("row",)
-        np.testing.assert_array_equal(result.values, [1.0, 2.0])
+        np.testing.assert_array_equal(result.raw, [1.0, 2.0])
 
     def test_an_array_under_one_component_stays_an_array(self):
         wrapped = Function(
@@ -139,7 +139,7 @@ class TestTheKindDirectedWrap:
         assert isinstance(result, NumericArray)
         assert result is not stored
         assert result.label == "loaded" and stored.label == "stored"
-        assert result.value is stored.value
+        assert result.raw is stored.raw
 
 
 class TestLabelAndProvenance:

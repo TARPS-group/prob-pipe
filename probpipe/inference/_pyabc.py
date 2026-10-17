@@ -255,6 +255,10 @@ class PyABCSMCMethod(InferenceMethod):
     )
 
     @property
+    def description(self) -> str:
+        return "Sequential Monte Carlo ABC through pyabc, for a likelihood that simulates."
+
+    @property
     def name(self) -> str:
         return "pyabc_smcabc"
 

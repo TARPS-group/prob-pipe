@@ -245,7 +245,10 @@ def format_value(value: Any) -> str:
     summary = getattr(value, "_repr_summary", None)
     if summary is not None:
         return summary()
-    if hasattr(value, "raw"):
+    # Interim implementation detail: a ``LinOp`` is not yet a tracked term (III.4), so
+    # a class that defines ``raw`` stands for an operator here. The check reads the
+    # class, so it never computes a term's raw form.
+    if hasattr(type(value), "raw"):
         return repr(value)
     if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
         return value.__qualname__

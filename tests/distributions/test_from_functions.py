@@ -384,7 +384,7 @@ class TestEventsThatAreNotNumeric:
 
     def test_an_opaque_event_samples_through_the_operation(self):
         law = distribution(sample=_word, event_spec=OpaqueSpec(str), component="w")
-        assert sample(law).value in {"low", "mid", "high"}
+        assert sample(law).raw in {"low", "mid", "high"}
         batch = sample(law, sample_shape=(5,))
         assert isinstance(batch, OpaqueBatch)
         assert batch.batch_shape == (5,)

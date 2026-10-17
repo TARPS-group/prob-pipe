@@ -102,14 +102,14 @@ class TestBatches:
         assert draws.batch_shape == (3,)
 
     def test_the_draws_of_a_batch_are_independent(self):
-        values = np.asarray(sample(Gaussian("g"), sample_shape=(64,)).values)
+        values = np.asarray(sample(Gaussian("g"), sample_shape=(64,)).raw)
         assert len(np.unique(values)) == 64
 
     def test_a_seeded_workflow_reproduces_the_batch(self):
         with workflow_run(seed=5):
-            first = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).values)
+            first = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).raw)
         with workflow_run(seed=5):
-            second = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).values)
+            second = np.asarray(sample(Gaussian("g"), sample_shape=(8,)).raw)
         np.testing.assert_array_equal(first, second)
 
 

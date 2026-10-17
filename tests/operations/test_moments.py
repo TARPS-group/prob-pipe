@@ -436,7 +436,7 @@ class TestStandardDeviation:
         result = standard_deviation(law)
         assert isinstance(result, Function)
         assert result.label == "√𝕍[f ~ GaussianProcess]"
-        assert inspect.signature(result.raw()).parameters.keys() == {"X"}
+        assert inspect.signature(result.raw).parameters.keys() == {"X"}
         points = jnp.linspace(0.0, 1.0, 3)[:, None]
         np.testing.assert_allclose(np.asarray(result(points)), [2.0, 2.0, 2.0], rtol=1e-6)
 
@@ -519,7 +519,7 @@ class TestQuantile:
         result = quantile(Gaussian("g"), jnp.array([0.1, 0.5, 0.9]))
         assert isinstance(result, NumericArrayBatch)
         assert (result.level_names, result.batch_shape) == (("quantile",), (3,))
-        assert _value(result.values[1]) == pytest.approx(0.0, abs=1e-6)
+        assert _value(result.raw[1]) == pytest.approx(0.0, abs=1e-6)
 
     @pytest.mark.parametrize("q", [1.5, -0.1, jnp.array([0.5, 2.0])])
     def test_a_level_outside_the_unit_interval_raises_a_domain_error(self, q):
@@ -536,7 +536,7 @@ class TestQuantile:
         # Four draws of x are 0, 1, 2, 3, whose CDF reaches 0.25 at 0.
         view = quantile.using(n_broadcast_samples=4)
         estimate = view(_Ramp("ramp", record=record), jnp.array([0.25, 0.5, 1.0]))
-        x = estimate["x"] if record else estimate.values[:, 0]
+        x = estimate["x"] if record else estimate.raw[:, 0]
         np.testing.assert_array_equal(np.asarray(x), [0.0, 1.0, 3.0])
 
     def test_method_selects_the_fallback_over_the_closed_form(self):
@@ -1445,11 +1445,11 @@ class TestASummaryTakesTheEventsNames:
         result = summary(law)
         whole = result.at_path(path) if isinstance(result, Record) else result[path]
         part = summary(law[path])
-        assert jax.tree.structure(whole.raw()) == jax.tree.structure(part.raw())
+        assert jax.tree.structure(whole.raw) == jax.tree.structure(part.raw)
         # Both are exact on the same atoms, so they differ by float32 rounding of
         # the reductions alone.
         for selected, direct in zip(
-            jax.tree.leaves(whole.raw()), jax.tree.leaves(part.raw()), strict=True
+            jax.tree.leaves(whole.raw), jax.tree.leaves(part.raw), strict=True
         ):
             np.testing.assert_allclose(np.asarray(selected), np.asarray(direct), rtol=1e-6)
 

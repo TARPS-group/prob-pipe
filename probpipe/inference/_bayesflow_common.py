@@ -236,7 +236,7 @@ def _leaf_draws(draws: Any, leaf: str) -> Any:
     an array-drawing law's are the stacked array of its one leaf.
     """
     if isinstance(draws, Record):
-        return draws.raw(leaf)
+        return draws._raw_at(leaf)
     if isinstance(draws, Mapping):
         node = draws
         for part in leaf.split("/"):

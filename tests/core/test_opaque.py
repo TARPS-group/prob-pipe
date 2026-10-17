@@ -35,7 +35,7 @@ class TestOpaqueHoldsOneValue:
             Opaque(
                 payload,
                 label="p",
-            ).value
+            ).raw
             is payload
         )
 
@@ -92,7 +92,7 @@ class TestOpaqueHoldsOneValue:
             Opaque(
                 value,
                 label="p",
-            ).value
+            ).raw
             == value
         )
 
@@ -125,7 +125,7 @@ class TestOpaqueAddsIdentityAndNothingElse:
             Opaque(
                 _Payload("hi"),
                 label="p",
-            ).value.shout()
+            ).raw.shout()
             == "HI"
         )
 
@@ -192,7 +192,7 @@ class TestOpaqueCarriesIdentity:
 
         assert isinstance(rebuilt, Opaque)
         assert rebuilt.label == "model"
-        assert rebuilt.value == _Payload("kept")
+        assert rebuilt.raw == _Payload("kept")
 
 
 class TestOpaqueAndItsBatch:
@@ -208,7 +208,7 @@ class TestOpaqueAndItsBatch:
             label="batch",
         )
 
-        assert batch[0].value is payloads[0]
+        assert batch[0].raw is payloads[0]
         assert batch[0].label == "batch[draw=0]"
 
     def test_a_batch_may_hold_opaque_terms_as_its_elements(self):
@@ -230,7 +230,7 @@ class TestOpaqueAndItsBatch:
             label="batch",
         )
 
-        assert batch[1].value is terms[1].value
+        assert batch[1].raw is terms[1].raw
         assert batch[1].label == "batch[draw=1]"
         assert terms[1].label == "second"
 
@@ -256,7 +256,7 @@ class TestTheLabelFirstFormIsRefusedWithAHint:
             build()
 
     def test_a_string_alone_is_a_value(self):
-        assert Opaque("north", label="site").value == "north"
+        assert Opaque("north", label="site").raw == "north"
 
     def test_a_label_first_batch_names_the_new_form(self):
         with pytest.raises(

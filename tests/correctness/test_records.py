@@ -604,7 +604,7 @@ class TestRawForms:
 
     def test_a_record_result_detaches_to_its_nested_mapping(self):
         law = _law("two-groups", "one-level")
-        detached = mean(law).raw()
+        detached = mean(law).raw
         assert _is_nested_mapping_of_arrays(detached)
         np.testing.assert_allclose(
             _at(detached, "population/mu"),
