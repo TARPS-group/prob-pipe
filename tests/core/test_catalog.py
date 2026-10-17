@@ -627,6 +627,26 @@ class TestBijectorEntries:
                 "exp, onto the positive half-line."
             )
 
+    def test_a_shared_repr_is_qualified_for_a_third_party_instance_key(self) -> None:
+        """Two instance keys with one ``repr`` stay apart: the third-party one names its type."""
+        from probpipe.core.constraints import _Positive
+
+        class ThirdPartyPositive(_Positive):
+            pass
+
+        builtin, third_party = _Positive(), ThirdPartyPositive()
+        assert repr(builtin) == repr(third_party)
+        with _restored_bijector_registry():
+            register_bijector(builtin, lambda c: None, description="built-in instance")
+            register_bijector(third_party, lambda c: None, description="third-party instance")
+            qualified = (
+                f"{third_party!r} ({ThirdPartyPositive.__module__}."
+                f"{ThirdPartyPositive.__qualname__})"
+            )
+            bijectors = registry_catalog["bijectors"]
+            assert bijectors.describe_entry(repr(builtin)).description == "built-in instance"
+            assert bijectors.describe_entry(qualified).description == "third-party instance"
+
     def test_registering_a_key_again_replaces_its_description(self) -> None:
         from probpipe.core.constraints import _Positive
 
