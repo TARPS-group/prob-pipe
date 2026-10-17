@@ -528,19 +528,22 @@ Each **dispatch method** declares:
 3. a `check` function that probes feasibility without significant computation and reports, as a `Feasibility`, whether the call is feasible, infeasible, or **unresolved**, which means the declarations the probe needs are not yet available;
 4. an `execute` function that performs it;
 5. whether it is **exact**: a method either returns a representation of the requested result or a stand-in for it, declared where the method is registered and fixed for the method's life;
-6. a **priority**: an integer rank among the methods of the same exactness, and the one thing about a method a deployment may change at runtime.
+6. whether it is a **floor**, `is_floor`: a fallback on its supported types, which ranks after every method that is not a floor, declared where the method is registered and fixed for the method's life, and `False` by default;
+7. a **priority**: an integer rank among the methods of the same floor status and exactness, and the one thing about a method a deployment may change at runtime;
+8. optionally, a one-line `description`, which the registry catalog shows.
 
 Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in **selection order** and runs the first whose `check` establishes feasibility. While a higher-ranked candidate is unresolved, the registry's `check` reports the call unresolved (V.1), and execution resolves prerequisite plans first or reports unavailable requirements (V.9). Selection order is the same in every registry:
-1. exact methods before approximate ones, so auto-selection runs an exact method whenever one is feasible;
-2. priority among methods of the same exactness, higher first;
-3. specificity, favoring the method whose declared types are closest to the arguments' classes in method-resolution order: a type that admits a class without appearing in its method-resolution order, such as a registered virtual subclass of an abstract base class, counts as least specific, and a binary registry sums the distances of its two arguments;
-4. registration order.
+1. every method that is not a floor before every floor, so auto-selection tries a floor only after every other candidate;
+2. exact methods before approximate ones, so auto-selection runs an exact method whenever one that is not a floor is feasible;
+3. priority among methods of the same floor status and exactness, higher first;
+4. specificity, favoring the method whose declared types are closest to the arguments' classes in method-resolution order: a type that admits a class without appearing in its method-resolution order, such as a registered virtual subclass of an abstract base class, counts as least specific, and a binary registry sums the distances of its two arguments;
+5. registration order.
 
-A registry may also declare a floor tier, which ranks below every method it orders, whatever their exactness (V.7).
+The first criterion sets the floors apart as a tier of their own: a floor ranks after every other method a call admits, whatever their exactness and priority, as the sampling lift and the elementwise sweep do among the evaluation rules (V.7). The other four criteria order the methods within each tier in the same way.
 
-**Priority.** A method whose priority is `None` is **opt-in-only**: auto-selection skips it, and a caller selects it by name. `None` is the default, so a method registered without a priority leaves auto-selection unchanged until a contributor ranks it. `set_priorities` re-ranks methods at runtime, by keyword or by a mapping, which accepts every method name. It keeps each method's declared exactness and warns when a method moves into or out of opt-in-only.
+**Priority.** A method whose priority is `None` is **opt-in-only**: auto-selection skips it, and a caller selects it by name. `None` is the default, so a method registered without a priority leaves auto-selection unchanged until a contributor ranks it. `set_priorities` re-ranks methods at runtime, by keyword or by a mapping, which accepts every method name. It keeps each method's declared exactness and floor status, so it moves a method only within its tier and its exactness, and it warns when a method moves into or out of opt-in-only.
 
-**Listing.** `list_methods` returns the method names ranked by exactness, priority, and registration order. A call also ranks its candidates by specificity, before registration order, since specificity is measured against that call's arguments.
+**Listing.** `list_methods` returns the method names ranked by floor status, exactness, priority, and registration order. A call also ranks its candidates by specificity, before registration order, since specificity is measured against that call's arguments.
 
 **Naming a method.** `method="..."` selects the named method in place of auto-selection. Naming skips the type pre-filter alone: the named method's `check` still decides feasibility, and a call with fewer positional arguments than the registry's arity raises `TypeError`, as it does without a name. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and an infeasible named method or an unregistered name raises the same. The registry's `check` and `execute` are the dispatch interface, so an unregistered name is a dispatch that cannot resolve, whereas `get_method` and `set_priorities` look a name up and raise `KeyError` for an unregistered one.
 
@@ -553,7 +556,9 @@ type BinarySupportedTypes = tuple[tuple[type, ...], tuple[type, ...]]   # (left,
 class BaseDispatchMethod[SupportedTypesT](ABC):
     name: str
     exact: bool                   # declared at registration, fixed for the method's life
-    priority: int | None = None   # rank among methods of the same exactness, higher first; None is opt-in-only
+    is_floor: bool = False        # a fallback, ranked after every method that is not one; fixed for the method's life
+    priority: int | None = None   # rank among methods of the same floor status and exactness, higher first; None is opt-in-only
+    description: str = ""         # one line, shown by the registry catalog
 
     @abstractmethod
     def supported_types(self) -> SupportedTypesT: ...   # admitted by the registry's structural pre-filter
@@ -580,12 +585,16 @@ class MathematicalDomainError(ValueError): ...  # the mathematical operation is 
 
 class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
+    kind: str = "dispatch"        # with name and description, the SupportsRegistryCataloging identity
+    def __init__(self, *, name: str = "", description: str = "") -> None: ...   # constructing does not catalog
     def register(self, method: M) -> None: ...
     def set_priorities(self, priorities: Mapping[str, int | None] | None = None, /,
                        **kwargs: int | None) -> None: ...   # ranks only; warns on a move into or out of opt-in-only
     def execute(self, *args, method: str | None = None, exact_only: bool = False, **kwargs) -> Any: ...   # auto-select, or run the named method
     def check(self, *args, method: str | None = None, exact_only: bool = False, **kwargs) -> MethodInfo: ...
-    def list_methods(self) -> list[str]: ...                           # names, ranked by exactness, priority, and registration order
+    def list_methods(self) -> list[str]: ...                           # names, ranked by floor status, exactness, priority, and registration order
+    def entry_summaries(self) -> list[EntrySummary]: ...               # one per method, in list_methods order
+    def describe_entry(self, name: str) -> EntrySummary: ...           # KeyError for an unknown name
 
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ...    # keys on one argument's type
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
@@ -597,7 +606,7 @@ Provenance records whether each step was exact and its target, preserving upstre
 
 **Two failures.** Known mathematical undefinedness alone raises `MathematicalDomainError`, for example the mean of a `Cauchy`, whereas a moment that diverges is the extended real ±∞ (VII.1). Computational unavailability, including a missing capability and a failure to establish existence, raises `ResolutionError`, and a numerical execution failure propagates unchanged. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
 
-A single **catalog** makes every registry discoverable: it lists the registries, their entries with their priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries of every `kind`, such as the dispatch registries and the bijector factory. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
+A single **catalog** makes every registry discoverable: it lists the registries and their entries, each entry with its exactness, its floor status, its priority, and a one-line description, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries of every `kind`, such as the dispatch registries and the bijector factory. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
 
 ```python
 @dataclass(frozen=True)
@@ -607,21 +616,26 @@ class EntrySummary:
     supported_types: tuple[Any, ...] = ()
     description: str = ""
     module_path: str = ""
+    exact: bool | None = None   # None when the registry declares no exactness per entry
+    is_floor: bool = False      # a fallback, ranked after every entry that is not one
     @property
-    def is_opt_in_only(self) -> bool: ...
+    def is_opt_in_only(self) -> bool: ...   # priority is None; meaningful only in a registry that ranks its entries
 
 @dataclass(frozen=True)
 class RegistryInfo:            # the catalog's per-registry record
     name: str                  # unique within the catalog
     description: str           # one line
-    kind: str                  # e.g., "dispatch", "factory", "converter"
+    kind: str                  # e.g., "dispatch", "operation", "factory"
     entry_count: int
 
 @runtime_checkable
-class SupportsRegistryCataloging(Protocol):
-    name: str
-    description: str
-    kind: str
+class SupportsRegistryCataloging(Protocol):   # the identity members are read-only
+    @property
+    def name(self) -> str: ...
+    @property
+    def description(self) -> str: ...
+    @property
+    def kind(self) -> str: ...
     def entry_summaries(self) -> list[EntrySummary]: ...
     def describe_entry(self, name: str) -> EntrySummary: ...
 
@@ -632,7 +646,7 @@ class RegistryCatalog:
     def __getitem__(self, name: str) -> SupportsRegistryCataloging: ...     # get the registry
     def __contains__(self, name: object) -> bool: ...                       # check if a registry exists
     def describe(self, name: str) -> str: ...                               # a readable summary of one registry
-registry_catalog = RegistryCatalog()  # the global instance
+registry_catalog: RegistryCatalog   # the global instance
 ```
 
 ### Rationale

@@ -12,7 +12,7 @@ The terms of art of the reference, in alphabetical order. Each entry defines its
 - **conversion**: a change of a distribution's representation that preserves its law, up to the recorded fidelity, and its event declaration; a converter is the registered method that carries one out (IV.3).
 - **declaration**: static information an object states before any computation, such as a spec, a claimed capability, or a method's exactness (II.7). In particular, an `InputSpec` declares a map-like kind's input slots, an `OutputSpec` declares the components of one produced term, and a law's event declaration is the `OutputSpec` of a draw (II.2, III.7).
 - **derived operation**: an operation defined by an identity over other operations, such as `prob = exp ∘ log_prob` or `expectation(d, f) = mean(pushforward(d, f))` (VI.0, VI.4, VI.5).
-- **description**: the expression a term derives at construction, from its declared fields, its callable's name, or its operands, which its label renders when the caller gives no alias. A term that JAX rebuilds from its leaves has none and displays `<no description>` (II.4).
+- **description**: the expression a term derives at construction, from its declared fields, its callable's name, or its operands, which its label renders when the caller gives no alias. A term that JAX rebuilds from its leaves has none and displays `<no description>` (II.4). A registry and each of its entries carry a different `description`, the one line the registry catalog shows (II.7).
 - **element**: one object of a batch, at one position of its batch axes (II.5). The scalar values of an array are its entries.
 - **evaluation rule**: a method of the evaluation-rule registry, which realizes a map applied to a distribution or a batch, such as a closed-form rule, an integration rule, or the sampling lift (V.7).
 - **event**: one value of a distribution's space, such as a draw or a stored datum, typed by the law's event declaration (III.5, III.7). A workflow-owned random event is one draw's occurrence in a workflow scope (V.8).
@@ -76,3 +76,4 @@ The canonical name of a recurring concept is the name that its parameters, attri
 | a field key within a tree, or the name assigned to a field | `field_name` or `key` |
 | the attributes an immutable class keeps out of its state round-trip, such as a memo | `_transient_state` |
 | the attributes an immutable class restores into a container of their own, such as a store written in place | `_decoupled_state` |
+| the one line the registry catalog shows for a registry or an entry, such as a dispatch method (II.7) | `description` |

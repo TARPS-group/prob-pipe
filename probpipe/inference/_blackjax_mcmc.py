@@ -309,14 +309,25 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         "step_size",
     )
 
-    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int | None):
+    def __init__(
+        self,
+        algorithm: Algorithm,
+        method_name: str,
+        method_priority: int | None,
+        method_description: str,
+    ):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority
+        self._method_description = method_description
 
     @property
     def name(self) -> str:
         return self._method_name
+
+    @property
+    def description(self) -> str:
+        return self._method_description
 
     def supported_types(self) -> tuple[type, ...]:
         return (Distribution,)
@@ -402,7 +413,9 @@ def BlackJAXNutsMethod() -> _BlackJAXMCMCMethod:
     above ``cmdstan_nuts`` and ``pymc_nuts`` (82), which apply to disjoint
     model classes.
     """
-    return _BlackJAXMCMCMethod("nuts", "blackjax_nuts", 85)
+    return _BlackJAXMCMCMethod(
+        "nuts", "blackjax_nuts", 85, "NUTS through BlackJAX, for a JAX-traceable log-density."
+    )
 
 
 def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
@@ -421,4 +434,9 @@ def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
     that of ``blackjax_nuts``, so with NUTS ranked, HMC would never be
     selected automatically; ``priority=None`` makes that explicit.
     """
-    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", None)
+    return _BlackJAXMCMCMethod(
+        "hmc",
+        "blackjax_hmc",
+        None,
+        "HMC through BlackJAX with a hand-set step size, for a JAX-traceable log-density.",
+    )

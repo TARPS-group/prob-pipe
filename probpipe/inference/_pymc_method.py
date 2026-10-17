@@ -66,6 +66,10 @@ class PyMCNutsMethod(InferenceMethod):
         self._model_type = PyMCModel
 
     @property
+    def description(self) -> str:
+        return "NUTS through PyMC, for a PyMC model."
+
+    @property
     def name(self) -> str:
         return "pymc_nuts"
 
@@ -184,6 +188,10 @@ class PyMCADVIMethod(InferenceMethod):
         from ..families._programs import PyMCModel
 
         self._model_type = PyMCModel
+
+    @property
+    def description(self) -> str:
+        return "Variational inference through PyMC's fit, ADVI by default, for a PyMC model."
 
     @property
     def name(self) -> str:
