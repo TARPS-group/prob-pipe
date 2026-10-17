@@ -424,7 +424,7 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 | E1–E7 | The execution core of the plan's section 13 | yes |
 | E8 | The JAX settings contract | yes, but the first to cut if time runs short |
 
-**Status:** open; your decision.
+**Status:** ✅ settled 2026-10-17. Before the workshop: S0–S4, G1, and E1–E8. After it: G2–G5 and the execution plan's post-workshop list. If time runs short, the cuts are E8 first, then E7, then the lifting and default-output parts of G1; S0–S4 and E1–E6 are never cut.
 
 ---
 

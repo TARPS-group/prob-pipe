@@ -83,6 +83,8 @@ A choice that changes none of the above, such as a private helper's structure, i
 **Provisional:** the steps and their order are final once `gaps-and-conflicts.md` is settled.
 "Before" marks a step planned before the workshop. A step may not start until every step and PR it depends on has merged into `dev/overhaul`, or it stacks as § Branches and PRs allows.
 
+If time runs short before the workshop, steps are cut in this order: E8, then E7, then the lifting and default-output parts of G1, which move to after the workshop. S0–S4 and E1–E6 are never cut.
+
 ### Before any step
 
 | Step | What | Depends on | State |
@@ -115,7 +117,7 @@ A choice that changes none of the above, such as a private helper's structure, i
 | E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens; a failure raises `PointEvaluationError` and stops a compiled program | §6.4, §6.9 | E2, E3, S3 | yes | | |
 | E5 | `map_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | §6.1, §13 item 5 | E4 | yes | | |
 | E6 | The public target interface: `InferenceTarget` and `make_posterior`, with the run key passed as #554 §8 states | §6.12 | E2, E3 | yes | | |
-| E7 | At most one run per distinct point inside a call | §6.5, Q17 | E4 | yes | | |
+| E7 | At most one run per distinct point inside a call | §6.5, Q17 | E4 | yes, cut second | | |
 | E8 | The JAX settings contract | §6.15 | E3 | yes, cut first | | |
 
 The execution plan's post-workshop steps are listed in its §13 and in `deferred.md`.
