@@ -1043,7 +1043,7 @@ Shipping a chunk to a worker is a transfer for execution, and the chunk is never
 #374's rule that stored executables use versioned codecs therefore does not apply to it.
 #374's other rule, a check before anything is sent, does: an executor that ships chunks calls `shipping_check()` before it runs anything.
 
-> **Today → Proposed.** Lifts and sweeps build a list of work items, one per row, before the first call, and each mode ships them its own way. Proposed, they build one lazy point set, and the workflow scope registers its points as an index range (#510).
+> **Today → Proposed.** Lifts and sweeps build a list of points, one per row, before the first call, and each mode ships them its own way. Proposed, they build one lazy point set, and the workflow scope registers its points as an index range (#510).
 
 ### 6.8 Executors and their contract
 
@@ -1396,7 +1396,7 @@ The design therefore places the code by what it depends on:
 | `core/_executors.py` | the executor registry and the built-in executors | every package chooses through it |
 | `core/_compilation.py` | `compiled_or_eager` with the tracing rule, and the program store | as today |
 | `functions/_boundary.py` | embedded calls, call tokens, and the derivative wrappers | needs the `Function` engine |
-| `functions/_work_scope.py` | the workflow scope that `PointChunk.run` enters, installed into `core` at import | needs the workflow scope. #524 plans to merge `_managed.py` into a module named `_broker.py`, and this design proposes the name `_work_scope.py`, which says what the module holds (Q16) |
+| `functions/_point_keys.py` | how a draw made inside a point gets its key: the point's segment of the occurrence path, the draws it claims and their order, and coordination with the parent call; `PointChunk.run` enters it, and it is installed into `core` at import | needs the workflow scope. #524 merges `_managed.py` and the key broker `_broker.py` into this module (Q16) |
 | `testing/` | `check_executor` | a public test kit |
 
 `core` defines what running a point does, and `functions` installs the workflow scope into it at import, as `install_call_engine` installs the engine today (III.3).
@@ -1660,7 +1660,7 @@ Each question is explained from scratch, lists its options, and gives a recommen
 | Q13 | Callables that state nothing | probe once per input structure, in `check` too, and catch NumPy randomness |
 | Q14 | Whether a traceable model may use gradient methods without a claim | yes, as today; claims only narrow it |
 | Q15 | The class name | `PointExecutor` |
-| Q16 | Names that collide with ProbPipe's vocabulary | *probe result*, `functions/_work_scope.py`, and "the point's random key" with no separate name; V.8's "random event" left for a separate decision |
+| Q16 | Names that collide with ProbPipe's vocabulary | **Decided:** *probe result*, `functions/_point_keys.py`, "point" in place of V.8's "managed work item", and "the point's random key" with no separate name; V.8's "random event" left for a separate decision |
 | Q17 | Repeated runs of an opaque callable inside one call | **Decided:** at most one run per distinct point, by default |
 | Q18 | A JAX setting changed during a call | raise |
 
@@ -1819,7 +1819,10 @@ A trace that succeeds also does not prove gradients are useful: `jnp.round`, `st
 **Recommendation.**
 - no name for the identity a random key is derived from: the design says "the point's random key", because *key* alone already means a field key;
 - *probe result* for a stored probe outcome;
-- `functions/_work_scope.py` for the module that holds the workflow scope work items enter, in place of `_broker.py`.
+- `functions/_point_keys.py` for the module that `_managed.py` and `_broker.py` merge into, since it decides how a draw made inside a point gets its key;
+- *point* in place of V.8's *managed work item*, everywhere, since every managed work item is a point once executors run point sets.
+
+**Decision** (2026-10-17): as recommended, with the module named `_point_keys.py`.
 
 V.8 and #554 say "random event" throughout, with the same collision. Renaming it, for example to *random draw*, changes both and is a separate decision.
 
@@ -1847,7 +1850,7 @@ V.8 and #554 say "random event" throughout, with the same collision. Renaming it
 |---|---|---|
 | **#554** explicit-key randomness | `key` parameters, random events and their subdivision, `share_keys_across`, versions per sampling algorithm, `sampler(d)` | Shares P1 and P11. Point sets carry its keys, and coupled cells share random keys and keep distinct point identities (6.11). Write both design texts in one docs PR. |
 | **#522** `LinOp` and the differentiability claim | `differentiable=` and `is_differentiable` | Owns the claim (Q11). `LinOp` claims `traceable=True`. |
-| **#524** finishing the function engine | module moves and controls | Moves `_execution_contract.py` into `_execution.py` and `_managed.py` into `_broker.py`, which Q16 proposes to name `_work_scope.py`. These should merge first, so this work does not rewrite moved files. |
+| **#524** finishing the function engine | module moves and controls | Moves `_execution_contract.py` into `_execution.py` and `_managed.py` into `_broker.py`, which Q16 names `_point_keys.py`. These should merge first, so this work does not rewrite moved files. |
 | **#451** n-ary dispatch registry | one registry class with an arity | The executor registry has arity 1. |
 | **#474** registry catalog | lists every registry | The executor registry registers with `kind="dispatch"`. |
 
@@ -2136,3 +2139,4 @@ A second adversarial round read the rewritten draft and found these, all now add
 | 2026-10-16 | The name `executor` decided (Q1). Renamed *key identity*, *probe result*, and `functions/_work_scope.py` (Q16). Added: what each JAX transformation requires (3.10), the error for a false traceable claim (6.2), how settings travel from a call to a callable (6.3), one run per distinct point inside a call (6.5, Q17), the empirical-operand report moved to the route (6.6), ProbPipe ships no cluster executor (6.8), the JAX settings contract (6.15, Q18), a kernel over a batch of givens (7.11), different executors for parts of one model (7.12), implementation guidelines (12), and the order of work split at the workshop (13). | Maintainer's first review |
 | 2026-10-16 | No name for the identity a random key is derived from: the design says "the point's random key" (6.7, Q16). The enumeration report removed from the execution design, and an exact route lost to a budget proposed as a general rule of route resolution in a separate issue (6.6, Q12). One run per distinct point inside a call decided, in the core (Q17). A guideline for tests and demonstrations with every PR (12), and the workshop demonstration removed from the order of work (13). | Maintainer's second review |
 | 2026-10-16 | Q12 opened as #585 and cited (6.6, Q12, section 10). | Maintainer's request |
+| 2026-10-17 | Moved into `plans/`. Q2 settled by the push's clean-break rule. Q3, Q4, Q5, Q7, Q8, Q13, Q14, Q15, and Q18 accepted as recommended. Q16 decided: the module is `functions/_point_keys.py`, and "point" replaces V.8's "managed work item". | Maintainer, while settling `plans/gaps-and-conflicts.md` D5 and D6 |

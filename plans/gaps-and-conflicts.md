@@ -334,7 +334,7 @@ Each is explained from scratch in the plan's section 9, so here each gets its co
 
 Questions Q6 (the memo across calls), Q9 (Prefect), Q10 (a Gibbs method), and Q11 (who owns the differentiability claim) belong to post-workshop steps.
 
-**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, Q5 and Q14 included. One part of Q16 stays open: the name of the module that `_managed.py` and `_broker.py` merge into, since `_work_scope.py` is too vague (T6).
+**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, Q5 and Q14 included. Q16's module is named `functions/_point_keys.py`, since `_work_scope.py` was too vague.
 
 ---
 
@@ -475,6 +475,8 @@ Each work item adds a segment to the occurrence path, so a draw inside it gets t
 The execution plan calls these same units **points**, and gathers them into point sets that an executor runs.
 Once step E3 lands, every managed work item is a point, so the design would have two words for one thing.
 **Fix:** the execution design text (step E1) replaces "managed work item" with "point" in V.8 and the glossary, and the module that merges `_managed.py` and `_broker.py` is named after what it does for a point (D6, Q16).
+
+**Status:** ✅ settled 2026-10-17. "Point" replaces "managed work item" everywhere, and the module is `functions/_point_keys.py`.
 
 ---
 
