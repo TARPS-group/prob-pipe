@@ -776,9 +776,13 @@ jobs:
           - group: user_guide
             dir: docs/user_guide
             extras: --extra dev --extra nutpie --extra pymc --extra pyabc
+          # Advisory while the contracts push changes the API and the
+          # tutorials are rewritten separately (plans/README.md, directive 6).
+          # Remove `advisory` when the rewritten tutorials merge.
           - group: tutorials
             dir: docs/tutorials
             extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
+            advisory: true
     runs-on: ubuntu-latest
     env:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
@@ -878,6 +882,7 @@ jobs:
 
       - name: Execute affected notebooks
         if: steps.nb_check.outputs.skip != 'true'
+        continue-on-error: ${{ matrix.advisory == true }}
         # Read the list via an env var (not spliced into the script) and iterate
         # with read, so notebook paths are never word-split or shell-injected.
         env:
