@@ -18,12 +18,12 @@ Every session that works on the push reads this file in full before anything els
 | [`decisions.md`](decisions.md) | Every decision taken during the push, with its date and reason, and the queue of questions waiting for the maintainer |
 | [`gaps-and-conflicts.md`](gaps-and-conflicts.md) | The places where the plans disagree or leave a decision open. This PR merges once each is settled. |
 | [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
-| [`declarations.md`](declarations.md) | The declarations design: #571's body and jhuggins's reply |
-| [`addressing.md`](addressing.md) | The addressing design, grammar B (#573) |
+| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, subscripts and paths, `&`, and steps S0–S4 and G1–G5 |
+| [`declarations.md`](declarations.md), [`addressing.md`](addressing.md) | The two source texts the reconciled design replaced, kept for comparison until the maintainer has reviewed the reconciled text |
 | [`call-context-proposal.md`](call-context-proposal.md) | The design of the one call context that carries per-call state, under review; it is folded into `execution-layer.md` once accepted |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
 
-`declarations.md` and `addressing.md` are replaced by one reconciled text once the items of `gaps-and-conflicts.md` are settled (item D1).
+`declarations-and-addressing.md` replaces `declarations.md` and `addressing.md` (gaps D1); the two sources are deleted once the maintainer has reviewed it.
 
 ## Standing directives
 
@@ -90,7 +90,7 @@ If time runs short before the workshop, steps are cut in this order: E8, then E7
 
 | Step | What | Depends on | State |
 |---|---|---|---|
-| P0 | The in-flight PRs merge: #575, #583, #474, #584, #586, #587. Pending the maintainer's decision OD5 of `call-context-proposal.md`, #587 creates the one call context before it merges | — | open |
+| P0 | The in-flight PRs merge: #584, #586, #587 (#575, #583, and #474 merged on 2026-10-17). Pending the maintainer's decision OD5 of `call-context-proposal.md`, #587 creates the one call context before it merges | — | open |
 | PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | #587 | open |
 | PL | This `plans/` PR merges | the items of `gaps-and-conflicts.md` | open |
 
@@ -99,13 +99,13 @@ If time runs short before the workshop, steps are cut in this order: E8, then E7
 | Step | What | Plan sections | Depends on | Before | PR | State |
 |---|---|---|---|---|---|---|
 | S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and the reading of a subscript; the glossary and `STYLE_GUIDE.md` §1.10–§1.11 | reconciled text | PL | yes | | |
-| S1 | One subscript reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`; `marginal(d, paths)`; `()` on a batch raises | addressing: Reading a subscript, Indexing with several paths, Membership | S0 | yes | | |
-| S2 | `OutputSpec` as a mapping; `term_spec`; `project` and `without` through S1's reader; one reading of slots; the size shorthand; `InputSpec.merge`. Its renames change about 41 modules, so it is announced like S3 | declarations; reconciled text | S1 | yes | | |
-| S3 | `&` replaces `*` for laws, kernels, records, and declarations; `rename` and `MarginalView`, in one announced mechanical PR | declarations Part 2 §3 | S2 | yes | | |
+| S1 | One subscript reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last segments; `()` on a batch raises | addressing: Reading a subscript, Indexing with several paths, Membership | S0 | yes | | |
+| S2 | `OutputSpec` as a mapping; `term_spec`; `project` and `without` through S1's reader; one reading of slots; the size shorthand; `&` on `InputSpec`, `OutputSpec`, `RecordSpec`, and `Record`, which replaces their `merge`. Its renames change about 41 modules, so it is announced like S3 | declarations; reconciled text | S1 | yes | | |
+| S3 | `&` replaces `*` for laws and kernels; `rename` and `MarginalView`; in one announced mechanical PR | declarations Part 2 §3 | S2 | yes | | |
 | S4 | Every batch stores its element declaration | declarations; addressing: Batches | S2, E3 | yes | | |
-| G1 | Grammar B for the kinds the workshop uses: a view or marginal of a group exposes its parts; the library's laws declared whole over a record are exposed or wrapped; a factor that holds a group wraps it; a function that returns a law or a function exposes its output; a lifted law-returning function wraps its draws; defaults by kind; the reading of a bare `output_spec` | addressing: The grammar rule, Structured outputs, Defaults | S2, S4 | yes | | |
+| G1 | Grammar B for the kinds the workshop uses: a view or marginal of a group exposes its parts; the library's laws declared whole over a record are exposed or wrapped; a factor that holds a group wraps it; a function that returns a law or a function exposes its output; a lifted law-returning function wraps its draws; defaults by kind; the reading of a bare `output_spec` | addressing: The grammar rule, Structured outputs, Defaults | S2, S4, E5 | yes | | |
 | G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts | addressing: The grammar rule, What grammar B costs | G1 | after | | |
-| G3 | Paths through every kind; `Function[]`; the public `component` accessor; a view of a field that holds a law or a function wraps | addressing: Indexing each kind; gaps D4 | G1 | after | | |
+| G3 | Paths through every kind; `Function[]`; the public `component` accessor, and a whole term's name stops being a subscript; a view of a field that holds a law or a function wraps | addressing: Indexing each kind; gaps D4 | G1 | after | | |
 | G4 | `condition_on` declared as `d.without(*fixed)`; `law.without` | addressing: Operations that take paths | G1 | after | | |
 | G5 | `[]` on batches of laws and on kernels | addressing: Indexing each kind | G3 | after | | |
 

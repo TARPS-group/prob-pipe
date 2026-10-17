@@ -1,6 +1,6 @@
 # Declarations: slots, components, and operations on `InputSpec` and `OutputSpec`
 
-> **Status: imported source, not yet reconciled.**
+> **Status: superseded by [`declarations-and-addressing.md`](declarations-and-addressing.md)**, kept for comparison until the maintainer has reviewed the reconciled text.
 > This file holds the text of [#571](https://github.com/TARPS-group/prob-pipe/issues/571) as it stood on 2026-10-17: the issue body (Part 1) and jhuggins's reply (Part 2), copied without edits.
 > The reply changes parts of the body, and [`addressing.md`](addressing.md) (grammar B) changes parts of both.
 > [`gaps-and-conflicts.md`](gaps-and-conflicts.md) lists every place where the three texts disagree.

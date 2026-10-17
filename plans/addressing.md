@@ -1,6 +1,6 @@
 # ProbPipe addressing plan, grammar B
 
-> **Status: imported source, not yet reconciled.**
+> **Status: superseded by [`declarations-and-addressing.md`](declarations-and-addressing.md)**, kept for comparison until the maintainer has reviewed the reconciled text.
 > This file is the Claude Doc "ProbPipe addressing plan, grammar B" (revision 63, 2026-10-16), exported to Markdown without edits.
 > From now on this file, not the Doc, is the copy that changes.
 > [`gaps-and-conflicts.md`](gaps-and-conflicts.md) lists where it disagrees with [`declarations.md`](declarations.md) (#571) and with [`execution-layer.md`](execution-layer.md).
