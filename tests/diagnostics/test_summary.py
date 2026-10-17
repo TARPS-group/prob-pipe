@@ -414,8 +414,8 @@ class TestABatchOfLaws:
             element = summarize(laws[index])
             for path in element:
                 np.testing.assert_allclose(
-                    np.asarray(summary[index][path].raw()),
-                    np.asarray(element[path].raw()),
+                    np.asarray(summary[index][path].raw),
+                    np.asarray(element[path].raw),
                     **TOLERANCE,
                 )
         assert repr(summary).splitlines()[1] == "  law=0"
@@ -433,8 +433,8 @@ class TestABatchOfLaws:
         with workflow_run(seed=0):
             summary = summarize(laws, mcse=True)
 
-        assert float(summary[0]["mcse_median/count"].raw()) == 0.0
-        assert np.isnan(float(summary[1]["mcse_median/count"].raw()))
+        assert float(summary[0]["mcse_median/count"].raw) == 0.0
+        assert np.isnan(float(summary[1]["mcse_median/count"].raw))
 
     def test_a_column_only_some_laws_give_is_nan_for_the_others(self, chain_draws):
         laws = DistributionBatch(
@@ -443,8 +443,8 @@ class TestABatchOfLaws:
 
         summary = summarize(laws, mean)
 
-        assert np.isfinite(float(summary[0]["r_hat/mu"].raw()))
-        assert np.isnan(float(summary[1]["r_hat/mu"].raw()))
+        assert np.isfinite(float(summary[0]["r_hat/mu"].raw))
+        assert np.isnan(float(summary[1]["r_hat/mu"].raw))
 
     def test_a_statistic_that_differs_in_shape_across_the_laws_raises(self):
         def shifting(d):
@@ -461,7 +461,7 @@ class TestATableForPandas:
         pd = pytest.importorskip("pandas")
         summary = summarize(model)
 
-        frame = pd.DataFrame(summary.raw()).astype(float)
+        frame = pd.DataFrame(summary.raw).astype(float)
 
         assert list(frame.columns) == ["mean", "sd", "median", "q10", "q90"]
         assert list(frame.index) == ["mu", "tau"]

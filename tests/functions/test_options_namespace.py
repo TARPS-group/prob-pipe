@@ -272,7 +272,7 @@ def test_workflow_control_names_are_user_parameters():
         dispatch="local",
     )
 
-    assert result.value == "1:2:True:model:local"
+    assert result.raw == "1:2:True:model:local"
 
 
 def test_var_keyword_receives_workflow_control_names():

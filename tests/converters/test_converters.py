@@ -276,8 +276,8 @@ class TestAnEmpiricalSourceAgainstTheTargetSupport:
         assert isinstance(fitted, Beta)
         assert fitted.support == unit_interval
         # The three equally weighted atoms have means 0.4 and 0.5 and variance 0.08 / 3.
-        np.testing.assert_allclose(mean(fitted).raw(), [0.4, 0.5], rtol=1e-6, atol=0)
-        np.testing.assert_allclose(variance(fitted).raw(), [0.08 / 3] * 2, rtol=1e-6, atol=0)
+        np.testing.assert_allclose(mean(fitted).raw, [0.4, 0.5], rtol=1e-6, atol=0)
+        np.testing.assert_allclose(variance(fitted).raw, [0.08 / 3] * 2, rtol=1e-6, atol=0)
 
 
 class TestASupportTheFamilyDoesNotShare:
@@ -626,7 +626,7 @@ class TestTFPConverter:
         tfp_dist = tfd.VonMises(loc=0.0, concentration=1.0)
         result = converter_registry.convert(tfp_dist, SupportsLogProb)
         assert type(result) is TFPDistribution
-        assert result.raw() is tfp_dist
+        assert result.raw is tfp_dist
 
     def test_unknown_tfp_to_empirical(self):
         """An unknown TFP distribution samples through the backend adapter."""
@@ -638,8 +638,8 @@ class TestTFPConverter:
     def test_a_family_exports_its_backend_distribution_through_raw(self):
         """Converting to a backend class is no conversion, since the result carries no declaration."""
         n = Normal("x", loc=3.0, scale=1.0)
-        assert isinstance(n.raw(), tfd.Normal)
-        np.testing.assert_allclose(float(n.raw().loc), 3.0)
+        assert isinstance(n.raw, tfd.Normal)
+        np.testing.assert_allclose(float(n.raw.loc), 3.0)
         with pytest.raises(ResolutionError):
             converter_registry.convert(n, tfd.Normal)
 
@@ -659,11 +659,11 @@ class TestTFPConverter:
         ids=["beta", "gamma", "exponential", "bernoulli", "dirichlet", "mvn"],
     )
     def test_each_family_exports_its_backend_distribution(self, law, backend):
-        assert isinstance(law.raw(), backend)
+        assert isinstance(law.raw, backend)
 
     def test_probpipe_to_tfp_round_trip(self):
         n = Normal("x", loc=5.0, scale=2.0)
-        n2 = converter_registry.convert(n.raw(), Normal)
+        n2 = converter_registry.convert(n.raw, Normal)
         np.testing.assert_allclose(float(n2._loc), 5.0)
         np.testing.assert_allclose(float(n2._scale), 2.0)
 

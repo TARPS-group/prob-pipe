@@ -1842,6 +1842,7 @@ class Operation(Function):
             )
         return super().using(**controls)
 
+    @property
     def raw(self) -> Callable[..., Any]:
         """The evaluator that realizes one call with no lifting, tracking, or provenance.
 

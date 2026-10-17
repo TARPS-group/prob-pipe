@@ -7,7 +7,7 @@ Part II introduces the shared abstractions the rest of the library is built on.
 | II.1 | Typing | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. |
 | II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named input slots and the component interface of one produced term. |
 | II.3 | Numeric values | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
-| II.4 | Identity | `TrackedTerm` / `Provenance` | The label, type (spec), lineage, and annotations an object carries beyond its raw representation, with `raw()` as its access to that representation. |
+| II.4 | Identity | `TrackedTerm` / `Provenance` | The label, type (spec), lineage, and annotations an object carries beyond its raw representation, with `raw` as its access to that representation. |
 | II.5 | Multiplicity | `Batch` | An indexed collection of *separate* objects, with its `BatchSpec`. |
 | II.6 | Structure | `NamedTree` | Abstract named, ordered tree addressed by path with leaf-keyed mapping contract and navigation. |
 | II.7 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved, and the catalog that makes every registry discoverable. |
@@ -265,7 +265,7 @@ So a selection of a batch labeled `x·y` is labeled `(x·y)[sample=0:2]`, and a 
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
-Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which `raw()` returns, for example a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a factored joint, returns that object detached, and a field view of a law returns the raw form of its parent's marginal at its path (III.7).
+Every tracked term exposes the property `raw` as the single access point to the representation layer. It is the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the label. A kind represented by an object from outside ProbPipe has a **raw host**, which is its `raw`, for example a backing array object or a wrapped callable. The `raw` of a kind whose representation is a ProbPipe object, such as a factored joint, is that object detached, and the `raw` of a field view of a law is the raw form of its parent's marginal at its path (III.7). **Every read of `raw` gives the same raw form.** A term keeps the detached copy it builds on the first read, and the copy refuses provenance, since every reader shares it, while a relabeled or unpickled copy of it is a term of its own. A record keeps its resolved leaves and gives a new `dict` over them on each read, which the caller may change (III.5).
 
 Accessing a container returns a **view**, for example a record field or a batch element. A container's view is a tracked term labeled from the accessor, which is the field key for a record and the selected levels for a batch, and a batch element is a relabeled copy, so the term the batch stores keeps its own label; its provenance records the container and the source term where one was supplied. A batch's label is grouped before the selection, as in `(lik·prior)[dataset=0]`, so the selection reads as applying to the whole label.
 
@@ -300,6 +300,7 @@ class TrackedTerm(ABC):
     annotations:  Mapping[str, Any] | None       # free-form; the one store written after construction
     def with_label(self, label: str) -> Self: ...  # the one way a label changes
     def with_provenance(self, p: Provenance) -> Self: ...
+    @property
     @abstractmethod
     def raw(self) -> Any: ...
     # the representation, detached from the workflow; each kind defines it, as its section states
@@ -336,7 +337,7 @@ Fingerprints are best-effort and tiered, from a content hash, through the code h
 
 ### Rationale
 
-`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived labels keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps labels inert in computation, so a label never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone. A numeric term's repr also shows its values, so a reader sees a result in the tracked form that `B3 – Tracked forms out by default` returns without calling `raw()`. Reading only the entries shown keeps the display of a large array cheap. Reading the signature from the declaration is `D6 – Single source of truth`: the notation states what a term is over from the one place that fixes it, so a label chosen by the user cannot misstate it.
+`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived labels keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps labels inert in computation, so a label never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one attribute away. The repr serves `C5 – Naming for unambiguous meaning`, since it names the term's label, its public class, and each part by what it is, so a reader learns what a term is and holds from its repr alone. A numeric term's repr also shows its values, so a reader sees a result in the tracked form that `B3 – Tracked forms out by default` returns without reading `raw`. Reading only the entries shown keeps the display of a large array cheap. Reading the signature from the declaration is `D6 – Single source of truth`: the notation states what a term is over from the one place that fixes it, so a label chosen by the user cannot misstate it.
 
 ### Notes
 
@@ -404,6 +405,7 @@ class Batch[E](TrackedTerm):
     def __getitem__(self, key: Any) -> Any: ...         # a position indexes the axes, a name a component of every element
     def at_levels(self, /, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
     # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
+    @property
     def raw(self) -> Any: ...
     # the storage view: the elements' raw values in their native stacked layout
 ```
@@ -412,7 +414,7 @@ class Batch[E](TrackedTerm):
 
 **The batch's own type.** A batch stores its `BatchSpec`; `element_spec`, `components`, `axis_groups`, and `level_names` are views on it. `spec` is the batch's own type, which keeps `OpaqueBatch` well typed although its elements carry no structure.
 
-**The raw view.** `raw()` returns the **storage view**, which holds the elements' raw values in their native stacked layout — for example, one array for array-valued elements and an object array for opaque-valued ones.
+**The raw view.** `raw` is the **storage view**, which holds the elements' raw values in their native stacked layout — for example, one array for array-valued elements and an object array for opaque-valued ones.
 
 **A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, as a `NumericArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds: "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A live `Batch` is concrete, since it holds elements at positions; construction refuses a spec with free dimensions, and `batch_size` is defined once they are bound.
 

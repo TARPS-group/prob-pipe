@@ -420,8 +420,8 @@ class TestUnnormalizedDensity:
                 law, EmpiricalDistribution
             )
         # One row per atom, across the levels chain and draw.
-        atoms = np.reshape(np.asarray(normalized.atoms.values), (normalized.num_atoms, -1))
-        for draw in np.asarray(draws.values):
+        atoms = np.reshape(np.asarray(normalized.atoms.raw), (normalized.num_atoms, -1))
+        for draw in np.asarray(draws.raw):
             assert np.any(np.all(np.isclose(atoms, draw), axis=1))
 
     def test_conversion_through_a_method_keeps_the_declaration(self):

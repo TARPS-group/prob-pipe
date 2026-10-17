@@ -410,9 +410,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         "_label",
         "_label_collapse",
         "_provenance",
+        "_raw_cache",
         "_spec",
         "_tree",
     )
+
+    #: The resolved raw leaves, kept for later reads of :attr:`raw`. A memo over
+    #: the stored leaves, so ``copy`` and ``pickle`` leave it behind.
+    _transient_state = ("_raw_cache",)
 
     def __new__(cls, *args: Any, **kwargs: Any):
         refuse_label_first(cls.__name__, args, kwargs, ("fields",))
@@ -648,18 +653,40 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- The representation -------------------------------------------------
 
-    def raw(self, path: str | tuple[str, ...] | None = None) -> Any:
-        """The stored representation: the nested mapping of raw leaves, or one node's.
+    @property
+    def raw(self) -> dict[str, Any]:
+        """The stored representation: the nested mapping of raw leaves.
 
         A leaf is held in native form, so its raw value is the leaf itself, and a
-        tracked term held as a leaf, such as a law, gives its own ``raw()``. An
-        interior node gives the nested mapping of the raw leaves beneath it.
+        tracked term held as a leaf, such as a law, gives its own ``raw``. An
+        interior node gives the nested mapping of the raw leaves beneath it. A
+        node's stored form is read from the mapping, as ``record.raw["g"]["x"]``,
+        which also works inside a JAX trace. A field's view has a ``raw`` of its
+        own, ``record["g/x"].raw``, which presents the leaf as the view's kind
+        does, so a Python scalar becomes an array, and inside a trace indexing
+        returns the traced leaf itself, which has no ``raw``.
+
+        The leaves are resolved on the first read and kept, so a stored law is
+        detached once, and each read returns a new ``dict`` over them that the
+        caller may change. A record has a raw form only when every leaf has
+        one, so a leaf whose raw form raises, such as a field view with no
+        exact marginal, makes the read raise. A record holding a traced leaf
+        keeps nothing.
+        """
+        cached = getattr(self, "_raw_cache", None)
+        if cached is None:
+            cached, traced = _raw_tree(self)
+            if not traced:
+                object.__setattr__(self, "_raw_cache", cached)
+        return _fresh_dicts(cached)
+
+    def _raw_at(self, path: str) -> Any:
+        """The raw value of the node at *path*, without building its view.
 
         Parameters
         ----------
-        path : str or tuple of str, optional
-            The path of one node, a field or a subtree. Omitted, the whole
-            record.
+        path : str
+            The ``/``-joined path of one node, a field or a subtree.
 
         Returns
         -------
@@ -671,7 +698,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         KeyError
             If *path* is not a path of the record.
         """
-        node = self if path is None else self._node_at(path)
+        node = self._node_at(path)
         if isinstance(node, Record):
             return _raw_nested(node)
         return _raw_leaf(node)
@@ -703,7 +730,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         representation inside a JAX trace (II.4), so a traced field is its
         stored leaf. A leaf that is no value of the field's declared kind, as a
         transform leaves when it maps the leaves to ``None``, is returned as it
-        is, and :meth:`raw` returns the stored leaf.
+        is, and :attr:`raw` returns the stored leaf.
 
         Parameters
         ----------
@@ -1434,8 +1461,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
 
 def _raw_leaf(leaf: Any) -> Any:
-    """A stored leaf's raw value: a tracked term's ``raw()``, and any other leaf as stored."""
-    return leaf.raw() if isinstance(leaf, TrackedTerm) else leaf
+    """A stored leaf's raw value: a tracked term's ``raw``, and any other leaf as stored."""
+    # A class check, since the protocol metaclass's ``isinstance`` dominates the cost
+    # of a record's raw form, and no tracked kind overrides the check.
+    return leaf.raw if type.__instancecheck__(TrackedTerm, leaf) else leaf
 
 
 def _leaf_value(leaf: Any) -> Any:
@@ -1450,14 +1479,42 @@ def _leaf_value(leaf: Any) -> Any:
     from ._numeric_array import NumericArray
     from ._opaque import Opaque
 
-    return leaf.raw() if isinstance(leaf, NumericArray | Opaque | Function) else leaf
+    return leaf.raw if isinstance(leaf, NumericArray | Opaque | Function) else leaf
 
 
 def _raw_nested(record: Record) -> dict[str, Any]:
     """*record* as the nested ``dict`` of its raw leaves, in canonical order."""
     return {
-        name: _raw_nested(child) if isinstance(child, Record) else _raw_leaf(child)
+        name: _raw_nested(child) if type.__instancecheck__(Record, child) else _raw_leaf(child)
         for name, child in record._tree.items()
+    }
+
+
+class _RawNode(dict):
+    """An interior node of a record's kept raw form, which a read copies into a ``dict``."""
+
+    __slots__ = ()
+
+
+def _raw_tree(record: Record) -> tuple[_RawNode, bool]:
+    """*record*'s raw leaves under :class:`_RawNode` interiors, and whether a leaf is traced."""
+    node = _RawNode()
+    traced = False
+    for name, child in record._tree.items():
+        if type.__instancecheck__(Record, child):
+            node[name], child_traced = _raw_tree(child)
+            traced = traced or child_traced
+        else:
+            node[name] = _raw_leaf(child)
+            traced = traced or isinstance(child, jax.core.Tracer)
+    return node, traced
+
+
+def _fresh_dicts(node: _RawNode) -> dict[str, Any]:
+    """A new nested ``dict`` over the leaves of *node*, which stays unchanged."""
+    return {
+        name: _fresh_dicts(child) if type(child) is _RawNode else child
+        for name, child in node.items()
     }
 
 

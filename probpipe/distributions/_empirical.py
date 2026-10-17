@@ -256,13 +256,6 @@ def _flat_rows(atoms: Batch, event_spec: TermSpec | None = None) -> Any:
     return _flattened(atoms._store, count, rank)
 
 
-def _stored_values(atoms: Batch) -> Any:
-    """The storage of array or object atoms, with the batch axes leading."""
-    if isinstance(atoms, NumericArrayBatch):
-        return atoms.values
-    return atoms._store
-
-
 def _taken(column: Any, index: Any) -> Any:
     """The rows of *column* at *index*, an integer array whose axes lead the result."""
     if _is_object_array(column):
@@ -933,7 +926,7 @@ class EmpiricalDistribution(Distribution, SupportsSampling, SupportsExpectation,
             final = requested.rsplit(_PATH_SEP, 1)[-1]
             fields[final] = node
             if not is_record:
-                columns[final] = _stored_values(atoms)
+                columns[final] = atoms.raw
                 continue
             prefix = _PATH_SEP.join(segments)
             for leaf, column in stored.items():

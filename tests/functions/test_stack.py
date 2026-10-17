@@ -36,7 +36,7 @@ class TestTheFunction:
 
         assert isinstance(wrapped, Function)
         assert wrapped.label == "predict"
-        assert wrapped.raw() is predict
+        assert wrapped.raw is predict
 
     def test_the_decorator_takes_construction_time_controls(self):
         @function(n_broadcast_samples=500, dispatch="jax")
@@ -55,7 +55,7 @@ class TestTheFunction:
         result = predict(2.0, x)
 
         assert isinstance(result, NumericArray)
-        np.testing.assert_allclose(result.value, predict.apply(2.0, x))
+        np.testing.assert_allclose(result.raw, predict.apply(2.0, x))
         assert result.provenance is not None
         assert result.provenance.parents[0].label == "predict"
 

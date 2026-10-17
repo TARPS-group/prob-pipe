@@ -222,12 +222,8 @@ class NumericArrayBatch(Batch[NumericArray]):
         return cast(NumericArraySpec, self.spec.element_spec)
 
     @property
-    def values(self) -> Any:
-        """The stored array, batch axes leading, in native form. Untracked."""
-        return self._values
-
     def raw(self) -> Any:
-        """The storage view: the stored array with the batch axes leading, as :attr:`values` holds it."""
+        """The storage view: the stored array with the batch axes leading, in native form. Untracked."""
         return self._values
 
     # -- display --------------------------------------------------------------

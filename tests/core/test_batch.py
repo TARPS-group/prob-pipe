@@ -54,6 +54,7 @@ class _Leaf(TrackedTerm):
         object.__setattr__(self, "value", value)
         self._init_tracked(label)
 
+    @property
     def raw(self):
         return self.value
 
@@ -67,6 +68,7 @@ class _ListBatch(Batch[_Leaf]):
         object.__setattr__(self, "_store", list(store))
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._store
 
@@ -151,6 +153,7 @@ class _ViewBatch(Batch[_Leaf]):
         )
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._root_store
 
@@ -211,6 +214,7 @@ class _StoringBatch(Batch[_Leaf]):
         object.__setattr__(self, "_store", list(elements))
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._store
 
@@ -236,6 +240,7 @@ class _StringSlotsBatch(Batch[int]):
         object.__setattr__(self, "_store", list(store))
         self._init_batch(spec, label=label)
 
+    @property
     def raw(self):
         return self._store
 

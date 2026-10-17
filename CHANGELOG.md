@@ -9,9 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
+  search your code for `.raw(` to find the calls. The `raw` of a `Function`,
+  an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
+  wrapped function with no arguments instead of raising.
+  - A `Record` and a `RecordBatch` no longer take a path, and `record.raw` is
+    the whole nested mapping. Replace `record.raw("x")` with
+    `record["x"].raw` to read one field's view, or with `record.raw["x"]` to
+    read the stored form, and `record.raw("g/x")` with `record.raw["g"]["x"]`.
+    Inside a JAX trace, `record["x"]` is the traced value itself, so traced
+    code reads `record.raw["x"]`. A field's view presents a stored Python
+    scalar as an array, so `record["x"].raw` is an array where
+    `record.raw["x"]` is the stored `float`.
+  - Every read returns the same raw form. A law, a kernel, or a field view
+    keeps the detached copy it returns, and the copy refuses provenance,
+    since every reader shares it; `with_label` gives a copy that can carry
+    provenance. A record keeps its resolved leaves and returns a new `dict`
+    over them on each read.
+  - A subclass of a tracked term or of `LinOp` defines `raw` with
+    `@property`, and a class on which `raw` is a method, a class or static
+    method, or a cached function raises `TypeError` when it is created.
 - **A numeric term shows its values.** The repr of a `NumericArray`, a
   `NumericRecord`, or a batch of either shows the values below its summary, and
-  `str()` shows the values alone, so a mean shows its value without `raw()`:
+  `str()` shows the values alone, so a mean shows its value without reading `raw`:
 
   ```text
   >>> mean(Normal("mu", 0.25, 1.0, label="prior"))
@@ -284,7 +304,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factors still gives the labels of the factors left, so
   `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
-  inference method's included, and a marginal, a view, and `raw()` keep them.
+  inference method's included, and a marginal, a view, and `raw` keep them.
   The repr shows them after the constructor call, as
   `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
   `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
@@ -293,9 +313,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result's label, as `model`, where it was recorded as `posterior`.
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
-- **`raw()` of a field view returns the raw form of the marginal at its path.**
-  `d[p].raw()` returns the TFP distribution where the marginal at `p` is a
-  parametric family, so `model["mu"].raw()` for a `Normal` prior over `mu` is
+- **`raw` of a field view is the raw form of the marginal at its path.**
+  `d[p].raw` returns the TFP distribution where the marginal at `p` is a
+  parametric family, so `model["mu"].raw` for a `Normal` prior over `mu` is
   the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
   labeled as `marginal(d, p)` labels it, where it was always a detached law
   under the view's label. A parameter annotated with a TFP class, such as
@@ -367,7 +387,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A term marks each NumPy array it stores read-only.** Constructing a term
   from a NumPy array, such as a `NumericArray`, a `Record`, or a parametric
   family, sets the array's `writeable` flag to `False` in place. A write into
-  that array afterwards, through the caller's handle or through `.raw()`,
+  that array afterwards, through the caller's handle or through `.raw`,
   raises `ValueError: assignment destination is read-only`, where it used to
   change the term. To keep a writable array, pass a copy,
   as in `NumericArray(values.copy(), label="x")`. A pandas or xarray container is
@@ -880,7 +900,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   references to use `NumericArraySpec`. The bare backend-array alias remains
   `Array`. The design baseline now gives each raw value kind a corresponding
   tracked term and batch form, including `NumericArray` / `NumericArrayBatch`
-  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw()` as a shared storage
+  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw` as a shared storage
   view. Runtime implementations of those design contracts land in the
   subsequent stack.
 
@@ -971,7 +991,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Function` swept over a batch collected numeric rows into a single-field
   `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
   reached the column. The aggregate is now the batch form of the rows' own kind,
-  read through `.values`.
+  read through `.raw`.
 
   A row that is itself a batch keeps its levels either way. Only `RecordBatch`
   rows did before, so once a scalar law's `sample` began returning a
@@ -1010,7 +1030,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
   law's `sample` all return a `NumericArray`. **A result is no longer indexable
   by the function's name** — `result["my_func"]` becomes `result` itself, and an
-  opaque result is read through `.value`.
+  opaque result is read through `.raw`.
 
   A callable result is callable because it *is* the function kind, rather than
   because a single-field record forwards `__call__`.
@@ -1505,7 +1525,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
   `median`, and the ends of the central 80% interval, `q10` and `q90`. So
   `summarize(d)["sd/mu"]` is the standard deviation of `mu`, and
-  `pd.DataFrame(summarize(d).raw())` gives the table.
+  `pd.DataFrame(summarize(d).raw)` gives the table.
 
   ```text
   >>> with workflow_run(seed=0):
@@ -1822,7 +1842,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns when its declared kind is an `OpaqueSpec`, completing the pair with the
   `OpaqueBatch` that already existed. It adds identity and nothing else: no
   attribute forwarding, no `__call__`, no operators — the wrapped value is
-  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  reached through `.raw`, explicitly. `OpaqueBatch`'s element contract is
   unchanged; it still hands back the object the caller put in rather than
   wrapping it.
 
@@ -3507,6 +3527,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
+  removed.** Each returned what `raw` returns, so replace `x.value` and
+  `batch.values` with `x.raw` and `batch.raw`.
 - **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
   for `X ~ d`, and the direct call `f(v)` replaces every other use:
   `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
@@ -3746,7 +3769,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body received a tracked argument whatever its parameter's annotation, so
   `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a
   `Series`. A parameter annotated with a class such as `pd.Series`,
-  `xr.DataArray`, or `jax.Array` now receives the argument's `raw()` when that is
+  `xr.DataArray`, or `jax.Array` now receives the argument's `raw` when that is
   an instance of the class, in a call, in `apply`, and for each element of a
   sweep and each draw of a broadcast.
 - **A level name is any non-empty string without `/`.** A batch required a

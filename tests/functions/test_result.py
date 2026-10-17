@@ -48,7 +48,7 @@ class TestMakeStack:
         assert isinstance(out, NumericArrayBatch)
         assert (out.batch_shape, out.level_names) == ((4,), ("sweep",))
         assert tuple(out.element_spec.shape) == ()
-        np.testing.assert_allclose(out.values, [1.0, 2.0, 3.0, 4.0])
+        np.testing.assert_allclose(out.raw, [1.0, 2.0, 3.0, 4.0])
 
     def test_list_of_arrays_preserves_event_shape(self):
         """The rows' own shape is the element's; only the sweep axis is a level."""
@@ -60,7 +60,7 @@ class TestMakeStack:
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
         assert tuple(out.element_spec.shape) == (3,)
-        assert out.values.shape == (4, 3)
+        assert out.raw.shape == (4, 3)
 
     def test_list_of_numeric_records_promotes_to_numeric_array(self):
         from probpipe import NumericRecord, NumericRecordBatch
@@ -98,7 +98,7 @@ class TestMakeStack:
         assert isinstance(out, RecordBatch)
         assert not isinstance(out, NumericRecordBatch)
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
-        assert [element.value for element in out["label"]] == ["row0", "row1", "row2"]
+        assert [element.raw for element in out["label"]] == ["row0", "row1", "row2"]
 
     def test_bfloat16_field_inferred_numeric_not_opaque(self):
         """The broadcast-template builder shares the numeric-dtype gate, so an
@@ -181,7 +181,7 @@ class TestMakeStack:
         assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
         assert tuple(out.element_spec.shape) == (3,)
-        assert out.values.shape == (4, 3)
+        assert out.raw.shape == (4, 3)
 
     def test_declared_vmap_array_requires_single_leaf_template(self):
         from probpipe import RecordSpec

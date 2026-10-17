@@ -582,7 +582,7 @@ def _record_scales(
     shapes = fields.leaf_shapes
     blocks = []
     for path in expected:
-        scale = jnp.asarray(scales.raw(path))
+        scale = jnp.asarray(scales._raw_at(path))
         try:
             block = jnp.broadcast_to(scale, shapes[path])
         except ValueError:

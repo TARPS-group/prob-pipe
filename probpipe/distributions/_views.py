@@ -73,6 +73,7 @@ from ._distribution import (
     _COPY_SOURCE,
     _EMPTY_SELECTION,
     Distribution,
+    _cached_raw,
     _fixed_paths,
     _fixes_every_field,
     _install_copy_source,
@@ -544,7 +545,7 @@ def _batch_values(value: Any, spec: BatchSpec, sample_shape: tuple[int, ...]) ->
     if not _is_batch_per_draw(value, sample_shape):
         return value
     if isinstance(value, Batch):
-        return _raw_record(value) if isinstance(value, RecordBatch) else value.raw()
+        return _raw_record(value) if isinstance(value, RecordBatch) else value.raw
     stacked = _stacked_batches(value, spec)
     return _unflatten_paths(stacked) if isinstance(stacked, Mapping) else stacked
 
@@ -1021,8 +1022,8 @@ class FieldView(Distribution):
     ``_marginal_capabilities``, and a parent that defines none reports its own
     claims; the view reads the report once, at construction.
 
-    The view's ``raw()`` is the raw form of the parent's marginal at the path,
-    ``parent._marginal(path).raw()``: the backend object where the marginal
+    The view's ``raw`` is the raw form of the parent's marginal at the path,
+    ``parent._marginal(path).raw``: the backend object where the marginal
     has one, such as the TFP distribution of a TFP family, and the detached
     law otherwise. ``with_dim_sizes`` and ``with_dim_names`` apply to the
     parent and return the view of the result at the same path.
@@ -1223,8 +1224,12 @@ class FieldView(Distribution):
         view._store_expression(_marginal_expression_at(self, key))
         return view
 
+    @property
     def raw(self) -> Any:
-        """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw()``.
+        """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw``.
+
+        Every read returns the same object, resolved on the first read. A
+        detached law refuses provenance, since every reader shares it.
 
         Returns
         -------
@@ -1239,8 +1244,14 @@ class FieldView(Distribution):
         Raises
         ------
         ResolutionError
-            If the parent has no exact marginal at the path.
+            If the parent has no exact marginal at the path. The error is not
+            an ``AttributeError``, so ``hasattr(view, "raw")`` raises it rather
+            than returning ``False``, and each read tries the marginal again.
         """
+        return _cached_raw(self, self._resolved_raw)
+
+    def _resolved_raw(self) -> Any:
+        """Resolve the raw form of the parent's marginal at the path, as :attr:`raw` describes."""
         parent = self._parent
         if not isinstance(parent, SupportsMarginals):
             raise ResolutionError(
@@ -1252,7 +1263,7 @@ class FieldView(Distribution):
             raise ResolutionError(
                 f"{parent.label!r} has no exact marginal at {self._path!r}: {reason}"
             )
-        raw = parent._marginal(self._path).raw()
+        raw = parent._marginal(self._path).raw
         if not isinstance(raw, Distribution):
             return raw
         return _carrying(raw, self._expression)

@@ -283,7 +283,7 @@ def chains_at(posterior: Any, path: str, shape: tuple[int, ...]) -> np.ndarray:
 
     posterior = independent_draws(posterior)
     atoms = posterior.atoms
-    raw = atoms.values if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
+    raw = atoms.raw if isinstance(atoms, NumericArrayBatch) else _raw_record(atoms)
     values = np.asarray(_node(raw, posterior, path), dtype=np.float64)
     chains = atoms.batch_shape[0] if len(atoms.axis_groups) > 1 else 1
     return values.reshape(chains, -1, *shape)

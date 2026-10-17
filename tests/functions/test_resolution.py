@@ -376,7 +376,7 @@ class TestTheDirectCall:
             result = identity(standard_normal())
 
         assert isinstance(result, Opaque)
-        assert result.value == "closed form"
+        assert result.raw == "closed form"
         assert result.provenance.metadata["route"] == "closed_form"
 
     def test_exact_only_leaves_no_route_for_a_sampled_lift(self):
