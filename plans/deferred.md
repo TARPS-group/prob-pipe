@@ -15,6 +15,7 @@ Postponed work leaves the current behaviour unchanged (README directive 8).
 | `condition_on` declared as `d.without(*fixed)`, and `law.without` (step G4) | `declarations-and-addressing.md` § 12, § 19.8 |
 | `[]` on batches of laws and on kernels (step G5) | `declarations-and-addressing.md` § 9, § 19.8 |
 | `&` on `Function`, `FunctionSpec`, `Batch`, and `BatchSpec`, and lifting by postcomposition, so a consumer can meet a function's parts | `declarations-and-addressing.md` § 14.4 |
+| `without` on a `Function`, a `ConditionalDistribution`, a batch of laws, and through a law held in a record field, so I10 holds for every kind | `declarations-and-addressing.md` § 3, § 16 |
 | `&` on `DistributionSpec` and `ConditionalDistributionSpec`, and `InputSpec` renames, so a function that builds a model declares its output | `declarations-and-addressing.md` § 14.4 |
 
 ### The execution layer

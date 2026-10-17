@@ -99,7 +99,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 | P0 | The in-flight PRs #586 and #587 merge (#575, #583, and #474 merged on 2026-10-17) | — |
 | P0b | The call context is created as `call-context-proposal.md` § 7.2 describes: in #587 before it merges if the maintainer chooses OD5 option A, in a follow-up PR if option B (decision pending) | #586 |
 | PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | P0, P0b |
-| PL | This `plans/` PR merges | every item of `gaps-and-conflicts.md` except D7, and the open points O1–O11 of `declarations-and-addressing.md` |
+| PL | This `plans/` PR merges | every item of `gaps-and-conflicts.md` except D7, and the open points O1–O16 of `declarations-and-addressing.md` |
 
 ### Declarations and addressing
 
@@ -113,7 +113,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 | S4 | Every batch stores its element declaration | § 19.6 | S2b, E3b | yes |
 | G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group | § 19.7 | S2b, S4 | yes, never cut |
 | G1b | Grammar B for outputs: a function that returns a law or a function exposes its output, a lifted law-returning function wraps its draws, defaults by kind, and the reading of a bare `output_spec` | § 19.7 | G1a, E5 | yes, cut third |
-| G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts | § 19.8 | G1b | after |
+| G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts, once G3 has moved views at law-valued fields off the old form | § 19.8 | G1b, G3 | after |
 | G3 | Paths through every kind; `Function[]`; the public `component` accessor, and a whole term's name stops being a subscript; a view of a field that holds a law or a function wraps | § 19.8 | G1a | after |
 | G4 | `condition_on` declared as `d.without(*fixed)`; `law.without` | § 19.8 | G1a | after |
 | G5 | `[]` on batches of laws and on kernels | § 19.8 | G3 | after |

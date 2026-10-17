@@ -1,7 +1,7 @@
 # Gaps and conflicts across the plans
 
 This file lists every place where the three plans disagree with each other, are out of date, or leave a decision open that implementation needs.
-The `plans/` PR merges once each item here except D7 is settled, together with the open points O1–O11 of `declarations-and-addressing.md`, and the plans are updated to match (README § Steps, step PL). D7 gates the execution steps that need the call context, not this PR.
+The `plans/` PR merges once each item here except D7 is settled, together with the open points O1–O16 of `declarations-and-addressing.md`, and the plans are updated to match (README § Steps, step PL). D7 gates the execution steps that need the call context, not this PR.
 Settled items move to [`decisions.md`](decisions.md), and the plan texts change in the same commit.
 
 Each item has the same parts:

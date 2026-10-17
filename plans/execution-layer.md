@@ -582,7 +582,7 @@ Each term below is a proposal for `design/glossary.md`.
 | **call token** | a `uint32` that names one open call context in the table of active calls, passed into compiled programs as an argument; a call registers one only when it runs a program with embedded calls (3.8, [`call-context-proposal.md`](call-context-proposal.md) § 5.2) |
 | **call context** | the one value that holds a call's per-call state, from `config` blocks to the executor choice, carried across every boundary ([`call-context-proposal.md`](call-context-proposal.md)) |
 | **program with embedded calls** | a program ProbPipe opens whose trace staged an embedded call, found by searching its jaxpr when it is lowered |
-| **requester** | the code that asked for a point set, such as a lift, a joint, or an inference method. (*Consumer* means a term that declares what it consumes, as `plans/declarations.md` defines it.) |
+| **requester** | the code that asked for a point set, such as a lift, a joint, or an inference method. (*Consumer* means a term that declares what it consumes, as `plans/declarations-and-addressing.md` defines it.) |
 | **program store** | the compiled programs a `Function` or another owner keeps, keyed by input structure |
 | **evaluation memo** | an opt-in store of a callable's outputs, keyed by the content of its arguments and its key (6.5) |
 | **result cache** | the call-level cache of V.8, keyed by the structure of a whole call |
