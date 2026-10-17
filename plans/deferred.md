@@ -32,7 +32,7 @@ From `execution-layer.md` §13, "After the workshop":
 | pyabc and BayesFlow on point sets and executors; see jhuggins's lighter pyabc route below | §6.12 |
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
-| The rest of #524, #554, #506, and #522, beyond the pieces the core absorbs | `gaps-and-conflicts.md` A8 |
+| The rest of #524, #554, #506, and #522, beyond the pieces the core absorbs | `gaps-and-conflicts.md` D8 |
 
 ## Found along the way
 
@@ -41,6 +41,6 @@ From `execution-layer.md` §13, "After the workshop":
 | 2026-10-16 | The Rocq model of the component interface does not cover renames by path or paths inside slots. | addressing plan | Extend before the grammar-B design text is final. |
 | 2026-10-16 | The Gaussian route of `condition_on` accepts a given record with a missing or extra field. | addressing plan | A bug, separate from the push. |
 | 2026-10-16 | Inference on a law declared whole over a record fails with a wrong message. | addressing plan | Grammar B removes the cause (step G1). |
-| 2026-10-16 | A lighter pyabc route: a `pyabc.sampler.Sampler` subclass seeds NumPy's global generator per evaluation from `fold_in(fold_in(run_key, t), i)` and sends the seeds to the executor as one point set. A 60-line prototype gave bitwise-identical populations under four execution orders. The thread executor cannot run these points. | jhuggins, comment on the execution Doc | Would replace the plan's pyabc reimplementation. |
+| 2026-10-16 | A lighter pyabc route: a `pyabc.sampler.Sampler` subclass seeds NumPy's global generator per evaluation from `fold_in(fold_in(run_key, t), i)` and sends the seeds to the executor as one point set. A 60-line prototype gave bitwise-identical populations run sequentially, with chunks in reverse order, on 4 processes, and with two batch sizes. The thread executor cannot run these points. | jhuggins, comment on the execution Doc | Would replace the plan's pyabc reimplementation. |
 | 2026-10-16 | Issues to open: deterministic fields of a joint (Q4) and a Gibbs method (Q10). | execution plan | |
 | 2026-10-16 | An exact route ruled out only by a budget should be reported, and the call should warn. | execution plan, Q12 | Tracked in #585; its text needs `max_evaluations` after #586. |

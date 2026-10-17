@@ -15,11 +15,11 @@ The items fall into five groups:
 
 | Group | What it holds | Items |
 |---|---|---|
-| A | Decisions needed before implementation can start | A1–A9 |
-| B | Text fixes that need no new decision | B1–B5 |
-| C | Steps that edit the same files, and the order that avoids collisions | C1 |
-| P | Process gaps in how the push itself runs | P1–P5 |
-| E | Known gaps that can wait until after the workshop | E1–E6 |
+| D | Decisions needed before implementation can start | D1–D9 |
+| T | Text fixes that need no new decision | T1–T5 |
+| F | Steps that edit the same files, and the order that avoids collisions | F1 |
+| W | Gaps in how the push itself works | W1–W5 |
+| L | Known gaps that can wait until after the workshop | L1–L6 |
 
 ---
 
@@ -49,6 +49,8 @@ Three terms recur below:
 - A **whole** declaration names one value under one name, written with a keyword: `OutputSpec(x=NumericArraySpec(()))`.
 - An **exposed** declaration offers the parts of its value as components, written positionally: `OutputSpec(RecordSpec(a=..., g=...))` offers `a` and `g`.
 - A **base spec** types a value with no named parts: a `NumericArraySpec` or an `OpaqueSpec`. Every other spec has parts.
+- A **view** `d[p]` is the law of the part of `d` at path `p`, which keeps a reference to `d` (today the class `FieldView`).
+- A component's **address** is the position of its value inside the produced value: the root for a whole declaration, and the path of its name for an exposed record.
 
 The addressing plan states its scope against #571 explicitly, so the two were meant to fit.
 They were written two days apart, however, and #571's text was not updated when grammar B was adopted.
@@ -56,9 +58,9 @@ The execution plan was written alongside them, and uses some words and examples 
 
 ---
 
-## A. Decisions needed before implementation
+## D. Decisions needed before implementation
 
-### A1. There is no single current text for declarations
+### D1. There is no single current text for declarations
 
 **Background.**
 The declarations design exists in three texts:
@@ -69,19 +71,23 @@ The declarations design exists in three texts:
 None of the three has been updated to match the later ones.
 An implementer reading #571 alone would build several things that the later texts replaced.
 
-**The problem.** The texts disagree on nine points.
+**The problem.** The texts disagree on thirteen points.
 
 | # | Topic | #571 body | jhuggins's reply | Grammar B |
 |---|---|---|---|---|
 | a | Whether a declaration is whole or exposed | a property `exposes` with four values: `"whole"`, `"record"`, `"event"`, `"element"` | a boolean `exposes_parts` | no property: the spec decides, since a declaration is whole exactly when its spec is a base spec |
 | b | `project` with several paths | a record of the nodes, each under its last segment, in the order given; two paths with the same last segment raise | as the body | each node stays at its own path, in the tree's order; a path inside another raises |
 | c | `project` with one path to a group | the group, named whole by its last segment | as the body | the group's parts, exposed; `project(["g"])` keeps the name |
-| d | Reading the term at a component | five cases, one per kind | a private method `_component` per kind | one rule, a public `t.component(c)`, equal to `t[address(c)]` |
+| d | Reading the term at a component | five cases by what the declaration exposes: the term itself, a record's child, a law's view, a kernel's laws, a batch's elements | a private method `_component` per kind | one rule: a public `t.component(c)`, equal to `t[address(c)]`; the name `component` is a placeholder |
 | e | `batch["mu"]` on a batch of draws of `Normal("mu", ...)` | returns the batch | as the body | raises, since `mu` is a name and not a path; `draws.component("mu")` returns the batch |
-| f | The spec of a component when the declared value is a law | the spec of one draw's value at the component | as the body | the spec of the law's view at the component, a `DistributionSpec` |
+| f | The spec of a component when the declared value is a law | the spec of one draw's value at the component | reads the term at component `c` of a law as the view `t[c]`, without restating the spec | the spec of the law's view at the component, a `DistributionSpec`, following jhuggins's decision 5 in his component-interface doc |
 | g | A batch built from raw values | keeps a bare element spec with no components, so a batch of arrays cannot be exposed | as the body | every batch holds an element declaration; a base element is whole under the default name `element` |
-| h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree (item A3) |
-| i | Merging declarations | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods (item A2) | uses `&` in its examples, and leaves the operator to #571 |
+| h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree (item D3) |
+| i | Merging declarations | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods (item D2) | uses `&` in its examples, and leaves the operator to #571 |
+| j | The paths of a whole declaration | the component followed by the paths inside the term, as `c/beta` | as the body | only the root, since a whole declaration names a base value |
+| k | The column of a group in a batch of records, `rb["g"]` | not covered (a field's column carries `OutputSpec(a=...)`) | as the body | carries the exposed record `{c, e}` |
+| l | `&` on an operand that exposes a law or a batch | not covered | raises | as the reply; since grammar B exposes more outputs, such outputs must be wrapped to merge |
+| m | `OutputSpec.without` on a whole declaration | removes nodes inside its term | as the body | has nothing to remove, since a whole declaration names a base value with no paths below it |
 
 Two examples show what is at stake.
 
@@ -110,17 +116,19 @@ grouped[["g"]].event_spec   # grammar B: OutputSpec(RecordSpec(g=RecordSpec(c=..
 
 **Recommendation.** Option 1.
 The two plans meet in twelve places, so the boundary between them causes most of the disagreement.
-You decided rows b and c on 2026-10-15, and adopted grammar B on 2026-10-16, so rows a to g follow grammar B.
-Rows h and i wait on items A3 and A2.
-Row a also depends on item A4: if jhuggins rules for grammar B′ instead of B, a declaration needs a flag again.
+Where the rows stand:
+- **Settled:** rows b and c (2026-10-15), and grammar B itself (2026-10-16).
+- **Follow from grammar B:** rows a, j, l, and m. Row a also depends on item D4: if jhuggins rules for grammar B′, a declaration needs a flag again.
+- **Recommended by the addressing plan, awaiting your confirmation:** row d (the public accessor and its name), row e (which follows from d), row f, row g, and row k.
+- **Wait on other items:** row h on D3, and row i on D2.
 
 **Blocks:** S2, S3, S4, and every later step of the declarations and addressing track.
 
-**Status:** open. The reconciled text is written once A2, A3, and A4 are settled.
+**Status:** open. The reconciled text is written once D2, D3, and D4 are settled.
 
 ---
 
-### A2. Should `&` replace `*` for composition, and should the pending renames merge with it?
+### D2. Should `&` replace `*` for composition, and should the pending renames merge with it?
 
 **Background.**
 Today `*` composes laws and kernels: `likelihood * prior` is the joint law.
@@ -143,10 +151,11 @@ The execution plan's examples still use `*`.
 Grammar B notes one exception: `&` on two arrays is NumPy's bitwise "and".
 So `sample(Normal("x", 0, 1)) & sample(Normal("y", 0, 1))` combines two arrays elementwise, while `Normal("x", 0, 1) & Normal("y", 0, 1)` is the joint law.
 
-Three renames are also pending, all user-visible:
-- `with_path_names` becomes `rename`, as in pandas and xarray (addressing plan, recommended);
-- `FieldView` becomes `MarginalView`, since it covers groups and lists of paths (addressing plan, recommended);
-- the parameter of `marginal(d, field)` becomes `paths` (addressing plan, decided).
+Two renames are also pending, both user-visible and both recommended by the addressing plan:
+- `with_path_names` becomes `rename`, as in pandas and xarray;
+- `FieldView` becomes `MarginalView`, since it covers groups and lists of paths.
+
+The parameter of `marginal(d, field)` also becomes `paths`, which belongs to step S1 because it changes what `marginal` accepts.
 
 **The problem.**
 `&` changes the most visible line of every model a user writes.
@@ -160,16 +169,16 @@ The decision is not yours alone: jhuggins proposed `&`, and the addressing plan 
 3. Support both for a release.
 
 **Recommendation.** Option 1, settled with jhuggins.
-Put `&` and the three renames in one mechanical PR (step S3), so the codebase changes its vocabulary once.
-Option 3 contradicts the clean-break rule of item A5.
+Put `&` and the two renames in one mechanical PR (step S3), announced in advance. Step S2 is also a wide rename (`components` and `exposes_record` go and `.spec` becomes `term_spec`, on about 380 lines), so it is announced the same way (item F1).
+Option 3 contradicts the clean-break rule of item D5.
 
-**Blocks:** S3. The reconciled declarations text (A1, row i).
+**Blocks:** S3. The reconciled declarations text (D1, row i).
 
 **Status:** open; needs jhuggins.
 
 ---
 
-### A3. Do a batch's component names stay out of equality and the JAX pytree?
+### D3. Do a batch's component names stay out of equality and the JAX pytree?
 
 **Background.**
 A batch is a JAX pytree, so JAX splits it into arrays and static data.
@@ -214,7 +223,7 @@ jhuggins's Rocq model proves only that `&` commutes with renaming, so this needs
 
 ---
 
-### A4. Grammar B's open rulings, and whether to enforce grammar B before the workshop
+### D4. Grammar B's open rulings, and whether to enforce grammar B before the workshop
 
 **Background.**
 Under grammar B, a whole declaration may name only a base spec.
@@ -222,7 +231,7 @@ Under grammar B, a whole declaration may name only a base spec.
 A law over that record either offers `beta` and `sigma`, or is wrapped as `OutputSpec(RecordSpec(params=RecordSpec(...)))`, whose draws are `{params: {beta, sigma}}`.
 This keeps one set of paths: a term's subscripts, its rename keys, and its draws all agree.
 
-jhuggins's component-interface doc models this in Rocq and leans toward B, but leaves three things open.
+jhuggins's component-interface doc models this in Rocq and leans toward B, but leaves two rulings open, and the addressing plan leaves a third.
 
 **The problem.** Three rulings are open, and a fourth question is about timing.
 
@@ -251,10 +260,10 @@ jhuggins's component-interface doc models this in Rocq and leans toward B, but l
    A function that returns a posterior under one name is declared `OutputSpec(RecordSpec(posterior=post_spec))`.
    Either its body returns `{"posterior": law}` and the declaration only checks it, or the body returns the law and ProbPipe wraps it.
    The same question decides what a pending type `OutputSpec(x=None)` becomes when it is filled with a spec that has parts.
-   The plan leans to the first: the body returns the record, and a pending type filled with parts raises.
+   This question is the addressing plan's own. It leans to the first: the body returns the record, and a pending type filled with parts raises.
 
 4. **Timing.**
-   Enforcing grammar B changes 679 tests in 46 files and about 31 library sites.
+   The addressing plan counted 679 tests in 46 files that run a whole declaration over a spec with parts, an upper bound on the tests that change, and about 31 library sites.
    It changes what users see in several places: the view of a group, laws declared whole over a record, random measures, Gaussian processes, and functions that return laws.
 
 **Options for timing.**
@@ -263,23 +272,23 @@ jhuggins's component-interface doc models this in Rocq and leans toward B, but l
 
 **Recommendation.**
 Ruling 1: B.
-Ruling 2: such a view wraps, because narrowing the event rule reopens the defect that rule fixed (problem 4 of #571, a joint whose draws fail their declaration).
+Ruling 2: such a view wraps, which keeps #571's event rule as it stands. Narrowing the rule may be sound once row f of D1 types a component by its view, but it changes what a joint's draw stores, so it needs its own analysis.
 Ruling 3: the body returns the record.
 Timing: option 1. The size and the open rulings make option 2 a risk to everything else on the schedule.
 
-**Blocks:** the grammar-B step (G1 in the README, after the workshop under the recommendation). Row a of A1.
+**Blocks:** the grammar-B step (G1 in the README, after the workshop under the recommendation). Row a of D1.
 
 **Status:** open; rulings 1 and 2 need jhuggins.
 
 ---
 
-### A5. Clean break, with no deprecation aliases?
+### D5. Clean break, with no deprecation aliases?
 
 **Background.**
 ProbPipe has not released on PyPI.
 #448 set the rule for 0.2.0 as breaking changes with no compatibility shims, and draft PR #549 prepares 0.2.0.
 jhuggins's reply on #571 answers "no deprecated aliases" for its renames.
-The addressing plan lists thirteen breaking changes and marks "a clean break" as open, to confirm with jhuggins.
+The addressing plan lists fourteen breaking changes and marks "a clean break" as open, to confirm with jhuggins.
 The execution plan's Q2 asks whether `dispatch` and `max_workers` go before 0.2.0.
 
 **The problem.**
@@ -291,7 +300,7 @@ It also decides whether 0.2.0 waits for the push.
 2. Deprecation warnings for one release.
 
 **Recommendation.** Option 1.
-A shim would also break directive 8 of the README, which forbids bridging code.
+A shim is the kind of bridging code that directive 8 of the README forbids for deferred work, and the same reasoning applies to a change made now.
 
 **Blocks:** S2, S3, E3.
 
@@ -299,7 +308,7 @@ A shim would also break directive 8 of the README, which forbids bridging code.
 
 ---
 
-### A6. The execution plan's open questions on the pre-workshop path
+### D6. The execution plan's open questions on the pre-workshop path
 
 **Background.**
 The execution plan asks eighteen questions in its section 9.
@@ -312,22 +321,23 @@ Each is explained from scratch in the plan's section 9, so here each gets its co
 |---|---|---|---|
 | Q5 | Where the code goes. The import order puts `distributions/` before `functions/`, and joints must use the executor registry. | Point sets and the registry go in `core/`; `functions/` installs the workflow scope into `core` at import, as the call engine is installed today. No import goes against the layering. | E2, E3 |
 | Q13 | What happens with a callable that claims nothing. Tutorial code claims nothing. | Probe it once per input structure, in `check` as well as in the call, and store the outcome. A callable that draws from NumPy's global generator is recorded as opaque, with a warning. | E2 |
-| Q16 | Names that collide with ProbPipe's vocabulary | *probe result* for a stored probe outcome; `functions/_work_scope.py` for the module of the workflow scope that work enters, instead of #524's `_broker.py` merge target; "the point's random key" with no separate name | E2, E3 |
+| Q16 | Names that collide with ProbPipe's vocabulary | *probe result* for a stored probe outcome; "the point's random key" with no separate name; `functions/_work_scope.py` as the name of the module that holds the workflow scope work enters. #524 plans to merge `_managed.py` into the existing key broker `functions/_broker.py`, so this renames that module. | E2, E3 |
 | Q15 | The executor class's name | `PointExecutor`, since users often import `concurrent.futures.Executor` too | E3 |
 | Q3 | Which callables an executor named on an operation applies to. `condition_on.using(executor="slurm")` must send the simulator to the cluster without the user rebuilding the model. | Every opaque callable inside the call. An executor set on a `Function` itself wins, so a cheap statistic can stay local. A mapping by label can come later. | E3 |
-| Q2 | When `dispatch` and `max_workers` go | Before 0.2.0, removed outright (item A5) | E3 |
-| Q4 | Host callbacks, staged execution, or both. Staged execution stores `G(θ)` as a deterministic field of a joint. | Callbacks now. Deterministic fields change what a joint's event holds, so they go to a separate issue (E5 below). | E4 |
+| Q2 | When `dispatch` and `max_workers` go | Removed outright before 0.2.0, provided the controls and the executor registry merge before #549 does (item D5) | E3 |
+| Q8 | Which executor a ProbPipe call made inside a point uses | Automatic selection, unless the call names one, so a cluster job does not submit cluster jobs | E3, E5 |
+| Q4 | Host callbacks, staged execution, or both. Staged execution stores `G(θ)` as a deterministic field of a joint. | Callbacks now. Deterministic fields change what a joint's event holds, so they go to a separate issue (L5 below). | E4 |
 | Q7 | What a failed point means | The call raises once its point set completes, naming the point, and a compiled program stops at once. Dropping failed points is opt-in, after the workshop, for point sets built in Python only. | E4 |
-| Q14 | Whether a traceable model may use gradient methods without claiming gradients. A strict reading of V.11 would take NUTS away from every tutorial model. | Yes, as today. Claims only narrow it: an opaque step needs a supplied derivative. V.11 states this as an exception. | E6 |
+| Q14 | Whether a traceable model may use gradient methods without claiming gradients. A strict reading of V.11, which says a claim is never inferred, would take NUTS away from every tutorial model. | Yes, as today. Claims only narrow it: an opaque step needs a supplied derivative, and an explicit claim restricts which inputs gradients use. V.11's text says so. | E6 |
 | Q18 | A JAX setting, such as `jax_enable_x64`, changed during a call | Raise, naming the setting and both values | E8 |
 
-Questions Q6 (the memo across calls), Q8, Q9 (Prefect), Q10 (a Gibbs method), and Q11 (who owns the differentiability claim) belong to post-workshop steps.
+Questions Q6 (the memo across calls), Q9 (Prefect), Q10 (a Gibbs method), and Q11 (who owns the differentiability claim) belong to post-workshop steps.
 
 **Status:** open; your decision on each, with jhuggins on Q5 and Q14.
 
 ---
 
-### A7. Per-call settings: #587's `config` blocks and the execution plan's call context
+### D7. Per-call settings: #587's `config` blocks and the execution plan's call context
 
 **Background.**
 PR #587 (jhuggins, ready to merge after #586) groups the global settings under `probpipe.config` and adds temporary blocks:
@@ -338,7 +348,8 @@ with probpipe.config.sampling.using(num_samples=4096):
 ```
 
 A block is stored in a context variable.
-The call context that #547 carries into worker threads, which already carries the inherited `exact_only`, now carries the active blocks too.
+Since PR #547, a call carries a small context into the worker threads it dispatches to, holding controls such as the inherited `exact_only`.
+#587 extends it to `_CarriedContext(func, inherited, record, settings)`: the active blocks are `settings`, and `record` is #586's record of the Monte Carlo draws a call makes, which provenance reports.
 #587's design text adds: "A setting read while JAX traces a function is its value at trace time."
 
 The execution plan carries per-call settings the same way within Python: a call context in a context variable, inherited by worker threads.
@@ -349,16 +360,17 @@ Inside a compiled program it cannot, for two reasons its verification found:
 So the plan passes a **call token** into every program as an argument, and the host looks the call's settings up by token (principle P11: per-call values are data at every boundary).
 
 **The problem.** Three things need to fit together.
-1. **Callbacks cannot see `config` blocks.** An embedded call's host side finds its settings by token. Unless the call context registered under the token also holds the active `config` blocks, a callback on an XLA thread reads the session values instead of the block's.
+1. **Callbacks cannot see the carried context.** An embedded call's host side finds its settings by token. Unless the call context registered under the token also holds the active `config` blocks and the Monte Carlo record, a callback on an XLA thread reads the session values instead of the block's, and its draws go unrecorded.
 2. **"Its value at trace time" meets program reuse.** A program store reuses one compiled program across calls. A setting read inside a traced function and baked in would then leak from one call into the next. A setting that changes what a compiled program computes must be part of the program's cache key or be passed as an argument.
 3. **Where executor settings are kept.** #587 adds `config.prefect`, which holds the Prefect task runner and auto-detects Ray or Dask. The execution plan's Q9 retires that auto-detection and turns Prefect's runners into a `prefect` executor, after the workshop. It is also open whether `executor` and `executor_options` get a `config.execution` section for session defaults.
+4. **When Prefect's auto-detection goes.** Step E3 replaces the dispatch modes before the workshop, while the `prefect` executor comes after it. Retiring the auto-detection in E3 would remove behaviour before its replacement exists, which directive 8 rules out.
 
 **Options.**
-1. One call context, the execution plan's, that captures #587's active blocks when the call starts and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the program-store key. No `config.execution` section for now.
+1. One call context, the execution plan's, that captures #587's carried context (its active blocks and its Monte Carlo record) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the program-store key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
 2. Two mechanisms side by side.
 
 **Recommendation.** Option 1, agreed with jhuggins before step E3 starts.
-#586 and #587 merge first, and the execution plan is updated to cite `config` (item B2).
+#586 and #587 merge first, and the execution plan is updated to cite `config` (item T2).
 
 **Blocks:** E3, E4.
 
@@ -366,7 +378,7 @@ So the plan passes a **call token** into every program as an argument, and the h
 
 ---
 
-### A8. Prerequisites the execution plan names that have no PR
+### D8. Prerequisites the execution plan names that have no PR
 
 **Background.**
 The execution plan's section 10 lists issues that must merge first or alongside.
@@ -374,17 +386,17 @@ None of them has a PR, so the plan cannot wait for them.
 
 | Issue | What it is | What the pre-workshop steps need from it | Recommendation |
 |---|---|---|---|
-| #524 | Finishing the function engine. Includes moving `_execution_contract.py` into `_execution.py` and merging `_managed.py` into `_broker.py`. | E3 rewrites these modules, so moving them afterwards would rewrite them twice. | E3's first commit does the two moves mechanically, using Q16's name. The rest of #524 stays after the workshop. |
+| #524 | Finishing the function engine. Includes moving `_execution_contract.py` into `_execution.py` and merging `_managed.py` into the existing key broker `_broker.py`. | E3 rewrites these modules, so moving them afterwards would rewrite them twice. | E3's first commit does the two moves mechanically, using Q16's name. The rest of #524 stays after the workshop. |
 | #554 | Explicit-key randomness: a `key` parameter declares randomness, and the workflow supplies the key. | E6's `InferenceTarget` gives a method its run key through a `key` parameter (#554 §8). A `vectorized` callable receives stacked keys. | E6 implements the run-key delivery of #554 §8 only. The rest of #554 follows the workshop. |
 | #522 | `LinOp` as a `Function`, and the differentiability claim. | Nothing, if Q14 is answered as recommended. | After the workshop, with the supplied derivatives. |
-| #506 | What a function body receives: raw values by default. | Point sets carry raw values, as #575 already makes `raw` a property. | Point sets present raw values; the rest of #506 after the workshop. |
+| #506 | What a function body receives: raw values by default. | Point sets carry raw values, which open PR #575 reads through the `raw` property. | Point sets present raw values; the rest of #506 after the workshop. |
 | #451 | One n-ary dispatch registry class. | The executor registry has one key, so today's unary registry serves. | No dependency. |
 
 **Status:** recommended; your confirmation, especially for the partial #554.
 
 ---
 
-### A9. Which steps happen before the workshop
+### D9. Which steps happen before the workshop
 
 **Background.**
 On 2026-10-16 you set the execution core: executor dispatch for traceable and opaque functions, and the public target interface.
@@ -397,9 +409,9 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 |---|---|---|
 | S1 | One subscript reader: a `str` is one path, a list or tuple is a list of paths that keep their paths, `[]` returns groups, `in`, `marginal(d, paths)` | yes |
 | S2 | `OutputSpec` as a mapping, `term_spec`, `project` and `without`, one reading of slots, the size shorthand, `InputSpec.merge` | yes |
-| S3 | `&` and the three renames, one mechanical PR | yes, if A2 is settled |
-| S4 | Batches store their element declaration | yes if A3 is settled by the end of day 2, otherwise the first item after |
-| G1 | Grammar-B enforcement and wrapping | after (A4) |
+| S3 | `&` and the two renames, one mechanical PR | yes, if D2 is settled |
+| S4 | Batches store their element declaration | yes if D3 is settled before S2 merges, otherwise the first item after |
+| G1 | Grammar-B enforcement and wrapping | after (D4) |
 | G2 | Paths through every kind, `Function[]`, `component` | after |
 | G3 | `condition_on` declared as `without`; `law.without` | after |
 | G4 | `[]` on batches of laws and on kernels | after |
@@ -410,9 +422,9 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 
 ---
 
-## B. Text fixes that need no new decision
+## T. Text fixes that need no new decision
 
-### B1. "Consumer" means two things
+### T1. "Consumer" means two things
 
 #571 defines a **consumer** as a term that declares what it consumes: a `Function` through `input_spec`, or a `ConditionalDistribution` through `given_spec`.
 It replaces the design's phrase "map-like kind".
@@ -424,28 +436,31 @@ Both senses would end up in `design/glossary.md`.
 **Fix:** the execution plan says **requester** for the code that asks for a point set.
 The declarations sense keeps "consumer", since it pairs with "producer".
 
-### B2. The execution plan is out of date in four places
+### T2. The execution plan is out of date in six places
 
-1. Its examples compose with `*` (`prior = Normal(...) * HalfNormal(...)`). They change to whatever A2 decides.
+1. Its examples compose with `*` (`prior = Normal(...) * HalfNormal(...)`). They change to whatever D2 decides.
 2. It cites `n_broadcast_samples`, which #586 replaces with `max_evaluations` for lifting and `num_samples` for Monte Carlo summaries. Q12 and issue #585 need the same change.
 3. It cites Prefect's auto-detection at `core/config.py:104-121`, which #587 moves to `config.prefect`.
-4. Its header and §12 say its verification scripts are in `.claude/plans/580-verification/` and that the document is kept in the repository. The first is a gitignored local path (item P4). The second becomes true with this PR.
+4. Its note says the questions are numbered Q1 to Q15; there are eighteen.
+5. §5 and Q16 justify writing "random key" because "key" alone means a field key. The addressing plan removes that sense from the glossary, so the justification changes, though the decision of 2026-10-16 to tolerate "key" stands.
+6. Its header and §12 say its verification scripts are in `.claude/plans/580-verification/` and that the document is kept in the repository. The first is a gitignored local path (item W4). The second becomes true with this PR.
 
-### B3. "Selection" keeps one sense
+### T3. "Selection" keeps one sense
 
 The glossary defines *selection* twice: positions of a batch, and several paths of a law.
 The addressing plan removes both senses, since `select` is a method with another meaning, and keeps *selection order* (II.7), the ranking by which a registry tries its methods.
 The execution plan's "automatic selection" of an executor uses the II.7 sense, which stays.
 **Fix:** the glossary keeps only *selection order*, and the execution plan's glossary entry for "automatic selection" points to it.
 
-### B4. How a bare `TermSpec` given as `output_spec` is read
+### T4. Grammar B changes how a bare `TermSpec` given as `output_spec` is read
 
-The execution plan's examples declare `output_spec=NumericArraySpec((40,), "float32")`, a bare term spec rather than an `OutputSpec`.
-Neither #571 nor the addressing plan says how a bare term spec given as `output_spec` is read.
-Under grammar B the natural reading is a whole declaration under the function's default name for a base spec, and an exposed declaration otherwise.
-**Fix:** the reconciled declarations text states this reading, and the execution plan cites it.
+`output_spec=` accepts a bare term spec as well as an `OutputSpec`.
+Today's rule (V.1 in `design/05-functions.md`, and III.3) is that a bare `RecordSpec` exposes its fields, and any other bare spec is whole under the callable's name.
+The execution plan relies on this when it writes `output_spec=NumericArraySpec((40,), "float32")`.
+Grammar B's "defaults by kind" changes the rule for specs with parts: a bare law, function, or batch spec becomes exposed instead of whole.
+**Fix:** the reconciled declarations text restates the rule for bare specs under grammar B, and V.1 and III.3 change with step G1. The execution plan's examples use base specs, so they are unaffected.
 
-### B5. IV.2's rationale misattributes associativity
+### T5. IV.2's rationale misattributes associativity
 
 jhuggins's Rocq model finds that a chain of kernels is associative with or without IV.2's rule that the right operand's slots avoid the left operand's components.
 That rule keeps the joint well formed, which is a different reason.
@@ -453,44 +468,49 @@ That rule keeps the joint well formed, which is a different reason.
 
 ---
 
-## C. Steps that edit the same files
+## F. Steps that edit the same files
 
-### C1. The order that avoids collisions
+### F1. The order that avoids collisions
 
 Several steps edit the same modules.
 Run in the wrong order, each rebase redoes the other's work.
 
 | Module | Steps that edit it |
 |---|---|
-| `functions/_broadcast.py`, `functions/_sweep.py`, `functions/_execution.py` | E3 (executors replace the dispatch modes), E5 (`map_points` in lifting and sweeps), S4 (sweeps store their element declaration), G1 (defaults by kind) |
-| `core/_specs.py` | S1 (`project` reads subscripts), S2 (most of it), S3 (`&` on declarations) |
+| `functions/_broadcast.py`, `functions/_sweep.py`, `functions/_execution.py` | S2 (the renames: `_broadcast.py` reads `_component_name` 17 times), E3 (executors replace the dispatch modes), E5 (`map_points` in lifting and sweeps), S4 (sweeps store their element declaration), G1 (defaults by kind) |
+| about 41 modules that read `.spec`, `components`, `exposes_record`, or `_component_name` | S2 |
+| `core/_specs.py` | S2 (most of it, including `project`), S3 (`&` on declarations) |
+| `core/_shapes.py`, `named_tree.py`, `Record`, `RecordSpec`, and the 9 modules that define their own `_PATH_SEP` | S1 |
 | `core/_batch.py` | S1, S4 |
-| `distributions/_conditional.py` | S2 (one reading of slots: `_slots_of`, `_complete_given_spec`), S3 (`&` replaces `__mul__`), E4 (building a kernel over an embedded call) |
-| `distributions/_factored.py` | S2 (the joint's event from its factors' components), S3, E5 (`map_points` at joint factors) |
+| `distributions/_distribution.py` (`__mul__`) | S3 |
+| `distributions/_conditional.py` | S1 (`_PATH_SEP`), S2 (one reading of slots: `_slots_of`, `_complete_given_spec`), S3 (`&` replaces `__mul__`), E2 (its construction probe), E4 (building a kernel over an embedded call) |
+| `distributions/_factored.py` | S1 (`_PATH_SEP`), S2 (the joint's event from its factors' components), S3, E5 (`map_points` at joint factors) |
 | `distributions/_views.py` | S1, S2 (`_view_declaration` becomes `project`) |
+| `functions/_function.py` | E2 (the probes it holds today), E3 |
 | `values/_function_base.py` | E2 (claims on `Function`), E3 (the controls and the call context), S2 (the reading of `input_spec`) |
 
 **Proposed order.**
-1. S1 and E2 together: they share no module.
-2. S2 and E3 together: they share only `values/_function_base.py`, in different functions.
-3. S3 at an announced time, after S2, so every open branch rebases once.
-4. E4 and E5 after S2 and S3, since both edit `_conditional.py` and `_factored.py`.
-5. S4 after E3, since both rewrite the sweep.
+1. S1 and E2 together. They share only `_conditional.py`, where S1 changes one constant and E2 the construction probe.
+2. S2, announced in advance like S3, since its renames change about 41 modules.
+3. E3 in two parts: the point sets and the registry in `core/` start alongside S2, and the rewrite of the dispatch in `_broadcast.py` and `_sweep.py` starts after S2 merges.
+4. S3 at an announced time, after S2, so every open branch rebases once.
+5. E4 and E5 after S2 and S3, since both edit `_conditional.py` and `_factored.py`.
+6. S4 after E3, since both rewrite the sweep.
 
 **Status:** recommended.
 
 ---
 
-## P. Process gaps
+## W. Gaps in how the push works
 
-### P1. CONTRIBUTING keeps planning files off branches
+### W1. CONTRIBUTING keeps planning files off branches
 
 `CONTRIBUTING.md` § Opening the PR says scratch planning artifacts stay off the branch, and § Plan first puts a significant plan in a GitHub issue.
 `plans/` is a deliberate exception: three plans that must agree, many PRs, and sessions that need the plans in their checkout.
 **This PR** adds one sentence to CONTRIBUTING naming the exception and its lifecycle: `plans/` exists while a push runs and is deleted when its sections have moved into `design/`.
 **Status:** recommended; the sentence is in this PR for review.
 
-### P2. The tutorials notebooks block every PR
+### W2. The tutorials notebooks block every PR
 
 The CI job `notebooks (tutorials)` runs `docs/tutorials` whenever `probpipe/` changes, and it blocks the merge.
 Directive 6 puts the tutorials outside this work, and you are rewriting them on your own branch (#548 and `dev/workshop-tutorials`).
@@ -503,13 +523,13 @@ Every breaking step will fail that job.
 **Recommendation.** Option 1. The `user_guide` and `get_started` legs stay blocking.
 **Status:** open; your decision.
 
-### P3. Who updates the User Guide when a step breaks it
+### W3. Who updates the User Guide when a step breaks it
 
 The User Guide notebooks lag behind the code, and they run in a blocking CI leg.
 **Recommendation:** each step updates the User Guide notebooks it breaks, mechanically and with no rewriting, so the leg stays green and the guide never documents a removed API.
 **Status:** recommended.
 
-### P4. The execution plan's verification scripts
+### W4. The execution plan's verification scripts
 
 Appendix A of the execution plan cites 21 scripts and a prototype (`proto/`), about 120 KB, in the gitignored `.claude/plans/580-verification/`.
 They are evidence for the plan's ✅ claims, and the steps reuse the prototype's solver as a test stand-in.
@@ -522,22 +542,22 @@ They fail `ruff check` in 180 places, so copying them as they are would break th
 **Recommendation.** Option 2. The tests of each step replace them, and the plan keeps describing what they showed.
 **Status:** open.
 
-### P5. The Claude Docs copies
+### W5. The Claude Docs copies
 
-The execution plan and the addressing plan also exist as Claude Docs, and jhuggins has commented on the execution Doc (his comment on a lighter pyabc route is recorded in E4 below).
+The execution plan and the addressing plan also exist as Claude Docs, and jhuggins has commented on the execution Doc (his comment on a lighter pyabc route is recorded in L4 below).
 From this PR on, the files in `plans/` are the copies that change.
 **Recommendation:** add a line at the top of each Doc pointing to the file in `plans/`, and stop editing the Docs.
 **Status:** open; needs your permission to edit the Docs.
 
 ---
 
-## E. Known gaps that can wait
+## L. Known gaps that can wait
 
 These are recorded in [`deferred.md`](deferred.md) and become issues after the workshop.
 
-- **E1. The Rocq model does not cover renames by path or paths inside slots.** The addressing plan asks to extend the model before the design text is final, which matters for step G1 and later.
-- **E2. When kernels get `[]`.** `lik["y"]` raises until step G4. The design states the exception until then.
-- **E3. Two bugs the addressing plan found.** The Gaussian route of `condition_on` accepts a given record with a missing or extra field, and inference on a law declared whole over a record fails with a wrong message. Grammar B removes the second one's cause.
-- **E4. A lighter route for pyabc.** jhuggins's comment on the execution Doc (2026-10-16) proposes a `pyabc.sampler.Sampler` subclass that seeds NumPy's global generator per evaluation, instead of reimplementing pyabc's loop. A 60-line prototype gave bitwise-identical populations across executors. This would shrink the plan's post-workshop pyabc step.
-- **E5. Two issues the execution plan proposes and nobody has opened:** deterministic fields of a joint (Q4), and a Gibbs method (Q10).
-- **E6. An exact result lost to a budget** is tracked in #585, which needs the `max_evaluations` wording of item B2.
+- **L1. The Rocq model does not cover renames by path or paths inside slots.** The addressing plan asks to extend the model before the design text is final, which matters for step G1 and later.
+- **L2. When kernels get `[]`.** `lik["y"]` raises until step G4. The design states the exception until then.
+- **L3. Two bugs the addressing plan found.** The Gaussian route of `condition_on` accepts a given record with a missing or extra field, and inference on a law declared whole over a record fails with a wrong message. Grammar B removes the second one's cause.
+- **L4. A lighter route for pyabc.** jhuggins's comment on the execution Doc (2026-10-16) proposes a `pyabc.sampler.Sampler` subclass that seeds NumPy's global generator per evaluation, instead of reimplementing pyabc's loop. A 60-line prototype gave bitwise-identical populations when run sequentially, with chunks in reverse order, on 4 processes, and with two batch sizes. The thread executor cannot run these points, since threads share NumPy's global generator. This would shrink the plan's post-workshop pyabc step.
+- **L5. Two issues the execution plan proposes and nobody has opened:** deterministic fields of a joint (Q4), and a Gibbs method (Q10).
+- **L6. An exact result lost to a budget** is tracked in #585, which needs the `max_evaluations` wording of item T2.

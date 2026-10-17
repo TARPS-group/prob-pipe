@@ -4,7 +4,7 @@
 > This file is the execution-layer design for [#580](https://github.com/TARPS-group/prob-pipe/issues/580), moved from a gitignored local draft (it matches the Claude Doc "Running computations in ProbPipe: the execution layer", revision 63, 2026-10-16).
 > From now on this file, not the Doc, is the copy that changes, and Appendix D keeps its revision log.
 > [`gaps-and-conflicts.md`](gaps-and-conflicts.md) lists the places where it is out of date or disagrees with the other plans.
-> The verification scripts that Appendix A cites are not in the repository yet (item P4 of that file).
+> The verification scripts that Appendix A cites are not in the repository yet (item W4 of that file).
 
 - **For:** issue #580, as a draft for maintainer review. Not posted.
 - **Date:** 2026-10-15.

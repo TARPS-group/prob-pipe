@@ -22,7 +22,7 @@ Every session that works on the push reads this file in full before anything els
 | [`addressing.md`](addressing.md) | The addressing design, grammar B (#573) |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
 
-`declarations.md` and `addressing.md` are replaced by one reconciled text once the items of `gaps-and-conflicts.md` are settled (item A1).
+`declarations.md` and `addressing.md` are replaced by one reconciled text once the items of `gaps-and-conflicts.md` are settled (item D1).
 
 ## Standing directives
 
@@ -39,7 +39,7 @@ They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines 
     - A public docstring is written for users, and carries no design reasoning.
     - An inline comment appears only where it adds something the code and the docstring do not already say.
     - A module puts its most important public objects first and its private helpers at the bottom.
-6. **The tutorials are out of scope.** `docs/tutorials/` is being rewritten separately, so no step edits it (item P2 of `gaps-and-conflicts.md` covers the CI job).
+6. **The tutorials are out of scope.** `docs/tutorials/` is being rewritten separately, so no step edits it (item W2 of `gaps-and-conflicts.md` covers the CI job).
 7. **No partial migrations.** A PR that changes a name or a meaning changes every use of it in the same PR, so `dev/overhaul` is always coherent and could be used at the workshop at any merge.
 8. **Deferring keeps the current behaviour.** Work postponed to after the workshop leaves the current code unchanged and gets an entry in `deferred.md`. It never gets bridging code, such as an alias, a shim, or a special case that serves only the interim.
 9. **Tests and a demonstration in every PR.** Each PR adds the tests that assert its contract (shapes, orderings, and error cases, beyond the happy path), and its body includes a short runnable demonstration with its output.
@@ -96,8 +96,8 @@ A choice that changes none of the above, such as a private helper's structure, i
 |---|---|---|---|---|---|---|
 | S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and the reading of a subscript; the glossary and `STYLE_GUIDE.md` §1.10–§1.11 | reconciled text | PL | yes | | |
 | S1 | One subscript reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`; `marginal(d, paths)`; `()` on a batch raises | addressing: Reading a subscript, Indexing with several paths, Membership | S0 | yes | | |
-| S2 | `OutputSpec` as a mapping; `term_spec`; `project` and `without` through S1's reader; one reading of slots; the size shorthand; `InputSpec.merge` | declarations; reconciled text | S1 | yes | | |
-| S3 | `&` replaces `*` for laws, kernels, records, and declarations; `rename`, `MarginalView`, `marginal(d, paths)` | declarations Part 2 §3 | S2 | yes | | |
+| S2 | `OutputSpec` as a mapping; `term_spec`; `project` and `without` through S1's reader; one reading of slots; the size shorthand; `InputSpec.merge`. Its renames change about 41 modules, so it is announced like S3 | declarations; reconciled text | S1 | yes | | |
+| S3 | `&` replaces `*` for laws, kernels, records, and declarations; `rename` and `MarginalView`, in one announced mechanical PR | declarations Part 2 §3 | S2 | yes | | |
 | S4 | Every batch stores its element declaration | declarations; addressing: Batches | S2, E3 | yes | | |
 | G1 | Grammar-B enforcement: the keyword form refuses a spec with parts; views of groups expose their parts; wrapped draws for random measures, random functions, and bootstrap laws; defaults by kind | addressing: The grammar rule | S4 | after | | |
 | G2 | Paths through every kind; `Function[]`; the public `component` accessor | addressing: Indexing each kind | G1 | after | | |

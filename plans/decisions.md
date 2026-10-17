@@ -24,9 +24,9 @@ Newest first.
 | 2026-10-17 | `/review-all` runs only at checkpoints, never after each PR. | process | maintainer |
 | 2026-10-17 | A session that opens a PR creates a handoff chip for each step it unblocks; the next session checks that its dependencies have merged before it starts. | process | maintainer |
 | 2026-10-17 | `docs/tutorials/` is out of scope for the push; the maintainer rewrites it separately. | process | maintainer |
-| 2026-10-16 | Grammar B is adopted for the addressing plan: a whole declaration names only a base spec. jhuggins's final ruling between B and B′ is still open (gaps A4). | addressing | maintainer |
+| 2026-10-16 | Grammar B is adopted for the addressing plan: a whole declaration names only a base spec. jhuggins's final ruling between B and B′ is still open (gaps D4). | addressing | maintainer |
 | 2026-10-16 | Paths go through a law, a function, or a batch held in a field. | addressing | maintainer |
-| 2026-10-16 | The addressing plan writes composition as `&`; the operator itself is #571's decision (gaps A2). | addressing | maintainer |
+| 2026-10-16 | The addressing plan writes composition as `&`; the operator itself is #571's decision (gaps D2). | addressing | maintainer |
 | 2026-10-16 | Before the workshop, the execution core is executor dispatch for traceable and opaque functions, and the public target interface. | execution | maintainer, review 1 |
 | 2026-10-16 | Q17: inside one call, an opaque `Function` runs at most once per distinct point, by default, and this is in the core. | execution | maintainer, review 2 |
 | 2026-10-16 | Q12, an exact result lost to a budget, is a general rule of route resolution, tracked in #585 and outside the execution design. | execution | maintainer, review 2 |
