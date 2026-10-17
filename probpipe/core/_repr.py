@@ -162,7 +162,7 @@ def call_repr(
 
     One argument goes on each line past :data:`WIDTH` characters, and a value
     that is itself such a repr is laid out at the width its line leaves. When a
-    name is no Python identifier, as a component ``mean(mu)`` is, the keywords
+    name is no Python identifier, as a level ``my model`` is, the keywords
     are written in order as one ``**{'name': value, ...}`` argument, which the
     constructor takes alike.
     """

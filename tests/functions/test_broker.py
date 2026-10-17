@@ -689,7 +689,7 @@ class TestCallerJaxTrace:
         with workflow_run(seed=3):
             posterior = likelihood(_normal_model(prior), {"y": jnp.zeros(4)})
 
-        assert np.all(np.isfinite(np.asarray(mean(posterior)["mean(mu)"])))
+        assert np.all(np.isfinite(np.asarray(mean(posterior)["mu"])))
 
     def test_a_deterministic_operation_runs_under_the_callers_jit(self):
         def body(loc):

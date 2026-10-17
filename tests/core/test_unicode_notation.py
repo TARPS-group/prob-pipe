@@ -26,11 +26,11 @@ class TestUnicodeNotation:
     @pytest.mark.parametrize(
         "operation,symbol,component",
         [
-            (mean, "𝔼", "mean"),
-            (variance, "𝕍", "variance"),
-            (standard_deviation, "√𝕍", "standard_deviation"),
+            (mean, "𝔼", "mu"),
+            (variance, "𝕍", "mu"),
+            (standard_deviation, "√𝕍", "mu"),
             (cov, "ℂ", "cov"),
-            (quantile, "ℚ", "quantile"),
+            (quantile, "ℚ", "mu"),
         ],
     )
     def test_summary_symbols_preserve_ascii_components(self, operation, symbol, component):
@@ -38,8 +38,8 @@ class TestUnicodeNotation:
         args = (law, 0.5) if operation is quantile else (law,)
         result = operation(*args)
         assert result.label == f"{symbol}[mu ~ prior]"
-        assert tuple(operation.check(*args).result.components) == (f"{component}(mu)",)
-        if component == "quantile":
+        assert tuple(operation.check(*args).result.components) == (component,)
+        if operation is quantile:
             plural = quantile(law, jnp.array([0.1, 0.9]))
             assert plural.level_names == ("quantile",)
 

@@ -1337,11 +1337,11 @@ class TestSymbolicCalls:
         )
         averaged = mean(result)
         assert averaged.event_template == RecordSpec(
-            **{"mean(stats)": RecordSpec(value=(), doubled=())},
+            **{"stats": RecordSpec(value=(), doubled=())},
         )
         np.testing.assert_allclose(
-            averaged["mean(stats)/doubled"],
-            averaged["mean(stats)/value"] * 2,
+            averaged["stats/doubled"],
+            averaged["stats/value"] * 2,
         )
 
     def test_distribution_outputs_keep_their_declaration_through_broadcast(self):
