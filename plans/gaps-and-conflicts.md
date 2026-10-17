@@ -71,25 +71,28 @@ The declarations design exists in three texts:
 None of the three has been updated to match the later ones.
 An implementer reading #571 alone would build several things that the later texts replaced.
 
-**The problem.** The texts disagree on thirteen points.
+**Rule of precedence (settled 2026-10-17).**
+Where the texts disagree, the grammar-B addressing plan wins, then jhuggins's reply, then #571's body.
+Under this rule every disagreement below is resolved, and the table records the outcome.
+The old positions stay in the table so the reconciled text can say what changes from #571.
 
-| # | Topic | #571 body | jhuggins's reply | Grammar B |
-|---|---|---|---|---|
-| a | Whether a declaration is whole or exposed | a property `exposes` with four values: `"whole"`, `"record"`, `"event"`, `"element"` | a boolean `exposes_parts` | no property: the spec decides, since a declaration is whole exactly when its spec is a base spec |
-| b | `project` with several paths | a record of the nodes, each under its last segment, in the order given; two paths with the same last segment raise | as the body | each node stays at its own path, in the tree's order; a path inside another raises |
-| c | `project` with one path to a group | the group, named whole by its last segment | as the body | the group's parts, exposed; `project(["g"])` keeps the name |
-| d | Reading the term at a component | five cases by what the declaration exposes: the term itself, a record's child, a law's view, a kernel's laws, a batch's elements | a private method `_component` per kind | one rule: a public `t.component(c)`, equal to `t[address(c)]`; the name `component` is a placeholder |
-| e | `batch["mu"]` on a batch of draws of `Normal("mu", ...)` | returns the batch | as the body | raises, since `mu` is a name and not a path; `draws.component("mu")` returns the batch |
-| f | The spec of a component when the declared value is a law | the spec of one draw's value at the component | reads the term at component `c` of a law as the view `t[c]`, without restating the spec | the spec of the law's view at the component, a `DistributionSpec`, following jhuggins's decision 5 in his component-interface doc |
-| g | A batch built from raw values | keeps a bare element spec with no components, so a batch of arrays cannot be exposed | as the body | every batch holds an element declaration; a base element is whole under the default name `element` |
-| h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree (item D3) |
-| i | Merging declarations | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods (item D2) | uses `&` in its examples, and leaves the operator to #571 |
-| j | The paths of a whole declaration | the component followed by the paths inside the term, as `c/beta` | as the body | only the root, since a whole declaration names a base value |
-| k | The column of a group in a batch of records, `rb["g"]` | not covered (a field's column carries `OutputSpec(a=...)`) | as the body | carries the exposed record `{c, e}` |
-| l | `&` on an operand that exposes a law or a batch | not covered | raises | as the reply; since grammar B exposes more outputs, such outputs must be wrapped to merge |
-| m | `OutputSpec.without` on a whole declaration | removes nodes inside its term | as the body | has nothing to remove, since a whole declaration names a base value with no paths below it |
+| # | Topic | #571 body | jhuggins's reply | Grammar B, which takes precedence | Resolution |
+|---|---|---|---|---|---|
+| a | Whether a declaration is whole or exposed | a property `exposes` with four values: `"whole"`, `"record"`, `"event"`, `"element"` | a boolean `exposes_parts` | no property: the spec decides, since a declaration is whole exactly when its spec is a base spec | ✅ grammar B: no flag |
+| b | `project` with several paths | a record of the nodes, each under its last segment, in the order given; two paths with the same last segment raise | as the body | each node stays at its own path, in the tree's order; a path inside another raises | ✅ grammar B |
+| c | `project` with one path to a group | the group, named whole by its last segment | as the body | the group's parts, exposed; `project(["g"])` keeps the name | ✅ grammar B |
+| d | Reading the term at a component | five cases by what the declaration exposes: the term itself, a record's child, a law's view, a kernel's laws, a batch's elements | a private method `_component` per kind | one rule: a public `t.component(c)`, equal to `t[address(c)]` | ✅ grammar B. The method's name is still a placeholder (below). |
+| e | `batch["mu"]` on a batch of draws of `Normal("mu", ...)` | returns the batch | as the body | raises, since `mu` is a name and not a path; `draws.component("mu")` returns the batch | ✅ grammar B |
+| f | The spec of a component when the declared value is a law | the spec of one draw's value at the component | reads the term at component `c` of a law as the view `t[c]`, without restating the spec | the spec of the law's view at the component, a `DistributionSpec`, following jhuggins's decision 5 in his component-interface doc | ✅ grammar B |
+| g | A batch built from raw values | keeps a bare element spec with no components, so a batch of arrays cannot be exposed | as the body | every batch holds an element declaration; a base element is whole under the default name `element` | ✅ grammar B |
+| h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree | ✅ grammar B. The addressing plan itself asks jhuggins to confirm it, which D3 tracks. |
+| i | Merging declarations | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods | uses `&` in its examples | ✅ `&`, on which the reply and grammar B agree. D2 keeps the renames and the timing. |
+| j | The paths of a whole declaration | the component followed by the paths inside the term, as `c/beta` | as the body | only the root, since a whole declaration names a base value | ✅ grammar B |
+| k | The column of a group in a batch of records, `rb["g"]` | not covered (a field's column carries `OutputSpec(a=...)`) | as the body | carries the exposed record `{c, e}` | ✅ grammar B |
+| l | `&` on an operand that exposes a law or a batch | not covered | raises | as the reply; since grammar B exposes more outputs, such outputs must be wrapped to merge | ✅ the reply and grammar B agree |
+| m | `OutputSpec.without` on a whole declaration | removes nodes inside its term | as the body | has nothing to remove, since a whole declaration names a base value with no paths below it | ✅ grammar B |
 
-Two examples show what is at stake.
+Two examples show what the resolution changes from #571.
 
 Row b, with a hierarchical law `hier` whose draws are `{s1: {theta}, s2: {theta}, mu}`:
 
@@ -110,21 +113,13 @@ grouped["g"].event_spec
 grouped[["g"]].event_spec   # grammar B: OutputSpec(RecordSpec(g=RecordSpec(c=..., e=...)))
 ```
 
-**Options.**
-1. Write one reconciled text, `plans/declarations-and-addressing.md`, which replaces `declarations.md` and `addressing.md`. #571 and #573 then link to it.
-2. Keep two texts and edit #571's body to match grammar B row by row.
+**What remains open in D1.** Two small things, neither a conflict between the texts:
+1. **The form of the text.** Either one reconciled text, `plans/declarations-and-addressing.md`, replaces `declarations.md` and `addressing.md`, and #571 and #573 link to it; or the two texts stay separate and #571's body is edited row by row. Recommendation: one reconciled text, since the two plans meet in twelve places and that boundary caused most of the disagreement.
+2. **The name of the component accessor.** The addressing plan writes `t.component(name)` and calls the name a placeholder. Recommendation: keep `component`. It pairs with the glossary term, and `d[...]` already reads paths, so the accessor needs a name that says it reads a component.
 
-**Recommendation.** Option 1.
-The two plans meet in twelve places, so the boundary between them causes most of the disagreement.
-Where the rows stand:
-- **Settled:** rows b and c (2026-10-15), and grammar B itself (2026-10-16).
-- **Follow from grammar B:** rows a, j, l, and m. Row a also depends on item D4: if jhuggins rules for grammar B′, a declaration needs a flag again.
-- **Recommended by the addressing plan, awaiting your confirmation:** row d (the public accessor and its name), row e (which follows from d), row f, row g, and row k.
-- **Wait on other items:** row h on D3, and row i on D2.
+**Blocks:** S2, S3, S4, and every later step of the declarations and addressing track, until the reconciled text exists.
 
-**Blocks:** S2, S3, S4, and every later step of the declarations and addressing track.
-
-**Status:** open. The reconciled text is written once D2, D3, and D4 are settled.
+**Status:** the conflicts are resolved; the two points above are open.
 
 ---
 
@@ -172,7 +167,7 @@ The decision is not yours alone: jhuggins proposed `&`, and the addressing plan 
 Put `&` and the two renames in one mechanical PR (step S3), announced in advance. Step S2 is also a wide rename (`components` and `exposes_record` go and `.spec` becomes `term_spec`, on about 380 lines), so it is announced the same way (item F1).
 Option 3 contradicts the clean-break rule of item D5.
 
-**Blocks:** S3. The reconciled declarations text (D1, row i).
+**Blocks:** S3.
 
 **Status:** open; needs jhuggins.
 
@@ -276,7 +271,7 @@ Ruling 2: such a view wraps, which keeps #571's event rule as it stands. Narrowi
 Ruling 3: the body returns the record.
 Timing: option 1. The size and the open rulings make option 2 a risk to everything else on the schedule.
 
-**Blocks:** the grammar-B step (G1 in the README, after the workshop under the recommendation). Row a of D1.
+**Blocks:** the grammar-B step (G1 in the README, after the workshop under the recommendation). If jhuggins rules for B′, row a of D1 reopens, since B′ needs a flag on every declaration.
 
 **Status:** open; rulings 1 and 2 need jhuggins.
 
