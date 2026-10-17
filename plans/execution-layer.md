@@ -4,12 +4,12 @@
 > This file is the execution-layer design for [#580](https://github.com/TARPS-group/prob-pipe/issues/580), moved from a gitignored local draft (it matches the Claude Doc "Running computations in ProbPipe: the execution layer", revision 63, 2026-10-16).
 > From now on this file, not the Doc, is the copy that changes, and Appendix D keeps its revision log.
 > [`gaps-and-conflicts.md`](gaps-and-conflicts.md) lists the places where it is out of date or disagrees with the other plans.
-> The verification scripts that Appendix A cites are not in the repository yet (item W4 of that file).
+> The verification scripts that Appendix A cites stay outside the repository (item W4 of that file).
 
 - **For:** issue #580, as a draft for maintainer review. Not posted.
 - **Date:** 2026-10-15.
 - **Code base:** `origin/dev/overhaul` at `023bfd01`, with JAX 0.10.1 and BlackJAX 1.5.
-- **Verification:** every ✅ claim was checked by running code. The scripts are in `.claude/plans/580-verification/`, and Appendix A lists them.
+- **Verification:** every ✅ claim was checked by running code. The scripts are kept by the author outside the repository, and Appendix A lists them; each implementation step ports what it needs into `tests/` (`plans/gaps-and-conflicts.md` W4).
 - **Review:** two rounds of independent adversarial review (accuracy, design, readability), then the maintainer's first review. Appendix C lists what the adversarial reviews changed, and Appendix D is the revision log.
 
 ---
@@ -32,7 +32,7 @@ Each subsection of section 6 ends with a **Today → Proposed** note.
 > [!NOTE]
 > This document says **executor** for what #580 calls a *backend*, because "backend" already has five meanings in ProbPipe (question Q1).
 > Every `backend=` in #580 corresponds to `executor=` here.
-> The maintainer questions are numbered **Q1 to Q15**, so they do not clash with the design principles D1 to D6 of `design/01-design-principles.md`.
+> The maintainer questions are numbered **Q1 to Q18**, so they do not clash with the design principles D1 to D6 of `design/01-design-principles.md`.
 
 ### Design sections cited
 
@@ -109,7 +109,7 @@ Today goal 1 already fails: building the likelihood traces `G` with JAX, and `G`
 4. **Executors are chosen like inference methods.** A user registers their own executor and selects it with `using(executor="slurm", executor_options={...})`, the way they select a method with `method=`.
 5. **Opaque code can run inside compiled JAX code.** When an opaque `Function` is called inside a JAX program, ProbPipe makes the call a host callback. A batch of points then arrives at the host as one call, and the host sends it to the executor. This is what lets a joint's compiled sampler or a BlackJAX kernel use a user's cluster without being rewritten.
 6. **Gradients need a derivative only where they cross opaque code.** A gradient in `σ` with `G(θ)` held fixed needs nothing from `G`. A gradient through `G` uses the user's derivative, or raises an error that names `G`.
-7. **Failures are reported per point.** By default a failed point stops the call with an error that names it. Consumers that can use the remaining points, such as ABC, may opt in to dropping failed ones.
+7. **Failures are reported per point.** By default a failed point stops the call with an error that names it. Requesters that can use the remaining points, such as ABC, may opt in to dropping failed ones.
 8. **Nothing changes silently.** Before a call, `check` reports how many points it will evaluate, which executor will run them and why, and whether the callable traces. Provenance records the same.
 
 ### The motivating case, before and after
@@ -144,8 +144,8 @@ def forward(theta):
 def likelihood(theta, sigma):
     return Normal("y", forward(theta), sigma)              # builds without running the solver
 
-prior = Normal("theta", jnp.zeros(2), 1.0) * HalfNormal("sigma", 1.0)
-model = likelihood * prior
+prior = Normal("theta", jnp.zeros(2), 1.0) & HalfNormal("sigma", 1.0)
+model = likelihood & prior
 
 with workflow_run(seed=1):
     local = sample(model, 200)                              # 200 solver runs, here
@@ -579,7 +579,7 @@ Each term below is a proposal for `design/glossary.md`.
 | **embeddable**, **host-only** | an opaque `Function` with, or without, a complete output declaration (6.2) |
 | **embedded call** | a call of an opaque `Function` from inside a JAX program, which ProbPipe turns into a host callback (6.9) |
 | **call token** | a small integer that names one operation call, passed into compiled programs as an argument (3.8) |
-| **consumer** | the code that asked for a point set, such as a lift, a joint, or an inference method |
+| **requester** | the code that asked for a point set, such as a lift, a joint, or an inference method. (*Consumer* means a term that declares what it consumes, as `plans/declarations.md` defines it.) |
 | **program store** | the compiled programs a `Function` or another owner keeps, keyed by input structure |
 | **evaluation memo** | an opt-in store of a callable's outputs, keyed by the content of its arguments and its key (6.5) |
 | **result cache** | the call-level cache of V.8, keyed by the structure of a whole call |
@@ -591,7 +591,7 @@ Each term below is a proposal for `design/glossary.md`.
 - **evaluator** and **transport** name today's execution contract (`functions/_execution_contract.py`), which this design retires. Sending a chunk to another process is called **shipping** here.
 - **cache** alone is ambiguous: JAX's compilation cache, the program store, Prefect's task cache, and V.8's result cache are four different things.
 - **event** means the event of a distribution, as in `event_spec`. V.8 derives each random key from the identity of a "random event", and this design does not name that identity: it says "the point's random key". V.8 and #554 use "random event" throughout, and whether to rename it there is part of Q16.
-- **key** here means a random key, as in V.8. The glossary also uses it for a field key, a known collision that Python's dictionaries make natural, so where the two could be confused this design writes *random key*.
+- **key** here means a random key, as in V.8. A mapping's keys are the other sense, a collision Python's dictionaries make natural, so where the two could be confused this design writes *random key* (decided 2026-10-16).
 - **record** means ProbPipe's `Record`. This design says *probe result* for the stored outcome of a probe, and uses "record" only as a verb.
 
 ---
@@ -642,7 +642,7 @@ flowchart TB
 ```
 
 A point set arrives at the registry by one of two entries:
-1. **From Python.** A consumer that runs in Python builds a point set and hands it to the registry. A lifted call, pyabc's simulation loop, and SBC's loop of inference runs do this.
+1. **From Python.** A requester that runs in Python builds a point set and hands it to the registry. A lifted call, pyabc's simulation loop, and SBC's loop of inference runs do this.
 2. **From inside a compiled program.** An opaque `Function` called on traced values becomes a host callback, whose host side builds the point set (step 4 above). A joint's compiled sampler and a BlackJAX kernel use the registry this way, with no change to their code.
 
 One helper, `map_points(fn, args, claims)`, replaces the fourteen "vectorize or loop" decisions of section 2.2.
@@ -805,7 +805,7 @@ with workflow_run(seed=1):
 
 The operation rules have six parts:
 1. **What it covers.** The executor, with its options, applies to every point set of an **opaque** user callable made during the call: in the calling thread, in the engine's worker threads, and in embedded calls through the call token.
-2. **The operation's own point set.** A consumer that builds a point set of its own, such as SBC's point set of inference runs (7.8), runs it on the executor named on the consumer's call. Its points state `traceable=False`, so `jax` never claims them.
+2. **The operation's own point set.** A requester that builds a point set of its own, such as SBC's point set of inference runs (7.8), runs it on the executor named on the requester's call. Its points state `traceable=False`, so `jax` never claims them.
 3. **What it leaves alone.** Traceable callables keep automatic selection, which compiles them, and they receive none of the inherited options. Naming a cluster executor on `condition_on` therefore never moves the compiled parts of a model off the compiled path. ProbPipe's own numerical methods, such as a family's sampler, are unaffected.
 4. **The innermost explicit choice wins.** An executor set on a `Function` itself, by its decorator or its own `using`, wins over one inherited from an enclosing call, and it takes only its own options. A cheap opaque summary statistic can therefore stay local with `@function(executor="sequential")` while the expensive simulator goes to the cluster. This departs from VI.0, where a callable's decorator does not override a value passed down. Here it does, because the decorator is where a user states that a callable must not leave the machine.
 5. **It stops at a point.** A ProbPipe call made inside a point uses automatic selection unless it names an executor itself, so a cluster job does not submit cluster jobs (Q8).
@@ -836,7 +836,7 @@ sample's call context: executor=slurm, n_jobs=50, token 7
 > `condition_on` is not a derived operation, so the design text needs a new rule: **execution controls apply to everything a call does, not only to what its identity derives.**
 > The context variable that carries inherited controls today, `_INHERITED_CONTROLS` in `values/_function_base.py:712-805`, already crosses into worker threads and can carry them.
 
-> **Today → Proposed.** The dispatch modes `auto`, `jax`, `sequential`, and `thread` become the executors `jax`, `sequential`, and `thread`, and automatic selection replaces `auto`. The controls `dispatch` and `max_workers` are removed (Q2). Prefect no longer picks Ray or Dask on its own (`core/config.py:104-121`), because that changes how a call runs without the user asking.
+> **Today → Proposed.** The dispatch modes `auto`, `jax`, `sequential`, and `thread` become the executors `jax`, `sequential`, and `thread`, and automatic selection replaces `auto`. The controls `dispatch` and `max_workers` are removed (Q2). Prefect no longer picks Ray or Dask on its own (`config.prefect`, after #587), because that changes how a call runs without the user asking. The auto-detection stays unchanged until the post-workshop `prefect` executor replaces it (`plans/gaps-and-conflicts.md` D7).
 
 ### 6.4 When a point fails
 
@@ -873,7 +873,7 @@ class PointEvaluationError(RuntimeError):
 
 1. **By default, a failure makes the call raise.** The unit is the point set: its executor runs every point, so the outputs that succeeded are kept, and then the call raises `PointEvaluationError` naming every failed point. The executor option `cancel_on_failure=True` cancels the points not yet started instead. The message follows STYLE_GUIDE §9.3: `evaluation of 'forward' failed at draw 17: CalledProcessError: solver exited with status 3`.
 2. **Inside a compiled program, the failure stops the program.** The callback's point set completes, then the callback records its failures on the call's context, which it finds by token, and raises. That stops the program at once, so none of its later steps run. The engine catches JAX's untyped `JaxRuntimeError` and raises the recorded `PointEvaluationError` in its place. ✅ `proto/abort.py`: a failure at step 4 of a compiled 10-step chain stopped the program after 4 solver runs, and the error named the failed point.
-3. **Only point sets built in Python can drop failed points.** A consumer that builds a point set in Python, such as ABC over an opaque simulator, empirical reweighting over an opaque likelihood, or SBC over its runs, sees that point set's `PointOutcomes` and can drop failed points. A user opts in through `method_options={"on_failure": "drop"}`. When the failing callable is instead embedded in a compiled program, such as `forward` inside the kernel of the motivating model, its failure stops the program (rule 2), so `check` refuses `on_failure="drop"` and names the embedded callable. Section 8 lists the work that would lift this limit. Dropping changes the target to the region where the callable succeeds, so `check` reports it and provenance records every dropped point.
+3. **Only point sets built in Python can drop failed points.** A requester that builds a point set in Python, such as ABC over an opaque simulator, empirical reweighting over an opaque likelihood, or SBC over its runs, sees that point set's `PointOutcomes` and can drop failed points. A user opts in through `method_options={"on_failure": "drop"}`. When the failing callable is instead embedded in a compiled program, such as `forward` inside the kernel of the motivating model, its failure stops the program (rule 2), so `check` refuses `on_failure="drop"` and names the embedded callable. Section 8 lists the work that would lift this limit. Dropping changes the target to the region where the callable succeeds, so `check` reports it and provenance records every dropped point.
 4. **Dropping applies to user-code errors only.** A `lost` or `timeout` point is retried by the executor or raises, because otherwise a flaky cluster node would change the target and break P3. An error the environment causes in user code, such as running out of memory or a missing licence, can still make results depend on where they ran.
 5. **Retries.** The common option `retries=2` retries `lost` and `timeout` points with the same key, so a retry computes the same value. `retry_errors=True` also retries points whose code raised.
 6. **Interrupts.** A chunk catches `Exception`, never `KeyboardInterrupt`. An interrupt cancels the points that have not started, stops a compiled program through its callback, and is raised again as `KeyboardInterrupt`.
@@ -885,7 +885,7 @@ Two cases need care:
 
 Tolerating failures inside compiled MCMC, by rejecting a proposal whose point failed, is not part of this design. It needs a per-lane success flag that crosses the boundary next to each output, and it is listed in section 8.
 
-> **Today → Proposed.** Every mode stops at the first error and keeps nothing (2.1, row 7). Proposed, the error names the point and keeps the outputs that succeeded, a compiled program stops early, and consumers in Python can opt in to dropping failed points.
+> **Today → Proposed.** Every mode stops at the first error and keeps nothing (2.1, row 7). Proposed, the error names the point and keeps the outputs that succeeded, a compiled program stops early, and requesters in Python can opt in to dropping failed points.
 
 ### 6.5 Reusing evaluations
 
@@ -952,7 +952,7 @@ This design fixes only its relation to the memo: the two are independent, both a
 @dataclass(frozen=True)
 class PointSetReport:                        # one per callable whose points the call evaluates
     callable: str
-    points: int | None                       # the number of evaluations; None when the consumer is adaptive
+    points: int | None                       # the number of evaluations; None when the requester is adaptive
     traceable: bool
     traceability_source: Literal["claimed", "probed"]
     executor: MethodInfo                     # the executor chosen, and why each higher one could not run
@@ -992,7 +992,7 @@ CallReport(route='sampling_lift', ..., execution=ExecutionReport(
 
 | Where the evaluations come from | Points |
 |---|---|
-| a lift over a law, sampled (V.5) | one per draw: `n_broadcast_samples` of them |
+| a lift over a law, sampled (V.5) | one per draw: `max_evaluations` of them |
 | a lift over empirical laws, enumerated | one per combination of atoms |
 | a sweep over a batch | one per cell |
 | a sweep of lifts | one per cell and draw |
@@ -1435,7 +1435,7 @@ Section 6.1 already traced the motivating `sample` call, so it is not repeated.
 def growth(r, K, n0):                         # jax.numpy only; no claim needed
     return K / (1 + (K / n0 - 1) * jnp.exp(-r * t))
 
-model = likelihood * prior                    # built-in families and a kernel written in JAX
+model = likelihood & prior                    # built-in families and a kernel written in JAX
 with workflow_run(seed=0):
     curves = growth(r=prior["r"], K=prior["K"], n0=10.0)
     posterior = condition_on(model, observed)
@@ -1485,7 +1485,7 @@ def epidemic(params):                         # params: (n, 3); one NumPy call s
     return simulate_many(np.asarray(params))
 
 with workflow_run(seed=2):
-    curves = epidemic.using(n_broadcast_samples=10_000,
+    curves = epidemic.using(max_evaluations=10_000,
                             executor_options={"chunk_size": 1000})(prior)
 ```
 
@@ -1633,7 +1633,7 @@ The verification ran on CPU only, and the following questions remain open.
 | **Reverse mode from a JVP.** A callable with only `jvp` and a low-dimensional input could serve `grad` through one JVP per input, run as one point set. | It would make more opaque callables usable by NUTS. | A small extension of the derivative wrapper. |
 | **Residuals of an adjoint solver.** `vjp(*args, cotangent)` makes an adjoint solver recompute its forward state. | The cost doubles for some solvers. | Letting `vjp` receive a handle to state saved by the forward call. |
 | **Persistent compilation cache with callbacks.** XLA may refuse to cache programs that contain host callbacks. | Opt-in persistence may not help programs with opaque code. | A test. |
-| **Streaming results.** `execute` blocks until every point has an outcome. | An adaptive consumer, such as ABC stopping early, could use results as they complete. | An extension that returns outcomes as they complete while keeping point order in the result. |
+| **Streaming results.** `execute` blocks until every point has an outcome. | An adaptive requester, such as ABC stopping early, could use results as they complete. | An extension that returns outcomes as they complete while keeping point order in the result. |
 | **Offloading an expensive traceable callable.** A traceable callable is compiled inline, so an inherited executor never sends it to a cluster. | A user with a slow JAX model may want that. | Claiming `traceable=False`, which sends it through the callback. Naming an executor on a traceable `Function` has no effect when it is compiled inline, so ProbPipe warns in that case. |
 | **Thread safety of user code inside the user's own threads.** The `thread` executor is opt-in, but an embedded call inside the user's own threaded code is not protected. | A data race in user code. | Documentation. |
 
@@ -1754,7 +1754,7 @@ A host-side record cannot tell a point JAX will use from one it will discard (6.
 
 ### Q9. Prefect
 
-**Context.** V.9 says orchestration records a call and never changes how it runs. Today Prefect also runs the work, on Ray or Dask runners it detects on its own (`core/config.py:104-121`).
+**Context.** V.9 says orchestration records a call and never changes how it runs. Today Prefect also runs the work, on Ray or Dask runners it detects on its own (`config.prefect`, after #587).
 
 **Options.** A: Prefect's task runners become the `prefect` executor, and Prefect's recording stays orchestration through `workflow_kind`. Prefect's task cache (#352, #364) is retired in favour of the memo and the result cache. B: keep Prefect as the thing that overrides the dispatch mode.
 
@@ -1778,7 +1778,7 @@ This design adds supplied derivatives and a `jacobian` operation. #109 asks for 
 **Context.** #580 found that a lift over an empirical law with 300 atoms and the default 256 draws samples the law instead of evaluating every atom, with no warning (2.1, row 5). The decision is made while the call is planned (`functions/_plan.py:393-407`), from the sample count, before routes are resolved. `check` therefore never shows it: with 300 atoms it lists only the sampling route, and the exact enumeration route does not appear at all (✅ `t20`). The same pattern can occur wherever a budget control decides whether an exact method is used, such as a conversion's `num_samples`, so a fix for empirical laws alone would patch one case of a general problem. The problem is in route resolution (V.7), not in execution.
 
 **Options.**
-- **A.** Make it a route choice, with one rule for every operation. The exact route stays a candidate and is reported infeasible when a budget, and nothing else, rules it out: `empirical_enumeration: infeasible, 300 atoms exceed n_broadcast_samples=256`. A call that falls from an exact route to an approximate one for that reason warns once.
+- **A.** Make it a route choice, with one rule for every operation. The exact route stays a candidate and is reported infeasible when a budget, and nothing else, rules it out: `empirical_enumeration: infeasible, 300 atoms exceed max_evaluations=256`. A call that falls from an exact route to an approximate one for that reason warns once.
 - **B.** Warn for empirical lifts alone.
 - **C.** Leave it to provenance, which records the route and its exactness today.
 
@@ -1817,7 +1817,7 @@ A trace that succeeds also does not prove gradients are useful: `jnp.round`, `st
 **Context.** In ProbPipe an *event* is the value a distribution draws, as in `event_spec`, and a *record* is a `Record`. The first draft used "event identity", and then "key identity", for what fixes a point's random key, "traceability record" for a stored probe outcome, and the module name `_broker.py`, which #524 plans and which says little about its contents.
 
 **Recommendation.**
-- no name for the identity a random key is derived from: the design says "the point's random key", because *key* alone already means a field key;
+- no name for the identity a random key is derived from: the design says "the point's random key", which is unambiguous next to a mapping's keys;
 - *probe result* for a stored probe outcome;
 - `functions/_point_keys.py` for the module that `_managed.py` and `_broker.py` merge into, since it decides how a draw made inside a point gets its key;
 - *point* in place of V.8's *managed work item*, everywhere, since every managed work item is a point once executors run point sets.
@@ -2008,7 +2008,7 @@ Compiled lifting (6.10, items 1 to 3) makes warm calls compile nothing, and it c
 
 ## Appendix A: verification log
 
-The scripts are in `.claude/plans/580-verification/`, and each runs with the repository's `.venv` Python.
+The scripts are kept by the author outside the repository (`plans/gaps-and-conflicts.md` W4). Each ran with the repository's `.venv` Python.
 The ones marked † import ProbPipe, so they need an extracted copy of `origin/dev/overhaul` on `PYTHONPATH`, and they must run without `-I`, which ignores `PYTHONPATH`:
 
 ```bash
@@ -2073,7 +2073,7 @@ Most were right. These differ:
 | Background: the mixture's branch is at `_mixture.py:134-135` | It is at `133-134`. |
 
 How this design's principles differ from #580's P1 to P10:
-- **P1** is stated per point set, so adaptive consumers fit it.
+- **P1** is stated per point set, so adaptive requesters fit it.
 - **P3** says where bitwise reproduction stops.
 - **P4** adds that `check` runs the same probe as the call.
 - **P6** names two entries, so sites written in JAX need no rewrite.
@@ -2090,7 +2090,7 @@ Their main findings, and what changed:
 | Finding | Change |
 |---|---|
 | A program opened inside another program's trace baked its call token in, so a named executor was ignored (reproduced). | The traced token is passed on (6.9, step 3). The prototype was fixed and tested (`proto/nested.py`). |
-| `NaN` placeholders let a failed point become a finite, wrong density, and the default rule ran a whole compiled program before failing. | Failures stop a compiled program at once with a typed error (6.4). Dropping failed points is limited to consumers in Python. Tolerant compiled MCMC moved to section 8. |
+| `NaN` placeholders let a failed point become a finite, wrong density, and the default rule ran a whole compiled program before failing. | Failures stop a compiled program at once with a typed error (6.4). Dropping failed points is limited to requesters in Python. Tolerant compiled MCMC moved to section 8. |
 | A program opened by the user turned failures into silent `NaN`s (reproduced). | It raises (6.4). The thread-based fallback was removed, because under `pmap` callbacks run on XLA threads (✅ `t14`). |
 | Workflow randomness inside an embedded point had no stable identity, because JAX may call a callback any number of times. | Embedded points are untracked, and workflow draws inside them raise (6.9). |
 | Removing `is_jax_traceable` under a strict V.11 would take NUTS away from every tutorial model. | New question Q14, with a recommendation that keeps today's behaviour. |
@@ -2120,7 +2120,7 @@ A second adversarial round read the rewritten draft and found these, all now add
 | Controls inherited by a nested call differed between executors in the same process and in other processes. | Chunks and the embedded host side carry them (6.7). |
 | "The first failure stops the call" contradicted the executor contract and the memo example. | The unit is the point set, with an opt-in `cancel_on_failure` (6.4). |
 | The Slurm sketch lost point order, and `PointOutcomes` had no offset or helpers. | `PointOutcomes.start`, `lost`, and `merge` (6.4, 6.8). |
-| SBC's point set of runs was not covered by the rules for operations. | An executor named on a consumer runs the consumer's own point set (6.3). |
+| SBC's point set of runs was not covered by the rules for operations. | An executor named on a requester runs the requester's own point set (6.3). |
 | The headline example raced on `in.txt` under the executor it demonstrated, and returned `float64`. | The example uses a temporary directory and returns `float32` (section 1). |
 | The memo's scope was inconsistent, and `DiskMemo` was tied to #504 unnecessarily. | The memo is a static option bound from the `Function`, and a `version`-keyed `DiskMemo` ships first (6.5, 6.10). |
 | The spawned-worker configuration list missed `jax_threefry_partitionable`. | Every non-default `jax.config` value is carried (6.7). |
@@ -2140,3 +2140,4 @@ A second adversarial round read the rewritten draft and found these, all now add
 | 2026-10-16 | No name for the identity a random key is derived from: the design says "the point's random key" (6.7, Q16). The enumeration report removed from the execution design, and an exact route lost to a budget proposed as a general rule of route resolution in a separate issue (6.6, Q12). One run per distinct point inside a call decided, in the core (Q17). A guideline for tests and demonstrations with every PR (12), and the workshop demonstration removed from the order of work (13). | Maintainer's second review |
 | 2026-10-16 | Q12 opened as #585 and cited (6.6, Q12, section 10). | Maintainer's request |
 | 2026-10-17 | Moved into `plans/`. Q2 settled by the push's clean-break rule. Q3, Q4, Q5, Q7, Q8, Q13, Q14, Q15, and Q18 accepted as recommended. Q16 decided: the module is `functions/_point_keys.py`, and "point" replaces V.8's "managed work item". | Maintainer, while settling `plans/gaps-and-conflicts.md` D5 and D6 |
+| 2026-10-17 | "Requester" replaces "consumer" for the code that asks for a point set, since #571 uses "consumer" for a term that declares what it consumes. Composition written with `&`; `n_broadcast_samples` replaced by `max_evaluations` (#586); Prefect's auto-detection cited at `config.prefect` (#587) and kept until the `prefect` executor; the question count corrected to 18; the reason for "random key" restated; the verification scripts marked as kept outside the repository. | `plans/gaps-and-conflicts.md` T1, T2, W4 |

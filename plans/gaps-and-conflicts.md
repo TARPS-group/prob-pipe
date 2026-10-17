@@ -442,6 +442,8 @@ Both senses would end up in `design/glossary.md`.
 **Fix:** the execution plan says **requester** for the code that asks for a point set.
 The declarations sense keeps "consumer", since it pairs with "producer".
 
+**Status:** ✅ settled 2026-10-17; applied to `execution-layer.md`, which says **requester**.
+
 ### T2. The execution plan is out of date in six places
 
 1. Its examples compose with `*` (`prior = Normal(...) * HalfNormal(...)`). They change to whatever D2 decides.
@@ -451,12 +453,16 @@ The declarations sense keeps "consumer", since it pairs with "producer".
 5. §5 and Q16 justify writing "random key" because "key" alone means a field key. The addressing plan removes that sense from the glossary, so the justification changes, though the decision of 2026-10-16 to tolerate "key" stands.
 6. Its header and §12 say its verification scripts are in `.claude/plans/580-verification/` and that the document is kept in the repository. The first is a gitignored local path (item W4). The second becomes true with this PR.
 
+**Status:** ✅ settled 2026-10-17; applied to `execution-layer.md` (Appendix D logs it).
+
 ### T3. "Selection" keeps one sense
 
 The glossary defines *selection* twice: positions of a batch, and several paths of a law.
 The addressing plan removes both senses, since `select` is a method with another meaning, and keeps *selection order* (II.7), the ranking by which a registry tries its methods.
 The execution plan's "automatic selection" of an executor uses the II.7 sense, which stays.
 **Fix:** the glossary keeps only *selection order*, and the execution plan's glossary entry for "automatic selection" points to it.
+
+**Status:** ✅ settled 2026-10-17; applied by the glossary changes of steps S0 and E1.
 
 ### T4. Grammar B changes how a bare `TermSpec` given as `output_spec` is read
 
@@ -466,11 +472,15 @@ The execution plan relies on this when it writes `output_spec=NumericArraySpec((
 Grammar B's "defaults by kind" changes the rule for specs with parts: a bare law, function, or batch spec becomes exposed instead of whole.
 **Fix:** the reconciled declarations text restates the rule for bare specs under grammar B, and V.1 and III.3 change with step G1. The execution plan's examples use base specs, so they are unaffected.
 
+**Status:** ✅ settled 2026-10-17; applied in the reconciled plan and step G1.
+
 ### T5. IV.2's rationale misattributes associativity
 
 jhuggins's Rocq model finds that a chain of kernels is associative with or without IV.2's rule that the right operand's slots avoid the left operand's components.
 That rule keeps the joint well formed, which is a different reason.
 **Fix:** the design text of step S2 or S3 corrects IV.2's rationale.
+
+**Status:** ✅ settled 2026-10-17; applied in the reconciled plan and step S0.
 
 ### T6. A point and a managed work item name the same thing
 
@@ -513,7 +523,7 @@ Run in the wrong order, each rebase redoes the other's work.
 5. E4 and E5 after S2 and S3, since both edit `_conditional.py` and `_factored.py`.
 6. S4 after E3, since both rewrite the sweep.
 
-**Status:** recommended.
+**Status:** ✅ settled 2026-10-17: the order above.
 
 ---
 
@@ -524,7 +534,7 @@ Run in the wrong order, each rebase redoes the other's work.
 `CONTRIBUTING.md` § Opening the PR says scratch planning artifacts stay off the branch, and § Plan first puts a significant plan in a GitHub issue.
 `plans/` is a deliberate exception: three plans that must agree, many PRs, and sessions that need the plans in their checkout.
 **This PR** adds one sentence to CONTRIBUTING naming the exception and its lifecycle: `plans/` exists while a push runs and is deleted when its sections have moved into `design/`.
-**Status:** recommended; the sentence is in this PR for review.
+**Status:** ✅ settled 2026-10-17; the sentence is in this PR.
 
 ### W2. The tutorials notebooks block every PR
 
@@ -537,13 +547,13 @@ Every breaking step will fail that job.
 2. Each step makes minimal mechanical fixes to the tutorials, which then conflict with your rewrite.
 
 **Recommendation.** Option 1. The `user_guide` and `get_started` legs stay blocking.
-**Status:** open; your decision.
+**Status:** ✅ settled 2026-10-17: option 1. This PR makes the step that runs the tutorials notebooks advisory in `.github/workflows/ci.yml`; the `advisory` flag is removed when the rewritten tutorials merge.
 
 ### W3. Who updates the User Guide when a step breaks it
 
 The User Guide notebooks lag behind the code, and they run in a blocking CI leg.
 **Recommendation:** each step updates the User Guide notebooks it breaks, mechanically and with no rewriting, so the leg stays green and the guide never documents a removed API.
-**Status:** recommended.
+**Status:** ✅ settled 2026-10-17; README directive 6 states it.
 
 ### W4. The execution plan's verification scripts
 
@@ -556,14 +566,14 @@ They fail `ruff check` in 180 places, so copying them as they are would break th
 2. Leave them local, and let each step port what it needs into `tests/`.
 
 **Recommendation.** Option 2. The tests of each step replace them, and the plan keeps describing what they showed.
-**Status:** open.
+**Status:** ✅ settled 2026-10-17: option 2. The scripts stay outside the repository, and each step ports what it needs into `tests/`.
 
 ### W5. The Claude Docs copies
 
 The execution plan and the addressing plan also exist as Claude Docs, and jhuggins has commented on the execution Doc (his comment on a lighter pyabc route is recorded in L4 below).
 From this PR on, the files in `plans/` are the copies that change.
 **Recommendation:** add a line at the top of each Doc pointing to the file in `plans/`, and stop editing the Docs.
-**Status:** open; needs your permission to edit the Docs.
+**Status:** ✅ settled 2026-10-17. Each Doc opens with a note pointing to its file in `plans/`, and the Docs are no longer edited.
 
 ---
 

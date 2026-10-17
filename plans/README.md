@@ -39,7 +39,7 @@ They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines 
     - A public docstring is written for users, and carries no design reasoning.
     - An inline comment appears only where it adds something the code and the docstring do not already say.
     - A module puts its most important public objects first and its private helpers at the bottom.
-6. **The tutorials are out of scope.** `docs/tutorials/` is being rewritten separately, so no step edits it (item W2 of `gaps-and-conflicts.md` covers the CI job).
+6. **The tutorials are out of scope; the User Guide is kept running.** `docs/tutorials/` is being rewritten separately, so no step edits it, and its CI notebook job is advisory until the rewrite merges. The User Guide notebooks run in a blocking CI job: a step that breaks one updates it mechanically, without rewriting it, so the guide never documents a removed API.
 7. **No partial migrations.** A PR that changes a name or a meaning changes every use of it in the same PR, so `dev/overhaul` is always coherent and could be used at the workshop at any merge.
 8. **Deferring keeps the current behaviour.** Work postponed to after the workshop leaves the current code unchanged and gets an entry in `deferred.md`. It never gets bridging code, such as an alias, a shim, or a special case that serves only the interim.
 9. **Tests and a demonstration in every PR.** Each PR adds the tests that assert its contract (shapes, orderings, and error cases, beyond the happy path), and its body includes a short runnable demonstration with its output.

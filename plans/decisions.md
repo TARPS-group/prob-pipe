@@ -19,6 +19,10 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-17 | The text fixes T1–T5 are accepted; the execution plan says **requester** for the code that asks for a point set. | process | maintainer |
+| 2026-10-17 | Steps run in the order of gaps F1: S1 with E2; S2 announced; E3's `core/` part alongside S2 and its `_broadcast`/`_sweep` rewrite after; S3 announced; E4 and E5 after S2 and S3; S4 after E3. | process | maintainer |
+| 2026-10-17 | The tutorials notebook check is advisory until the rewritten tutorials merge; the User Guide stays blocking, and each step updates the User Guide notebooks it breaks, mechanically. | process | maintainer |
+| 2026-10-17 | The execution plan's verification scripts stay outside the repository; each step ports what it needs into `tests/`. The Claude Docs point to `plans/` and are no longer edited. CONTRIBUTING names `plans/` as the exception to keeping planning files off branches. | process | maintainer |
 | 2026-10-17 | Before the workshop: steps S0–S4, G1, and E1–E8. If time runs short, cut E8, then E7, then the lifting and default-output parts of G1; S0–S4 and E1–E6 are never cut. | process | maintainer |
 | 2026-10-17 | Of the issues the execution plan depends on: E3's first commit makes #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_point_keys.py`); E6 implements #554 §8 only, the run key passed to an inference method through its `key` parameter; point sets present raw values as #506 proposes; #522 waits until after the workshop; #451 is not a dependency. | execution | maintainer |
 | 2026-10-17 | Per-call state is carried by one call context whose core logic is implemented once: #587's carried context and the execution plan's call context become one mechanism. Its precise contract is being designed in `plans/call-context-proposal.md` (gaps D7). | execution | maintainer |
