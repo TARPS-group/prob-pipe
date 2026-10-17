@@ -1500,6 +1500,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`summarize(d)` collects a law's standard summaries in one record that
+  displays as a table.** Each top-level field is the term an operation returns
+  for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
+  `median`, and the ends of the central 80% interval, `q10` and `q90`. So
+  `summarize(d)["sd/mu"]` is the standard deviation of `mu`, and
+  `pd.DataFrame(summarize(d).raw())` gives the table.
+
+  ```text
+  >>> with workflow_run(seed=0):
+  ...     summarize(Normal("mu", 0.0, 2.0) * Poisson("count", 4.0))
+  summary of Normal(mu)·Poisson(count)
+           mean  sd  median         q10        q90
+    mu       0.  2.      0.  -2.5631032  2.5631022
+    count    4.  2.      4.   1.         6.
+  mean, sd: exact. median, q10, q90: Monte Carlo, 256 draws.
+  ```
+
+  - **Columns:** `interval=0.9` gives `q5` and `q95`. Given statistics, as
+    `summarize(d, mean, variance)` or `summarize(d, {"sd": standard_deviation})`,
+    replace the default columns.
+  - **MCMC posteriors:** a posterior on the levels `chain` and `draw` also gets
+    `r_hat`, `ess_bulk`, and `ess_tail`, and its line reads
+    `MCMC, 4 chains of 1,000 draws`.
+  - **Monte Carlo errors:** `mcse=True` adds `mcse_<name>` for each statistic:
+    ArviZ's error for an MCMC posterior, and for another law `0` where the
+    route was exact and `sd / sqrt(n)` for a mean from `n` draws.
+  - **Batches:** a `DistributionBatch` gives a batch of summary records, which
+    displays a table for each law.
+- **A record of summaries displays as a table.** A numeric record whose
+  top-level fields are records over the same paths, at least one of which
+  records how it was computed, shows one row for each path and one column for
+  each field, in its repr and in a notebook, with a line that states how each
+  column was computed. A record built by hand, as
+  `Record({"mean": mean(d), "sd": standard_deviation(d)})`, displays the same
+  way. A record of plain values keeps one line for each path.
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
   is a record with a field per component, as `mu` and `tau`, so

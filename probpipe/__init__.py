@@ -93,6 +93,7 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
+from probpipe.diagnostics import summarize
 from probpipe.distributions._batches import DistributionBatch
 from probpipe.distributions._capabilities import (
     SupportsApproximateConditioning,
@@ -382,6 +383,7 @@ __all__ = [
     "simplex",
     "sphere",
     "standard_deviation",
+    "summarize",
     "unit_interval",
     "unnormalized_log_prob",
     "unnormalized_prob",

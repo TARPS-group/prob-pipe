@@ -43,6 +43,7 @@ from ._record_batch import (
 from ._repr import VALUE_INDENT, format_rows, rows_html, summary_with_values
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from ._table import batch_tables_html, batch_tables_text
 from .provenance import Provenance
 from .tracked import refuses_label_first
 
@@ -163,7 +164,20 @@ class NumericRecordBatch(RecordBatch):
         column ends with its shape. Only the entries shown are read from the
         device. Inside a JAX trace, where the columns are tracers, the repr is
         the summary of the label, the levels, and the field paths.
+
+        A batch of records of summaries, whose provenance describes how each
+        column of each element was computed, as the batch ``summarize`` returns
+        for a batch of laws does, shows one table for each element instead, as
+        a record's repr states. Each table is titled by its element's levels, as
+        ``law=0``, each title is indented by two spaces and each table by four,
+        and the elements are shortened to ``edgeitems`` at each end when their
+        rows number more than NumPy's ``threshold``. The line that states how
+        the columns were computed follows each table, or follows the last when
+        every element's line is the same.
         """
+        tables = batch_tables_text(self, self._repr_summary(structure=False))
+        if tables is not None:
+            return tables
         return summary_with_values(
             self._repr_summary(structure=False),
             format_rows(self._value_rows(), VALUE_INDENT),
@@ -171,16 +185,23 @@ class NumericRecordBatch(RecordBatch):
         )
 
     def __str__(self) -> str:
-        """The lines of the repr's values alone, or the summary inside a JAX trace."""
+        """The lines of the repr's values or tables alone, or the summary inside a JAX trace."""
+        tables = batch_tables_text(self, None)
+        if tables is not None:
+            return tables
         rows = format_rows(self._value_rows())
         return self._repr_summary() if rows is None else rows
 
     def _repr_html_(self) -> str | None:
         """The batch as a two-column table of its field paths and columns, for a notebook.
 
-        Each column is formatted as the repr formats it. Inside a JAX trace the
-        result is ``None``, so the notebook shows the repr.
+        Each column is formatted as the repr formats it, and a batch the repr
+        shows as tables is one HTML table for each element. Inside a JAX trace
+        the result is ``None``, so the notebook shows the repr.
         """
+        tables = batch_tables_html(self, self._repr_summary(structure=False))
+        if tables is not None:
+            return tables
         return rows_html(self._repr_summary(structure=False), self._value_rows())
 
     def _value_rows(self) -> list[tuple[str, Any]]:
