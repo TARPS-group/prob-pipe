@@ -120,8 +120,8 @@ class TestConstruction:
             {"a": 1.0, "b": 2},
             label="nr",
         )
-        assert isinstance(nr["a"].raw, jnp.ndarray)
-        assert isinstance(nr["b"].raw, jnp.ndarray)
+        assert isinstance(nr.raw["a"], jnp.ndarray)
+        assert isinstance(nr.raw["b"], jnp.ndarray)
 
     def test_numpy_stored_native_converted_at_boundary(self):
         arr = np.array([1.0, 2.0])

@@ -410,9 +410,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         "_label",
         "_label_collapse",
         "_provenance",
+        "_raw_cache",
         "_spec",
         "_tree",
     )
+
+    #: The resolved raw leaves, kept for later reads of :attr:`raw`. A memo over
+    #: the stored leaves, so ``copy`` and ``pickle`` leave it behind.
+    _transient_state = ("_raw_cache",)
 
     def __new__(cls, *args: Any, **kwargs: Any):
         refuse_label_first(cls.__name__, args, kwargs, ("fields",))
@@ -660,16 +665,28 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         own, ``record["g/x"].raw``, which presents the leaf as the view's kind
         does, so a Python scalar becomes an array, and inside a trace indexing
         returns the traced leaf itself, which has no ``raw``.
-        """
-        return _raw_nested(self)
 
-    def _raw_at(self, path: str | tuple[str, ...]) -> Any:
+        The leaves are resolved on the first read and kept, so a stored law is
+        detached once, and each read returns a new ``dict`` over them that the
+        caller may change. A record has a raw form only when every leaf has
+        one, so a leaf whose raw form raises, such as a field view with no
+        exact marginal, makes the read raise. A record holding a traced leaf
+        keeps nothing.
+        """
+        cached = getattr(self, "_raw_cache", None)
+        if cached is None:
+            cached, traced = _raw_tree(self)
+            if not traced:
+                object.__setattr__(self, "_raw_cache", cached)
+        return _fresh_dicts(cached)
+
+    def _raw_at(self, path: str) -> Any:
         """The raw value of the node at *path*, without building its view.
 
         Parameters
         ----------
-        path : str or tuple of str
-            The path of one node, a field or a subtree.
+        path : str
+            The ``/``-joined path of one node, a field or a subtree.
 
         Returns
         -------
@@ -1454,6 +1471,34 @@ def _raw_nested(record: Record) -> dict[str, Any]:
     return {
         name: _raw_nested(child) if type.__instancecheck__(Record, child) else _raw_leaf(child)
         for name, child in record._tree.items()
+    }
+
+
+class _RawNode(dict):
+    """An interior node of a record's kept raw form, which a read copies into a ``dict``."""
+
+    __slots__ = ()
+
+
+def _raw_tree(record: Record) -> tuple[_RawNode, bool]:
+    """*record*'s raw leaves under :class:`_RawNode` interiors, and whether a leaf is traced."""
+    node = _RawNode()
+    traced = False
+    for name, child in record._tree.items():
+        if type.__instancecheck__(Record, child):
+            node[name], child_traced = _raw_tree(child)
+            traced = traced or child_traced
+        else:
+            node[name] = _raw_leaf(child)
+            traced = traced or isinstance(child, jax.core.Tracer)
+    return node, traced
+
+
+def _fresh_dicts(node: _RawNode) -> dict[str, Any]:
+    """A new nested ``dict`` over the leaves of *node*, which stays unchanged."""
+    return {
+        name: _fresh_dicts(child) if type(child) is _RawNode else child
+        for name, child in node.items()
     }
 
 

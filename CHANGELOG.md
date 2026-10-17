@@ -9,18 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`. A
-  `Record` and a `RecordBatch` no longer take a path: `record.raw` is the
-  whole nested mapping, so replace `record.raw("x")` with `record.raw["x"]`
-  and `record.raw("g/x")` with `record.raw["g"]["x"]`, which also work inside
-  a JAX trace. The `raw` of a `Function`, an `Operation`, or a `Bijector` is a
-  callable, so an old `f.raw()` now calls the wrapped function with no
-  arguments instead of raising. A subclass of a tracked term or of `LinOp`
-  defines `raw` with `@property`, and a class that defines it as a plain
-  method raises `TypeError` when it is created.
-- **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
-  removed.** Each returned what `raw` returns, so replace `x.value` and
-  `batch.values` with `x.raw` and `batch.raw`.
+- **`raw` is a property on every term.** Replace `x.raw()` with `x.raw`, and
+  search your code for `.raw(` to find the calls. The `raw` of a `Function`,
+  an `Operation`, or a `Bijector` is a callable, so an old `f.raw()` calls the
+  wrapped function with no arguments instead of raising.
+  - A `Record` and a `RecordBatch` no longer take a path, and `record.raw` is
+    the whole nested mapping. Replace `record.raw("x")` with
+    `record["x"].raw` to read one field's view, or with `record.raw["x"]` to
+    read the stored form, and `record.raw("g/x")` with `record.raw["g"]["x"]`.
+    Inside a JAX trace, `record["x"]` is the traced value itself, so traced
+    code reads `record.raw["x"]`. A field's view presents a stored Python
+    scalar as an array, so `record["x"].raw` is an array where
+    `record.raw["x"]` is the stored `float`.
+  - Every read returns the same raw form. A law, a kernel, or a field view
+    keeps the detached copy it returns, and the copy refuses provenance,
+    since every reader shares it; `with_label` gives a copy that can carry
+    provenance. A record keeps its resolved leaves and returns a new `dict`
+    over them on each read.
+  - A subclass of a tracked term or of `LinOp` defines `raw` with
+    `@property`, and a class on which `raw` is a method, a class or static
+    method, or a cached function raises `TypeError` when it is created.
 - **`with_options` is renamed `using`.** `Function.using(**controls)` and
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
@@ -280,7 +288,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factors still gives the labels of the factors left, so
   `condition_on(lik * prior, {"mu": 0.5})` is labeled `lik` and prints as
   `lik(y; mu)`. The fixed paths are recorded whichever route conditions, an
-  inference method's included, and a marginal, a view, and `raw()` keep them.
+  inference method's included, and a marginal, a view, and `raw` keep them.
   The repr shows them after the constructor call, as
   `Normal('y', loc=0.5, scale=1.0, label='lik', fixed=('mu',))` or
   `EmpiricalDistribution(atoms=..., label='model', fixed=('y',))`.
@@ -289,7 +297,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result's label, as `model`, where it was recorded as `posterior`.
   Replace a comparison with a label such as `"model | y"` by one with
   `"model"`, or compare `str(posterior)` with `"model(mu; y)"`.
-- **`raw()` of a field view returns the raw form of the marginal at its path.**
+- **`raw` of a field view is the raw form of the marginal at its path.**
   `d[p].raw` returns the TFP distribution where the marginal at `p` is a
   parametric family, so `model["mu"].raw` for a `Normal` prior over `mu` is
   the TFP `Normal`. Any other marginal is returned as a detached ProbPipe law,
@@ -3430,6 +3438,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`NumericArray.value`, `Opaque.value`, and `NumericArrayBatch.values` are
+  removed.** Each returned what `raw` returns, so replace `x.value` and
+  `batch.values` with `x.raw` and `batch.raw`.
 - **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
   for `X ~ d`, and the direct call `f(v)` replaces every other use:
   `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
@@ -3663,7 +3674,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body received a tracked argument whatever its parameter's annotation, so
   `def g(c: pd.Series)` raised `AttributeError` on a record field that holds a
   `Series`. A parameter annotated with a class such as `pd.Series`,
-  `xr.DataArray`, or `jax.Array` now receives the argument's `raw()` when that is
+  `xr.DataArray`, or `jax.Array` now receives the argument's `raw` when that is
   an instance of the class, in a call, in `apply`, and for each element of a
   sweep and each draw of a broadcast.
 - **A level name is any non-empty string without `/`.** A batch required a

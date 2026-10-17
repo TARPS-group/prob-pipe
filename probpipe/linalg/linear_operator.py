@@ -123,7 +123,7 @@ class LinOp(ABC):
         self._flags: set[str] = set()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Refuse a subclass that defines ``raw`` as a plain method.
+        """Refuse a subclass on which ``raw`` is anything but a property.
 
         Parameters
         ----------
@@ -133,7 +133,7 @@ class LinOp(ABC):
         Raises
         ------
         TypeError
-            If the class body defines ``raw`` as a function.
+            If ``raw`` on the class is anything but a property.
         """
         super().__init_subclass__(**kwargs)
         _check_raw_is_a_property(cls)

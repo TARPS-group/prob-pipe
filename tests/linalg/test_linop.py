@@ -270,7 +270,7 @@ class TestRaw:
         assert "raw" in LinOp.__abstractmethods__
 
     def test_an_operator_that_defines_raw_as_a_method_cannot_be_defined(self):
-        with pytest.raises(TypeError, match="raw is a method, but it must be a property"):
+        with pytest.raises(TypeError, match="raw is a function, but it must be a property"):
 
             class Stale(LinOp):
                 def raw(self):

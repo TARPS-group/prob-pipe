@@ -597,10 +597,8 @@ def _batch_columns(atoms: Batch) -> dict[str, Any]:
     """The columns of a batch led by its axes: by leaf path for records, else one unnamed column."""
     if isinstance(atoms, RecordBatch):
         return dict(atoms._raw_columns())
-    if isinstance(atoms, NumericArrayBatch):
+    if isinstance(atoms, NumericArrayBatch | _ObjectBatch):
         return {"": atoms.raw}
-    if isinstance(atoms, _ObjectBatch):
-        return {"": atoms._store}
     raise TypeError(f"a lifted output of kind {type(atoms).__name__} has no columns")
 
 

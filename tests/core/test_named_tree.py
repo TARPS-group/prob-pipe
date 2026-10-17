@@ -461,7 +461,7 @@ class TestMappingsAreNeverLeaves:
         )
         assert type(r) is NumericRecord
         assert tuple(r.keys()) == ("cfg/a", "cfg/b", "x")
-        assert isinstance(r["cfg/a"].raw, jnp.ndarray)
+        assert isinstance(r.raw["cfg"]["a"], jnp.ndarray)
         assert isinstance(r.at_path("cfg"), NumericRecord)
 
     def test_mapping_value_with_opaque_leaf_stays_plain(self):

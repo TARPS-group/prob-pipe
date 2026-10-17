@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import copy
+import functools
+import pickle
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,15 +28,18 @@ from probpipe import (
     Record,
     RecordBatch,
     RecordSpec,
+    ResolutionError,
 )
+from probpipe.core._fingerprint import fingerprint
+from probpipe.core._immutable import transient_memo
 from probpipe.core._record_spec import NumericRecordSpec
 from probpipe.core.provenance import Provenance
-from probpipe.core.tracked import TrackedTerm
+from probpipe.core.tracked import TrackedTerm, _is_raw_form
 from probpipe.distributions._batches import _element_source
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution
 
-from ..operations._laws import Gaussian, Kernel
+from ..operations._laws import Gaussian, Kernel, Pair
 
 
 class TestTheContract:
@@ -43,11 +50,26 @@ class TestTheContract:
         assert isinstance(TrackedTerm.__dict__["raw"], property)
 
     def test_a_kind_that_defines_raw_as_a_method_cannot_be_defined(self):
-        with pytest.raises(TypeError, match="raw is a method, but it must be a property"):
+        with pytest.raises(TypeError, match="raw is a function, but it must be a property"):
 
             class Stale(TrackedTerm):
                 def raw(self):
                     return None
+
+    @pytest.mark.parametrize("wrap", [classmethod, staticmethod, functools.cache])
+    def test_a_kind_whose_raw_is_a_wrapped_function_cannot_be_defined(self, wrap):
+        with pytest.raises(TypeError, match="but it must be a property"):
+            type("Stale", (TrackedTerm,), {"raw": wrap(lambda *args: None)})
+
+    def test_a_kind_that_inherits_raw_as_a_method_from_a_mixin_cannot_be_defined(self):
+        class Mixin:
+            def raw(self):
+                return None
+
+        with pytest.raises(TypeError, match="raw is a function, but it must be a property"):
+
+            class Stale(Mixin, TrackedTerm):
+                pass
 
     def test_a_kind_that_does_not_define_raw_cannot_be_constructed(self):
         class Bare(TrackedTerm):
@@ -114,13 +136,32 @@ class TestValues:
         total = jax.jit(lambda r: r.raw["x"].sum() + r.raw["g"]["y"].sum())(record)
         assert float(total) == 5.0
 
+    def test_a_family_held_as_a_leaf_is_its_backend_distribution(self):
+        record = Record(
+            {"law": Normal("theta", 0.0, 1.0), "x": 1.0},
+            label="r",
+        )
+        assert isinstance(record.raw["law"], tfd.Normal)
+
     def test_a_law_held_as_a_leaf_is_detached(self):
-        law = Normal("theta", 0.0, 1.0)
+        law = EmpiricalDistribution(jnp.arange(3.0), component="e").with_provenance(
+            Provenance.create("made", parents=[])
+        )
         record = Record(
             {"law": law, "x": 1.0},
             label="r",
         )
-        assert isinstance(record["law"].raw, tfd.Normal)
+        detached = record.raw["law"]
+        assert isinstance(detached, EmpiricalDistribution) and detached is not law
+        assert detached.provenance is None
+
+    def test_a_field_view_presents_a_stored_python_scalar_as_an_array(self):
+        record = Record(
+            {"x": 42.0, "label": "tag"},
+            label="r",
+        )
+        assert isinstance(record.raw["x"], float)
+        assert isinstance(record["x"].raw, jnp.ndarray)
 
 
 class TestTheRawFormAtAPath:
@@ -296,3 +337,141 @@ class TestDistributions:
         assert isinstance(detached, ConditionalDistribution) and detached is not kernel
         assert (detached.label, detached.spec) == (kernel.label, kernel.spec)
         assert detached.provenance is None
+
+
+class TestTheRawFormIsShared:
+    """Every read of ``raw`` returns the same object, and a record a new mapping of the same leaves."""
+
+    def test_a_law_returns_one_detached_copy(self):
+        law = Gaussian("g", 1.0)
+        assert law.raw is law.raw
+
+    def test_a_kernel_returns_one_detached_copy(self):
+        kernel = Kernel("k")
+        assert kernel.raw is kernel.raw
+
+    def test_a_field_view_resolves_its_marginal_once(self):
+        view = (Normal("a", 0.0, 1.0) * Normal("b", 1.0, 1.0))["a"]
+        assert view.raw is view.raw
+
+    def test_a_failed_resolution_is_not_kept(self):
+        view = Pair("p")["a"]
+        for _ in range(2):
+            with pytest.raises(ResolutionError):
+                _ = view.raw
+        assert "raw" not in transient_memo(view)
+
+    def test_a_record_reads_the_same_leaves_into_a_new_mapping(self):
+        law = EmpiricalDistribution(jnp.arange(3.0), component="e")
+        record = Record(
+            {"g": {"law": law, "x": jnp.ones(2)}, "label": "A"},
+            label="r",
+        )
+        first, second = record.raw, record.raw
+        assert type(first) is dict and type(first["g"]) is dict
+        assert first is not second and first["g"] is not second["g"]
+        assert first["g"]["law"] is second["g"]["law"]
+        first["g"]["x"] = None
+        first["label"] = None
+        assert record.raw["g"]["x"] is not None and record.raw["label"] == "A"
+
+    def test_a_record_batch_reads_the_same_columns_into_a_new_mapping(self):
+        batch = _numeric_record_batch()
+        first = batch.raw
+        first["g"]["a"] = None
+        first["c"] = None
+        second = batch.raw
+        assert second["g"]["a"] is batch._raw_column("g/a")
+        assert second["c"] is batch._raw_column("c")
+
+    def test_a_stored_array_stays_read_only_on_a_second_read(self):
+        record = Record(
+            {"x": np.arange(3.0)},
+            label="r",
+        )
+        _ = record.raw
+        assert not record.raw["x"].flags.writeable
+
+    def test_a_copy_and_an_unpickled_law_rebuild_their_raw_form(self):
+        law = Gaussian("g", 1.0)
+        detached = law.raw
+        assert copy.copy(law).raw is not detached
+        restored = pickle.loads(pickle.dumps(law))
+        assert restored.raw is not detached and restored.raw.loc == detached.loc
+
+    def test_a_copy_and_an_unpickled_record_rebuild_their_raw_form(self):
+        record = Record(
+            {"x": jnp.ones(2)},
+            label="r",
+        )
+        _ = record.raw
+        assert getattr(copy.copy(record), "_raw_cache", None) is None
+        assert getattr(pickle.loads(pickle.dumps(record)), "_raw_cache", None) is None
+
+    def test_a_relabeled_law_has_a_raw_form_of_its_own(self):
+        law = Gaussian("g", 1.0)
+        assert law.with_label("h").raw is not law.raw
+
+    def test_a_read_changes_no_hash_equality_or_fingerprint(self):
+        law = Gaussian("g", 1.0)
+        record = Record(
+            {"law": law, "x": jnp.ones(2)},
+            label="r",
+        )
+        before = (hash(record), fingerprint(law), fingerprint(record))
+        _ = law.raw
+        _ = record.raw
+        assert (hash(record), fingerprint(law), fingerprint(record)) == before
+        assert record == Record({"law": law, "x": jnp.ones(2)}, label="r")
+
+    def test_a_read_inside_a_trace_keeps_nothing(self):
+        traced = []
+
+        def total(r):
+            traced.append(r)
+            return r.raw["x"].sum()
+
+        record = NumericRecord(
+            {"x": jnp.ones(2)},
+            label="r",
+        )
+        assert float(jax.jit(total)(record)) == 2.0
+        assert getattr(traced[0], "_raw_cache", None) is None
+        assert getattr(record, "_raw_cache", None) is None
+
+
+class TestARawFormRefusesProvenance:
+    def test_a_raw_form_reports_no_provenance_and_refuses_one(self):
+        detached = Gaussian("g").raw
+        assert detached.provenance is None
+        with pytest.raises(RuntimeError, match="it is the raw form of a term, which carries none"):
+            detached.with_provenance(Provenance.create("made", parents=[]))
+
+    def test_the_raw_form_of_a_raw_form_is_itself(self):
+        detached = Gaussian("g").raw
+        assert detached.raw is detached
+
+    def test_a_relabeled_copy_is_not_a_raw_form(self):
+        assert not _is_raw_form(Gaussian("g").raw.with_label("h"))
+
+    def test_an_unpickled_copy_can_carry_provenance(self):
+        restored = pickle.loads(pickle.dumps(Gaussian("g").raw))
+        provenance = Provenance.create("made", parents=[])
+        assert restored.with_provenance(provenance).provenance is provenance
+
+
+class TestTheRemovedAccessors:
+    def test_an_array_has_no_value(self):
+        assert not hasattr(NumericArray(jnp.ones(2), label="x"), "value")
+
+    def test_an_opaque_value_has_no_value(self):
+        assert not hasattr(Opaque("north", label="site"), "value")
+
+    def test_an_array_batch_has_no_values(self):
+        batch = NumericArrayBatch(
+            jnp.zeros((4, 2)),
+            "draw",
+            element_spec=NumericArraySpec((2,)),
+            label="x",
+        )
+        assert not hasattr(batch, "values")

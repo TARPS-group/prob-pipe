@@ -561,7 +561,7 @@ class TestStorage:
             label="r",
         )
         assert v["x"] == 42.0
-        assert isinstance(v["x"].raw, jnp.ndarray)
+        assert isinstance(v.raw["x"], jnp.ndarray)
         mixed = Record(
             {"x": 42.0, "label": "tag"},
             label="r",

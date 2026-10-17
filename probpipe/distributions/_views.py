@@ -73,6 +73,7 @@ from ._distribution import (
     _COPY_SOURCE,
     _EMPTY_SELECTION,
     Distribution,
+    _cached_raw,
     _fixed_paths,
     _fixes_every_field,
     _install_copy_source,
@@ -1227,6 +1228,9 @@ class FieldView(Distribution):
     def raw(self) -> Any:
         """The raw form of the parent's marginal at the path, ``parent._marginal(path).raw``.
 
+        Every read returns the same object, resolved on the first read. A
+        detached law refuses provenance, since every reader shares it.
+
         Returns
         -------
         Any
@@ -1240,8 +1244,14 @@ class FieldView(Distribution):
         Raises
         ------
         ResolutionError
-            If the parent has no exact marginal at the path.
+            If the parent has no exact marginal at the path. The error is not
+            an ``AttributeError``, so ``hasattr(view, "raw")`` raises it rather
+            than returning ``False``, and each read tries the marginal again.
         """
+        return _cached_raw(self, self._resolved_raw)
+
+    def _resolved_raw(self) -> Any:
+        """Resolve the raw form of the parent's marginal at the path, as :attr:`raw` describes."""
         parent = self._parent
         if not isinstance(parent, SupportsMarginals):
             raise ResolutionError(

@@ -290,11 +290,54 @@ class _TrackedTermMeta(_ProtocolMeta):
         return instance
 
 
+class _RawFormProvenance:
+    """The provenance slot of a raw form: it reports none and refuses any."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<raw form>"
+
+
+#: The mark a raw form holds in its provenance slot (see :func:`_as_raw_form`).
+_RAW_FORM = _RawFormProvenance()
+
+
+def _as_raw_form[T: TrackedTerm](term: T) -> T:
+    """Mark *term*, a detached copy, as the raw form every reader of ``raw`` shares.
+
+    Provenance is write-once and attached in place, so a shared copy that took
+    one reader's provenance would show it to every later reader. The mark makes
+    :meth:`TrackedTerm.with_provenance` refuse, and :attr:`TrackedTerm.provenance`
+    reads it as ``None``. A copy of the term, through ``with_label``, ``copy``, or
+    ``pickle``, does not carry the mark.
+
+    Parameters
+    ----------
+    term : TrackedTerm
+        A detached copy that no reader has seen yet.
+
+    Returns
+    -------
+    TrackedTerm
+        *term*, marked.
+    """
+    object.__setattr__(term, "_provenance", _RAW_FORM)
+    return term
+
+
+def _is_raw_form(term: Any) -> bool:
+    """Whether *term* is a raw form that :func:`_as_raw_form` marked."""
+    return getattr(term, "_provenance", None) is _RAW_FORM
+
+
 def _check_raw_is_a_property(cls: type) -> None:
-    """Refuse *cls* when its body defines ``raw`` as a plain method.
+    """Refuse *cls* unless ``raw`` resolves on it to a property.
 
     Any attribute named ``raw`` satisfies an abstract ``raw`` property, so a
-    method would make ``term.raw`` a bound method rather than the representation.
+    method, a class or static method, a cached function, or a mixin's method
+    would make ``term.raw`` something other than the representation. The lookup
+    is static, so it reads the attribute the class resolves without running it.
 
     Parameters
     ----------
@@ -304,12 +347,13 @@ def _check_raw_is_a_property(cls: type) -> None:
     Raises
     ------
     TypeError
-        If the class body defines ``raw`` as a function.
+        If ``raw`` on *cls* is anything but a property.
     """
-    if inspect.isfunction(cls.__dict__.get("raw")):
+    attribute = inspect.getattr_static(cls, "raw", None)
+    if attribute is not None and not isinstance(attribute, property):
         raise TypeError(
-            f"Cannot define {cls.__name__}: raw is a method, but it must be a property. "
-            "Decorate it with @property."
+            f"Cannot define {cls.__name__}: raw is a {type(attribute).__name__}, but it must be "
+            "a property. Decorate it with @property."
         )
 
 
@@ -347,8 +391,8 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     :attr:`raw` is the one access to the representation, and it is an abstract
     property: each kind defines it, as its section of the design states. A
-    subclass that defines ``raw`` as a plain method raises ``TypeError`` when
-    the class is created.
+    subclass on which ``raw`` resolves to anything but a property raises
+    ``TypeError`` when the class is created.
 
     Attributes
     ----------
@@ -381,7 +425,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     __slots__ = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Refuse a subclass that defines ``raw`` as a plain method.
+        """Refuse a subclass on which ``raw`` is anything but a property.
 
         Parameters
         ----------
@@ -391,7 +435,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         Raises
         ------
         TypeError
-            If the class body defines ``raw`` as a function.
+            If ``raw`` on the class is anything but a property.
         """
         super().__init_subclass__(**kwargs)
         _check_raw_is_a_property(cls)
@@ -603,8 +647,12 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
 
     @property
     def provenance(self) -> Provenance | None:
-        """Provenance describing how this object was produced, or ``None``."""
-        return getattr(self, "_provenance", None)
+        """Provenance describing how this object was produced, or ``None``.
+
+        A raw form, such as the detached law a law's :attr:`raw` returns, has none.
+        """
+        provenance = getattr(self, "_provenance", None)
+        return None if provenance is _RAW_FORM else provenance
 
     def with_provenance(self, provenance: Provenance | None) -> Self:
         """Attach provenance to this object (write-once) and return it.
@@ -626,16 +674,43 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         Raises
         ------
         RuntimeError
-            If provenance is already set (provenance is write-once).
+            If provenance is already set (provenance is write-once), or if this
+            object is a raw form, which every reader of :attr:`raw` shares and so
+            carries no provenance.
         """
         if provenance is None:
             return self
-        if getattr(self, "_provenance", None) is not None:
+        current = getattr(self, "_provenance", None)
+        if current is _RAW_FORM:
+            raise RuntimeError(
+                f"Cannot attach provenance to {self.label!r}: it is the raw form of a term, "
+                "which carries none. Use with_label for a copy that can carry it."
+            )
+        if current is not None:
             raise RuntimeError(f"provenance of {self!r} is already set; it can be set only once")
         object.__setattr__(self, "_provenance", provenance)
         return self
 
     # -- copying -------------------------------------------------------------
+
+    def __getstate__(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Return this object's state, with a raw form's provenance mark cleared.
+
+        A copy or an unpickled object is not the raw form every reader shares,
+        so it is a term of its own that can take provenance.
+
+        Returns
+        -------
+        tuple of (dict or None, dict or None)
+            The instance dictionary and the assigned slots, as
+            :meth:`Immutable.__getstate__` returns them.
+        """
+        instance_dict, slots = super().__getstate__()
+        if instance_dict is not None and instance_dict.get("_provenance") is _RAW_FORM:
+            instance_dict = {**instance_dict, "_provenance": None}
+        if slots is not None and slots.get("_provenance") is _RAW_FORM:
+            slots = {**slots, "_provenance": None}
+        return (instance_dict, slots)
 
     def _shallow_copy(self) -> Self:
         """Return a shallow copy holding the same state, entries shared.

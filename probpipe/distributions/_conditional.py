@@ -48,6 +48,7 @@ from ._distribution import (
     DEFAULT_LABEL,
     Distribution,
     DistributionSpec,
+    _cached_raw,
     _check_marker_claims,
     _complete_event_spec,
     _compose_operands,
@@ -593,8 +594,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
         A kernel is represented by itself, so its raw form is a copy that shares
         its representation and carries no provenance, no annotations, and no
         reference to a batch it was an element of.
+
+        Every read returns the same copy, which refuses provenance, since every
+        reader shares it. ``with_label`` gives a copy of it that can carry
+        provenance.
         """
-        return _detached_term(self)
+        return _cached_raw(self, lambda: _detached_term(self))
 
     # -- the declarations ---------------------------------------------------
 
