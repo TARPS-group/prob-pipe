@@ -220,7 +220,7 @@ Resolution selects the route that realizes the call. Candidates are checked on t
 
 An **integration rule**, such as quadrature or quasi-Monte Carlo, registers beside these and returns a weighted empirical law whose atoms are its nodes and whose weights are the nodes' weights (VII.2).
 
-A **floor** is a fallback on its stated domain, with the lowest rank there: the sampling lift on samplable distribution operands and the elementwise sweep on supported batch elements. That rank holds whatever the exactness of the other rules: a registered rule of either exactness takes precedence over a floor where both apply, and selection among the other rules follows II.7. An integration rule or an unscented transform therefore ranks above the empirical lift (II.7). Floors remain subject to fidelity controls, output requirements, and capability guards. The generic lazy linear-pushforward rule (VII.4) represents the image law exactly and preserves derivable moments. The selected route records its representation and local fidelity in provenance. *Requires:* a feasible candidate under the requested controls. *On failure:* `ResolutionError`, naming missing requirements; `check` may report an unresolved selection (V.1).
+A **floor** is a fallback on its stated domain, with the lowest rank there: the sampling lift on samplable distribution operands and the elementwise sweep on supported batch elements. Each declares `is_floor`, which is the first criterion of II.7's selection order, so that rank holds whatever the exactness of the other rules: a registered rule of either exactness takes precedence over a floor where both apply, and selection among the other rules follows II.7. An integration rule or an unscented transform therefore ranks above the empirical lift (II.7). Floors remain subject to fidelity controls, output requirements, and capability guards. The generic lazy linear-pushforward rule (VII.4) represents the image law exactly and preserves derivable moments. The selected route records its representation and local fidelity in provenance. *Requires:* a feasible candidate under the requested controls. *On failure:* `ResolutionError`, naming missing requirements; `check` may report an unresolved selection (V.1).
 
 ### Rationale
 
@@ -344,7 +344,8 @@ A slot checks the claims it needs at construction and raises `ResolutionError` w
 ```python
 def bijector_for(constraint: Constraint) -> Function: ...   # the canonical map ℝⁿ → support(constraint)
 def register_bijector(key: type[Constraint] | Constraint,
-                      factory: Callable[[Constraint], Function]) -> None: ...
+                      factory: Callable[[Constraint], Function], *,
+                      description: str = "") -> None: ...   # the description is the catalog's
 ```
 
 The factory keys on constraint instances and types rather than dispatching on argument types alone, so it is not a dispatch registry; it still satisfies `SupportsRegistryCataloging` and appears in the registry catalog alongside the dispatch registries.

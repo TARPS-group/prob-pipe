@@ -1520,6 +1520,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`summarize(d)` collects a law's standard summaries in one record that
+  displays as a table.** Each top-level field is the term an operation returns
+  for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
+  `median`, and the ends of the central 80% interval, `q10` and `q90`. So
+  `summarize(d)["sd/mu"]` is the standard deviation of `mu`, and
+  `pd.DataFrame(summarize(d).raw())` gives the table.
+
+  ```text
+  >>> with workflow_run(seed=0):
+  ...     summarize(Normal("mu", 0.0, 2.0) * Poisson("count", 4.0))
+  summary of Normal(mu)·Poisson(count)
+           mean  sd  median         q10        q90
+    mu       0.  2.      0.  -2.5631032  2.5631022
+    count    4.  2.      4.   1.         6.
+  mean, sd: exact. median, q10, q90: Monte Carlo, 256 draws.
+  ```
+
+  - **Columns:** `interval=0.9` gives `q5` and `q95`. Given statistics, as
+    `summarize(d, mean, variance)` or `summarize(d, {"sd": standard_deviation})`,
+    replace the default columns.
+  - **MCMC posteriors:** a posterior on the levels `chain` and `draw` also gets
+    `r_hat`, `ess_bulk`, and `ess_tail`, and its line reads
+    `MCMC, 4 chains of 1,000 draws`.
+  - **Monte Carlo errors:** `mcse=True` adds `mcse_<name>` for each statistic:
+    ArviZ's error for an MCMC posterior, and for another law `0` where the
+    route was exact and `sd / sqrt(n)` for a mean from `n` draws.
+  - **Batches:** a `DistributionBatch` gives a batch of summary records, which
+    displays a table for each law.
+- **A record of summaries displays as a table.** A numeric record whose
+  top-level fields are records over the same paths, at least one of which
+  records how it was computed, shows one row for each path and one column for
+  each field, in its repr and in a notebook, with a line that states how each
+  column was computed. A record built by hand, as
+  `Record({"mean": mean(d), "sd": standard_deviation(d)})`, displays the same
+  way. A record of plain values keeps one line for each path.
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
   is a record with a field per component, as `mu` and `tau`, so
@@ -1653,6 +1688,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed check raises `ValueError`. A simulator's kernel is
   `conditional_distribution` of a function that returns
   `distribution(..., sample=...)`, which claims conditional sampling.
+- **The registry catalog.** `probpipe.registry_catalog` lists the registries
+  and their entries, so a user can see which implementations exist and how a
+  call resolves. `print(registry_catalog)` gives one row per registry, and
+  `registry_catalog.describe(name)` lists one registry's entries, each with
+  its priority, exactness, and description. A dispatch registry's floors and
+  its opt-in-only methods are each listed in a section of their own. An entry
+  is one registered item of a registry, such as an inference method or a
+  converter.
+  - **Membership:** a registry is cataloged by implementing
+    `SupportsRegistryCataloging` and by an explicit
+    `registry_catalog.register(registry)`, which rejects an empty or duplicate
+    name. The protocol's `name`, `description`, and `kind` are read-only, and
+    its methods are `entry_summaries()` and `describe_entry()`. Constructing a registry does not catalog it, and the catalog has no
+    removal, so reloading a module that registers a registry raises.
+  - **The built-in registries:** the bijector factories, the converters, the
+    evaluation rules, the inference methods, and the operations, each under
+    its own name, and each entry with a one-line description.
+  - **Dispatch registries:** `BaseDispatchRegistry` takes keyword-only `name`
+    and `description`, which are read-only, and its `kind` is `"dispatch"`.
+    Its `entry_summaries()` reports each method's registered name, exactness,
+    floor status, effective priority, supported types, and description as an
+    `EntrySummary`, in `list_methods()` order. A method may declare a one-line
+    `description` property, which registration reads and validates with its
+    other declarations.
+  - **Floors:** a dispatch method declares `is_floor`, `False` by default, and
+    every registry ranks a floor after each method that is not one, whatever
+    their exactness and priority. Floor status is the first criterion of
+    selection order, before exactness, priority, specificity, and
+    registration order, and `set_priorities` cannot change it. The sampling
+    lift and the elementwise sweep declare it, so the evaluation rules rank
+    them as before.
+  - **Bijectors:** `register_bijector` takes a keyword-only `description`,
+    which the catalog shows, and each constraint with no smooth bijector is
+    described by the reason.
+  - **Operations:** `OperationSummary` is an `EntrySummary`, and
+    `OperationRegistry` implements `SupportsRegistryCataloging`.
+  - **Exports:** `probpipe` exports `registry_catalog` and the four classes
+    that `probpipe/core/_catalog.py` defines: `RegistryCatalog`,
+    `EntrySummary`, `RegistryInfo`, and `SupportsRegistryCataloging`.
 - **Writing rules and a prose checker.** `STYLE_GUIDE.md` §10 states the
   writing rules for docstrings, comments, the documentation, `design/`, and PR
   and issue text, and `design/README.md` § Conventions adds two rules for the

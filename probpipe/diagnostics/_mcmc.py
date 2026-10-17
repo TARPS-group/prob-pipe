@@ -90,16 +90,16 @@ def arviz_ess(arviz_tree: Any, *, method: str = "bulk") -> Any:
         return az.ess(arviz_tree, method=method)
 
 
-def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
+def arviz_mcse(arviz_tree: Any, *, method: str = "mean", prob: float | None = None) -> Any:
     _check_arviz_stats()
     try:
         import arviz_stats as azs
 
-        return azs.mcse(arviz_tree, method=method)
+        return azs.mcse(arviz_tree, method=method, prob=prob)
     except ImportError:
         import arviz as az
 
-        return az.mcse(arviz_tree, method=method)
+        return az.mcse(arviz_tree, method=method, prob=prob)
 
 
 # ---------------------------------------------------------------------------

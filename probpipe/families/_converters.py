@@ -521,6 +521,10 @@ class _TFPConverter(_BackendConverter):
     """A TFP backend distribution enters ProbPipe as its family, or through the bare adapter."""
 
     @property
+    def description(self) -> str:
+        return "A TFP distribution as its ProbPipe family, or as a TFPDistribution."
+
+    @property
     def name(self) -> str:
         return "tfp"
 
@@ -541,6 +545,10 @@ class _ScipyConverter(_BackendConverter):
     A location or scale the family does not hold, such as a gamma's location,
     enters through a ``BijectorTransformedDistribution`` of the family.
     """
+
+    @property
+    def description(self) -> str:
+        return "A SciPy frozen distribution as the ProbPipe family whose parameters it holds."
 
     @property
     def name(self) -> str:
@@ -968,6 +976,10 @@ class _MomentMatching(Converter):
     _reads = ("num_samples", "total_count", "check_support", "event_spec")
 
     @property
+    def description(self) -> str:
+        return "A parametric family fit to a law by its moments or its draws' statistics."
+
+    @property
     def name(self) -> str:
         return "moment_match"
 
@@ -1194,6 +1206,10 @@ class _EmpiricalDraws(Converter):
     _reads = ("num_samples", "event_spec")
 
     @property
+    def description(self) -> str:
+        return "The empirical law of num_samples draws of a law."
+
+    @property
     def name(self) -> str:
         return "empirical"
 
@@ -1306,6 +1322,10 @@ class _KDESmoothing(Converter):
     """
 
     _reads = ("bandwidth", "num_samples", "event_spec")
+
+    @property
+    def description(self) -> str:
+        return "A kernel density estimate from an empirical law's atoms or a law's draws."
 
     @property
     def name(self) -> str:

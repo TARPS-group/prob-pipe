@@ -106,6 +106,10 @@ class EmpiricalReweightingMethod(InferenceMethod):
     _method_options = ()
 
     @property
+    def description(self) -> str:
+        return "Bayes' rule on an empirical prior, which reweights its atoms by the likelihood."
+
+    @property
     def name(self) -> str:
         return "empirical_reweighting"
 
