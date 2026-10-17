@@ -119,7 +119,7 @@ grouped[["g"]].event_spec   # grammar B: OutputSpec(RecordSpec(g=RecordSpec(c=..
 
 **Blocks:** S2, S3, S4, and every later step of the declarations and addressing track, until the reconciled text exists.
 
-**Status:** the conflicts are resolved; the two points above are open.
+**Status:** ✅ settled 2026-10-17. The conflicts are resolved by precedence, the plan becomes one reconciled text, and the accessor is named `component`.
 
 ---
 
@@ -169,7 +169,7 @@ Option 3 contradicts the clean-break rule of item D5.
 
 **Blocks:** S3.
 
-**Status:** open; needs jhuggins.
+**Status:** ✅ settled 2026-10-17. `&` replaces `*` for composition (D1 row i). `with_path_names` becomes `rename`, and `FieldView` becomes `MarginalView`. All three change in one announced mechanical PR, step S3. Whether `*` keeps an alias is D5, and whether S3 comes before the workshop is D9.
 
 ---
 

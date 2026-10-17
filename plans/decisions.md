@@ -19,6 +19,9 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-17 | `&` replaces `*` for composition; `with_path_names` becomes `rename`; `FieldView` becomes `MarginalView`. The three change in one mechanical PR (step S3). | declarations, addressing | maintainer |
+| 2026-10-17 | The public accessor of the term at a component is `t.component(c)`. | addressing | maintainer |
+| 2026-10-17 | The declarations and addressing plans become one reconciled text, `plans/declarations-and-addressing.md`, which #571 and #573 link to. | declarations, addressing | maintainer |
 | 2026-10-17 | Where #571's body, jhuggins's reply on #571, and the grammar-B addressing plan disagree, the addressing plan wins, then the reply, then the body. This resolves the thirteen rows of gaps D1. | declarations, addressing | maintainer |
 | 2026-10-17 | Every step is a PR into `dev/overhaul`, with no separate branch for the push; the workshop uses a tag cut at the freeze. | process | maintainer |
 | 2026-10-17 | The plans of the push are kept in `plans/` in the repository, which replaces the Claude Docs and the local drafts as the copy that changes. | process | maintainer |
