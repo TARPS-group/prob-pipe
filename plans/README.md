@@ -91,7 +91,7 @@ If time runs short before the workshop, steps are cut in this order: E8, then E7
 | Step | What | Depends on | State |
 |---|---|---|---|
 | P0 | The in-flight PRs merge: #575, #583, #474, #584, #586, #587. Pending the maintainer's decision OD5 of `call-context-proposal.md`, #587 creates the one call context before it merges | — | open |
-| P1 | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | #587 | open |
+| PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | #587 | open |
 | PL | This `plans/` PR merges | the items of `gaps-and-conflicts.md` | open |
 
 ### Declarations and addressing
