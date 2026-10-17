@@ -276,6 +276,23 @@ class TestRaw:
                 def raw(self):
                     return None
 
+    @pytest.mark.parametrize(
+        ("build", "operand_count"),
+        [
+            pytest.param(lambda a, b: a @ b, 2, id="product"),
+            pytest.param(lambda a, b: a + b, 2, id="sum"),
+            pytest.param(lambda a, b: 2.0 * a, 2, id="scaled"),
+            pytest.param(lambda a, b: a.T, 1, id="transposed"),
+        ],
+    )
+    def test_a_composite_is_its_operands_and_shows_them(self, build, operand_count):
+        a = DenseLinOp(jnp.eye(2))
+        b = DiagonalLinOp(jnp.array([1.0, 2.0]))
+        op = build(a, b)
+        assert isinstance(op.raw, tuple) and len(op.raw) == operand_count
+        assert op.raw[0] is a
+        assert "operands=(DenseLinOp(shape=(2, 2)" in repr(op)
+
     def test_a_dense_operator_is_its_matrix(self):
         op = DenseLinOp(jnp.eye(2))
         assert op.raw is op.array
