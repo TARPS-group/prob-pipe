@@ -19,6 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-17 | A batch's component names stay out of its equality, hashing, the static data of its JAX pytree, and its fingerprint. A raw JAX transform therefore drops a whole element's name, as it drops a label, and ProbPipe's operations restore names at their result. This reverses #571's sentence that such batches are unequal. | declarations | maintainer |
 | 2026-10-17 | `&` replaces `*` for composition; `with_path_names` becomes `rename`; `FieldView` becomes `MarginalView`. The three change in one mechanical PR (step S3). | declarations, addressing | maintainer |
 | 2026-10-17 | The public accessor of the term at a component is `t.component(c)`. | addressing | maintainer |
 | 2026-10-17 | The declarations and addressing plans become one reconciled text, `plans/declarations-and-addressing.md`, which #571 and #573 link to. | declarations, addressing | maintainer |

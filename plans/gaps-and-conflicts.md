@@ -85,7 +85,7 @@ The old positions stay in the table so the reconciled text can say what changes 
 | e | `batch["mu"]` on a batch of draws of `Normal("mu", ...)` | returns the batch | as the body | raises, since `mu` is a name and not a path; `draws.component("mu")` returns the batch | ✅ grammar B |
 | f | The spec of a component when the declared value is a law | the spec of one draw's value at the component | reads the term at component `c` of a law as the view `t[c]`, without restating the spec | the spec of the law's view at the component, a `DistributionSpec`, following jhuggins's decision 5 in his component-interface doc | ✅ grammar B |
 | g | A batch built from raw values | keeps a bare element spec with no components, so a batch of arrays cannot be exposed | as the body | every batch holds an element declaration; a base element is whole under the default name `element` | ✅ grammar B |
-| h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree | ✅ grammar B. The addressing plan itself asks jhuggins to confirm it, which D3 tracks. |
+| h | Equality of batches whose elements differ only in component names | not equal | as the body | equal: names stay out of equality, hashing, and the JAX pytree | ✅ grammar B, confirmed in D3. |
 | i | Merging declarations | `OutputSpec.merge`, `InputSpec.merge` | `&` replaces `*` and both `merge` methods | uses `&` in its examples | ✅ `&`, on which the reply and grammar B agree. D2 keeps the renames and the timing. |
 | j | The paths of a whole declaration | the component followed by the paths inside the term, as `c/beta` | as the body | only the root, since a whole declaration names a base value | ✅ grammar B |
 | k | The column of a group in a batch of records, `rb["g"]` | not covered (a field's column carries `OutputSpec(a=...)`) | as the body | carries the exposed record `{c, e}` | ✅ grammar B |
@@ -214,7 +214,7 @@ jhuggins's Rocq model proves only that `&` commutes with renaming, so this needs
 
 **Blocks:** S4.
 
-**Status:** recommended; needs jhuggins.
+**Status:** ✅ settled 2026-10-17: option 1. A batch's component names stay out of equality, hashing, the pytree's static data, and fingerprints.
 
 ---
 
@@ -405,7 +405,7 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 | S1 | One subscript reader: a `str` is one path, a list or tuple is a list of paths that keep their paths, `[]` returns groups, `in`, `marginal(d, paths)` | yes |
 | S2 | `OutputSpec` as a mapping, `term_spec`, `project` and `without`, one reading of slots, the size shorthand, `InputSpec.merge` | yes |
 | S3 | `&` and the two renames, one mechanical PR | yes, if D2 is settled |
-| S4 | Batches store their element declaration | yes if D3 is settled before S2 merges, otherwise the first item after |
+| S4 | Batches store their element declaration | yes |
 | G1 | Grammar-B enforcement and wrapping | after (D4) |
 | G2 | Paths through every kind, `Function[]`, `component` | after |
 | G3 | `condition_on` declared as `without`; `law.without` | after |
