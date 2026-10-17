@@ -1,7 +1,7 @@
 """Tests for BlackJAX-backed SGMCMC methods (``blackjax_sgld`` / ``blackjax_sghmc``).
 
 End-to-end coverage of the inference-method-registry path:
-``condition_on.with_options(method="blackjax_sgld", method_options={"batch_size": …})``
+``condition_on.using(method="blackjax_sgld", method_options={"batch_size": …})``
 applied to ``(likelihood * prior, {"y": y})``,
 plus checks that the gradient estimator actually drives convergence
 toward the posterior mode on a 200-row Bayesian logistic regression.
@@ -297,7 +297,7 @@ class TestConvergence:
 class TestConditionOnDispatch:
     def test_sgld_via_condition_on(self, logistic_problem):
         with workflow_run(seed=7):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="blackjax_sgld",
                 method_options={
                     "batch_size": 40,
@@ -361,7 +361,7 @@ class TestConditionOnDispatch:
             "dispersion", 1.0
         )
         with workflow_run(seed=1):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="blackjax_sgld",
                 method_options={
                     "batch_size": 20,
@@ -388,7 +388,7 @@ class TestConditionOnDispatch:
         ``MinibatchedDistribution`` tests.
         """
         with workflow_run(seed=4):
-            post = condition_on.with_options(
+            post = condition_on.using(
                 method="blackjax_sgld",
                 method_options={
                     "batch_size": 20,

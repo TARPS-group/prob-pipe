@@ -236,7 +236,7 @@ class TestConvertProvenance:
 
     def test_empirical_by_convert(self):
         src = Normal("x", loc=0.0, scale=1.0, label="norm_src")
-        ed = convert.with_options(method_options={"num_samples": 100})(src, EmpiricalDistribution)
+        ed = convert.using(method_options={"num_samples": 100})(src, EmpiricalDistribution)
         assert ed.provenance is not None
         assert ed.provenance.operation == "workflow.convert"
         assert isinstance(ed.provenance.parents[0], ParentInfo)

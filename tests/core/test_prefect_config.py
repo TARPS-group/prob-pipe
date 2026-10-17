@@ -338,7 +338,7 @@ class TestEffectiveWorkflowKind:
             lambda x: x,
             label="noop",
         )
-        configured = wf.with_options(workflow_kind=WorkflowKind.TASK)
+        configured = wf.using(workflow_kind=WorkflowKind.TASK)
 
         assert configured.effective_workflow_kind is WorkflowKind.TASK
         assert wf.effective_workflow_kind is WorkflowKind.OFF

@@ -228,13 +228,13 @@ class TestEvaluation:
         np.testing.assert_allclose(law._mean(), 1.0)
         np.testing.assert_allclose(law._variance(), 4.0)
 
-    def test_binding_some_slots_curries_the_kernel(self):
-        curried = condition_on(
+    def test_binding_some_slots_returns_a_kernel_over_the_rest(self):
+        rest = condition_on(
             conditional_distribution(_location, given_spec=SLOTS, label="y"), {"mu": 1.0}
         )
-        assert list(curried.given_spec) == ["tau"]
-        assert isinstance(curried, SupportsConditionalSampling)
-        np.testing.assert_allclose(condition_on(curried, {"tau": 2.0})._mean(), 1.0)
+        assert list(rest.given_spec) == ["tau"]
+        assert isinstance(rest, SupportsConditionalSampling)
+        np.testing.assert_allclose(condition_on(rest, {"tau": 2.0})._mean(), 1.0)
 
     def test_the_conditional_density_is_the_laws(self):
         kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
@@ -265,13 +265,13 @@ class TestEvaluation:
         with pytest.raises(TypeError, match="num_results"):
             kernel._condition_on({"mu": 0.0, "tau": 1.0}, num_results=3)
 
-    def test_a_kernel_and_its_curried_kernel_pickle(self):
+    def test_a_kernel_and_its_partly_bound_kernel_pickle(self):
         kernel = conditional_distribution(_location, given_spec=SLOTS, label="y")
         restored = pickle.loads(pickle.dumps(kernel))
         np.testing.assert_allclose(condition_on(restored, {"mu": 1.0, "tau": 2.0})._mean(), 1.0)
-        curried = pickle.loads(pickle.dumps(condition_on(kernel, {"mu": 1.0})))
-        assert list(curried.given_spec) == ["tau"]
-        np.testing.assert_allclose(condition_on(curried, {"tau": 2.0})._mean(), 1.0)
+        rest = pickle.loads(pickle.dumps(condition_on(kernel, {"mu": 1.0})))
+        assert list(rest.given_spec) == ["tau"]
+        np.testing.assert_allclose(condition_on(rest, {"tau": 2.0})._mean(), 1.0)
 
 
 class TestNotation:
@@ -281,20 +281,20 @@ class TestNotation:
         kernel = conditional_distribution(_location, given_spec=SLOTS, label="glm")
         assert str(kernel) == kernel.notation == "glm(y | mu, tau)"
 
-    def test_a_curried_kernel_lists_its_fixed_paths_after_its_free_slots(self):
+    def test_a_partly_bound_kernel_lists_its_fixed_paths_after_its_free_slots(self):
         """``condition_on`` records the bound slots; here they are set by hand."""
         kernel = conditional_distribution(_location, given_spec=SLOTS, label="glm")
-        curried = kernel._condition_on({"mu": 1.0})
-        assert curried.notation == "glm(y | tau)"
-        curried._store_expression(curried._expression.with_fixed(("mu",)))
-        assert curried.notation == "glm(y | tau; mu)"
+        rest = kernel._condition_on({"mu": 1.0})
+        assert rest.notation == "glm(y | tau)"
+        rest._store_expression(rest._expression.with_fixed(("mu",)))
+        assert rest.notation == "glm(y | tau; mu)"
         assert kernel.notation == "glm(y | mu, tau)"
 
-    def test_currying_a_curried_kernel_keeps_its_fixed_paths(self):
+    def test_binding_a_partly_bound_kernel_keeps_its_fixed_paths(self):
         kernel = conditional_distribution(_scaled_location, given_spec=_THREE_SLOTS, label="glm")
-        curried = kernel._condition_on({"mu": 1.0})
-        curried._store_expression(curried._expression.with_fixed(("mu",)))
-        assert curried._condition_on({"tau": 2.0}).notation == "glm(y | scale; mu)"
+        rest = kernel._condition_on({"mu": 1.0})
+        rest._store_expression(rest._expression.with_fixed(("mu",)))
+        assert rest._condition_on({"tau": 2.0}).notation == "glm(y | scale; mu)"
 
 
 def _scaled_location(mu: Any, tau: Any, scale: Any) -> Distribution:
@@ -338,11 +338,11 @@ class TestOptionalSlots:
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
         np.testing.assert_allclose(condition_on(kernel, {"mu": 1.0, "scale": 3.0})._variance(), 9.0)
 
-    def test_binding_an_optional_slot_alone_curries_the_kernel(self):
+    def test_binding_an_optional_slot_alone_leaves_a_kernel(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
-        curried = condition_on(kernel, {"scale": 3.0})
-        assert curried.given_spec == InputSpec(mu=REAL)
-        np.testing.assert_allclose(condition_on(curried, {"mu": 0.0})._variance(), 9.0)
+        rest = condition_on(kernel, {"scale": 3.0})
+        assert rest.given_spec == InputSpec(mu=REAL)
+        np.testing.assert_allclose(condition_on(rest, {"mu": 0.0})._variance(), 9.0)
 
     def test_construction_reads_the_law_at_the_defaults(self):
         """A default that fixes a shape reaches the function as its value."""
@@ -356,8 +356,8 @@ class TestOptionalSlots:
         restored = pickle.loads(pickle.dumps(kernel))
         assert restored.given_spec == kernel.given_spec
         np.testing.assert_allclose(condition_on(restored, {"mu": 1.0})._variance(), 4.0)
-        curried = pickle.loads(pickle.dumps(condition_on(kernel, {"scale": 3.0})))
-        np.testing.assert_allclose(condition_on(curried, {"mu": 1.0})._variance(), 9.0)
+        rest = pickle.loads(pickle.dumps(condition_on(kernel, {"scale": 3.0})))
+        np.testing.assert_allclose(condition_on(rest, {"mu": 1.0})._variance(), 9.0)
 
     def test_an_array_default_declares_its_shape(self):
         kernel = conditional_distribution(
@@ -412,15 +412,15 @@ class TestOptionalSlots:
         np.testing.assert_allclose(kernel._condition_on({})._mean(), 1.0)
         np.testing.assert_allclose(condition_on(kernel, {"mu": 3.0})._mean(), 3.0)
 
-    def test_binding_a_required_slot_curries_over_the_rest_and_keeps_them_optional(self):
+    def test_binding_a_required_slot_leaves_a_kernel_over_the_rest_and_keeps_them_optional(self):
         kernel = conditional_distribution(
             lambda mu, tau, scale=1.0: Normal("y", mu, tau * scale),
             given_spec={"mu": REAL, "tau": POSITIVE},
             label="y",
         )
-        curried = condition_on(kernel, {"mu": 0.0})
+        rest = condition_on(kernel, {"mu": 0.0})
         expected = InputSpec(tau=POSITIVE, scale=NumericArraySpec(())).with_optional("scale")
-        assert curried.given_spec == expected
+        assert rest.given_spec == expected
 
     def test_a_value_that_does_not_conform_to_an_optional_slot_raises(self):
         kernel = conditional_distribution(_scaled, given_spec={"mu": REAL}, label="y")
@@ -463,7 +463,7 @@ class TestOptionalSlots:
         y = jnp.array([1.0, 2.0, 0.5, 1.5, 2.5])
         budget = {"num_results": 500, "num_warmup": 500, "num_chains": 2}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(method="blackjax_nuts", method_options=budget)(
+            posterior = condition_on.using(method="blackjax_nuts", method_options=budget)(
                 kernel * Normal("mu", 0.0, 1.0), {"y": y}
             )
         assert list(posterior.event_spec.components) == ["mu"]

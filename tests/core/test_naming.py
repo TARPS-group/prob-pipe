@@ -42,6 +42,7 @@ from probpipe import (
     prob,
     quantile,
     sample,
+    standard_deviation,
     unnormalized_log_prob,
     unnormalized_prob,
     variance,
@@ -264,9 +265,10 @@ class TestAnOperationLabelsItsResultByItsLaw:
         [
             (lambda d: mean(d), "𝔼[height ~ prior]"),
             (lambda d: variance(d), "𝕍[height ~ prior]"),
+            (lambda d: standard_deviation(d), "√𝕍[height ~ prior]"),
             (lambda d: log_prob(d, jnp.asarray(0.0)), "log prior(height)"),
         ],
-        ids=["mean", "variance", "log_prob"],
+        ids=["mean", "variance", "standard_deviation", "log_prob"],
     )
     def test_a_scalar_law_result_is_labeled_over_the_law(self, compute, label):
         assert compute(self.LAW).label == label
@@ -752,7 +754,7 @@ class TestADefaultedSlotShowsItsDefault:
         assert at.notation == "counts(y | n0=50.0; K, r)"
         assert not hasattr(at, "given_spec")
 
-    def test_a_curried_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
+    def test_a_partly_bound_kernel_keeps_the_defaulted_slot_after_the_free_slots(self):
         assert str(condition_on(_counts(), {"K": 300.0})) == "counts(y | r, n0=50.0; K)"
 
     def test_binding_the_defaulted_slot_moves_it_to_the_fixed_paths(self):
@@ -833,6 +835,13 @@ class TestTheLabelsOfValuesComputedFromALaw:
                 ("variance(y)", "variance(mu)"),
                 id="variance",
             ),
+            pytest.param(
+                standard_deviation,
+                lambda: (_model(),),
+                "√𝕍[(y, mu) ~ model]",
+                ("standard_deviation(y)", "standard_deviation(mu)"),
+                id="standard_deviation",
+            ),
             pytest.param(cov, lambda: (_model(),), "ℂ[(y, mu) ~ model]", ("cov(y, mu)",), id="cov"),
             pytest.param(
                 quantile, lambda: (_prior(), 0.5), "ℚ[mu ~ prior]", ("quantile(mu)",), id="quantile"
@@ -865,7 +874,7 @@ class TestTheLabelsOfValuesComputedFromALaw:
 
         renamed = square.with_label("g")
         with workflow_run(seed=0):
-            lifted = mean(renamed.with_options(n_broadcast_samples=8)(_prior()))
+            lifted = mean(renamed.using(n_broadcast_samples=8)(_prior()))
             assert expectation(_prior(), renamed).label == lifted.label == "𝔼[sq(mu ~ prior)]"
 
     def test_a_draw_and_a_score_of_a_posterior_list_its_fixed_paths(self):
@@ -977,9 +986,7 @@ class TestTheLabelsOfALiftedFunction:
             label="tau",
         )
         with workflow_run(seed=0):
-            laws = shifted.with_options(n_broadcast_samples=8)(
-                Normal("mu", 0.0, 1.0, label="prior"), taus
-            )
+            laws = shifted.using(n_broadcast_samples=8)(Normal("mu", 0.0, 1.0, label="prior"), taus)
             means = mean(laws)
         assert laws.label == "shifted"
         assert laws[1].label == "shifted[tau=1]"
@@ -997,7 +1004,7 @@ class TestTheLabelsOfALiftedFunction:
             label="tau",
         )
         with workflow_run(seed=0):
-            laws = effect_of.with_options(n_broadcast_samples=8)(
+            laws = effect_of.using(n_broadcast_samples=8)(
                 Normal("mu", 0.0, 1.0, label="prior"), taus
             )
             element = laws[3]
@@ -1031,7 +1038,7 @@ class TestTheLabelsOfALiftedFunction:
         def scaled(x: jax.Array, scale: float = 2.0) -> jax.Array:
             return x * scale
 
-        lift = scaled.with_options(n_broadcast_samples=4)
+        lift = scaled.using(n_broadcast_samples=4)
         with workflow_run(seed=0):
             prior = Normal("mu", 0.0, 1.0, label="prior")
             assert lift(prior).notation == "scaled(mu ~ prior)"
@@ -1044,7 +1051,7 @@ class TestTheLabelsOfALiftedFunction:
         def scaled(x: jax.Array, scale: float = 2.0) -> jax.Array:
             return x * scale
 
-        lift = scaled.with_options(n_broadcast_samples=4)
+        lift = scaled.using(n_broadcast_samples=4)
         with workflow_run(seed=0):
             prior = Normal("mu", 0.0, 1.0, label="prior")
             assert lift(prior, scale=scale).notation == "scaled(mu ~ prior, 2.0)"

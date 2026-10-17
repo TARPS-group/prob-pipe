@@ -51,7 +51,7 @@ class TestMethodOptions:
     def test_progress_bar_false_prints_no_progress_bar(self, method, normal_mean, capfd):
         options = {**_BUDGETS[method], "progress_bar": False}
         with workflow_run(seed=0):
-            condition_on.with_options(method=method, method_options=options)(
+            condition_on.using(method=method, method_options=options)(
                 normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
             )
         out, err = capfd.readouterr()
@@ -61,7 +61,7 @@ class TestMethodOptions:
         """PyMC's own name ``progressbar`` is not an option of the method."""
         options = {**_BUDGETS[method], "progressbar": False}
         with pytest.raises(TypeError, match="unknown method option 'progressbar'"):
-            condition_on.with_options(method=method, method_options=options)(
+            condition_on.using(method=method, method_options=options)(
                 normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
             )
 
@@ -77,7 +77,7 @@ def test_the_draws_of_an_empirical_advi_result_follow_the_workflow_seed(normal_m
 
     def draws(seed: int) -> np.ndarray:
         with workflow_run(seed=seed):
-            posterior = condition_on.with_options(method="pymc_advi", method_options=options)(
+            posterior = condition_on.using(method="pymc_advi", method_options=options)(
                 normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
             )
         return np.asarray(flat_draws(posterior)["mu"])
@@ -91,7 +91,7 @@ def test_pymc_nuts_runs_pymcs_own_sampler_where_nutpie_is_installed(normal_mean)
     pytest.importorskip("nutpie")
     options = {**_BUDGETS["pymc_nuts"], "progress_bar": False}
     with workflow_run(seed=0):
-        posterior = condition_on.with_options(method="pymc_nuts", method_options=options)(
+        posterior = condition_on.using(method="pymc_nuts", method_options=options)(
             normal_mean, {"y": np.array([0.1, -0.3, 0.7])}
         )
     attrs = posterior.annotations["arviz"].posterior.attrs

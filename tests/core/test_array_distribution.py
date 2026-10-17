@@ -85,7 +85,7 @@ class TestDistributionBase:
     def test_convert_on_base_class(self, scalar_normal):
         """from_distribution is accessible on Distribution base."""
         # convert returns a Normal source unchanged
-        result = convert.with_options(method_options={"num_samples": 100})(scalar_normal, Normal)
+        result = convert.using(method_options={"num_samples": 100})(scalar_normal, Normal)
         assert isinstance(result, Normal)
 
 
@@ -168,7 +168,10 @@ class TestCanonicalConvenience:
         from probpipe import Gamma
 
         target = Gamma("gamma_target", concentration=1.0, rate=1.0)
-        with pytest.raises(ValueError, match=r"Normal 'Normal' \(support=real\)"):
+        with pytest.raises(
+            ValueError,
+            match=r"the fitted Gamma is supported on positive, but 'Normal' declares the support real",
+        ):
             _check_support(target, scalar_normal)
 
     def test_the_support_check_skips_a_source_without_a_support(self, scalar_normal):

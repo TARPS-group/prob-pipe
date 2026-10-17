@@ -9,11 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`with_options` is renamed `using`.** `Function.using(**controls)` and
+  `Operation.using(**controls)` behave as `with_options` did.
+  Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
+  `condition_on.using(method="tfp_nuts")(model, data)`.
+- **A kernel's conditional methods must be pure.** A joint compiles the
+  function of `conditional_distribution`, and the conditional methods of any
+  `ConditionalDistribution`, when it draws or scores the kernel at many given
+  values, and it keeps the compiled program. A call that reuses the program
+  computes with the values that the globals the function reads had when it
+  was compiled, while a call with new input shapes or a single given value
+  reads their current values. A warning the function issues is issued when a
+  program is compiled. A value that changes between calls belongs in a given
+  slot.
+- `pushforward` and `expectation` validate construction-bound arguments as
+  constants, just as they validate `fixed_args`. Maps annotated `Any` retain
+  their input/output schema checks when pushed forward, including shared
+  symbolic dimensions.
+
+- **`expectation(d, f)` integrates `f` over draws of `d` on every route.**
+  It is `mean(pushforward(d, f))`, so the integrand receives one draw at a
+  time whatever its parameter's annotation. An integrand whose declared input
+  cannot take a draw raises `ApplicabilityError` from the call and from
+  `check()`, on every route: `expectation(Normal("x", 1.0, 2.0), the_law)` for
+  `the_law(law: Distribution)` used to return `1.0`, which is the mean of
+  `the_law(d)`, and now raises. An integrand annotated `Any` receives draws,
+  where it received the whole law. A law or a batch in `fixed_args` raises
+  `ApplicabilityError`, where `closed_form` passed it to the integrand as it
+  is and the evaluation rules lifted it, so the result depended on the route;
+  `mean(function(f)(x=d, a=A))` integrates over both laws.
+- **`expectation`'s routes are `closed_form` and `pushforward_mean`,** which
+  replace `evaluation_rules` and `identity`. A rule name such as
+  `method="sampling_lift"` still selects the rule, and the qualified form is
+  `pushforward_mean/sampling_lift`. The provenance of `pushforward_mean`
+  records the exactness of the rule and of the mean together, while
+  `expectation.check` states a call whose rule is exact as approximate, since
+  the mean's route is chosen only when the call runs. Under `exact_only` both
+  steps are restricted to exact routes, so a Monte Carlo mean of a pushforward
+  that an exact rule built raises `ResolutionError` naming `mean`.
+- **`condition_on`'s route that binds given slots is named
+  `bind_given_slots`,** in place of `curry`. The route binds the given slots of
+  a `ConditionalDistribution` and runs no inference; a `check` report, a
+  result's provenance, and an error message now name it, as in
+  `bind_given_slots/nutpie_nuts`, and `method="curry"` no longer selects it.
+- **On `closed_form`, `expectation` passes a record atom to the integrand as a
+  `Record`,** as the evaluation rules pass a record draw, where it passed the
+  nested `dict` of the atom's raw leaves. The integrand's open parameter is
+  the one parameter with no default that is neither in `fixed_args` nor bound
+  by the map's `bind`, on every route, so an integrand whose only parameter has
+  a default or is variadic raises `ApplicabilityError` on `closed_form` as on
+  the other routes.
+
 - Remove the experimental `Node`, `Module`, `AbstractModule`,
   `workflow_method`, `abstract_workflow_method`, and `InputFrozenError` APIs.
   `Function` and `@function` no longer accept `module=`. Use ordinary callables
   and `bind=` for construction-time arguments; call arguments override those
   bindings, followed by Python defaults for omitted arguments.
+- **Lifted empirical laws name their atom level after the output component,**
+  such as `trajectory`, instead of `draw`. Display aliases leave this level as
+  it is. A batch-valued output keeps its event levels after the atom level, and
+  an output component named like one of those levels needs a distinct component
+  in `OutputSpec`. Two lifted laws whose output components differ, such as
+  `double` and `shift`, keep their atoms on different levels, so a function
+  called on both `.atoms` forms their outer product where it paired them on
+  `draw`.
 
 - Automatic mathematical notation uses `𝔼`, `ℙ`, `ℚ`, `𝕍`, `ℂ`, and `𝒻` for
   expectation, generic laws or kernels, quantile, variance, covariance, and
@@ -329,7 +388,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields of their names, and a kernel with one given slot, such as an amortized
   posterior's `observation`, takes the one observed field. Without `posterior`,
   each replication fits `model` with
-  `condition_on.with_options(method=method, method_options=method_options)`.
+  `condition_on.using(method=method, method_options=method_options)`.
   A `method` or `method_options` beside `posterior` raises `ValueError`. Each
   replication draws `num_posterior_draws` times from its posterior with
   `sample`, so a weighted posterior, such as SMC-ABC's particles, is resampled
@@ -396,8 +455,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the workers no longer repeat one another's prior draws and simulations.
 
   Replace
-  `condition_on.with_options(method_options={"random_seed": 0, "num_results": 500})(model, data)`
-  with `condition_on.with_options(method_options={"num_results": 500})(model, data)`
+  `condition_on.using(method_options={"random_seed": 0, "num_results": 500})(model, data)`
+  with `condition_on.using(method_options={"num_results": 500})(model, data)`
   inside `workflow_run(seed=0)`, and
   `learn_amortized_posterior(prior, simulator, random_seed=0)` with
   `learn_amortized_posterior(prior, simulator)` inside `workflow_run(seed=0)`.
@@ -979,11 +1038,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Function` controls now live outside user call kwargs.**
   `@function(...)` configures definition-time controls, and
-  `workflow.with_options(...)(...)` is the call-time override API for
+  `workflow.using(...)(...)` is the call-time override API for
   `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
-  ProbPipe controls; use `workflow.with_options(...)(...)` instead.
+  ProbPipe controls; use `workflow.using(...)(...)` instead.
 - **`Function.workflow_kind` and `Module.workflow_kind` now require
   `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
   and `None` are no longer accepted and now raise `TypeError`; use
@@ -1426,6 +1485,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`standard_deviation(d)` returns the standard deviation of a law, the square
+  root of its variance in each coordinate.** A record law's standard deviation
+  is a record with a field per component, as `standard_deviation(mu)`, so
+  `standard_deviation(Normal("mu", 0.0, 2.0) * Gamma("tau", 2.0, 1.0))` holds
+  `2.0` and `√2` without mapping `sqrt` over the fields of `variance`. A random
+  function's is its pointwise standard deviation function, and the result is
+  labeled `√𝕍[(mu, tau) ~ d]`. It is defined as `sqrt(variance(d))`, so it takes
+  the routes of `variance`, and `exact_only` and `n_broadcast_samples` set on it
+  pass to `variance`.
+- **A derived operation's `method` error names the operation that has the
+  route.** `standard_deviation.using(method="monte_carlo")` raises
+  `ResolutionError` saying that `standard_deviation` does not pass `method` on
+  to `variance` and to call `variance.using(method='monte_carlo')`, and
+  `expectation` names `mean` the same way.
+- **`pushforward(d, f, fixed_args)`** returns the law of `f(X)` for `X ~ d`.
+  The map receives one draw at a time whatever its parameter's annotation, so
+  a statistic annotated `Distribution` over a random measure receives each
+  draw, and `pushforward(K, f, given=s)` conditions a kernel first. An integrand
+  whose declared input cannot take a draw, and a law or a batch in
+  `fixed_args`, raise `ApplicabilityError` before any route runs.
+- **`@operation(identity_route=...)`** registers a composite route that runs
+  a route of each constituent operation in turn in place of the generic
+  identity route of a derived operation, and provenance records the exactness
+  that route learns when it runs.
 - Distribution-subject operations accept keyword-only `given=` for conditional
   operands, including sampling, densities, moments, quantiles, expectations,
   marginals, and conversion. Conditional capabilities serve calls directly;
@@ -1501,6 +1584,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each notebook opens on Google Colab from its badge, and the notebook
   job of CI gains a leg for `docs/get_started/`. A notebook links to another
   page by its file, which the docs build rewrites to the page's URL and checks.
+- **A user guide of nine chapters.** Each chapter explains one feature area on
+  small examples, and the guide's overview page lists them:
+  1. terms: the label and notation, spec, and stored data of every object,
+     immutability, batches, and provenance;
+  2. values and records;
+  3. distributions, including `distribution` from a sampler or a density;
+  4. joint models and conditional distributions;
+  5. functions on values, distributions, and batches;
+  6. conditioning and the inference methods, with a PyMC model and SMC-ABC;
+  7. MCMC diagnostics, predictive checks, leave-one-out comparison, and
+     simulation-based calibration;
+  8. empirical distributions, `convert`, resampling, and sequential updating;
+  9. routes, options, reproducible draws, and provenance.
+
+  Each chapter opens on Google Colab from its badge, and the user-guide leg
+  of the notebook job installs the `pymc` and `pyabc` extras for chapter 6.
 - **`SBCResult.coverage(levels)`** returns, for each credible level, the share
   of the replications whose `θ★` lies in the central interval of that level, one
   share per parameter. It reads the ranks alone: `θ★` lies in the interval when
@@ -2400,9 +2499,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``_RecordDistributionView`` (mirror the existing shims on
   ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
+- **Functions can lift to empirical laws of whole batches.** Atom counts,
+  weights, exact enumeration, and sampling distinguish atom axes from each
+  event's batch axes. `include_inputs=True` retains each complete batch in
+  the joint record. A subsequent lift receives each batch in its raw form,
+  or as the batch at a parameter annotated with a batch class such as
+  `NumericArrayBatch`. Under `dispatch="auto"` and `"jax"`, a body that
+  returns a numeric batch, and a later lift over its law, run in one
+  `jax.vmap`. A batch-valued event with numeric elements has
+  elementwise moments, so the mean of a trajectory law on `time` is a
+  `NumericArrayBatch` on `time`. Nested event batches combine their levels in
+  outer-to-inner order, so bootstrap replicates of trajectories support
+  moments and `include_inputs=True` lifts.
 
 ### Changed
 
+- **A parametric family and a joint's conditional factors reuse their
+  compiled code across calls.** A family samples, scores, and takes quantiles
+  through compiled programs that a later call with the same parameter shapes
+  reuses. A joint draws and scores a conditional factor with numeric givens at
+  all of its given draws through one compiled program, which the factor keeps
+  and which takes new draws, keys, and numeric unmet givens without compiling
+  again.
+  - **Speed:** a warm `sample(model, 50)` of the first tutorial's model drops
+    from about 1.2 s to about 0.005 s.
+  - **Seeded results:** a compiled program fuses its arithmetic differently,
+    which changes the last float32 digit of some draws and densities. A
+    rejection sampler or a discrete family can then return a different value
+    where a parameter differs in its last digit.
+  - **Checks:** a family's checks of its parameter values do not run inside a
+    conditional factor's compiled program, so an invalid parameter, such as a
+    negative mixture weight, gives draws and densities, such as `nan`, rather
+    than an error.
+  - **Uncompiled calls:** a backend that holds a class a user writes, a
+    function such as the model of a `JointDistributionSequential`, or a part
+    built with `validate_args=True` runs uncompiled. So does a factor that does
+    not compile, such as one that converts a given to a Python number, for
+    calls with the same structure of unmet givens.
 - **A dependent joint's mean, variance, and quantiles take `by_component`
   rather than `monte_carlo`** when one of its components has an exact
   summary. The check of such a call lists `by_component (exact)` and
@@ -2410,7 +2543,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   differs from the one `monte_carlo` gave, since they are drawn through their
   view. A component whose summary is known to be undefined, such as the mean
   of a Cauchy root factor, now raises `MathematicalDomainError`, where the
-  fallback returned an estimate. `with_options(method="monte_carlo")` keeps the
+  fallback returned an estimate. `using(method="monte_carlo")` keeps the
   fallback.
 - **A law's fingerprint is computed once.** A distribution keeps its
   fingerprint in a memo that a copy or a pickle leaves out, so the views and
@@ -3311,6 +3444,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed (breaking)
 
+- **`evaluate` is removed.** `pushforward(d, f)` computes the law of `f(X)`
+  for `X ~ d`, and the direct call `f(v)` replaces every other use:
+  `f(v)` for a value, `function(f)(batch)` for a batch, and `f(d)` for a map
+  that takes the law itself. `evaluate.check(f, v)` becomes `f.check(v)` or
+  `pushforward.check(d, f)`. The bootstrap distribution of a statistic is
+  `pushforward(B, stat)`.
 - **`Function` no longer takes the callable as `func=`.** `Function(g, func=h)`
   raises `TypeError`, where it warned and used `h`; pass the callable first, as
   `Function(h, label="g")`.
@@ -3346,6 +3485,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An installed PyMC older than 6.2 raises an `ImportError` that names the
+  upgrade,** as `ProbPipe needs PyMC 6.2 or later, which works with ArviZ 1.x,
+  but PyMC 5.28.5 is installed`, where PyMC 5 failed on import with an error
+  about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
+  install cell, and the minimal Colab command of the installation page, also
+  installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
+- **A derived operation passes `exact_only` and `n_broadcast_samples` to the
+  functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
+  0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
+  density, because the `log_prob` that `prob` calls selects only exact routes.
+  `exact_only` restricts the route selection of every operation and plain
+  `Function` the identity runs, at any depth and in the workers the engine
+  dispatches to. A derived operation therefore still raises `ResolutionError`
+  when a call inside it has only an approximate route, and when it is declared
+  without an `identity_check`, which the message names. The conversion of an
+  argument inside the identity follows its parameter's `conversions` control,
+  as in a direct call. A derived operation's `n_broadcast_samples` used to be
+  dropped at its identity's calls, which drew their own default, and now sets
+  their draws when the derived call sets it, unless the identity sets its own
+  on the call. The other controls stay each call's own. A composite identity,
+  such as `expectation`'s, runs each of its steps under the same two controls.
+  A call under `exact_only` on an operation without an exact route says so,
+  where it said that no route is registered.
 - **A SciPy distribution with a location or scale its family does not hold
   converts to the same law.** The `scipy` converter used to read a `beta`'s
   shape arguments alone and drop the location of a `gamma`, `expon`, or
@@ -3356,6 +3518,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shifted support, such as `greater_than(3.0)` for `scipy.stats.gamma(2.0, loc=3.0)`.
   The approximate converters read a SciPy source through the same law, so
   their fits and draws follow the location and scale too.
+- **A moment-matched fit refuses a family whose fixed support differs from
+  the source's.** The subset test on supports used to accept a pair it did not
+  compare, such as `interval(1.0, 3.0)` against `unit_interval`, and accepted
+  `positive` as a subset of `greater_than(1.0)`.
+  So `convert(scipy.stats.beta(2, 3, loc=1, scale=2), Beta)` fit a `Beta` on
+  `[0, 1]` with mean about 0.001 to a law on `[1, 3]` with mean 1.8.
+  Two intervals of the reals now compare by their bounds, so the `moment_match`
+  check reports such a fit infeasible, as for `scipy.stats.gamma(2, loc=1)`
+  to `Gamma` or `Normal`, and `convert` raises `ResolutionError` when no
+  other converter applies.
+  List and tuple bounds compare element-wise, as array bounds do, so a law
+  declared on `interval([0, 0], [1, 1])` can be fit by `Beta`.
+  The converter option `check_support=False` still fits the family on its own
+  support.
+  The same comparison checks a law a `Function` returns against the support its
+  output spec declares, so a returned `Uniform` on `[0, 2]` fails a declared
+  `unit_interval`.
+  The support refusals of `moment_match` at check and at fit read alike, and
+  each names the converter option `check_support=False`.
 - **A SciPy distribution without a family declares the dtype of its draws**:
   JAX's default integer dtype for a discrete distribution, such as
   `scipy.stats.poisson`, and the default floating dtype otherwise, which is
@@ -3363,6 +3544,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It used to declare `float32` in both cases.
 - **The `tfp` converter reads the rate of a TFP `Gamma` or `Poisson` built from
   `log_rate`.** It used to raise `ValueError`.
+- **A call over a batch of records and a law lifts the law at each record row.**
+  The call raised `TypeError` for records of several fields, as did a lift with
+  such a record among its other arguments. A record row displays as its own
+  expression, as `f(rows[row=0], mu ~ prior)`, where a row of one field
+  displayed as a dictionary. The JAX trace probe passes each argument it does
+  not map as the call passed it, as the executor does. A body that reads a
+  record's fields therefore runs in one `vmap` under `dispatch="auto"` and
+  `dispatch="jax"`, where the probe converted the record to an array and
+  failed. A pandas Series among the other arguments sends the call to
+  sequential dispatch under `"auto"`, where the JAX executor raised.
 - **Empty sweeps require a concrete output declaration before execution.**
   Both the call and `Function.check` refuse an omitted declaration, a type hole,
   or an output dimension that remains unbound after input dimensions bind.
@@ -3395,6 +3586,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Each cell of a nested sweep over stored objects chooses its own dispatch
   under `auto`.** A cell reused the dispatch that the first cell chose, which
   raised `ConcretizationTypeError` when a later cell could not be traced.
+- **A function sweep broadcasts the shapes of each named level by NumPy's
+  rule.** Within a level that the swept batches share, shapes of any rank align
+  from the right and a size-one axis expands. The result carries each level's
+  broadcast shape. Incompatible sizes raise an `ApplicabilityError` that names
+  the level and each argument's shape.
 - **A single str is one name wherever a sequence of names is taken.**
   `score_posterior(metrics="mmd")` scores `mmd`, where it raised that `'m'` is
   an unknown metric, and `add_mcmc_diagnostics(metrics="rhat")` computes R-hat,
@@ -3499,7 +3695,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bootstrap law checks its `level` by the same rule when it is constructed.
 - **`convert` fits a family on another support under `check_support=False`.**
   Passing the option as
-  `convert.with_options(method_options={"check_support": False})` raised
+  `convert.using(method_options={"check_support": False})` raised
   `ResultSchemaError` whenever the source declared a support, as converting a
   `Gamma` law to `Normal` did. The result now has the family's own support, as
   `converter_registry.convert(..., check_support=False)` returns it.
@@ -3509,7 +3705,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result recorded `method="pymc_nuts"`. It now passes `nuts_sampler="pymc"`.
 - **`pymc_nuts` and `pymc_advi` read the `progress_bar` method option.** They
   refused it with `TypeError`, so
-  `condition_on.with_options(method_options={"progress_bar": False})` on a
+  `condition_on.using(method_options={"progress_bar": False})` on a
   `PyMCModel` failed wherever `pymc_nuts` was selected, as it is without
   nutpie, and no option turned off PyMC's progress bars. Each now passes the
   option to PyMC as `progressbar`, `True` unless set, as `nutpie_nuts` does.

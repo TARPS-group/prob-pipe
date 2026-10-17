@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import pickle
+import re
 import subprocess
+import tomllib
 import types
+from pathlib import Path
 from unittest.mock import patch
 
 import jax
@@ -130,7 +134,7 @@ class TestStanModel:
         assert not isinstance(model, SupportsConditionalLogProb)
         assert not _kernel_is_normalized(model)
 
-    def test_data_given_at_construction_curry_the_program(self, regression_file):
+    def test_data_given_at_construction_bind_the_program(self, regression_file):
         model = StanModel(regression_file, data={"N": 3, "K": 2}, label="regression")
         assert list(model.given_spec) == ["X", "y"]
         assert model.event_spec.spec["beta"].shape == (2,)
@@ -529,7 +533,7 @@ class TestPyMCModel:
         assert isinstance(kernel, SupportsConditionalUnnormalizedLogProb)
         assert not isinstance(kernel, SupportsConditionalSampling)
         assert not _kernel_is_normalized(kernel)
-        law = probpipe.operations._condition.condition_on.with_options(method="unnormalized")(
+        law = probpipe.operations._condition.condition_on.using(method="unnormalized")(
             kernel, {"x": np.linspace(0, 1, 3)}
         )
         assert not _is_normalized(law)
@@ -552,3 +556,63 @@ class TestPyMCModel:
         model = PyMCModel(_normal_model, label="normal")
         restored = pickle.loads(pickle.dumps(model))
         assert (restored.label, restored.spec) == (model.label, model.spec)
+
+
+class TestThePyMCRelease:
+    """PyMC is imported only at a release that works with ArviZ 1.x, and an older one names the upgrade."""
+
+    @staticmethod
+    def _installed(monkeypatch, version):
+        original = importlib.metadata.version
+
+        def installed(name):
+            if name != "pymc":
+                return original(name)
+            if version is None:
+                raise importlib.metadata.PackageNotFoundError(name)
+            return version
+
+        monkeypatch.setattr(_programs.importlib.metadata, "version", installed)
+
+    def test_an_older_release_names_the_upgrade(self, monkeypatch):
+        self._installed(monkeypatch, "5.28.5")
+        with pytest.raises(ImportError, match=r'PyMC 6\.2 or later.*PyMC 5\.28\.5.*"pymc>=6\.2"'):
+            _programs._import_pymc()
+
+    def test_a_missing_pymc_names_the_extra(self, monkeypatch):
+        self._installed(monkeypatch, None)
+        with pytest.raises(ImportError, match=r"probpipe-core\[pymc\]"):
+            _programs._import_pymc()
+
+    def test_a_model_refuses_an_older_release_before_it_imports_pymc(self, monkeypatch):
+        self._installed(monkeypatch, "5.28.5")
+
+        def model():
+            raise AssertionError("the model is built only after the check")
+
+        with pytest.raises(ImportError, match=r"PyMC 6\.2 or later"):
+            PyMCModel(model)
+
+    def test_the_floor_is_the_pymc_extras(self):
+        project = tomllib.loads(
+            (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+        )
+        requirement = next(
+            entry
+            for entry in project["project"]["optional-dependencies"]["pymc"]
+            if entry.startswith("pymc")
+        )
+        floor = re.fullmatch(r"pymc>=([\d.]+)", requirement).group(1)
+        assert _programs._release(floor) == _programs._PYMC_FLOOR
+
+    @pytest.mark.parametrize(
+        ("version", "release"),
+        [
+            ("6.2", (6, 2)),
+            ("5.28.5", (5, 28, 5)),
+            ("6.3.0rc1", (6, 3, 0)),
+            ("6.2.1+local", (6, 2, 1)),
+        ],
+    )
+    def test_a_release_reads_its_first_three_numbers(self, version, release):
+        assert _programs._release(version) == release

@@ -95,7 +95,7 @@ class MethodProfile:
         Whether the method's draws converge to the posterior, which selects the
         contract it is held to.
     method_options : Mapping[str, Any]
-        The ``method_options`` control ``condition_on.with_options`` receives.
+        The ``method_options`` control ``condition_on.using`` receives.
     """
 
     representation: str
@@ -107,11 +107,27 @@ class MethodProfile:
 #: warmup steps, which gives every case well over a thousand effective draws.
 _GRADIENT = {"num_results": 2000, "num_warmup": 1000, "num_chains": 2}
 
-#: The budget of the random walk, whose draws are more autocorrelated.
-_RANDOM_WALK = {"num_results": 4000, "num_warmup": 2000, "num_chains": 2}
+#: The budget of the random walk, whose draws are more autocorrelated: two chains
+#: of 16000 draws after 4000 warmup steps. On eight_schools, two chains of 4000
+#: draws mix slowly enough that the MCSE understates the error of a tail quantile
+#: or a variance of theta_tilde. They miss their band, or R-hat its limit, at 6 of
+#: workflow seeds 0 to 63. The longer chains meet every band at those seeds, the
+#: largest error reaching 0.8 of its band.
+_RANDOM_WALK = {"num_results": 16000, "num_warmup": 4000, "num_chains": 2}
 
 #: The budget of a stochastic-gradient sampler, which needs a minibatch size.
 _STOCHASTIC = {"num_results": 2000, "num_warmup": 1000, "batch_size": 10}
+
+#: The budget of SGHMC, whose step size is ten times its default of 1e-3. Each
+#: SGHMC step resamples the momentum and integrates ten Euler steps, so at the
+#: default a step moves the chain about as far as a Langevin step of 5e-5 does,
+#: and the chain does not forget its start within the budget. At 1e-3 a
+#: coefficient's mean misses its band on gaussian_linear at 15 of workflow seeds
+#: 0 to 63, with errors up to 3.2 times the band. At 1e-2 every mean of
+#: gaussian_linear and poisson_regression meets its band at seeds 0 to 127, the
+#: largest error reaching half its band. At 2e-2 the chain diverges on
+#: poisson_regression.
+_SGHMC = {**_STOCHASTIC, "step_size": 1e-2}
 
 #: Each registered method's profile. The tolerances do not depend on the
 #: budgets, since the MCSE scales with them.
@@ -121,7 +137,7 @@ PROFILES: dict[str, MethodProfile] = {
     "blackjax_rwmh": MethodProfile("probpipe", True, _RANDOM_WALK),
     "blackjax_elliptical_slice": MethodProfile("probpipe", True, _GRADIENT),
     "blackjax_sgld": MethodProfile("probpipe", False, _STOCHASTIC),
-    "blackjax_sghmc": MethodProfile("probpipe", False, _STOCHASTIC),
+    "blackjax_sghmc": MethodProfile("probpipe", False, _SGHMC),
     "tfp_nuts": MethodProfile("probpipe", True, _GRADIENT),
     "nutpie_nuts": MethodProfile("pymc", True, _GRADIENT),
     "pymc_nuts": MethodProfile("pymc", True, {**_GRADIENT, "cores": 1}),
@@ -169,21 +185,6 @@ KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "poisson_regression")] = (
 # Fails at four of workflow seeds 0 to 5, seed 0 among them.
 KNOWN_FAILURES[("pyabc_smcabc", "probpipe", "beta_bernoulli")] = (
     _ABC_RAW_OUTCOMES,
-    AssertionError,
-    False,
-)
-# Fails at three of workflow seeds 0 to 31, seed 0 among them.
-KNOWN_FAILURES[("blackjax_rwmh", "probpipe", "eight_schools")] = (
-    "the random walk's two chains of 4000 draws mix slowly over eight_schools, so a tail "
-    "quantile of theta_tilde or mu, or a variance of theta_tilde, misses its bound at some "
-    "seeds",
-    AssertionError,
-    False,
-)
-# Fails at three of workflow seeds 0 to 11, and passes at seed 0.
-KNOWN_FAILURES[("blackjax_sghmc", "probpipe", "gaussian_linear")] = (
-    "SGHMC's fixed step size and friction at the harness's budget leave a coefficient's "
-    "mean further from the reference than a quarter of its posterior sd at some seeds",
     AssertionError,
     False,
 )
@@ -369,10 +370,10 @@ def assert_matches(
         Listing every comparison that fails.
     """
     posterior = independent_draws(posterior)
-    means = mean.with_options(raw=True)(posterior)
-    variances = variance.with_options(raw=True)(posterior)
+    means = mean.using(raw=True)(posterior)
+    variances = variance.using(raw=True)(posterior)
     levels = jnp.asarray(INTERVAL_LEVELS)
-    quantiles = quantile.with_options(raw=True)(posterior, levels)
+    quantiles = quantile.using(raw=True)(posterior, levels)
     comparisons = _Comparisons()
     for path, leaf in reference.leaves.items():
         shape = leaf.mean.shape
@@ -491,7 +492,7 @@ def validate_method(
             pytest.skip(f"{name} is not registered here, since its backend is not installed")
         case = canonical.case(case_name)
         model, data = _model_and_data(case, profile.representation, request)
-        view = condition_on.with_options(method=name, method_options=profile.method_options)
+        view = condition_on.using(method=name, method_options=profile.method_options)
         report = view.check(model, data)
         if report.feasible is not True:
             pytest.skip(f"{name} does not apply to {case_name}: {_skip_reason(report)}")
@@ -542,11 +543,11 @@ def calibration_ranks(
     rows = []
     for replication in range(replications):
         with workflow_run(seed=10_000 + replication):
-            joint_draw = sample.with_options(raw=True)(case.model)
+            joint_draw = sample.using(raw=True)(case.model)
         given = {name: joint_draw[name] for name in observed}
         view = condition_on
         if method is not None:
-            view = condition_on.with_options(method=method, method_options=method_options or {})
+            view = condition_on.using(method=method, method_options=method_options or {})
         with workflow_run(seed=replication):
             posterior = view(case.model, given)
         ranks = []

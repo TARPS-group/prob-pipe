@@ -270,11 +270,11 @@ class _BayesFlowLikelihoodBase(ConditionalDistribution):
         left = {slot: spec for slot, spec in self.given_spec.items() if slot not in values}
         if not left:
             return self._law(values)
-        curried = self._shallow_copy()
-        object.__setattr__(curried, "_provenance", None)
-        object.__setattr__(curried, "_bound", values)
-        object.__setattr__(curried, "_spec", ConditionalDistributionSpec(left, self.event_spec))
-        return curried
+        rest = self._shallow_copy()
+        object.__setattr__(rest, "_provenance", None)
+        object.__setattr__(rest, "_bound", values)
+        object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
+        return rest
 
     @abstractmethod
     def _law(self, values: Mapping[str, Any]) -> _LearnedLaw:

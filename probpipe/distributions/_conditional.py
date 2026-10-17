@@ -491,6 +491,20 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     operation on ``condition_on(K, s)``. A subclass implements
     :meth:`_condition_on`, and it may claim the conditional capabilities.
 
+    The conditional methods, such as ``_conditional_sample``, must be pure:
+    their result is determined by the given values and the key or the event
+    they take. A joint that draws or scores the kernel at many given values
+    compiles the method, vectorized over those values, and keeps the compiled
+    program for later calls with the same constants and input shapes. A call
+    that reuses the program computes with the values that the globals the
+    method reads had when the program was compiled. A call that compiles a new
+    program, or that runs uncompiled, reads their current values. A Python side
+    effect of the method, such as a warning, happens when a program is
+    compiled. A family skips its checks of a traced parameter value, such as
+    that mixture weights are nonnegative, so inside the program an invalid
+    parameter computed from an unmet given or from a constant of the method
+    gives draws or densities such as ``nan`` rather than an error.
+
     ``str(K)`` returns the kernel's :attr:`notation`, its label followed by its
     signature, as ``glm(y | beta)``, and the repr reads as a call of the
     constructor, with ``label=`` where a caller gave a label other than the
@@ -527,6 +541,12 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     #: The label the constructor gives when it is given none, which the repr leaves out;
     #: ``None`` for a class whose constructor requires a label.
     _default_label: ClassVar[str | None] = None
+
+    #: The memo of values computed from the kernel on demand, such as the
+    #: compiled programs of a joint that maps it over draws, which a copy or a
+    #: pickle leaves out. A program calls the kernel it was built for, so a copy
+    #: that holds other bound values must build its own.
+    _transient_state = ("_memo",)
 
     #: Where the constructor takes the component of a whole-term event, which the
     #: repr follows, as for a law.
@@ -739,7 +759,7 @@ class ConditionalDistribution(TrackedTerm, Annotated, ABC, metaclass=_Conditiona
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
-        """The law ``K(given, ·)``, or a curried kernel for a partial given.
+        """The law ``K(given, ·)``, or the kernel over the rest for a partial given.
 
         Parameters
         ----------
@@ -1095,7 +1115,7 @@ class _FunctionKernel(ConditionalDistribution):
     def _condition_on(
         self, given: Record | Mapping[str, Any], /, **options: Any
     ) -> Distribution | ConditionalDistribution:
-        """The law the function returns at a value of every given slot, or the curried kernel.
+        """The law the function returns at a value of every given slot, or the kernel over the rest.
 
         Parameters
         ----------
@@ -1130,12 +1150,12 @@ class _FunctionKernel(ConditionalDistribution):
         if set(self.given_spec.required) <= set(values):
             return self._law(values)
         self._check_conformance(values)
-        curried = self._shallow_copy()
-        object.__setattr__(curried, "_provenance", None)
-        object.__setattr__(curried, "_bound", {**self._bound, **self._arguments(values)})
+        rest = self._shallow_copy()
+        object.__setattr__(rest, "_provenance", None)
+        object.__setattr__(rest, "_bound", {**self._bound, **self._arguments(values)})
         left = self.given_spec.without(*values)
-        object.__setattr__(curried, "_spec", ConditionalDistributionSpec(left, self.event_spec))
-        return curried
+        object.__setattr__(rest, "_spec", ConditionalDistributionSpec(left, self.event_spec))
+        return rest
 
     def _given_values(self, given: Any) -> dict[str, Any]:
         """The values *given* holds, by given slot.
@@ -1185,7 +1205,7 @@ class _FunctionKernel(ConditionalDistribution):
         Returns
         -------
         Distribution
-            The law the function returns at the values a curried kernel holds and
+            The law the function returns at the values a partly bound kernel holds and
             at *given*, checked against the kernel's event declaration.
 
         Raises
@@ -1528,7 +1548,7 @@ def conditional_distribution(
     Binding every required slot calls the function with each value as the
     argument of that name, at the kind its slot declares, and with its default
     for each optional slot left unbound, and returns the law the call returns;
-    binding fewer slots curries the kernel over the rest.
+    binding fewer slots returns the kernel over the rest.
 
     The kernel is labeled *label*, or after the function's ``__name__``, and
     ``ℙ`` for a lambda. The call form takes the function first::
@@ -1552,7 +1572,7 @@ def conditional_distribution(
     and the decorator form labels the kernel after the function, or as given::
 
         @conditional_distribution(given_spec=prior.event_spec.components)
-        def y(population, groups):
+        def y(population, groups, sigma=1.0):
             return Normal("y", population["mu"] + population["tau"] * groups["theta"], sigma)
 
     Parameters
@@ -1589,6 +1609,15 @@ def conditional_distribution(
         returned law exposes a record or has more than one component, if
         *event_spec* names other components or another packaging than the
         returned law, or if its type does not unify with the law's.
+
+    Notes
+    -----
+    The function computes the kernel's conditional draws and densities, so it
+    must be pure, as ``ConditionalDistribution`` states. A value that changes
+    between calls belongs in a given slot, as ``sigma`` is in the decorator
+    example, and not in a global. A function that does not compile with its
+    unmet givens traced, such as one that converts a given to a Python number,
+    runs uncompiled.
     """
     if isinstance(fn, str):
         raise TypeError(label_given_first("conditional_distribution", "function", fn))

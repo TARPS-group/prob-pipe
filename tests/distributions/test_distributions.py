@@ -187,9 +187,7 @@ class TestMultivariateNormal:
         assert gaussian.dtype == loc.dtype
 
     def test_convert_empirical(self, gaussian):
-        ed = convert.with_options(method_options={"num_samples": 2000})(
-            gaussian, EmpiricalDistribution
-        )
+        ed = convert.using(method_options={"num_samples": 2000})(gaussian, EmpiricalDistribution)
         g2 = convert(ed, MultivariateNormal)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.label == gaussian.label
@@ -198,9 +196,7 @@ class TestMultivariateNormal:
 
     def test_convert_gaussian(self, gaussian):
         """A law already of the target class converts to itself."""
-        g2 = convert.with_options(method_options={"num_samples": 5000})(
-            gaussian, MultivariateNormal
-        )
+        g2 = convert.using(method_options={"num_samples": 5000})(gaussian, MultivariateNormal)
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.15)
 
 
@@ -303,9 +299,7 @@ class TestEmpiricalDistribution:
         assert EmpiricalDistribution(simple_samples, component="emp", label="e").label == "e"
 
     def test_from_distribution(self, gaussian):
-        ed = convert.with_options(method_options={"num_samples": 50})(
-            gaussian, EmpiricalDistribution
-        )
+        ed = convert.using(method_options={"num_samples": 50})(gaussian, EmpiricalDistribution)
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
@@ -314,7 +308,7 @@ class TestEmpiricalDistribution:
 
     def test_convert_keeps_the_source_label(self, gaussian):
         """A conversion changes the representation, so the raw result keeps the label."""
-        ed = convert.with_options(raw=True, method_options={"num_samples": 10})(
+        ed = convert.using(raw=True, method_options={"num_samples": 10})(
             gaussian, EmpiricalDistribution
         )
         assert ed.label == gaussian.label
@@ -322,9 +316,7 @@ class TestEmpiricalDistribution:
 
     def test_convert_default_key(self, gaussian):
         """from_distribution should work without explicit key."""
-        ed = convert.with_options(method_options={"num_samples": 10})(
-            gaussian, EmpiricalDistribution
-        )
+        ed = convert.using(method_options={"num_samples": 10})(gaussian, EmpiricalDistribution)
         assert ed.num_atoms == 10
 
 

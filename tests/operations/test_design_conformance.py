@@ -23,13 +23,13 @@ from probpipe.operations import (
     _condition,
     _convert,
     _density,
-    _evaluate,
     _inverse,
     _joint,
     _marginal,
     _mixture,
     _moments,
     _operation,
+    _pushforward,
     _sample,
     operation_registry,
 )
@@ -48,7 +48,7 @@ _BLOCK_SECTIONS = ("VI.0",)
 #: The modules a declared name is looked up in, first match winning.
 _MODULES = (
     _operation,
-    _evaluate,
+    _pushforward,
     _inverse,
     _sample,
     _density,
@@ -62,7 +62,7 @@ _MODULES = (
 
 #: The operations each later section declares in its prose, as the signatures it states.
 _PROSE = {
-    "VI.1": ("def evaluate(f, v, fixed_args): ...",),
+    "VI.1": ("def pushforward(d, f, fixed_args): ...",),
     "VI.2": ("def inverse(f): ...", "def log_det_jacobian(f, x): ..."),
     "VI.3": ("def sample(d, sample_shape=()): ...",),
     "VI.4": (
@@ -76,6 +76,7 @@ _PROSE = {
     "VI.5": (
         "def mean(d): ...",
         "def variance(d): ...",
+        "def standard_deviation(d): ...",
         "def cov(d): ...",
         "def quantile(d, q): ...",
         "def expectation(d, f, fixed_args): ...",

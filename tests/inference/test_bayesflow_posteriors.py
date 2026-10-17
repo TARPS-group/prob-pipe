@@ -318,7 +318,7 @@ class TestBayesFlowNPE:
         with pytest.raises(
             TypeError, match=r"takes no method_options; got \['num_chains', 'num_warmup'\]"
         ):
-            condition_on.with_options(method_options={"num_warmup": 99, "num_chains": 4})(
+            condition_on.using(method_options={"num_warmup": 99, "num_chains": 4})(
                 npe_model, {"observation": _observe(0.0, 0.0, 1)}
             )
 
@@ -346,11 +346,11 @@ class TestBayesFlowNPE:
         assert npe_model.event_spec == npe_model.prior.event_spec
 
     def test_conditioning_evaluates_it_with_no_inference(self, npe_model):
-        """Conditioning on an observation curries the kernel, which is approximate,
+        """Conditioning on an observation binds the kernel's given slot, which is approximate,
         and returns a law that samples, so no inference method runs."""
         observation = {"observation": _observe(0.5, 0.0, 0)}
         report = condition_on_operation.check(npe_model, observation)
-        assert (report.route, report.method, report.exact) == ("curry", None, False)
+        assert (report.route, report.method, report.exact) == ("bind_given_slots", None, False)
         law = condition_on_operation(npe_model, observation)
         assert isinstance(law, SupportsSampling)
         assert _is_normalized(law)
@@ -363,7 +363,7 @@ class TestBayesFlowNPE:
         given = {"observation": _observe(0.5, 0.0, 0), "a": 0.5}
         budgets = {"num_warmup": 200, "num_results": 400}
         with workflow_run(seed=0):
-            law = condition_on_operation.with_options(method_options=budgets)(npe_model, given)
+            law = condition_on_operation.using(method_options=budgets)(npe_model, given)
         assert isinstance(law, EmpiricalDistribution)
         assert tuple(law.event_spec.components) == ("b",)
         # Observed across four workflow seeds: |mean of b| 0.009-0.056.
@@ -397,7 +397,7 @@ class TestBayesFlowNPE:
             npe_model._condition_on({"observation": _observe(0.5, 0.0, 0), "typo": 1.0})
 
     def test_exact_only_refuses_it(self, npe_model):
-        view = condition_on_operation.with_options(exact_only=True)
+        view = condition_on_operation.using(exact_only=True)
         with pytest.raises(ResolutionError, match="SupportsApproximateConditioning"):
             view(npe_model, {"observation": _observe(0.5, 0.0, 0)})
 

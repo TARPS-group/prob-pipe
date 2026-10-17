@@ -13,12 +13,16 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, Self, runtime_checkable
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax.scipy.linalg import block_diag
 
+from ..core._array_backend import _is_numeric_leaf
+from ..core._compilation import compiled_or_eager
 from ..core._dispatch import Feasibility, ResolutionError
 from ..core._expression import (
     Named,
@@ -26,6 +30,7 @@ from ..core._expression import (
     Selected,
     joined_labels,
 )
+from ..core._immutable import transient_memo
 from ..core._object_batch import _is_object_array
 from ..core._record_batch import RecordBatch
 from ..core._record_spec import RecordSpec
@@ -735,6 +740,113 @@ def _factor_given(
     }
 
 
+#: The kernel method a joint maps over the draws of a factor's givens to draw the factor.
+_DRAW = "_conditional_sample"
+
+
+def _is_constant(value: Any) -> bool:
+    """Whether *value* is a string, ``None``, a boolean, or a tuple of them.
+
+    Such a value is hashable and compares equal exactly when it is the same
+    value, so a compiled program can take it as a static argument.
+    """
+    if isinstance(value, tuple):
+        return all(_is_constant(item) for item in value)
+    return value is None or isinstance(value, (str, bool, np.bool_))
+
+
+def _split_fixed(
+    factor: ConditionalDistribution, fixed: Mapping[str, Any]
+) -> tuple[dict[str, Any], tuple[tuple[str, Any], ...]] | None:
+    """The unmet givens in *fixed* a compiled call takes as arguments, and those it takes as constants.
+
+    Returns ``None`` when an unmet given is neither, and the call then runs
+    uncompiled. The three cases:
+
+    1. **Arguments:** a slot that *factor* declares numeric, holding numeric
+       leaves, as :func:`~probpipe.core._array_backend._is_numeric_leaf`
+       decides. A new value of the same shape reuses the program.
+    2. **Constants:** a value that :func:`_is_constant` admits. It is part of
+       the program's identity, so a new value compiles a new program, which
+       the factor keeps.
+    3. **Neither:** any other value, such as an object whose state may change
+       between calls, since a program would keep the state it had when it was
+       traced.
+    """
+    arguments: dict[str, Any] = {}
+    constants: list[tuple[str, Any]] = []
+    for slot, value in fixed.items():
+        if isinstance(factor.given_spec[slot], NumericSpec) and all(
+            _is_numeric_leaf(leaf) for leaf in jax.tree.leaves(value)
+        ):
+            arguments[slot] = value
+        elif _is_constant(value):
+            constants.append((slot, value))
+        else:
+            return None
+    return arguments, tuple(constants)
+
+
+def _at_each_given(
+    factor: ConditionalDistribution,
+    method: str,
+    fixed: Mapping[str, Any],
+    count: int,
+    values: Mapping[str, Any],
+    points: Any,
+) -> Any:
+    """*factor*'s *method* at each of the *count* values along the leading axis of *values*, stacked.
+
+    The *i*-th call binds the factor's givens to the *i*-th entry of *values*
+    and to the unmet givens in *fixed*, and takes the *i*-th entry of *points*:
+    a key when *method* draws, and the factor's part of the joint's value when
+    *method* is a density.
+
+    A call whose givens are numeric runs one compiled program: the factor's
+    method vectorized with ``jax.vmap`` and compiled with ``jax.jit``. It takes
+    the draws, the keys or the events, and the unmet givens as
+    :func:`_split_fixed` sorts them. The factor's memo holds the program, with
+    one compiled form for each set of constants and input shapes. The program
+    calls the factor it was built for, so a copy of the factor, which may hold
+    other bound values, builds its own. ``ConditionalDistribution`` states
+    what the factor's method may read.
+
+    The call runs uncompiled, under ``jax.vmap``, when :func:`_split_fixed`
+    returns ``None`` or when the program does not trace, as for a method that
+    converts an unmet given to a Python number.
+    :func:`~probpipe.core._compilation.compiled_or_eager` records a program
+    that does not trace for the structure of the unmet givens, so later calls
+    with that structure skip the attempt. When a given is not numeric, the
+    method is called on one value at a time.
+    """
+    fixed = {slot: fixed[slot] for slot in factor.given_spec if slot in fixed}
+    tail = ((),) if method == _DRAW else ()
+
+    def one(fixed: Mapping[str, Any], values: Mapping[str, Any], point: Any) -> Any:
+        return getattr(factor, method)(_factor_given(factor, values, fixed), point, *tail)
+
+    def uncompiled(*_: Any) -> Any:
+        return _each_value(partial(one, fixed), count, values, points, traceable=True)
+
+    if not _numeric_givens(factor, values):
+        return _each_value(partial(one, fixed), count, values, points, traceable=False)
+    split = _split_fixed(factor, fixed)
+    if split is None:
+        return uncompiled()
+    memo = transient_memo(factor)
+    program = memo.get(("mapped", method))
+    if program is None:
+
+        def mapped(arguments: dict[str, Any], constants: tuple, values: Any, points: Any) -> Any:
+            held = {**arguments, **dict(constants)}
+            return jax.vmap(partial(one, held))(values, points)
+
+        program = memo[("mapped", method)] = jax.jit(mapped, static_argnums=1)
+    arguments, constants = split
+    key = ("untraced", method, jax.tree.structure(arguments), constants)
+    return compiled_or_eager(memo, key, program, uncompiled, arguments, constants, values, points)
+
+
 def _conditional_draw(
     factor: ConditionalDistribution,
     drawn: Mapping[str, Any],
@@ -748,19 +860,16 @@ def _conditional_draw(
     those components, one given value per call, each call with its own key.
     """
     inner = {slot: drawn[slot] for slot in factor.given_spec if slot in drawn}
-
-    def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return _factor_given(factor, values, fixed)
-
     if not inner or not sample_shape:
-        return factor._conditional_sample(given(inner), key, sample_shape)
+        return factor._conditional_sample(_factor_given(factor, inner, fixed), key, sample_shape)
     count = math.prod(sample_shape)
-    draws = _each_value(
-        lambda values, subkey: factor._conditional_sample(given(values), subkey, ()),
+    draws = _at_each_given(
+        factor,
+        _DRAW,
+        fixed,
         count,
         _flatten_draws(inner, sample_shape),
         jax.random.split(key, count),
-        traceable=_numeric_givens(factor, inner),
     )
     return _unflatten_draws(draws, sample_shape)
 
@@ -791,19 +900,11 @@ def _conditional_score(
 ) -> Array:
     """*factor*'s density *method* at *event*, at the given the joint's components supply."""
     inner = {slot: components[slot] for slot in factor.given_spec if slot in graph.producers}
-
-    def given(values: Mapping[str, Any]) -> dict[str, Any]:
-        return _factor_given(factor, values, fixed)
-
-    density = getattr(factor, method)
     batch = _batch_axes(factor, inner, event)
     if not batch:
-        return density(given(inner), event)
-    scores = _each_value(
-        lambda values, one: density(given(values), one),
-        math.prod(batch),
-        *_flatten_draws((inner, event), batch),
-        traceable=_numeric_givens(factor, inner),
+        return getattr(factor, method)(_factor_given(factor, inner, fixed), event)
+    scores = _at_each_given(
+        factor, method, fixed, math.prod(batch), *_flatten_draws((inner, event), batch)
     )
     return _unflatten_draws(scores, batch)
 
@@ -2149,7 +2250,7 @@ class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors):
     Its ``given_spec`` is exactly the unmet givens, same-named ones unified into
     one slot, and its event declaration is read as for
     :class:`FactoredDistribution`. Conditioning on every given yields a
-    ``FactoredDistribution``, and conditioning on some curries to a smaller
+    ``FactoredDistribution``, and conditioning on some returns a smaller
     ``FactoredConditionalDistribution``.
 
     Each conditional capability is its unconditional counterpart's on

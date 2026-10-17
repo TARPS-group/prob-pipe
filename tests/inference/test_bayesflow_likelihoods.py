@@ -36,6 +36,7 @@ from probpipe import (
 from probpipe.distributions._capabilities import (
     SupportsConditionalLogProb,
     SupportsConditionalUnnormalizedLogProb,
+    SupportsLogProb,
 )
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.operations._condition import condition_on as condition_on_operation
@@ -103,9 +104,7 @@ def _score(lik, theta, rows):
 
 def _posterior(lik, prior, y):
     """The posterior of ``lik * prior`` at the observation rows *y*, by the registry's method."""
-    view = condition_on_operation.with_options(
-        method_options={"num_results": 1500, "num_warmup": 500}
-    )
+    view = condition_on_operation.using(method_options={"num_results": 1500, "num_warmup": 500})
     with workflow_run(seed=0):
         return view(lik * prior, {"observation": jnp.asarray(y)})
 
@@ -238,6 +237,25 @@ class TestSurrogateContract:
         np.testing.assert_allclose(
             float(law._log_prob(y_row)),
             float(_score(nle, jnp.array([0.4, -0.3]), y_row)),
+            rtol=1e-6,
+        )
+
+    @pytest.mark.parametrize("which", ["nle", "nre"])
+    def test_binding_some_parameters_returns_the_kernel_over_the_rest(self, which, request):
+        """Binding one parameter leaves a kernel over the other, whose law at it
+        scores as the law at both parameters bound at once."""
+        lik = request.getfixturevalue(which)
+        rest = lik._condition_on({"a": 0.4})
+        assert type(rest) is type(lik)
+        assert list(rest.given_spec) == ["b"]
+        assert list(lik.given_spec) == ["a", "b"]
+        y_row = jnp.array([0.6, -0.1])
+        in_steps = rest._condition_on({"b": -0.3})
+        at_once = lik._condition_on({"a": 0.4, "b": -0.3})
+        score = "_log_prob" if isinstance(at_once, SupportsLogProb) else "_unnormalized_log_prob"
+        np.testing.assert_allclose(
+            float(getattr(in_steps, score)(y_row)),
+            float(getattr(at_once, score)(y_row)),
             rtol=1e-6,
         )
 
@@ -426,9 +444,9 @@ class TestConditioning:
             ),
         )
         with workflow_run(seed=0):
-            ref_post = condition_on.with_options(
-                method_options={"num_results": 1500, "num_warmup": 500}
-            )(true_likelihood * prior, {"observation": jnp.asarray(y)})
+            ref_post = condition_on.using(method_options={"num_results": 1500, "num_warmup": 500})(
+                true_likelihood * prior, {"observation": jnp.asarray(y)}
+            )
         ref = np.asarray(flat_draws(ref_post)["lam"]).reshape(-1)
         with workflow_run(seed=0):
             lik = learn_amortized_likelihood(

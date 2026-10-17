@@ -18,6 +18,8 @@ from itertools import product as cartesian_product
 from math import prod
 from typing import Any, Literal
 
+import numpy as np
+
 from ..core._batch import Batch
 from ..core._spec_base import TermSpec
 from ..core._specs import OutputSpec
@@ -37,10 +39,11 @@ StructuralRngId = tuple[str | int, ...]
 
 @dataclass(frozen=True)
 class ArrayBroadcastGroup:
-    """One zip group of swept batches, read along the same axes.
+    """One zip group of swept batches.
 
     The batches of one group carry the same level names, since levels are how
-    batches align.
+    batches align. ``axis_groups`` holds each level's broadcast shape over the
+    group's batches, and ``batch_shape`` is their concatenation in level order.
     """
 
     arg_refs: tuple[_binding.FunctionInputRef, ...]
@@ -55,7 +58,12 @@ class ArrayBroadcastGroup:
 
 @dataclass(frozen=True)
 class BroadcastPlan:
-    """Pure broadcast classification for one resolved workflow call."""
+    """Pure broadcast classification for one resolved workflow call.
+
+    ``batch_args`` holds the broadcast arguments whose parameter's annotation
+    names a batch class, as :func:`receives_batch` states. A batch-valued draw
+    is passed to such a parameter as a batch, and to any other in its raw form.
+    """
 
     regime: BroadcastRegime
     dist_args: tuple[_binding.FunctionInputRef, ...]
@@ -65,6 +73,7 @@ class BroadcastPlan:
     sweep_level_names: tuple[str, ...]
     sweep_axis_groups: tuple[tuple[int, ...], ...]
     n_sweep: int
+    batch_args: tuple[_binding.FunctionInputRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,7 +121,13 @@ class StochasticSourceGroup:
 
 @dataclass(frozen=True)
 class StochasticRuntimeBinding:
-    """Live root and preflight-captured evaluators for one source group."""
+    """Live root and preflight-captured evaluators for one source group.
+
+    ``consumer_events`` holds the event type of each consumer, in the order of
+    ``consumer_evaluators``, and ``consumer_batches`` whether each consumer's
+    parameter receives a batch-valued draw as a batch rather than in its raw
+    form.
+    """
 
     root: Distribution = field(compare=False, hash=False, repr=False)
     sample_root: Callable[[Any, tuple[int, ...]], Any] = field(
@@ -121,6 +136,16 @@ class StochasticRuntimeBinding:
         repr=False,
     )
     consumer_evaluators: tuple[Callable[[Any], Any], ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+    consumer_events: tuple[TermSpec, ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+    consumer_batches: tuple[bool, ...] = field(
         compare=False,
         hash=False,
         repr=False,
@@ -255,6 +280,21 @@ def lift_at(function: Any, parameter: str | None, value: Any) -> Lift:
     return lift_of(value, hint, function._roles.get(parameter))
 
 
+def receives_batch(expected: Any) -> bool:
+    """Whether a lifted parameter annotated *expected* receives a batch-valued draw as a batch.
+
+    The annotation names a batch class, such as ``NumericArrayBatch``,
+    ``RecordBatch``, or ``Batch``, in itself or in an arm of a union. Any
+    other annotation, or none, receives the draw in its raw form: an array, or
+    the nested mapping of columns of a batch of records.
+    """
+    for arm in _normalization._arms(expected):
+        named = _normalization._hint_class(arm)
+        if isinstance(named, type) and issubclass(named, Batch):
+            return True
+    return False
+
+
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
@@ -268,6 +308,7 @@ def build_broadcast_plan(
     """
     dist_args: list[_binding.FunctionInputRef] = []
     array_args: list[_binding.FunctionInputRef] = []
+    batch_args: list[_binding.FunctionInputRef] = []
 
     for ref in _binding.iter_input_refs(signature_info, values):
         value = _binding.input_ref_value(values, ref)
@@ -277,6 +318,8 @@ def build_broadcast_plan(
             array_args.append(ref)
         elif lift == "broadcast":
             dist_args.append(ref)
+            if receives_batch(expected):
+                batch_args.append(ref)
 
     array_groups = build_array_zip_groups(values=values, refs=array_args)
     sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
@@ -293,6 +336,7 @@ def build_broadcast_plan(
         sweep_level_names=sweep_level_names,
         sweep_axis_groups=sweep_axis_groups,
         n_sweep=n_sweep,
+        batch_args=tuple(batch_args),
     )
 
 
@@ -338,12 +382,13 @@ def build_stochastic_plan(
 
     _validate_stochastic_sample_count(n_broadcast_samples)
     arg_refs = tuple(broadcast_plan.dist_args)
-    grouped_consumers, source_values, runtime_samplers, runtime_evaluators = (
+    grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events = (
         _group_stochastic_sources(
             values=values,
             refs=arg_refs,
         )
     )
+    batch_args = set(broadcast_plan.batch_args)
 
     candidates = [
         (index, source)
@@ -379,6 +424,10 @@ def build_stochastic_plan(
             root=source,
             sample_root=runtime_samplers[index],
             consumer_evaluators=tuple(runtime_evaluators[index]),
+            consumer_events=tuple(runtime_events[index]),
+            consumer_batches=tuple(
+                consumer.arg_ref in batch_args for consumer in grouped_consumers[index]
+            ),
         )
         for index, source in enumerate(source_values)
     )
@@ -429,12 +478,14 @@ def _group_stochastic_sources(
     list[Distribution],
     list[Callable[[Any, tuple[int, ...]], Any]],
     list[list[Callable[[Any], Any]]],
+    list[list[TermSpec]],
 ]:
     """Discover live roots while keeping object IDs out of canonical plans."""
     grouped_consumers: list[list[StochasticConsumerPlan]] = []
     source_values: list[Distribution] = []
     runtime_samplers: list[Callable[[Any, tuple[int, ...]], Any]] = []
     runtime_evaluators: list[list[Callable[[Any], Any]]] = []
+    runtime_events: list[list[TermSpec]] = []
     group_index_by_root_id: dict[int, int] = {}
 
     source_entries = tuple((ref, _binding.input_ref_value(values, ref)) for ref in refs)
@@ -442,7 +493,7 @@ def _group_stochastic_sources(
         tuple(value for _ref, value in source_entries)
     )
 
-    for (ref, _value), captured in zip(source_entries, captured_consumers, strict=True):
+    for (ref, value), captured in zip(source_entries, captured_consumers, strict=True):
         root = captured.root
 
         root_identity = id(root)
@@ -454,6 +505,7 @@ def _group_stochastic_sources(
             source_values.append(root)
             runtime_samplers.append(captured.sample_root)
             runtime_evaluators.append([])
+            runtime_events.append([])
         descendant_descriptor = captured.descendant_descriptor
         if descendant_descriptor is not None:
             descendant_descriptor = (
@@ -469,8 +521,9 @@ def _group_stochastic_sources(
             )
         )
         runtime_evaluators[group_index].append(captured.evaluator)
+        runtime_events[group_index].append(value.event_spec.spec)
 
-    return grouped_consumers, source_values, runtime_samplers, runtime_evaluators
+    return grouped_consumers, source_values, runtime_samplers, runtime_evaluators, runtime_events
 
 
 def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ...]:
@@ -526,9 +579,11 @@ def build_array_zip_groups(
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build the zip groups of the swept batches.
 
-    Every batch in a group is read along the same axes, so they must agree on
-    what those axes are; a disagreement is a mistake about which multiplicity is
-    which rather than a product to be formed silently.
+    Batches with the same level names broadcast their shapes level by level by
+    NumPy's rule, so within each level the shapes align from the right and a
+    size-one axis expands. The group's shape concatenates the broadcast shapes
+    in level order, and the sweep reads each batch at index zero along its
+    size-one axes.
 
     Parameters
     ----------
@@ -545,32 +600,39 @@ def build_array_zip_groups(
     Raises
     ------
     ApplicabilityError
-        If two batches carry the same levels on different axes, or two groups
+        If matching levels have shapes that cannot broadcast, or two groups
         share a level without sharing all their levels, naming the level.
     """
     groups: list[ArrayBroadcastGroup] = []
     for first, arg_refs in group_by_alignment(values=values, refs=refs):
-        for ref in arg_refs[1:]:
-            other = _binding.input_ref_value(values, ref)
-            # Two operands naming the same levels claim the same axes, group by
-            # group: agreeing on the flat shape alone would zip a ((2,), (3, 4))
-            # partition with a ((2, 3), (4,)) one and hand the output whichever
-            # arrived first.
-            if tuple(other.axis_groups) != tuple(first.axis_groups):
-                raise ApplicabilityError(
-                    f"{arg_refs[0].label!r} and {ref.label!r} have the same levels "
-                    f"{tuple(first.level_names)} but different shapes per level: "
-                    f"{tuple(first.axis_groups)} vs {tuple(other.axis_groups)}. Arguments that "
-                    f"share level names must have the same shape for each level."
+        batches = [_binding.input_ref_value(values, ref) for ref in arg_refs]
+        broadcast_groups = []
+        for level, name in enumerate(first.level_names):
+            shapes = [tuple(batch.axis_groups[level]) for batch in batches]
+            try:
+                broadcast_groups.append(np.broadcast_shapes(*shapes))
+            except ValueError as error:
+                described = [
+                    f"{shape} for {ref.label!r}"
+                    for ref, shape in zip(arg_refs, shapes, strict=True)
+                ]
+                listed = (
+                    " and ".join(described)
+                    if len(described) == 2
+                    else ", ".join(described[:-1]) + ", and " + described[-1]
                 )
-        batch_shape = tuple(first.batch_shape)
+                raise ApplicabilityError(
+                    f"level {name!r} has shapes {listed}, which do not broadcast"
+                ) from error
+        axis_groups = tuple(broadcast_groups)
+        batch_shape = tuple(axis for shape in axis_groups for axis in shape)
         groups.append(
             ArrayBroadcastGroup(
                 arg_refs=tuple(arg_refs),
                 batch_shape=batch_shape,
                 size=prod(batch_shape),
                 level_names=tuple(first.level_names),
-                axis_groups=tuple(first.axis_groups),
+                axis_groups=axis_groups,
             )
         )
     # A level name in two groups is one multiplicity read at two geometries:

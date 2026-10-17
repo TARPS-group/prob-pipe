@@ -115,22 +115,22 @@ class TestBatches:
 
 class TestRawDraws:
     def test_one_raw_draw_is_the_raw_value(self):
-        draw = sample.with_options(raw=True)(Gaussian("g"))
+        draw = sample.using(raw=True)(Gaussian("g"))
         assert isinstance(draw, jnp.ndarray) and draw.shape == ()
 
     def test_a_raw_batch_is_the_stacked_array_with_the_batch_axes_leading(self):
-        draws = sample.with_options(raw=True)(Vector("v"), sample_shape=(5,))
+        draws = sample.using(raw=True)(Vector("v"), sample_shape=(5,))
         assert isinstance(draws, jnp.ndarray) and draws.shape == (5, 2)
 
     def test_a_raw_draw_of_a_measure_is_the_law_itself(self):
-        assert isinstance(sample.with_options(raw=True)(Measure("m")), Distribution)
+        assert isinstance(sample.using(raw=True)(Measure("m")), Distribution)
 
     def test_a_raw_batch_of_laws_is_an_object_array(self):
-        draws = sample.with_options(raw=True)(Measure("m"), sample_shape=(2,))
+        draws = sample.using(raw=True)(Measure("m"), sample_shape=(2,))
         assert isinstance(draws, np.ndarray) and draws.dtype == object
 
     def test_a_raw_batch_of_a_joint_is_the_mapping_of_its_columns(self):
-        draws = sample.with_options(raw=True)(Gaussian("a") * Gaussian("b"), sample_shape=(3,))
+        draws = sample.using(raw=True)(Gaussian("a") * Gaussian("b"), sample_shape=(3,))
         assert isinstance(draws, dict) and list(draws) == ["a", "b"]
         assert all(jnp.shape(column) == (3,) for column in draws.values())
 

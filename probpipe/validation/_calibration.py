@@ -347,7 +347,7 @@ def simulation_based_calibration(
        ``condition_on(posterior, {slot: y})`` returns without a fit, as for an
        amortized posterior or a closed-form posterior;
     2. otherwise, it is the fit of *model* at ``y`` that
-       ``condition_on.with_options(method=method, method_options=method_options)(model, y)``
+       ``condition_on.using(method=method, method_options=method_options)(model, y)``
        returns.
 
     *posterior*'s given slots take the observed fields of their names, and a
@@ -479,7 +479,7 @@ def simulation_based_calibration(
                 f"the parameters; got {type(posterior).__name__}"
             )
     # Configured before any draw, so a malformed method or option fails first.
-    fit = condition_on.with_options(method=method, method_options=method_options)
+    fit = condition_on.using(method=method, method_options=method_options)
     if not callable(getattr(model, "_sample", None)):
         raise TypeError(
             f"simulation_based_calibration: model must be a distribution that can be sampled; "
@@ -501,7 +501,7 @@ def simulation_based_calibration(
         binding = _slot_binding(posterior, observed)
         _check_parameters(posterior.event_spec, parameters, posterior.label)
 
-    simulations = _raw_record(sample.with_options(raw=True)(model, sample_shape=(num_simulations,)))
+    simulations = _raw_record(sample.using(raw=True)(model, sample_shape=(num_simulations,)))
     rank_rows: list[np.ndarray] = []
     component_names: tuple[str, ...] | None = None
     for index in range(num_simulations):
@@ -511,7 +511,7 @@ def simulation_based_calibration(
             law = fit(model, {name: draw[name] for name in observed})
         else:
             law = condition_on(posterior, {slot: draw[field] for slot, field in binding.items()})
-        draws = sample.with_options(raw=True)(law, sample_shape=(num_posterior_draws,))
+        draws = sample.using(raw=True)(law, sample_shape=(num_posterior_draws,))
         if component_names is None:
             _check_parameters(law.event_spec, parameters, law.label)
             component_names = _component_names(law)

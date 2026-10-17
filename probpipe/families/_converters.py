@@ -877,6 +877,14 @@ def _same_support(first: Constraint, second: Constraint) -> bool:
     return _supports_compatible(first, second) and _supports_compatible(second, first)
 
 
+def _support_mismatch(fit: str, fit_support: Constraint, name: str, declared: Constraint) -> str:
+    """The reason a fit on *fit_support* cannot keep the support *declared* by the law *name*."""
+    return (
+        f"{fit} is supported on {fit_support}, but {name!r} declares the support {declared}. "
+        f"Set the converter option check_support=False to fit it anyway"
+    )
+
+
 def _check_support(result: Distribution, law: Distribution | None) -> None:
     """Refuse a fit whose support is not the law's.
 
@@ -904,19 +912,19 @@ def _check_support(result: Distribution, law: Distribution | None) -> None:
     source = getattr(law, "support", None)
     if source is not None:
         if not _same_support(source, target):
+            fit = f"the fitted {type(result).__name__}"
             raise ValueError(
-                f"cannot convert {type(law).__name__} {law.label!r} (support={source}) to "
-                f"{type(result).__name__} (support={target}). Pass check_support=False to "
-                f"override."
+                f"cannot convert {law.label!r} to {type(result).__name__}: "
+                f"{_support_mismatch(fit, target, law.label, source)}"
             )
         return
     if isinstance(law, EmpiricalDistribution) and not bool(
         jnp.all(target.check(jnp.asarray(law._rows)))
     ):
         raise ValueError(
-            f"cannot convert {type(law).__name__} {law.label!r} to {type(result).__name__} "
-            f"(support={target}): its atoms lie outside that support. Pass check_support=False "
-            f"to override."
+            f"cannot convert {law.label!r} to {type(result).__name__}: the fitted "
+            f"{type(result).__name__} is supported on {target}, but atoms of {law.label!r} lie "
+            f"outside it. Set the converter option check_support=False to fit it anyway"
         )
 
 
@@ -1082,10 +1090,8 @@ class _MomentMatching(Converter):
         ):
             return ConversionInfo(
                 False,
-                description=(
-                    f"{target_type.__name__} is supported on {fixed}, but {planned.label!r} "
-                    f"declares the support {declared}; set the converter option "
-                    f"check_support=False to fit it anyway"
+                description=_support_mismatch(
+                    target_type.__name__, fixed, _label(source, planned.law, declaration), declared
                 ),
             )
         promised = declaration._with_spec(

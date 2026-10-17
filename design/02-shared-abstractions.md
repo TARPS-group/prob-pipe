@@ -342,6 +342,7 @@ Automatic summaries use these symbols:
 |---|---|
 | Mean and expectation | `𝔼` |
 | Variance | `𝕍` |
+| Standard deviation | `√𝕍` |
 | Covariance | `ℂ` |
 | Quantile | `ℚ` |
 

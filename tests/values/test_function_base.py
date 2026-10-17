@@ -16,6 +16,7 @@ import pytest
 
 from probpipe import (
     ApplicabilityError,
+    Beta,
     DistributionSpec,
     EmpiricalDistribution,
     Function,
@@ -33,13 +34,14 @@ from probpipe import (
     OutputSpec,
     Record,
     RecordSpec,
+    Uniform,
     WorkflowKind,
     function,
     sample,
     workflow_run,
 )
 from probpipe.core._fingerprint import fingerprint
-from probpipe.core.constraints import positive, real
+from probpipe.core.constraints import interval, positive, real, unit_interval
 from probpipe.core.tracked import _NO_DESCRIPTION
 
 
@@ -685,7 +687,7 @@ class TestFunctionDeclarations:
             output_spec=OutputSpec(value=OpaqueSpec()),
             label="value",
         )
-        view = wrapped.with_options(dispatch="thread", max_workers=2)
+        view = wrapped.using(dispatch="thread", max_workers=2)
         assert view.options["dispatch"] == "thread"
         assert wrapped.options["dispatch"] == "auto"
         assert view.spec is wrapped.spec
@@ -825,7 +827,7 @@ class TestLiftedNames:
         )
         if renamed is not None:
             wrapped = wrapped.with_label(renamed)
-        result = wrapped.with_options(dispatch=dispatch)(rows)
+        result = wrapped.using(dispatch=dispatch)(rows)
         assert isinstance(result, OpaqueBatch)
         assert result.label == "outs"
         assert result.level_names == ("rows",)
@@ -994,6 +996,48 @@ class TestCompletedOutputDeclarations:
         ):
             factory.apply()
 
+    def test_a_returned_law_on_a_wider_interval_is_refused(self):
+        factory = Function(
+            lambda: Uniform("y", low=0.0, high=2.0),
+            output_spec=OutputSpec(
+                factory=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=unit_interval)))
+            ),
+            label="factory",
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"factory/y support interval\(0\.0, 2\.0\) does not conform to unit_interval",
+        ):
+            factory.apply()
+
+    def test_a_returned_law_on_the_declared_interval_is_accepted(self):
+        factory = Function(
+            lambda: Uniform("y", low=0.0, high=1.0),
+            output_spec=OutputSpec(
+                factory=DistributionSpec(OutputSpec(y=NumericArraySpec((), support=unit_interval)))
+            ),
+            label="factory",
+        )
+        assert factory.apply().support == interval(0.0, 1.0)
+
+    @pytest.mark.parametrize("container", [list, tuple])
+    def test_a_returned_law_conforms_to_declared_sequence_bounds(self, container):
+        stored = Beta("x", [2.0, 3.0], [3.0, 4.0])
+        factory = Function(
+            lambda: stored,
+            output_spec=OutputSpec(
+                factory=DistributionSpec(
+                    OutputSpec(
+                        x=NumericArraySpec(
+                            (2,), support=interval(container([0.0, 0.0]), container([1.0, 1.0]))
+                        )
+                    )
+                )
+            ),
+            label="factory",
+        )
+        assert factory.apply() is stored
+
     def test_a_returned_law_over_a_whole_record_is_checked_field_by_field(self):
         from probpipe import Distribution
 
@@ -1105,7 +1149,7 @@ class TestCompletedOutputDeclarations:
             label="f",
         )
         with workflow_run(seed=4):
-            joint = wrapped.with_options(include_inputs=True)(Normal("x", 0, 1))
+            joint = wrapped.using(include_inputs=True)(Normal("x", 0, 1))
         assert joint.label == "result"
         assert tuple(joint.event_spec.components) == ("x", "component")
         column = joint._rows["component/component" if kind == "record_hole" else "component"]
@@ -1219,12 +1263,7 @@ class TestCompletedOutputDeclarations:
             "function",
             "opaque",
             "record",
-            pytest.param(
-                "batch",
-                marks=pytest.mark.pending(
-                    reason="the empirical law of a lifted function that returns a batch"
-                ),
-            ),
+            "batch",
         ],
     )
     def test_a_lift_keeps_a_non_numeric_component_kind(self, dispatch, kind):
@@ -1250,7 +1289,7 @@ class TestCompletedOutputDeclarations:
             "batch": lambda: NumericArrayBatch(
                 jnp.arange(2.0),
                 "row",
-                element_spec=NumericArraySpec(()),
+                element_spec=NumericArraySpec((), dtype=jnp.float32),
                 label="stored",
             ),
         }[kind]()

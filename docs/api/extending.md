@@ -14,6 +14,7 @@ A family's constructor takes the component as its first argument and the label a
 So `Normal("mu", 0.0, 1.0)` is labeled `Normal`, and `Normal("mu", 0.0, 1.0, label="prior")` is labeled `prior`.
 A family over a TensorFlow Probability distribution subclasses `TFPDistribution`, which samples and scores through the backend distribution.
 A family claims a capability by defining its implementation method, such as `_sample` for `SupportsSampling` or `_mean` for `SupportsMean`, and claims a conditioning capability by inheriting `SupportsExactConditioning` or `SupportsApproximateConditioning`.
+A kernel's conditional methods, such as `_conditional_sample`, must be pure, since a joint compiles them when it maps the kernel over draws, as `ConditionalDistribution` states.
 [Distributions and families](distributions.md) documents the base classes and each capability.
 
 A family registers with no registry, since an operation selects a capability route by the protocols the family claims.
@@ -56,7 +57,7 @@ class ImportanceSampling(InferenceMethod):
 inference_method_registry.register(ImportanceSampling())
 ```
 
-`condition_on.with_options(method="my_importance_sampling")` runs the method by name.
+`condition_on.using(method="my_importance_sampling")` runs the method by name.
 The method takes part in automatic selection once it overrides `priority`.
 
 ### Exactness and priority

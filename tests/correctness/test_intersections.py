@@ -112,9 +112,9 @@ def schools():
     """
     joint = nested_schools()
     given = {"y": jnp.asarray(canonical.SCHOOL_EFFECTS, jnp.float32)}
-    target = condition_on.with_options(method="unnormalized")(joint, given)
+    target = condition_on.using(method="unnormalized")(joint, given)
     with workflow_run(seed=0):
-        posterior = condition_on.with_options(
+        posterior = condition_on.using(
             method="blackjax_nuts", method_options={"init": _SCHOOLS_INIT, **FIT}
         )(joint, given)
     return joint, target, posterior
@@ -148,7 +148,7 @@ class TestNestedHierarchicalModel:
         _, _, posterior = schools
         view = FieldView(posterior, "population/tau")
         draws = _raw_record(flat_draws(posterior))
-        assert float(mean.with_options(raw=True)(view)) == pytest.approx(
+        assert float(mean.using(raw=True)(view)) == pytest.approx(
             float(np.mean(draws["population"]["tau"])), rel=1e-5
         )
 
@@ -162,7 +162,7 @@ class TestNestedHierarchicalModel:
     def test_draws_of_the_posterior_keep_the_nested_paths(self, schools):
         _, _, posterior = schools
         with workflow_run(seed=21):
-            raw = sample.with_options(raw=True)(posterior, sample_shape=(3,))
+            raw = sample.using(raw=True)(posterior, sample_shape=(3,))
         assert isinstance(raw["population"], dict) and set(raw["population"]) == {"mu", "tau"}
         assert np.shape(raw["groups"]["theta_tilde"]) == (3, canonical.SCHOOL_EFFECTS.shape[0])
 
@@ -212,9 +212,9 @@ class TestDeclarations:
         else:
             case = canonical.case(name)
             model, data = case.model, case.data
-        target = condition_on.with_options(method="unnormalized")(model, data)
+        target = condition_on.using(method="unnormalized")(model, data)
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts",
                 method_options={**FIT, "num_results": 100, "num_warmup": 50, **controls},
             )(model, data)
@@ -225,9 +225,9 @@ class TestDeclarations:
         method = _pymc_method()
         model = PyMCModel(_normal_model, label="normal")
         data = {"y": _NORMAL_DATA}
-        target = condition_on.with_options(method="unnormalized")(model, data)
+        target = condition_on.using(method="unnormalized")(model, data)
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method=method,
                 method_options={
                     **PROFILES[method].method_options,
@@ -240,7 +240,7 @@ class TestDeclarations:
     def test_an_mcmc_posterior_is_an_empirical_law(self):
         case = canonical.case("gaussian_linear")
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts", method_options={**FIT, "num_results": 100, "num_warmup": 50}
             )(case.model, case.data)
         assert isinstance(posterior, EmpiricalDistribution)
@@ -365,7 +365,7 @@ class TestFamiliesWithRecordParameters:
         """
         joint, data = _glm_with_dispersion()
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method="blackjax_nuts", method_options={"init": _glm_init(), **FIT}
             )(joint, data)
         assert_matches(posterior, _glm_reference(), label="the GLM with its dispersion")
@@ -375,7 +375,7 @@ class TestFamiliesWithRecordParameters:
         pytest.importorskip("pymc")
         method = _pymc_method()
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
+            posterior = condition_on.using(
                 method=method, method_options=PROFILES[method].method_options
             )(PyMCModel(_normal_model, label="normal"), {"y": _NORMAL_DATA})
         assert_matches(posterior, _normal_reference(), label=f"{method} on the normal model")
@@ -392,9 +392,9 @@ class TestFamiliesWithRecordParameters:
         path.write_text(_REGRESSION_PROGRAM)
         data = {**case.stan_data, "y": np.asarray(case.data["y"], np.float64)}
         with workflow_run(seed=0):
-            posterior = condition_on.with_options(
-                method_options=PROFILES["cmdstan_nuts"].method_options
-            )(StanModel(str(path), label="regression"), data)
+            posterior = condition_on.using(method_options=PROFILES["cmdstan_nuts"].method_options)(
+                StanModel(str(path), label="regression"), data
+            )
         assert_matches(posterior, _glm_reference(), label="the Stan regression")
 
     def test_an_unnormalized_law_over_a_nested_record_converts_with_its_declaration(self):
@@ -403,7 +403,7 @@ class TestFamiliesWithRecordParameters:
             unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED), label="theta"
         )
         with workflow_run(seed=0):
-            normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
+            normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
                 law, EmpiricalDistribution
             )
         assert normalized.event_spec == law.event_spec
@@ -414,7 +414,7 @@ class TestFamiliesWithRecordParameters:
             unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED), label="theta"
         )
         with workflow_run(seed=0):
-            normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
+            normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
                 law, EmpiricalDistribution
             )
         assert_matches(normalized, _nested_reference(), label="the converted nested law")
@@ -425,20 +425,20 @@ class TestFamiliesWithRecordParameters:
             unnormalized_log_prob=_nested_density, event_spec=OutputSpec(_NESTED), label="theta"
         )
         with workflow_run(seed=0):
-            normalized = convert.with_options(method="blackjax_nuts", method_options=FIT)(
+            normalized = convert.using(method="blackjax_nuts", method_options=FIT)(
                 law, EmpiricalDistribution
             )
-        parent_mean = mean.with_options(raw=True)(normalized)
+        parent_mean = mean.using(raw=True)(normalized)
         view = FieldView(normalized, "theta/b")
         group = marginal(normalized, "theta")
         np.testing.assert_allclose(
-            np.asarray(mean.with_options(raw=True)(view)),
+            np.asarray(mean.using(raw=True)(view)),
             np.asarray(parent_mean["mean(theta)"]["b"]),
         )
         assert group.event_spec == OutputSpec(theta=_NESTED.children["theta"])
         np.testing.assert_allclose(
-            np.asarray(variance.with_options(raw=True)(group)["a"]),
-            np.asarray(variance.with_options(raw=True)(normalized)["variance(theta)"]["a"]),
+            np.asarray(variance.using(raw=True)(group)["a"]),
+            np.asarray(variance.using(raw=True)(normalized)["variance(theta)"]["a"]),
         )
 
     def test_a_density_over_a_nested_record_reads_an_interior_path(self):
@@ -490,6 +490,6 @@ class TestLearnedKernelOverANestedRecord:
         )
         assert law.event_spec == prior.event_spec
         with workflow_run(seed=22):
-            raw = sample.with_options(raw=True)(law, sample_shape=(4,))
+            raw = sample.using(raw=True)(law, sample_shape=(4,))
         assert np.shape(raw["groups"]["theta_tilde"]) == (4, canonical.SCHOOL_EFFECTS.shape[0])
         assert np.shape(raw["population"]["tau"]) == (4,)

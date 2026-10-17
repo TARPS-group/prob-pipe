@@ -6,7 +6,7 @@ field-keyed, a ``Record`` or a mapping of field paths. Binding a given slot
 applies the kernel, and binding a produced field conditions the law.
 
 A call resolves in two stages. The **exact stage** computes the conditional: it
-curries given slots, calls a conditioning capability, or, where no exact route
+binds given slots, calls a conditioning capability, or, where no exact route
 conditions a produced field, forms the **unnormalized conditional**, the law of
 the unconditioned fields whose unnormalized log-density is the joint's at the
 given values. The **normalization stage** returns a normalized result as it is,
@@ -18,7 +18,7 @@ value: it normalizes each law it yields once its last given is bound.
 
 The routes, in selection order:
 
-1. ``curry`` binds given slots of a kernel through its ``_condition_on``, which
+1. ``bind_given_slots`` binds given slots of a kernel through its ``_condition_on``, which
    is exact unless the kernel claims ``SupportsApproximateConditioning``, and
    normalizes the result.
 2. ``slice`` assembles the conditional from a factored law's factors when the
@@ -26,10 +26,10 @@ The routes, in selection order:
    part of a law's that conditions on them exactly, and normalizes the result.
 3. ``exact_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsExactConditioning``.
-4. ``inference_methods`` curries any given slots the given names, forms the
+4. ``inference_methods`` binds any given slots the given names, forms the
    unnormalized conditional of the produced fields by Bayes' rule, and
    normalizes it through the inference-method registry. A kernel normalized
-   per value is curried and conditioned through the kernel whose laws it
+   per value is bound and conditioned through the kernel whose laws it
    normalizes, so its result is normalized once.
 5. ``approximate_conditioning`` calls ``_condition_on`` on a law claiming
    ``SupportsApproximateConditioning``.
@@ -46,12 +46,12 @@ result. ``check`` reports both stages: its route is the exact stage's, and its
 method the normalization's, which is ``None`` for a result that needs none.
 Whether a result needs normalization is read from the declarations: a kernel's
 conditional capabilities state whether its laws are normalized. ``check``
-computes no exact stage, so it reports a curry unresolved when the kernel's
+computes no exact stage, so it reports a binding unresolved when the kernel's
 capabilities do not state it, and the call reads the computed law's own.
 
 The inference methods' budgets, such as warmup lengths, are the entries of the
 ``method_options`` control. The routes that normalize pass them to the selected
-method, or, when they curry a kernel normalized per value, to the method that
+method, or, when they bind a kernel normalized per value, to the method that
 normalizes the law it yields; ``approximate_conditioning`` passes them to the
 law's ``_condition_on`` as keyword options, and the other routes read none. The
 method that runs validates them: an inference method refuses an entry it does
@@ -411,8 +411,8 @@ def _fixes_every(d: Any) -> Feasibility:
 # ---------------------------------------------------------------------------
 
 
-def _curried(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
-    """The law or kernel that *kernel* yields at *given*, its provenance recording the curry.
+def _at_given(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any:
+    """The law or kernel that *kernel* yields at *given*, its provenance recording the binding.
 
     A result that carries a record of its own keeps it.
     """
@@ -442,7 +442,9 @@ def _curried(kernel: ConditionalDistribution, given: Any, **options: Any) -> Any
     if result is not kernel and result.provenance is None:
         result.with_provenance(
             Provenance.create(
-                "condition_on", parents=[kernel], metadata={"stage": "exact", "route": "curry"}
+                "condition_on",
+                parents=[kernel],
+                metadata={"stage": "exact", "route": "bind_given_slots"},
             )
         )
     return result
@@ -627,7 +629,7 @@ class _UnnormalizedConditionalKernel(ConditionalDistribution):
         self, given: Record | Mapping[str, Any], /, **kwargs: Any
     ) -> Distribution | ConditionalDistribution:
         """The unnormalized conditional at a value of every given slot, or a kernel over the rest."""
-        return _unnormalized_conditional(_curried(self._kernel, given, **kwargs), self._given)
+        return _unnormalized_conditional(_at_given(self._kernel, given, **kwargs), self._given)
 
 
 def _unnormalized_conditional(law: Any, given: Record) -> Any:
@@ -739,7 +741,7 @@ class _Normalization:
         """The selected method's normalized law for the target *law*.
 
         The result carries *law*'s event declaration, as the result rule of
-        currying requires. A law renamed at its boundary is normalized through
+        binding given slots requires. A law renamed at its boundary is normalized through
         the target it holds, as :func:`_held_target` states.
         """
         held, renamed = _held_target(law)
@@ -841,7 +843,7 @@ class _PerValueNormalization(ConditionalDistribution):
 
         *kwargs* are budgets of the method that normalizes the law.
         """
-        result = _curried(self._kernel, given)
+        result = _at_given(self._kernel, given)
         if not _needs_normalization(result):
             return result
         return _normalized(result, self._normalization.with_budgets(kwargs))
@@ -853,7 +855,7 @@ class _PerValueNormalization(ConditionalDistribution):
 
         It computes that law and runs no method.
         """
-        law = _curried(self._kernel, given)
+        law = _at_given(self._kernel, given)
         if not _needs_normalization(law):
             return Feasibility(True)
         return self._normalization.with_budgets(budgets).report(law)
@@ -943,7 +945,7 @@ class _ExactStage:
     yields_kernel: Callable[[BoundCall], bool]
 
 
-def _can_curry(call: BoundCall) -> Feasibility:
+def _can_bind_given_slots(call: BoundCall) -> Feasibility:
     """Every key of the given names a given slot of a conditional distribution.
 
     Parameters
@@ -974,7 +976,7 @@ def _can_curry(call: BoundCall) -> Feasibility:
     return Feasibility(True)
 
 
-def _curry(call: BoundCall) -> Any:
+def _bind_given_slots(call: BoundCall) -> Any:
     """The kernel's ``_condition_on`` at the given slots.
 
     A kernel whose evaluation runs a method, one normalized per value or one
@@ -986,7 +988,7 @@ def _curry(call: BoundCall) -> Any:
     options: dict[str, Any] = {}
     if isinstance(kernel, (_PerValueNormalization, SupportsApproximateConditioning)):
         options = dict(call.controls.get("method_options", {}))
-    return _curried(kernel, call.operands["given"], **options)
+    return _at_given(kernel, call.operands["given"], **options)
 
 
 def _evaluation_is_exact(call: BoundCall) -> bool:
@@ -994,7 +996,7 @@ def _evaluation_is_exact(call: BoundCall) -> bool:
     return not isinstance(call.operands["d"], SupportsApproximateConditioning)
 
 
-def _curried_is_normalized(call: BoundCall) -> bool | None:
+def _bound_is_normalized(call: BoundCall) -> bool | None:
     """Whether the kernel's laws are normalized, as its conditional capabilities declare."""
     return _laws_are_normalized(call.operands["d"])
 
@@ -1045,16 +1047,16 @@ def _evaluated(d: Any) -> Any:
 
 
 def _bayes(call: BoundCall) -> Any:
-    """The unnormalized conditional of the produced fields, the given slots curried first.
+    """The unnormalized conditional of the produced fields, the given slots bound first.
 
-    A kernel normalized per value is curried and conditioned through the kernel
+    A kernel normalized per value is bound and conditioned through the kernel
     it normalizes, so the result is normalized once.
     """
     d, values = call.operands["d"], _given_values(call.operands["given"])
     evaluated = _evaluated(d)
     slots = _slots_of(d)
     bound = {key: value for key, value in values.items() if _head(key) in slots}
-    law = _curried(evaluated, bound) if bound else evaluated
+    law = _at_given(evaluated, bound) if bound else evaluated
     produced = {key: value for key, value in values.items() if key not in bound}
     return _unnormalized_conditional(
         law,
@@ -1063,7 +1065,7 @@ def _bayes(call: BoundCall) -> Any:
 
 
 def _bayes_is_exact(call: BoundCall) -> bool:
-    """Forming the unnormalized conditional is exact unless it curries an approximate kernel."""
+    """Forming the unnormalized conditional is exact unless it binds an approximate kernel."""
     d = call.operands["d"]
     binds = any(_head(key) in _slots_of(d) for key in _given_keys(call.operands["given"]) or ())
     return not (binds and isinstance(_evaluated(d), SupportsApproximateConditioning))
@@ -1190,8 +1192,9 @@ def _slice(call: BoundCall) -> Any:
     """The product of the factors the given leaves unconditioned, at the fixed values.
 
     A law fixed in part is replaced by its exact conditional, and a kernel is
-    curried at the fixed components it conditions on, receiving the call's
-    ``method_options`` where evaluating it runs a method, as in currying. One
+    bound at the fixed components it conditions on, receiving the call's
+    ``method_options`` where evaluating it runs a method, as in binding
+    given slots. One
     factor kept is the result itself.
 
     Parameters
@@ -1251,7 +1254,7 @@ def _slice(call: BoundCall) -> Any:
 
 
 def _slice_is_exact(call: BoundCall) -> bool:
-    """The slice is exact unless it curries a kernel that claims SupportsApproximateConditioning."""
+    """The slice is exact unless it binds a kernel that claims SupportsApproximateConditioning."""
     return not any(
         bound and isinstance(factor, SupportsApproximateConditioning)
         for factor, _, bound in _sliced_factors(call)
@@ -1346,11 +1349,11 @@ def _conforming(check: Callable[[BoundCall], Any]) -> Callable[[BoundCall], Any]
     return checked
 
 
-_CURRY = _ExactStage(
-    check=_conforming(_can_curry),
-    compute=_curry,
+_BIND_GIVEN_SLOTS = _ExactStage(
+    check=_conforming(_can_bind_given_slots),
+    compute=_bind_given_slots,
     exact=_evaluation_is_exact,
-    normalized=_curried_is_normalized,
+    normalized=_bound_is_normalized,
     yields_kernel=_leaves_a_slot,
 )
 _SLICE = _ExactStage(
@@ -1670,11 +1673,11 @@ _GIVEN_KINDS: tuple[type[TermSpec], ...] = (
 def condition_on(d: Distribution, given: Record | Mapping[str, Any]):
     """Fix fields of *d* at the values *given* holds, and return the resulting law, normalized.
 
-    The exact stage curries given slots, calls a conditioning capability, or
+    The exact stage binds given slots, calls a conditioning capability, or
     forms the unnormalized conditional of the produced fields, and the
     normalization stage passes an unnormalized result to the inference-method
-    registry. ``with_options(method="unnormalized")`` returns the exact stage's
-    result as it is, and ``with_options(exact_only=True)`` raises rather than
+    registry. ``using(method="unnormalized")`` returns the exact stage's
+    result as it is, and ``using(exact_only=True)`` raises rather than
     normalize by an approximate method. A batch of givens is swept: each
     element is conditioned on as one given is, and the results form a batch on
     the givens' levels.
@@ -1729,7 +1732,7 @@ def _conditioning_guard(call: BoundCall, result: OutputSpec | None) -> Any:
 def _exact_stage_by_name(call: BoundCall, result: OutputSpec | None) -> Any:
     """Selected only by name, as ``method="unnormalized"``; the exact stage alone then runs.
 
-    The exact stage is the first of currying, slicing, exact conditioning, and
+    The exact stage is the first of binding given slots, slicing, exact conditioning, and
     the unnormalized conditional that applies.
     """
     if call.controls["method"] != _UNNORMALIZED:
@@ -1758,7 +1761,10 @@ def _exact_stage_result(call: BoundCall, result: OutputSpec | None) -> Any:
 
 condition_on.register_route(
     _NormalizingRoute(
-        "curry", source=RouteSource.STRUCTURAL, stage=_CURRY, registry=inference_method_registry
+        "bind_given_slots",
+        source=RouteSource.STRUCTURAL,
+        stage=_BIND_GIVEN_SLOTS,
+        registry=inference_method_registry,
     )
 )
 condition_on.register_route(
@@ -1824,7 +1830,7 @@ _EXACT_CONDITIONING = _ExactStage(
 #: The ways the exact stage computes the conditional, in the order it tries them,
 #: each under the name of the route that runs it.
 _NAMED_STAGES: tuple[tuple[str, _ExactStage], ...] = (
-    ("curry", _CURRY),
+    ("bind_given_slots", _BIND_GIVEN_SLOTS),
     ("slice", _SLICE),
     ("exact_conditioning", _EXACT_CONDITIONING),
     ("inference_methods", _BAYES),

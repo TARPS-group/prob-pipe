@@ -15,7 +15,6 @@ from ._density import (
     unnormalized_log_prob,
     unnormalized_prob,
 )
-from ._evaluate import evaluate
 from ._inverse import inverse, log_det_jacobian
 from ._joint import joint
 from ._marginal import factor, marginal
@@ -25,6 +24,7 @@ from ._moments import (
     expectation,
     mean,
     quantile,
+    standard_deviation,
     variance,
 )
 from ._operation import (
@@ -38,6 +38,7 @@ from ._operation import (
     operation,
     operation_registry,
 )
+from ._pushforward import pushforward
 from ._sample import sample
 
 __all__ = [
@@ -51,7 +52,6 @@ __all__ = [
     "condition_on",
     "convert",
     "cov",
-    "evaluate",
     "expectation",
     "factor",
     "inference_method_registry",
@@ -65,10 +65,12 @@ __all__ = [
     "operation",
     "operation_registry",
     "prob",
+    "pushforward",
     "quantile",
     "random_log_prob",
     "random_unnormalized_log_prob",
     "sample",
+    "standard_deviation",
     "unnormalized_log_prob",
     "unnormalized_prob",
     "variance",
