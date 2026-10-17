@@ -1841,7 +1841,7 @@ class TestEqualityAndCopying:
             element_spec=RecordSpec(x=()),
             label="post",
         )
-        assert batch._repr_header() == (
+        assert batch._repr_summary() == (
             "NumericRecordBatch('post', levels={'chain': 4, 'draw': 100}, fields=('x',))"
         )
 

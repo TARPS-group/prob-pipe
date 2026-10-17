@@ -24,7 +24,14 @@ from ._array_backend import (
 )
 from ._expression import Expression, Operator, constant
 from ._numeric import Numeric
-from ._repr import BINARY_SYMBOLS, VALUE_INDENT, format_dtype, format_entries, term_repr
+from ._repr import (
+    BINARY_SYMBOLS,
+    VALUE_INDENT,
+    format_dtype,
+    format_entries,
+    summary_with_values,
+    term_repr,
+)
 from ._specs import NumericArraySpec
 from .provenance import Provenance
 from .tracked import (
@@ -321,7 +328,7 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         repr's summary.
         """
         values = format_entries(self._value)
-        return self._repr_header() if values is None else values
+        return self._repr_summary() if values is None else values
 
     def __format__(self, format_spec: str) -> str:
         """The stored value formatted by *format_spec*, as ``f"{x:.2f}"`` formats a scalar."""
@@ -336,11 +343,9 @@ class NumericArray(TrackedTerm, Annotated, Numeric):
         entries shown are read from the device. Inside a JAX trace, where the
         value is a tracer, the repr is the summary alone.
         """
-        header = self._repr_header()
-        values = format_entries(self._value, VALUE_INDENT)
-        return header if values is None else f"{header}\n{values}"
+        return summary_with_values(self._repr_summary(), format_entries(self._value, VALUE_INDENT))
 
-    def _repr_header(self) -> str:
+    def _repr_summary(self) -> str:
         """The label, then the declared shape and dtype, and the support when one is declared.
 
         A declaration with an open dtype shows the stored value's dtype. The

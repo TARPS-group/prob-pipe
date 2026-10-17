@@ -442,11 +442,12 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """
         return self._label
 
-    def _repr_header(self) -> str:
-        """The repr as another term's repr or an error message shows it: the repr itself.
+    def _repr_summary(self) -> str:
+        """The term as another term's repr or an error message shows it.
 
-        A numeric term returns the summary of its label and structure, without
-        the values its repr shows below that summary.
+        The repr itself by default. A numeric term returns the summary of its
+        label and structure that heads its repr, without the values below it,
+        so showing it reads no entry.
         """
         return repr(self)
 
@@ -597,7 +598,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
             return self
         if getattr(self, "_provenance", None) is not None:
             raise RuntimeError(
-                f"provenance of {self._repr_header()} is already set; it can be set only once"
+                f"provenance of {self._repr_summary()} is already set; it can be set only once"
             )
         object.__setattr__(self, "_provenance", provenance)
         return self

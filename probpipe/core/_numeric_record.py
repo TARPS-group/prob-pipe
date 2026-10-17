@@ -37,7 +37,7 @@ from ._array_backend import (
 )
 from ._expression import Named
 from ._numeric import Numeric
-from ._repr import VALUE_INDENT, format_rows, public_class_name, rows_html, term_repr
+from ._repr import VALUE_INDENT, format_rows, rows_html, summary_with_values
 from ._shapes import NamesLike, _as_names
 from ._specs import (
     NumericArraySpec,
@@ -414,10 +414,6 @@ class NumericRecord(Record, Numeric):
 
     # -- Display ------------------------------------------------------------
 
-    def _value_rows(self) -> list[tuple[str, Any]]:
-        """Each field's path and its stored array, in canonical order."""
-        return [(path, _raw_leaf(leaf)) for path, leaf in self._walk_leaves()]
-
     def __repr__(self) -> str:
         """The class and the label, then one line for each field with its path and its value.
 
@@ -442,11 +438,11 @@ class NumericRecord(Record, Numeric):
         if table is not None:
             lines = table.lines(VALUE_INDENT)
             return "\n".join([self._displayed_label(), *lines, table.footer])
-        rows = format_rows(self._value_rows(), indent=VALUE_INDENT)
-        if not rows:
-            return self._repr_header()
-        head = term_repr(public_class_name(type(self)), self._displayed_label())
-        return f"{head}\n{rows}"
+        return summary_with_values(
+            self._repr_summary(structure=False),
+            format_rows(self._value_rows(), VALUE_INDENT),
+            alone=self._repr_summary(),
+        )
 
     def __str__(self) -> str:
         """The lines of the repr's values alone, one for each field with its path and its value.
@@ -459,7 +455,7 @@ class NumericRecord(Record, Numeric):
         if table is not None:
             return "\n".join(table.lines())
         rows = format_rows(self._value_rows())
-        return rows if rows else self._repr_header()
+        return self._repr_summary() if rows is None else rows
 
     def _repr_html_(self) -> str | None:
         """The record as a two-column table of its field paths and values, for a notebook.
@@ -473,10 +469,11 @@ class NumericRecord(Record, Numeric):
         if table is not None:
             label = html.escape(self._displayed_label())
             return f"<div><b>{label}</b>{table.html()}</div>"
-        rows = self._value_rows()
-        if not rows:
-            return None
-        return rows_html(term_repr(public_class_name(type(self)), self._displayed_label()), rows)
+        return rows_html(self._repr_summary(structure=False), self._value_rows())
+
+    def _value_rows(self) -> list[tuple[str, Any]]:
+        """Each field's path and its stored array, in canonical order."""
+        return [(path, _raw_leaf(leaf)) for path, leaf in self._walk_leaves()]
 
     # -- Single-field scalar-like coercion ---------------------------------
 
