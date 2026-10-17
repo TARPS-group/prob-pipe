@@ -41,14 +41,14 @@ When the push ends, each issue's text is updated to match, and none closes until
 
 | Issue | Done in the push, before the workshop | Kept for after the workshop | Source |
 |---|---|---|---|
-| [#524](https://github.com/TARPS-group/prob-pipe/issues/524) Finish the function engine | Two module moves, in step E3's first commit: `_execution_contract.py` into `_execution.py`, and `_managed.py` with `_broker.py` into `_point_keys.py` | The return step's `ResultKindError`; a lifted body that returns a batch; the four lift departures from V.5 and V.6; the related defects #406, #452, #232 | gaps D8 |
+| [#524](https://github.com/TARPS-group/prob-pipe/issues/524) Finish the function engine | Two module moves, in step E0: `_execution_contract.py` into `_execution.py`, and `_managed.py` with `_broker.py` into `_point_keys.py` | The return step's `ResultKindError`; a lifted body that returns a batch; the four lift departures from V.5 and V.6; the related defects #406, #452, #232 | gaps D8 |
 | [#554](https://github.com/TARPS-group/prob-pipe/issues/554) Explicit-key randomness | §8 only, in step E6: an inference method receives its run key through its own `key` parameter, which replaces the private `run_seed` | Everything else: `key` parameters on `@function` callables and `Supports*` methods, random-event subdivision, `share_keys_across`, versions per sampling algorithm, `sampler(d)`, the guard on workflow draws inside JAX transformations | gaps D8 |
-| [#506](https://github.com/TARPS-group/prob-pipe/issues/506) What a function body receives | Point sets present raw values to the callable (step E3) | Raw forms by default for every body, annotations that ask for tracked terms, one converter registry for every kind, `ArrayBackend.axes` | gaps D8 |
+| [#506](https://github.com/TARPS-group/prob-pipe/issues/506) What a function body receives | Point sets present raw values to the callable (step E3a) | Raw forms by default for every body, annotations that ask for tracked terms, one converter registry for every kind, `ArrayBackend.axes` | gaps D8 |
 | [#522](https://github.com/TARPS-group/prob-pipe/issues/522) `LinOp` and the differentiability claim | Nothing | All of it, then the execution plan's supplied derivatives (`vjp`, `jacobian`, `jvp`) and the `jacobian` operation on top of it (Q11) | gaps D8 |
 | [#451](https://github.com/TARPS-group/prob-pipe/issues/451) One n-ary dispatch registry | Nothing: the executor registry uses today's unary registry | All of it; the executor registry moves to the n-ary class with the others | gaps D8 |
-| [#571](https://github.com/TARPS-group/prob-pipe/issues/571) Declarations | Steps S2, S3, S4, and G1 | Step G2 and the deferred `&` kinds listed above; the issue points to the reconciled plan | gaps D1–D4 |
+| [#571](https://github.com/TARPS-group/prob-pipe/issues/571) Declarations | Steps S2a, S2b, S3, S4, G1a, and G1b | Step G2 and the deferred `&` kinds listed above; the issue points to the reconciled plan | gaps D1–D4 |
 | [#573](https://github.com/TARPS-group/prob-pipe/issues/573) Field paths and subscripts | Step S1 | Steps G3–G5 | gaps D1, D4 |
-| [#580](https://github.com/TARPS-group/prob-pipe/issues/580) Execution layer | Steps E1–E8 | The execution-layer work listed above | `execution-layer.md` §13 |
+| [#580](https://github.com/TARPS-group/prob-pipe/issues/580) Execution layer | Steps E0–E8 | The execution-layer work listed above | `execution-layer.md` §13 |
 | [#585](https://github.com/TARPS-group/prob-pipe/issues/585) An exact result lost to a budget | Nothing | All of it; its text needs `max_evaluations` after #586 | `execution-layer.md` Q12 |
 
 ## Found along the way
@@ -57,8 +57,9 @@ When the push ends, each issue's text is updated to match, and none closes until
 |---|---|---|---|
 | 2026-10-16 | The Rocq model of the component interface does not cover renames by path or paths inside slots. | addressing plan | Extend before the grammar-B design text is final. |
 | 2026-10-16 | The Gaussian route of `condition_on` accepts a given record with a missing or extra field. | addressing plan | A bug, separate from the push. |
-| 2026-10-16 | Inference on a law declared whole over a record fails with a wrong message. | addressing plan | Grammar B removes the cause (step G1). |
+| 2026-10-16 | Inference on a law declared whole over a record fails with a wrong message. | addressing plan | Grammar B removes the cause (step G1a). |
 | 2026-10-16 | A lighter pyabc route: a `pyabc.sampler.Sampler` subclass seeds NumPy's global generator per evaluation from `fold_in(fold_in(run_key, t), i)` and sends the seeds to the executor as one point set. A 60-line prototype gave bitwise-identical populations run sequentially, with chunks in reverse order, on 4 processes, and with two batch sizes. The thread executor cannot run these points. | jhuggins, comment on the execution Doc | Would replace the plan's pyabc reimplementation. |
-| 2026-10-17 | Rename `with_level_names` and `with_dim_names` to `rename_levels` and `rename_dims`, so all three renames read alike. | addressing plan; O10 | Not part of the push. |
+| 2026-10-17 | Rename `with_level_names` and `with_dim_names` to `rename_levels` and `rename_dims`, so all three renames read alike. | addressing plan; `declarations-and-addressing.md` O13 | Not part of the push. |
+| 2026-10-17 | Rename a mixture's `components=` parameter, so "component" keeps one sense in the API. | `declarations-and-addressing.md` O14 | Not part of the push. |
 | 2026-10-16 | Issues to open: deterministic fields of a joint (Q4) and a Gibbs method (Q10). | execution plan | |
 | 2026-10-16 | An exact route ruled out only by a budget should be reported, and the call should warn. | execution plan, Q12 | Tracked in #585; its text needs `max_evaluations` after #586. |

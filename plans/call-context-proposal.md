@@ -8,7 +8,7 @@
 > 2. the key of a program ProbPipe opens includes only the settings that traced code may read, not every `config` block (OD6);
 > 3. the carrier is named `_ContextBoundFunction`.
 >
-> The second revision fixes two blockers the adversarial review found: tokens did not reach embedded calls inside the inference runners or past an inner `jax.jit`, and the detection of programs with embedded calls was neither specified soundly nor built by any step before the workshop. It also moves the shipping of JAX settings into E3a, gives the executor choice one home, and adds OD7 and OD8.
+> The second revision fixes two blockers the adversarial review found: no token was passed to embedded calls inside the inference runners or past an inner `jax.jit`, and the detection of programs with embedded calls was neither specified soundly nor built by any step before the workshop. It also moves the shipping of JAX settings into E3a, gives the executor choice one home, and adds OD7 and OD8.
 
 - **For:** the maintainer, and through § 12 for jhuggins on PR #587.
 - **Date:** 2026-10-17.
@@ -200,10 +200,13 @@ Threads, Prefect, processes, and callbacks differ only in how the captured value
 **CC3. Per-call values are data at every boundary.**
 This is P11 of the execution plan applied to settings: a per-call value enters a compiled program, a callback, or a worker as an argument or as carried data, never as a captured constant or as thread-local state the receiver cannot see.
 
-**CC4. Settings are read in Python, and traced code reads only traced settings.**
+**CC4. Settings are read in Python, and traced code reads only settings that cannot change a computed value or are part of the key.**
 A call resolves its controls once, when it opens, and the code the call runs reads the resolved values from its context.
-While ProbPipe traces a program it opens, code may read only the passed controls and the `config` settings declared traced (§ 5.5), and each of those is part of the program's key (OD6).
-Reading any other setting while ProbPipe traces one of its programs raises an error that names the setting.
+Each `config` setting declares one of two kinds:
+1. **traced:** it can change what a compiled program computes, such as `sampling.num_samples`. While ProbPipe traces a program it opens, code may read it, and it is part of the program's key (OD6).
+2. **presentation:** it changes only labels, messages, or provenance, such as `notation.max_depth` and `provenance.mode`. Code may read it at any time, since a value baked into a program cannot change a computed result, and it never enters a key. Labelled terms built inside traced kernel and route code read `notation.max_depth` today (`TrackedTerm._store_expression`), and this keeps them working.
+
+Reading a setting of neither kind while ProbPipe traces one of its programs raises an error that names the setting, so a new setting must declare its kind.
 
 **CC5. An explicit choice beats an ambient one.**
 A value set on a call beats a value passed down by an enclosing call, which beats a `config.using` block, which beats the session's value.
@@ -228,7 +231,7 @@ A call context, a block, and an installed point context each restore the previou
 - **Empty context:** the `_CallContext` with every field at its default: no blocks, no passed controls, no call, automatic selection.
 - **`config` block:** the temporary values that `config.<section>.using(...)` or `config.using(...)` sets for the extent of a `with` statement (#587).
 - **Passed controls:** the `exact_only`, `max_evaluations`, and `num_samples` that a derived operation's identity passes to the calls it makes (VI.0). Today they are the value of `_INHERITED_CONTROLS`.
-- **Point context:** the call context that a point of a call runs under, which `_CallContext.for_point()` returns. It is the call's context without the executor choice, the callback state, and the point-run table.
+- **Point context:** the call context that a point of a call runs under, which `_CallContext.for_point()` returns. It is the call's context without the executor choice, the embedded-call state, and the point-run table.
 - **Point boundary:** the place where a point starts running, in any thread or process. The point context is installed there.
 - **Call token:** a `numpy.uint32` that names one open call context in the table of active calls (execution plan §5). Token 0 names no call. A call registers a token only before it runs a program that stages an embedded call.
 - **Program with embedded calls:** a program ProbPipe opens whose trace staged at least one embedded call. The program store finds this by searching the program's jaxpr when it lowers the program, before the program first runs (§ 5.2).
@@ -339,7 +342,7 @@ Two methods differ from `__call__`:
 - **`apply`** shares its parent's `draw_counts` instead of starting its own, so the draws an `apply` makes count toward the enclosing call, as they do today, where only `__call__` starts its own Monte Carlo draw counts (`functions/_function.py:313`).
 
 **Registering a token.** A token is registered only for a program with embedded calls, and only when no trace is active:
-1. **Detection.** The program store lowers a program before its first run (execution plan §6.10, item 3, which step E3a builds). It searches the lowered jaxpr, sub-jaxprs included, for ProbPipe's own embedded-call callback, matched by the host-side function object, so `jax.debug.print` and a user's own callbacks do not count. A Python flag set while staging is not enough: a nested `jax.jit` that is already cached does not run its Python again when a second outer program traces it (review test R1). The search found the callback through a nested `jit`, `custom_vjp` (its primal and under `grad`), `custom_jvp`, `checkpoint`, and `scan` (review test R1).
+1. **Detection.** The program store lowers a program before its first run (execution plan §6.10, item 3, which step E3a builds). It traces the program with `jax.jit(f).trace(...)`, searches the resulting jaxpr, sub-jaxprs included, and then lowers it. (A `Lowered` object carries no jaxpr.) The search looks for ProbPipe's own embedded-call callback, matched by the host-side function object, so `jax.debug.print` and a user's own callbacks do not count. A Python flag set while staging is not enough: a nested `jax.jit` that is already cached does not run its Python again when a second outer program traces it (review test R1). The search found the callback through a nested `jit`, `custom_vjp` (its primal and under `grad`), `custom_jvp`, `checkpoint`, and `scan` (review test R1).
 2. **Validity.** The search also checks that the token operand of every embedded call is the program's own token argument. A literal token, or a tracer from another trace, means a `jax.jit` between the program and the embedded call captured the token, such as a user's jitted helper around an opaque `Function`, which otherwise sends the wrong call's settings or raises `UnexpectedTracerError` (review test R2). The program store raises an error that names the jitted helper and says to remove the inner `jit` or to call the opaque code through a ProbPipe call.
 3. **Registration.** Before the engine runs a program with embedded calls, it registers the call's context in `_ACTIVE_CALLS`, if the call holds no token yet, and passes the token. Every other program receives token 0, which it never reads.
 4. **Inside a trace.** When a trace is active, the engine registers nothing and waits for nothing. It passes `_TRACED_CALL_TOKEN` when ProbPipe is tracing, and 0 otherwise. Without this rule a program the engine runs inside an outer trace is staged into the outer program with its token as a literal, and the cached outer program later sends a released token to the host (review test R3).
@@ -360,12 +363,13 @@ A ProbPipe call the point makes then opens a child of the point context.
 1. **Wait for programs with embedded calls.** When the call holds a token, the engine blocks on the outputs of every program with embedded calls it ran (`jax.block_until_ready`) before the call returns. JAX dispatches a program asynchronously, so without the wait a callback could look up a released token. On CPU a program with a callback returned only after the callback ran, and a program without one returned before its result was ready (✅ `v04`). The design relies on neither. A call that ran no program with embedded calls holds no token and waits for nothing, so its programs keep running asynchronously after it returns.
 2. **Release the token** (E4), if the call registered one, in a `finally` clause.
 3. **Merge the draw counts** into the parent's on success, when the parent collects calls, as #586 does.
-4. **Check the JAX settings** at a root call (E8, Q18). A change raises on success. On error, a note naming the change is added to the original exception, so the original error is not hidden.
-5. **Restore the context variable**, in the same `finally` clause.
+4. **Merge what ran:** the call's `point_sets_run` merges into its parent's, on success and on error (§ 5.1).
+5. **Check the JAX settings** at a root call (E8, Q18). A change raises on success. On error, a note naming the change is added to the original exception, so the original error is not hidden.
+6. **Restore the context variable**, in the same `finally` clause.
 
-**On error.** An exception raised during the call propagates after steps 2 and 5.
+**On error.** An exception raised during the call propagates after steps 2, 4, and 6.
 The draw counts are not merged.
-When the call's `failures` hold entries recorded by a callback, the engine raises `PointEvaluationError` with them, chained to the exception JAX raised.
+When the failures in the call's `embedded_calls` hold entries recorded by a callback, the engine raises `PointEvaluationError` with them, chained to the exception JAX raised.
 It decides by the recorded failures, not by the exception's type: a failing callback raised `JaxRuntimeError` in one program and as `ValueError("INTERNAL: CpuCallback error ...")` in another (✅ `v07`, `v07b`).
 The execution plan's §6.4 rule 2 now states this.
 
@@ -460,8 +464,8 @@ Ask whether two calls that differ only in this setting may share one compiled pr
 | Setting | Where it is read | Class |
 |---|---|---|
 | `config.sampling.max_evaluations` and `num_samples`, and the controls of those names | planning a lift; the size of a Monte Carlo estimate | (a), and (b) for a program whose shapes they set, where they are part of its input structure |
-| `config.notation.max_depth` | rendering a label | (a) |
-| `config.provenance.mode` | building provenance | (a) |
+| `config.notation.max_depth` | rendering a label | (a); declared presentation, so readable while tracing (CC4) |
+| `config.provenance.mode` | building provenance | (a); declared presentation (CC4) |
 | `config.prefect.workflow_kind` and `task_runner` | choosing Prefect's transport | (a) |
 | `exact_only`, `method`, `method_options`, `conversions`, `include_inputs`, `raw`, the `workflow_kind` control | route selection and planning | (a) |
 | the failure rule, `method_options["on_failure"]` | a requester in Python | (a) |
@@ -470,7 +474,7 @@ Ask whether two calls that differ only in this setting may share one compiled pr
 | an executor set on the `Function` itself, or named on a call that opens while a trace is active | the host side, from the `Function` that the staged callback holds | (c): an executor's options can hold objects with no hash, such as a pool, so they never enter a program key |
 | the `jax` executor's `batch_size` | compiling a lifted program | (b) |
 | `memo` | the staging of an embedded call | (b), as the execution plan §6.10 item 2 states |
-| `failures`, the point-run table | the host side | (c) |
+| the failures in `embedded_calls`, the point-run table | the host side | (c) |
 | the traced settings: `passed_controls`, and the `config` settings declared traced (today `sampling.max_evaluations` and `sampling.num_samples`), as ProbPipe code traced inside a program ProbPipe opens reads them | the trace | (b): part of the key of every program ProbPipe opens (OD6); reading any other setting while ProbPipe traces raises (CC4) |
 | JAX's global settings: `jax_enable_x64`, `jax_default_prng_impl`, `jax_threefry_partitionable`, `jax_default_matmul_precision` | tracing and XLA | (b), through `jax.jit`'s own cache (OD8), and checked on the host side as (c) |
 
@@ -608,8 +612,8 @@ Each step adds fields and behaviour to the same type and the same functions, and
 
 | Step | Adds | Uses from #587 |
 |---|---|---|
-| E3a | `execution` and `_ExecutionChoice`; `for_point()` drops `execution`; `point_sets_run` and its merge into the parent; `jax_settings`, shipped to process workers through the pool's initializer; `PointChunk` carries `for_point()` and returns its draw counts (OD4); the program store, holding `jax.jit` objects and lowering each program before its first run (execution plan §6.10, item 3); replay reads `executor` from the context; the broker's requested-execution fields go | `_under_call_context`, `for_point`, `_ContextBoundFunction` (or `PointChunk.run` in its place) |
-| E4 | `embedded_calls` and `_EmbeddedCallState`, `_ActiveCalls`; `for_point()` drops `embedded_calls`; `_TRACED_CALL_TOKEN` and `_tracing_active()`; detection and validity by a search of the jaxpr; lazy registration, the rule inside a trace, and the wait before release; raising recorded failures; the token threaded through every program ProbPipe opens that runs user or route code, the inference runners included (execution plan §6.10, item 4, moves into E4); the per-point output check and its cast warning; the `traced` declaration on `config` settings, the error for reading another setting while ProbPipe traces, and the traced settings in the program key (OD6) | the same |
+| E3a | `execution` and `_ExecutionChoice`; `for_point()` drops `execution`; `point_sets_run` and its merge into the parent; `jax_settings`, shipped to process workers through the pool's initializer; `PointChunk` carries `for_point()` and returns its draw counts (OD4); the program store, holding `jax.jit` objects, tracing and lowering each program before its first run (execution plan §6.10, item 3), with the passed controls and the traced settings in its key, and the declaration of each `config` setting's kind (OD6, CC4); replay reads `executor` from the context; the broker's requested-execution fields go | `_under_call_context`, `for_point`, `_ContextBoundFunction` (or `PointChunk.run` in its place) |
+| E4 | `embedded_calls` and `_EmbeddedCallState`, `_ActiveCalls`; `for_point()` drops `embedded_calls`; `_TRACED_CALL_TOKEN` and `_tracing_active()`; detection and validity by a search of the jaxpr; lazy registration, the rule inside a trace, and the wait before release; raising recorded failures; the token threaded through every program ProbPipe opens that runs user or route code, the inference runners included (execution plan §6.10, item 4, moves into E4); the per-point output check and its cast warning; the error for reading a setting of neither kind while ProbPipe traces | the same |
 | E7 | `point_runs`; `for_point()` drops it | the same |
 | E8 | the check of the JAX settings at close and on the host side; their provenance | the same |
 
@@ -702,7 +706,7 @@ Each case was tried against the contract as a skeptical reviewer would.
 5. **Re-entrant calls.** A point run by a host side opens a ProbPipe call, which opens its own program with its own token while the outer program waits. ✅ `v06`: under `jit` and under `pmap`, each inner call found its own context with no executor, and the table was empty at the end. The lock of `_ACTIVE_CALLS` is held only for the lookup, so re-entry cannot deadlock on it.
 6. **A `config.using` block opened inside a point.** It derives from the point context and is reset on exit. ✅ `v09` item 3 for thread points, and ✅ `v11` for embedded points on XLA threads: inside the block a point read 7, and after it 1024. In `v11` JAX started new XLA threads for each `pmap` call, so a leak across calls did not appear. JAX documents no such rule, so the reset on exit is required, not optional.
 7. **A program that outlives its call.** JAX dispatches asynchronously, so a call could return while its program still runs. A program with embedded calls is waited for before its token is released (§ 5.2), so no callback finds a released token (✅ `v04`). A program without callbacks may outlive its call, which is harmless because it never looks a token up.
-8. **A call that opens while tracing.** A `Function` called inside a traced kernel opens a context with no callback state, so it never registers a token. Its embedded calls pass the traced token, so the call that runs the program decides the executor at run time (✅ `v06`, nested programs). Its explicit choice, if any, is static, which is correct because it is part of the traced code.
+8. **A call that opens while tracing.** A `Function` called inside a traced kernel opens a context with no embedded-call state, so it never registers a token. Its embedded calls pass the traced token, so the call that runs the program decides the executor at run time (✅ `v06`, nested programs). Its explicit choice, if any, is static, which is correct because it is part of the traced code.
 9. **A program the user opens.** It passes token 0, so its callbacks run under the empty context on every thread. Under plain `jit` the callback runs on the calling thread and could see that thread's context, while under `pmap` it could not (✅ `v02`). Using the empty context makes the two agree (OD3).
 10. **A term used after its call.** A law returned by one call holds no context (CC7). A later `sample` of it runs under the later call's settings, which is #587's stated rule that "a setting governs the functions constructed before it".
 11. **`check` against the call.** `check` opens a context with the same resolution, so it reports what the call would do (P4). It registers no token, because it runs no program.
@@ -820,7 +824,7 @@ Not every setting can be part of a key. A `config.prefect.using(task_runner=RayT
 
 **Options.**
 - **A.** The key of every program ProbPipe opens includes every active `config` block and the passed controls.
-- **A′.** Each `config` setting declares whether traced code may read it. The key of every program ProbPipe opens includes the passed controls and the current values of the settings declared traced. A traced setting's value must be hashable, which its section's check enforces. Today the traced settings are `sampling.max_evaluations` and `sampling.num_samples`; `notation`, `provenance`, and `prefect` are not traced.
+- **A′.** Each `config` setting declares its kind, traced or presentation (CC4). The key of every program ProbPipe opens includes the passed controls and the current values of the settings declared traced; presentation settings never enter it. A traced setting's value must be hashable, which its section's check enforces. Today the traced settings are `sampling.max_evaluations` and `sampling.num_samples`; `notation` and `provenance` are presentation settings; `prefect` is read only in Python orchestration, never in traced code.
 - **B.** Each owner of a program lists the settings its traced code reads, and only those enter its key.
 - **C.** ProbPipe traces its programs under the empty context, so traced code never sees blocks or passed controls.
 
@@ -919,3 +923,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 12 | OD8: the program store holds `jax.jit` objects. | JAX keys them by its settings, and lowering then calling compiles once. |
 | 13 | `point_sets_run` merges into the parent on close; `check` opens no draw counts and `apply` shares its parent's; `is_empty()` is in the sketch; § 5.7 lists the replay variables and `_BATCHED_INIT_BYPASS`; "requester" replaces "consumer"; "program with embedded calls" replaces "program with callbacks". | Gaps and text errors the review found. |
 | 14 | Not adopted: releasing tokens by sweeping finished programs in place of the lazy scheme. | The search of the jaxpr makes the lazy scheme sound, and the sweep keeps every call registered. |
+| 15 | CC4 distinguishes traced settings from presentation settings, which stay readable while tracing; the OD6 key and the declaration of each setting's kind move into E3a, which builds the program store; detection traces with `jax.jit(f).trace(...)` and then lowers; the closing order merges `point_sets_run`. | The final review: labelled terms read `notation.max_depth` inside traced code today, a store without its full key until E4 could carry a value across calls, and a `Lowered` object has no jaxpr. |

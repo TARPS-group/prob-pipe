@@ -1337,7 +1337,7 @@ The result is always an exposed record (I9), and it is the complement of `withou
 
 ```python
 grouped["a", "g/c"]                  # a law over {a, g: {c}}
-grouped.without("g/e")                # the same tree, reached by removing instead of choosing   (step G4)
+grouped.without("g/e")                # the same tree, obtained by removing instead of choosing   (step G4)
 sample(grouped)["a", "g/c"]           # Record {a, g: {c}}, labeled "(a, g/c)"
 
 # I8: the draws condition back onto the law they came from
@@ -1787,7 +1787,7 @@ Every place where the decision keeps names out uses a name-free canonical form o
 
 Two reasons rule out comparing names in some places and not others inside one `BatchSpec`:
 - JAX rebuilds the output of a cached compiled program from the static data of the first call, so a name kept in static data that compares without it comes back from a later call made under another name. A pytree whose static data compares equal across names shows this: `jax.jit(lambda b: b)` called with name `x` and then `y` returns `x` both times. The same holds one level down, for a record whose field holds a batch.
-- The execution plan keys its probe results and its program store by input structure. Two `BatchSpec`s that are equal while holding different names would share one entry, and the entry would answer with the wrong name.
+- Equal objects that answer differently are unsafe anywhere they serve as keys. The execution plan keys its probe results and its program store by input structure, which it defines through ProbPipe's canonical flatten (`execution-layer.md` § 5), so whole-element names never enter those keys and a name never causes a recompile; a requester restores names on its results. A spec captured by a closure is compared in its canonical form for the same reason.
 
 **Departure from the addressing plan.**
 The addressing plan stored the name "beside the spec, as a label is".
@@ -2019,7 +2019,7 @@ Its renames change about 50 modules, which is why it is announced.
 
 **S2a files:** `core/_specs.py`, `core/_fingerprint.py`, and every module that reads the removed names: 29 lines read `_component_name` outside `_specs.py`, `exposes_record` appears on 33 lines of `probpipe/` and 31 of `tests/`, and `.event_spec.spec` on 89 lines of `probpipe/` and 197 of `tests/`.
 
-**S2a is done when:** no module reads `OutputSpec._component_name` outside `_specs.py`; a search finds no `.components`, `exposes_record`, `.spec` on a declaration, or `with_spec` on an `OutputSpec`; and the full suite passes.
+**S2a is done when:** no module reads `OutputSpec._component_name` outside `_specs.py`; a search finds no `.components` on an `OutputSpec`, no `exposes_record`, no `.spec` on a declaration, and no `with_spec` on an `OutputSpec` (the expression signature's own `components` in `core/_expression.py` is unrelated); and the full suite passes.
 
 **S2b delivers** § 6.2–6.5, § 7.5–7.8, and the law's event rule of § 5.4:
 - `project` and `without` on declarations, through S1's reader;
@@ -2037,7 +2037,7 @@ Its renames change about 50 modules, which is why it is announced.
 - `values/_function_base.py`: the `input_spec` reading in `Function._initialize`;
 - `distributions/_conditional.py`: `_slots_of`, `_complete_given_spec`, `ConditionalDistributionSpec`'s `given_spec`, the event rule;
 - `distributions/_distribution.py`: `DistributionSpec` and the event rule;
-- `distributions/_views.py`: `_view_declaration` becomes `OutputSpec.project`;
+- `distributions/_views.py`: `_view_declaration` becomes `OutputSpec.project` for every subscript except one path to a group, which keeps today's whole form until G1a;
 - `distributions/_factored.py`: the joint's event and its unmet slots in `_factor_graph`, through `&`;
 - the three callers of `InputSpec.without` (§ 6.5);
 - `docs/api/declarations.md`.
@@ -2047,7 +2047,7 @@ Its renames change about 50 modules, which is why it is announced.
 - a nested `RecordSpec` and an `OutputSpec` each declare a kernel's slots, and the regrouped law of § 6.1 builds a kernel;
 - an `OutputSpec` source with a component name that is not an identifier, or with a type hole, raises;
 - `InputSpec(K=())`, `given_spec={"K": ()}`, and `OutputSpec(K=())` build, and `InputSpec(K=3)` raises;
-- tests cover each error of § 7.5–7.7 and check `d[s].event_spec == d.event_spec.project(s)` and `(a & b).event_spec == a.event_spec & b.event_spec` over the running examples;
+- tests cover each error of § 7.5–7.7 and check `d[s].event_spec == d.event_spec.project(s)` and `(a & b).event_spec == a.event_spec & b.event_spec` over the running examples, leaving out a single path to a group, such as `grouped["g"]`, whose identity G1a delivers;
 - `fit.output_spec.project("posterior")` is `OutputSpec(post_spec)` for the wrapped `fit` of § 5.3;
 - `InputSpec(a=NumericArraySpec(())).without("zzz")` raises `KeyError`, and its three callers pass only slots;
 - the full suite passes.
@@ -2126,9 +2126,9 @@ The event default does not change in G1b (§ 5.5).
 
 **The declaration probe.**
 A test-only probe wraps the keyword form of `OutputSpec` and its type-hole filling while the suite runs.
-For each whole declaration over a spec with parts, it records the innermost stack frame that built it:
+For each whole declaration over a spec with parts, it records the first stack frame outside `core/_specs.py` that built it, since the innermost frame is always inside `OutputSpec`'s own code:
 - a frame in `tests/` means the test built the form by hand, which stays legal until G2, so the probe ignores it;
-- a frame in `probpipe/` means the library built it, and the probe checks the frame's function against an allowance.
+- a frame in `probpipe/` means the library built it, and the probe checks the frame's function and the kind of the spec (law, function, batch, or record) together against an allowance, so a group view that regresses to the whole form is caught while a view at a law-valued field is allowed.
 
 | Allowance | Library functions that may still build the old form |
 | --- | --- |
@@ -2289,7 +2289,7 @@ def simulate(theta):
     return NumericArrayBatch(run_simulator(theta), "sim")    # options 1 and 3: offers simulate; option 2: offers element
 ```
 
-**Recommendation.** Option 3. It gives one rule for every kind, it matches the decision on type holes, since no named value is renamed, and it keeps a sensible name for a simulator that returns a raw batch, a common case in simulation-based inference. The default name `element` names no particular quantity, which is the reason a producer may replace it. The text of § 5.5 and § 5.6 follows this option.
+**Recommendation.** Option 3. It gives one rule for every kind, it amends the decision of 2026-10-17 that a type hole filled with any spec with parts raises, by allowing a batch whose element has only the default name, since no named value is renamed, and it keeps a sensible name for a simulator that returns a raw batch, a common case in simulation-based inference. The default name `element` names no particular quantity, which is the reason a producer may replace it. The text of § 5.5 and § 5.6 follows this option.
 
 #### O3. How a batch's whole-element name is stored
 
@@ -2456,18 +2456,9 @@ A mixture is a law, so `mix.component("x")` reads its event component, while a r
 
 **Recommendation.** Option 2. An attribute named `element` that holds a declaration reads as one item of the batch; `element_declaration` says what it holds, and the default component name stays as decided.
 
-#### O16. G2's refusal needs G3's wrap
+#### O16. G2's refusal needs G3's wrap (resolved by README)
 
-**Background.**
-README § Steps makes G2 depend on G1b and G3 on G1a, with no order between G2 and G3.
-Until G3, a view at a field that holds a law or a function keeps today's whole form, such as `joint["G"]` declared `OutputSpec(G=DistributionSpec(...))` (§ 5.3).
-G2 ends by refusing a whole declaration over a spec with parts, so if G2 merged first, such a view would raise.
-
-**Options.**
-1. Add G3 as a dependency of G2's final refusal, or of G2.
-2. Move the wrap of views at law- and function-valued fields from G3 into G2.
-
-**Recommendation.** Option 1. It needs only a change to README's dependency column, and it keeps each step's content as it is.
+Until G3, a view at a field that holds a law or a function keeps today's whole form, such as `joint["G"]` declared `OutputSpec(G=DistributionSpec(...))` (§ 5.3). G2 ends by refusing a whole declaration over a spec with parts, so it must follow G3. README § Steps now makes G2 depend on G1b and G3.
 
 ## 22. Appendix: what moved from each source
 

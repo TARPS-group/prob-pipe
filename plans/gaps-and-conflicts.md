@@ -391,7 +391,7 @@ None of them has a PR, so the plan cannot wait for them.
 
 | Issue | What it is | What the pre-workshop steps need from it | Recommendation |
 |---|---|---|---|
-| #524 | Finishing the function engine. Includes moving `_execution_contract.py` into `_execution.py` and merging `_managed.py` into the existing key broker `_broker.py`. | E3 rewrites these modules, so moving them afterwards would rewrite them twice. | E3's first commit does the two moves mechanically, using Q16's name. The rest of #524 stays after the workshop. |
+| #524 | Finishing the function engine. Includes moving `_execution_contract.py` into `_execution.py` and merging `_managed.py` into the existing key broker `_broker.py`. | E3 rewrites these modules, so moving them afterwards would rewrite them twice. | Step E0 does the two moves mechanically, using Q16's name, with the rename to "point" (README § Steps). The rest of #524 stays after the workshop. |
 | #554 | Explicit-key randomness: a `key` parameter declares randomness, and the workflow supplies the key. | E6's `InferenceTarget` gives a method its run key through a `key` parameter (#554 §8). A `vectorized` callable receives stacked keys. | E6 implements the run-key delivery of #554 §8 only. The rest of #554 follows the workshop. |
 | #522 | `LinOp` as a `Function`, and the differentiability claim. | Nothing, if Q14 is answered as recommended. | After the workshop, with the supplied derivatives. |
 | #506 | What a function body receives: raw values by default. | Point sets carry raw values, which open PR #575 reads through the `raw` property. | Point sets present raw values; the rest of #506 after the workshop. |

@@ -18,7 +18,7 @@ Every session that works on the push reads this file in full before anything els
 | [`decisions.md`](decisions.md) | Every decision taken during the push, with its date and reason, and the queue of questions waiting for the maintainer |
 | [`gaps-and-conflicts.md`](gaps-and-conflicts.md) | The places where the plans disagree or leave a decision open. This PR merges once each is settled. |
 | [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
-| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, subscripts and paths, `&`, and steps S0–S4 and G1–G5 |
+| [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, subscripts and paths, `&`, and steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
 | [`declarations.md`](declarations.md), [`addressing.md`](addressing.md) | The two source texts the reconciled design replaced, kept for comparison until the maintainer has reviewed the reconciled text |
 | [`call-context-proposal.md`](call-context-proposal.md) | The design of the one call context that carries per-call state, under review; it is folded into `execution-layer.md` once accepted |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
@@ -90,7 +90,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 
 **The cut order.** If time runs short, steps are cut in this order: E8, then E7, then G1b. Every other step before the workshop is never cut.
 
-**The critical path** runs PL → S0 → S1 → S2b → S3 and S4 → G1a, and PL → E1 → E3a → E3b → E4 → E5 → G1b. S2a, E0, and E2 run beside it.
+**The critical path** has two chains. PL → S0 → S1 → S2b → S3, with S2b and E3b → S4 → G1a. PL → CC → E1 → E3a → E3b → E4 → E5 → G1b. S2a, E0, and E2 run beside them.
 
 ### Before any step
 
@@ -100,6 +100,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 | P0b | The call context is created as `call-context-proposal.md` § 7.2 describes: in #587 before it merges if the maintainer chooses OD5 option A, in a follow-up PR if option B (decision pending) | #586 |
 | PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | P0, P0b |
 | PL | This `plans/` PR merges | every item of `gaps-and-conflicts.md` except D7, and the open points O1–O16 of `declarations-and-addressing.md` |
+| CC | The maintainer accepts `call-context-proposal.md` (gaps D7), and a PR folds it into `execution-layer.md` | PL |
 
 ### Declarations and addressing
 
@@ -108,7 +109,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 | S0 | Design text: II.2 states the grammar rule and the declarations, II.6 the paths and the reading of a subscript; the glossary | `declarations-and-addressing.md` § 19.2 | PL | yes |
 | S1 | One subscript reader and one `_PATH_SEP`; `[]` returns groups on `Record` and `RecordSpec`; lists of paths keep their paths; `in`, laws included; `marginal(d, paths)`; `select` flattens to last segments; `()` on a batch raises | § 19.3 | S0 | yes |
 | S2a | **Announced, mechanical.** `OutputSpec` becomes a mapping of its components; `spec` becomes `term_spec`; every read of `components`, `exposes_record`, and `_component_name` outside `_specs.py` moves to the mapping | § 19.4 | S0 | yes |
-| S2b | `project` and `without` through S1's reader; one reading of slots; the size shorthand; `&` on `InputSpec` and `OutputSpec`; the refusal of a law's event that exposes a law or a batch | § 19.4 | S1, S2a | yes |
+| S2b | `project` and `without` through S1's reader; one reading of slots; the size shorthand; `&` on `InputSpec` and `OutputSpec`; the refusal of a law's or a kernel's event declaration that exposes a law, a kernel, a function, or a batch | § 19.4 | S1, S2a | yes |
 | S3 | **Announced, mechanical.** `&` replaces `*` for laws and kernels, and `merge` on records; `rename`; `MarginalView`. S3 and E4 may merge in either order; the second rebases | § 19.5 | S2b | yes |
 | S4 | Every batch stores its element declaration | § 19.6 | S2b, E3b | yes |
 | G1a | Grammar B for views and marginals of groups, the library's laws declared whole over a record, and factors that hold a group | § 19.7 | S2b, S4 | yes, never cut |
@@ -122,10 +123,10 @@ Each step's content and its done-condition are stated where the step's plan sect
 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
-| E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_point_keys.py`), and "managed work item" renamed "point" in every code name, docstring, and test | `execution-layer.md` § 13 | P0 | yes |
-| E1 | Design text: V.9 rewritten around point sets and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | PL | yes |
+| E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_point_keys.py`), and "managed work item" renamed "point" in every code name, docstring, and test | `execution-layer.md` § 13 | PL, P0 | yes |
+| E1 | Design text: V.9 rewritten around point sets and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | CC | yes |
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`, replacing the five probes, `is_jax_traceable` included; the error for a false claim | § 13 | E1 | yes |
-| E3a | In `core/`: point sets, the executor registry and its built-in executors, the call context's executor choice and point context, the program store of `jax.jit` objects that lowers each program before its first run, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b | yes |
+| E3a | In `core/`: point sets, the executor registry and its built-in executors, the call context's executor choice and point context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
 | E3b | The executors replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`; `dispatch` and `max_workers` go; the closed execution contract goes | § 13 | E3a, S2a | yes |
 | E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr; lazy token registration; failures; the per-point output check | § 13 | E2, E3b, S2b | yes |
 | E5 | `map_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | § 13 | E4 | yes |
@@ -159,7 +160,7 @@ A GitHub tracking issue holds each step's state and PR, as `CONTRIBUTING.md` § 
 When a session opens its PR, it creates a handoff for each step that lists its own step among its dependencies and whose other dependencies have each merged or are open as PRs.
 Two sessions may then create a handoff for the same step; the new session's check of the tracking issue stops the second.
 A handoff whose dependencies have not merged when it is opened stacks on them or stops (§ Starting a session); the maintainer opens it again later.
-When this `plans/` PR merges, its session creates the handoffs for S0, E0, and E1.
+When this `plans/` PR merges, its session creates the handoffs for S0, CC, and E0, and for P0b and PV once the maintainer has decided OD5 and OD2. The session that opens CC's PR creates E1's handoff. A handoff that stopped because a dependency had not merged is opened again by the maintainer.
 
 In the Claude desktop app, a handoff is a task chip made with the `spawn_task` tool: the maintainer clicks it to open a new session in a fresh worktree.
 Where `spawn_task` is not available, post the same prompt as a comment on the PR, not in its body, since the prompt names step labels (directive 10).
@@ -175,10 +176,11 @@ Repository: <absolute path of the main checkout>. Work in the fresh worktree thi
 1. Read plans/README.md in full and follow its directives. Then read plans/decisions.md
    and the current plans in full (README directive 1). This step is specified in
    <plan file and section>, which also states its done-condition.
-2. Check the tracking issue (<link>): if a PR or branch for this step already exists, stop.
+2. Check the tracking issue (<link>), or, if it does not exist yet, `gh pr list --search <branch name>`:
+   if a PR or branch for this step already exists, stop.
 3. This step depends on <each dependency: step, PR number>. Check each with
    `gh pr view <number> --json state,mergedAt`. Base the branch on origin/dev/overhaul
-   when all have merged; stack on <branch> if <dependency> is still open, as
+   when all have merged; stack on <branch> if exactly one dependency, <dependency>, is still open, as
    plans/README.md § Branches and PRs allows; otherwise stop and tell the maintainer.
 4. Run `git fetch origin` and create the branch dev/<name> from the base chosen above.
    Do not build on the branch this worktree started on.
