@@ -20,6 +20,7 @@ Every session that works on the push reads this file in full before anything els
 | [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
 | [`declarations.md`](declarations.md) | The declarations design: #571's body and jhuggins's reply |
 | [`addressing.md`](addressing.md) | The addressing design, grammar B (#573) |
+| [`call-context-proposal.md`](call-context-proposal.md) | The design of the one call context that carries per-call state, under review; it is folded into `execution-layer.md` once accepted |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
 
 `declarations.md` and `addressing.md` are replaced by one reconciled text once the items of `gaps-and-conflicts.md` are settled (item D1).
@@ -89,7 +90,8 @@ If time runs short before the workshop, steps are cut in this order: E8, then E7
 
 | Step | What | Depends on | State |
 |---|---|---|---|
-| P0 | The in-flight PRs merge: #575, #583, #474, #584, #586, #587 | — | open |
+| P0 | The in-flight PRs merge: #575, #583, #474, #584, #586, #587. Pending the maintainer's decision OD5 of `call-context-proposal.md`, #587 creates the one call context before it merges | — | open |
+| P1 | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | #587 | open |
 | PL | This `plans/` PR merges | the items of `gaps-and-conflicts.md` | open |
 
 ### Declarations and addressing
@@ -113,12 +115,12 @@ If time runs short before the workshop, steps are cut in this order: E8, then E7
 |---|---|---|---|---|---|---|
 | E1 | Design text: V.9 rewritten around point sets and executors, the new V.13, the controls in V.2 and VI.0, the glossary | §11, §13 item 1 | PL | yes | | |
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`; the error for a false claim | §6.2 | E1 | yes | | |
-| E3 | Point sets and the executor registry: `jax`, `sequential`, `thread`, `process` replace the dispatch modes; the controls `executor` and `executor_options`; the closed execution contract goes. First commit: #524's two module moves | §6.3, §6.7, §6.8 | E1, P0 | yes | | |
-| E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens; a failure raises `PointEvaluationError` and stops a compiled program | §6.4, §6.9 | E2, E3, S3 | yes | | |
+| E3 | Point sets and the executor registry: `jax`, `sequential`, `thread`, `process` replace the dispatch modes; the controls `executor` and `executor_options`; the closed execution contract goes; the call context's executor choice and point context; the program store of `jax.jit` objects, lowering each program before its first run; the JAX settings shipped to process workers. First commit: #524's two module moves | §6.3, §6.7, §6.8, §6.10 item 3; call-context § 7.3 | E1, P0 | yes | | |
+| E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr for embedded calls and stray tokens; lazy token registration; a failure raises `PointEvaluationError` and stops a compiled program; the per-point output check | §6.4, §6.9, §6.10 item 4; call-context § 5.2, § 7.3 | E2, E3, S3 | yes | | |
 | E5 | `map_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | §6.1, §13 item 5 | E4 | yes | | |
 | E6 | The public target interface: `InferenceTarget` and `make_posterior`, with the run key passed as #554 §8 states | §6.12 | E2, E3 | yes | | |
 | E7 | At most one run per distinct point inside a call | §6.5, Q17 | E4 | yes, cut second | | |
-| E8 | The JAX settings contract | §6.15 | E3 | yes, cut first | | |
+| E8 | The JAX settings contract: the check at close and on the host side, and provenance | §6.15 | E3, E4 | yes, cut first | | |
 
 The execution plan's post-workshop steps are listed in its §13 and in `deferred.md`.
 
