@@ -27,12 +27,12 @@ def add_diag_jitter(
     Raises:
         ValueError on invalid shapes or non-real jitter values.
     """
-    mat = _ensure_square_matrix(matrix, copy=copy)
+    mat = _ensure_square_matrix(matrix, name="matrix", copy=copy)
     n = mat.shape[0]
 
     # Normalize jitter into a 1D real array of length n (or scalar)
     try:
-        jitter_scalar = _ensure_real_scalar(jitter)
+        jitter_scalar = _ensure_real_scalar(jitter, name="jitter")
         jitter_arr = jnp.full(
             (n,), jitter_scalar, dtype=jnp.result_type(mat.dtype, jnp.array(jitter_scalar).dtype)
         )
@@ -40,7 +40,7 @@ def add_diag_jitter(
         # Not a scalar real: try array-like
         jitter_arr = jnp.asarray(jitter)
         if jitter_arr.ndim == 0:
-            jitter_scalar = _ensure_real_scalar(jitter_arr)
+            jitter_scalar = _ensure_real_scalar(jitter_arr, name="jitter")
             jitter_arr = jnp.full(
                 (n,),
                 jitter_scalar,
@@ -49,13 +49,17 @@ def add_diag_jitter(
         elif jitter_arr.ndim == 1:
             if jitter_arr.shape != (n,):
                 raise ValueError(
-                    f"add_diag_jitter: jitter must be scalar or shape ({n},). Got {jitter_arr.shape}."
+                    f"add_diag_jitter(): jitter must be a scalar or have shape ({n},), "
+                    f"got shape {jitter_arr.shape}"
                 ) from None
             if jnp.iscomplexobj(jitter_arr):
-                raise ValueError("add_diag_jitter: jitter contains complex values.") from None
+                raise ValueError(
+                    "add_diag_jitter(): jitter must be real, got complex values"
+                ) from None
         else:
             raise ValueError(
-                f"add_diag_jitter: jitter must be scalar or 1D array. Got ndim={jitter_arr.ndim}."
+                f"add_diag_jitter(): jitter must be a scalar or a 1-D array, "
+                f"got shape {jitter_arr.shape}"
             ) from None
 
     # Add jitter to diagonal (JAX arrays are immutable; always returns new array)
@@ -90,7 +94,7 @@ def symmetrize_pd(
         Array, the modified matrix. A copy of the original matrix if `copy` is True.
     """
 
-    C = _ensure_square_matrix(matrix, copy=copy)
+    C = _ensure_square_matrix(matrix, name="matrix", copy=copy)
 
     if symmetrize:
         C = 0.5 * (C + C.T)

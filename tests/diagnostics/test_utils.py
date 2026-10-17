@@ -15,7 +15,6 @@ from probpipe.diagnostics._utils import (
     _dataset_values,
     _json_dumps_safe,
     _record_get,
-    _resolve_generative_likelihood,
     _safe_float,
 )
 
@@ -222,61 +221,3 @@ class TestDiagnosticDatasetValues:
             "omega[1, 0]": 6.0,
             "omega[1, 1]": 7.0,
         }
-
-
-# ---------------------------------------------------------------------------
-# _resolve_generative_likelihood
-# ---------------------------------------------------------------------------
-
-
-class _FakeLikelihood:
-    def generate_data(self, params, n_samples, *, key=None):
-        return np.zeros(n_samples)
-
-
-class TestResolveGenerativeLikelihood:
-    def test_explicit_arg_wins(self):
-        gl = _FakeLikelihood()
-        assert _resolve_generative_likelihood(None, gl) is gl
-
-    def test_subscript_data_path(self):
-        gl = _FakeLikelihood()
-
-        class _Model:
-            def __getitem__(self, k):
-                return gl if k == "data" else KeyError(k)
-
-        result = _resolve_generative_likelihood(_Model())
-        assert result is gl
-
-    def test_likelihood_attribute(self):
-        gl = _FakeLikelihood()
-
-        class _Posterior:
-            _likelihood = gl
-
-        result = _resolve_generative_likelihood(_Posterior())
-        assert result is gl
-
-    def test_generative_likelihood_attribute(self):
-        gl = _FakeLikelihood()
-
-        class _Posterior:
-            generative_likelihood = gl
-
-        result = _resolve_generative_likelihood(_Posterior())
-        assert result is gl
-
-    def test_raises_when_nothing_found(self):
-        with pytest.raises(ValueError, match="generative likelihood"):
-            _resolve_generative_likelihood(object())
-
-    def test_subscript_without_generate_data_is_skipped(self):
-        """distribution["data"] exists but has no generate_data — skip it."""
-
-        class _BadModel:
-            def __getitem__(self, k):
-                return "not-a-likelihood"
-
-        with pytest.raises(ValueError):
-            _resolve_generative_likelihood(_BadModel())

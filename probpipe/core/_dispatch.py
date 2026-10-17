@@ -2,19 +2,15 @@
 
 A dispatch registry holds named implementations of one operation and
 selects among them by the types of the arguments and their relative
-priorities. Every method declares whether it is **exact**. Selection order
-is based on four criteria, in decreasing precedence:
-
-1. exact methods before approximate ones;
-2. priority among methods of the same exactness, higher first;
-3. specificity, favoring the method whose declared types are closest to
-   the arguments' classes in method-resolution order;
-4. registration order.
+priorities. Every method declares whether it is **exact** and whether it is a
+**floor**, a fallback that ranks after every method that is not one, and
+:class:`BaseDispatchRegistry` states the selection order these declarations
+and the priority decide.
 
 A method whose ``priority`` is ``None`` is **opt-in-only**: automatic
 selection skips it and it runs only when named through ``method="..."``.
 ``set_priorities`` re-ranks at runtime but never changes a method's
-exactness.
+exactness or whether it is a floor.
 
 A method's ``check`` returns a :class:`Feasibility`: whether the call is
 feasible, if not then why, and which declarations are pending. The
@@ -24,6 +20,10 @@ method's name and declared exactness from the registration.
 A :class:`ResolutionError` means there is no available implementation under
 the requested controls. A :class:`MathematicalDomainError` means the
 mathematical operation is known to be undefined.
+
+Every registry implements
+:class:`~probpipe.core._catalog.SupportsRegistryCataloging`, so a named one can
+be added to :data:`~probpipe.core._catalog.registry_catalog`.
 """
 
 from __future__ import annotations
@@ -34,6 +34,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
+
+from .._messages import unknown_names
+from ._catalog import EntrySummary
+from ._repr import call_repr
 
 __all__ = [
     "BaseDispatchMethod",
@@ -51,7 +55,10 @@ __all__ = [
 ]
 
 type UnarySupportedTypes = tuple[type, ...]
+"""The ``supported_types`` of a unary dispatch method: a tuple of classes."""
+
 type BinarySupportedTypes = tuple[tuple[type, ...], tuple[type, ...]]
+"""The ``supported_types`` of a binary dispatch method: a pair of tuples of classes."""
 
 
 class ResolutionError(Exception):
@@ -67,8 +74,8 @@ class ResolutionError(Exception):
 class MathematicalDomainError(ValueError):
     """The mathematical operation is known to be undefined.
 
-    Raised by a method that can establish nonexistence, such as a
-    requested mean that does not exist.
+    Raised by a method that can establish that its operation is undefined,
+    such as the mean of a Cauchy law.
     """
 
 
@@ -87,6 +94,11 @@ class Feasibility:
         One entry per missing declaration, each describing what is required
         for the method to be feasible. Non-empty exactly when ``feasible`` is
         ``None``.
+    actionable : bool
+        ``True`` when the method accepts this kind of argument and fails on a
+        detail of the call that the caller can fix, such as a field name the
+        argument does not have. A message that lists several reports leads
+        with an actionable one. Only an infeasible report is actionable.
 
     Raises
     ------
@@ -96,12 +108,14 @@ class Feasibility:
         or ``""`` would make ``check`` and ``execute`` disagree.
     ValueError
         If ``pending`` is empty while ``feasible`` is ``None``, or non-empty
-        while it is not.
+        while it is not, or if ``actionable`` is set on a report that is not
+        infeasible.
     """
 
     feasible: bool | None
     description: str = ""
     pending: tuple[str, ...] = field(default_factory=tuple)
+    actionable: bool = False
 
     def __post_init__(self) -> None:
         if self.feasible is not None and type(self.feasible) is not bool:
@@ -110,14 +124,31 @@ class Feasibility:
             raise ValueError("an unresolved Feasibility must name its pending declarations")
         if self.feasible is not None and self.pending:
             raise ValueError("only an unresolved Feasibility carries pending declarations")
+        if self.actionable and self.feasible is not False:
+            raise ValueError("only an infeasible Feasibility can be actionable")
 
     @property
     def unresolved(self) -> bool:
         """``True`` when ``feasible`` is ``None``."""
         return self.feasible is None
 
+    def __repr__(self) -> str:
+        """The feasibility, positionally, then each other attribute that differs from its default."""
+        return call_repr(type(self).__name__, [repr(self.feasible)], self._repr_arguments())
 
-@dataclass(frozen=True)
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The description, the pending declarations, and actionability, where there are any."""
+        fields = []
+        if self.description:
+            fields.append(("description", repr(self.description)))
+        if self.pending:
+            fields.append(("pending", repr(self.pending)))
+        if self.actionable:
+            fields.append(("actionable", "True"))
+        return fields
+
+
+@dataclass(frozen=True, repr=False)
 class MethodInfo(Feasibility):
     """Used by a registry to describe a method's feasibility plus its registration information.
 
@@ -150,6 +181,15 @@ class MethodInfo(Feasibility):
         if self.method_name is None and self.feasible is not False:
             raise ValueError("a feasible or unresolved MethodInfo names its method")
 
+    def _repr_arguments(self) -> list[tuple[str, str]]:
+        """The method and its exactness where one is selected, then the feasibility's arguments."""
+        fields = []
+        if self.method_name is not None:
+            fields.append(("method_name", repr(self.method_name)))
+        if self.exact is not None:
+            fields.append(("exact", repr(self.exact)))
+        return [*fields, *super()._repr_arguments()]
+
 
 # ---------------------------------------------------------------------------
 # Abstract method bases
@@ -161,10 +201,16 @@ class BaseDispatchMethod[SupportedTypesT](ABC):
 
     A subclass declares a unique ``name``, whether it is ``exact``, the
     ``supported_types`` the registry's structural pre-filter admits, and
-    ``check`` / ``execute``; ``priority`` has a default. The type parameter
-    is the shape of ``supported_types``. :class:`UnaryDispatchMethod` and
-    :class:`BinaryDispatchMethod` fix it, so an implementation subclasses
-    one of those and never spells the parameter.
+    ``check`` / ``execute``; ``priority``, ``is_floor``, and ``description``
+    have defaults. The type parameter is the shape of ``supported_types``.
+    :class:`UnaryDispatchMethod` and :class:`BinaryDispatchMethod` fix it, so
+    an implementation subclasses one of those and never spells the
+    parameter.
+
+    A subclass overrides each declaration as a property, and a declaration
+    may differ between instances, as when one class registers two methods
+    under names, priorities, and descriptions its constructor receives. A
+    registry reads every declaration once, when the method is registered.
     """
 
     @property
@@ -208,12 +254,29 @@ class BaseDispatchMethod[SupportedTypesT](ABC):
 
     @property
     def priority(self) -> int | None:
-        """Rank among methods of the same exactness, higher first.
+        """Rank among the methods of the same exactness and floor status, higher first.
 
         ``None``, the default, is opt-in-only: excluded from automatic selection
         and reachable only by name.
         """
         return None
+
+    @property
+    def is_floor(self) -> bool:
+        """Whether the method is a floor, a fallback ranked after every method that is not one.
+
+        A floor ranks after every other method its registry admits for a
+        call, whatever their exactness and priority; among the floors,
+        exactness, priority, specificity, and registration order apply as
+        they do among the other methods. ``False`` by default. Declared once
+        and fixed for the method's life, as ``exact`` is.
+        """
+        return False
+
+    @property
+    def description(self) -> str:
+        """A one-line description, which the registry catalog shows; empty by default."""
+        return ""
 
 
 class UnaryDispatchMethod(BaseDispatchMethod[UnarySupportedTypes]):
@@ -244,13 +307,15 @@ class _Registration[M]:
     priority: int | None
     supported_types: Any
     index: int
+    is_floor: bool
+    description: str
 
 
 def _validated_priority(name: str, priority: Any) -> int | None:
     """``priority`` if it is an ``int`` or ``None``; ``TypeError`` otherwise, ``bool`` included."""
     if priority is None or (isinstance(priority, int) and not isinstance(priority, bool)):
         return priority
-    raise TypeError(f"Method {name!r} priority must be an int or None; got {priority!r}")
+    raise TypeError(f"method {name!r} priority must be an int or None, got {priority!r}")
 
 
 class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
@@ -259,36 +324,101 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     :meth:`register` adds a method, :meth:`check` reports which method a call
     would run, :meth:`execute` runs it, :meth:`set_priorities` re-ranks at
     runtime, and :meth:`list_methods` lists the methods in selection order.
-    The registry reads a method's ``name``, ``exact``, ``priority``, and
-    ``supported_types()`` once, at registration, and validates them before it
-    changes; ranking, filtering, and reporting then use that registration, so
-    a method mutated afterwards changes nothing.
+    The registry reads a method's ``name``, ``exact``, ``priority``,
+    ``is_floor``, ``supported_types()``, and ``description`` once, at
+    registration, and validates them before it changes; ranking, filtering,
+    and reporting then use that registration, so a method mutated afterwards
+    changes nothing.
+
+    Automatic selection admits the methods whose ``supported_types()`` admit
+    the call's arguments and whose priority is not ``None``, keeps only the
+    exact ones under ``exact_only=True``, and runs the first whose ``check``
+    establishes feasibility, in this **selection order**:
+
+    1. every method that is not a floor before every floor;
+    2. exact methods before approximate ones;
+    3. priority among methods that agree on the first two criteria, higher
+       first;
+    4. specificity: the smaller distance :meth:`_distance` reports, which
+       favors the method whose declared types are closest to the arguments'
+       classes in method-resolution order;
+    5. registration order.
+
+    A **floor** is a method that declares ``is_floor``: a fallback on its
+    supported types, which a call tries only after every other candidate,
+    whatever their exactness and priority. The other four criteria order the
+    floors among themselves as they order the other methods. Since
+    :meth:`set_priorities` changes neither exactness nor floor status, it
+    moves a method only among the methods that agree with it on both.
+
+    The first three criteria are the method's rank, which :meth:`_rank`
+    computes and :meth:`list_methods` follows; specificity depends on the
+    call's arguments, so only a call applies it.
+
+    A registry implements
+    :class:`~probpipe.core._catalog.SupportsRegistryCataloging` through
+    ``name``, ``description``, ``kind``, :meth:`entry_summaries`, and
+    :meth:`describe_entry`. Constructing a registry does not catalog it:
+    ``registry_catalog.register(registry)`` does, and it requires a non-empty
+    ``name``.
 
     Everything that does not depend on how many arguments select the method
     is implemented here, admission and ranking included; an arity subclass
     supplies the four hooks :meth:`_cache_key`,
     :meth:`_validate_supported_types`, :meth:`_distance`, and
     :meth:`_format_key`.
+
+    Parameters
+    ----------
+    name : str
+        The registry's name in the registry catalog; empty for a registry that
+        is not cataloged.
+    description : str
+        A one-line description, which the registry catalog shows.
+
+    Notes
+    -----
+    ``name`` and ``description`` are read-only after construction, so the
+    name a registry is cataloged under stays its ``name``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, name: str = "", description: str = "") -> None:
+        self._name = name
+        self._description = description
         self._registrations: list[_Registration[M]] = []
         self._by_name: dict[str, _Registration[M]] = {}
         self._priority_overrides: dict[str, int | None] = {}
         self._type_cache: dict[Any, list[_Registration[M]]] = {}
         self._cache_token = abc.get_cache_token()
 
+    @property
+    def name(self) -> str:
+        """The registry's name in the registry catalog; empty for a registry that is not cataloged."""
+        return self._name
+
+    @property
+    def description(self) -> str:
+        """A one-line description of the registry, which the registry catalog shows."""
+        return self._description
+
+    @property
+    def kind(self) -> str:
+        """``"dispatch"``, the catalog kind of every dispatch registry."""
+        return "dispatch"
+
     # -- registration -------------------------------------------------------
 
-    def _available(self) -> str:
-        return ", ".join(sorted(self._by_name)) or "(none)"
+    def _unknown(self, name: str) -> str:
+        """The message for a request of the method *name*, which is not registered."""
+        return unknown_names("method", [name], sorted(self._by_name))
 
     def register(self, method: M) -> None:
         """Register a method.
 
-        The method's ``name``, ``exact``, ``priority``, and
-        ``supported_types()`` are read here, once, and validated before the
-        registry changes, so a rejected method leaves it as it was.
+        The method's ``name``, ``exact``, ``priority``, ``is_floor``,
+        ``supported_types()``, and ``description`` are read here, once, and
+        validated before the registry changes, so a rejected method leaves it
+        as it was.
 
         Parameters
         ----------
@@ -298,31 +428,48 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         Raises
         ------
         TypeError
-            If ``method.name`` is not a ``str``; if ``method.exact`` is not a
-            ``bool``; if ``method.priority`` is not an ``int`` or ``None``, a
-            ``bool`` included; if ``method.supported_types()`` does not
-            have the registry's arity shape; or if it lists a class whose
+            If ``method.name`` is not a ``str``; if ``method.exact`` or
+            ``method.is_floor`` is not a ``bool``; if ``method.priority`` is
+            not an ``int`` or ``None``, a ``bool`` included; if
+            ``method.supported_types()`` does not
+            have the registry's arity shape, or lists a class whose
             membership follows an instance's declaration rather than its class,
-            such as ``NumericDistribution``, which matching by class would miss.
+            such as ``NumericDistribution``, which matching by class would miss;
+            or if ``method.description`` is not a ``str``.
         ValueError
             If ``method.name`` is empty or already registered.
         """
         name = method.name
         if not isinstance(name, str):
-            raise TypeError(f"Method.name must be a str; got {name!r}")
+            raise TypeError(f"method name must be a string, got {name!r}")
         if not name:
-            raise ValueError("Method.name must be a non-empty string; got ''")
+            raise ValueError("method name must be a non-empty string, got ''")
         if name in self._by_name:
-            raise ValueError(f"Method name {name!r} is already registered")
+            raise ValueError(f"a method named {name!r} is already registered")
         exact = method.exact
         if type(exact) is not bool:
-            raise TypeError(f"Method {name!r} must declare exact as a bool; got {exact!r}")
+            raise TypeError(f"method {name!r} must declare exact as a bool, got {exact!r}")
         priority = _validated_priority(name, method.priority)
+        is_floor = method.is_floor
+        if type(is_floor) is not bool:
+            raise TypeError(f"method {name!r} must declare is_floor as a bool, got {is_floor!r}")
         supported_types = method.supported_types()
         self._validate_supported_types(name, supported_types)
         _refuse_declaration_markers(name, supported_types)
+        description = method.description
+        if not isinstance(description, str):
+            raise TypeError(
+                f"method {name!r} must declare description as a str, got {description!r}"
+            )
         registration = _Registration(
-            method, name, exact, priority, supported_types, len(self._registrations)
+            method=method,
+            name=name,
+            exact=exact,
+            priority=priority,
+            supported_types=supported_types,
+            index=len(self._registrations),
+            is_floor=is_floor,
+            description=description,
         )
         self._registrations.append(registration)
         self._by_name[name] = registration
@@ -333,12 +480,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
     def _effective_priority(self, registration: _Registration[M]) -> int | None:
         return self._priority_overrides.get(registration.name, registration.priority)
 
-    def _rank(self, registration: _Registration[M]) -> tuple[int, int, int]:
-        """Exactness, then opt-in status, then priority: the selection key that needs no call."""
-        priority = self._effective_priority(registration)
-        return (0 if registration.exact else 1, 1 if priority is None else 0, -(priority or 0))
+    def _rank(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+        """The part of the selection order that needs no call, smallest first.
 
-    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int]:
+        Floor status, then exactness, then opt-in status, then priority. The
+        opt-in key places an opt-in-only method after the ranked methods of
+        its group in :meth:`list_methods`; automatic selection never tries
+        it, since it skips opt-in-only methods.
+        """
+        priority = self._effective_priority(registration)
+        return (
+            1 if registration.is_floor else 0,
+            0 if registration.exact else 1,
+            1 if priority is None else 0,
+            -(priority or 0),
+        )
+
+    def _sort_key(self, registration: _Registration[M]) -> tuple[int, int, int, int, int]:
         return (*self._rank(registration), registration.index)
 
     def _sort_registrations(self) -> None:
@@ -354,8 +512,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         """Override the rank of one or more methods.
 
         Overrides are recorded on the registry and never mutate a method. An
-        override cannot change exactness, so it never lifts an approximate
-        method above an exact one. A move between ``None`` and an integer
+        override changes neither exactness nor floor status, so it never lifts
+        an approximate method above an exact one or a floor above a method
+        that is not one. A move between ``None`` and an integer
         emits a ``UserWarning``, since it changes whether the method
         participates in automatic selection. When an error is raised, nothing
         is applied.
@@ -381,20 +540,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         overrides: dict[str, int | None] = dict(priorities or {})
         for name, value in kwargs.items():
             if name in overrides:
-                raise ValueError(f"Method {name!r} given both in the mapping and as a keyword")
+                raise ValueError(f"method {name!r} is given both in the mapping and as a keyword")
             overrides[name] = value
         for name, value in overrides.items():
             if name not in self._by_name:
-                raise KeyError(f"No method named {name!r}. Available: {self._available()}")
+                raise KeyError(self._unknown(name))
             _validated_priority(name, value)
         for name, new_priority in overrides.items():
             old_priority = self._effective_priority(self._by_name[name])
             if (old_priority is None) != (new_priority is None):
-                direction = "out of opt-in-only" if old_priority is None else "into opt-in-only"
+                effect = (
+                    "automatic dispatch can now select it"
+                    if old_priority is None
+                    else f"it now runs only when requested with method={name!r}"
+                )
                 warnings.warn(
-                    f"Priority override for {name!r} moves it {direction} "
-                    f"({old_priority} -> {new_priority}); auto-dispatch "
-                    f"participation changes accordingly.",
+                    f"method {name!r} changed from priority {old_priority} to {new_priority}, "
+                    f"so {effect}",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -424,7 +586,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         try:
             return self._by_name[name].method
         except KeyError:
-            raise KeyError(f"No method named {name!r}. Available: {self._available()}") from None
+            raise KeyError(self._unknown(name)) from None
 
     def _named(self, name: str) -> _Registration[M]:
         """The registration of the method a caller requested with ``method=``.
@@ -436,22 +598,69 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         try:
             return self._by_name[name]
         except KeyError:
-            raise ResolutionError(
-                f"No method named {name!r}. Available: {self._available()}"
-            ) from None
+            raise ResolutionError(self._unknown(name)) from None
 
     def list_methods(self) -> list[str]:
-        """Every registered method name, ranked by exactness, priority, and registration order.
+        """Every registered method name, ranked by floor status, exactness, priority, and registration order.
 
         Returns
         -------
         list of str
             The names in the order automatic selection considers them before
-            type specificity, which depends on the arguments; opt-in-only
-            methods are included at their rank. The listing does not say what
-            a call would run; :meth:`check` does.
+            type specificity, which depends on the arguments; an opt-in-only
+            method follows the ranked methods of its floor status and
+            exactness. The listing does not say what a call would run;
+            :meth:`check` does.
         """
         return [registration.name for registration in self._registrations]
+
+    def entry_summaries(self) -> list[EntrySummary]:
+        """One :class:`~probpipe.core._catalog.EntrySummary` per method, in :meth:`list_methods` order.
+
+        Returns
+        -------
+        list of EntrySummary
+            Each method's registered name, exactness, floor status,
+            ``supported_types()``, and description, its defining module, and
+            its effective priority, a :meth:`set_priorities` override
+            included.
+        """
+        return [self._summary(registration) for registration in self._registrations]
+
+    def describe_entry(self, name: str) -> EntrySummary:
+        """The :class:`~probpipe.core._catalog.EntrySummary` of the method *name*.
+
+        Parameters
+        ----------
+        name : str
+            A registered method name.
+
+        Returns
+        -------
+        EntrySummary
+            The method's summary, as :meth:`entry_summaries` reports it.
+
+        Raises
+        ------
+        KeyError
+            If no method is registered under *name*.
+        """
+        try:
+            registration = self._by_name[name]
+        except KeyError:
+            raise KeyError(self._unknown(name)) from None
+        return self._summary(registration)
+
+    def _summary(self, registration: _Registration[M]) -> EntrySummary:
+        return EntrySummary(
+            name=registration.name,
+            priority=self._effective_priority(registration),
+            supported_types=registration.supported_types,
+            description=registration.description,
+            module_path=type(registration.method).__module__,
+            exact=registration.exact,
+            is_floor=registration.is_floor,
+        )
 
     def _is_auto_dispatchable(self, registration: _Registration[M]) -> bool:
         return self._effective_priority(registration) is not None
@@ -518,20 +727,23 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             if not self._passes_exact_only(named, exact_only):
                 return MethodInfo(
                     feasible=False,
-                    description=f"Method {method!r} is approximate and exact_only was requested",
+                    description=_approximate(method),
                     method_name=method,
                     exact=named.exact,
                 )
             return self._report(named, named.method.check(*args, **kwargs))
         tried: list[str] = []
+        lead = ""
         for candidate in self._candidates(key, exact_only):
             info = self._report(candidate, candidate.method.check(*args, **kwargs))
             if info.feasible is not False:
                 return info
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
+            if info.actionable and not lead:
+                lead = info.description
         return MethodInfo(
             feasible=False,
-            description=self._no_method_message(key, tried, exact_only),
+            description=self._no_method_message(key, tried, exact_only, listing=False, lead=lead),
         )
 
     def execute(
@@ -581,28 +793,25 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         if method is not None:
             named = self._named(method)
             if not self._passes_exact_only(named, exact_only):
-                raise ResolutionError(
-                    f"Method {method!r} is approximate and exact_only was requested"
-                )
+                raise ResolutionError(_approximate(method))
             info = named.method.check(*args, **kwargs)
             if info.feasible is None:
-                raise ResolutionError(
-                    f"Method {method!r} is unresolved; pending: {', '.join(info.pending)}"
-                )
+                raise ResolutionError(_unresolved(method, info.pending))
             if not info.feasible:
-                raise ResolutionError(f"Method {method!r} is not applicable: {info.description}")
+                raise ResolutionError(f"method {method!r} does not apply: {info.description}")
             return named.method.execute(*args, **kwargs)
         tried: list[str] = []
+        lead = ""
         for candidate in self._candidates(key, exact_only):
             info = candidate.method.check(*args, **kwargs)
             if info.feasible is None:
-                raise ResolutionError(
-                    f"Method {candidate.name!r} is unresolved; pending: {', '.join(info.pending)}"
-                )
+                raise ResolutionError(_unresolved(candidate.name, info.pending))
             if info.feasible is True:
                 return candidate.method.execute(*args, **kwargs)
             tried.append(f"{candidate.name}: {info.description or 'infeasible'}")
-        raise ResolutionError(self._no_method_message(key, tried, exact_only))
+            if info.actionable and not lead:
+                lead = info.description
+        raise ResolutionError(self._no_method_message(key, tried, exact_only, lead=lead))
 
     # -- internals ----------------------------------------------------------
 
@@ -613,18 +822,35 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             feasible=feasibility.feasible,
             description=feasibility.description,
             pending=feasibility.pending,
+            actionable=feasibility.actionable,
             method_name=registration.name,
             exact=registration.exact,
         )
 
-    def _no_method_message(self, key: Any, tried: list[str], exact_only: bool) -> str:
+    def _no_method_message(
+        self,
+        key: Any,
+        tried: list[str],
+        exact_only: bool,
+        *,
+        listing: bool = True,
+        lead: str = "",
+    ) -> str:
+        """Why no method applies: each method tried, or, when none admits the key, that none does.
+
+        With *listing*, a key no method admits also lists the registered
+        methods. A report leaves them out, since a call's report lists each
+        registry's methods once. A *lead*, the first reason the caller can fix,
+        opens the message.
+        """
         formatted = self._format_key(key)
         restriction = " with exact_only" if exact_only else ""
         if tried:
-            return f"No feasible method for {formatted}{restriction}. Tried: " + "; ".join(tried)
-        return (
-            f"No method registered for {formatted}{restriction}. Available: {self.list_methods()}"
-        )
+            if lead:
+                return f"{lead}. Methods tried for {formatted}{restriction}: " + "; ".join(tried)
+            return f"no method applies to {formatted}{restriction}. Tried: " + "; ".join(tried)
+        message = f"no method is registered for {formatted}{restriction}"
+        return f"{message}; available methods: {self.list_methods()}" if listing else message
 
     @abstractmethod
     def _cache_key(self, args: tuple[Any, ...]) -> Any:
@@ -666,7 +892,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
             self._type_cache.clear()
             self._cache_token = token
         if key not in self._type_cache:
-            ranked: list[tuple[tuple[int, int, int], int, int, _Registration[M]]] = []
+            ranked: list[tuple[tuple[int, int, int, int], int, int, _Registration[M]]] = []
             for registration in self._registrations:
                 if not self._is_auto_dispatchable(registration):
                     continue
@@ -699,6 +925,16 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         ...
 
 
+def _approximate(method: str) -> str:
+    """The message for a request of the approximate *method* under ``exact_only``."""
+    return f"method {method!r} is approximate, but exact_only=True was requested"
+
+
+def _unresolved(method: str, pending: tuple[str, ...]) -> str:
+    """The message for *method*, whose feasibility waits on the *pending* declarations."""
+    return f"method {method!r} cannot tell yet whether it applies: {', '.join(pending)}"
+
+
 def _refuse_declaration_markers(name: str, supported_types: Any) -> None:
     """Raise ``TypeError`` if *supported_types* lists a declaration-membership marker.
 
@@ -713,8 +949,9 @@ def _refuse_declaration_markers(name: str, supported_types: Any) -> None:
             stack.extend(entry)
         elif isinstance(entry, type) and vars(entry).get("_membership_follows_declaration"):
             raise TypeError(
-                f"Method {name!r} lists {entry.__name__}, whose membership follows an "
-                f"instance's declaration rather than its class, so it is not a dispatch type"
+                f"method {name!r} cannot dispatch on {entry.__name__}: membership depends on an "
+                f"object's declared specs, not its class. List ordinary classes in "
+                f"supported_types instead."
             )
 
 
@@ -738,15 +975,13 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
 
     def _cache_key(self, args: tuple[Any, ...]) -> type:
         if not args:
-            raise TypeError(
-                "UnaryDispatchRegistry requires a positional argument to dispatch on; got none"
-            )
+            raise TypeError("UnaryDispatchRegistry requires a positional argument to dispatch on")
         return type(args[0])
 
     def _validate_supported_types(self, name: str, supported_types: Any) -> None:
         if not _is_tuple_of_classes(supported_types):
             raise TypeError(
-                f"Method {name!r} must declare supported_types as a tuple of classes; "
+                f"method {name!r} must declare supported_types as a tuple of classes, "
                 f"got {supported_types!r}"
             )
 
@@ -767,8 +1002,7 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
     def _cache_key(self, args: tuple[Any, ...]) -> tuple[type, type]:
         if len(args) < 2:
             raise TypeError(
-                "BinaryDispatchRegistry requires at least two positional "
-                f"arguments; got {len(args)}"
+                f"BinaryDispatchRegistry requires two positional arguments, got {len(args)}"
             )
         return (type(args[0]), type(args[1]))
 
@@ -779,8 +1013,8 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
             and all(_is_tuple_of_classes(side) for side in supported_types)
         ):
             raise TypeError(
-                f"Method {name!r} must declare supported_types as a (left_types, right_types) "
-                f"pair of tuples of classes; got {supported_types!r}"
+                f"method {name!r} must declare supported_types as a (left_types, right_types) "
+                f"pair of tuples of classes, got {supported_types!r}"
             )
 
     def _distance(

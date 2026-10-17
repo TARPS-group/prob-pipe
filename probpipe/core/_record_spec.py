@@ -6,12 +6,16 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Self, cast
 
 from ._immutable import Immutable
+from ._repr import term_repr
 from ._spec_base import (
     NumericArraySpec,
     NumericSpec,
     OpaqueSpec,
     TermSpec,
+    _described,
     _full_array_shape_or_none,
+    _kind_mismatch,
+    _name_mismatch,
     _require_hashable,
     _unify_specs,
 )
@@ -48,25 +52,42 @@ def _reshaped_template(
     return RecordSpec(children)
 
 
-# Constructor inputs also admit nested mappings, shape tuples, and opaque shorthand.
-type _FieldSpecInput = TermSpec | Mapping[str, Any] | tuple[int | str, ...] | None
+# Constructor inputs also admit nested mappings and shape tuples.
+type _FieldSpecInput = TermSpec | Mapping[str, Any] | tuple[int | str, ...]
 
 
 def _to_spec(spec: _FieldSpecInput) -> TermSpec:
     """Normalise a constructor input to a stored field spec.
 
-    Construction-time sugar (preserved): a bare shape ``tuple`` becomes an
-    :class:`NumericArraySpec`, ``None`` becomes an :class:`OpaqueSpec`, and a nested
-    :class:`RecordSpec` is kept as-is. Already-built specs pass through, so
-    new code may supply explicit ``NumericArraySpec(...)`` / ``OpaqueSpec(...)`` etc.
+    A bare shape ``tuple`` becomes a :class:`NumericArraySpec`, and a built spec,
+    a nested :class:`RecordSpec` included, passes through.
+
+    Parameters
+    ----------
+    spec : tuple or TermSpec
+        One field's constructor input.
+
+    Returns
+    -------
+    TermSpec
+        The field's spec, ready to store.
+
+    Raises
+    ------
+    TypeError
+        If *spec* is ``None``, which is a pending type rather than a field's
+        type, or anything but a shape tuple or a spec.
     """
     if isinstance(spec, TermSpec):
         return spec
     if spec is None:
-        return OpaqueSpec()
+        raise TypeError(
+            "None is not a field spec; use OpaqueSpec() for an untyped field or a shape tuple "
+            "such as (3,) for an array"
+        )
     if isinstance(spec, tuple):
         return NumericArraySpec(shape=spec)
-    raise TypeError(f"spec must be a shape tuple, None, or a TermSpec, got {type(spec).__name__}")
+    raise TypeError(f"spec must be a shape tuple or a TermSpec, got {type(spec).__name__}")
 
 
 def _is_numeric_spec(spec: Any) -> bool:
@@ -89,9 +110,9 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
 
     Drives the base-class auto-promotion hook so ``RecordSpec(x=(), y=(3,))``
     returns a ``NumericRecordSpec`` without opting in explicitly. Raw inputs
-    also allow the shape-tuple sugar; ``None``, non-numeric leaf specs,
-    mixed nested templates, and any unsupported type are non-numeric
-    (``__init__`` rejects the latter).
+    also allow the shape-tuple sugar; non-numeric leaf specs, mixed nested
+    templates, and any unsupported type are non-numeric (``__init__`` rejects
+    the latter).
     """
     return all(isinstance(s, tuple) or _is_numeric_spec(s) for s in specs)
 
@@ -114,9 +135,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     context can thus be a structured Python object, with structure described by
     the ``RecordSpec``.
 
-    Terminology
-    -----------
-    Used precisely throughout this class:
+    **Terminology.** Used precisely throughout this class:
 
     - **field** — one named object in the collection (here, a value spec),
       addressed by its full ``/``-delimited **key** (path from the root, e.g.
@@ -142,11 +161,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
       leaves in it, and
       :attr:`~NumericRecordSpec.leaf_shapes` is keyed by it.
 
-    JAX pytree contract
-    -------------------
-    A ``RecordSpec`` is **not** a registered JAX pytree node — its value specs
-    are atomic, so ``jax.tree_util.tree_leaves(template) == [template]``. It is
-    the *schema* of the value pytrees it describes, not a pytree itself (think of
+    **JAX pytree contract.** A ``RecordSpec`` is **not** a registered JAX pytree node —
+    its value specs are atomic, so ``jax.tree_util.tree_leaves(template) == [template]``.
+    It is the *schema* of the value pytrees it describes, not a pytree itself (think of
     it as an enriched ``PyTreeDef`` that also carries each leaf's kind / shape).
 
     For a value ``v`` it describes (a :class:`~probpipe.Record`): a nested
@@ -162,22 +179,27 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
 
     Parameters
     ----------
-    **field_specs
+    _field_specs : Mapping or RecordSpec, optional
+        The fields as a positional mapping, keyed by name or by ``/``-joined path,
+        or a ``RecordSpec`` whose fields are copied. Passing it together with
+        keyword fields raises.
+    **field_specs : tuple, TermSpec, or Mapping
         Fields with non-empty names. Each value is one of:
 
         - ``tuple[int | str, ...]`` — fixed or symbolic shape of a numeric array
           leaf (e.g. ``()`` for a scalar, ``(3,)`` for a 3-vector, or
           ``("obs", 3)``); normalised to :class:`NumericArraySpec`.
-        - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
         - a :class:`TermSpec` — an already-built spec (passed through).
         - ``RecordSpec`` — a nested sub-structure (an internal node).
+        - a ``Mapping`` — a nested sub-structure whose values take these forms,
+          built into a ``RecordSpec``.
 
     Examples
     --------
     ::
 
         RecordSpec(x=(), y=(3,))                     # -> NumericRecordSpec
-        RecordSpec(label=None, x=())                 # -> RecordSpec (mixed)
+        RecordSpec(label=OpaqueSpec(), x=())         # -> RecordSpec (mixed)
         RecordSpec(physics=RecordSpec(force=(), mass=()), obs=())
 
     Notes
@@ -219,7 +241,10 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         # explicit ``NumericRecordSpec(...)`` calls bypass this path
         # and run their own strict validation.
         if _field_specs is not None and not isinstance(_field_specs, (Mapping, RecordSpec)):
-            raise TypeError("RecordSpec fields must be a mapping or a RecordSpec")
+            raise TypeError(
+                f"{cls.__name__} fields must be a mapping or a RecordSpec, "
+                f"got {type(_field_specs).__name__}"
+            )
         if cls is RecordSpec:
             specs = _field_specs if _field_specs is not None else field_specs
             if isinstance(specs, RecordSpec):
@@ -241,7 +266,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     ):
         if _field_specs is not None:
             if field_specs:
-                raise ValueError("Cannot pass both positional dict and keyword arguments")
+                raise ValueError(
+                    f"pass {type(self).__name__} fields as a mapping or as keywords, not both"
+                )
             nested = (
                 dict(_field_specs.children)
                 if isinstance(_field_specs, RecordSpec)
@@ -267,7 +294,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 try:
                     converted = _to_spec(spec)
                 except TypeError as exc:
-                    raise TypeError(f"Field {name!r}: {exc}") from None
+                    raise TypeError(f"field {name!r}: {exc}") from None
                 if not isinstance(converted, RecordSpec):
                     self._check_leaf(name, converted)
             if (
@@ -277,7 +304,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
                 and converted.is_numeric
             ):
                 converted = NumericRecordSpec(converted)
-            _require_hashable(converted, context=f"Field {name!r} spec")
+            _require_hashable(converted, context=f"the spec of field {name!r}")
             specs[name] = converted
         self._post_validate(specs)
         object.__setattr__(self, "_tree", specs)
@@ -363,14 +390,10 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             children = value
         else:
             raise ValueError(
-                f"{path} does not match its RecordSpec: expected named fields, "
-                f"got {type(value).__name__}"
+                f"{path} must be a record or a mapping of fields, got {_described(value)}"
             )
         if self._tree.keys() != children.keys():
-            raise ValueError(
-                f"{path} fields {sorted(children)} do not match template fields "
-                f"{sorted(self._tree)}"
-            )
+            raise _field_mismatch(path, children, self._tree)
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
             spec._bind_dims_from_value(children[name], bindings, child_path)
@@ -379,10 +402,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         if not isinstance(actual, RecordSpec):
             return False
         if self._tree.keys() != actual._tree.keys():
-            raise ValueError(
-                f"{path} fields {sorted(actual._tree)} do not match template fields "
-                f"{sorted(self._tree)}"
-            )
+            raise _field_mismatch(path, actual._tree, self._tree)
         for name, spec in self._tree.items():
             child_path = f"{path}{_PATH_SEP}{name}" if path else name
             _unify_specs(spec, actual._tree[name], bindings, child_path)
@@ -400,7 +420,7 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         if not isinstance(value, (Record, Mapping)):
             return False
         try:
-            self._bind_dims_from_value(value, {}, type(self).__name__)
+            self._bind_dims_from_value(value, {}, "value")
         except (AttributeError, TypeError, ValueError):
             return False
         return True
@@ -428,9 +448,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
         """
         specs = {path: spec for path, spec in self._walk_leaves() if isinstance(spec, NumericSpec)}
         if not specs:
+            found = f"none of {list(self._tree)} is numeric" if self._tree else "it has no fields"
             raise ValueError(
-                f"numeric_subset() of {type(self).__name__} is empty: no "
-                f"NumericSpec leaves survive. Dropped fields: {tuple(self._tree)}."
+                f"numeric_subset() found no numeric field in this {type(self).__name__}: {found}"
             )
         return NumericRecordSpec(specs)
 
@@ -467,8 +487,9 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
           own schema; other tracked fields, distributions included, retain
           their specs. Callables become function specs;
           a numeric array or scalar becomes a :class:`NumericArraySpec` of its
-          shape, and remaining raw values become :class:`OpaqueSpec`. The result
-          auto-promotes to a :class:`NumericRecordSpec` when every field is numeric.
+          shape, and a remaining raw value becomes the :class:`OpaqueSpec` of its
+          type. The result auto-promotes to a :class:`NumericRecordSpec` when every
+          field is numeric.
 
         This is the **fallback** for wrapping a raw value that has no template
         yet (e.g. at a workflow boundary); for a value you already hold, read
@@ -503,11 +524,11 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             return value.event_template
         if not isinstance(value, Mapping):
             raise TypeError(
-                f"infer_from expects a Record or a mapping of fields, got {type(value).__name__}."
+                f"infer_from() expects a Record or a mapping of fields, got {type(value).__name__}"
             )
 
         def _leaf_spec(val: Any) -> _FieldSpecInput:
-            from ._kind_specs import FunctionSpec
+            from ..values._function_base import FunctionSpec
             from .tracked import TrackedTerm
 
             if isinstance(val, TrackedTerm):
@@ -517,10 +538,6 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             if isinstance(val, Record):
                 return val.event_template
             if callable(val):
-                if isinstance(val, TrackedTerm):
-                    return FunctionSpec(
-                        getattr(val, "input_template", None), getattr(val, "output_template", None)
-                    )
                 return FunctionSpec()
             # A mapping is never a leaf: it denotes tree structure, so infer a
             # nested template from it rather than an (invalid) opaque-leaf spec
@@ -531,7 +548,8 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
             # (xarray / pandas / registered backends) alike — infers an
             # ``NumericArraySpec``; leaves are stored in native form, so nothing is
             # lost by classing them numeric.
-            return _full_array_shape_or_none(val)
+            shape = _full_array_shape_or_none(val)
+            return OpaqueSpec(type=type(val)) if shape is None else shape
 
         specs: dict[str, _FieldSpecInput] = {name: _leaf_spec(val) for name, val in value.items()}
         return RecordSpec(specs)
@@ -539,18 +557,18 @@ class RecordSpec(NamedTree[TermSpec], Immutable, TermSpec):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        parts = []
+        """Each child by name, as the constructor takes it.
+
+        A bare array spec, which declares only a shape, renders as its
+        shape-tuple shorthand, which the constructor accepts.
+        """
+        fields = []
         for name, spec in self._tree.items():
-            if isinstance(spec, RecordSpec):
-                parts.append(f"{name}={spec!r}")
-            elif isinstance(spec, NumericArraySpec) and spec.dtype is None and spec.support is None:
-                # Bare specs render as their sugar form (shape tuple / None).
-                parts.append(f"{name}={spec.shape}")
-            elif isinstance(spec, OpaqueSpec) and spec.meta is None:
-                parts.append(f"{name}=None")
-            else:
-                parts.append(f"{name}={spec!r}")
-        return f"{type(self).__name__}({', '.join(parts)})"
+            bare = (
+                isinstance(spec, NumericArraySpec) and spec.dtype is None and spec.support is None
+            )
+            fields.append((name, repr(spec.shape) if bare else repr(spec)))
+        return term_repr(type(self).__name__, None, fields)
 
 
 # ---------------------------------------------------------------------------
@@ -587,15 +605,13 @@ class NumericRecordSpec(RecordSpec, NumericSpec):
                 continue
             if isinstance(spec, RecordSpec):
                 raise TypeError(
-                    f"NumericRecordSpec: nested field {name!r} is a "
-                    f"{type(spec).__name__}; nested sub-templates must "
-                    f"themselves be NumericRecordSpec."
+                    f"NumericRecordSpec nested field {name!r} must be numeric, got "
+                    f"{type(spec).__name__}; use RecordSpec for records with non-numeric fields"
                 )
             # Any non-numeric leaf — OpaqueSpec, DistributionSpec, or FunctionSpec.
             raise TypeError(
-                f"NumericRecordSpec: field {name!r} is a {type(spec).__name__}; "
-                f"only NumericArraySpec or other NumericSpec leaves (including nested numeric records) are "
-                f"allowed — use RecordSpec if you need a mixed template."
+                f"NumericRecordSpec field {name!r} must be numeric, got {type(spec).__name__}; "
+                f"use RecordSpec for records with non-numeric fields"
             )
 
     def __init__(
@@ -686,6 +702,14 @@ def _concretize_record_spec(
     return template._substitute_dims(bindings)
 
 
+def _field_mismatch(path: str, actual: Iterable[str], declared: Iterable[str]) -> ValueError:
+    """The error for the record at *path*, whose fields *actual* are not the *declared* ones."""
+    subject = f"{path} fields" if path else "fields"
+    return ValueError(
+        f"{subject} do not match the declared fields: {_name_mismatch(actual, declared)}"
+    )
+
+
 def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> None:
     """Refuse *value* unless it satisfies *spec*'s kind.
 
@@ -695,4 +719,4 @@ def _check_kind_of(around: TermSpec, value: Any, spec: TermSpec, path: str) -> N
     the only thing its own ``is_valid`` still tests.
     """
     if not around.is_valid(value):
-        raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
+        raise _kind_mismatch(path, spec, value)

@@ -18,7 +18,9 @@ import numpy as np
 
 # Absolute (not relative) so this file stays loadable standalone — the
 # missing-xarray fallback test execs it outside the package.
-from probpipe.diagnostics._utils import _is_structured, _leaf_keys
+from probpipe._messages import unknown_names
+from probpipe.core._shapes import NamesLike, _as_names
+from probpipe.distributions._empirical import EmpiricalDistribution
 
 try:
     import xarray as xr
@@ -47,13 +49,9 @@ def check_arviz_installed() -> None:
 def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     """Extract named parameter draws from a posterior distribution.
 
-    Handles two cases:
-
-    1. **ApproximateDistribution** (from ``condition_on``) with
-       ``.draws()`` returning a ``Record`` / ``NumericRecord`` or
-       plain dict.
-    2. **EmpiricalDistribution** with ``.samples`` as a
-       ``Record`` / ``NumericRecord``.
+    The posterior is an ``EmpiricalDistribution``, such as the result of
+    ``condition_on``, whose atoms along one axis give one variable per leaf
+    path, or one under the component of an array event.
 
     Parameters
     ----------
@@ -69,28 +67,18 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     Raises
     ------
     TypeError
-        If the posterior has neither ``.draws()`` nor ``.samples``.
+        If the posterior is not an ``EmpiricalDistribution``.
     """
-    # Case 1: ApproximateDistribution with .draws()
-    if hasattr(posterior, "draws"):
-        raw = posterior.draws()
-        if _is_structured(raw):
-            # One variable per leaf field, keyed by its full /-path (see
-            # ``_leaf_keys`` for the nested-vs-duck-typed rule).
-            return {k: np.asarray(raw[k]) for k in _leaf_keys(raw)}
-        if isinstance(raw, dict):
-            return {k: np.asarray(v) for k, v in raw.items()}
-
-    # Case 2: EmpiricalDistribution with .samples
-    if hasattr(posterior, "samples"):
-        samples = posterior.samples
-        if _is_structured(samples):
-            return {k: np.asarray(samples[k]) for k in _leaf_keys(samples)}
-        return {"x": np.asarray(samples)}
+    if isinstance(posterior, EmpiricalDistribution):
+        rows = posterior._rows
+        if isinstance(rows, dict):
+            return {path: np.asarray(column) for path, column in rows.items()}
+        (component,) = posterior.event_spec.components
+        return {component: np.asarray(rows)}
 
     raise TypeError(
-        f"Cannot extract draws from {type(posterior).__name__}. "
-        f"Expected a posterior with .draws() or .samples attribute."
+        f"cannot extract draws: the posterior must be an EmpiricalDistribution; "
+        f"got {type(posterior).__name__}"
     )
 
 
@@ -100,45 +88,59 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
 def to_arviz_dataset(
     posterior: Any,
     *,
-    var_names: list[str] | None = None,
+    var_names: NamesLike | None = None,
 ) -> xr.Dataset:
     """Convert a posterior distribution to an xarray.Dataset for ArviZ 1.0.
 
-    For ``ApproximateDistribution``, delegates to
-    ``_datatree_store.to_named_posterior_dataset`` which builds variables with
-    dims ``(chain, draw, *event_shape)``.
-
-    Falls back to flat construction for plain ``EmpiricalDistribution``
-    (no chain structure).
+    For an inference result, whose atoms lie on the levels ``chain`` and
+    ``draw``, it delegates to ``_datatree_store.to_named_posterior_dataset``,
+    which builds variables with dims ``(chain, draw, *event_shape)``. Any other
+    ``EmpiricalDistribution`` takes its atoms as one chain.
 
     Parameters
     ----------
     posterior : Distribution
         Posterior from ``condition_on`` or ``EmpiricalDistribution``.
-    var_names : list[str] or None
-        Subset of variables to include. ``None`` includes all.
+    var_names : str, sequence of str, or None
+        The variables to include, in the order given. A str names one
+        variable, and ``None`` includes all.
 
     Returns
     -------
     xr.Dataset
         Dataset with dims ``(chain, draw, *event_shape)``.
+
+    Raises
+    ------
+    ImportError
+        If xarray is not installed.
+    TypeError
+        If *var_names* is not a str, a sequence of str, or ``None``.
+    ValueError
+        If *var_names* names a variable the posterior does not have.
     """
     if xr is None:
         raise ImportError("xarray is required. Install with: pip install xarray")
+    names = None if var_names is None else _as_names(var_names, what="to_arviz_dataset var_names")
 
-    # ── ApproximateDistribution: delegate to the canonical builder ────────────
-    if hasattr(posterior, "chains") and _is_structured(posterior):
+    from probpipe.inference._approximate_distribution import _has_chains
+
+    # ── An inference result: delegate to the canonical builder ────────────────
+    if _has_chains(posterior):
         from ._datatree_store import to_named_posterior_dataset
 
         ds = to_named_posterior_dataset(posterior)
-        if var_names is not None:
-            ds = ds[var_names]
+        if names is not None:
+            _check_variables(names, [str(name) for name in ds.data_vars])
+            # A list, since xarray reads a tuple as one variable name.
+            ds = ds[list(names)]
         return ds
 
     # ── Fallback: flat EmpiricalDistribution — no chain structure ─────────────
     draws = extract_draws(posterior)
-    if var_names is not None:
-        draws = {k: v for k, v in draws.items() if k in var_names}
+    if names is not None:
+        _check_variables(names, list(draws))
+        draws = {name: draws[name] for name in names}
 
     data_vars = {}
     for name, arr in draws.items():
@@ -152,3 +154,10 @@ def to_arviz_dataset(
         data_vars[name] = xr.DataArray(arr, dims=dims)
 
     return xr.Dataset(data_vars)
+
+
+def _check_variables(names: tuple[str, ...], available: list[str]) -> None:
+    """Raise ``ValueError`` if a name of *names* is not one of the *available* variables."""
+    unknown = [name for name in names if name not in available]
+    if unknown:
+        raise ValueError(unknown_names("variable", unknown, available))

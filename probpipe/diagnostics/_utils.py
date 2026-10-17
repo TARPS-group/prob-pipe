@@ -13,44 +13,13 @@ __all__ = [
     "_component_name",
     "_dataset_values",
     "_json_dumps_safe",
-    "_leaf_keys",
     "_record_get",
-    "_resolve_generative_likelihood",
     "_safe_float",
 ]
 
 import json
 
 import numpy as np
-
-
-def _is_structured(value: Any) -> bool:
-    """Whether *value* enumerates named fields, so one export variable fits each.
-
-    A record or a batch of them carries an ``event_template``, which is the
-    nested-aware enumeration :func:`_leaf_keys` reads. A test double may expose
-    only the top-level ``.fields``; either is enough to key the export by field
-    rather than treating the value as one opaque array.
-    """
-    return hasattr(value, "event_template") or hasattr(value, "fields")
-
-
-def _leaf_keys(value: Any) -> list[str]:
-    """Leaf keys of a draws/samples container, one export variable per leaf.
-
-    A real ``Record`` / ``RecordBatch`` exposes
-    the ``/``-path of every leaf via its ``event_template`` — the nested-aware
-    enumeration, and the single duck-typing rule the diagnostics exporters
-    share. Objects without a template (e.g. test doubles) fall back to the
-    top-level ``.fields``, which coincides for a flat structure.
-
-    Note the keys of a *nested* value contain ``/``, which
-    ``InferenceData.to_netcdf()`` rejects in variable names — rename such
-    variables before persisting to netCDF.
-    """
-    if hasattr(value, "event_template"):
-        return list(value.event_template.keys())
-    return list(value.fields)
 
 
 def _record_get(obj: Any, key: str, default: Any = None) -> Any:
@@ -137,70 +106,3 @@ def _dataset_values(ds: Any) -> dict[str, float]:
             values[_component_name(param, index)] = float(arr[index])
 
     return values
-
-
-def _resolve_generative_likelihood(
-    distribution: Any,
-    generative_likelihood: Any = None,
-) -> Any:
-    """Auto-detect generative likelihood from a posterior distribution.
-
-    Resolution order:
-
-    1. Explicitly passed ``generative_likelihood`` argument.
-    2. ``distribution["data"]`` — works for
-       :class:`~probpipe.modeling.SimpleGenerativeModel` where
-       ``__getitem__("data")`` returns a
-       :class:`~probpipe.modeling.GenerativeLikelihood`.
-    3. ``distribution._likelihood`` — direct attribute fallback.
-    4. ``distribution.generative_likelihood`` — future-proofing.
-    5. Raise a descriptive :class:`ValueError`.
-
-    Parameters
-    ----------
-    distribution : Distribution
-        Posterior or prior — typically a ``SimpleGenerativeModel``
-        or a conditioned posterior.
-    generative_likelihood : optional
-        Explicitly supplied likelihood; returned as-is if not ``None``.
-
-    Returns
-    -------
-    GenerativeLikelihood
-        Object with a ``generate_data(params, n_samples, *, key)`` method.
-
-    Raises
-    ------
-    ValueError
-        If no generative likelihood can be found.
-    """
-    # 1. Explicit argument — highest priority
-    if generative_likelihood is not None:
-        return generative_likelihood
-
-    # 2. distribution["data"] — SimpleGenerativeModel path
-    try:
-        candidate = distribution["data"]
-        if hasattr(candidate, "generate_data"):
-            return candidate
-    except (KeyError, TypeError):
-        pass
-
-    # 3. distribution._likelihood — direct attribute
-    candidate = getattr(distribution, "_likelihood", None)
-    if candidate is not None and hasattr(candidate, "generate_data"):
-        return candidate
-
-    # 4. distribution.generative_likelihood — future-proofing
-    candidate = getattr(distribution, "generative_likelihood", None)
-    if candidate is not None and hasattr(candidate, "generate_data"):
-        return candidate
-
-    # 5. Nothing found
-    raise ValueError(
-        "Could not auto-detect a generative likelihood from the distribution.\n"
-        "Either:\n"
-        "  (a) pass `generative_likelihood` explicitly, or\n"
-        "  (b) use a SimpleGenerativeModel whose 'data' component "
-        "has a `generate_data()` method."
-    )

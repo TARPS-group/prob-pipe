@@ -11,14 +11,28 @@ a type the duck path cannot see.
 
 from __future__ import annotations
 
+import copy
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import ArrayBackend, NumericRecord, Record, array_backend_for, register_array_backend
+from probpipe import (
+    ArrayBackend,
+    NumericArray,
+    NumericArrayBatch,
+    NumericRecord,
+    NumericRecordBatch,
+    Opaque,
+    Record,
+    RecordBatch,
+    array_backend_for,
+    register_array_backend,
+)
 from probpipe.core import _array_backend
 from probpipe.core._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
+from probpipe.core.tracked import _NO_DESCRIPTION
 
 xr = pytest.importorskip("xarray")
 pd = pytest.importorskip("pandas")
@@ -97,8 +111,12 @@ class TestRegistryLookup:
         # NumericRecordSpec (previously rejected because numpy_dtype was None).
         df = pd.DataFrame({"a": [1, 2], "b": [3.0, 4.0]})
         tpl = NumericRecordSpec({"x": NumericArraySpec((2, 2), dtype=np.dtype("float64"))})
-        nr = NumericRecord("r", x=df, event_template=tpl)
-        assert nr["x"] is df
+        nr = NumericRecord(
+            {"x": df},
+            event_template=tpl,
+            label="r",
+        )
+        assert nr["x"].raw is df
 
     def test_dataframe_is_numeric_per_instance(self):
         backend = array_backend_for(pd.DataFrame({"a": [1.0]}))
@@ -131,7 +149,7 @@ class TestRegistryLookup:
         first = ArrayBackend(event_shape=lambda b: (1,))
         second = ArrayBackend(event_shape=lambda b: (2,))
         register_array_backend(Box, first)
-        with pytest.warns(UserWarning, match="overwriting the existing ArrayBackend"):
+        with pytest.warns(UserWarning, match="replaced the ArrayBackend already registered"):
             register_array_backend(Box, second)
         assert array_backend_for(Box()) is second
 
@@ -143,64 +161,106 @@ class TestRegistryLookup:
 
 class TestNativeStorage:
     def test_leaf_stored_verbatim(self, da):
-        nr = NumericRecord("nr", temps=da)
-        assert nr["temps"] is da
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
+        assert nr["temps"].raw is da
 
     def test_metadata_intact_after_construction(self, da):
-        nr = NumericRecord("nr", temps=da)
-        assert nr["temps"].dims == ("t",)
-        assert [int(v) for v in nr["temps"].coords["t"].values] == [10, 20, 30]
-        assert nr["temps"].attrs == {"units": "meters"}
-        assert nr["temps"].name == "temps"
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
+        assert nr["temps"].raw.dims == ("t",)
+        assert [int(v) for v in nr["temps"].raw.coords["t"].values] == [10, 20, 30]
+        assert nr["temps"].raw.attrs == {"units": "meters"}
+        assert nr["temps"].raw.name == "temps"
 
     def test_to_numeric_is_identity(self, da):
-        nr = NumericRecord("nr", temps=da)
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
         assert nr.to_numeric() is nr
 
     def test_construction_paths_agree(self, da):
         # Direct construction, promoted construction, and to_numeric() store
         # the identical native leaf and produce equal records.
-        direct = NumericRecord("r", temps=da, x=1.0)
-        promoted = Record("r", temps=da, x=1.0)
-        converted = Record("r", temps=da, x=1.0).to_numeric()
+        direct = NumericRecord(
+            {"temps": da, "x": 1.0},
+            label="r",
+        )
+        promoted = Record(
+            {"temps": da, "x": 1.0},
+            label="r",
+        )
+        converted = Record(
+            {"temps": da, "x": 1.0},
+            label="r",
+        ).to_numeric()
         for rec in (direct, promoted, converted):
             assert type(rec) is NumericRecord
-            assert rec["temps"] is da
+            assert rec["temps"].raw is da
         assert direct == promoted == converted
 
     def test_nested_native_leaf(self, da):
-        inner = NumericRecord("grp", temps=da)
-        outer = NumericRecord("outer", grp=inner, extra=1.0)
+        inner = NumericRecord(
+            {"temps": da},
+            label="grp",
+        )
+        outer = NumericRecord(
+            {"grp": inner, "extra": 1.0},
+            label="outer",
+        )
         assert outer.at_path("grp") is inner
-        assert outer["grp/temps"] is da
+        assert outer["grp/temps"].raw is da
 
     def test_series_stored_verbatim(self):
         s = pd.Series([1.0, 2.0], index=["a", "b"], name="s")
-        nr = NumericRecord("nr", s=s)
-        assert nr["s"] is s
-        assert list(nr["s"].index) == ["a", "b"]
+        nr = NumericRecord(
+            {"s": s},
+            label="nr",
+        )
+        assert nr["s"].raw is s
+        assert list(nr["s"].raw.index) == ["a", "b"]
 
     def test_dataframe_stored_verbatim_and_vectorized(self):
         df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
-        nr = NumericRecord("nr", tbl=df)
-        assert nr["tbl"] is df
+        nr = NumericRecord(
+            {"tbl": df},
+            label="nr",
+        )
+        assert nr["tbl"].raw is df
         assert nr.vector_size == 4
         np.testing.assert_allclose(nr.to_vector(), [1.0, 3.0, 2.0, 4.0])
 
     def test_mixed_backend_record(self, da):
         df = pd.DataFrame({"a": [1.0, 2.0]})
-        nr = NumericRecord("nr", temps=da, tbl=df, x=jnp.array(1.0))
-        assert nr["temps"] is da
-        assert nr["tbl"] is df
-        assert isinstance(nr["x"], jnp.ndarray)
+        nr = NumericRecord(
+            {"temps": da, "tbl": df, "x": jnp.array(1.0)},
+            label="nr",
+        )
+        assert nr["temps"].raw is da
+        assert nr["tbl"].raw is df
+        assert isinstance(nr["x"].raw, jnp.ndarray)
 
     def test_non_numeric_leaves_raise(self):
         with pytest.raises(TypeError, match="must be a numeric"):
-            NumericRecord("nr", s="text")
+            NumericRecord(
+                {"s": "text"},
+                label="nr",
+            )
         with pytest.raises(TypeError, match="must be a numeric"):
-            Record("r", x=1.0, o=object()).to_numeric()
+            Record(
+                {"x": 1.0, "o": object()},
+                label="r",
+            ).to_numeric()
         with pytest.raises(TypeError, match="must be a numeric"):
-            NumericRecord("nr", tbl=pd.DataFrame({"a": ["s"]}))
+            NumericRecord(
+                {"tbl": pd.DataFrame({"a": ["s"]})},
+                label="nr",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -210,62 +270,98 @@ class TestNativeStorage:
 
 class TestTransformsPreserveNativeLeaves:
     def test_without_preserves_top_level_native_leaf(self, da):
-        nr = NumericRecord("nr", temps=da, extra=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": da, "extra": jnp.array(1.0)},
+            label="nr",
+        )
         edited = nr.without("extra")
-        assert edited["temps"] is da
-        assert type(edited["temps"]) is xr.DataArray
+        assert edited["temps"].raw is da
+        assert type(edited["temps"].raw) is xr.DataArray
 
     def test_without_preserves_nested_native_leaf(self, da):
-        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=da), extra=jnp.array(1.0))
+        outer = NumericRecord(
+            {
+                "grp": NumericRecord(
+                    {"temps": da},
+                    label="grp",
+                ),
+                "extra": jnp.array(1.0),
+            },
+            label="outer",
+        )
         edited = outer.without("extra")
-        assert edited["grp/temps"] is da
+        assert edited["grp/temps"].raw is da
 
     def test_replace_preserves_untouched_native_leaf(self, da):
-        nr = NumericRecord("nr", temps=da, extra=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": da, "extra": jnp.array(1.0)},
+            label="nr",
+        )
         edited = nr.replace(extra=jnp.array(2.0))
-        assert edited["temps"] is da
+        assert edited["temps"].raw is da
 
     def test_replace_swaps_in_new_native_leaf(self, da):
-        nr = NumericRecord("nr", temps=da, extra=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": da, "extra": jnp.array(1.0)},
+            label="nr",
+        )
         new_da = xr.DataArray(np.zeros(2), dims=["s"])
         edited = nr.replace(temps=new_da)
-        assert edited["temps"] is new_da
+        assert edited["temps"].raw is new_da
 
     def test_merge_preserves_native_leaves_from_both_sides(self, da):
-        left = NumericRecord("left", temps=da)
+        left = NumericRecord(
+            {"temps": da},
+            label="left",
+        )
         s = pd.Series([1.0, 2.0])
-        right = NumericRecord("right", s=s)
+        right = NumericRecord(
+            {"s": s},
+            label="right",
+        )
         merged = left.merge(right)
-        assert merged["temps"] is da
-        assert merged["s"] is s
+        assert merged["temps"].raw is da
+        assert merged["s"].raw is s
 
     def test_with_path_names_preserves_native_leaf(self, da):
-        nr = NumericRecord("nr", temps=da, extra=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": da, "extra": jnp.array(1.0)},
+            label="nr",
+        )
         renamed = nr.with_path_names(temps="warmth")
-        assert renamed["warmth"] is da
+        assert renamed["warmth"].raw is da
 
     def test_identity_map_preserves_native_leaf(self, da):
         # map rebuilds the record but stores whatever f returns verbatim — it
         # does not coerce the leaf — so an identity f yields a *new* record
         # whose leaf is the same native object.
-        nr = NumericRecord("nr", temps=da)
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
         mapped = nr.map(lambda x: x)
         assert mapped is not nr
-        assert mapped["temps"] is da
+        assert mapped["temps"].raw is da
 
     def test_map_through_native_arithmetic_stays_native(self, da):
         # xarray arithmetic returns a DataArray, so the mapped record keeps a
         # native (new) leaf rather than a coerced array.
-        nr = NumericRecord("nr", temps=da)
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
         doubled = nr.map(lambda x: x * 2)
-        assert type(doubled["temps"]) is xr.DataArray
-        np.testing.assert_allclose(np.asarray(doubled["temps"]), [2.0, 4.0, 6.0])
+        assert type(doubled["temps"].raw) is xr.DataArray
+        np.testing.assert_allclose(np.asarray(doubled["temps"].raw), [2.0, 4.0, 6.0])
 
     def test_source_record_unchanged_after_transform(self, da):
-        nr = NumericRecord("nr", temps=da, extra=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": da, "extra": jnp.array(1.0)},
+            label="nr",
+        )
         nr.without("extra")
         nr.with_path_names(temps="warmth")
-        assert nr["temps"] is da
+        assert nr["temps"].raw is da
         assert tuple(nr.children) == ("temps", "extra")
 
 
@@ -276,23 +372,32 @@ class TestTransformsPreserveNativeLeaves:
 
 class TestJaxBoundary:
     def test_flatten_converts_to_jax(self, da):
-        nr = NumericRecord("nr", temps=da, x=jnp.array(1.0))
+        nr = NumericRecord(
+            {"temps": da, "x": jnp.array(1.0)},
+            label="nr",
+        )
         leaves, treedef = jax.tree_util.tree_flatten(nr)
         assert all(isinstance(leaf, jnp.ndarray) for leaf in leaves)
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert type(back) is NumericRecord
-        assert isinstance(back["temps"], jnp.ndarray)  # native type does not cross
-        assert back.name == "nr"
+        assert isinstance(back["temps"].raw, jnp.ndarray)  # native type does not cross
+        assert back.label == _NO_DESCRIPTION  # the label does not cross either
         assert back.event_template == nr.event_template
 
     def test_tree_map_returns_bare_arrays(self, da):
-        nr = NumericRecord("nr", temps=da)
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
         out = jax.tree_util.tree_map(lambda x: x * 2, nr)
-        assert isinstance(out["temps"], jnp.ndarray)
-        np.testing.assert_allclose(out["temps"], [2.0, 4.0, 6.0])
+        assert isinstance(out["temps"].raw, jnp.ndarray)
+        np.testing.assert_allclose(out["temps"].raw, [2.0, 4.0, 6.0])
 
     def test_jit_over_native_leaf_record(self, da):
-        nr = NumericRecord("nr", temps=da)
+        nr = NumericRecord(
+            {"temps": da},
+            label="nr",
+        )
 
         @jax.jit
         def double(v):
@@ -300,20 +405,23 @@ class TestJaxBoundary:
 
         out = double(nr)
         assert type(out) is NumericRecord
-        np.testing.assert_allclose(out["temps"], [2.0, 4.0, 6.0])
+        np.testing.assert_allclose(out["temps"].raw, [2.0, 4.0, 6.0])
 
     @pytest.mark.parametrize("nested", [False, True], ids=["flat", "nested"])
     def test_first_conversion_inside_jit_can_be_reused(self, da, nested):
         native = pd.Series([4.0, 5.0])
         fields = {"values": {"x": da}} if nested else {"x": da}
         fields["y"] = native
-        nr = NumericRecord("native", fields)
+        nr = NumericRecord(
+            fields,
+            label="native",
+        )
 
         np.testing.assert_array_equal(
             jax.jit(lambda: nr.to_vector() * 2)(), [2.0, 4.0, 6.0, 8.0, 10.0]
         )
-        assert nr["values/x" if nested else "x"] is da
-        assert nr["y"] is native
+        assert nr["values/x" if nested else "x"].raw is da
+        assert nr["y"].raw is native
         np.testing.assert_array_equal(nr.to_vector(), [1.0, 2.0, 3.0, 4.0, 5.0])
         np.testing.assert_array_equal(
             jax.jit(lambda: nr.to_vector() + 1)(), [2.0, 3.0, 4.0, 5.0, 6.0]
@@ -346,29 +454,41 @@ class _LazyLeaf:
 class TestLazyConversion:
     def test_construction_and_navigation_do_not_materialise(self):
         leaf = _LazyLeaf()
-        nr = NumericRecord("nr", lazy=leaf, x=1.0)
-        assert nr["lazy"] is leaf
+        nr = NumericRecord(
+            {"lazy": leaf, "x": 1.0},
+            label="nr",
+        )
+        assert nr["lazy"].raw is leaf
         assert nr.event_template["lazy"] == NumericArraySpec((3,))
         assert nr.vector_size == 4
         assert leaf.materialisations == 0
 
     def test_transforms_do_not_materialise(self):
         leaf = _LazyLeaf()
-        nr = NumericRecord("nr", lazy=leaf, x=1.0)
+        nr = NumericRecord(
+            {"lazy": leaf, "x": 1.0},
+            label="nr",
+        )
         edited = nr.without("x").with_path_names(lazy="late")
-        assert edited["late"] is leaf
+        assert edited["late"].raw is leaf
         assert leaf.materialisations == 0
 
     def test_promotion_and_inference_do_not_materialise(self):
         leaf = _LazyLeaf()
-        r = Record("r", lazy=leaf)
+        r = Record(
+            {"lazy": leaf},
+            label="r",
+        )
         assert type(r) is NumericRecord
         assert isinstance(r.event_template, NumericRecordSpec)
         assert leaf.materialisations == 0
 
     def test_compute_boundary_materialises_exactly_once(self):
         leaf = _LazyLeaf()
-        nr = NumericRecord("nr", lazy=leaf)
+        nr = NumericRecord(
+            {"lazy": leaf},
+            label="nr",
+        )
         v1 = nr.to_vector()
         v2 = nr.to_vector()
         np.testing.assert_allclose(v1, v2)
@@ -376,7 +496,10 @@ class TestLazyConversion:
 
     def test_cache_shared_across_boundaries(self):
         leaf = _LazyLeaf()
-        nr = NumericRecord("nr", lazy=leaf)
+        nr = NumericRecord(
+            {"lazy": leaf},
+            label="nr",
+        )
         nr.to_vector()
         jax.tree_util.tree_flatten(nr)  # flatten reuses the cached conversion
         assert leaf.materialisations == 1
@@ -391,13 +514,19 @@ class TestNativePickle:
     def test_pickle_preserves_native_types_at_every_level(self, da):
         import pickle
 
-        inner = NumericRecord("grp", temps=da)
-        outer = NumericRecord("outer", grp=inner, tbl=pd.DataFrame({"a": [1.0]}), x=1.0)
+        inner = NumericRecord(
+            {"temps": da},
+            label="grp",
+        )
+        outer = NumericRecord(
+            {"grp": inner, "tbl": pd.DataFrame({"a": [1.0]}), "x": 1.0},
+            label="outer",
+        )
         back = pickle.loads(pickle.dumps(outer))
-        assert type(back["grp/temps"]) is xr.DataArray
-        assert back["grp/temps"].dims == ("t",)
-        assert back["grp/temps"].attrs == {"units": "meters"}
-        assert type(back["tbl"]) is pd.DataFrame
+        assert type(back["grp/temps"].raw) is xr.DataArray
+        assert back["grp/temps"].raw.dims == ("t",)
+        assert back["grp/temps"].raw.attrs == {"units": "meters"}
+        assert type(back["tbl"].raw) is pd.DataFrame
         assert back == outer
 
 
@@ -410,10 +539,16 @@ class TestEagerBatchBoundary:
     def test_stack_of_native_leaf_records_coerces_columns(self, da):
         from probpipe import RecordBatch
 
-        records = [NumericRecord("r", temps=da, x=float(i)) for i in range(3)]
+        records = [
+            NumericRecord(
+                {"temps": da, "x": float(i)},
+                label="r",
+            )
+            for i in range(3)
+        ]
         ra = RecordBatch.stack(records, level_name="draw")
-        assert isinstance(ra["temps"], jnp.ndarray)
-        assert ra["temps"].shape == (3, 3)
+        assert isinstance(ra["temps"].raw, jnp.ndarray)
+        assert ra["temps"].raw.shape == (3, 3)
         assert ra.batch_shape == (3,)
 
 
@@ -458,7 +593,10 @@ class TestBackendRegistrationEndToEnd:
         t = _FakeTensor([1.0, 2.0])
         assert RecordSpec.infer_from({"t": t})["t"] != NumericArraySpec((2,))
         with pytest.raises(TypeError, match="must be a numeric"):
-            NumericRecord("nr", t=t)
+            NumericRecord(
+                {"t": t},
+                label="nr",
+            )
 
     def test_one_registration_lights_up_everything(self, clean_registry):
         register_array_backend(_FakeTensor, _fake_backend())
@@ -473,9 +611,12 @@ class TestBackendRegistrationEndToEnd:
         assert not NumericArraySpec((3,)).is_valid(t)
 
         # Promotion: an all-numeric record holding the tensor promotes.
-        r = Record("r", t=t)
+        r = Record(
+            {"t": t},
+            label="r",
+        )
         assert type(r) is NumericRecord
-        assert r["t"] is t
+        assert r["t"].raw is t
 
         # Conversion: the compute boundary routes through the custom to_jax.
         np.testing.assert_allclose(r.to_vector(), [1.0, 2.0])
@@ -494,11 +635,17 @@ class TestBackendRegistrationEndToEnd:
         from probpipe import RecordBatch
 
         register_array_backend(_FakeTensor, _fake_backend())
-        records = [Record("r", t=_FakeTensor([float(i), 2.0])) for i in range(3)]
+        records = [
+            Record(
+                {"t": _FakeTensor([float(i), 2.0])},
+                label="r",
+            )
+            for i in range(3)
+        ]
         ra = RecordBatch.stack(records, level_name="draw")
-        assert isinstance(ra["t"], jnp.ndarray)
-        assert ra["t"].shape == (3, 2)
-        assert all(r["t"].to_jax_calls == 1 for r in records)
+        assert isinstance(ra["t"].raw, jnp.ndarray)
+        assert ra["t"].raw.shape == (3, 2)
+        assert all(r["t"].raw.to_jax_calls == 1 for r in records)
 
 
 class TestRegisteredBackendIdentity:
@@ -527,15 +674,27 @@ class TestRegisteredBackendIdentity:
 
     def test_eq_routes_through_registry(self, box_backend):
         Box = box_backend
-        a = NumericRecord("r", x=Box([1.0, 2.0]))
-        b = NumericRecord("r", x=Box([1.0, 2.0]))
+        a = NumericRecord(
+            {"x": Box([1.0, 2.0])},
+            label="r",
+        )
+        b = NumericRecord(
+            {"x": Box([1.0, 2.0])},
+            label="r",
+        )
         assert (a.to_vector() == b.to_vector()).all()
         assert a == b  # was False when __eq__ used raw jnp.asarray
-        assert a != NumericRecord("r", x=Box([1.0, 9.0]))
+        assert a != NumericRecord(
+            {"x": Box([1.0, 9.0])},
+            label="r",
+        )
 
     def test_to_numpy_routes_through_registry(self, box_backend):
         Box = box_backend
-        out = NumericRecord("r", x=Box([1.0, 2.0])).to_numpy()["x"]
+        out = NumericRecord(
+            {"x": Box([1.0, 2.0])},
+            label="r",
+        ).to_numpy()["x"]
         np.testing.assert_array_equal(out, [1.0, 2.0])  # not a 0-d object array
         assert out.dtype == np.float64
 
@@ -552,7 +711,12 @@ class TestRegisteredBackendIdentity:
                 return self._v
 
         leaf = Counting([1.0, 2.0])
-        hash(NumericRecord("r", x=leaf))
+        hash(
+            NumericRecord(
+                {"x": leaf},
+                label="r",
+            )
+        )
         assert leaf.converted == 0
 
 
@@ -596,13 +760,21 @@ class TestNullableNumericMissingData:
 
     def test_nullable_frame_promotes(self):
         df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64")})
-        r = Record("r", m=df)
+        r = Record(
+            {"m": df},
+            label="r",
+        )
         assert type(r) is NumericRecord
         assert isinstance(r.event_template, NumericRecordSpec)
 
     def test_na_encoded_as_nan_at_boundary(self):
         df = pd.DataFrame({"a": pd.array([1, None, 3], dtype="Int64")})
-        v = np.asarray(Record("r", m=df).to_vector())
+        v = np.asarray(
+            Record(
+                {"m": df},
+                label="r",
+            ).to_vector()
+        )
         assert v[0] == 1.0 and v[2] == 3.0
         assert np.isnan(v[1])
 
@@ -611,26 +783,40 @@ class TestNullableNumericMissingData:
         # survives construction. NA -> NaN happens only at the jax boundary,
         # never at rest.
         df = pd.DataFrame({"a": pd.array([1, None], dtype="Int64")})
-        stored = Record("r", m=df)["m"]
+        stored = Record(
+            {"m": df},
+            label="r",
+        )["m"].raw
         assert isinstance(stored, pd.DataFrame)
         assert stored["a"].isna().tolist() == [False, True]
 
     def test_series_nullable_promotes_and_converts(self):
         s = pd.Series(pd.array([1.5, None, 3.0], dtype="Float64"), name="x")
-        r = Record("r", m=s)
+        r = Record(
+            {"m": s},
+            label="r",
+        )
         assert type(r) is NumericRecord
         v = np.asarray(r.to_vector())
         assert v[0] == 1.5 and v[2] == 3.0 and np.isnan(v[1])
 
     def test_boolean_nullable_converts_to_float(self):
         s = pd.Series(pd.array([True, None, False], dtype="boolean"))
-        v = np.asarray(Record("r", m=s).to_vector())
+        v = np.asarray(
+            Record(
+                {"m": s},
+                label="r",
+            ).to_vector()
+        )
         np.testing.assert_array_equal(np.isnan(v), [False, True, False])
         assert v[0] == 1.0 and v[2] == 0.0
 
     def test_mixed_nullable_and_plain_columns(self):
         df = pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [3.0, 4.0]})
-        r = Record("r", m=df)
+        r = Record(
+            {"m": df},
+            label="r",
+        )
         assert type(r) is NumericRecord
         v = np.asarray(r.to_vector())  # row-major flatten: [1, 3, nan, 4]
         np.testing.assert_array_equal(np.isnan(v), [False, False, True, False])
@@ -648,20 +834,44 @@ class TestNullableNumericMissingData:
         # x64 config; the backend numpy_dtype is float64 either way, checked
         # in test_numpy_dtype_is_float64_for_nullable.)
         df = pd.DataFrame({"a": pd.array([1, 2, 3], dtype="Int64")})
-        v = np.asarray(Record("r", m=df).to_vector())
+        v = np.asarray(
+            Record(
+                {"m": df},
+                label="r",
+            ).to_vector()
+        )
         assert np.issubdtype(v.dtype, np.floating)
 
     def test_categorical_and_string_stay_opaque(self):
         # Non-numeric extension dtypes are not swept in: the container stays a
         # plain Record.
         cat = pd.DataFrame({"a": pd.Categorical([1, 2, 1])})
-        assert type(Record("r", m=cat)) is Record
+        assert (
+            type(
+                Record(
+                    {"m": cat},
+                    label="r",
+                )
+            )
+            is Record
+        )
         text = pd.DataFrame({"a": pd.array(["a", "b"], dtype="string")})
-        assert type(Record("r", m=text)) is Record
+        assert (
+            type(
+                Record(
+                    {"m": text},
+                    label="r",
+                )
+            )
+            is Record
+        )
 
     def test_numpy_backed_frame_still_promotes(self):
         df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
-        r = Record("r", m=df)
+        r = Record(
+            {"m": df},
+            label="r",
+        )
         assert type(r) is NumericRecord
         np.testing.assert_allclose(r.to_vector(), [1.0, 3.0, 2.0, 4.0])
 
@@ -680,7 +890,10 @@ class TestNullableNumericMissingData:
 
     def test_nullable_beside_complex_promotes_and_vectorizes(self):
         df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64"), "b": [1 + 2j, 3 + 4j]})
-        r = Record("r", m=df)
+        r = Record(
+            {"m": df},
+            label="r",
+        )
         assert type(r) is NumericRecord
         v = np.asarray(r.to_vector())
         assert np.issubdtype(v.dtype, np.complexfloating)
@@ -699,8 +912,8 @@ class TestNullableNumericMissingData:
 
         def mk(imag):
             return Record(
-                "r",
-                m=pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [1 + 2j, imag]}),
+                {"m": pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [1 + 2j, imag]})},
+                label="r",
             )
 
         # Identical (including the NA position) -> equal and fingerprint-equal.
@@ -725,15 +938,24 @@ class TestNullableNumericMissingData:
 
     def test_sparse_complex_promotes_and_round_trips(self):
         sd = pd.SparseDtype("complex128", np.nan)
-        r1 = Record("r", m=pd.Series([1 + 2j, 3 + 4j], dtype=sd))
-        r2 = Record("r", m=pd.Series([1 + 2j, 3 + 4j], dtype=sd))
+        r1 = Record(
+            {"m": pd.Series([1 + 2j, 3 + 4j], dtype=sd)},
+            label="r",
+        )
+        r2 = Record(
+            {"m": pd.Series([1 + 2j, 3 + 4j], dtype=sd)},
+            label="r",
+        )
         assert type(r1) is NumericRecord
         v = np.asarray(r1.to_vector())
         assert np.issubdtype(v.dtype, np.complexfloating)
         np.testing.assert_array_equal(v, [1 + 2j, 3 + 4j])
         # equality/fingerprint see the imaginary parts
         assert r1 == r2
-        assert r1 != Record("r", m=pd.Series([1 + 2j, 3 + 9j], dtype=sd))
+        assert r1 != Record(
+            {"m": pd.Series([1 + 2j, 3 + 9j], dtype=sd)},
+            label="r",
+        )
 
 
 class TestNativeMetadataInIdentity:
@@ -749,14 +971,26 @@ class TestNativeMetadataInIdentity:
             attrs={"units": "meters"},
             name="temps",
         )
-        r1 = NumericRecord("r", temps=da)
-        r2 = NumericRecord("r", temps=other)
+        r1 = NumericRecord(
+            {"temps": da},
+            label="r",
+        )
+        r2 = NumericRecord(
+            {"temps": other},
+            label="r",
+        )
         assert (r1.to_vector() == r2.to_vector()).all()
         assert r1 != r2  # coords are identity-bearing
 
     def test_eq_equal_when_coords_match(self, da):
-        r1 = NumericRecord("r", temps=da)
-        r2 = NumericRecord("r", temps=da)
+        r1 = NumericRecord(
+            {"temps": da},
+            label="r",
+        )
+        r2 = NumericRecord(
+            {"temps": da},
+            label="r",
+        )
         assert r1 == r2
 
     def test_metadata_key_hashes_in_full(self, da):
@@ -768,3 +1002,100 @@ class TestNativeMetadataInIdentity:
 
         meta = array_backend_for(da).metadata(da)
         assert _leaf_metadata_key(da) == fingerprint(meta, max_array_bytes=None)
+
+
+# ---------------------------------------------------------------------------
+# A stored NumPy array is read-only
+# ---------------------------------------------------------------------------
+
+#: Each constructor that stores a NumPy array, given that array.
+_STORES = {
+    "NumericArray": lambda a: NumericArray(
+        a,
+        label="x",
+    ),
+    "Record": lambda a: Record(
+        {"x": a},
+        label="r",
+    ),
+    "nested Record": lambda a: Record(
+        {"inner": {"x": a}},
+        label="r",
+    ),
+    "NumericArrayBatch": lambda a: NumericArrayBatch(
+        a,
+        "draw",
+        label="b",
+    ),
+    "NumericRecordBatch": lambda a: NumericRecordBatch(
+        {"x": a},
+        "draw",
+        label="b",
+    ),
+    "RecordBatch": lambda a: RecordBatch(
+        {"x": a},
+        "draw",
+        label="b",
+    ),
+    "Opaque": lambda a: Opaque(
+        a,
+        label="o",
+    ),
+}
+
+
+class TestStoredNumPyArraysAreReadOnly:
+    """A term stores the array it is given and marks it read-only in place."""
+
+    @pytest.mark.parametrize("store", list(_STORES))
+    def test_a_write_through_the_callers_array_raises(self, store):
+        values = np.array([1.0, 2.0, 3.0])
+        _STORES[store](values)
+
+        with pytest.raises(ValueError, match="read-only"):
+            values[0] = 9.0
+
+    @pytest.mark.parametrize(
+        "store", ["NumericArray", "Record", "NumericArrayBatch", "RecordBatch"]
+    )
+    def test_a_write_through_raw_raises(self, store):
+        term = _STORES[store](np.array([1.0, 2.0, 3.0]))
+        stored = term.raw if store in ("NumericArray", "NumericArrayBatch") else term["x"].raw
+
+        with pytest.raises(ValueError, match="read-only"):
+            stored[0] = 9.0
+
+    @pytest.mark.parametrize("store", ["NumericArray", "NumericArrayBatch"])
+    def test_a_deep_copy_stores_a_read_only_array(self, store):
+        term = copy.deepcopy(_STORES[store](np.array([1.0, 2.0, 3.0])))
+
+        assert not term.raw.flags.writeable
+
+    def test_an_element_of_a_batch_is_read_only(self):
+        batch = NumericArrayBatch(
+            np.arange(6.0).reshape(2, 3),
+            "row",
+            label="b",
+        )
+
+        assert not batch[0].raw.flags.writeable
+
+    def test_a_failed_construction_leaves_the_array_writable(self):
+        values = np.array([1.0, 2.0])
+
+        with pytest.raises(ValueError):
+            NumericArray(
+                values,
+                spec=NumericArraySpec(shape=(3,)),
+                label="x",
+            )
+        assert values.flags.writeable
+
+    def test_a_pandas_container_is_stored_as_given(self):
+        series = pd.Series([1.0, 2.0, 3.0])
+        record = Record(
+            {"x": series},
+            label="r",
+        )
+
+        assert record["x"].raw is series

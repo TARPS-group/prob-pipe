@@ -2,8 +2,9 @@
 
 Provides MCMC sampling (gradient-based NUTS/HMC + gradient-free RWMH and
 elliptical slice sampling — all BlackJAX-backed), chain-structured
-empirical distributions, and the inference method registry for
-``condition_on`` dispatch.
+empirical distributions, and the inference methods that normalize the targets
+of ``condition_on``. The methods register into the inference-method registry,
+which is defined with ``condition_on`` and re-exported here.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from ..core._dispatch import (
     UnaryDispatchRegistry,
     UnarySupportedTypes,
 )
-from ._approximate_distribution import ApproximateDistribution
+from ..operations._condition import InferenceMethod, inference_method_registry
 from ._bayesflow_likelihoods import (
     BayesFlowLikelihood,
     BayesFlowRatio,
@@ -31,25 +32,20 @@ from ._bayesflow_likelihoods import (
 )
 
 # Amortized SBI (optional ``[bayesflow]`` extra). keras/bayesflow load lazily on
-# first call, so these eager imports stay cheap; the trained artifacts dispatch
-# via ``SupportsApproximateConditioning`` (NPE) or plug into ``SimpleModel`` as
-# ``Likelihood`` components (NLE/NRE) -- no inference-registry methods needed.
-from ._bayesflow_posteriors import BayesFlowModel, learn_amortized_posterior
+# first call, so these eager imports stay cheap. The trained artifacts are
+# kernels: an amortized posterior claims ``SupportsApproximateConditioning``, and
+# a learned likelihood or ratio composes with a prior into a joint whose
+# conditional the registered methods normalize.
+from ._bayesflow_posteriors import learn_amortized_posterior
 from ._blackjax_ess import elliptical_slice
 from ._blackjax_rwmh import rwmh
 from ._minibatch import MinibatchedDistribution
 from ._nutpie import condition_on_nutpie
-from ._registry import (
-    InferenceMethod,
-    inference_method_registry,
-)
 
 __all__ = [
-    "ApproximateDistribution",
     "BaseDispatchMethod",
     "BaseDispatchRegistry",
     "BayesFlowLikelihood",
-    "BayesFlowModel",
     "BayesFlowRatio",
     "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
@@ -77,12 +73,18 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
+# ``probpipe.condition_on`` passes a model and its observed data to the registry,
+# whose methods take the target this package forms from them.
+from ..operations._condition import _install_observed_target
+from ._inference_utils import observed_target
+
+_install_observed_target(observed_target)
+
 # TFP-backed MCMC — registered with ``priority=None`` (opt-in only); BlackJAX
 # methods below win auto-dispatch.
-from ._tfp_mcmc import TFPHmcMethod, TFPNutsMethod
+from ._tfp_mcmc import TFPNutsMethod
 
 inference_method_registry.register(TFPNutsMethod())
-inference_method_registry.register(TFPHmcMethod())
 
 # BlackJAX MCMC (gradient-based) — auto-dispatch default for any
 # JAX-traceable ``SupportsLogProb`` target.
@@ -97,6 +99,11 @@ from ._blackjax_rwmh import BlackJAXRWMHMethod
 
 inference_method_registry.register(BlackJAXRWMHMethod())
 inference_method_registry.register(BlackJAXESSMethod())
+
+# Exact Bayes' rule for an empirical prior, which reweights its atoms.
+from ._empirical_reweighting import EmpiricalReweightingMethod
+
+inference_method_registry.register(EmpiricalReweightingMethod())
 
 # BlackJAX SGMCMC
 from ._blackjax_sgmcmc import BlackJAXSGHMCMethod, BlackJAXSGLDMethod

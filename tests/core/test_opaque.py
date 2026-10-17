@@ -31,52 +31,109 @@ class TestOpaqueHoldsOneValue:
     def test_the_value_is_reachable_and_unchanged(self):
         payload = _Payload()
 
-        assert Opaque("p", payload).value is payload
+        assert (
+            Opaque(
+                payload,
+                label="p",
+            ).raw
+            is payload
+        )
 
-    def test_the_spec_defaults_to_a_bare_one(self):
-        assert Opaque("p", _Payload()).spec == OpaqueSpec()
+    def test_the_spec_defaults_to_the_values_type(self):
+        assert Opaque(
+            _Payload(),
+            label="p",
+        ).spec == OpaqueSpec(type=_Payload)
+        assert Opaque(
+            "north",
+            label="s",
+        ).spec == OpaqueSpec(type=str)
+
+    def test_a_declared_type_the_value_lacks_is_refused(self):
+        with pytest.raises(
+            TypeError, match=r"value of type _Payload does not match OpaqueSpec\(type=str\)"
+        ):
+            Opaque(
+                _Payload(),
+                spec=OpaqueSpec(type=str),
+                label="p",
+            )
 
     def test_a_declared_spec_carries_its_meta(self):
         spec = OpaqueSpec(meta="fitted-model")
 
-        assert Opaque("p", _Payload(), spec=spec).spec.meta == "fitted-model"
+        assert (
+            Opaque(
+                _Payload(),
+                spec=spec,
+                label="p",
+            ).spec.meta
+            == "fitted-model"
+        )
 
     def test_a_spec_of_another_kind_is_refused(self):
         with pytest.raises(TypeError, match="must be an OpaqueSpec"):
-            Opaque("p", _Payload(), spec="not a spec")
+            Opaque(
+                _Payload(),
+                spec="not a spec",
+                label="p",
+            )
 
     def test_a_mapping_is_refused(self):
-        """The value layer reads a mapping as a subtree."""
-        with pytest.raises(TypeError, match="reads a mapping as a subtree"):
-            Opaque("p", {"a": 1})
+        with pytest.raises(TypeError, match="Opaque cannot hold a mapping, got dict"):
+            Opaque(
+                {"a": 1},
+                label="p",
+            )
 
     @pytest.mark.parametrize("value", [1, "text", None, [1, 2], (1, 2), _Payload()])
     def test_anything_else_is_admitted(self, value):
-        assert Opaque("p", value).value == value
+        assert (
+            Opaque(
+                value,
+                label="p",
+            ).raw
+            == value
+        )
 
 
 class TestOpaqueAddsIdentityAndNothingElse:
     """Its interface is `value` and the identity a tracked term carries."""
 
     def test_it_does_not_forward_attributes(self):
-        wrapped = Opaque("p", _Payload())
+        wrapped = Opaque(
+            _Payload(),
+            label="p",
+        )
 
         assert not hasattr(wrapped, "shout")
         with pytest.raises(AttributeError):
             wrapped.shout()
 
     def test_it_is_not_callable_even_when_its_value_is(self):
-        wrapped = Opaque("p", _Payload())
+        wrapped = Opaque(
+            _Payload(),
+            label="p",
+        )
 
         assert not callable(wrapped)
         with pytest.raises(TypeError):
             wrapped()
 
     def test_the_value_affords_what_it_always_did_once_out(self):
-        assert Opaque("p", _Payload("hi")).value.shout() == "HI"
+        assert (
+            Opaque(
+                _Payload("hi"),
+                label="p",
+            ).raw.shout()
+            == "HI"
+        )
 
     def test_it_carries_no_array_surface(self):
-        wrapped = Opaque("p", _Payload())
+        wrapped = Opaque(
+            _Payload(),
+            label="p",
+        )
 
         for absent in ("shape", "dtype", "ndim", "__array__", "as_jax"):
             assert not hasattr(wrapped, absent)
@@ -84,22 +141,31 @@ class TestOpaqueAddsIdentityAndNothingElse:
 
 class TestOpaqueCarriesIdentity:
     def test_a_name_is_kept(self):
-        wrapped = Opaque("model", _Payload())
+        wrapped = Opaque(
+            _Payload(),
+            label="model",
+        )
 
-        assert wrapped.name == "model"
+        assert wrapped.label == "model"
 
     def test_a_name_is_required(self):
-        """The name is what says which opaque value this is."""
+        """The label is what says which opaque value this is."""
         with pytest.raises(TypeError):
-            Opaque(_Payload())
+            Opaque(label=_Payload())
 
     def test_a_derived_name_is_kept(self):
-        wrapped = Opaque("batch[draw=0]", _Payload())
+        wrapped = Opaque(
+            _Payload(),
+            label="batch[draw=0]",
+        )
 
-        assert wrapped.name == "batch[draw=0]"
+        assert wrapped.label == "batch[draw=0]"
 
     def test_provenance_is_write_once(self):
-        wrapped = Opaque("p", _Payload()).with_provenance(Provenance.create("fit", parents=[]))
+        wrapped = Opaque(
+            _Payload(),
+            label="p",
+        ).with_provenance(Provenance.create("fit", parents=[]))
 
         assert wrapped.provenance.operation == "fit"
         with pytest.raises(RuntimeError, match="already set"):
@@ -107,46 +173,93 @@ class TestOpaqueCarriesIdentity:
 
     def test_it_is_immutable(self):
         with pytest.raises(AttributeError, match="immutable"):
-            Opaque("p", _Payload())._value = _Payload("other")
+            Opaque(
+                _Payload(),
+                label="p",
+            )._value = _Payload("other")
 
     @pytest.mark.parametrize(
         "roundtrip",
         [copy.copy, copy.deepcopy, lambda o: pickle.loads(pickle.dumps(o))],
     )
     def test_it_survives_copy_and_pickle(self, roundtrip):
-        wrapped = Opaque("model", _Payload("kept"))
+        wrapped = Opaque(
+            _Payload("kept"),
+            label="model",
+        )
 
         rebuilt = roundtrip(wrapped)
 
         assert isinstance(rebuilt, Opaque)
-        assert rebuilt.name == "model"
-        assert rebuilt.value == _Payload("kept")
+        assert rebuilt.label == "model"
+        assert rebuilt.raw == _Payload("kept")
 
 
 class TestOpaqueAndItsBatch:
     """A collection is tracked whatever it holds."""
 
-    def test_a_batch_of_opaque_values_still_hands_back_what_was_put_in(self):
-        """Its elements are stored, so a batch hands back the caller's object."""
+    def test_a_batch_of_opaque_values_hands_back_a_view_of_what_was_put_in(self):
+        """Its elements are stored, so an element is an Opaque holding the caller's object."""
         payloads = [_Payload("a"), _Payload("b")]
 
         batch = OpaqueBatch(
-            "batch",
             payloads,
             "draw",
+            label="batch",
         )
 
-        assert batch[0] is payloads[0]
+        assert batch[0].raw is payloads[0]
+        assert batch[0].label == "batch[draw=0]"
 
     def test_a_batch_may_hold_opaque_terms_as_its_elements(self):
         """An `Opaque` is itself a non-mapping value."""
-        terms = [Opaque("first", _Payload("a")), Opaque("second", _Payload("b"))]
+        terms = [
+            Opaque(
+                _Payload("a"),
+                label="first",
+            ),
+            Opaque(
+                _Payload("b"),
+                label="second",
+            ),
+        ]
 
         batch = OpaqueBatch(
-            "batch",
             terms,
             "draw",
+            label="batch",
         )
 
-        assert batch[1] is terms[1]
-        assert batch[1].name == "second"
+        assert batch[1].raw is terms[1].raw
+        assert batch[1].label == "batch[draw=1]"
+        assert terms[1].label == "second"
+
+
+class TestTheLabelFirstFormIsRefusedWithAHint:
+    """A string with a value after it, and no label keyword, is the earlier label-first form."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: Opaque("x", _Payload()), id="positional"),
+            pytest.param(lambda: Opaque("x", value=_Payload()), id="value-by-keyword"),
+        ],
+    )
+    def test_a_label_and_a_value_name_the_new_form(self, build):
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^Opaque got the string 'x' as its value; pass the label by keyword: "
+                r"Opaque\(value, label='x'\)$"
+            ),
+        ):
+            build()
+
+    def test_a_string_alone_is_a_value(self):
+        assert Opaque("north", label="site").raw == "north"
+
+    def test_a_label_first_batch_names_the_new_form(self):
+        with pytest.raises(
+            TypeError, match=r"keyword: OpaqueBatch\(elements, level_names, label='s'\)$"
+        ):
+            OpaqueBatch("s", ["north"], "site")
