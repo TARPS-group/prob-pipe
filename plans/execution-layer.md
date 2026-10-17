@@ -5,6 +5,7 @@
 > From now on this file, not the Doc, is the copy that changes, and Appendix D keeps its revision log.
 > [`gaps-and-conflicts.md`](gaps-and-conflicts.md) lists the places where it is out of date or disagrees with the other plans.
 > The verification scripts that Appendix A cites stay outside the repository (item W4 of that file).
+> The call context, the call token, and the carrying of settings are specified in [`call-context-proposal.md`](call-context-proposal.md), which this plan follows; where the two differ, the proposal governs until it is folded in here.
 
 - **For:** issue #580, as a draft for maintainer review. Not posted.
 - **Date:** 2026-10-15.
@@ -389,7 +390,7 @@ Six more facts about callbacks (✅ `t2`, `t3`, `t8`, `t13`):
 2. **An unused callback may never run.** JAX deletes computations whose results are unused, and it treats `pure_callback` as such a computation.
 3. **A callback may run more than once for one value.** Two identical callbacks in one program ran twice. A callback inside `jax.checkpoint` ran twice under `grad`, because the backward pass recomputes the forward pass to save memory.
 4. **An input that is not batched is evaluated once.** In `jit(vmap(grad(logp), in_axes=(0, None)))`, a callback on the unbatched input ran once for all lanes.
-5. **A host exception loses its type.** An exception raised by the host function arrives at the caller as a `JaxRuntimeError`, whose message contains the original text.
+5. **A host exception loses its type.** An exception raised by the host function arrives at the caller as a `JaxRuntimeError`, or in some programs as a `ValueError` whose message begins `INTERNAL: CpuCallback error`; either way only the message carries the original text.
 6. **A batched loop runs every lane until the slowest finishes.** Under `vmap`, a `while_loop` cannot stop one lane early, so it keeps computing finished lanes with their last values and discards the results. A callback inside it is called for those lanes too. Lanes needing 1, 2, 6, and 10 iterations sent 40 points to the host where 19 were needed (✅ `t13`). The same holds for `lax.cond` under `vmap`, which computes both branches for every lane.
 
 `io_callback(..., ordered=True)` guarantees each call runs once and in order, but it cannot be batched (`Cannot vmap ordered IO callback`).
@@ -451,7 +452,7 @@ Under `pmap` across 4 CPU devices, the host function ran on four of XLA's own th
 JAX documents no guarantee either way.
 
 **Why it matters.** ProbPipe cannot rely on thread-local state to tell a callback which executor to use.
-It passes a small integer, the **call token**, into the program as an argument, and the host looks the call's settings up by token (✅ `t5`: one trace, three calls with different executors, each seen correctly).
+It passes a `uint32`, the **call token**, into the program as an argument, and the host looks the call's settings up by token (✅ `t5`: one trace, three calls with different executors, each seen correctly). A Python `int` of 2^31 or more overflows a jitted argument when 64-bit types are off, hence the fixed type.
 The host's lookup table must be safe to read from several threads at once.
 
 ### 3.9 Processes and serialization
@@ -578,7 +579,9 @@ Each term below is a proposal for `design/glossary.md`.
 | **complete output declaration** | an `output_spec` that gives every output a known shape and dtype (6.2) |
 | **embeddable**, **host-only** | an opaque `Function` with, or without, a complete output declaration (6.2) |
 | **embedded call** | a call of an opaque `Function` from inside a JAX program, which ProbPipe turns into a host callback (6.9) |
-| **call token** | a small integer that names one operation call, passed into compiled programs as an argument (3.8) |
+| **call token** | a `uint32` that names one open call context in the table of active calls, passed into compiled programs as an argument; a call registers one only when it runs a program with embedded calls (3.8, [`call-context-proposal.md`](call-context-proposal.md) § 5.2) |
+| **call context** | the one value that holds a call's per-call state, from `config` blocks to the executor choice, carried across every boundary ([`call-context-proposal.md`](call-context-proposal.md)) |
+| **program with embedded calls** | a program ProbPipe opens whose trace staged an embedded call, found by searching its jaxpr when it is lowered |
 | **requester** | the code that asked for a point set, such as a lift, a joint, or an inference method. (*Consumer* means a term that declares what it consumes, as `plans/declarations.md` defines it.) |
 | **program store** | the compiled programs a `Function` or another owner keeps, keyed by input structure |
 | **evaluation memo** | an opt-in store of a callable's outputs, keyed by the content of its arguments and its key (6.5) |
@@ -613,7 +616,7 @@ with workflow_run(seed=1):
 4. **The embedded call.** Inside that program, `forward(theta)` is an opaque `Function` called on traced values, so ProbPipe stages it as a host callback. Under the `vmap` over 200 draws, the callback runs once and receives all 200 values of `θ`.
 5. **The executor.** The host side looks the call up by its token and finds `executor="slurm"`. It builds a point set of 200 points and hands it to the Slurm executor, which runs 50 jobs of 4 points each and returns 200 outcomes in order.
 6. **Back in JAX.** The program continues with the 200 outputs as data and draws `y`.
-7. **The result.** The engine wraps the draws and records in provenance that 200 points ran on `slurm` with `n_jobs=50`.
+7. **The result.** The engine waits for the program, since it holds a token, releases the token, wraps the draws, and records that 200 points ran on `slurm` with `n_jobs=50`. The record is made by the call whose context holds the token and merges into `sample`'s provenance when that call closes.
 
 Changing `executor="slurm"` to nothing changes step 5 alone: automatic selection picks `sequential`, which runs the 200 points one after another. The draws are identical.
 
@@ -722,7 +725,7 @@ A false claim that traces without an error, such as a callable that reads a glob
 Four probe rules keep the probe result sound:
 1. **Python numbers.** A Python `float` argument is treated as a weakly typed array, so a sweep over `n0=10.0, 11.0, ...` reuses one probe result and one program. A Python `int` is treated the same way when the probe succeeds with it as data. When it fails, because the callable uses the `int` as a loop count or a shape, the probe runs again with the `int` static, and the probe result says which. A static `int`, a string, or another hashable non-number is part of the input structure.
 2. **NumPy's global generator is caught.** The probe compares the global states of NumPy's and Python's random generators before and after. If the callable drew from either, it is recorded as opaque, and ProbPipe warns that its noise would otherwise be frozen into the program (3.2). A NumPy `Generator` the callable creates or holds is not caught, so the documentation tells such a callable to claim `traceable=False`.
-3. **Copies share the probe result.** The probe result belongs to the wrapped callable and its construction bindings, so the copies `using` makes share it (6.10). For a law built from functions inside a kernel, such as `distribution(log_prob=lambda y: score(y, mu))`, the kernel makes a new closure for every given value. Its probe result is therefore keyed by the closure's code and the structure of the values it captures, not by those values, so one probe serves every application (2.1, row 8).
+3. **Copies share the probe result.** The probe result belongs to the wrapped callable and its construction bindings, so the copies `using` makes share it (6.10). For a law built from functions inside a kernel, such as `distribution(log_prob=lambda y: score(y, mu))`, the kernel makes a new closure for every given value. Its probe result is therefore keyed by the closure's code and the structure of the values it captures, not by those values, so one probe serves every application (2.1, row 8). The structure of a captured value is read as follows: an array by its shape and dtype; a hashable value that is not an array by its value; a captured callable by its own probe result; and any other value prevents sharing, so the closure is probed for itself.
 4. **`check` probes too.** `f.check(...)` runs the same probe the call would run and stores its outcome, so `check` and the call always choose the same executor and method. A probe runs the user's Python up to the first operation that fails on a tracer (3.1), so a callable with side effects should claim `traceable=False`.
 
 #### Three states
@@ -808,18 +811,18 @@ The operation rules have six parts:
 2. **The operation's own point set.** A requester that builds a point set of its own, such as SBC's point set of inference runs (7.8), runs it on the executor named on the requester's call. Its points state `traceable=False`, so `jax` never claims them.
 3. **What it leaves alone.** Traceable callables keep automatic selection, which compiles them, and they receive none of the inherited options. Naming a cluster executor on `condition_on` therefore never moves the compiled parts of a model off the compiled path. ProbPipe's own numerical methods, such as a family's sampler, are unaffected.
 4. **The innermost explicit choice wins.** An executor set on a `Function` itself, by its decorator or its own `using`, wins over one inherited from an enclosing call, and it takes only its own options. A cheap opaque summary statistic can therefore stay local with `@function(executor="sequential")` while the expensive simulator goes to the cluster. This departs from VI.0, where a callable's decorator does not override a value passed down. Here it does, because the decorator is where a user states that a callable must not leave the machine.
-5. **It stops at a point.** A ProbPipe call made inside a point uses automatic selection unless it names an executor itself, so a cluster job does not submit cluster jobs (Q8).
+5. **It stops at a point.** A ProbPipe call made inside a point uses automatic selection unless it names an executor itself, so a cluster job does not submit cluster jobs (Q8). This rule covers ProbPipe calls that a point makes in Python. An embedded call inside a program the `jax` executor compiles belongs to the call that runs the program and uses its executor (call-context OD7).
 6. **Refusals.** An executor named on the call itself that cannot run a point set raises `ResolutionError`, naming the executor and the reason. An inherited executor that cannot run a point set, for example because a closure cannot be pickled, leaves the point set to automatic selection without the inherited options, and warns once per call. An executor named on an operation that ran no point set at all also warns, because the name was probably meant for something else.
 
 #### How the settings travel from a call to a callable
 
 `sample.using(executor="slurm")(model, 200)` names an executor on `sample`, but the evaluations it governs happen deep inside: in a kernel the joint maps, inside a compiled program. The settings get there in four steps:
 1. **Resolve.** `sample` resolves its controls, as V.2 states for every control.
-2. **Open a call context.** When the call starts, the engine opens a **call context**: the resolved execution settings, the list of failures, and a fresh call token. It sets the context in a context variable for the calling thread, which the engine's worker threads inherit as `_INHERITED_CONTROLS` does today, and it enters the context in the table of active calls under the token.
+2. **Open a call context.** When the call starts, the engine opens a child **call context** ([`call-context-proposal.md`](call-context-proposal.md)): the resolved controls, the executor choice, the active `config` blocks, and empty state for embedded calls. It sets the context in a context variable for the calling thread, and the engine carries the point context into worker threads and processes as data. The call registers a token in the table of active calls only before it runs a program with embedded calls.
 3. **Find it.** A point set built in Python reads the context variable. An embedded call inside a compiled program reads the token its program passes and looks the context up (6.9).
 4. **Choose.** The point set's callable is checked in order: an executor set on the `Function` itself wins (operation rule 4); a traceable callable keeps automatic selection (operation rule 3); otherwise the call context's executor and options apply.
 
-When the call ends, its context and token are removed. A later call gets a new token, so a cached program never finds stale settings.
+When the call ends, it waits for any program with embedded calls it ran, releases its token, and restores the previous context. A later call gets a new token, so a cached program never finds stale settings.
 
 For the motivating model, inside `sample.using(executor="slurm", executor_options={"n_jobs": 50})`:
 
@@ -834,7 +837,7 @@ sample's call context: executor=slurm, n_jobs=50, token 7
 > [!IMPORTANT]
 > Today a control set on one call is passed to nested calls only by derived operations, and only for `exact_only` and the sample count (VI.0, "Controls inside an identity").
 > `condition_on` is not a derived operation, so the design text needs a new rule: **execution controls apply to everything a call does, not only to what its identity derives.**
-> The context variable that carries inherited controls today, `_INHERITED_CONTROLS` in `values/_function_base.py:712-805`, already crosses into worker threads and can carry them.
+> Today `_INHERITED_CONTROLS` (`values/_function_base.py:712-805`) carries inherited controls into worker threads, and PR #587 adds two more context variables. The call context replaces all three ([`call-context-proposal.md`](call-context-proposal.md)).
 
 > **Today → Proposed.** The dispatch modes `auto`, `jax`, `sequential`, and `thread` become the executors `jax`, `sequential`, and `thread`, and automatic selection replaces `auto`. The controls `dispatch` and `max_workers` are removed (Q2). Prefect no longer picks Ray or Dask on its own (`config.prefect`, after #587), because that changes how a call runs without the user asking. The auto-detection stays unchanged until the post-workshop `prefect` executor replaces it (`plans/gaps-and-conflicts.md` D7).
 
@@ -872,12 +875,12 @@ class PointEvaluationError(RuntimeError):
 #### What a failure means
 
 1. **By default, a failure makes the call raise.** The unit is the point set: its executor runs every point, so the outputs that succeeded are kept, and then the call raises `PointEvaluationError` naming every failed point. The executor option `cancel_on_failure=True` cancels the points not yet started instead. The message follows STYLE_GUIDE §9.3: `evaluation of 'forward' failed at draw 17: CalledProcessError: solver exited with status 3`.
-2. **Inside a compiled program, the failure stops the program.** The callback's point set completes, then the callback records its failures on the call's context, which it finds by token, and raises. That stops the program at once, so none of its later steps run. The engine catches JAX's untyped `JaxRuntimeError` and raises the recorded `PointEvaluationError` in its place. ✅ `proto/abort.py`: a failure at step 4 of a compiled 10-step chain stopped the program after 4 solver runs, and the error named the failed point.
+2. **Inside a compiled program, the failure stops the program.** The callback's point set completes, then the callback records its failures on the call's context, which it finds by token, and raises. That stops the program at once, so none of its later steps run. When a program raises and the call's context holds recorded failures, the engine raises `PointEvaluationError` with them, chained to whatever JAX raised; it decides by the recorded failures, never by the exception's type (3.6, fact 5). ✅ `proto/abort.py`: a failure at step 4 of a compiled 10-step chain stopped the program after 4 solver runs, and the error named the failed point.
 3. **Only point sets built in Python can drop failed points.** A requester that builds a point set in Python, such as ABC over an opaque simulator, empirical reweighting over an opaque likelihood, or SBC over its runs, sees that point set's `PointOutcomes` and can drop failed points. A user opts in through `method_options={"on_failure": "drop"}`. When the failing callable is instead embedded in a compiled program, such as `forward` inside the kernel of the motivating model, its failure stops the program (rule 2), so `check` refuses `on_failure="drop"` and names the embedded callable. Section 8 lists the work that would lift this limit. Dropping changes the target to the region where the callable succeeds, so `check` reports it and provenance records every dropped point.
 4. **Dropping applies to user-code errors only.** A `lost` or `timeout` point is retried by the executor or raises, because otherwise a flaky cluster node would change the target and break P3. An error the environment causes in user code, such as running out of memory or a missing licence, can still make results depend on where they ran.
 5. **Retries.** The common option `retries=2` retries `lost` and `timeout` points with the same key, so a retry computes the same value. `retry_errors=True` also retries points whose code raised.
 6. **Interrupts.** A chunk catches `Exception`, never `KeyboardInterrupt`. An interrupt cancels the points that have not started, stops a compiled program through its callback, and is raised again as `KeyboardInterrupt`.
-7. **Outputs are checked per point.** `PointChunk.run` checks each output against the output declaration, its tree structure, shape, and dtype, before the outcome leaves the chunk. A memo stores only checked outputs. A mismatch is an `invalid` failure of that point, not a crash of the whole program. A host `float64` output under a `float32` declaration is cast and warns once, because it loses precision.
+7. **Outputs are checked per point.** `PointChunk.run` checks each output against the output declaration, its tree structure, shape, and dtype, before the outcome leaves the chunk. A memo stores only checked outputs. A mismatch is an `invalid` failure of that point, not a crash of the whole program. A host `float64` output under a `float32` declaration is cast and warns once, because it loses precision. JAX itself casts such an output silently, so the warning is ProbPipe's own check, built in E4.
 
 Two cases need care:
 - **Points the algorithm discards still count.** Under `vmap`, both branches of a `lax.cond` and every finished lane of a `while_loop` are evaluated (3.6, fact 6). The host cannot tell a used lane from a discarded one, so a failure at a discarded lane still stops the call. This is conservative: no failure goes unreported.
@@ -906,11 +909,11 @@ def forward(theta): ...
 forward_on_disk = forward.using(memo=DiskMemo("~/.cache/forward"))            # survives the session
 ```
 
-1. **The key** hashes the callable's code fingerprint (#504), its `version`, the bytes, shape, and dtype of each argument, the key's data, and an environment salt of the ProbPipe and JAX versions and whether 64-bit floats are on (#352). Arguments every point shares are hashed once per point set.
+1. **The memo's index** hashes the callable's code fingerprint (#504), its `version`, the bytes, shape, and dtype of each argument, the random key's data, and an environment salt of the ProbPipe and JAX versions and whether 64-bit floats are on (#352). Arguments every point shares are hashed once per point set.
 2. **Bounds.** `memo=True` keeps a store bounded by size, which drops the least recently used entries (J7). The bound is a setting.
 3. **What a fingerprint cannot see.** A code fingerprint covers Python code, not an executable it runs or a data file it reads, and it may not cover values bound by `functools.partial` or held in a closure. A `DiskMemo` therefore requires either `version` or a content fingerprint of the whole callable (#504), so two differently configured solvers cannot share entries. A `DiskMemo` keyed by `version` does not wait for #504.
 4. **Failures are not stored,** so running a call again computes only the points that failed.
-5. **No workflow events.** A memoized callable must not draw workflow-owned randomness inside its body, because a memo hit would skip those draws and replay could not account for them. A point that tries raises.
+5. **No workflow-owned draws.** A memoized callable must not draw workflow-owned randomness inside its body, because a memo hit would skip those draws and replay could not account for them. A point that tries raises.
 6. **Scope.** The memo belongs to a `Function`. It is bound into a staged call from the `Function` being called, so it is a static option of the program (6.10), and an operation's `using` does not pass it on.
 
 The memo acts on the host side of both entries, so it serves embedded calls too:
@@ -928,9 +931,9 @@ A deterministic field of a joint, which would store `G(θ)` next to `θ`, avoids
 #### Within one call
 
 JAX may call a callback more than once for one value (3.6, facts 3 and 6), and a joint, a while loop, or a checkpointed gradient can each cause it. For a callable that runs an expensive subprocess, every repeat is a wasted run. So, inside one call, an opaque `Function` runs at most once for each distinct point:
-1. **The table.** The call context keeps a table of the points it has run, keyed as the memo is, and bounded as the memo is.
+1. **The table.** The call context keeps a table of the points it has run. It holds the `Function` strongly for the call's lifetime and keys each point by that `Function`, the bytes, shape, and dtype of its arguments, and its random key's data, so it needs neither #504's fingerprint nor an `id()` key (J7). Its bound is fixed, because no `config` section holds execution settings.
 2. **Its lifetime.** The table is dropped when the call ends, so it can never serve a stale result in a later call.
-3. **The default.** It is on for every opaque `Function`, because a repeat is never wanted and the table cannot go stale. `memo=False` turns it off, for example for a callable whose arguments are so large that hashing them costs more than running it again.
+3. **The default.** It is on for every opaque `Function`, because a repeat is never wanted and the table cannot go stale. Before the workshop it has no opt-out; `memo=False` turns it off once the memo control lands, for example for a callable whose arguments are so large that hashing them costs more than running it again.
 4. **The report.** Provenance records both the number of points and the number of runs, so a user can see that 200 points cost 200 runs.
 
 This is Q17, decided, and the cross-call memo above stays opt-in.
@@ -1032,8 +1035,8 @@ The built-in `jax` executor is the one executor that reads the stacked arguments
 #### What running a chunk does
 
 `PointChunk.run()` does the same thing wherever it runs:
-1. **Configuration.** In another process, it first applies the parent's JAX configuration, carried in the chunk: every `jax.config` value that differs from its default, such as 64-bit floats, the random generator's implementation, and `jax_threefry_partitionable`. Without this, a spawned worker draws different numbers from the same key (3.9).
-2. **Inherited controls.** It applies the controls a point inherits from its call, `exact_only` and the sample count of VI.0, from values carried in the chunk. The host side of an embedded call reads them from the call's context. Every executor therefore gives a nested call inside a point the same controls, whatever thread or machine runs it.
+1. **Configuration.** In another process, the pool's worker initializer has already applied the parent's JAX settings, before the worker unpickled anything: `jax_enable_x64`, `jax_default_prng_impl`, `jax_threefry_partitionable`, and `jax_default_matmul_precision`. Without them a spawned worker draws different numbers from the same key (3.9), and settings applied after unpickling come too late, because a float64 array in the payload is already float32.
+2. **The point context.** It installs the point context carried in the chunk, which holds the call's `config` blocks and the passed `exact_only`; the passed counts apply only to the calls an identity makes directly, so they do not reach a point. The host side of an embedded call reads the same context by token. Every executor therefore gives a nested call inside a point the same controls, whatever thread or machine runs it.
 3. **Scope.** For a point built in Python, it enters the point's workflow scope, so a ProbPipe call made inside the callable derives its keys from that point (V.8). In another process, the scope travels inside the chunk. A point of an embedded call has no such scope (6.9).
 4. **Arguments.** It presents each argument in the form the callable's parameter asks for, as #506 specifies, and passes the point's own key when the callable takes one.
 5. **Calls.** It calls the callable once per point, or once for the chunk when the callable claims `vectorized`. When a vectorized call raises, every point of the chunk fails with that error, and the executor option `bisect=True` splits the chunk to find the failing points.
@@ -1170,12 +1173,12 @@ def staged_forward(token, theta):
                          token, theta, vmap_method="expand_dims")   # a batch arrives as ONE host call
 
 def host_side(token, theta, *, ranks):
-    call = active_calls.get(int(token))              # the call's executor, options, controls, and failures
+    call = active_calls.lookup(token.item())         # the call's context; under vmap the token has shape (1,)
     points = point_set(forward, theta, ranks)        # flatten the batch axes into points; forward's own memo
                                                      # serves the points it already holds
     outcomes = select(call).execute(points)          # the executor runs them
     if outcomes.failures:
-        call.record(outcomes.failures)
+        call.note_failures(outcomes.failures)
         raise PointsFailed                           # stops the program; the engine raises the typed error
     return stack(outcomes.outputs)                   # reshape to the batch
 ```
@@ -1183,7 +1186,7 @@ def host_side(token, theta, *, ranks):
 It works in five steps:
 1. **Requirement.** The `Function` must be embeddable: its output declaration must be complete (6.2). A host-only `Function` raises while tracing, and the error names the missing declaration.
 2. **Staging.** ProbPipe stages `jax.pure_callback` with the declared output shape and `vmap_method="expand_dims"`, so under `vmap` over N points the host receives all N at once. Nested `vmap`s add several leading axes, and the host flattens them, using each argument's per-point rank, which is bound into the staged callback with `partial`. The rank is never stored on the `Function`, because one `Function` can be staged at several ranks (✅ `proto/nested.py`).
-3. **The call token.** Every program ProbPipe opens takes the call token as an argument. While tracing, a context variable holds the *traced* token, so an embedded call knows which argument carries it. It never holds the token's value. A program ProbPipe opens inside another program's trace passes that enclosing traced token on, so it is never baked in as a constant. A cached program therefore serves every call, and each call's token arrives at the host (P11).
+3. **The call token.** Every program ProbPipe opens that runs user or route code takes the call token as an argument, the inference runners included. While tracing, a context variable holds the *traced* token, so an embedded call knows which argument carries it. It never holds the token's value. A program ProbPipe opens inside another program's trace passes that enclosing traced token on, so it is never baked in as a constant. When the program is lowered, a search of its jaxpr finds its embedded calls and refuses any whose token operand is not the program's token argument, which catches a `jax.jit` in between that captured the token. A cached program therefore serves every call, and each call's token arrives at the host (P11). [`call-context-proposal.md`](call-context-proposal.md) § 5.2 gives the rules, including the rule for a program run while another trace is active.
 4. **The host side.** The host finds the call by its token, looks each point up in the memo when there is one (6.5), and hands the rest to the chosen executor as one point set. It then checks the outputs (6.4, rule 7) and returns them stacked. The table of active calls is safe for several threads, because under `pmap` the host runs on several XLA threads at once and receives one point set per device (3.8).
 5. **Failures** stop the program at once, as 6.4 states.
 
@@ -1199,7 +1202,7 @@ Two properties follow from JAX's treatment of callbacks (3.6):
 An embedded call can run more than once per value, or not at all, and the number of runs depends on how JAX compiled the program.
 A random event inside it would therefore have no stable identity, and replay could not reproduce it.
 So:
-1. **It is untracked.** An embedded call is a raw evaluation, like `apply` (III.3). Its record (the executor, the points, the failures, the memo hits) is attached to the enclosing call through the token, never while tracing.
+1. **It is untracked.** An embedded call is a raw evaluation, like `apply` (III.3). What it ran (the executor, the points, the failures, the memo hits) is attached to the enclosing call through the token, never while tracing.
 2. **No workflow randomness.** A ProbPipe call inside an embedded point that draws workflow-owned randomness raises, as #554 §4 requires inside any JAX transformation a user opens. Randomness inside an opaque callable comes from the key it receives (6.11).
 3. **Guards change.** Today's guards against managed submission during JAX execution (`_guard_managed_submission`, `_JAX_RUNTIME_GUARD` in `functions/_context.py`) must allow an embedded call's host side to hand points to an executor, and must keep refusing workflow events there.
 
@@ -1275,9 +1278,9 @@ The `jax` executor and ProbPipe's own methods follow J1 to J9.
 The work #535 planned and #556 did not finish continues here.
 
 1. **Lifted calls compile.** The `jax` executor builds `jax.jit(jax.vmap(point))` once per input structure and keeps it in the `Function`'s program store. Today the lifted path runs an eager `vmap` that traces the body twice per call (2.1, row 4).
-2. **Copies share programs when it is safe.** A program's key is the input structure plus the **static options**: the options that change the compiled program, such as the `jax` executor's `batch_size`. Options that only travel through the token, such as the executor of an embedded call, its options, and the failure rule, are run-time options and do not enter the key. The memo is static, because it is bound from the `Function` when the call is staged. Copies made by `using` share the store, and a copy that changes a static option compiles its own program. A copy with another callable or other bindings has its own store, as #556 requires for kernels with different given values.
-3. **One fallback rule.** `compiled_or_eager` separates tracing from running. It traces with `jax.jit(f).lower(...)` and records the eager route when tracing fails, and it lets a compiled program's run-time error propagate. ✅ `t10`: `lower()` raised for a body that does not trace, and a traced program's run-time failure raised only when run. `inference/_pyabc._compiled` is replaced by it.
-4. **Inference runners** are module-level and take their target as `jax.tree_util.Partial(density, observed=...)`, with the chain count, the draw counts, and the algorithm static. This removes the 7 compilations a warm `condition_on` makes today (#556).
+2. **Copies share programs when it is safe.** A program's key is the input structure plus the **static options**: the options that change the compiled program, such as the `jax` executor's `batch_size`, plus the passed controls and the `config` settings declared traced (call-context OD6). Options that only travel through the token, such as the executor of an embedded call, a `Function`'s own executor, their options, and the failure rule, are run-time options and do not enter the key. The store holds `jax.jit` objects, which JAX itself keys by its global settings (call-context OD8). The memo is static, because it is bound from the `Function` when the call is staged. Copies made by `using` share the store, and a copy that changes a static option compiles its own program. A copy with another callable or other bindings has its own store, as #556 requires for kernels with different given values.
+3. **One fallback rule.** `compiled_or_eager` separates tracing from running. It traces with `jax.jit(f).lower(...)`, which also gives the jaxpr that the search for embedded calls reads, and records the eager route when tracing fails, and it lets a compiled program's run-time error propagate. ✅ `t10`: `lower()` raised for a body that does not trace, and a traced program's run-time failure raised only when run. `inference/_pyabc._compiled` is replaced by it.
+4. **Inference runners** are module-level, take the call token, and take their target as `jax.tree_util.Partial(density, observed=...)`, with the chain count, the draw counts, and the algorithm static. This removes the 7 compilations a warm `condition_on` makes today (#556), and it is what lets an embedded call inside a runner find its call.
 5. **One key derivation per algorithm.** RWMH's compiled and eager paths derive keys the same way (2.3, fact 5).
 6. **No silent device dependence.** `parallel_chain_map` always uses `vmap`. A user who wants one chain per device asks for it with a method option, `method_options={"chain_map": "pmap"}`, so the device count never changes the draws unasked (P10).
 7. **The mixture sampler** uses one algorithm for direct and mapped calls, after #554 gives each sampling algorithm its own version, so a replay of an old mixture draw refuses instead of silently changing.
@@ -1323,7 +1326,7 @@ A method's `check` reads claims and the probe result instead of tracing on its o
 | external program | its own program | `cmdstan_nuts`, `pymc_nuts`, `nutpie_nuts` |
 
 `is_jax_traceable` is removed.
-Today one `condition_on` can trace the user's code in each gradient method's `check` (NUTS, ESS) and again in RWMH's execution. Reading the stored record removes those repeats.
+Today one `condition_on` can trace the user's code in each gradient method's `check` (NUTS, ESS) and again in RWMH's execution. Reading the stored probe result removes those repeats.
 
 #### How evaluations get to the executor
 
@@ -1392,6 +1395,7 @@ The design therefore places the code by what it depends on:
 
 | Module | Contents | Why there |
 |---|---|---|
+| `core/_call_context.py` | the call context, its carrier, the table of active calls, and the Monte Carlo draw counts ([`call-context-proposal.md`](call-context-proposal.md)) | `core/config.py` and `core/_points.py` read it |
 | `core/_points.py` | `PointSet`, `PointChunk`, `PointOutcomes`, `PointFailure`, `PointEvaluationError`, `map_points` | every package builds point sets |
 | `core/_executors.py` | the executor registry and the built-in executors | every package chooses through it |
 | `core/_compilation.py` | `compiled_or_eager` with the tracing rule, and the program store | as today |
@@ -1413,8 +1417,8 @@ JAX keeps process-wide settings that change results: `jax_enable_x64` (64-bit fl
 
 The contract has five rules:
 1. **The settings belong to the user.** ProbPipe never changes one, at import or during a call (J6).
-2. **A call holds them fixed.** The call context stores the values when the call starts, and provenance records them with the JAX version and the device count (J8).
-3. **A change during a call raises.** When a call ends, and when an embedded call's host side runs, ProbPipe compares the settings with the stored ones. A change, for example by a library an inference method called, raises an error naming the setting and its two values, because the call's programs were compiled under the old value (Q18).
+2. **A call holds them fixed.** The root call's context stores the values when it opens, and its children inherit the snapshot, and provenance records them with the JAX version and the device count (J8).
+3. **A change during a call raises.** When the root call ends, and when an embedded call's host side runs, ProbPipe compares the settings with the stored ones. A change, for example by a library an inference method called, raises an error naming the setting and its two values, because the call's programs were compiled under the old value (Q18).
 4. **Declarations are checked against them.** A `float64` output declaration with 64-bit floats off is refused when the call is staged, with an error that tells the user to set `jax_enable_x64`, never silently cast.
 5. **Work elsewhere gets the same settings.** A chunk carries every setting that differs from its default (6.7), and the program store's key includes the settings that change a compiled program.
 
@@ -1952,14 +1956,14 @@ The core comes first, for a workshop in about two weeks. It must show executor d
 
 1. **Design text for the core:** V.9 rewritten around point sets and executors, the new V.13 on claims and the boundary, the controls in V.2 and VI.0, and the glossary. The other design-text changes of section 11 follow with their steps.
 2. **Claims and the probe result:** `traceable` and `vectorized`, one probe stored per callable and input structure, shared by `using` copies and run by `check`, and the error for a false claim.
-3. **Point sets and the executor registry:** the executors `jax`, `sequential`, `thread`, and `process` replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`. The controls `executor` and `executor_options`, with the rules of 6.3. The execution contract drops its closed set (6.8).
-4. **The boundary:** embedded calls and call tokens in every program ProbPipe opens, including programs opened inside others, and the error for a host-only `Function` inside a trace. A failure raises `PointEvaluationError` naming the point and stops a compiled program. Dropping, retries, and cancellation come later.
+3. **Point sets and the executor registry:** the executors `jax`, `sequential`, `thread`, and `process` replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`. The program store holds `jax.jit` objects and lowers each program before its first run (6.10, item 3). The `process` executor ships the four JAX settings through its worker initializer. The controls `executor` and `executor_options`, with the rules of 6.3. The execution contract drops its closed set (6.8).
+4. **The boundary:** embedded calls and call tokens in every program ProbPipe opens that runs user or route code, including programs opened inside others and the inference runners (6.10, item 4); the search of the jaxpr for embedded calls and stray tokens; the per-point output check; and the error for a host-only `Function` inside a trace. A failure raises `PointEvaluationError` naming the point and stops a compiled program. Dropping, retries, and cancellation come later.
 5. **`map_points` where the workshop needs it:** lifting and sweeps, joint factors, laws built from functions, and expectations.
 6. **The public target interface:** `InferenceTarget` and `make_posterior`, with the run key delivered as #554 §8 states.
 7. **One run per distinct point inside a call** (Q17), which protects an expensive subprocess under NUTS and `vmap`.
-8. **The JAX settings contract of 6.15:** settings recorded, a change during a call raises, workers get the parent's settings.
+8. **The JAX settings contract of 6.15:** settings recorded and a change during a call raises. Shipping the settings to workers is part of item 3.
 
-Compiled lifting (6.10, items 1 to 3) makes warm calls compile nothing, and it can join the core if time allows.
+Compiled lifting (6.10, items 1 and 2) makes warm calls compile nothing, and it can join the core if time allows; items 3 and 4 are part of items 3 and 4 above.
 
 ### After the workshop
 
@@ -1987,7 +1991,7 @@ Compiled lifting (6.10, items 1 to 3) makes warm calls compile nothing, and it c
 
 | Area | Test |
 |---|---|
-| Claims | A `traceable=False` callable runs once per point under every executor, with no probe. A callable that states nothing is probed once per input structure, across calls, `using` copies, and `check`. A callable that draws from NumPy's global generator is recorded as opaque and warns. Python floats do not create new records, and an `int` used as a loop count is retried static. A law built from functions inside a kernel is probed once, not once per kernel application. |
+| Claims | A `traceable=False` callable runs once per point under every executor, with no probe. A callable that states nothing is probed once per input structure, across calls, `using` copies, and `check`. A callable that draws from NumPy's global generator is recorded as opaque and warns. Python floats do not create new probe results, and an `int` used as a loop count is retried static. A law built from functions inside a kernel is probed once, not once per kernel application. |
 | Agreement | `jax`, `sequential`, `thread`, `process`, and a test executor give the same results at one seed, within J8's tolerance. A spawned worker under a parent with 64-bit floats and a non-default `jax_threefry_partitionable` gives the parent's numbers. A nested call inside a point sees the same inherited controls under every executor. |
 | Selection | An opt-in executor is never selected automatically. A refusing executor named on the call raises `ResolutionError`. An inherited one falls back and warns. An executor set on a `Function` wins over an inherited one, and takes only its own options. Inherited options are never passed to a fallback or a traceable callable. An unknown `executor_options` entry raises. An executor named on SBC runs its point set of runs. |
 | Failures | A failing point raises `PointEvaluationError` naming it, keeping the outputs that succeeded. A failure inside a compiled program stops it early. A program the user opens raises on failure instead of returning `NaN`. A retry reuses the key. `on_failure="drop"` drops user-code errors only, and `check` refuses it when the failing callable is embedded in a compiled program. A wrong output shape fails its point only. `KeyboardInterrupt` is raised as itself. |
@@ -2141,3 +2145,4 @@ A second adversarial round read the rewritten draft and found these, all now add
 | 2026-10-16 | Q12 opened as #585 and cited (6.6, Q12, section 10). | Maintainer's request |
 | 2026-10-17 | Moved into `plans/`. Q2 settled by the push's clean-break rule. Q3, Q4, Q5, Q7, Q8, Q13, Q14, Q15, and Q18 accepted as recommended. Q16 decided: the module is `functions/_point_keys.py`, and "point" replaces V.8's "managed work item". | Maintainer, while settling `plans/gaps-and-conflicts.md` D5 and D6 |
 | 2026-10-17 | "Requester" replaces "consumer" for the code that asks for a point set, since #571 uses "consumer" for a term that declares what it consumes. Composition written with `&`; `n_broadcast_samples` replaced by `max_evaluations` (#586); Prefect's auto-detection cited at `config.prefect` (#587) and kept until the `prefect` executor; the question count corrected to 18; the reason for "random key" restated; the verification scripts marked as kept outside the repository. | `plans/gaps-and-conflicts.md` T1, T2, W4 |
+| 2026-10-17 | Aligned with `call-context-proposal.md` after an adversarial review: the call context and lazy token registration (6.3, 6.9), failures decided by recorded failures (6.4), `uint32` tokens (3.8), the program store of `jax.jit` objects with traced settings in its key (6.10), the token threaded through the inference runners (6.10 item 4, now in step E4), JAX settings shipped by the worker initializer (6.7, now in step E3), the probe key for captured values (6.2), the per-call run table keyed without `id()` (6.5), the per-point output check in E4 (6.4), and embedded calls in compiled point sets using the call's executor (6.3). | Adversarial review, round 1 |
