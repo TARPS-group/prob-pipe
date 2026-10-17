@@ -233,7 +233,7 @@ def _monte_carlo_errors(
             if draws and not counts:
                 error[path] = jnp.zeros(shape)
             elif counts and statistic.mcse_method == "mean":
-                error[path] = jnp.asarray(standard_deviations().raw(path)) / np.sqrt(counts[0])
+                error[path] = jnp.asarray(standard_deviations()._raw_at(path)) / np.sqrt(counts[0])
             else:
                 error[path] = jnp.full(shape, np.nan)
         errors[f"mcse_{statistic.name}"] = error
@@ -302,7 +302,7 @@ def _summary_batch(
 
     def stacked(name: str, path: str) -> Any:
         values = [
-            jnp.asarray(record.raw(f"{name}{_PATH_SEP}{path}"))
+            jnp.asarray(record._raw_at(f"{name}{_PATH_SEP}{path}"))
             if name in record.children
             else jnp.full(shapes[name][path], np.nan)
             for record, _ in summaries
@@ -349,7 +349,7 @@ def summarize(
     ``exact``, ``Monte Carlo`` with its draws, or ``approximate``, as the
     statistic's provenance records it, and, for an MCMC posterior, ``MCMC``
     with its chains and draws. The record's provenance records those
-    descriptions. ``pd.DataFrame(summarize(d).raw())`` gives the table of a law
+    descriptions. ``pd.DataFrame(summarize(d).raw)`` gives the table of a law
     whose components are scalars as a DataFrame.
 
     The default columns are:

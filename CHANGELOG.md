@@ -1525,7 +1525,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the law, with its provenance: `mean`, `sd` from `standard_deviation`,
   `median`, and the ends of the central 80% interval, `q10` and `q90`. So
   `summarize(d)["sd/mu"]` is the standard deviation of `mu`, and
-  `pd.DataFrame(summarize(d).raw())` gives the table.
+  `pd.DataFrame(summarize(d).raw)` gives the table.
 
   ```text
   >>> with workflow_run(seed=0):
