@@ -427,7 +427,7 @@ def lifted_declaration(
     The point binds a stand-in for a draw of each law the call lifts and for an
     element of each batch it sweeps, and it evaluates and samples nothing. The
     law of the evaluations therefore declares the components that one point's
-    result declares, as ``log_prob(mu)`` for a score.
+    result declares, as ``log_prob`` for a score.
 
     Parameters
     ----------

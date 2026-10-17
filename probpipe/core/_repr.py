@@ -9,10 +9,17 @@ A repr built here is a :class:`_Layout`, a string that keeps its arguments, so
 an enclosing repr lays it out again where its line starts. A nested repr
 therefore takes several lines when its own line would pass :data:`WIDTH`.
 
-A helper reads declarations and array metadata, and it reads a parameter's
-entries only when it has at most eight, so a repr raises no storage error.
-:meth:`~probpipe.core.tracked.TrackedTerm.with_provenance` interpolates a term
-into its error, which depends on that.
+A term's **summary** is the call these helpers build. They read declarations
+and array metadata, and they read a parameter's entries only when it has at
+most eight, so a summary raises no storage error.
+:meth:`~probpipe.core.tracked.TrackedTerm.with_provenance` interpolates a
+term's summary into its error, which depends on that.
+
+A numeric term's repr also shows its values below its summary, and
+:func:`format_entries` and :func:`format_rows` format them by NumPy's printing.
+They read only the entries that NumPy's printing shows, and they give ``None``
+when an entry cannot be read, as for a tracer, so the repr is the summary
+alone. A term shown inside another repr shows its summary alone.
 
 The module also groups a label where a derived label is built from it, and
 formats the notation ``label(signature)`` that ``str()`` of a law, a kernel, or
@@ -21,6 +28,7 @@ a function shows.
 
 from __future__ import annotations
 
+import html
 import inspect
 import sys
 from collections.abc import Iterable, Mapping
@@ -28,23 +36,31 @@ from keyword import iskeyword
 from math import prod
 from typing import Any
 
+import jax
 import numpy as np
+
+from ._array_backend import _event_shape_of, _take_at, _to_numpy_array
 
 __all__ = [
     "ELLIPSIS",
+    "VALUE_INDENT",
     "WIDTH",
     "call_repr",
     "format_components",
     "format_default",
     "format_dtype",
+    "format_entries",
     "format_levels",
     "format_names",
     "format_notation",
+    "format_rows",
     "format_signature",
     "format_value",
     "mapping_repr",
     "public_class_name",
+    "rows_html",
     "sequence_repr",
+    "summary_with_values",
     "term_repr",
     "type_name",
 ]
@@ -146,7 +162,7 @@ def call_repr(
 
     One argument goes on each line past :data:`WIDTH` characters, and a value
     that is itself such a repr is laid out at the width its line leaves. When a
-    name is no Python identifier, as a component ``mean(mu)`` is, the keywords
+    name is no Python identifier, as a level ``my model`` is, the keywords
     are written in order as one ``**{'name': value, ...}`` argument, which the
     constructor takes alike.
     """
@@ -218,13 +234,19 @@ def format_value(value: Any) -> str:
     A scalar reads as a number and an array of at most eight entries as a list
     of them, while a larger array, or a traced one, whose entries cannot be
     read, gives ``array(shape=..., dtype=...)``. A function or a class reads as
-    its name, and any other value, a tracked term or an operator among them,
-    keeps its own repr.
+    its name, and a tracked term as its summary, without the values a numeric
+    term's repr shows below it. Any other value, an operator among them, keeps
+    its own repr.
     """
-    if isinstance(value, bool | int | float | complex | str | type(None)) or hasattr(value, "raw"):
+    if isinstance(value, bool | int | float | complex | str | type(None)):
         return repr(value)
     if isinstance(value, type):
         return value.__name__
+    summary = getattr(value, "_repr_summary", None)
+    if summary is not None:
+        return summary()
+    if hasattr(value, "raw"):
+        return repr(value)
     if inspect.isfunction(value) or inspect.ismethod(value) or inspect.isbuiltin(value):
         return value.__qualname__
     shape = getattr(value, "shape", None)
@@ -245,6 +267,196 @@ def format_value(value: Any) -> str:
             )
             return text.replace("\n", "")
     return f"array(shape={shape}, dtype={format_dtype(dtype)})"
+
+
+# ---------------------------------------------------------------------------
+# The values of numeric terms
+# ---------------------------------------------------------------------------
+
+#: The space between a path and its value on a line of a record's values.
+_GAP = "   "
+
+#: The indent of the values that a numeric term's repr shows below its summary.
+VALUE_INDENT = "  "
+
+
+def _shown_entries(value: Any) -> tuple[np.ndarray, bool]:
+    """The entries of *value* that NumPy's printing shows, on the host, and whether it shortens them.
+
+    An array of at most ``threshold`` entries, by NumPy's print options, is
+    read whole. A larger array is shortened along each axis longer than twice
+    ``edgeitems``: the first ``edgeitems + 1`` and the last ``edgeitems``
+    entries along that axis are read, and NumPy's printing shows the extra
+    entry as ``...``. Only those entries are read from the device.
+    """
+    shape = _event_shape_of(value)
+    options = np.get_printoptions()
+    edge = options["edgeitems"]
+    if prod(shape) <= options["threshold"] or all(n <= 2 * edge for n in shape):
+        return _to_numpy_array(value), False
+
+    def edges(part: Any, axis: int) -> np.ndarray:
+        """The shown entries of *part*, whose axes before *axis* are already shortened."""
+        if axis == len(shape):
+            return _to_numpy_array(part)
+        n = shape[axis]
+        if n <= 2 * edge:
+            return edges(part, axis + 1)
+        lead = (slice(None),) * axis
+        head = _take_at(part, (*lead, slice(0, edge + 1)))
+        tail = _take_at(part, (*lead, slice(n - edge, n)))
+        return np.concatenate([edges(head, axis + 1), edges(tail, axis + 1)], axis=axis)
+
+    return edges(value, 0), True
+
+
+def _entries_text(value: Any, column: int) -> tuple[str, bool] | None:
+    """*value*'s entries as NumPy prints them, and whether they are shortened.
+
+    A line after the first is indented to *column*, where the first line
+    starts. The result is ``None`` when the entries cannot be read, as for a
+    tracer or a deleted array.
+    """
+    if isinstance(value, jax.core.Tracer):
+        return None
+    try:
+        entries, shortened = _shown_entries(value)
+    except Exception:  # a repr shows the summary alone rather than raise
+        return None
+    # A shortened array keeps one entry between its ends, so a threshold of
+    # zero makes NumPy show "..." there; None keeps the print option.
+    threshold = 0 if shortened else None
+    return np.array2string(entries, prefix=" " * column, threshold=threshold), shortened
+
+
+def _row_text(value: Any, column: int) -> str | None:
+    """*value*'s entries on a row of a record's values, ending with its shape when shortened."""
+    text = _entries_text(value, column)
+    if text is None:
+        return None
+    entries, shortened = text
+    return f"{entries}{_GAP}shape={_event_shape_of(value)}" if shortened else entries
+
+
+def format_entries(value: Any, indent: str = "") -> str | None:
+    """The entries of the numeric array *value* as NumPy prints them, each line indented.
+
+    NumPy's print options set the precision, the line width, and the size past
+    which an array is shortened with ``...``. Every line starts with *indent*,
+    so the lines of a value that NumPy prints over several lines stay aligned,
+    and the line width counts the indent. Only the entries shown are read from
+    the device.
+
+    Parameters
+    ----------
+    value : array-like
+        A numeric array in any registered array backend.
+    indent : str, optional
+        The text each line starts with, such as :data:`VALUE_INDENT` under a
+        repr's summary.
+
+    Returns
+    -------
+    str or None
+        The entries, or ``None`` when they cannot be read, as for a tracer.
+    """
+    text = _entries_text(value, len(indent))
+    return None if text is None else indent + text[0]
+
+
+def format_rows(rows: Iterable[tuple[str, Any]], indent: str = "") -> str | None:
+    """One line for each path: the path, then its value as :func:`format_entries` gives it.
+
+    The values start in one column. A value of several lines indents its later
+    lines to that column, and a shortened value ends with its shape, as
+    ``shape=(50,)``.
+
+    Parameters
+    ----------
+    rows : iterable of (str, array-like)
+        Each path and its numeric array, in order.
+    indent : str, optional
+        The text each line starts with.
+
+    Returns
+    -------
+    str or None
+        The lines joined by newlines, or ``None`` when there are no rows or a
+        value's entries cannot be read, as for a tracer.
+    """
+    listed = list(rows)
+    width = max((len(path) for path, _ in listed), default=0)
+    lines = []
+    for path, value in listed:
+        start = f"{indent}{path.ljust(width)}{_GAP}"
+        text = _row_text(value, len(start))
+        if text is None:
+            return None
+        lines.append(start + text)
+    return "\n".join(lines) if lines else None
+
+
+def summary_with_values(summary: str, values: str | None, alone: str | None = None) -> str:
+    """A numeric term's repr: *summary*, then the lines of *values* below it.
+
+    Parameters
+    ----------
+    summary : str
+        The summary that heads the values.
+    values : str or None
+        The values as :func:`format_entries` or :func:`format_rows` gives them
+        with :data:`VALUE_INDENT`, or ``None`` when they cannot be read.
+    alone : str, optional
+        The repr when *values* is ``None``, *summary* by default. A record
+        passes its summary with its field paths, which the lines of values
+        list otherwise.
+
+    Returns
+    -------
+    str
+        The repr.
+    """
+    if values is None:
+        return summary if alone is None else alone
+    return f"{summary}\n{values}"
+
+
+def rows_html(title: str, rows: Iterable[tuple[str, Any]]) -> str | None:
+    """A two-column HTML table of paths and values, under *title*, for a notebook's display.
+
+    Each value is formatted as :func:`format_rows` formats it, a shortened
+    value with its shape, and every cell is escaped.
+
+    Parameters
+    ----------
+    title : str
+        The text above the table, such as the term's class and label.
+    rows : iterable of (str, array-like)
+        Each path and its numeric array, in order.
+
+    Returns
+    -------
+    str or None
+        The table, or ``None`` when there are no rows or a value's entries
+        cannot be read, as for a tracer, so the notebook shows the repr instead.
+    """
+    cells = []
+    for path, value in rows:
+        text = _row_text(value, 0)
+        if text is None:
+            return None
+        cells.append(
+            f'<tr><td style="text-align: left"><code>{html.escape(path)}</code></td>'
+            f'<td style="text-align: left"><code style="white-space: pre">'
+            f"{html.escape(text)}</code></td></tr>"
+        )
+    if not cells:
+        return None
+    return (
+        f'<div><code style="white-space: pre">{html.escape(title)}</code><table>'
+        f"<thead><tr><th>path</th><th>value</th></tr></thead>"
+        f"<tbody>{''.join(cells)}</tbody></table></div>"
+    )
 
 
 def public_class_name(cls: type) -> str:

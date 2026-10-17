@@ -1336,15 +1336,9 @@ class TestReprAndEquality:
             == "Record('r', fields=('a', 'b'))"
         )
 
-    def test_repr_of_a_numeric_record_names_its_class(self):
-        assert (
-            repr(
-                Record(
-                    {"x": jnp.zeros((3, 4))},
-                    label="r",
-                )
-            )
-            == "NumericRecord('r', fields=('x',))"
+    def test_repr_of_a_numeric_record_names_its_class_then_its_values(self):
+        assert repr(Record({"x": jnp.zeros((2, 3))}, label="r")) == (
+            "NumericRecord('r')\n  x   [[0. 0. 0.]\n       [0. 0. 0.]]"
         )
 
     def test_repr_lists_nested_fields_by_path(self):
