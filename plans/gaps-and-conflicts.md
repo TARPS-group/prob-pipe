@@ -397,7 +397,7 @@ None of them has a PR, so the plan cannot wait for them.
 | #506 | What a function body receives: raw values by default. | Point sets carry raw values, which open PR #575 reads through the `raw` property. | Point sets present raw values; the rest of #506 after the workshop. |
 | #451 | One n-ary dispatch registry class. | The executor registry has one key, so today's unary registry serves. | No dependency. |
 
-**Status:** recommended; your confirmation, especially for the partial #554.
+**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, with the partial #554. `deferred.md` § Open issues the push touches records what each issue keeps for after the workshop.
 
 ---
 

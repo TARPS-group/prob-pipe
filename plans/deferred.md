@@ -32,7 +32,23 @@ From `execution-layer.md` §13, "After the workshop":
 | pyabc and BayesFlow on point sets and executors; see jhuggins's lighter pyabc route below | §6.12 |
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
-| The rest of #524, #554, #506, and #522, beyond the pieces the core absorbs | `gaps-and-conflicts.md` D8 |
+
+## Open issues the push touches
+
+Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
+When the push ends, each issue's text is updated to match, and none closes until its remaining work is done.
+
+| Issue | Done in the push, before the workshop | Kept for after the workshop | Source |
+|---|---|---|---|
+| [#524](https://github.com/TARPS-group/prob-pipe/issues/524) Finish the function engine | Two module moves, in step E3's first commit: `_execution_contract.py` into `_execution.py`, and `_managed.py` with `_broker.py` into `_point_keys.py` | The return step's `ResultKindError`; a lifted body that returns a batch; the four lift departures from V.5 and V.6; the related defects #406, #452, #232 | gaps D8 |
+| [#554](https://github.com/TARPS-group/prob-pipe/issues/554) Explicit-key randomness | §8 only, in step E6: an inference method receives its run key through its own `key` parameter, which replaces the private `run_seed` | Everything else: `key` parameters on `@function` callables and `Supports*` methods, random-event subdivision, `share_keys_across`, versions per sampling algorithm, `sampler(d)`, the guard on workflow draws inside JAX transformations | gaps D8 |
+| [#506](https://github.com/TARPS-group/prob-pipe/issues/506) What a function body receives | Point sets present raw values to the callable (step E3) | Raw forms by default for every body, annotations that ask for tracked terms, one converter registry for every kind, `ArrayBackend.axes` | gaps D8 |
+| [#522](https://github.com/TARPS-group/prob-pipe/issues/522) `LinOp` and the differentiability claim | Nothing | All of it, then the execution plan's supplied derivatives (`vjp`, `jacobian`, `jvp`) and the `jacobian` operation on top of it (Q11) | gaps D8 |
+| [#451](https://github.com/TARPS-group/prob-pipe/issues/451) One n-ary dispatch registry | Nothing: the executor registry uses today's unary registry | All of it; the executor registry moves to the n-ary class with the others | gaps D8 |
+| [#571](https://github.com/TARPS-group/prob-pipe/issues/571) Declarations | Steps S2, S3, S4, and G1 | Step G2 and the deferred `&` kinds listed above; the issue points to the reconciled plan | gaps D1–D4 |
+| [#573](https://github.com/TARPS-group/prob-pipe/issues/573) Field paths and subscripts | Step S1 | Steps G3–G5 | gaps D1, D4 |
+| [#580](https://github.com/TARPS-group/prob-pipe/issues/580) Execution layer | Steps E1–E8 | The execution-layer work listed above | `execution-layer.md` §13 |
+| [#585](https://github.com/TARPS-group/prob-pipe/issues/585) An exact result lost to a budget | Nothing | All of it; its text needs `max_evaluations` after #586 | `execution-layer.md` Q12 |
 
 ## Found along the way
 
