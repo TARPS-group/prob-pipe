@@ -39,6 +39,10 @@ TOLERANCE = {"rtol": 1e-5, "atol": 1e-6}
 # from those of the float64 draws by at most 3e-6 relative, as measured here.
 ARVIZ_TOLERANCE = {"rtol": 1e-5}
 
+# sd / sqrt(n) of a float32 standard deviation, computed in float32 by summarize
+# and in float64 here, agree to float32 rounding.
+FLOAT32_TOLERANCE = {"rtol": 1e-6}
+
 
 @pytest.fixture
 def model():
@@ -56,15 +60,21 @@ def _kernel_model():
     return (kernel * prior).with_label("model")
 
 
-def _posterior(draws: np.ndarray, *, vector: bool = False) -> EmpiricalDistribution:
-    """An MCMC posterior over ``mu`` and ``sigma``, or over a vector ``beta``, of *draws*.
+def _posterior(
+    draws: np.ndarray, *, vector: bool = False, nested: bool = False
+) -> EmpiricalDistribution:
+    """An MCMC posterior of *draws*, whose shape is ``(chains, draws, 2)``.
 
-    *draws* has the shape ``(chains, draws, 2)``.
+    The posterior is over ``mu`` and ``sigma``, over a vector ``beta`` when
+    *vector*, or over ``population/mu`` and ``population/sigma`` when *nested*.
     """
+    scalar = NumericArraySpec(())
     if vector:
         event = OutputSpec(beta=NumericArraySpec((2,)))
+    elif nested:
+        event = OutputSpec(RecordSpec(population=RecordSpec(mu=scalar, sigma=scalar)))
     else:
-        event = OutputSpec(RecordSpec(mu=NumericArraySpec(()), sigma=NumericArraySpec(())))
+        event = OutputSpec(RecordSpec(mu=scalar, sigma=scalar))
     return make_posterior(list(draws), (), "test", event_spec=event)
 
 
@@ -187,6 +197,12 @@ class TestGivenStatistics:
         np.testing.assert_allclose(float(summary["variance/mu"]), 4.0, **TOLERANCE)
         np.testing.assert_allclose(float(summary["variance/tau"]), 2.0, **TOLERANCE)
 
+    def test_a_function_is_named_by_its_name(self, model):
+        def spread(d):
+            return standard_deviation(d)
+
+        assert tuple(summarize(model, spread).children) == ("spread",)
+
     def test_a_mapping_names_its_statistics(self, model):
         summary = summarize(model, {"spread": standard_deviation}, mean)
 
@@ -251,6 +267,18 @@ class TestAnMCMCPosterior:
         np.testing.assert_allclose(float(summary["mean/mu"]), draws.mean(), rtol=1e-5)
         np.testing.assert_allclose(float(summary["sd/mu"]), draws.std(), rtol=1e-4)
 
+    def test_a_nested_parameter_has_its_diagnostics_at_its_path(self, chain_draws):
+        summary = summarize(_posterior(chain_draws, nested=True))
+
+        assert summary.at_path("r_hat").keys() == ("population/mu", "population/sigma")
+        np.testing.assert_allclose(
+            float(summary["r_hat/population/sigma"]),
+            azs.rhat(chain_draws[..., 1].astype(np.float64)),
+            **ARVIZ_TOLERANCE,
+        )
+        rows = [line.split()[0] for line in repr(summary).splitlines()[2:-1]]
+        assert rows == ["population/mu", "population/sigma"]
+
     def test_a_vector_parameter_has_a_diagnostic_per_element(self, chain_draws):
         summary = summarize(_posterior(chain_draws, vector=True))
 
@@ -301,14 +329,18 @@ class TestAnMCMCPosterior:
 
 
 class TestMonteCarloStandardErrors:
-    def test_an_exact_summary_gains_no_error_columns(self, model):
-        assert tuple(summarize(model, mcse=True).children) == (
-            "mean",
-            "sd",
-            "median",
-            "q10",
-            "q90",
+    def test_an_exact_summary_has_errors_of_zero(self, model):
+        summary = summarize(model, mcse=True)
+
+        assert tuple(summary.children)[5:] == (
+            "mcse_mean",
+            "mcse_sd",
+            "mcse_median",
+            "mcse_q10",
+            "mcse_q90",
         )
+        for name in tuple(summary.children)[5:]:
+            assert float(summary[f"{name}/mu"]) == float(summary[f"{name}/tau"]) == 0.0
 
     def test_a_monte_carlo_mean_has_sd_over_root_n_and_an_exact_path_zero(self):
         draws = mean.options["n_broadcast_samples"]
@@ -319,7 +351,7 @@ class TestMonteCarloStandardErrors:
         np.testing.assert_allclose(
             np.asarray(summary["mcse_mean/y"]),
             np.asarray(summary["sd/y"]) / np.sqrt(draws),
-            **ARVIZ_TOLERANCE,
+            **FLOAT32_TOLERANCE,
         )
         assert float(summary["mcse_mean/mu"]) == 0.0
 
@@ -348,6 +380,19 @@ class TestTheFooter:
         assert lines[0] == "summary of pair(mu, count)"
         assert lines[-1] == f"mean, sd: exact. median, q10, q90: Monte Carlo, {draws:,} draws."
 
+    def test_an_mcmc_posterior_states_its_chains_and_draws(self, chain_draws):
+        summary = summarize(_posterior(chain_draws), mean, mcse=True)
+
+        assert repr(summary).splitlines()[-1] == "mean: MCMC, 4 chains of 500 draws."
+
+    def test_the_summarys_provenance_records_the_line(self, model):
+        provenance = summarize(model, mean, {"sd": standard_deviation}).provenance
+
+        assert provenance.metadata == {
+            "func": "summarize",
+            "computations": {"mean": "exact", "sd": "exact"},
+        }
+
 
 class TestABatchOfLaws:
     def test_it_gives_a_batch_of_summary_records(self):
@@ -374,6 +419,41 @@ class TestABatchOfLaws:
                     **TOLERANCE,
                 )
         assert repr(summary).splitlines()[1] == "  law=0"
+
+    def test_mcse_holds_for_laws_computed_differently(self):
+        # The median of the Normal count is exact, and of the Poisson count Monte Carlo.
+        laws = DistributionBatch(
+            [
+                Normal("mu", 0.0, 1.0) * Normal("count", 4.0, 1.0),
+                Normal("mu", 0.0, 1.0) * Poisson("count", 4.0),
+            ],
+            "law",
+        )
+
+        with workflow_run(seed=0):
+            summary = summarize(laws, mcse=True)
+
+        assert float(summary[0]["mcse_median/count"].raw()) == 0.0
+        assert np.isnan(float(summary[1]["mcse_median/count"].raw()))
+
+    def test_a_column_only_some_laws_give_is_nan_for_the_others(self, chain_draws):
+        laws = DistributionBatch(
+            [_posterior(chain_draws), Normal("mu", 0.0, 1.0) * Normal("sigma", 1.0, 1.0)], "law"
+        )
+
+        summary = summarize(laws, mean)
+
+        assert np.isfinite(float(summary[0]["r_hat/mu"].raw()))
+        assert np.isnan(float(summary[1]["r_hat/mu"].raw()))
+
+    def test_a_statistic_that_differs_in_shape_across_the_laws_raises(self):
+        def shifting(d):
+            return mean(d) if float(mean(d)) == 0.0 else mean(Normal("x", jnp.zeros(2), 1.0))
+
+        laws = DistributionBatch([Normal("x", 0.0, 1.0), Normal("x", 1.0, 1.0)], "law")
+
+        with pytest.raises(ValueError, match="must give the column 'shifting' over the same"):
+            summarize(laws, shifting)
 
 
 class TestATableForPandas:

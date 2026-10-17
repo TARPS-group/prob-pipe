@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Mapping
+from math import prod
 from typing import Any
 
 from ..core.config import ProvenanceMode
@@ -198,6 +200,37 @@ def _serialize_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
         "provider_abi": effect.provider_abi,
         "record_path": list(effect.record_path),
         "descendant_descriptor": _json_value(effect.descendant_descriptor),
+    }
+
+
+def monte_carlo_draws(provenance: Any) -> dict[tuple[str, ...], int]:
+    """The Monte Carlo draws a call's provenance records, by the path of the part each drew.
+
+    The draws are the expected effects of the call's replay anchor, which
+    :func:`provenance_recipe_fields` writes, whose execution mode is
+    ``monte_carlo``. A nested call's draws are not the call's own, so they are
+    not counted.
+
+    Parameters
+    ----------
+    provenance : Provenance or None
+        The provenance of a call.
+
+    Returns
+    -------
+    dict of tuple of str to int
+        The number of draws of each part, keyed by the part's path as a tuple of
+        names, with ``()`` for the whole law. A call that records no anchor of
+        this version, or no Monte Carlo draws, gives an empty dict.
+    """
+    controls = getattr(provenance, "controls", None) or {}
+    anchor = controls.get("replay")
+    if not isinstance(anchor, Mapping) or anchor.get("schema") != _REPLAY_ANCHOR_ABI:
+        return {}
+    return {
+        tuple(effect["record_path"]): prod(effect["sample_shape"] or ())
+        for effect in anchor["plan"]["expected_effects"]
+        if effect["execution_mode"] == "monte_carlo"
     }
 
 

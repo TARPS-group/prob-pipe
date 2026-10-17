@@ -43,7 +43,7 @@ from ._record_batch import (
 from ._repr import VALUE_INDENT, format_levels, format_rows, public_class_name, rows_html, term_repr
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
-from ._table import batch_tables_html, batch_tables_text, record_table_shape
+from ._table import batch_tables_html, batch_tables_text
 from .provenance import Provenance
 from .tracked import refuses_label_first
 
@@ -170,25 +170,28 @@ class NumericRecordBatch(RecordBatch):
         device. Inside a JAX trace, where the columns are tracers, the repr is
         the summary of the label, the levels, and the field paths.
 
-        A batch whose elements display as tables, as a record's repr states,
-        shows one table for each element under a title that gives its levels, as
-        ``law=0``, shortened past NumPy's ``threshold`` to ``edgeitems`` elements
-        at each end. Each title is indented by two spaces and each table by
-        four.
+        A batch of records of summaries, whose provenance describes how each
+        column of each element was computed, as the batch ``summarize`` returns
+        for a batch of laws does, shows one table for each element instead, as
+        a record's repr states. Each table is titled by its element's levels, as
+        ``law=0``, each title is indented by two spaces and each table by four,
+        and the elements are shortened to ``edgeitems`` at each end when their
+        rows number more than NumPy's ``threshold``. The line that states how
+        the columns were computed follows each table, or follows the last when
+        every element's line is the same.
         """
         head = self._display_head()
-        tables = batch_tables_text(self, head) if record_table_shape(self.element_spec) else None
+        tables = batch_tables_text(self, head)
         if tables is not None:
             return tables
         rows = format_rows(self._columns.items(), indent=VALUE_INDENT)
         return f"{head}\n{rows}" if rows else self._repr_header()
 
     def __str__(self) -> str:
-        """The lines of the repr's values alone, or the summary inside a JAX trace."""
-        if record_table_shape(self.element_spec):
-            tables = batch_tables_text(self, None)
-            if tables is not None:
-                return tables
+        """The lines of the repr's values or tables alone, or the summary inside a JAX trace."""
+        tables = batch_tables_text(self, None)
+        if tables is not None:
+            return tables
         rows = format_rows(self._columns.items())
         return rows if rows else self._repr_header()
 
@@ -200,10 +203,9 @@ class NumericRecordBatch(RecordBatch):
         the result is ``None``, so the notebook shows the repr.
         """
         head = self._display_head()
-        if record_table_shape(self.element_spec):
-            tables = batch_tables_html(self, head)
-            if tables is not None:
-                return tables
+        tables = batch_tables_html(self, head)
+        if tables is not None:
+            return tables
         return rows_html(head, self._columns.items()) if self._columns else None
 
     # -- single-field coercion ----------------------------------------------

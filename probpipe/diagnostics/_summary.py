@@ -14,18 +14,21 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any
 
+import jax.numpy as jnp
 import numpy as np
 
-from ..core._array_backend import _event_shape_of
+from .._messages import count
 from ..core._numeric_array import NumericArray
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._repr import type_name
-from ..core._table import column_provenance, monte_carlo_draws
+from ..core._table import COMPUTATIONS, column_provenance, computation, path_shapes
 from ..core.named_tree import _PATH_SEP
+from ..core.provenance import Provenance
 from ..core.record import Record
 from ..distributions._batches import DistributionBatch
 from ..distributions._distribution import Distribution
+from ..functions._recipe import monte_carlo_draws
 from ..operations import mean, quantile, standard_deviation
 
 __all__ = ["summarize"]
@@ -43,6 +46,18 @@ class _Statistic:
     compute: Callable[[Any], Any]
     mcse_method: str | None = None
     prob: float | None = None
+
+
+#: The operations whose ArviZ Monte Carlo standard error has a method of its own.
+_MCSE_METHODS: tuple[tuple[Callable[[Any], Any], str], ...] = (
+    (mean, "mean"),
+    (standard_deviation, "sd"),
+)
+
+
+def _mcse_method(compute: Callable[[Any], Any]) -> str | None:
+    """The ArviZ standard error method of the operation *compute*, or ``None``."""
+    return next((method for operation, method in _MCSE_METHODS if compute is operation), None)
 
 
 def _quantile_at(prob: float) -> Callable[[Any], Any]:
@@ -71,15 +86,12 @@ def _default_statistics(interval: float) -> list[_Statistic]:
     ]
 
 
-#: The ArviZ Monte Carlo standard error of each operation that has one.
-_MCSE_METHODS: dict[int, str] = {id(mean): "mean", id(standard_deviation): "sd"}
-
-
 def _given_statistics(statistics: tuple[Any, ...]) -> list[_Statistic]:
     """The columns that *statistics* name, in order.
 
-    A callable is named by its label, which an operation's name is, or by its
-    ``__name__``, and a mapping names each callable it holds by its key.
+    A mapping names each callable it holds by its key. A callable is named by
+    its label, which an operation's name is, or by its ``__name__``, and a name
+    that is not an identifier, as a lambda's ``<lambda>``, names no statistic.
     """
     given: list[_Statistic] = []
     for item in statistics:
@@ -108,7 +120,7 @@ def _given_statistics(statistics: tuple[Any, ...]) -> list[_Statistic]:
                 raise TypeError(
                     f"summarize: the statistic {name!r} must be callable, got {type_name(compute)}"
                 )
-            given.append(_Statistic(name, compute, _MCSE_METHODS.get(id(compute))))
+            given.append(_Statistic(name, compute, _mcse_method(compute)))
     names = [statistic.name for statistic in given]
     repeated = sorted({name for name in names if names.count(name) > 1})
     if repeated:
@@ -136,13 +148,15 @@ def _column(statistic: _Statistic, d: Distribution) -> Record:
     )
 
 
-def _shapes(column: Record) -> dict[str, tuple[int, ...]]:
-    """Each path of *column* and the shape of its value."""
-    return {path: tuple(_event_shape_of(column.raw(path))) for path in column}
+def _filled(shapes: Mapping[str, tuple[int, ...]], value: float) -> dict[str, Any]:
+    """A column that holds *value* at each path, in the shape of that path."""
+    return {path: jnp.full(shape, value) for path, shape in shapes.items()}
 
 
-def _chain_summaries(d: Distribution, statistics: list[_Statistic], mcse: bool) -> dict[str, Any]:
-    """The columns ``r_hat``, ``ess_bulk``, and ``ess_tail`` of an MCMC posterior, and its MCSEs.
+def _chain_columns(
+    d: Distribution, statistics: list[_Statistic], mcse: bool
+) -> dict[str, dict[str, Any]]:
+    """An MCMC posterior's MCSE columns, when *mcse*, then ``r_hat``, ``ess_bulk``, and ``ess_tail``.
 
     The values come from the ArviZ computations that ``add_mcmc_diagnostics``
     runs, keyed by the posterior's event paths, and the posterior's annotations
@@ -150,97 +164,173 @@ def _chain_summaries(d: Distribution, statistics: list[_Statistic], mcse: bool) 
     """
     from ..inference._approximate_distribution import _num_chains
     from ._datatree_store import to_named_posterior_dataset
-    from ._mcmc import _check_arviz_stats, arviz_ess, arviz_rhat
-
-    _check_arviz_stats()
-    import arviz_stats
+    from ._mcmc import arviz_ess, arviz_mcse, arviz_rhat
 
     dataset = to_named_posterior_dataset(d)
-    paths = list(dataset.data_vars)
+    shapes = {str(path): tuple(dataset[path].shape[2:]) for path in dataset.data_vars}
 
-    def by_path(result: Any) -> dict[str, np.ndarray]:
-        return {path: np.asarray(result[path], dtype=float) for path in paths}
+    def by_path(result: Any) -> dict[str, Any]:
+        return {path: jnp.asarray(result[path].values) for path in shapes}
 
-    shapes = {path: dataset[path].shape[2:] for path in paths}
-    columns: dict[str, Any] = {}
+    columns: dict[str, dict[str, Any]] = {}
     if mcse:
         for statistic in statistics:
-            if statistic.mcse_method is None:
-                columns[f"mcse_{statistic.name}"] = {
-                    path: np.full(shape, np.nan) for path, shape in shapes.items()
-                }
-            else:
-                result = arviz_stats.mcse(
-                    dataset, method=statistic.mcse_method, prob=statistic.prob
-                )
-                columns[f"mcse_{statistic.name}"] = by_path(result)
-    if _num_chains(d) >= 2:
-        columns["r_hat"] = by_path(arviz_rhat(dataset, method="rank"))
-    else:
-        columns["r_hat"] = {path: np.full(shape, np.nan) for path, shape in shapes.items()}
+            columns[f"mcse_{statistic.name}"] = (
+                _filled(shapes, np.nan)
+                if statistic.mcse_method is None
+                else by_path(arviz_mcse(dataset, method=statistic.mcse_method, prob=statistic.prob))
+            )
+    columns["r_hat"] = (
+        by_path(arviz_rhat(dataset, method="rank"))
+        if _num_chains(d) >= 2
+        else _filled(shapes, np.nan)
+    )
     columns["ess_bulk"] = by_path(arviz_ess(dataset, method="bulk"))
     columns["ess_tail"] = by_path(arviz_ess(dataset, method="tail"))
     return columns
 
 
+def _chain_computation(d: Distribution) -> str:
+    """How each statistic of an MCMC posterior was computed, as ``MCMC, 4 chains of 1,000 draws``."""
+    chains, draws = (int(n) for n in d.atoms.batch_shape)
+    return f"MCMC, {count(chains, 'chain')} of {draws:,} draws"
+
+
 def _monte_carlo_errors(
     d: Distribution, statistics: list[_Statistic], columns: Mapping[str, Record]
-) -> dict[str, Any]:
-    """A Monte Carlo standard error column for each column whose route is approximate.
+) -> dict[str, dict[str, Any]]:
+    """The Monte Carlo standard error column of each statistic of a law that is not an MCMC posterior.
 
-    A path that the route computed exactly, which its provenance records by
-    drawing no Monte Carlo draws of it, has ``0``. The error of a mean estimated
-    from ``n`` independent draws is ``sd / sqrt(n)``. No estimator applies to
-    another statistic without the draws, nor to a column whose provenance
-    records no draws, so their other paths hold ``nan``.
+    A path that the statistic's route computed exactly has ``0``: every path of
+    an exact route, and each path an approximate route took no Monte Carlo
+    draws of. The error of a mean estimated from ``n`` independent draws is
+    ``sd / sqrt(n)``. No estimator applies to another statistic without its
+    draws, nor to a column whose provenance records neither its exactness nor
+    its draws, so their paths hold ``nan``.
     """
-    errors: dict[str, Any] = {}
     sd: Record | None = None
-    for statistic in statistics:
-        column = columns[statistic.name]
-        provenance = column_provenance(column)
-        if provenance is None or (provenance.metadata or {}).get("exact") is not False:
-            continue
-        draws = monte_carlo_draws(provenance)
-        if statistic.mcse_method == "mean" and sd is None:
+
+    def standard_deviations() -> Record:
+        nonlocal sd
+        if sd is None:
             named = [other.name for other in statistics if other.compute is standard_deviation]
             sd = columns[named[0]] if named else _column(_Statistic("sd", standard_deviation), d)
+        return sd
+
+    errors: dict[str, dict[str, Any]] = {}
+    for statistic in statistics:
+        column = columns[statistic.name]
+        shapes = path_shapes(column)
+        provenance = column_provenance(column)
+        if computation(provenance) == "exact":
+            errors[f"mcse_{statistic.name}"] = _filled(shapes, 0.0)
+            continue
+        draws = monte_carlo_draws(provenance)
         error: dict[str, Any] = {}
-        for path, shape in _shapes(column).items():
+        for path, shape in shapes.items():
             parts = tuple(path.split(_PATH_SEP))
             counts = [n for part, n in draws.items() if parts[: len(part)] == part]
             if draws and not counts:
-                error[path] = np.zeros(shape)
-            elif counts and statistic.mcse_method == "mean" and sd is not None:
-                error[path] = np.asarray(sd.raw(path), dtype=float) / np.sqrt(counts[0])
+                error[path] = jnp.zeros(shape)
+            elif counts and statistic.mcse_method == "mean":
+                error[path] = jnp.asarray(standard_deviations().raw(path)) / np.sqrt(counts[0])
             else:
-                error[path] = np.full(shape, np.nan)
+                error[path] = jnp.full(shape, np.nan)
         errors[f"mcse_{statistic.name}"] = error
     return errors
 
 
-def _summarize_law(d: Distribution, statistics: list[_Statistic], mcse: bool) -> NumericRecord:
-    """The summary record of one law."""
+def _summary(
+    d: Distribution, statistics: list[_Statistic], mcse: bool
+) -> tuple[NumericRecord, dict[str, str | None]]:
+    """The summary record of one law, and how each of its statistic columns was computed."""
     from ..inference._approximate_distribution import _has_chains
 
     columns = {statistic.name: _column(statistic, d) for statistic in statistics}
-    shapes = None
-    for name, column in columns.items():
-        if shapes is None:
-            shapes = _shapes(column)
-        elif _shapes(column) != shapes:
+    first, *others = statistics
+    shapes = path_shapes(columns[first.name])
+    for statistic in others:
+        given = path_shapes(columns[statistic.name])
+        if given != shapes:
             raise ValueError(
-                f"summarize: the statistic {name!r} has the paths and shapes {_shapes(column)}, "
-                f"but the first has {shapes}"
+                f"summarize: the statistics {first.name!r} and {statistic.name!r} must give "
+                f"values over the same paths and shapes, got {shapes} and {given}"
             )
     fields: dict[str, Any] = dict(columns)
+    computations: dict[str, str | None]
     if _has_chains(d):
-        fields.update(_chain_summaries(d, statistics, mcse))
-    elif mcse:
-        fields.update(_monte_carlo_errors(d, statistics, columns))
-    return Record(fields, label=f"summary of {d}")
+        fields.update(_chain_columns(d, statistics, mcse))
+        computations = dict.fromkeys(columns, _chain_computation(d))
+    else:
+        if mcse:
+            fields.update(_monte_carlo_errors(d, statistics, columns))
+        computations = {
+            name: computation(column_provenance(column)) for name, column in columns.items()
+        }
+    return Record(fields, label=f"summary of {d}"), computations
 
 
+def _summary_provenance(d: Any, computations: Mapping[str, Any]) -> Provenance | None:
+    """The provenance of a summary of *d*, which describes how each statistic column was computed."""
+    return Provenance.create(
+        "summarize", parents=[d], metadata={"func": "summarize", COMPUTATIONS: dict(computations)}
+    )
+
+
+def _summary_batch(
+    d: DistributionBatch, statistics: list[_Statistic], mcse: bool
+) -> NumericRecordBatch:
+    """The batch of the summary records of the laws of *d*, on its levels.
+
+    A column that only some laws give, as ``r_hat`` of a batch that mixes MCMC
+    posteriors with other laws, holds ``nan`` for the others.
+    """
+    shape = tuple(d.batch_shape)
+    summaries = [_summary(d[index], statistics, mcse) for index in np.ndindex(*shape)]
+    if not summaries:
+        raise ValueError(f"summarize: the batch must hold at least one law, got shape {shape}")
+    shapes: dict[str, dict[str, tuple[int, ...]]] = {}
+    for record, _ in summaries:
+        for name in record.children:
+            given = path_shapes(record.at_path(name))
+            expected = shapes.setdefault(name, given)
+            if given != expected:
+                raise ValueError(
+                    f"summarize: the laws of the batch must give the column {name!r} over the "
+                    f"same paths and shapes, got {expected} and {given}"
+                )
+
+    def stacked(name: str, path: str) -> Any:
+        values = [
+            jnp.asarray(record.raw(f"{name}{_PATH_SEP}{path}"))
+            if name in record.children
+            else jnp.full(shapes[name][path], np.nan)
+            for record, _ in summaries
+        ]
+        return jnp.stack(values).reshape(*shape, *shapes[name][path])
+
+    columns = {
+        f"{name}{_PATH_SEP}{path}": stacked(name, path)
+        for name, paths in shapes.items()
+        for path in paths
+    }
+    computations = {
+        statistic.name: [described[statistic.name] for _, described in summaries]
+        for statistic in statistics
+    }
+    batch = NumericRecordBatch(
+        columns,
+        tuple(d.level_names),
+        axes_per_level=tuple(len(group) for group in d.axis_groups),
+        label=f"summary of {d}",
+    )
+    return batch.with_provenance(_summary_provenance(d, computations))
+
+
+# summarize is a plain function rather than a Function (STYLE_GUIDE.md §1.4): its
+# result is a record of the terms each statistic returns, each with its own
+# provenance, and a Function call would wrap that record under one label that
+# renders every statistic it is given.
 def summarize(
     d: Distribution | DistributionBatch,
     *statistics: Callable[[Any], Any] | Mapping[str, Callable[[Any], Any]],
@@ -254,11 +344,13 @@ def summarize(
     so ``summarize(d)["sd/mu"]`` is the standard deviation of ``mu``. A law of
     one whole term holds each statistic under its component, as ``mean/theta``.
     The record displays as a table with one row for each path and one column
-    for each statistic, under the label ``summary of`` and the law's notation,
-    and the line below the table states which columns are exact and which are
-    Monte Carlo, with their draws, as each column's provenance records it.
-    ``pd.DataFrame(summarize(d).raw())`` gives the table of a law whose
-    components are scalars as a DataFrame.
+    for each statistic, under the label ``summary of`` and the law's notation.
+    The line below the table states how each statistic was computed:
+    ``exact``, ``Monte Carlo`` with its draws, or ``approximate``, as the
+    statistic's provenance records it, and, for an MCMC posterior, ``MCMC``
+    with its chains and draws. The record's provenance records those
+    descriptions. ``pd.DataFrame(summarize(d).raw())`` gives the table of a law
+    whose components are scalars as a DataFrame.
 
     The default columns are:
 
@@ -274,29 +366,31 @@ def summarize(
     ``ess_tail``, computed as ``add_mcmc_diagnostics`` computes them and keyed by
     the same paths. The posterior's annotations are left as they are.
 
-    With ``mcse=True``, each column that is a Monte Carlo estimate gains a
-    column ``mcse_<name>`` of its Monte Carlo standard error:
+    With ``mcse=True``, each statistic gains a column ``mcse_<name>`` of its
+    Monte Carlo standard error, after the statistic columns:
 
     1. **An MCMC posterior:** each statistic of its draws estimates the posterior
-       the sampler targets, so every statistic column gains the ArviZ standard
-       error of its kind: ``mean``, ``sd``, ``median``, or the quantile at its
+       the sampler targets, so each column holds the ArviZ standard error of
+       its kind: ``mean``, ``sd``, ``median``, or the quantile at its
        probability. A statistic of another kind has ``nan``.
-    2. **Another law:** a column whose provenance records an approximate route
-       gains one. For ``mean`` it is ``sd / sqrt(n)`` at each path its route drew
-       ``n`` draws of, and ``0`` at each path its route computed exactly. Any
-       other statistic has ``nan``, since its standard error needs the draws the
-       route took.
+    2. **Another law:** a path that the statistic's route computed exactly has
+       ``0``. For ``mean``, a path its route drew ``n`` draws of has
+       ``sd / sqrt(n)``. Any other path has ``nan``, since its standard error
+       needs the draws the route took.
 
     Parameters
     ----------
     d : Distribution or DistributionBatch
         The law to summarize. A ``DistributionBatch`` gives a batch of summary
-        records, one for each law, on the batch's levels.
+        records, one for each law, on the batch's levels. A column that only
+        some laws give, as ``r_hat`` of a batch that mixes MCMC posteriors with
+        other laws, holds ``nan`` for the others.
     *statistics : callable or Mapping of str to callable
         The columns to compute in place of the default ones, each a callable
         that takes *d*, such as an operation. A callable is named by its label,
-        as ``mean`` and ``variance`` are, and a mapping names its callables by
-        its keys, as ``{"sd": standard_deviation}`` does.
+        as ``mean`` and ``variance`` are, or by its ``__name__``, and the name
+        must be an identifier. A mapping names its callables by its keys, as
+        ``{"sd": standard_deviation}`` does.
     interval : float
         The probability of the central interval whose ends the default columns
         hold, strictly between 0 and 1. It does not apply to given statistics.
@@ -318,17 +412,11 @@ def summarize(
         names to callables, or a statistic returns a value that is not numeric
         over the law's components.
     ValueError
-        If *interval* is not strictly between 0 and 1, a statistic has no name,
-        a name with ``/``, or the name of another, two statistics return values
-        over different paths or shapes, or the laws of a batch give summaries
-        over different fields.
-
-    Notes
-    -----
-    ``summarize`` is a plain function rather than a ``Function``: its result is a
-    record of the terms each statistic returns, each with its own provenance,
-    and a ``Function`` call would wrap that record under a label that renders
-    every statistic it is given.
+        If *interval* is not strictly between 0 and 1, a callable's name is not
+        an identifier, a name is empty, has ``/``, or names another statistic,
+        two statistics return values over different paths or shapes, a batch
+        holds no law, or the laws of a batch give a column over different paths
+        or shapes.
 
     Examples
     --------
@@ -348,26 +436,7 @@ def summarize(
     if not 0.0 < float(interval) < 1.0:
         raise ValueError(f"summarize: interval must be strictly between 0 and 1, got {interval}")
     chosen = _given_statistics(statistics) if statistics else _default_statistics(float(interval))
-    if isinstance(d, Distribution):
-        return _summarize_law(d, chosen, mcse)
-    shape = tuple(d.batch_shape)
-    records = [_summarize_law(d[index], chosen, mcse) for index in np.ndindex(*shape)]
-    paths = records[0].keys()
-    for record in records[1:]:
-        if record.keys() != paths:
-            raise ValueError(
-                f"summarize: the laws of the batch must give summaries over the same fields, "
-                f"got {list(paths)} and {list(record.keys())}"
-            )
-    columns = {
-        path: np.stack([np.asarray(record.raw(path)) for record in records]).reshape(
-            *shape, *np.shape(records[0].raw(path))
-        )
-        for path in paths
-    }
-    return NumericRecordBatch(
-        columns,
-        tuple(d.level_names),
-        axes_per_level=tuple(len(group) for group in d.axis_groups),
-        label=f"summary of {d}",
-    )
+    if isinstance(d, DistributionBatch):
+        return _summary_batch(d, chosen, mcse)
+    record, computations = _summary(d, chosen, mcse)
+    return record.with_provenance(_summary_provenance(d, computations))

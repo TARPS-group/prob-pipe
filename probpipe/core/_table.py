@@ -1,9 +1,12 @@
-"""The table display of a record whose top-level fields are records over the same paths.
+"""The table display of a record of summaries.
 
-Design II.4 states the rule: such a record displays as a table with one row for
-each path and one column for each top-level field, in its repr and in a
-notebook. The record :func:`~probpipe.summarize` returns is one, and so is a
-record built by hand from summaries of one law.
+Design II.4 states the rule. A numeric record displays as a table when its
+top-level fields are records over the same paths, with the same shape at each
+path, and at least one of them records how it was computed. The record
+:func:`~probpipe.summarize` returns is one, and so is a record built by hand
+from the summaries operations return. A record of plain numbers, or the draw or
+mean of a law whose groups share their field names, records no computation and
+shows one line for each path.
 
 A row is a path whose value is a scalar, or one element of a path whose value
 is an array, as ``y[0]``. NumPy's print options shorten the rows of an array of
@@ -11,17 +14,19 @@ more than ``threshold`` elements to ``edgeitems`` at each end, and format the
 entries of each column, so a column's entries share one precision. Only the
 entries shown are read from the device.
 
-The line below the table states how each column was computed, read from the
-column's provenance: ``exact`` for an exact route, ``Monte Carlo`` with the
-number of draws for a route that records Monte Carlo draws, and
-``approximate`` for any other approximate route.
+The line below the table states how each column was computed: ``exact`` for an
+exact route, ``Monte Carlo`` with the number of draws for a route that records
+its draws, and ``approximate`` for any other approximate route. A record whose
+provenance records a description of each column under :data:`COMPUTATIONS`, as
+the record ``summarize`` returns does, takes those descriptions, and any other
+record reads each column's own provenance.
 """
 
 from __future__ import annotations
 
 import html
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -35,14 +40,20 @@ from ._repr import VALUE_INDENT
 from .tracked import TrackedTerm
 
 __all__ = [
+    "COMPUTATIONS",
     "RecordTable",
     "batch_tables_html",
     "batch_tables_text",
     "column_provenance",
-    "monte_carlo_draws",
+    "computation",
+    "path_shapes",
     "record_table",
-    "record_table_shape",
 ]
+
+#: The provenance metadata entry that describes how each column of a record of
+#: summaries was computed: a mapping from each column's name to its description,
+#: or, for a batch, to the list of its elements' descriptions in C order.
+COMPUTATIONS = "computations"
 
 #: The space between two columns of a table.
 _GAP = "  "
@@ -68,7 +79,7 @@ class RecordTable:
     cells : tuple of tuple of str
         Each column's formatted entries, one for each row.
     footer : str
-        How each column was computed, or ``""`` when no column records it.
+        How each column was computed, as ``mean, sd: exact.``.
     """
 
     rows: tuple[str, ...]
@@ -115,9 +126,9 @@ class RecordTable:
             + "</tr>"
             for index, row in enumerate(self.rows)
         )
-        footer = f"<p>{html.escape(self.footer)}</p>" if self.footer else ""
         return (
-            f"<table><thead><tr><th></th>{head}</tr></thead><tbody>{body}</tbody></table>{footer}"
+            f"<table><thead><tr><th></th>{head}</tr></thead><tbody>{body}</tbody></table>"
+            f"<p>{html.escape(self.footer)}</p>"
         )
 
 
@@ -125,9 +136,10 @@ def record_table(record: Any) -> RecordTable | None:
     """The table of *record*, or ``None`` when the record does not display as one.
 
     A record displays as a table when it has at least one top-level field, every
-    top-level field is a record, and those records have the same field paths
-    with the same shape at each path. A record whose entries cannot be read, as
-    inside a JAX trace, gives ``None`` too.
+    top-level field is a record, those records have the same field paths with
+    the same shape at each path, and at least one of them records how it was
+    computed. A record whose entries cannot be read, as inside a JAX trace,
+    gives ``None`` too.
 
     Parameters
     ----------
@@ -139,10 +151,198 @@ def record_table(record: Any) -> RecordTable | None:
     RecordTable or None
         The rows, the columns, the formatted cells, and the footer.
     """
-    from .record import Record, _raw_leaf
+    children = _columns(record)
+    if children is None:
+        return None
+    recorded = _recorded_computations(record.provenance)
+    if recorded is None:
+        computations = {
+            name: computation(column_provenance(child)) for name, child in children.items()
+        }
+    else:
+        computations = {name: recorded.get(name) for name in children}
+    return _table(children, computations)
+
+
+def column_provenance(column: Any) -> Any:
+    """The provenance of a column: the column's own, or that of the one term it holds.
+
+    Parameters
+    ----------
+    column : Record
+        A top-level field of a record of summaries.
+
+    Returns
+    -------
+    Provenance or None
+        The provenance, or ``None`` when the column records none.
+    """
+    if column.provenance is not None:
+        return column.provenance
+    leaves = [leaf for _, leaf in column._walk_leaves()]
+    if len(leaves) == 1 and isinstance(leaves[0], TrackedTerm):
+        return leaves[0].provenance
+    return None
+
+
+def computation(provenance: Any) -> str | None:
+    """How a summary was computed, as its provenance records it.
+
+    An exact route reads ``exact``. An approximate route reads ``Monte Carlo,
+    N draws`` when it records one count of Monte Carlo draws, ``Monte Carlo``
+    when it records several, and ``approximate`` when it records none, as a
+    route that takes its draws in a nested call does.
+
+    Parameters
+    ----------
+    provenance : Provenance or None
+        The provenance of the summary.
+
+    Returns
+    -------
+    str or None
+        The description, or ``None`` when the provenance records no exactness.
+    """
+    if provenance is None:
+        return None
+    exact = (provenance.metadata or {}).get("exact")
+    if exact is True:
+        return "exact"
+    if exact is not False:
+        return None
+    # The replay anchor's format belongs to functions/, which core/ imports
+    # lazily (STYLE_GUIDE.md §6).
+    from ..functions._recipe import monte_carlo_draws
+
+    counts = set(monte_carlo_draws(provenance).values())
+    if len(counts) == 1:
+        return f"Monte Carlo, {counts.pop():,} draws"
+    return "Monte Carlo" if counts else "approximate"
+
+
+def path_shapes(record: Any) -> dict[str, tuple[int, ...]]:
+    """Each field path of *record* and the shape of its value, in canonical order.
+
+    Parameters
+    ----------
+    record : Record
+        The record.
+
+    Returns
+    -------
+    dict of str to tuple of int
+        The shape of each path's value.
+    """
+    from .record import _raw_leaf
+
+    return {path: tuple(_event_shape_of(_raw_leaf(leaf))) for path, leaf in record._walk_leaves()}
+
+
+def batch_tables_text(batch: Any, head: str | None) -> str | None:
+    """A batch of records of summaries as one table for each element, or ``None``.
+
+    Each element's table is titled by its levels, as ``law=0``. Under *head*
+    each title is indented by two spaces and each table by four, and the line
+    that states how the columns were computed follows each table, or follows
+    the last when every element's line is the same. Without a head the titles
+    and tables start at the margin and the lines are left out, as ``str()`` of
+    a record leaves its line out.
+
+    Parameters
+    ----------
+    batch : NumericRecordBatch
+        The batch to display.
+    head : str or None
+        The line above the tables, or ``None`` for none.
+
+    Returns
+    -------
+    str or None
+        The lines of the display, or ``None`` when the elements do not display
+        as tables, as :func:`record_table` states, or their entries cannot be
+        read.
+    """
+    shown = _batch_tables(batch)
+    if shown is None:
+        return None
+    footers = {table.footer for _, table in shown if table is not None}
+    title_indent = "" if head is None else VALUE_INDENT
+    table_indent = "" if head is None else VALUE_INDENT * 2
+    lines = [] if head is None else [head]
+    for title, table in shown:
+        lines.append(title_indent + title)
+        if table is not None:
+            lines.extend(table.lines(table_indent))
+            if head is not None and len(footers) > 1:
+                lines.append(table_indent + table.footer)
+    if head is not None and len(footers) == 1:
+        lines.append(footers.pop())
+    return "\n".join(lines)
+
+
+def batch_tables_html(batch: Any, head: str) -> str | None:
+    """A batch of records of summaries as one HTML table for each element, or ``None``.
+
+    Each table is titled by its element's levels and followed by the line that
+    states how its columns were computed.
+
+    Parameters
+    ----------
+    batch : NumericRecordBatch
+        The batch to display.
+    head : str
+        The text above the tables.
+
+    Returns
+    -------
+    str or None
+        The HTML of the display, or ``None`` when the text display is ``None``.
+    """
+    shown = _batch_tables(batch)
+    if shown is None:
+        return None
+    parts = [f'<code style="white-space: pre">{html.escape(head)}</code>']
+    for title, table in shown:
+        if table is None:
+            parts.append(f"<p>{_SKIPPED}</p>")
+        else:
+            parts.append(f"<p><b>{html.escape(title)}</b></p>{table.html()}")
+    return f"<div>{''.join(parts)}</div>"
+
+
+# ---------------------------------------------------------------------------
+# Building a table
+# ---------------------------------------------------------------------------
+
+
+def _columns(record: Any) -> dict[str, Any] | None:
+    """The top-level fields of *record*, or ``None`` unless each is a record."""
+    from .record import Record
 
     children = dict(record._tree)
     if not children or not all(isinstance(child, Record) for child in children.values()):
+        return None
+    return children
+
+
+def _recorded_computations(provenance: Any) -> Mapping[str, Any] | None:
+    """The description of each column that *provenance* records, or ``None``."""
+    recorded = None if provenance is None else (provenance.metadata or {}).get(COMPUTATIONS)
+    return recorded if isinstance(recorded, Mapping) else None
+
+
+def _table(
+    children: Mapping[str, Any], computations: Mapping[str, str | None]
+) -> RecordTable | None:
+    """The table of the columns *children*, each described by *computations*.
+
+    ``None`` when no column has a description, the columns differ in their
+    paths or shapes, or their entries cannot be read.
+    """
+    from .record import _raw_leaf
+
+    described = {name: text for name, text in computations.items() if text is not None}
+    if not described:
         return None
     columns = {
         name: {path: _raw_leaf(leaf) for path, leaf in child._walk_leaves()}
@@ -160,37 +360,9 @@ def record_table(record: Any) -> RecordTable | None:
     rows = _rows(shapes)
     try:
         cells = tuple(_column_cells(column, rows) for column in columns.values())
-    except Exception:  # a display shows the summary alone rather than raise
+    except Exception:  # a display shows the summary alone rather than raise, as _repr.py does
         return None
-    footer = _footer({name: column_provenance(child) for name, child in children.items()})
-    return RecordTable(tuple(row.label for row in rows), tuple(children), cells, footer)
-
-
-def record_table_shape(spec: Any) -> bool:
-    """Whether a record of *spec* displays as a table, read from the spec alone.
-
-    Parameters
-    ----------
-    spec : RecordSpec
-        The record's spec, such as a batch's element spec.
-
-    Returns
-    -------
-    bool
-        Whether the spec has at least one top-level field, every top-level field
-        is a record, and those records have the same field paths with the same
-        shape at each path.
-    """
-    from ._record_spec import RecordSpec
-
-    children = dict(getattr(spec, "children", {}))
-    if not children or not all(isinstance(child, RecordSpec) for child in children.values()):
-        return False
-    shapes = [
-        {path: getattr(leaf, "shape", None) for path, leaf in child.items()}
-        for child in children.values()
-    ]
-    return all(shape == shapes[0] for shape in shapes)
+    return RecordTable(tuple(row.label for row in rows), tuple(children), cells, _footer(described))
 
 
 @dataclass(frozen=True)
@@ -206,24 +378,31 @@ class _Row:
     index: int = 0
 
 
+def _shown_positions(size: int, rows_each: int = 1) -> list[int | None]:
+    """The flat positions shown of *size* items of *rows_each* rows, ``None`` for ``...``.
+
+    As NumPy shortens an array, the items are shortened to ``edgeitems`` at each
+    end when their rows number more than ``threshold``.
+    """
+    options = np.get_printoptions()
+    edge = options["edgeitems"]
+    if size * rows_each > options["threshold"] and size > 2 * edge:
+        return [*range(edge), None, *range(size - edge, size)]
+    return list(range(size))
+
+
 def _rows(shapes: Mapping[str, tuple[int, ...]]) -> list[_Row]:
     """The rows of a table over paths of the given *shapes*, in order.
 
     A scalar path takes one row. An array path takes one row for each element, in
     C order, shortened past ``threshold`` elements to ``edgeitems`` at each end.
     """
-    options = np.get_printoptions()
-    edge = options["edgeitems"]
     rows: list[_Row] = []
     for path, shape in shapes.items():
         if shape == ():
             rows.append(_Row(path, path))
             continue
-        size = prod(shape)
-        flat: list[int | None] = list(range(size))
-        if size > options["threshold"] and size > 2 * edge:
-            flat = [*range(edge), None, *range(size - edge, size)]
-        for index in flat:
+        for index in _shown_positions(prod(shape)):
             if index is None:
                 rows.append(_Row(_SKIPPED))
                 continue
@@ -257,163 +436,64 @@ def _column_cells(column: Mapping[str, Any], rows: Sequence[_Row]) -> tuple[str,
     return tuple(_SKIPPED if row.path is None else next(formatted) for row in rows)
 
 
-def column_provenance(column: Any) -> Any:
-    """The provenance of a column: the column's own, or that of the one term it holds."""
-    if column.provenance is not None:
-        return column.provenance
-    leaves = [leaf for _, leaf in column._walk_leaves()]
-    if len(leaves) == 1 and isinstance(leaves[0], TrackedTerm):
-        return leaves[0].provenance
-    return None
-
-
-def _fidelity(provenance: Any) -> str | None:
-    """How a column was computed, as its provenance records it, or ``None`` when it does not.
-
-    An exact route reads ``exact``. An approximate route reads ``Monte Carlo,
-    N draws`` when its provenance records one count of Monte Carlo draws, and
-    ``approximate`` otherwise.
-    """
-    if provenance is None:
-        return None
-    exact = (provenance.metadata or {}).get("exact")
-    if exact is True:
-        return "exact"
-    if exact is not False:
-        return None
-    counts = {prod(effect.get("sample_shape") or ()) for effect in _monte_carlo_effects(provenance)}
-    if len(counts) == 1:
-        return f"Monte Carlo, {counts.pop():,} draws"
-    return "Monte Carlo" if counts else "approximate"
-
-
-def _monte_carlo_effects(provenance: Any) -> list[Mapping[str, Any]]:
-    """The Monte Carlo draws a call's provenance records, each with its sample shape and path."""
-    replay = (provenance.controls or {}).get("replay")
-    plan = replay.get("plan") if isinstance(replay, Mapping) else None
-    effects = plan.get("expected_effects") if isinstance(plan, Mapping) else None
-    return [
-        effect
-        for effect in effects or ()
-        if isinstance(effect, Mapping) and effect.get("execution_mode") == "monte_carlo"
-    ]
-
-
-def monte_carlo_draws(provenance: Any) -> dict[tuple[str, ...], int]:
-    """The Monte Carlo draws a call's provenance records, by the path of the part each drew.
-
-    Parameters
-    ----------
-    provenance : Provenance or None
-        The provenance of a summary.
-
-    Returns
-    -------
-    dict of tuple of str to int
-        The number of draws of each part, keyed by the part's path as a tuple of
-        names, with ``()`` for the whole law.
-    """
-    if provenance is None:
-        return {}
-    return {
-        tuple(effect.get("record_path") or ()): prod(effect.get("sample_shape") or ())
-        for effect in _monte_carlo_effects(provenance)
-    }
-
-
-def _footer(provenances: Mapping[str, Any]) -> str:
+def _footer(computations: Mapping[str, str]) -> str:
     """The columns grouped by how each was computed, as ``mean, sd: exact.``, in order."""
     groups: dict[str, list[str]] = {}
-    for name, provenance in provenances.items():
-        fidelity = _fidelity(provenance)
-        if fidelity is not None:
-            groups.setdefault(fidelity, []).append(name)
-    return " ".join(f"{', '.join(names)}: {fidelity}." for fidelity, names in groups.items())
+    for name, text in computations.items():
+        groups.setdefault(text, []).append(name)
+    return " ".join(f"{', '.join(names)}: {text}." for text, names in groups.items())
 
 
-def _element_titles(batch: Any) -> Iterable[tuple[tuple[int, ...] | None, str]]:
-    """Each element's index and its levels as a title, as ``law=0``, ``None`` for ``...``.
+# ---------------------------------------------------------------------------
+# A batch of tables
+# ---------------------------------------------------------------------------
 
-    The elements are shortened as NumPy shortens an array: past ``threshold``
-    elements, ``edgeitems`` at each end.
+
+def _batch_tables(batch: Any) -> list[tuple[str, RecordTable | None]] | None:
+    """Each shown element's title and table, with ``("...", None)`` where elements are left out.
+
+    The elements display as tables when the batch's provenance describes each
+    column of each element under :data:`COMPUTATIONS`, as the batch that
+    ``summarize`` returns for a batch of laws does. The elements are shortened
+    when their rows number more than ``threshold``.
     """
-    options = np.get_printoptions()
-    edge = options["edgeitems"]
+    recorded = _recorded_computations(batch.provenance)
     shape = tuple(batch.batch_shape)
     size = prod(shape)
-    flat: list[int | None] = list(range(size))
-    if size > options["threshold"] and size > 2 * edge:
-        flat = [*range(edge), None, *range(size - edge, size)]
-    for position in flat:
+    if recorded is None or size == 0:
+        return None
+
+    def table_at(position: int) -> RecordTable | None:
+        children = _columns(batch[_index(shape, position)])
+        if children is None:
+            return None
+        return _table(children, {name: texts[position] for name, texts in recorded.items()})
+
+    first = table_at(0)
+    if first is None:
+        return None
+    shown: list[tuple[str, RecordTable | None]] = []
+    for position in _shown_positions(size, len(first.rows)):
         if position is None:
-            yield None, _SKIPPED
+            shown.append((_SKIPPED, None))
             continue
-        index = tuple(int(i) for i in np.unravel_index(position, shape))
-        parts, start = [], 0
-        for name, group in zip(batch.level_names, batch.axis_groups, strict=True):
-            level = index[start : start + len(group)]
-            start += len(group)
-            parts.append(f"{name}={level[0] if len(level) == 1 else level}")
-        yield index, ", ".join(parts)
-
-
-def batch_tables_text(batch: Any, head: str | None) -> str | None:
-    """A batch of records as one table for each element, under *head*, or ``None``.
-
-    Each element's table is titled by its levels. Under *head* each title is
-    indented by two spaces and each table by four, and without one both start
-    at the margin. The result is ``None`` when the elements do not display as
-    tables or their entries cannot be read.
-
-    Parameters
-    ----------
-    batch : NumericRecordBatch
-        The batch to display.
-    head : str or None
-        The line above the tables, or ``None`` for none.
-
-    Returns
-    -------
-    str or None
-        The lines of the display.
-    """
-    lines = [] if head is None else [head]
-    indent = "" if head is None else VALUE_INDENT
-    table_indent = "" if head is None else VALUE_INDENT * 2
-    for index, title in _element_titles(batch):
-        if index is None:
-            lines.append(indent + title)
-            continue
-        table = record_table(batch[index])
+        table = first if position == 0 else table_at(position)
         if table is None:
             return None
-        lines.append(indent + title)
-        lines.extend(table.lines(table_indent))
-    return "\n".join(lines)
+        shown.append((_title(batch, _index(shape, position)), table))
+    return shown
 
 
-def batch_tables_html(batch: Any, head: str) -> str | None:
-    """A batch of records as one HTML table for each element, or ``None``, as the text form.
+def _index(shape: tuple[int, ...], position: int) -> tuple[int, ...]:
+    """The batch index of the flat *position* in a batch of *shape*."""
+    return tuple(int(i) for i in np.unravel_index(position, shape))
 
-    Parameters
-    ----------
-    batch : NumericRecordBatch
-        The batch to display.
-    head : str
-        The text above the tables.
 
-    Returns
-    -------
-    str or None
-        The HTML of the display.
-    """
-    parts = [f'<code style="white-space: pre">{html.escape(head)}</code>']
-    for index, title in _element_titles(batch):
-        if index is None:
-            parts.append(f"<p>{_SKIPPED}</p>")
-            continue
-        table = record_table(batch[index])
-        if table is None:
-            return None
-        parts.append(f"<p><b>{html.escape(title)}</b></p>{table.html()}")
-    return f"<div>{''.join(parts)}</div>"
+def _title(batch: Any, index: tuple[int, ...]) -> str:
+    """The element at *index* titled by its levels, as ``law=0`` or ``chain=0, draw=1``."""
+    parts, start = [], 0
+    for name, group in zip(batch.level_names, batch.axis_groups, strict=True):
+        level = index[start : start + len(group)]
+        start += len(group)
+        parts.append(f"{name}={level[0] if len(level) == 1 else level}")
+    return ", ".join(parts)

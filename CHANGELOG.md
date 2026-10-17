@@ -1521,16 +1521,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `summarize(d, mean, variance)` or `summarize(d, {"sd": standard_deviation})`,
     replace the default columns.
   - **MCMC posteriors:** a posterior on the levels `chain` and `draw` also gets
-    `r_hat`, `ess_bulk`, and `ess_tail`.
-  - **Monte Carlo errors:** `mcse=True` adds `mcse_<name>` for each column that
-    is a Monte Carlo estimate.
-  - **Batches:** a `DistributionBatch` gives a batch of summary records.
-- **A record of records displays as a table.** A numeric record whose top-level
-  fields are all records over the same paths shows one row for each path and
-  one column for each field, in its repr and in a notebook, with a line that
-  states how each column was computed, as its provenance records it. A record
-  built by hand, as `Record({"mean": mean(d), "sd": standard_deviation(d)})`,
-  displays the same way.
+    `r_hat`, `ess_bulk`, and `ess_tail`, and its line reads
+    `MCMC, 4 chains of 1,000 draws`.
+  - **Monte Carlo errors:** `mcse=True` adds `mcse_<name>` for each statistic:
+    ArviZ's error for an MCMC posterior, and for another law `0` where the
+    route was exact and `sd / sqrt(n)` for a mean from `n` draws.
+  - **Batches:** a `DistributionBatch` gives a batch of summary records, which
+    displays a table for each law.
+- **A record of summaries displays as a table.** A numeric record whose
+  top-level fields are records over the same paths, at least one of which
+  records how it was computed, shows one row for each path and one column for
+  each field, in its repr and in a notebook, with a line that states how each
+  column was computed. A record built by hand, as
+  `Record({"mean": mean(d), "sd": standard_deviation(d)})`, displays the same
+  way. A record of plain values keeps one line for each path.
 - **`standard_deviation(d)` returns the standard deviation of a law, the square
   root of its variance in each coordinate.** A record law's standard deviation
   is a record with a field per component, as `mu` and `tau`, so

@@ -428,19 +428,20 @@ class NumericRecord(Record, Numeric):
         values are tracers, and for a record with no fields, the repr is the
         summary of the label and the field paths.
 
-        A record whose top-level fields are all records over the same paths, with
-        the same shape at each path, displays as a table under its label instead:
-        one row for each path, or for each element of an array path, as
-        ``y[0]``, and one column for each top-level field. The table's lines are
-        indented by two spaces, as a record's lines are. The line below the
-        table states how each column was computed, as its provenance records it:
-        ``exact``, ``Monte Carlo`` with the number of draws, or ``approximate``.
+        A record of summaries displays as a table under its label instead. Its
+        top-level fields are records over the same paths, with the same shape
+        at each path, and at least one of them records how it was computed, as
+        the term an operation returns does. The table has one row for each
+        path, or for each element of an array path, as ``y[0]``, and one column
+        for each top-level field, and its lines are indented by two spaces, as a
+        record's lines are. The line below the table states how each column
+        was computed: ``exact``, ``Monte Carlo`` with the number of draws, or
+        ``approximate``.
         """
         table = record_table(self)
         if table is not None:
-            footer = [table.footer] if table.footer else []
             lines = table.lines(VALUE_INDENT)
-            return "\n".join([self._displayed_label(), *lines, *footer])
+            return "\n".join([self._displayed_label(), *lines, table.footer])
         rows = format_rows(self._value_rows(), indent=VALUE_INDENT)
         if not rows:
             return self._repr_header()
