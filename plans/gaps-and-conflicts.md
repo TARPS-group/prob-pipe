@@ -375,7 +375,11 @@ So the plan passes a **call token** into every program as an argument, and the h
 
 **Blocks:** E3, E4.
 
-**Status:** open; needs jhuggins.
+**Status:** in progress. Settled 2026-10-17:
+1. There is one call context, and its core logic is implemented once. #587's carried context and the execution plan's call context become the same mechanism, with no duplicated or redundant code.
+2. The field `record` of #587's `_CarriedContext` is renamed, since "record" collides with ProbPipe's `Record`; the class `_MonteCarloRecord` has the same collision.
+
+An independent design agent is writing the precise contract to `plans/call-context-proposal.md`: what the context holds, its lifecycle and precedence, its transport across threads, processes, Prefect, and host callbacks, the rule for settings read while tracing, the names, and what changes in #587 versus the execution steps. Once the maintainer accepts it, it is folded into the execution plan, and a comment on #587 describes the unified design to jhuggins.
 
 ---
 
