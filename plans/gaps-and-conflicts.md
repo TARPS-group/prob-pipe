@@ -271,9 +271,15 @@ Ruling 2: such a view wraps, which keeps #571's event rule as it stands. Narrowi
 Ruling 3: the body returns the record.
 Timing: option 1. The size and the open rulings make option 2 a risk to everything else on the schedule.
 
-**Blocks:** the grammar-B step (G1 in the README, after the workshop under the recommendation). If jhuggins rules for B′, row a of D1 reopens, since B′ needs a flag on every declaration.
+**Blocks:** steps G1 and G2.
 
-**Status:** open; rulings 1 and 2 need jhuggins.
+**Status:** ✅ settled 2026-10-17.
+1. Grammar B, not B′.
+2. A view of a field that holds a law or a function wraps, keeping the field's name, so #571's event rule stands unchanged.
+3. The body of a function with a wrapped output returns the record, and the declaration checks it. A pending type filled with a spec that has parts raises.
+4. Grammar B for the kinds the workshop uses lands before it (step G1). Random measures, random functions, and Gaussian processes do not appear in the workshop, so they wait until after it (step G2).
+
+The refusal of a whole declaration over a spec with parts waits for G2 as well. Random measures and Gaussian processes declare their draws whole today, so refusing that form before they are migrated would break them, and a special case that exempts them would be the bridging code directive 8 forbids. Until G2, a user can still write the old form, and the library no longer does.
 
 ---
 
@@ -406,10 +412,11 @@ The principle proposed on 2026-10-17: change everything a user types before the 
 | S2 | `OutputSpec` as a mapping, `term_spec`, `project` and `without`, one reading of slots, the size shorthand, `InputSpec.merge` | yes |
 | S3 | `&` and the two renames, one mechanical PR | yes, if D2 is settled |
 | S4 | Batches store their element declaration | yes |
-| G1 | Grammar-B enforcement and wrapping | after (D4) |
-| G2 | Paths through every kind, `Function[]`, `component` | after |
-| G3 | `condition_on` declared as `without`; `law.without` | after |
-| G4 | `[]` on batches of laws and on kernels | after |
+| G1 | Grammar B for the kinds the workshop uses | yes (D4) |
+| G2 | Grammar B for random measures, random functions, Gaussian processes, and bootstrap laws; then the refusal of the old form | after (D4) |
+| G3 | Paths through every kind, `Function[]`, `component` | after |
+| G4 | `condition_on` declared as `without`; `law.without` | after |
+| G5 | `[]` on batches of laws and on kernels | after |
 | E1–E7 | The execution core of the plan's section 13 | yes |
 | E8 | The JAX settings contract | yes, but the first to cut if time runs short |
 
@@ -550,8 +557,8 @@ From this PR on, the files in `plans/` are the copies that change.
 
 These are recorded in [`deferred.md`](deferred.md) and become issues after the workshop.
 
-- **L1. The Rocq model does not cover renames by path or paths inside slots.** The addressing plan asks to extend the model before the design text is final, which matters for step G1 and later.
-- **L2. When kernels get `[]`.** `lik["y"]` raises until step G4. The design states the exception until then.
+- **L1. The Rocq model does not cover renames by path or paths inside slots.** The addressing plan asks to extend the model before the design text is final, which matters for steps G1 and G2.
+- **L2. When kernels get `[]`.** `lik["y"]` raises until step G5. The design states the exception until then.
 - **L3. Two bugs the addressing plan found.** The Gaussian route of `condition_on` accepts a given record with a missing or extra field, and inference on a law declared whole over a record fails with a wrong message. Grammar B removes the second one's cause.
 - **L4. A lighter route for pyabc.** jhuggins's comment on the execution Doc (2026-10-16) proposes a `pyabc.sampler.Sampler` subclass that seeds NumPy's global generator per evaluation, instead of reimplementing pyabc's loop. A 60-line prototype gave bitwise-identical populations when run sequentially, with chunks in reverse order, on 4 processes, and with two batch sizes. The thread executor cannot run these points, since threads share NumPy's global generator. This would shrink the plan's post-workshop pyabc step.
 - **L5. Two issues the execution plan proposes and nobody has opened:** deterministic fields of a joint (Q4), and a Gibbs method (Q10).

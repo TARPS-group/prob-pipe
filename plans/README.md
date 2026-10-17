@@ -99,10 +99,11 @@ A choice that changes none of the above, such as a private helper's structure, i
 | S2 | `OutputSpec` as a mapping; `term_spec`; `project` and `without` through S1's reader; one reading of slots; the size shorthand; `InputSpec.merge`. Its renames change about 41 modules, so it is announced like S3 | declarations; reconciled text | S1 | yes | | |
 | S3 | `&` replaces `*` for laws, kernels, records, and declarations; `rename` and `MarginalView`, in one announced mechanical PR | declarations Part 2 §3 | S2 | yes | | |
 | S4 | Every batch stores its element declaration | declarations; addressing: Batches | S2, E3 | yes | | |
-| G1 | Grammar-B enforcement: the keyword form refuses a spec with parts; views of groups expose their parts; wrapped draws for random measures, random functions, and bootstrap laws; defaults by kind | addressing: The grammar rule | S4 | after | | |
-| G2 | Paths through every kind; `Function[]`; the public `component` accessor | addressing: Indexing each kind | G1 | after | | |
-| G3 | `condition_on` declared as `d.without(*fixed)`; `law.without` | addressing: Operations that take paths | G1 | after | | |
-| G4 | `[]` on batches of laws and on kernels | addressing: Indexing each kind | G2 | after | | |
+| G1 | Grammar B for the kinds the workshop uses: a view or marginal of a group exposes its parts; the library's laws declared whole over a record are exposed or wrapped; a factor that holds a group wraps it; a function that returns a law or a function exposes its output; a lifted law-returning function wraps its draws; defaults by kind; the reading of a bare `output_spec` | addressing: The grammar rule, Structured outputs, Defaults | S2, S4 | yes | | |
+| G2 | Grammar B for the remaining kinds, then enforcement: random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets wrap their draws; then the keyword form of `OutputSpec` refuses a spec with parts | addressing: The grammar rule, What grammar B costs | G1 | after | | |
+| G3 | Paths through every kind; `Function[]`; the public `component` accessor; a view of a field that holds a law or a function wraps | addressing: Indexing each kind; gaps D4 | G1 | after | | |
+| G4 | `condition_on` declared as `d.without(*fixed)`; `law.without` | addressing: Operations that take paths | G1 | after | | |
+| G5 | `[]` on batches of laws and on kernels | addressing: Indexing each kind | G3 | after | | |
 
 ### The execution layer
 

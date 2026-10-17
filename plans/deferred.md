@@ -10,10 +10,10 @@ Postponed work leaves the current behaviour unchanged (README directive 8).
 
 | Work | Source |
 |---|---|
-| Grammar-B enforcement and wrapping (step G1) | `addressing.md`: The grammar rule |
-| Paths through every kind, `Function[]`, and the public `component` accessor (step G2) | `addressing.md`: Indexing each kind |
-| `condition_on` declared as `d.without(*fixed)`, and `law.without` (step G3) | `addressing.md`: Operations that take paths |
-| `[]` on batches of laws and on kernels (step G4) | `addressing.md`: Indexing each kind |
+| Grammar B for random measures, random functions and Gaussian processes, bootstrap laws, empirical laws of laws, and minibatched targets; then the refusal of a whole declaration over a spec with parts (step G2) | `addressing.md`: The grammar rule; gaps D4 |
+| Paths through every kind, `Function[]`, and the public `component` accessor (step G3) | `addressing.md`: Indexing each kind |
+| `condition_on` declared as `d.without(*fixed)`, and `law.without` (step G4) | `addressing.md`: Operations that take paths |
+| `[]` on batches of laws and on kernels (step G5) | `addressing.md`: Indexing each kind |
 | `&` on `Function`, `FunctionSpec`, `Batch`, and `BatchSpec` | `declarations.md` Part 2 §3 |
 | `&` on `DistributionSpec`, `ConditionalDistributionSpec`, and `FunctionSpec`, and `InputSpec` renames, so a function that builds a model declares its output | `declarations.md` Part 2 §4 |
 
