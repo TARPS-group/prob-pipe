@@ -9,7 +9,7 @@ Each item says why it matters, what is recommended, and where to read more.
 1. **The reconciled plan was written.** [`declarations-and-addressing.md`](declarations-and-addressing.md) replaces #571's body, jhuggins's reply, and the grammar-B plan, following the precedence you set (grammar B, then the reply, then the body). It defines everything from first principles and gives each step a done-condition.
 2. **The call-context proposal was reviewed and revised three times.** [`call-context-proposal.md`](call-context-proposal.md), § 13, lists every revision.
 3. **Four adversarial reviews ran, each with scratch tests against JAX and the code:**
-   - **Round 1:** the execution plan and the call context. It found two blockers: no token reached embedded calls inside the inference runners, and the detection of programs with embedded calls was unsound.
+   - **Round 1:** the execution plan and the call context. It found two blockers: no token was passed to embedded calls inside the inference runners, and the detection of programs with embedded calls was unsound.
    - **Round 2a:** the reconciled plan.
    - **Round 2b:** consistency across every plan.
    - **Round 3:** verification of all the fixes.
