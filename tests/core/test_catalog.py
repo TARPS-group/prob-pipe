@@ -18,6 +18,8 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import fields
 from pathlib import Path
 from typing import Any
@@ -119,6 +121,21 @@ class _StubMethodWithDescription(UnaryDispatchMethod):
         return self._name
 
 
+@contextmanager
+def _restored_bijector_registry() -> Iterator[None]:
+    """Restore the bijector factory's registrations and descriptions on exit."""
+    from probpipe.functions import _reparameterization as module
+
+    tables = (module._CONSTRAINT_BIJECTOR_REGISTRY, module._BIJECTOR_DESCRIPTIONS)
+    saved = [dict(table) for table in tables]
+    try:
+        yield
+    finally:
+        for table, contents in zip(tables, saved, strict=True):
+            table.clear()
+            table.update(contents)
+
+
 # ---------------------------------------------------------------------------
 # RegistryCatalog mechanics (use a *local* catalog, not the global one)
 # ---------------------------------------------------------------------------
@@ -156,12 +173,38 @@ class TestRegistration:
         with pytest.raises(
             ValueError, match=r'^cannot catalog a registry whose name is empty; pass name="\.\.\."'
         ):
-            cat.register(_StubRegistry(""))
+            cat.register(_StubRegistry("", kind="dispatch"))
 
-    def test_a_reload_of_a_registering_module_raises(self) -> None:
+    def test_registering_a_cataloged_name_again_raises(self) -> None:
         """The catalog has no removal, so registering a built-in registry again raises."""
         with pytest.raises(ValueError, match="second registry named 'inference'"):
             registry_catalog.register(registry_catalog["inference"])
+
+    def test_a_registry_class_is_refused(self) -> None:
+        """A class carries the protocol's members as attributes, so it is refused by name."""
+        cat = RegistryCatalog()
+        with pytest.raises(TypeError, match="takes a registry instance"):
+            cat.register(UnaryDispatchRegistry)  # type: ignore[arg-type]
+        assert cat.names() == []
+
+    def test_an_object_without_the_protocol_is_refused(self) -> None:
+        class _NameOnly:
+            name = "partial"
+
+        cat = RegistryCatalog()
+        with pytest.raises(TypeError, match="implements SupportsRegistryCataloging"):
+            cat.register(_NameOnly())  # type: ignore[arg-type]
+        assert cat.names() == []
+
+    def test_a_non_string_name_is_refused(self) -> None:
+        cat = RegistryCatalog()
+        with pytest.raises(TypeError, match="name must be a str, got 3"):
+            cat.register(_StubRegistry(3))  # type: ignore[arg-type]
+        assert cat.names() == []
+
+    def test_the_empty_name_fix_is_given_only_for_a_dispatch_registry(self) -> None:
+        with pytest.raises(ValueError, match=r"^cannot catalog a registry whose name is empty$"):
+            RegistryCatalog().register(_StubRegistry("", kind="factory"))
 
     def test_missing_lookup_raises(self) -> None:
         cat = RegistryCatalog()
@@ -230,10 +273,10 @@ class TestQuery:
         cat.register(a)
         out = cat.describe("a")
         auto = out.index("Auto-dispatched, in selection order:")
-        fallbacks = out.index("Fallbacks, after every other entry:")
+        floors = out.index("Floors, after every other entry:")
         opt_in = out.index("Opt-in only")
-        assert auto < out.index("rule") < fallbacks
-        assert fallbacks < out.index("exact_floor") < out.index("approx_floor") < opt_in
+        assert auto < out.index("rule") < floors
+        assert floors < out.index("exact_floor") < out.index("approx_floor") < opt_in
         assert opt_in < out.index("opt_in_floor")
 
     def test_describe_has_no_fallback_section_without_floors(self) -> None:
@@ -241,7 +284,7 @@ class TestQuery:
         a = _StubRegistry("a", kind="dispatch")
         a.add(EntrySummary(name="rule", priority=5))
         cat.register(a)
-        assert "Fallbacks" not in cat.describe("a")
+        assert "Floors" not in cat.describe("a")
 
     def test_describe_keeps_the_priority_column_when_any_entry_is_ranked(self) -> None:
         cat = RegistryCatalog()
@@ -471,9 +514,9 @@ class TestBuiltinPopulation:
         assert floors == ["elementwise_sweep", "sampling_lift"]
         assert [s.name for s in summaries][-2:] == floors
         out = registry_catalog.describe("evaluation_rules")
-        fallbacks = out.index("Fallbacks, after every other entry:")
-        assert out.index("empirical_enumeration") < fallbacks
-        assert all(fallbacks < out.index(f"  {name}") for name in floors)
+        section = out.index("Floors, after every other entry:")
+        assert out.index("empirical_enumeration") < section
+        assert all(section < out.index(f"  {name}") for name in floors)
         assert str(-(2**31)) not in out
 
     @pytest.mark.parametrize("name", ["converters", "evaluation_rules", "inference"])
@@ -543,31 +586,18 @@ class TestBijectorEntries:
         description = registry_catalog["bijectors"].describe_entry(name).description
         assert description.startswith("No smooth bijector: ")
 
-    def test_register_bijector_records_its_description(self) -> None:
+    def test_an_instance_key_is_named_by_its_repr_and_described(self) -> None:
         from probpipe.core.constraints import _Positive
-        from probpipe.functions import _reparameterization as module
 
-        saved = (
-            dict(module._CONSTRAINT_BIJECTOR_REGISTRY),
-            dict(module._BIJECTOR_DESCRIPTIONS),
-        )
-        try:
+        with _restored_bijector_registry():
             register_bijector(_Positive(), lambda c: None, description="an instance key")
             entry = registry_catalog["bijectors"].describe_entry(repr(_Positive()))
             assert entry.description == "an instance key"
-        finally:
-            for registry, contents in zip(
-                (module._CONSTRAINT_BIJECTOR_REGISTRY, module._BIJECTOR_DESCRIPTIONS),
-                saved,
-                strict=True,
-            ):
-                registry.clear()
-                registry.update(contents)
 
     def test_register_bijector_rejects_a_non_string_description(self) -> None:
         from probpipe.core.constraints import _Positive
 
-        with pytest.raises(TypeError, match="bijector description must be a str, got 3"):
+        with pytest.raises(TypeError, match="register_bijector's description must be a str, got 3"):
             register_bijector(_Positive, lambda c: None, description=3)  # type: ignore[arg-type]
 
     def test_describe_entry_known(self) -> None:
@@ -577,24 +607,33 @@ class TestBijectorEntries:
         with pytest.raises(KeyError, match="unknown bijector entry 'DoesNotExist'"):
             registry_catalog["bijectors"].describe_entry("DoesNotExist")
 
-    def test_an_instance_key_is_named_by_its_repr(self) -> None:
-        """A registration keyed on a constraint instance is named by its ``repr``.
-
-        The built-in registrations are keyed on types, so this registers an
-        instance key for the duration of the test.
-        """
+    def test_a_shared_short_name_is_qualified_for_a_third_party_key(self) -> None:
+        """Entry names stay unique: a third-party ``Positive`` is named by its module."""
         from probpipe.core.constraints import _Positive
-        from probpipe.functions._reparameterization import _CONSTRAINT_BIJECTOR_REGISTRY
 
-        instance_key = _Positive()
-        saved = dict(_CONSTRAINT_BIJECTOR_REGISTRY)
-        try:
-            _CONSTRAINT_BIJECTOR_REGISTRY[instance_key] = lambda c: None
-            names = [s.name for s in registry_catalog["bijectors"].entry_summaries()]
-            assert repr(instance_key) in names
-        finally:
-            _CONSTRAINT_BIJECTOR_REGISTRY.clear()
-            _CONSTRAINT_BIJECTOR_REGISTRY.update(saved)
+        class Positive(_Positive):
+            pass
+
+        with _restored_bijector_registry():
+            register_bijector(Positive, lambda c: None, description="third party")
+            summaries = registry_catalog["bijectors"].entry_summaries()
+            names = [s.name for s in summaries]
+            assert len(names) == len(set(names))
+            qualified = f"{Positive.__module__}.{Positive.__qualname__}"
+            assert registry_catalog["bijectors"].describe_entry(qualified).description == (
+                "third party"
+            )
+            assert registry_catalog["bijectors"].describe_entry("Positive").description == (
+                "exp, onto the positive half-line."
+            )
+
+    def test_registering_a_key_again_replaces_its_description(self) -> None:
+        from probpipe.core.constraints import _Positive
+
+        with _restored_bijector_registry():
+            register_bijector(_Positive, lambda c: None, description="replaced")
+            entry = registry_catalog["bijectors"].describe_entry("Positive")
+            assert entry.description == "replaced"
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +760,9 @@ class TestDispatchRegistryEntrySummaries:
         method = _StubMethodWithDescription("m", 10)
         method._description = 3
         reg = UnaryDispatchRegistry()
-        with pytest.raises(TypeError, match=r"^method 'm' description must be a str, got 3$"):
+        with pytest.raises(
+            TypeError, match=r"^method 'm' must declare description as a str, got 3$"
+        ):
             reg.register(method)
         assert reg.list_methods() == []
 
@@ -773,13 +814,8 @@ class TestDispatchRegistryEntrySummaries:
 
     def test_describe_entry_unknown_raises_with_available(self) -> None:
         reg = self._registry_with(("known", 10))
-        with pytest.raises(KeyError, match="unknown method 'missing'"):
+        with pytest.raises(KeyError, match=r"unknown method 'missing'.*'known'"):
             reg.describe_entry("missing")
-        # The error message lists what is available.
-        try:
-            reg.describe_entry("missing")
-        except KeyError as exc:
-            assert "known" in str(exc)
 
     def test_entry_summaries_on_empty_registry(self) -> None:
         reg = UnaryDispatchRegistry()

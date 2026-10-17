@@ -237,7 +237,7 @@ def register_bijector(
     without a registration of its own.
     """
     if not isinstance(description, str):
-        raise TypeError(f"bijector description must be a str, got {description!r}")
+        raise TypeError(f"register_bijector's description must be a str, got {description!r}")
     _CONSTRAINT_BIJECTOR_REGISTRY[key] = factory
     _BIJECTOR_DESCRIPTIONS[key] = description
 
@@ -412,19 +412,40 @@ _register_no_smooth_bijector(
 # ---------------------------------------------------------------------------
 
 
-def _entry_name(key: type | Constraint) -> str:
-    """The catalog name of a registered key.
+def _short_name(key: type | Constraint) -> str:
+    """A key's short catalog name: a type's name without leading underscores, or an instance's ``repr``."""
+    return key.__name__.lstrip("_") if isinstance(key, type) else repr(key)
 
-    A constraint type is named by its class name with leading underscores
-    removed, as ``_Positive`` is named ``Positive``, and a constraint instance
-    by its ``repr``.
-    """
+
+def _qualified_name(key: type | Constraint) -> str:
+    """A key's catalog name when its short name is shared: qualified by its module."""
     if isinstance(key, type):
-        return key.__name__.lstrip("_")
-    return repr(key)
+        return f"{key.__module__}.{key.__qualname__}"
+    return f"{key!r} ({type(key).__module__}.{type(key).__qualname__})"
 
 
-class _BijectorFactory:
+def _entry_names(keys: list[type | Constraint]) -> dict[type | Constraint, str]:
+    """The catalog name of each registered key, unique among *keys*.
+
+    A key is named by its short name, as ``_Positive`` is named ``Positive``
+    and a constraint instance by its ``repr``. Where keys share a short name,
+    each key that ProbPipe does not define is named by its qualified name in
+    its place, so a third-party ``Positive`` is named
+    ``"mypackage.Positive"`` and the built-in keeps ``Positive``.
+    """
+    counts: dict[str, int] = {}
+    for key in keys:
+        counts[_short_name(key)] = counts.get(_short_name(key), 0) + 1
+    names = {}
+    for key in keys:
+        short = _short_name(key)
+        module = key.__module__ if isinstance(key, type) else type(key).__module__
+        builtin = module == "probpipe" or module.startswith("probpipe.")
+        names[key] = short if counts[short] == 1 or builtin else _qualified_name(key)
+    return names
+
+
+class _BijectorRegistryView:
     """The constraint-to-bijector factory as the registry catalog lists it.
 
     The factory maps a constraint, by instance and then by the nearest type in
@@ -432,8 +453,9 @@ class _BijectorFactory:
     :func:`register_bijector` populates it and :func:`bijector_for` reads it.
     This object implements
     :class:`~probpipe.core._catalog.SupportsRegistryCataloging` over those
-    registrations, with one entry per registered key in name order, and it is
-    cataloged as ``"bijectors"``. Each entry's description is the one
+    registrations, with one entry per registered key in name order, each
+    named as :func:`_entry_names` names it, and it is cataloged as
+    ``"bijectors"``. Each entry's description is the one
     :func:`register_bijector` received. The factory does not rank its entries,
     so each entry's ``priority`` and ``exact`` are ``None``.
     """
@@ -446,9 +468,10 @@ class _BijectorFactory:
 
     def entry_summaries(self) -> list[EntrySummary]:
         """One :class:`~probpipe.core._catalog.EntrySummary` per registered key, in name order."""
+        names = _entry_names(list(_CONSTRAINT_BIJECTOR_REGISTRY))
         summaries = [
             EntrySummary(
-                name=_entry_name(key),
+                name=names[key],
                 priority=None,
                 supported_types=(key,),
                 description=_BIJECTOR_DESCRIPTIONS.get(key, ""),
@@ -490,4 +513,4 @@ class _BijectorFactory:
         )
 
 
-registry_catalog.register(_BijectorFactory())
+registry_catalog.register(_BijectorRegistryView())

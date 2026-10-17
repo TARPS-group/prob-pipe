@@ -1622,14 +1622,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and their entries, so a user can see which implementations exist and how a
   call resolves. `print(registry_catalog)` gives one row per registry, and
   `registry_catalog.describe(name)` lists one registry's entries, each with
-  its priority, exactness, and description, a dispatch registry's floors and
-  opt-in-only methods each in a section of their own. An entry is one
-  registered item of a registry, such as an inference method or a converter.
+  its priority, exactness, and description. A dispatch registry's floors and
+  its opt-in-only methods are each listed in a section of their own. An entry
+  is one registered item of a registry, such as an inference method or a
+  converter.
   - **Membership:** a registry is cataloged by implementing
-    `SupportsRegistryCataloging` (the read-only `name`, `description`, and
-    `kind`, and `entry_summaries()` and `describe_entry()`) and by an explicit
+    `SupportsRegistryCataloging` and by an explicit
     `registry_catalog.register(registry)`, which rejects an empty or duplicate
-    name. Constructing a registry does not catalog it, and the catalog has no
+    name. The protocol's `name`, `description`, and `kind` are read-only, and
+    its methods are `entry_summaries()` and `describe_entry()`. Constructing a registry does not catalog it, and the catalog has no
     removal, so reloading a module that registers a registry raises.
   - **The built-in registries:** the bijector factories, the converters, the
     evaluation rules, the inference methods, and the operations, each under
@@ -1647,7 +1648,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     selection order, before exactness, priority, specificity, and
     registration order, and `set_priorities` cannot change it. The sampling
     lift and the elementwise sweep declare it, so the evaluation rules rank
-    them as before, and `FLOOR_PRIORITY`, their priority, is now 0.
+    them as before.
   - **Bijectors:** `register_bijector` takes a keyword-only `description`,
     which the catalog shows, and each constraint with no smooth bijector is
     described by the reason.

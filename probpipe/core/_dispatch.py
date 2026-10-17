@@ -458,7 +458,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod[Any]](ABC):
         _refuse_declaration_markers(name, supported_types)
         description = method.description
         if not isinstance(description, str):
-            raise TypeError(f"method {name!r} description must be a str, got {description!r}")
+            raise TypeError(
+                f"method {name!r} must declare description as a str, got {description!r}"
+            )
         registration = _Registration(
             method=method,
             name=name,

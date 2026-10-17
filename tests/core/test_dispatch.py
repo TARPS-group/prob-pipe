@@ -589,7 +589,7 @@ class TestSpecificity:
 
 
 # ---------------------------------------------------------------------------
-# set_priorities re-ranks among methods of the same exactness only
+# set_priorities re-ranks among methods of the same floor status and exactness only
 # ---------------------------------------------------------------------------
 
 

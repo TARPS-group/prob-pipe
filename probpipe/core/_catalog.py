@@ -1,10 +1,9 @@
 """The registry catalog, which lists every registry and its entries.
 
-:data:`registry_catalog` lists the registries in the process, their entries
-with each entry's exactness, priority, and floor status, and a one-line
-description of each,
-so a user can see which implementations exist and how a call resolves. An
-**entry** is one registered item of a registry, such as an inference method, a
+:data:`registry_catalog` lists the registries in the process and their
+entries. Each entry carries its exactness, its priority, its floor status, and
+a one-line description, so a user can see which implementations exist and how
+a call resolves. An **entry** is one registered item of a registry, such as an inference method, a
 converter, an operation, or a bijector factory.
 
 The catalog describes registries and selects nothing. A call goes to the
@@ -220,15 +219,29 @@ class RegistryCatalog:
 
         Raises
         ------
+        TypeError
+            If *registry* does not implement
+            :class:`SupportsRegistryCataloging`, or its ``name`` is not a
+            ``str``, as when a registry class is passed in place of an
+            instance.
         ValueError
             If ``registry.name`` is empty or already registered.
         """
-        name = registry.name
-        if not name:
-            raise ValueError(
-                "cannot catalog a registry whose name is empty; "
-                'pass name="..." when you construct the registry'
+        if isinstance(registry, type) or not isinstance(registry, SupportsRegistryCataloging):
+            raise TypeError(
+                "registry_catalog.register takes a registry instance that implements "
+                f"SupportsRegistryCataloging, got {registry!r}"
             )
+        name = registry.name
+        if not isinstance(name, str):
+            raise TypeError(f"a cataloged registry's name must be a str, got {name!r}")
+        if not name:
+            fix = (
+                '; pass name="..." when you construct the registry'
+                if registry.kind == "dispatch"
+                else ""
+            )
+            raise ValueError(f"cannot catalog a registry whose name is empty{fix}")
         if name in self._registries:
             raise ValueError(
                 f"cannot catalog a second registry named {name!r}: "
@@ -329,7 +342,7 @@ class RegistryCatalog:
                     [summary for summary in ranked if not summary.is_floor],
                 ),
                 (
-                    "Fallbacks, after every other entry:",
+                    "Floors, after every other entry:",
                     [summary for summary in ranked if summary.is_floor],
                 ),
                 (
