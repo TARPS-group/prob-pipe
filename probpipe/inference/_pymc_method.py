@@ -88,7 +88,9 @@ class PyMCNutsMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> EmpiricalDistribution:
         """PyMC inference on the model the target carries, at the observed values it binds."""
         self._check_options(kwargs)
-        import pymc as pm
+        from ..families._programs import _import_pymc
+
+        pm = _import_pymc()
 
         dist, observed = joint_and_given(target)
 
@@ -206,7 +208,9 @@ class PyMCADVIMethod(InferenceMethod):
     def execute(self, target: Any, /, **kwargs: Any) -> Distribution:
         """PyMC variational inference on the model the target carries, at the observed values it binds."""
         self._check_options(kwargs)
-        import pymc as pm
+        from ..families._programs import _import_pymc
+
+        pm = _import_pymc()
 
         dist, observed = joint_and_given(target)
 
@@ -316,6 +320,9 @@ def _bijector_of(transform: Any, rv: Any, model: Any) -> Any:
     ``None`` stands for no transform, and ``NotImplemented`` for a transform the
     mean-field family does not cover.
     """
+    from ..families._programs import _import_pymc
+
+    _import_pymc()
     from pymc.distributions import transforms
 
     tfb = tfp.bijectors

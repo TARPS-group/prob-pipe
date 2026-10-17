@@ -32,6 +32,7 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
+from ._repr import VALUE_INDENT, format_entries, summary_with_values
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
@@ -228,6 +229,25 @@ class NumericArrayBatch(Batch[NumericArray]):
     def raw(self) -> Any:
         """The storage view: the stored array with the batch axes leading, as :attr:`values` holds it."""
         return self._values
+
+    # -- display --------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        """The summary of the label, the levels, and the element spec, then the stored entries.
+
+        Each line of the entries is indented by two spaces, as a record's lines
+        are. NumPy's printing formats the stored array, batch axes leading, so
+        ``np.set_printoptions`` sets the precision and shortens a large batch
+        with ``...``, and only the entries shown are read from the device.
+        Inside a JAX trace, where the store is a tracer, the repr is the summary
+        alone.
+        """
+        return summary_with_values(self._repr_summary(), format_entries(self._values, VALUE_INDENT))
+
+    def __str__(self) -> str:
+        """The stored entries alone, as the repr shows them, or the summary inside a JAX trace."""
+        values = format_entries(self._values)
+        return self._repr_summary() if values is None else values
 
     # -- the array shim, as ``NumericRecordBatch`` carries from its sole field.
     # ``batch_shape`` / ``batch_size`` stay the names for the batch axes alone.

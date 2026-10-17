@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A numeric term shows its values.** The repr of a `NumericArray`, a
+  `NumericRecord`, or a batch of either shows the values below its summary, and
+  `str()` shows the values alone, so a mean shows its value without `raw()`:
+
+  ```text
+  >>> mean(Normal("mu", 0.25, 1.0, label="prior"))
+  NumericArray('𝔼[mu ~ prior]', shape=(), dtype=float32, support=real)
+    0.25
+  ```
+
+  NumPy's printing formats the values, so `np.set_printoptions` sets the
+  precision and shortens a large array with `...`, and only the entries shown
+  are read from the device. The values are indented by two spaces under the
+  summary. A record shows one line for each field path, such as
+  `population/mu`, and the summary above those lines leaves out `fields=`.
+  `str()` of a record or a batch gave its repr before. In a notebook a record and a batch of records
+  display as a two-column table of paths and values. Inside `jax.jit`, and
+  inside another term's repr such as a law's atoms, a term shows its summary
+  alone, and a record's summary then keeps `fields=`.
 - **`with_options` is renamed `using`.** `Function.using(**controls)` and
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with
@@ -3455,6 +3474,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An installed PyMC older than 6.2 raises an `ImportError` that names the
+  upgrade,** as `ProbPipe needs PyMC 6.2 or later, which works with ArviZ 1.x,
+  but PyMC 5.28.5 is installed`, where PyMC 5 failed on import with an error
+  about ArviZ. Google Colab preinstalls PyMC 5, so every notebook's Colab
+  install cell, and the minimal Colab command of the installation page, also
+  installs `pymc>=6.2`, and pip no longer reports a dependency conflict.
 - **A derived operation passes `exact_only` and `n_broadcast_samples` to the
   functions its identity calls.** `prob.using(exact_only=True)(Normal("x",
   0.0, 2.0), 0.0)` used to raise `ResolutionError` and now returns the exact
