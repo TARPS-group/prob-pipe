@@ -6,7 +6,7 @@
 - **For:** the maintainer, and through § 12 for jhuggins on PR #587.
 - **Date:** 2026-10-17.
 - **Code base:** `dev/overhaul` at `a703f15e` (this worktree), and PR #587 at `5ef1c6b2`, stacked on PR #586 at `a2f6e7fe`. JAX 0.10.1, Python 3.13.9, Prefect 3.7.4, on CPU.
-- **Verification:** every claim marked ✅ was checked by running a script. § 10 lists the scripts, which are kept in the session's scratch directory, `verify/`.
+- **Verification:** every claim marked ✅ was checked by running a script. § 10 lists the scripts, which are kept outside the repository (gaps W4).
 
 ---
 
@@ -684,7 +684,7 @@ Each case was tried against the contract as a skeptical reviewer would.
 
 ## 10. Verification log
 
-The scripts are in the session's scratch directory, `/private/tmp/claude-501/-Users-andrewroberts-Desktop-git-repos-prob-pipe/63ccb5ac-ce06-4fc1-9fc6-4b133a2d7e22/scratchpad/verify/`, which is temporary. They should join the execution plan's scripts in the repository (gaps W4).
+The scripts are kept by the author outside the repository, beside the execution plan's (gaps W4), in the gitignored `.claude/plans/call-context-verification/` of the main checkout.
 Beside them, `ctxproto.py` is a miniature of the design, which tests it and is not proposed code.
 They ran with the Python of #587's worktree, `uv sync --extra dev`.
 Scripts marked † import #587's code and run from its worktree.
