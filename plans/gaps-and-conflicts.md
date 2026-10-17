@@ -277,7 +277,7 @@ Timing: option 1. The size and the open rulings make option 2 a risk to everythi
 1. Grammar B, not B′.
 2. A view of a field that holds a law or a function wraps, keeping the field's name, so #571's event rule stands unchanged.
 3. The body of a function with a wrapped output returns the record, and the declaration checks it. A pending type filled with a spec that has parts raises.
-4. Grammar B for the kinds the workshop uses lands before it (step G1). Random measures, random functions, and Gaussian processes do not appear in the workshop, so they wait until after it (step G2).
+4. Grammar B for the kinds the workshop uses merges before it (step G1). Random measures, random functions, and Gaussian processes do not appear in the workshop, so they wait until after it (step G2).
 
 The refusal of a whole declaration over a spec with parts waits for G2 as well. Random measures and Gaussian processes declare their draws whole today, so refusing that form before they are migrated would break them, and a special case that exempts them would be the bridging code directive 8 forbids. Until G2, a user can still write the old form, and the library no longer does.
 
@@ -397,7 +397,7 @@ None of them has a PR, so the plan cannot wait for them.
 | #506 | What a function body receives: raw values by default. | Point sets carry raw values, which open PR #575 reads through the `raw` property. | Point sets present raw values; the rest of #506 after the workshop. |
 | #451 | One n-ary dispatch registry class. | The executor registry has one key, so today's unary registry serves. | No dependency. |
 
-**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, with the partial #554. `deferred.md` § Open issues the push touches records what each issue keeps for after the workshop.
+**Status:** ✅ settled 2026-10-17: every recommendation in the table is accepted, with the partial #554. `deferred.md` § Open issues the push changes records what each issue keeps for after the workshop.
 
 ---
 
@@ -487,7 +487,7 @@ That rule keeps the joint well formed, which is a different reason.
 V.8 keys every draw made inside a **managed work item**: a point evaluation, a cell of a sweep, or one evaluation of a lifted call (`functions/_managed.py`, `make_managed_work_items`).
 Each work item adds a segment to the occurrence path, so a draw inside it gets the same key wherever the item runs.
 The execution plan calls these same units **points**, and gathers them into point sets that an executor runs.
-Once step E3 lands, every managed work item is a point, so the design would have two words for one thing.
+Once step E3 merges, every managed work item is a point, so the design would have two words for one thing.
 **Fix:** the execution design text (step E1) replaces "managed work item" with "point" in V.8 and the glossary, and the module that merges `_managed.py` and `_broker.py` is named after what it does for a point (D6, Q16).
 
 **Status:** ✅ settled 2026-10-17. "Point" replaces "managed work item" everywhere, and the module is `functions/_point_keys.py`.

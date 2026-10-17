@@ -33,7 +33,7 @@ From `execution-layer.md` §13, "After the workshop":
 | Tests on a GPU or TPU | §8 |
 | The remaining design text, and a User Guide notebook on opaque code, executors, failures, and the memo | §11 |
 
-## Open issues the push touches
+## Open issues the push changes
 
 Each row says what the push does for an open issue before the workshop, and what the issue keeps for after it.
 When the push ends, each issue's text is updated to match, and none closes until its remaining work is done.
