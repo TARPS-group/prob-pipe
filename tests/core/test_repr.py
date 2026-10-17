@@ -244,7 +244,7 @@ class TestANumericTermShowsItsValues:
         shown = []
 
         def show(term):
-            shown.append((repr(term), str(term), term._repr_header()))
+            shown.append((repr(term), str(term), term._repr_summary()))
             return term
 
         terms = [
@@ -256,8 +256,8 @@ class TestANumericTermShowsItsValues:
         for term in terms:
             jax.jit(show)(term)
 
-        for text, as_str, header in shown:
-            assert text == as_str == header
+        for text, as_str, summary in shown:
+            assert text == as_str == summary
             assert "Traced" not in text
         assert shown[1][0] == "NumericRecord('<no description>', fields=('population/mu', 'y'))"
 
@@ -272,6 +272,28 @@ class TestANumericTermShowsItsValues:
         jax.jit(show)(_two_fields())
 
         assert tables == [None, None]
+
+    def test_a_term_whose_entries_cannot_be_read_shows_its_summary_alone(self):
+        stored = jnp.arange(3.0)
+        terms = [
+            NumericArray(stored, label="x"),
+            Record({"y": stored}, label="r"),
+            NumericArrayBatch(stored, "draw", label="b"),
+            NumericRecordBatch({"y": stored}, "draw", label="rows"),
+        ]
+        stored.delete()
+
+        for term in terms:
+            assert repr(term) == str(term) == term._repr_summary()
+        assert repr(terms[1]) == "NumericRecord('r', fields=('y',))"
+        assert terms[1]._repr_html_() is None
+        assert terms[3]._repr_html_() is None
+
+    def test_a_record_with_no_fields_shows_its_summary(self):
+        record = Record({}, label="e")
+
+        assert repr(record) == str(record) == "NumericRecord('e', fields=())"
+        assert record._repr_html_() is None
 
     def test_a_record_displays_as_a_table_of_paths_and_values_in_a_notebook(self):
         record = Record({"population": {"mu": 0.5}, "y": jnp.array([2.0, 2.5])}, label="a<b")

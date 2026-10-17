@@ -1298,16 +1298,28 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
-        """The label, then the field paths in canonical order, read from the schema."""
-        return self._repr_header()
+        """The label, then the field paths in canonical order, read from the schema.
 
-    def _repr_header(self) -> str:
-        """The label, then the field paths in canonical order, read from the schema."""
-        return term_repr(
-            public_class_name(type(self)),
-            self._displayed_label(),
-            [("fields", format_names(self.keys()))],
-        )
+        A numeric record shows its values below them.
+        """
+        return self._repr_summary()
+
+    def _repr_summary(self, *, structure: bool = True) -> str:
+        """The public class, the label, and the field paths in canonical order, read from the schema.
+
+        Parameters
+        ----------
+        structure : bool, optional
+            Whether to show the field paths. A numeric record leaves them out
+            of the summary above its values, whose lines list them.
+
+        Returns
+        -------
+        str
+            The summary, which reads no field's value.
+        """
+        arguments = [("fields", format_names(self.keys()))] if structure else []
+        return term_repr(public_class_name(type(self)), self._displayed_label(), arguments)
 
     # -- Call-forwarding shim for single-field Records ----------------------
     #

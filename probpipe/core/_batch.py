@@ -734,15 +734,27 @@ class Batch[E](TrackedTerm, ABC):
 
         A numeric batch shows its values below them.
         """
-        return self._repr_header()
+        return self._repr_summary()
 
-    def _repr_header(self) -> str:
+    def _repr_summary(self, *, structure: bool = True) -> str:
         """The public class, the label, the levels as a mapping, and the elements' structure.
 
         A level of one axis reports its size, and a level of several the tuple of
         its sizes, so a two-level batch of chains and draws reads
         ``levels={'chain': 4, 'draw': 1000}``. The elements' structure is their
         spec, or their field paths for a batch of records.
+
+        Parameters
+        ----------
+        structure : bool, optional
+            Whether to show the elements' structure. A numeric batch of records
+            leaves its field paths out of the summary above its values, whose
+            lines list them.
+
+        Returns
+        -------
+        str
+            The summary.
 
         Notes
         -----
@@ -751,12 +763,10 @@ class Batch[E](TrackedTerm, ABC):
         :meth:`TrackedTerm.with_provenance` interpolates the summary into its
         write-once error, so a summary that could fail would fail there.
         """
-        levels = ("levels", format_levels(self.level_names, self.axis_groups))
-        return term_repr(
-            public_class_name(type(self)),
-            self._displayed_label(),
-            [levels, *self._element_repr_arguments()],
-        )
+        arguments = [("levels", format_levels(self.level_names, self.axis_groups))]
+        if structure:
+            arguments += self._element_repr_arguments()
+        return term_repr(public_class_name(type(self)), self._displayed_label(), arguments)
 
     def _element_repr_arguments(self) -> list[tuple[str, str]]:
         """The elements' structure as the repr shows it: their spec, by default."""

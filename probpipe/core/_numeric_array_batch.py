@@ -32,7 +32,7 @@ from ._batch import (
 )
 from ._kinds import register_kind
 from ._numeric_array import NumericArray
-from ._repr import VALUE_INDENT, format_entries
+from ._repr import VALUE_INDENT, format_entries, summary_with_values
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec
 from .provenance import Provenance
@@ -242,14 +242,12 @@ class NumericArrayBatch(Batch[NumericArray]):
         Inside a JAX trace, where the store is a tracer, the repr is the summary
         alone.
         """
-        header = self._repr_header()
-        values = format_entries(self._values, VALUE_INDENT)
-        return header if values is None else f"{header}\n{values}"
+        return summary_with_values(self._repr_summary(), format_entries(self._values, VALUE_INDENT))
 
     def __str__(self) -> str:
         """The stored entries alone, as the repr shows them, or the summary inside a JAX trace."""
         values = format_entries(self._values)
-        return self._repr_header() if values is None else values
+        return self._repr_summary() if values is None else values
 
     # -- the array shim, as ``NumericRecordBatch`` carries from its sole field.
     # ``batch_shape`` / ``batch_size`` stay the names for the batch axes alone.

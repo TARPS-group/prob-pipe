@@ -23,11 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precision and shortens a large array with `...`, and only the entries shown
   are read from the device. The values are indented by two spaces under the
   summary. A record shows one line for each field path, such as
-  `population/mu`, and its summary leaves out `fields=`. `str()` of a record
-  or a batch gave its repr before. In a notebook a record and a batch of records
+  `population/mu`, and the summary above those lines leaves out `fields=`.
+  `str()` of a record or a batch gave its repr before. In a notebook a record and a batch of records
   display as a two-column table of paths and values. Inside `jax.jit`, and
   inside another term's repr such as a law's atoms, a term shows its summary
-  alone.
+  alone, and a record's summary then keeps `fields=`.
 - **`with_options` is renamed `using`.** `Function.using(**controls)` and
   `Operation.using(**controls)` behave as `with_options` did.
   Replace `condition_on.with_options(method="tfp_nuts")(model, data)` with

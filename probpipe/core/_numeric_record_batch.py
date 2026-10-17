@@ -40,7 +40,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
-from ._repr import VALUE_INDENT, format_levels, format_rows, public_class_name, rows_html, term_repr
+from ._repr import VALUE_INDENT, format_rows, rows_html, summary_with_values
 from ._shapes import AxisCountsLike, NamesLike, _as_axis_counts, _as_names
 from ._specs import NumericArraySpec, NumericRecordSpec, RecordSpec
 from .provenance import Provenance
@@ -154,11 +154,6 @@ class NumericRecordBatch(RecordBatch):
 
     # -- display --------------------------------------------------------------
 
-    def _display_head(self) -> str:
-        """The class, the label, and the levels, which head the values."""
-        levels = ("levels", format_levels(self.level_names, self.axis_groups))
-        return term_repr(public_class_name(type(self)), self._displayed_label(), [levels])
-
     def __repr__(self) -> str:
         """The class, the label, and the levels, then one line for each field with its values.
 
@@ -169,13 +164,16 @@ class NumericRecordBatch(RecordBatch):
         device. Inside a JAX trace, where the columns are tracers, the repr is
         the summary of the label, the levels, and the field paths.
         """
-        rows = format_rows(self._columns.items(), indent=VALUE_INDENT)
-        return f"{self._display_head()}\n{rows}" if rows else self._repr_header()
+        return summary_with_values(
+            self._repr_summary(structure=False),
+            format_rows(self._value_rows(), VALUE_INDENT),
+            alone=self._repr_summary(),
+        )
 
     def __str__(self) -> str:
         """The lines of the repr's values alone, or the summary inside a JAX trace."""
-        rows = format_rows(self._columns.items())
-        return rows if rows else self._repr_header()
+        rows = format_rows(self._value_rows())
+        return self._repr_summary() if rows is None else rows
 
     def _repr_html_(self) -> str | None:
         """The batch as a two-column table of its field paths and columns, for a notebook.
@@ -183,7 +181,11 @@ class NumericRecordBatch(RecordBatch):
         Each column is formatted as the repr formats it. Inside a JAX trace the
         result is ``None``, so the notebook shows the repr.
         """
-        return rows_html(self._display_head(), self._columns.items()) if self._columns else None
+        return rows_html(self._repr_summary(structure=False), self._value_rows())
+
+    def _value_rows(self) -> list[tuple[str, Any]]:
+        """Each field's path and its stored column, batch axes leading, in canonical order."""
+        return list(self._columns.items())
 
     # -- single-field coercion ----------------------------------------------
     #
