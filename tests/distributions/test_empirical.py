@@ -711,6 +711,14 @@ class TestMarginals:
         assert np.allclose(marginal.weights, _RECORD_WEIGHTS)
         assert jnp.allclose(marginal._mean(), law._mean()["b"])
 
+    def test_a_selection_of_a_whole_term_law_holds_its_atoms_as_one_field(self):
+        atoms = jnp.arange(4.0)
+        law = EmpiricalDistribution(atoms, component="e")
+        selected = law._marginal(("e",))
+        assert isinstance(selected, EmpiricalDistribution)
+        assert list(selected.event_spec.components) == ["e"]
+        assert jnp.array_equal(selected.atoms.raw["e"], atoms)
+
     def test_the_marginal_of_a_group_is_its_subtree_whole(self):
         law = EmpiricalDistribution(_mixed_atoms(), label="m")
         marginal = law._marginal("g")

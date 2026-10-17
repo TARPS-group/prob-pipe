@@ -9,7 +9,13 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from probpipe import MultivariateNormal, NumericArraySpec, OutputSpec
+from probpipe import (
+    MultivariateNormal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    OutputSpec,
+)
 from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._loo import (
     _add_log_likelihood,
@@ -102,6 +108,12 @@ class TestAsNumpy:
 
     def test_none_returns_none(self):
         assert _as_numpy(None) is None
+
+    def test_a_numeric_array_and_an_array_batch_convert_through_raw(self):
+        stored = jnp.arange(3.0)
+        batch = NumericArrayBatch(stored, "draw", element_spec=NumericArraySpec(()), label="x")
+        np.testing.assert_array_equal(_as_numpy(NumericArray(stored, label="x")), [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(_as_numpy(batch), [0.0, 1.0, 2.0])
 
     def test_values_attribute(self):
         class _HasValues:

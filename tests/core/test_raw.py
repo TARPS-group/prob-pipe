@@ -34,7 +34,7 @@ from probpipe.core._fingerprint import fingerprint
 from probpipe.core._immutable import transient_memo
 from probpipe.core._record_spec import NumericRecordSpec
 from probpipe.core.provenance import Provenance
-from probpipe.core.tracked import TrackedTerm, _is_raw_form
+from probpipe.core.tracked import TrackedTerm, _as_raw_form, _is_raw_form
 from probpipe.distributions._batches import _element_source
 from probpipe.distributions._conditional import ConditionalDistribution
 from probpipe.distributions._distribution import Distribution
@@ -453,6 +453,21 @@ class TestARawFormRefusesProvenance:
 
     def test_a_relabeled_copy_is_not_a_raw_form(self):
         assert not _is_raw_form(Gaussian("g").raw.with_label("h"))
+
+    def test_a_slotted_raw_form_clears_its_mark_on_a_copy(self):
+        class Slotted(TrackedTerm):
+            __slots__ = ("_expression", "_label", "_label_collapse", "_provenance")
+
+            def __init__(self):
+                self._init_tracked("slotted")
+
+            @property
+            def raw(self):
+                return self
+
+        term = _as_raw_form(Slotted())
+        assert repr(term._provenance) == "<raw form>"
+        assert _is_raw_form(term) and not _is_raw_form(copy.copy(term))
 
     def test_an_unpickled_copy_can_carry_provenance(self):
         restored = pickle.loads(pickle.dumps(Gaussian("g").raw))
