@@ -53,6 +53,8 @@ They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines 
     The title and the rest of the body name each change by its behaviour, never by a step label such as "S3" (`STYLE_GUIDE.md` §10, rule 9).
 11. **One vocabulary.** Terms come from `design/glossary.md` and the plans. A PR that needs a new term adds it to the glossary in the same PR, and checks that it collides with no existing term.
 12. **Broad reviews at checkpoints only.** `/review-all` runs four reviews and costs much time and many tokens. Run it when it is a good moment to assess the push broadly, such as after a group of steps has merged, never after each PR. A single PR gets `/review-pr` or `/check-pr`.
+13. **Review before asking for review.** Open the PR as a draft and run `/review-pr` on it. When `plans/README.md` exists, the skill also checks the PR against these directives, `decisions.md`, and the step's plan section. Fix each finding, or answer it in the PR, and then mark the PR ready for review. The maintainer reviews a PR once it is marked ready.
+14. **Replace stale code rather than work around it.** This push overhauls these parts of ProbPipe, and the goal is code a person can read through and follow. Code that conflicts with the plans, or that has bad names, poor organization, or duplicated logic, is rewritten or removed, not patched around and not edited piecemeal to fit. Writing a clean replacement from scratch is often the better choice, within the step's scope; a larger rewrite outside it is recorded in `deferred.md` or raised with the maintainer.
 
 ## When to stop and ask
 
@@ -139,7 +141,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`, replacing the five probes, `is_jax_traceable` included; the error for a false claim | § 13 | E1 | yes |
 | E3a | In `core/`: sets of evaluation points, the executor registry and its built-in executors, the call context's executor choice and evaluation context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
 | E3b | The executors replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`; `dispatch` and `max_workers` go; the closed execution contract goes | § 13 | E3a, S2a | yes |
-| E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr; lazy token registration; failures; the output check per evaluation point | § 13 | E2, E3b, S2b | yes |
+| E4 | The boundary: embedded calls and call tokens in every JAX program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr; lazy token registration; failures; the output check per evaluation point | § 13 | E2, E3b, S2b | yes |
 | E5 | `evaluate_at_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | § 13 | E4 | yes |
 | E6 | The public target interface: `InferenceTarget` and `make_posterior`, with the run key passed as #554 §8 states | § 13 | E4 | yes |
 | E7 | At most one run per distinct evaluation point inside a call | § 13 | E4 | yes, cut second |
@@ -161,14 +163,15 @@ A GitHub tracking issue holds each step's state and PR, as `CONTRIBUTING.md` § 
 
 ## Ending a session
 
-1. Open the PR into `dev/overhaul`, with a body that follows directives 4, 9, and 10 and the PR template.
-2. Comment on the tracking issue with the PR link.
-3. Record any decision in `decisions.md`, and any postponed work in `deferred.md`, in the same PR.
-4. Create the handoffs (below).
+1. Open the PR into `dev/overhaul` as a draft, with a body that follows directives 4, 9, and 10 and the PR template.
+2. Run `/review-pr` on it, fix or answer each finding, and mark it ready for review (directive 13).
+3. Comment on the tracking issue with the PR link.
+4. Record any decision in `decisions.md`, and any postponed work in `deferred.md`, in the same PR.
+5. Create the handoffs (below).
 
 ## Handoffs
 
-When a session opens its PR, it creates a handoff for each step that lists its own step among its dependencies and whose other dependencies have each merged or are open as PRs.
+When a session marks its PR ready for review, it creates a handoff for each step that lists its own step among its dependencies and whose other dependencies have each merged or are open as PRs.
 Two sessions may then create a handoff for the same step; the new session's check of the tracking issue stops the second.
 A handoff whose dependencies have not merged when it is opened stacks on them or stops (§ Starting a session); the maintainer opens it again later.
 When this `plans/` PR merges, its session creates the handoffs for S0, CC, and E0, and for P0b and PV once the maintainer has decided OD5 and OD2. The session that opens CC's PR creates E1's handoff. A handoff that stopped because a dependency had not merged is opened again by the maintainer.
@@ -215,5 +218,6 @@ At a checkpoint:
 ## When the push ends
 
 Steps S0 and E1 move the design into `design/`, which stays the single source of the target design; later steps update `design/` with their code.
-Once every step before the workshop has merged and the post-workshop work is recorded, `plans/` is deleted; git keeps its history.
+Before `plans/` is deleted, one PR re-evaluates the repository's rule documents against this push: `STYLE_GUIDE.md`, `CONTRACTS.md`, `CONTRIBUTING.md`, `AGENTS.md`, and the skills in `.claude/skills/`. It moves into them every directive of this file that proved useful and is not already there, such as the code-quality rules of directive 5 and the rule of directive 14, so the standards outlive the push.
+Once that PR has merged, every step before the workshop has merged, and the post-workshop work is recorded, `plans/` is deleted; git keeps its history.
 The items left in `deferred.md` become GitHub issues.

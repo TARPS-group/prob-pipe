@@ -36,6 +36,9 @@ knowledge of ProbPipe conventions, as they may have changed.
 - `design/README.md`, `design/glossary.md`, and the design section of each
   abstraction the PR changes, which `design/package-structure.md` § The tree
   lists beside each module
+- `plans/README.md`, when it exists at the base ref: a multi-PR push is running.
+  If the PR implements one of its steps, also read `plans/decisions.md` and
+  every current plan that `plans/README.md` lists, and run check 2.9
 
 ### 1b. Fetch the PR
 
@@ -173,6 +176,22 @@ documentation:
   same pin elsewhere in the repo, and reachable by the automated bumpers
   (Dependabot, `pre-commit autoupdate`)? An inline pin no bumper parses will
   silently drift.
+
+### 2.9 The push's plan (only when `plans/README.md` exists)
+
+- Which step does the PR implement? Does it deliver that step's plan section,
+  and does it meet the step's done-condition?
+- Check each standing directive of `plans/README.md` in turn, with evidence:
+  no partial migration, no bridging code, names that say what each thing is,
+  modules ordered from the public API down, no duplicated helper, comments that
+  earn their place, docstrings written for users, and stale code replaced
+  rather than worked around.
+- Does the PR contradict any settled entry of `plans/decisions.md`, or settle a
+  design question that `plans/README.md` § When to stop and ask reserves for
+  the maintainer?
+- Does the body's "Fit with the plan" section name the plan sections, the
+  departures, the decisions recorded, and the code reused or removed, and does
+  it match the diff?
 
 ## Step 3: Present findings
 

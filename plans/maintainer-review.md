@@ -9,7 +9,7 @@ Each item says why it matters, what is recommended, and where to read more.
 1. **The reconciled plan was written.** [`declarations-and-addressing.md`](declarations-and-addressing.md) replaces #571's body, jhuggins's reply, and the grammar-B plan, following the precedence you set (grammar B, then the reply, then the body). It defines everything from first principles and gives each step a done-condition.
 2. **The call-context proposal was reviewed and revised three times.** [`call-context-proposal.md`](call-context-proposal.md), § 13, lists every revision.
 3. **Four adversarial reviews ran, each with scratch tests against JAX and the code:**
-   - **Round 1:** the execution plan and the call context. It found two blockers: no token was passed to embedded calls inside the inference runners, and the detection of programs with embedded calls was unsound.
+   - **Round 1:** the execution plan and the call context. It found two blockers: no token was passed to embedded calls inside the inference runners, and the detection of JAX programs with embedded calls was unsound.
    - **Round 2a:** the reconciled plan.
    - **Round 2b:** consistency across every plan.
    - **Round 3:** verification of all the fixes.
@@ -31,7 +31,7 @@ Each item says why it matters, what is recommended, and where to read more.
 
 ### M2. The call-context plan
 
-**Why.** It is the one mechanism that carries per-call state (`config` blocks, inherited controls, Monte Carlo draw counts, the executor choice, the call token, the JAX settings) into threads, processes, Prefect, and host callbacks inside compiled programs. It unifies jhuggins's #587 with the execution plan, so nothing is built twice. Read the proposal in full; its § 1 summarizes it in eleven statements.
+**Why.** It is the one mechanism that carries per-call state (`config` blocks, inherited controls, Monte Carlo draw counts, the executor choice, the call token, the JAX settings) into threads, processes, Prefect, and host callbacks inside compiled JAX programs. It unifies jhuggins's #587 with the execution plan, so nothing is built twice. Read the proposal in full; its § 1 summarizes it in eleven statements.
 
 **The design in brief:**
 - **One value.** One frozen `_CallContext`, in one context variable, in `core/_call_context.py`. #587's three context variables become three of its fields: `config_blocks`, `passed_controls`, and `draw_counts`. The execution steps add their own fields to the same type.
@@ -40,10 +40,10 @@ Each item says why it matters, what is recommended, and where to read more.
 - **Transport:**
   - within a thread, the context variable;
   - across threads, Prefect, and processes, the evaluation context as picklable data;
-  - into compiled programs, a `uint32` call token, looked up in a table.
+  - into compiled JAX programs, a `uint32` call token, looked up in a table.
 - **Tokens only where they are needed.** A call registers a token only when it runs a program that stages an embedded call, found by searching the program's jaxpr. Only such a call waits for its programs before it closes, so every other call keeps JAX's asynchronous dispatch.
 - **Settings while tracing.** Each `config` setting declares its kind:
-  - *traced*, such as `num_samples`: part of the compiled program's key;
+  - *traced*, such as `num_samples`: part of the compiled JAX program's key;
   - *presentation*, such as `notation.max_depth`: readable anywhere, never part of a key.
 - **Renames:**
   - `record` → `draw_counts`;
@@ -56,10 +56,10 @@ Each item says why it matters, what is recommended, and where to read more.
 |---|---|---|
 | OD1 | `config` blocks are a field of the one context, not a separate variable | Accept |
 | OD2 | The provenance mode becomes a per-call setting, which fixes a bug in #587 (M4) | Accept, as step PV |
-| OD3 | A callback in a program the user compiles runs under the empty context on every thread | Accept: otherwise `jit` and `pmap` read different settings |
+| OD3 | A callback in a JAX program the user compiles runs under the default context on every thread | Accept: otherwise `jit` and `pmap` read different settings |
 | OD4 | Process workers return their Monte Carlo draw counts with their outcomes, starting in E3a | Accept |
 | OD5 | #587 creates the one context before it merges, rather than a follow-up PR (M3) | Accept |
-| OD6 | A compiled program's key holds the passed controls and the traced settings only | Accept (option A′) |
+| OD6 | A compiled JAX program's key holds the passed controls and the traced settings only | Accept (option A′) |
 | OD7 | An embedded call inside a program the `jax` executor compiles uses the call's executor, so `growth.using(executor="slurm")` sends the opaque `forward` inside it to the cluster | Accept; Q8 then covers only calls an evaluation point makes in Python |
 | OD8 | The program store holds `jax.jit` objects, which JAX itself keys by its global settings | Accept |
 
@@ -176,7 +176,7 @@ Two judgements to check:
 ### M10. The call-context revisions beyond the first draft
 
 Read the proposal's § 13:
-- tokens only for programs with embedded calls;
+- tokens only for JAX programs with embedded calls;
 - the narrowed key (OD6);
 - the name `_ContextBoundFunction`;
 - `embedded_calls` in place of `callbacks`, since `jax.debug.print` is also a callback;
