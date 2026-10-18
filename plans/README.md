@@ -98,7 +98,7 @@ Each step's content and its done-condition are stated where the step's plan sect
 
 **Priorities and off-ramps.** The push aims to merge every step marked "before" by the freeze, with several people and sessions working in parallel. The most fundamental contracts start first and are never cut; the rest are off-ramps, cut in a fixed order if the checkpoint of 2026-10-22 finds time short.
 
-1. **Never cut**, started first as their dependencies allow: CC, P0b, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6. These are the declarations and subscripts a user types, the call context, executor dispatch for traceable and opaque functions, the boundary, and the public target interface.
+1. **Never cut**, started first as their dependencies allow: P0b, PV, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6. These are the declarations and subscripts a user types, the call context, executor dispatch for traceable and opaque functions, the boundary, and the public target interface.
 2. **Off-ramps**, cut in this order: E8, then E7, then G1b, then E5, then G1a, then S4. Each cut keeps the steps above it buildable: cutting E5 also cuts G1b, which depends on it, and cutting S4 also cuts G1a.
 
 A clean cut means:
@@ -117,7 +117,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 |---|---|---|
 | P0 | The in-flight PRs #586 and #587 merge (#575, #583, and #474 merged on 2026-10-17) | — |
 | P0b | The call context is created as `execution-layer.md` § 6.16 describes, in #587 before it merges (decided 2026-10-18; the maintainer may push the commits to jhuggins's branch) | #586 |
-| PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (decided 2026-10-18) | P0, P0b |
+| PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame and the Prefect payload stop keeping their own copy (decided 2026-10-18; `execution-layer.md` § 6.16, "The provenance mode per call (step PV)", states it and its done-condition); PV adds the call context's `session_config_values` field, with the `provenance` section only, which E3a extends to every section | P0, P0b |
 | PL | This `plans/` PR merges, with the call context folded into `execution-layer.md` § 6.16 and the superseded sources deleted | every item of `gaps-and-conflicts.md` and every open point of `declarations-and-addressing.md`, all settled on 2026-10-18 |
 
 ### Declarations and addressing
@@ -142,7 +142,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
 | E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_evaluation_keys.py`), and "managed work item" renamed "evaluation point" in every code name, docstring, and test; a derived operation's "identity" renamed its "formula", and the identity route its "derived route", in `operations/`, VI.0, and the glossary | `execution-layer.md` § 13 | PL, P0 | yes |
-| E1 | Design text: V.9 rewritten around sets of evaluation points and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | PL | yes |
+| E1 | Design text: V.9 rewritten around sets of evaluation points and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | PL, P0 | yes |
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`, replacing the five probes, `is_jax_traceable` included; the error for a false claim | § 13 | E1 | yes |
 | E3a | In `core/`: sets of evaluation points, the executor registry and its built-in executors, the call context's executor choice and evaluation context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its cache key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
 | E3b | The executors replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`; `dispatch` and `max_workers` go; the closed execution contract goes | § 13 | E3a, S2a | yes |
