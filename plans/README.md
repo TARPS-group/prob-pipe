@@ -137,7 +137,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
-| E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_evaluation_keys.py`), and "managed work item" renamed "evaluation point" in every code name, docstring, and test | `execution-layer.md` § 13 | PL, P0 | yes |
+| E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_evaluation_keys.py`), and "managed work item" renamed "evaluation point" in every code name, docstring, and test; a derived operation's "identity" renamed its "formula", and the identity route its "derived route", in `operations/`, VI.0, and the glossary | `execution-layer.md` § 13 | PL, P0 | yes |
 | E1 | Design text: V.9 rewritten around sets of evaluation points and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | CC | yes |
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`, replacing the five probes, `is_jax_traceable` included; the error for a false claim | § 13 | E1 | yes |
 | E3a | In `core/`: sets of evaluation points, the executor registry and its built-in executors, the call context's executor choice and evaluation context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its cache key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |

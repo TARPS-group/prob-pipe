@@ -63,8 +63,8 @@ This proposal replaces them with one.
 
 The design in eleven statements:
 1. **One value.** One frozen `_CallContext` in one context variable carries every piece of per-call state. Each piece has one field as its home.
-2. **Who opens one.** Every call of a `Function`, operations included, opens a child call context when it starts and closes it when it ends. A `config.using` block and a derived operation's identity derive a changed copy of the current context, and open no call.
-3. **What a child takes.** A child keeps its parent's `config` blocks and the controls an enclosing identity passes. It resolves its own controls and starts its own Monte Carlo draw counts.
+2. **Who opens one.** Every call of a `Function`, operations included, opens a child call context when it starts and closes it when it ends. A `config.using` block and a derived route's scope derive a changed copy of the current context, and open no call.
+3. **What a child takes.** A child keeps its parent's `config` blocks and the controls an enclosing derived route passes. It resolves its own controls and starts its own Monte Carlo draw counts.
 4. **Precedence.** An explicit choice on the call wins, then a choice an enclosing call passes down, then the innermost `config.using` block, then the session's value, then the framework's default. `exact_only` accumulates.
 5. **Evaluation points.** An evaluation point runs under its call's *evaluation context*, which drops the executor choice, so a call made inside an evaluation point uses automatic selection (Q8).
 6. **Transport.** Within a thread the context variable carries the context. Across a thread, a Prefect task, or a process, the work function carries the evaluation context as plain data. Into a compiled JAX program, an integer call token carries it: the host side looks the context up in a thread-safe table of active calls.
@@ -87,7 +87,7 @@ The design in eleven statements:
 
 ### 2.1 Per-call state on `dev/overhaul`
 
-A derived operation, such as `standard_deviation = sqrt(variance)`, passes some of its controls to the calls its identity makes (VI.0, "Controls inside an identity").
+A derived operation, such as `standard_deviation = sqrt(variance)`, passes some of its controls to the calls its formula makes (VI.0, "Controls inside a derived route").
 PR #547 carries those controls into the engine's worker threads.
 
 **dev/overhaul** (`values/_function_base.py:713-805`):
@@ -212,7 +212,7 @@ Reading a setting of neither kind while ProbPipe traces one of its JAX programs 
 A value set on a call beats a value passed down by an enclosing call, which beats a `config.using` block, which beats the session's value.
 
 **CC6. Inheritance stops at a scope's edge.**
-A count an identity passes applies to the calls the identity makes directly, and an executor choice applies up to the nearest evaluation point.
+A count a derived route passes applies to the calls its formula makes directly, and an executor choice applies up to the nearest evaluation point.
 
 **CC7. A value never captures a call's settings.**
 A term built inside a call keeps no reference to the call's context.
@@ -231,7 +231,7 @@ A call context, a block, and an installed evaluation context each restore the pr
 - **Call context:** the `_CallContext` value that holds the per-call state of § 5.1. The **current call context** is the value of the context variable `_CALL_CONTEXT` in the running thread. Outside every call and block, it is the default context.
 - **Default context:** the `_CallContext` with every field at its default: no blocks, no passed controls, no call, automatic selection.
 - **`config` block:** the temporary values that `config.<section>.using(...)` or `config.using(...)` sets for the extent of a `with` statement (#587).
-- **Passed controls:** the `exact_only`, `max_evaluations`, and `num_samples` that a derived operation's identity passes to the calls it makes (VI.0). Today they are the value of `_INHERITED_CONTROLS`.
+- **Passed controls:** the `exact_only`, `max_evaluations`, and `num_samples` that a derived route passes to the calls its formula makes (VI.0). Today they are the value of `_INHERITED_CONTROLS`.
 - **Evaluation context:** the call context that an evaluation point of a call runs under, which `_CallContext.evaluation_context()` returns. It is the call's context without the executor choice, the embedded-call state, and the evaluation run table.
 - **Call token:** a `numpy.uint32` that names one open call context in the table of active calls (execution plan §5). Token 0 names no call. A call registers a token only before it runs a JAX program that stages an embedded call.
 - **JAX program with embedded calls:** a JAX program ProbPipe opens whose trace staged at least one embedded call. The program store finds this by searching the JAX program's jaxpr when it lowers the JAX program, before the JAX program first runs (§ 5.2).
@@ -272,7 +272,7 @@ class _CallContext:
       `opening_call` when it starts, and the previous context is restored when it
       ends, an error included.
     - A `config` block derives a changed copy with `with_config_block`, and an
-      operation's identity scope with `with_passed_controls`; neither opens a call.
+      operation's derived route's scope with `with_passed_controls`; neither opens a call.
     - An evaluation point runs under `evaluation_context()`, the call's context
       without its executor choice, its embedded-call state, and its run table, so a
       ProbPipe call made inside the evaluation point uses automatic selection.
@@ -360,7 +360,7 @@ Field by field:
 | Field | Type | Written by | Read by | Step | Today's home | Change |
 |---|---|---|---|---|---|---|
 | `config_blocks` | mapping of section to setting to value | `config.<section>.using` and `config.using`, through `with_config_block` | `_Section._current` in `core/config.py` | #587 | `_TEMPORARY` (#587) | **Change:** the variable goes; its value is a field |
-| `passed_controls` | mapping or `None` | `_passing_down` in an identity scope; `opening_call`, which clears the counts and keeps `exact_only` (today's `_EXACT_ONLY_BELOW`) | `opening_call` through `Function._inheriting` | #587 | `_INHERITED_CONTROLS` (#547, #586) | **Change:** the variable goes; its value is a field |
+| `passed_controls` | mapping or `None` | `_passing_down` in a derived route's scope; `opening_call`, which clears the counts and keeps `exact_only` (today's `_EXACT_ONLY_BELOW`) | `opening_call` through `Function._inheriting` | #587 | `_INHERITED_CONTROLS` (#547, #586) | **Change:** the variable goes; its value is a field |
 | `label` | `str` or `None` | `opening_call` | messages and warnings | #587 | none | new |
 | `controls` | mapping | `opening_call`: the view's `options` after `_inheriting`, without `executor` and `executor_options`, whose one home is `execution` | `_current_num_samples`, executors (E3a), requesters that read `method_options["on_failure"]` | #587 | `_MonteCarloRecord.num_samples` and `Function.options` | **Change:** `_MonteCarloRecord.num_samples` goes |
 | `draw_counts` | `_MonteCarloDrawCounts` | routes, through `_note_monte_carlo_draws`; `opening_call` and `_counting_monte_carlo_draws` create one | the call's provenance; the parent's counts on success, when the parent collects calls | #587 | `_MONTE_CARLO` (#586) | **Change:** renamed; the variable goes |
@@ -424,7 +424,7 @@ A JAX program that ProbPipe opens while tracing another is part of the outer JAX
 
 **Deriving without a call.** Two scopes change the current context without opening a call:
 - **A `config` block** derives `current.with_config_block(values)`: the enclosing blocks merged with the new values, an inner value winning.
-- **An identity scope** derives `current.with_passed_controls(passed)` for the extent of the identity's check and run.
+- **A derived route's scope** derives `current.with_passed_controls(passed)` for the extent of the identity's check and run.
 
 Each installs the derived context with `_under_call_context`, which resets the variable on exit.
 
@@ -451,14 +451,14 @@ The execution plan's §6.4 rule 2 now states this.
 For each control of a call, `opening_call` takes the first of these sources that gives a value:
 1. **The call's own explicit setting:** the `Function`'s `using` view, which overrides its decorator or constructor.
 2. **A value an enclosing call passes down:**
-   - the counts that an enclosing derived operation's identity passes to the calls it makes directly (VI.0);
+   - the counts that an enclosing derived route passes to the calls its formula makes directly (VI.0);
    - the executor choice of the enclosing call, for an opaque callable, up to the nearest evaluation point (execution plan §6.3, operation rules 1 to 5).
 3. **The innermost `config.using` block** that sets the control's default.
 4. **The session's value** in `config`.
 5. **The framework's default**, which is the session's initial value.
 
 `exact_only` is the one exception.
-It restricts route selection, so it is true when the call sets it or an enclosing identity passes it, whatever the call's own view says.
+It restricts route selection, so it is true when the call sets it or an enclosing derived route passes it, whatever the call's own view says.
 
 **Embedded calls inside a compiled set of evaluation points.** Q8 applies to a ProbPipe call that an evaluation point makes in Python, which opens a child of the evaluation context and so uses automatic selection. An embedded call inside a JAX program the `jax` executor compiles is not such a call: it is part of the call's own JAX program, and its host side finds the call's context by token, executor choice included. So `growth.using(executor="slurm")(prior)`, whose traceable body calls an opaque `forward`, sends `forward`'s evaluation points to `slurm` (OD7).
 
@@ -472,8 +472,8 @@ This one rule contains each of the three rules it reconciles:
 | VI.0 | an inherited count applies "unless that call's view sets its own" | source 1 before source 2 |
 
 One case needs a sentence of its own.
-A count passed by an identity beats a `config` block even when the block is opened inside the identity's scope, because the passed count is an explicit choice on the derived call.
-In practice this case does not arise. The calls that take a passed count are the ones the identity's body makes directly, and that body is ProbPipe's code, so no user's block opens between the identity and those calls.
+A count passed by an identity beats a `config` block even when the block is opened inside the derived route's scope, because the passed count is an explicit choice on the derived call.
+In practice this case does not arise. The calls that take a passed count are the ones the formula makes directly, and the formula is ProbPipe's code, so no user's block opens between the identity and those calls.
 
 A setting that is not a control, such as `config.notation.max_depth`, resolves from sources 3 to 5 at the moment it is read.
 
@@ -559,7 +559,7 @@ Three consequences follow.
 ### 5.6 Provenance and replay
 
 Provenance reports each setting once, at the call whose work used it, under the setting's own name:
-1. **Route metadata.** A Monte Carlo route reports `num_samples` from `draw_counts.provenance_num_samples`, and a lift reports `max_evaluations`, as #586 does. A derived operation's call reports the draws of its identity's calls, because its counts collect theirs.
+1. **Route metadata.** A Monte Carlo route reports `num_samples` from `draw_counts.provenance_num_samples`, and a lift reports `max_evaluations`, as #586 does. A derived operation's call reports the draws of its formula's calls, because its counts collect theirs.
 2. **Execution** (E3a, E4, E7). A call reports, from `evaluation_log`, each set of evaluation points it ran: the executor, its options, the number of evaluation points and of runs, and the failed or dropped evaluation points. An embedded call's sets of evaluation points are reported by the call that owns the token, never by a call that opened while tracing.
 3. **No block as such.** A `config` block is never recorded. Its effect is recorded through the resolved values that change a result, which items 1 and 2 already report. A setting that changes no result, such as `config.notation.max_depth`, is not recorded.
 4. **JAX's settings** (E8). A call that records a replay recipe records the root's `jax_settings` snapshot with the JAX version and the device count. It reads the snapshot from its context and never reads `jax.config` again, so the recorded values are the ones the call ran under.
@@ -590,7 +590,7 @@ Each name says what the thing is, and none uses "record" for anything but `Recor
 | (three context variables) | `_CallContext`, held in `_CALL_CONTEXT` | "call context" is the execution plan's term (§5) and is free in the glossary |
 | `_CarriedContext` | `_ContextBoundFunction(func, context)` | a function bound to the call context it runs under |
 | `_CarriedContext.record` | `_CallContext.draw_counts` | it holds the draw counts of Monte Carlo estimates |
-| `_CarriedContext.inherited` | `_CallContext.passed_controls` | VI.0 says an identity *passes* controls to its calls |
+| `_CarriedContext.inherited` | `_CallContext.passed_controls` | VI.0 says a derived route *passes* controls to the calls its formula makes |
 | `_CarriedContext.settings` | `_CallContext.config_blocks` | it holds the active `config.using` blocks, not every setting |
 | `_MonteCarloRecord` | `_MonteCarloDrawCounts` | |
 | `_MonteCarloRecord.num_samples` | removed; `_CallContext.controls["num_samples"]` | a second home of the resolved control |
@@ -624,7 +624,7 @@ The layering of `design/package-structure.md` and the decided Q5 place the code 
 | `core/_call_context.py` (new) | `_CallContext`, `_CALL_CONTEXT`, `current_call_context`, `_under_call_context`, `_MonteCarloDrawCounts`, `_counting_monte_carlo_draws`, `_note_monte_carlo_draws`, `_ContextBoundFunction`, `_carrying_call_context`; later `_ExecutionChoice` (E3a), `_ActiveCalls` (E4), the JAX settings snapshot (E3a) | `core/config.py` reads `config_blocks`, and `core/_evaluation_points.py` (E3a) carries the context, so it must be in `core/`. It imports nothing outside `core/`. |
 | `core/config.py` | the sections read `current_call_context().config_blocks`; `using` derives a context | as #587 |
 | `values/_function_base.py` | `_opening_call_context`, the decorator on `check`, `apply`, and `__call__`; `_passing_down` | the call's entry, as `_inheriting_controls` is today |
-| `operations/_operation.py` | `_identity_scope` calls `_passing_down`, unchanged | as today |
+| `operations/_operation.py` | `_derived_route_scope` calls `_passing_down`, unchanged | as today |
 | `functions/_execution.py` | `execute_many` wraps with `_carrying_call_context` until E3a replaces it with `EvaluationChunk` | as today |
 | `core/_evaluation_points.py`, `core/_executors.py` (E3a) | `EvaluationChunk` carries `evaluation_context()`; the dispatcher reads `execution` | execution plan §6.14 |
 | `functions/_boundary.py` (E4) | `_TRACED_CALL_TOKEN`, the staging of embedded calls, the host side | needs the `Function` engine |
@@ -772,7 +772,7 @@ with workflow_run(seed=4), config.sampling.using(num_samples=2048):
 
 Each case was tried against the contract as a skeptical reviewer would.
 
-1. **Nested calls.** `standard_deviation.using(num_samples=500)(y)` opens a context whose identity scope derives `passed_controls = {exact_only: False, num_samples: 500, ...}`. `variance` opens a child, takes 500 unless its own view sets a count, and clears the passed counts for its own inner calls. Its draw counts merge into `standard_deviation`'s on success, because the identity route collects calls. This is today's behaviour, with one variable in place of two.
+1. **Nested calls.** `standard_deviation.using(num_samples=500)(y)` opens a context whose derived route's scope derives `passed_controls = {exact_only: False, num_samples: 500, ...}`. `variance` opens a child, takes 500 unless its own view sets a count, and clears the passed counts for its own inner calls. Its draw counts merge into `standard_deviation`'s on success, because the derived route collects calls. This is today's behaviour, with one variable in place of two.
 2. **Threads inside a callback.** A host side that runs the `thread` executor gives each worker the evaluation context of the token's call. The worker's ProbPipe calls open their own contexts and tokens. ✅ `v06` ran a thread pool inside a callback, under `jit` and under `pmap`.
 3. **An exception mid-call.** The `finally` clause releases the token and restores the variable, and the draw counts are not merged (✅ `v07`: the variable was empty and the table was empty afterwards). An exception inside a worker evaluation point restores that worker's variable through `_under_call_context`, so a reused pool thread starts clean.
 4. **Two concurrent calls on different threads.** Each thread has its own context variable, each call its own token, and the compiled JAX program is shared. ✅ `v07`: two threads made five calls each through one compiled JAX program, and every callback found its own call.
@@ -1001,3 +1001,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 17 | (2026-10-18) "JAX program" replaces "program" wherever a compiled JAX program is meant, with a definition in § 4; *empty context* became *default context* and `is_empty()` became `is_default()`; *evaluation boundary* is dropped, since it named the place an evaluation point starts and no boundary; `_tracing_active()` became `_jax_tracing_active()`. | The maintainer's review. |
 | 18 | (2026-10-18) "Cache key" replaces "key" for what a cache looks a compiled JAX program up by, so "key" keeps its random-key and mapping senses; `_CallContext` gets a full docstring; the fields `evaluations_run` and `evaluation_runs`, easy to confuse, became `evaluation_log` and `run_table`. | The maintainer's review. |
 | 19 | (2026-10-18) `run_table` became `evaluation_run_table`, and `_RunTable` became `_EvaluationRunTable`. | The maintainer's review. |
+| 20 | (2026-10-18) A derived operation's "identity" is its **formula**, and the identity route is the **derived route**, so `passed_controls` are the controls a derived route passes to the calls its formula makes, and the identity scope is the derived route's scope (`_derived_route_scope`). | The maintainer's review. |

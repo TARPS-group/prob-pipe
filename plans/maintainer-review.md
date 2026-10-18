@@ -35,7 +35,7 @@ Each item says why it matters, what is recommended, and where to read more.
 
 **The design in brief:**
 - **One value.** One frozen `_CallContext`, in one context variable, in `core/_call_context.py`. #587's three context variables become three of its fields: `config_blocks`, `passed_controls`, and `draw_counts`. The execution steps add their own fields to the same type.
-- **Who opens one.** Every `Function` call opens a child context. A `config.using` block or an identity scope derives a changed copy and opens no call.
+- **Who opens one.** Every `Function` call opens a child context. A `config.using` block or a derived route's scope derives a changed copy and opens no call.
 - **One precedence rule:** the call's explicit setting, then a value passed down, then the innermost block, then the session value, then the default. `exact_only` accumulates.
 - **Transport:**
   - within a thread, the context variable;
