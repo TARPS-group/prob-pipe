@@ -490,7 +490,7 @@ The execution plan calls these same units **points**, and gathers them into poin
 Once step E3 merges, every managed work item is a point, so the design would have two words for one thing.
 **Fix:** the execution design text (step E1) replaces "managed work item" with "point" in V.8 and the glossary, and the module that merges `_managed.py` and `_broker.py` is named after what it does for a point (D6, Q16).
 
-**Status:** ✅ settled 2026-10-17. "Point" replaces "managed work item" everywhere, and the module is `functions/_point_keys.py`.
+**Status:** ✅ settled 2026-10-17. "Point" replaces "managed work item" everywhere, and the module is `functions/_point_keys.py`. *Superseded 2026-10-18: the term is "evaluation point", and the module is `functions/_evaluation_keys.py` (`decisions.md`).*
 
 ---
 

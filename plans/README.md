@@ -134,15 +134,15 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
-| E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_point_keys.py`), and "managed work item" renamed "point" in every code name, docstring, and test | `execution-layer.md` § 13 | PL, P0 | yes |
-| E1 | Design text: V.9 rewritten around point sets and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | CC | yes |
+| E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_evaluation_keys.py`), and "managed work item" renamed "evaluation point" in every code name, docstring, and test | `execution-layer.md` § 13 | PL, P0 | yes |
+| E1 | Design text: V.9 rewritten around sets of evaluation points and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | CC | yes |
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`, replacing the five probes, `is_jax_traceable` included; the error for a false claim | § 13 | E1 | yes |
-| E3a | In `core/`: point sets, the executor registry and its built-in executors, the call context's executor choice and point context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
+| E3a | In `core/`: sets of evaluation points, the executor registry and its built-in executors, the call context's executor choice and evaluation context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
 | E3b | The executors replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`; `dispatch` and `max_workers` go; the closed execution contract goes | § 13 | E3a, S2a | yes |
-| E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr; lazy token registration; failures; the per-point output check | § 13 | E2, E3b, S2b | yes |
-| E5 | `map_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | § 13 | E4 | yes |
+| E4 | The boundary: embedded calls and call tokens in every program ProbPipe opens that runs user or route code, the inference runners included; the search of the jaxpr; lazy token registration; failures; the output check per evaluation point | § 13 | E2, E3b, S2b | yes |
+| E5 | `evaluate_at_points` in lifting and sweeps, joint factors, laws built from functions, and expectations | § 13 | E4 | yes |
 | E6 | The public target interface: `InferenceTarget` and `make_posterior`, with the run key passed as #554 §8 states | § 13 | E4 | yes |
-| E7 | At most one run per distinct point inside a call | § 13 | E4 | yes, cut second |
+| E7 | At most one run per distinct evaluation point inside a call | § 13 | E4 | yes, cut second |
 | E8 | The JAX settings contract: the check at close and on the host side, and provenance | § 13 | E4 | yes, cut first |
 
 The post-workshop work of both tracks is listed in `deferred.md`.
@@ -176,7 +176,7 @@ When this `plans/` PR merges, its session creates the handoffs for S0, CC, and E
 In the Claude desktop app, a handoff is a task chip made with the `spawn_task` tool: the maintainer clicks it to open a new session in a fresh worktree.
 Where `spawn_task` is not available, post the same prompt as a comment on the PR, not in its body, since the prompt names step labels (directive 10).
 
-The chip's title names the step, such as "Implement step E3a: point sets and the executor registry".
+The chip's title names the step, such as "Implement step E3a: evaluation points and the executor registry".
 Its prompt stands alone, since the new session sees nothing of the old one, and follows this template:
 
 ```text

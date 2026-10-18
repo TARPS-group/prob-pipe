@@ -39,7 +39,7 @@ Each item says why it matters, what is recommended, and where to read more.
 - **One precedence rule:** the call's explicit setting, then a value passed down, then the innermost block, then the session value, then the default. `exact_only` accumulates.
 - **Transport:**
   - within a thread, the context variable;
-  - across threads, Prefect, and processes, the point context as picklable data;
+  - across threads, Prefect, and processes, the evaluation context as picklable data;
   - into compiled programs, a `uint32` call token, looked up in a table.
 - **Tokens only where they are needed.** A call registers a token only when it runs a program that stages an embedded call, found by searching the program's jaxpr. Only such a call waits for its programs before it closes, so every other call keeps JAX's asynchronous dispatch.
 - **Settings while tracing.** Each `config` setting declares its kind:
@@ -60,7 +60,7 @@ Each item says why it matters, what is recommended, and where to read more.
 | OD4 | Process workers return their Monte Carlo draw counts with their outcomes, starting in E3a | Accept |
 | OD5 | #587 creates the one context before it merges, rather than a follow-up PR (M3) | Accept |
 | OD6 | A compiled program's key holds the passed controls and the traced settings only | Accept (option A′) |
-| OD7 | An embedded call inside a program the `jax` executor compiles uses the call's executor, so `growth.using(executor="slurm")` sends the opaque `forward` inside it to the cluster | Accept; Q8 then covers only calls a point makes in Python |
+| OD7 | An embedded call inside a program the `jax` executor compiles uses the call's executor, so `growth.using(executor="slurm")` sends the opaque `forward` inside it to the cluster | Accept; Q8 then covers only calls an evaluation point makes in Python |
 | OD8 | The program store holds `jax.jit` objects, which JAX itself keys by its global settings | Accept |
 
 **Asked.**
@@ -100,7 +100,7 @@ Each item says why it matters, what is recommended, and where to read more.
 | O1 | Does `project` wrap at a field that holds a law or a function? Wrapping there breaks I13 for functions (`fit["posterior"]` would be declared a record while `fit(data)["posterior"]` is the law). | No. `project` never wraps, and a law's view adds the wrap on top. |
 | O2 | One naming rule for outputs whose one component is at the root | A producer names only what has no name of its own: a base term, or a batch whose element has only the default name `element`. Otherwise the returned term keeps its names. This **amends your decision** that a type hole filled with any spec with parts raises. |
 | O3 | How a batch's whole-element name is stored | In `BatchSpec`, whose own equality is name-sensitive. A batch's equality, fingerprints, and every pytree flatten use a name-free canonical form, recursively. This departs from the grammar-B plan's "beside the spec, as a label is", which leaked names through nested specs in a test. |
-| O4 | Do executors restore the declarations of their inputs? | Not before the workshop; point sets present raw values. |
+| O4 | Do executors restore the declarations of their inputs? | Not before the workshop; sets of evaluation points present raw values. |
 | O5 | Views at fields that hold a batch or a kernel | Extend the wrap to them, as for laws and functions. |
 | O6 | `Normal("x")[["x"]]` on a whole base term | Accept the whole name and return the wrap, which is what today's tuple form gives. |
 | O7 | `&` merges records but is elementwise on arrays | Keep both, and document the difference as a § 16 exception. |
@@ -125,7 +125,7 @@ The plan also lists R1–R6: points the charter has already resolved. Confirm th
 | Step | What it is |
 |---|---|
 | S2a, S2b | S2 split: S2a is the announced mechanical rename (`term_spec`, the mapping interface, about 50 modules); S2b is the behaviour |
-| E0 | A new mechanical step: #524's module moves, and "managed work item" renamed "point" in the code |
+| E0 | A new mechanical step: #524's module moves, and "managed work item" renamed "evaluation point" in the code |
 | E3a, E3b | E3 split: E3a builds the `core/` pieces, and E3b rewrites dispatch after S2a |
 | G1a, G1b | G1 split: G1a covers group views, library laws, and grouped sub-joints, and is never cut; G1b covers lifting and default outputs, comes after E5, and is cut third |
 | CC | Accept and fold the call context; it gates E1 and E3a |
@@ -170,8 +170,8 @@ Two judgements to check:
   - tokens are `uint32`;
   - a call with a token waits for its programs before releasing the token;
   - a `process` worker's initializer applies four JAX settings before it unpickles anything, since settings applied after unpickling turned float64 into float32 in a test.
-- **Marked post-workshop:** the common executor options `retries`, `retry_errors`, and `bisect` (until then an executor refuses them as unknown), SBC's point set of runs, and presenting arguments in the form #506 specifies (until then point sets present raw values).
-- **Moved into the core:** the per-point output check and its warning when a `float64` output is cast to `float32`, in E4.
+- **Marked post-workshop:** the common executor options `retries`, `retry_errors`, and `bisect` (until then an executor refuses them as unknown), SBC's evaluation points, one per inference run, and presenting arguments in the form #506 specifies (until then sets of evaluation points present raw values).
+- **Moved into the core:** the output check per evaluation point and its warning when a `float64` output is cast to `float32`, in E4.
 
 ### M10. The call-context revisions beyond the first draft
 
@@ -225,6 +225,7 @@ Beyond the open points of M5:
 
 None of these needs a decision before the workshop.
 
+- **"Point" became "evaluation point"** on 2026-10-18, a decision of the maintainer and jhuggins, and the plans use the new terms.
 - **#571's reply is partly wrong about `*`.** It motivates `&` by saying `*` multiplies records, but `NumericRecord` has no `*`. `&` on float arrays raises `TypeError` rather than computing an elementwise "and". The reconciled plan states both.
 - **`GaussianRandomFunction.__mul__` both composes and scales.** S3 keeps only the scaling.
 - **VI.8 orders a marginal's factors by path order** today (`marginal(model, ("b", "a"))` gives `b(b)·a(a)`). This changes under the tree-order rule.

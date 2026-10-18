@@ -84,7 +84,7 @@ This plan decides two things:
 
 The execution plan relies on this plan in two places.
 An embeddable `Function` needs a complete `term_spec` (execution plan §6.2), and claims that name parts of an input use the subscript reader of § 8.
-The execution plan uses two words that this plan does not: a **point** is one evaluation of a callable, and a **requester** is the code that asks for a set of points.
+The execution plan uses two words that this plan does not: an **evaluation point** is one evaluation of a callable, and a **requester** is the code that asks for a set of evaluation points.
 In this plan, a **consumer** is a term that declares what it consumes (§ 4.3).
 
 PR #576 (summaries keep the law's paths) and PR #575 (`raw` as a property) have merged into `dev/overhaul`.
@@ -1832,7 +1832,7 @@ One vocabulary runs through this plan and `design/`, and through the docstrings 
 | "packaging", "packaged" | "what a declaration exposes"; the verb *exposes* | The code already says `exposes_record` and `_exposed_kind`, and the verb avoids the sense of Python packaging. |
 | "produced slot", "output slot" (III.7, IV.2, VI.9) | "component" | A slot is a place where a consumer receives a value. |
 | "input slot" | "slot" | A slot is always an input. |
-| "map-like kind" (II.2) | "consumer" | It pairs with "producer". The execution plan says "requester" for the code that asks for a set of points. |
+| "map-like kind" (II.2) | "consumer" | It pairs with "producer". The execution plan says "requester" for the code that asks for a set of evaluation points. |
 | "packaged sub-joint" (IV.1), "packaged joint" (IV.2) | "grouped sub-joint" | A rename that gathers components under one node creates it. IV.2's paragraph "Packing the joint" becomes "The joint's event". |
 | "interior node", "subtree", "field group", "group of fields" | "group" | One word for a node of a record that is itself a record. |
 | "key" for a field path | "path"; "subscript" for what `[]` takes | "Key" means a random key, and a mapping's keys. |
@@ -1847,7 +1847,7 @@ One vocabulary runs through this plan and `design/`, and through the docstrings 
 Three steps edit `design/glossary.md`, each for its own terms:
 - step S0 owns the declaration and path terms below;
 - "call context" is added by #587, or by its follow-up PR, whichever creates the call context (README step P0b);
-- the execution terms, such as point, requester, and executor, are added by step E1.
+- the execution terms, such as evaluation point, requester, and executor, are added by step E1.
 
 **The glossary changes of step S0:**
 - **new entries:** base spec, spec with parts, node, group, leaf path, slot, producer, consumer, exposes, whole declaration, exposed declaration, address, component spec, wrap, position, subscript;
@@ -2233,7 +2233,7 @@ So §1.10 changes with S1 for paths and with S3 for `rename`, and §1.11 changes
 #### R5. G1's order relative to E5
 
 **Resolved by README § Steps:** G1 is split.
-G1b changes how a lift declares its result in `functions/_broadcast.py`, the module where E5 puts `map_points` into lifting, so G1b depends on E5.
+G1b changes how a lift declares its result in `functions/_broadcast.py`, the module where E5 puts `evaluate_at_points` into lifting, so G1b depends on E5.
 G1a does not edit `_broadcast.py`, so it depends only on S2b and S4.
 
 #### R6. Step assignments that README § Steps did not name
@@ -2309,13 +2309,13 @@ II.5 already names the stored declaration `BatchSpec.element`, and a batch's sta
 
 **Background.**
 This question crosses into [`execution-layer.md`](execution-layer.md).
-Under the `jax` executor a point set is traced, so a batch passed to a `Function` crosses a pytree flatten and loses its whole-element name (§ 15.3).
+Under the `jax` executor a set of evaluation points is traced, so a batch passed to a `Function` crosses a pytree flatten and loses its whole-element name (§ 15.3).
 Under the `sequential` executor the same batch may be passed to the body as the object itself, with its name.
 So a body that reads its argument's components could see `element` under one executor and `x` under another.
-The decisions of 2026-10-17 also say that point sets present raw values to the callable, as #506 proposes, so a body run by an executor sees no names today.
+The decisions of 2026-10-17 also say that sets of evaluation points present raw values to the callable, as #506 proposes, so a body run by an executor sees no names today.
 
 **Options.**
-1. The requester restores each input's declaration from the point set's stored input structure on the far side of every executor, so a body that receives a tracked batch sees the same names everywhere.
+1. The requester restores each input's declaration from the stored input structure of the evaluation points on the far side of every executor, so a body that receives a tracked batch sees the same names everywhere.
 2. Bodies run by an executor receive raw values only, as the decisions already say, so no body sees names; a body that asks for a tracked batch waits for the rest of #506, after the workshop.
 
 **Recommendation.** Option 2 before the workshop, since it follows the decisions and needs no code, with option 1 as the rule once #506 lets a body ask for tracked terms. The execution plan's §6.7 should state the same.
