@@ -137,6 +137,14 @@ The plan also lists R1–R6: points the charter has already resolved. Confirm th
 
 **Asked.** Confirm the structure and the cut order.
 
+**Update 2026-10-18.** You chose to aim for every step, with the fundamental steps first and clean off-ramps. `README.md` § Steps now proposes:
+- **never cut:** CC, P0b, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, and E6;
+- **off-ramps**, cut in order: E8, E7, G1b, E5, G1a, S4.
+
+Two judgements to check:
+- **E6 is in the never-cut group**, because you named the target interface as core on 2026-10-16.
+- **E5 is cut before G1a and S4**, because E4's embedded calls already let opaque code run inside joints and lifts; E5 only consolidates the remaining "vectorize or loop" sites.
+
 ### M7. A GitHub tracking issue for step status
 
 **Why.** If every step PR edited the status table in `README.md`, parallel PRs would conflict, and a row would show its state only after its PR merged. `CONTRIBUTING.md` already names a tracking issue's checklist as the tracker for a multi-PR plan.

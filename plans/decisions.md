@@ -19,6 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | The push aims for every pre-workshop step by the freeze, with the most fundamental steps first and clean off-ramps if time runs short. The proposed split (never cut: CC, P0b, S0, S1, S2a, S2b, S3, E0, E1, E2, E3a, E3b, E4, E6; off-ramps in order E8, E7, G1b, E5, G1a, S4) awaits the maintainer's confirmation under M6. | process | maintainer (strategy); coordinator (proposed split) |
 | 2026-10-18 | The workshop is on 2026-10-27. The code freezes at the end of 2026-10-25; checkpoints on 2026-10-20 (progress) and 2026-10-22 (the cut). | process | maintainer |
 | 2026-10-17 | The steps were restructured after three adversarial reviews: E0 (mechanical module moves and the rename to "point"), S2a/S2b, E3a/E3b, G1a/G1b, CC (accept and fold the call context), PV, and P0b; step state moves to a GitHub tracking issue. Provisional until the maintainer reviews `maintainer-review.md`. | process | coordinator, pending the maintainer |
 | 2026-10-17 | The text fixes T1–T6 are accepted; the execution plan says **requester** for the code that asks for a point set. | process | maintainer |
