@@ -252,7 +252,7 @@ Two adversarial reviews of the folded call context (`execution-layer.md` § 6.16
 | M13 | **Decided 2026-10-18:** settings are **static** (part of the cache key: `sampling.*`) or **inert** (cannot change a computed value: `notation.*`, `provenance.*`, `prefect.*`); a call opened inside a staging trace runs inline | | |
 | M14 | **Decided 2026-10-18:** notes made while tracing are captured and applied once per run; a later trace capturing a different note raises | | |
 | M15 | **Decided 2026-10-18:** shipped work carries the session's settings in effect when the call opened | | |
-| M16 | One rule for what a call's provenance reports: what it ran itself, plus, for a derived route, its formula's calls; each evaluation point notes into its own buffer, merged on success | Removes phantom counts from failed or retried evaluation points, and makes provenance the same under every executor | Merge logs into every parent call |
+| M16 | **Decided 2026-10-18:** two merge rules: derived routes collect their formula's calls; evaluation points always merge into their call, on success | | |
 | M17 | `executor` and `executor_options` resolve as one unit; `using(executor=None)` restores inheritance; to opt out of an inherited executor, name one such as `"sequential"`; a traceable callable is always compiled by `jax` | Options belong to the executor they were named with; the earlier wording paired one function's options with an inherited executor | `using(executor=None)` means automatic selection |
 
 Smaller choices the reviser made, for a glance:

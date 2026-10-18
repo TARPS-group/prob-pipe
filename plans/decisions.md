@@ -11,7 +11,7 @@ After that, a question raised during implementation is added here, written as RE
 
 | Raised | By | Question | Where it is explained |
 |---|---|---|---|
-| 2026-10-18 | call-context review | M16–M17: one provenance merge rule; resolving the executor and its options as one unit | `maintainer-review.md` § E; `execution-layer.md` § 6.16, "Decisions" |
+| 2026-10-18 | call-context review | M17: resolving the executor and its options as one unit | `maintainer-review.md` § E; `execution-layer.md` § 6.16, "Decisions" |
 | 2026-10-18 | call-context review, round 2 | A backward rule that runs after its call closed runs under the default context; a refusing executor raises when named for this callable and falls back when inherited; the `prefect` section is not shipped to workers; a new public error `UnshippableSettingError(RuntimeError)` for a setting that cannot travel to a worker; while ProbPipe is already tracing, an inner call's body runs inline in the outer trace (M22) | `execution-layer.md` § 6.16, "Decisions" (provisional table) |
 
 ## Settled
@@ -20,6 +20,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | M16: a call's provenance reports its own work; a derived route's call also collects the records of the calls its formula makes. Each evaluation point records into its own buffer, merged into its call on success, under every executor; process workers return their buffers with their outcomes. | execution | maintainer |
 | 2026-10-18 | M20: inside an evaluation point, under every executor, a setting no block sets reads the snapshot taken when the root call opened, so one call runs under one set of settings whatever the executor and the timing. This changes #587, where a worker thread reads the current session. | execution | maintainer |
 | 2026-10-18 | M15: work shipped to a worker process carries a snapshot of the settings in effect when the call opened, session values included (`session_config_values`); the worker applies it, and blocks still win over it. `prefect` is the exception (M21). | execution | maintainer |
 | 2026-10-18 | M14: notes made while JAX traces (the `num_samples` used, once-per-call warnings) are captured with the compiled JAX program's store entry and applied once per run, cold or warm, so provenance does not depend on whether the program was cached. A note must depend only on the cache key; a later trace that captures a different note raises. The contract and its tests are in `execution-layer.md` § 6.16. Static and inert settings are defined there precisely, and each setting's docstring and `docs/api/config.md` state its kind. | execution | maintainer |
