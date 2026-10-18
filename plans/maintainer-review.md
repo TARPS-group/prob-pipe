@@ -253,7 +253,7 @@ Two adversarial reviews of the folded call context (`execution-layer.md` § 6.16
 | M14 | **Decided 2026-10-18:** notes made while tracing are captured and applied once per run; a later trace capturing a different note raises | | |
 | M15 | **Decided 2026-10-18:** shipped work carries the session's settings in effect when the call opened | | |
 | M16 | **Decided 2026-10-18:** two merge rules: derived routes collect their formula's calls; evaluation points always merge into their call, on success | | |
-| M17 | `executor` and `executor_options` resolve as one unit; `using(executor=None)` restores inheritance; to opt out of an inherited executor, name one such as `"sequential"`; a traceable callable is always compiled by `jax` | Options belong to the executor they were named with; the earlier wording paired one function's options with an inherited executor | `using(executor=None)` means automatic selection |
+| M17 | **Decided 2026-10-18:** executor and options resolve as one unit; `using(executor=None)` restores inheritance; opt out by naming an executor; traceable callables always `jax` | | |
 
 Smaller choices the reviser made, for a glance:
 - **The evaluation run table (E7):** bounded at 65,536 entries with least-recently-used eviction. Concurrent misses on one evaluation point de-duplicate in flight.
