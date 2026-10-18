@@ -177,7 +177,7 @@ Two judgements to check:
 
 Read the proposal's § 13:
 - tokens only for JAX programs with embedded calls;
-- the narrowed key (OD6);
+- the narrowed cache key (OD6);
 - the name `_ContextBoundFunction`;
 - `embedded_calls` in place of `callbacks`, since `jax.debug.print` is also a callback;
 - presentation settings stay readable while tracing, because labelled terms read `notation.max_depth` inside traced code today;

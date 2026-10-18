@@ -367,7 +367,7 @@ So the plan passes a **call token** into every program as an argument, and the h
 4. **When Prefect's auto-detection goes.** Step E3 replaces the dispatch modes before the workshop, while the `prefect` executor comes after it. Retiring the auto-detection in E3 would remove behaviour before its replacement exists, which directive 8 rules out.
 
 **Options.**
-1. One call context, the execution plan's, that captures #587's carried context (its active blocks and its Monte Carlo draw counts) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the program-store key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
+1. One call context, the execution plan's, that captures #587's carried context (its active blocks and its Monte Carlo draw counts) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the cache key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
 2. Two mechanisms side by side.
 
 **Recommendation.** Option 1, agreed with jhuggins before step E3 starts.

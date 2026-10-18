@@ -37,8 +37,11 @@ knowledge of ProbPipe conventions, as they may have changed.
   abstraction the PR changes, which `design/package-structure.md` § The tree
   lists beside each module
 - `plans/README.md`, when it exists at the base ref: a multi-PR push is running.
-  If the PR implements one of its steps, also read `plans/decisions.md` and
-  every current plan that `plans/README.md` lists, and run check 2.9
+  A PR implements one of its steps when its body has a "Fit with the plan"
+  section or the push's tracking issue lists its branch. For such a PR, also read
+  `plans/decisions.md` and every current plan that `plans/README.md` lists, and
+  run check 2.9. Review any other PR as usual: the push's directives do not apply
+  to it, and check 2.9 is skipped, apart from its last bullet
 
 ### 1b. Fetch the PR
 
@@ -192,6 +195,9 @@ documentation:
 - Does the body's "Fit with the plan" section name the plan sections, the
   departures, the decisions recorded, and the code reused or removed, and does
   it match the diff?
+- For a PR outside the push: does it change code that a pending step of
+  `plans/README.md` § Steps rewrites? If so, note the overlap, so the two can be
+  coordinated; it is not a defect of the PR.
 
 ## Step 3: Present findings
 
