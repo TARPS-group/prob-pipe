@@ -116,7 +116,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | Step | What | Depends on |
 |---|---|---|
 | P0 | The in-flight PRs #586 and #587 merge (#575, #583, and #474 merged on 2026-10-17) | — |
-| P0b | The call context is created as `execution-layer.md` § 6.16 describes, in #587 before it merges (decided 2026-10-18; the maintainer may push the commits to jhuggins's branch) | #586 |
+| P0b | The call context is created as `execution-layer.md` § 6.16 describes, in #587 before it merges. jhuggins asked on 2026-10-18 that the push make these changes on his branch, so a session of the push does P0b by pushing commits to `dev/config-sections` | #586 |
 | PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame and the Prefect payload stop keeping their own copy (decided 2026-10-18; `execution-layer.md` § 6.16, "The provenance mode per call (step PV)", states it and its done-condition); PV adds the call context's `session_config_values` field, with the `provenance` section only, which E3a extends to every section | P0, P0b |
 | PL | This `plans/` PR merges, with the call context folded into `execution-layer.md` § 6.16 and the superseded sources deleted | every item of `gaps-and-conflicts.md` and every open point of `declarations-and-addressing.md`, all settled on 2026-10-18 |
 
@@ -179,7 +179,7 @@ A GitHub tracking issue holds each step's state and PR, as `CONTRIBUTING.md` § 
 When a session marks its PR ready for review, it creates a handoff for each step that lists its own step among its dependencies and whose other dependencies have each merged or are open as PRs.
 Two sessions may then create a handoff for the same step; the new session's check of the tracking issue stops the second.
 A handoff whose dependencies have not merged when it is opened stacks on them or stops (§ Starting a session); the maintainer opens it again later.
-When this `plans/` PR merges, its session creates the handoffs for S0, E0, E1, and PV. P0b is work on #587 itself, coordinated with jhuggins. A handoff that stopped because a dependency had not merged is opened again by the maintainer.
+When this `plans/` PR merges, its session creates the handoffs for S0, E0, E1, and PV. P0b's handoff tells its session to push its commits to #587's branch, `dev/config-sections`, and to rebase on #586 if it has changed. A handoff that stopped because a dependency had not merged is opened again by the maintainer.
 
 In the Claude desktop app, a handoff is a task chip made with the `spawn_task` tool: the maintainer clicks it to open a new session in a fresh worktree.
 Where `spawn_task` is not available, post the same prompt as a comment on the PR, not in its body, since the prompt names step labels (directive 10).
