@@ -1,6 +1,6 @@
 # The contracts push
 
-This folder holds the shared plans for a sequence of PRs that puts three areas of ProbPipe on precise contracts before the October 2026 workshop:
+This folder holds the shared plans for a sequence of PRs that puts three areas of ProbPipe on precise contracts before the workshop of 2026-10-27:
 1. **the execution layer:** how a computation runs, including code JAX cannot compile, and where (#580);
 2. **addressing:** how a path or a subscript picks out a part of a term (#573);
 3. **declarations:** how terms declare what they produce and consume, and the operations on those declarations (#571).
@@ -86,7 +86,7 @@ A choice that changes none of the above, such as a private helper's structure, i
 A step may not start until every step and PR it depends on has merged into `dev/overhaul`, or it stacks as § Branches and PRs allows.
 Each step's content and its done-condition are stated where the step's plan section says; this table owns only the order, the dependencies, and the cut.
 
-**Dates.** The workshop's date and the code freeze are set by the maintainer (decision pending). A checkpoint two working days before the freeze decides any cut.
+**Dates.** The workshop is on 2026-10-27, and the code freezes at the end of 2026-10-25, when `dev/overhaul` is tagged. A checkpoint on 2026-10-20 reviews progress, and a checkpoint on 2026-10-22 decides any cut.
 
 **The cut order.** If time runs short, steps are cut in this order: E8, then E7, then G1b. Every other step before the workshop is never cut.
 

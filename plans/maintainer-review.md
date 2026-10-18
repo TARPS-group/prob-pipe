@@ -27,6 +27,8 @@ Each item says why it matters, what is recommended, and where to read more.
 
 **Asked.** The workshop date and the freeze date. The charter then sets a checkpoint two working days before the freeze, where the cut is decided.
 
+**Answered 2026-10-18:** the workshop is on 2026-10-27, and the freeze is at the end of 2026-10-25. Checkpoints on 2026-10-20 (progress) and 2026-10-22 (the cut).
+
 ### M2. The call-context plan
 
 **Why.** It is the one mechanism that carries per-call state (`config` blocks, inherited controls, Monte Carlo draw counts, the executor choice, the call token, the JAX settings) into threads, processes, Prefect, and host callbacks inside compiled programs. It unifies jhuggins's #587 with the execution plan, so nothing is built twice. Read the proposal in full; its § 1 summarizes it in eleven statements.

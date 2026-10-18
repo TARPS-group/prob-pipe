@@ -19,6 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | The workshop is on 2026-10-27. The code freezes at the end of 2026-10-25; checkpoints on 2026-10-20 (progress) and 2026-10-22 (the cut). | process | maintainer |
 | 2026-10-17 | The steps were restructured after three adversarial reviews: E0 (mechanical module moves and the rename to "point"), S2a/S2b, E3a/E3b, G1a/G1b, CC (accept and fold the call context), PV, and P0b; step state moves to a GitHub tracking issue. Provisional until the maintainer reviews `maintainer-review.md`. | process | coordinator, pending the maintainer |
 | 2026-10-17 | The text fixes T1–T6 are accepted; the execution plan says **requester** for the code that asks for a point set. | process | maintainer |
 | 2026-10-17 | Steps run in the order of gaps F1: S1 with E2; S2 announced; E3's `core/` part alongside S2 and its `_broadcast`/`_sweep` rewrite after; S3 announced; E4 and E5 after S2 and S3; S4 after E3. | process *Superseded 2026-10-17: `README.md` § Steps owns the order; S3 and E4 may merge in either order.* | maintainer |
