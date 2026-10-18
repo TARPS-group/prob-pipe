@@ -79,7 +79,7 @@ This plan decides two things:
 
 **Out of scope:**
 - how a computation runs, and where: the execution plan, [`execution-layer.md`](execution-layer.md) (#580);
-- per-call state, such as `config` blocks and the call token: [`call-context-proposal.md`](call-context-proposal.md);
+- per-call state, such as `config` blocks and the call token: [`execution-layer.md`](execution-layer.md) § 6.16, "The call context";
 - the tutorials in `docs/tutorials/`, which are being rewritten separately (README directive 6).
 
 The execution plan relies on this plan in two places.
@@ -2188,6 +2188,8 @@ This is #571's checklist, rewritten for the reconciled design.
 ## 21. Open points
 
 This section lists the choices that the sources and [`decisions.md`](decisions.md) left open.
+
+> **Decided 2026-10-18:** the maintainer accepted every recommendation below, O1–O16 included (`decisions.md`). Each item keeps its options as the record of why.
 The resolved items come first, each with where it was resolved; they stay listed so the maintainer sees each one.
 The open items follow, each with options and a recommendation.
 The text above follows each recommendation and marks the place with the item's number.

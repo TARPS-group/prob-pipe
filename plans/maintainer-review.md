@@ -1,5 +1,7 @@
 # For the maintainer: what needs your opinion
 
+> **Answered 2026-10-18:** the maintainer accepted every recommendation below (`decisions.md`). This file is deleted before the `plans/` PR merges.
+
 This file lists what needs your review after the work of 2026-10-17. It is a working file of the `plans/` PR and is deleted before that PR merges.
 Answer in chat by item number, for example "M2: accept OD1–OD8 as recommended, but OD5 option B".
 Each item says why it matters, what is recommended, and where to read more.

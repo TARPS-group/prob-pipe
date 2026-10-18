@@ -20,7 +20,7 @@ Every session that works on the push reads this file in full before anything els
 | [`execution-layer.md`](execution-layer.md) | The execution-layer design (#580) |
 | [`declarations-and-addressing.md`](declarations-and-addressing.md) | The reconciled declarations and addressing design (#571, #573): grammar B, slots and components, subscripts and paths, `&`, and steps S0, S1, S2a, S2b, S3, S4, G1a, G1b, and G2–G5 |
 | [`declarations.md`](declarations.md), [`addressing.md`](addressing.md) | The two source texts the reconciled design replaced, kept for comparison until the maintainer has reviewed the reconciled text |
-| [`call-context-proposal.md`](call-context-proposal.md) | The design of the one call context that carries per-call state, under review; it is folded into `execution-layer.md` once accepted |
+| [`call-context-proposal.md`](call-context-proposal.md) | Superseded: the call-context design, folded into `execution-layer.md` § 6.16 on 2026-10-18; kept for its revision history and deleted before this PR merges |
 | [`deferred.md`](deferred.md) | Work found or postponed during the push, to become issues after the workshop |
 
 `declarations-and-addressing.md` replaces `declarations.md` and `addressing.md` (gaps D1); the two sources are deleted once the maintainer has reviewed it.
@@ -30,7 +30,7 @@ Every session that works on the push reads this file in full before anything els
 These apply to every person and agent working on the push.
 They add to `CONTRACTS.md`, `STYLE_GUIDE.md`, and the implementation guidelines of `execution-layer.md` §12, which still apply in full.
 
-1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the current plans in full: `declarations-and-addressing.md`, `execution-layer.md`, and `call-context-proposal.md` until it is folded into the execution plan. Read them whole, not only the sections the step implements. The superseded `declarations.md` and `addressing.md` are not plans; skip them. Check that the work fits the broader goals of the push and of `design/`.
+1. **Read the full design first.** Before working on a step, read this file, `decisions.md`, and the current plans in full: `declarations-and-addressing.md` and `execution-layer.md`, whose § 6.16 holds the call context. Read them whole, not only the sections the step implements. The superseded `declarations.md`, `addressing.md`, and `call-context-proposal.md` are not plans; skip them. Check that the work fits the broader goals of the push and of `design/`.
 2. **Design gaps go to the maintainer.** The plans will have gaps that implementation exposes. A gap that needs a real design decision is never settled by the implementer alone: follow § When to stop and ask. A fix to a gap serves the long-term design, never only the step at hand.
 3. **Contracts, not patches.** Write well-designed, coherent contracts. Never patch or work around a deeper design problem. If the problem is within the push's scope, fix it; otherwise record it in `deferred.md` for work after the workshop.
 4. **PR descriptions written for people.** Give the context, and do not assume the reviewer knows ProbPipe's internals. Show specific examples of new behaviour, such as code before and after. Avoid jargon and dense blocks of text. The reasoning should flow, and the summary of changes should read naturally.
@@ -109,17 +109,16 @@ A clean cut means:
 
 Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be frozen after any merge.
 
-**The critical path** has two chains. PL → S0 → S1 → S2b → S3, with S2b and E3b → S4 → G1a. PL → CC → E1 → E3a → E3b → E4 → E5 → G1b. S2a, E0, and E2 run beside them.
+**The critical path** has two chains. PL → S0 → S1 → S2b → S3, with S2b and E3b → S4 → G1a. PL → E1 → E3a → E3b → E4 → E5 → G1b. S2a, E0, and E2 run beside them.
 
 ### Before any step
 
 | Step | What | Depends on |
 |---|---|---|
 | P0 | The in-flight PRs #586 and #587 merge (#575, #583, and #474 merged on 2026-10-17) | — |
-| P0b | The call context is created as `call-context-proposal.md` § 7.2 describes: in #587 before it merges if the maintainer chooses OD5 option A, in a follow-up PR if option B (decision pending) | #586 |
-| PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (call-context OD2, pending) | P0, P0b |
-| PL | This `plans/` PR merges | every item of `gaps-and-conflicts.md` except D7, and the open points O1–O16 of `declarations-and-addressing.md` |
-| CC | The maintainer accepts `call-context-proposal.md` (gaps D7), and a PR folds it into `execution-layer.md` | PL |
+| P0b | The call context is created as `execution-layer.md` § 6.16 describes, in #587 before it merges (decided 2026-10-18; the maintainer may push the commits to jhuggins's branch) | #586 |
+| PV | The provenance mode becomes a per-call setting, and the `workflow_run` frame stops keeping its own copy (decided 2026-10-18) | P0, P0b |
+| PL | This `plans/` PR merges, with the call context folded into `execution-layer.md` § 6.16 and the superseded sources deleted | every item of `gaps-and-conflicts.md` and every open point of `declarations-and-addressing.md`, all settled on 2026-10-18 |
 
 ### Declarations and addressing
 
@@ -143,7 +142,7 @@ Since every merge leaves `dev/overhaul` coherent (directive 7), the code can be 
 | Step | What | Plan section | Depends on | Before |
 |---|---|---|---|---|
 | E0 | **Announced, mechanical.** #524's two module moves (`_execution_contract.py` into `_execution.py`; `_managed.py` and `_broker.py` into `_evaluation_keys.py`), and "managed work item" renamed "evaluation point" in every code name, docstring, and test; a derived operation's "identity" renamed its "formula", and the identity route its "derived route", in `operations/`, VI.0, and the glossary | `execution-layer.md` § 13 | PL, P0 | yes |
-| E1 | Design text: V.9 rewritten around sets of evaluation points and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | CC | yes |
+| E1 | Design text: V.9 rewritten around sets of evaluation points and executors, the new V.13, the controls in V.2 and VI.0, the glossary | § 13 | PL | yes |
 | E2 | Claims and the probe result: `traceable`, `vectorized`, one probe per callable and input structure, shared by `using` copies and run by `check`, replacing the five probes, `is_jax_traceable` included; the error for a false claim | § 13 | E1 | yes |
 | E3a | In `core/`: sets of evaluation points, the executor registry and its built-in executors, the call context's executor choice and evaluation context, the program store of `jax.jit` objects that traces and lowers each program before its first run, with the passed controls and the traced settings in its cache key, and the JAX settings shipped to process workers; the controls `executor` and `executor_options` | § 13 | E0, E1, P0b, PV | yes |
 | E3b | The executors replace the dispatch modes in `_broadcast.py`, `_sweep.py`, and `_execution.py`; `dispatch` and `max_workers` go; the closed execution contract goes | § 13 | E3a, S2a | yes |
@@ -157,7 +156,7 @@ The post-workshop work of both tracks is listed in `deferred.md`.
 
 ## Status
 
-A GitHub tracking issue holds each step's state and PR, as `CONTRIBUTING.md` § PR Workflow describes for a multi-PR plan. The maintainer creates it when this PR merges (pending the maintainer's approval). Step PRs never edit § Steps, so parallel PRs do not conflict on this file.
+A GitHub tracking issue holds each step's state and PR, as `CONTRIBUTING.md` § PR Workflow describes for a multi-PR plan. The maintainer approved it on 2026-10-18; it is created when this PR merges. Step PRs never edit § Steps, so parallel PRs do not conflict on this file.
 
 ## Starting a session on a step
 
@@ -180,7 +179,7 @@ A GitHub tracking issue holds each step's state and PR, as `CONTRIBUTING.md` § 
 When a session marks its PR ready for review, it creates a handoff for each step that lists its own step among its dependencies and whose other dependencies have each merged or are open as PRs.
 Two sessions may then create a handoff for the same step; the new session's check of the tracking issue stops the second.
 A handoff whose dependencies have not merged when it is opened stacks on them or stops (§ Starting a session); the maintainer opens it again later.
-When this `plans/` PR merges, its session creates the handoffs for S0, CC, and E0, and for P0b and PV once the maintainer has decided OD5 and OD2. The session that opens CC's PR creates E1's handoff. A handoff that stopped because a dependency had not merged is opened again by the maintainer.
+When this `plans/` PR merges, its session creates the handoffs for S0, E0, E1, and PV. P0b is work on #587 itself, coordinated with jhuggins. A handoff that stopped because a dependency had not merged is opened again by the maintainer.
 
 In the Claude desktop app, a handoff is a task chip made with the `spawn_task` tool: the maintainer clicks it to open a new session in a fresh worktree.
 Where `spawn_task` is not available, post the same prompt as a comment on the PR, not in its body, since the prompt names step labels (directive 10).

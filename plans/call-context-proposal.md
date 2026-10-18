@@ -1,7 +1,7 @@
 # The call context: one mechanism for per-call state
 
-> **Status: proposal, for the maintainer's review.** Not posted.
-> It answers item D7 of [`gaps-and-conflicts.md`](gaps-and-conflicts.md) and follows the two decisions of 2026-10-17 in [`decisions.md`](decisions.md): one call context implemented once, and no name that uses "record" for anything but `Record`.
+> **Status: superseded on 2026-10-18** by [`execution-layer.md`](execution-layer.md) § 6.16, into which it was folded after the maintainer approved it. It is kept until this PR merges for its revision history (§ 13).
+> It answered item D7 of [`gaps-and-conflicts.md`](gaps-and-conflicts.md) and follows the two decisions of 2026-10-17 in [`decisions.md`](decisions.md): one call context implemented once, and no name that uses "record" for anything but `Record`.
 >
 > **Revised twice on 2026-10-17**, after a first review and after an adversarial review (§ 13 lists the revisions). The first revision:
 > 1. a call registers a token, and waits for its JAX programs, only when it runs a JAX program that stages an embedded call, so every other call keeps JAX's asynchronous dispatch;
