@@ -389,7 +389,7 @@ The decorator that wraps `check`, `apply`, and `__call__` today, `_inheriting_co
 def _opening_call_context(method):
     """*method* of a Function, run in a call context of its own, opened from the current one."""
     @wraps(method)
-    def entered(self, /, *args, **kwargs):
+    def run_in_child_call_context(self, /, *args, **kwargs):
         parent = current_call_context()
         view = self if parent.passed_controls is None else self._inheriting(parent.passed_controls)
         context = parent.opening_call(
@@ -399,7 +399,7 @@ def _opening_call_context(method):
         )
         with _call_context_open(context, parent):           # releases any token (E4) and restores on exit
             return method(view, *args, **kwargs)
-    return entered
+    return run_in_child_call_context
 ```
 
 `opening_call` builds the child:
@@ -1003,3 +1003,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 19 | (2026-10-18) `run_table` became `evaluation_run_table`, and `_RunTable` became `_EvaluationRunTable`. | The maintainer's review. |
 | 20 | (2026-10-18) A derived operation's "identity" is its **formula**, and the identity route is the **derived route**, so `passed_controls` are the controls a derived route passes to the calls its formula makes, and the identity scope is the derived route's scope (`_derived_route_scope`). | The maintainer's review. |
 | 21 | (2026-10-18) The record of the Monte Carlo draws a call took is named after the public control it reports: `draw_counts` became `num_samples_used`, `_MonteCarloDrawCounts` became `_NumSamplesUsed`, `_note_monte_carlo_draws` became `_note_num_samples_used`, and `_counting_monte_carlo_draws` became `_collecting_num_samples_used`; `execution` became `execution_choice`. | The maintainer's review: one name for what the user sees as `num_samples`, and "draw counts" also named an MCMC method's draws. |
+| 22 | (2026-10-18) The wrapper inside `_opening_call_context` is named `run_in_child_call_context`, not `entered`. | The maintainer's review. |
