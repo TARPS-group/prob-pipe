@@ -64,14 +64,14 @@ This proposal replaces them with one.
 The design in eleven statements:
 1. **One value.** One frozen `_CallContext` in one context variable carries every piece of per-call state. Each piece has one field as its home.
 2. **Who opens one.** Every call of a `Function`, operations included, opens a child call context when it starts and closes it when it ends. A `config.using` block and a derived route's scope derive a changed copy of the current context, and open no call.
-3. **What a child takes.** A child keeps its parent's `config` blocks and the controls an enclosing derived route passes. It resolves its own controls and starts its own Monte Carlo draw counts.
+3. **What a child takes.** A child keeps its parent's `config` blocks and the controls an enclosing derived route passes. It resolves its own controls and starts its own `num_samples_used`.
 4. **Precedence.** An explicit choice on the call wins, then a choice an enclosing call passes down, then the innermost `config.using` block, then the session's value, then the framework's default. `exact_only` accumulates.
 5. **Evaluation points.** An evaluation point runs under its call's *evaluation context*, which drops the executor choice, so a call made inside an evaluation point uses automatic selection (Q8).
 6. **Transport.** Within a thread the context variable carries the context. Across a thread, a Prefect task, or a process, the work function carries the evaluation context as plain data. Into a compiled JAX program, an integer call token carries it: the host side looks the context up in a thread-safe table of active calls.
 7. **Tracing.** ProbPipe resolves settings in Python, when a call opens. Code that ProbPipe traces may read only the settings declared traced, which are part of the JAX program's cache key; reading any other setting while ProbPipe traces raises. A value that only steers the host side travels by token, and every other value stays in Python.
-8. **Errors.** A call context closes in a `finally` clause: it releases its token if it registered one, merges its draw counts into its parent only on success, and restores the context variable. The engine raises a callback's recorded failures in place of whatever exception JAX raises.
+8. **Errors.** A call context closes in a `finally` clause: it releases its token if it registered one, merges its `num_samples_used` into its parent's only on success, and restores the context variable. The engine raises a callback's recorded failures in place of whatever exception JAX raises.
 9. **Tokens only where embedded calls are.** A call registers a token only before it runs a JAX program that stages an embedded call, and only such a call waits for its JAX programs before it closes. Every other call registers nothing and keeps JAX's asynchronous dispatch.
-10. **Names.** `_CallContext` in a new module `core/_call_context.py`. #587's `record` becomes `draw_counts`, `_MonteCarloRecord` becomes `_MonteCarloDrawCounts`, and `_CarriedContext` becomes `_ContextBoundFunction`. The token table is `_ActiveCalls`.
+10. **Names.** `_CallContext` in a new module `core/_call_context.py`. #587's `record` becomes `num_samples_used`, `_MonteCarloRecord` becomes `_NumSamplesUsed`, and `_CarriedContext` becomes `_ContextBoundFunction`. The token table is `_ActiveCalls`.
 11. **Order.** #587 creates the one context with the fields it needs before it merges. E3a adds the executor choice, its reset where each evaluation point starts, and the shipped JAX settings; E4 the embedded-call state (the token and the failures); E7 the evaluation run table; and E8 the check of the JAX settings, each as a field or a rule of the same type.
 
 **What #587 changes before it merges** (§ 7.2):
@@ -79,7 +79,7 @@ The design in eleven statements:
 2. the renames of § 6 apply;
 3. a new rule replaces the sentence of V.2 on tracing.
 
-**Open decisions** (§ 11): where `config` blocks are kept, where the provenance mode is kept, what a JAX program the user opens gets, whether process workers return their draw counts, whether #587 or a follow-up PR does the unification, what the cache key includes, whether embedded calls inside a compiled set of evaluation points use the call's executor, and what the program store holds (OD1–OD8).
+**Open decisions** (§ 11): where `config` blocks are kept, where the provenance mode is kept, what a JAX program the user opens gets, whether process workers return their `num_samples_used`, whether #587 or a follow-up PR does the unification, what the cache key includes, whether embedded calls inside a compiled set of evaluation points use the call's executor, and what the program store holds (OD1–OD8).
 
 ---
 
@@ -241,7 +241,7 @@ A call context, a block, and an installed evaluation context each restore the pr
 - **JAX program ProbPipe opens:** a compiled JAX program that ProbPipe's code builds and runs and that runs user code or route code, such as the `jax` executor's lifted JAX program, a joint's compiled sampler, or an inference method's chain runner. Its first argument is the call token. A family's own sampler, which runs no user code, takes no token (OD6).
 - **JAX program the user opens:** a compiled JAX program that the user's code builds, such as their own `jax.jit` around ProbPipe code. It takes no token.
 - **Traced token:** while ProbPipe traces a JAX program it opens, the tracer that stands for that JAX program's token argument. An embedded call staged during the trace passes it to its callback.
-- **Draw counts:** the numbers of Monte Carlo draws that the routes of a call take, which its provenance reports as `num_samples` (#586).
+- **`num_samples` used:** the number of draws each Monte Carlo estimate of a call actually took, held in `num_samples_used`; the call's provenance reports it as `num_samples` (#586). It differs from the `num_samples` control, which says how many draws an estimate should take: a call that ran no Monte Carlo estimate reports none, and the calls a derived route's formula makes may use their own counts. In `method_options`, an MCMC method's draw counts are a different thing.
 
 ---
 
@@ -291,7 +291,7 @@ class _CallContext:
     presentation, which cannot change a computed value. Reading any other setting
     while ProbPipe traces one of its JAX programs raises.
 
-    The dataclass is frozen. Its mutable parts (`draw_counts`, `evaluation_log`,
+    The dataclass is frozen. Its mutable parts (`num_samples_used`, `evaluation_log`,
     `embedded_calls`, `evaluation_run_table`) are separate objects that it references, each
     with its own lock, so copying a context never copies an accumulator.
 
@@ -308,12 +308,12 @@ class _CallContext:
         The running call's `Function` label, for messages.
     controls : Mapping[str, Any]
         The running call's resolved controls, without `executor` and
-        `executor_options`, whose home is `execution`.
-    draw_counts : _MonteCarloDrawCounts or None
+        `executor_options`, whose home is `execution_choice`.
+    num_samples_used : _NumSamplesUsed or None
         The numbers of Monte Carlo draws the call's routes take, which its
         provenance reports as `num_samples`. Merged into the parent's on success
         when the parent collects calls.
-    execution : _ExecutionChoice
+    execution_choice : _ExecutionChoice
         The executor, its options, and whether the choice was named on this call,
         inherited, or automatic. The only place code reads the executor choice.
     evaluation_log : _EvaluationLog or None
@@ -338,9 +338,9 @@ class _CallContext:
     passed_controls: Mapping[str, Any] | None = None
     label: str | None = None
     controls: Mapping[str, Any] = _NO_CONTROLS
-    draw_counts: _MonteCarloDrawCounts | None = None
+    num_samples_used: _NumSamplesUsed | None = None
     # --- added by E3a ---------------------------------------------------------------------
-    execution: _ExecutionChoice = AUTOMATIC_SELECTION
+    execution_choice: _ExecutionChoice = AUTOMATIC_SELECTION
     evaluation_log: _EvaluationLog | None = None
     jax_settings: Mapping[str, Any] = _NO_JAX_SETTINGS
     # --- added by E4 ----------------------------------------------------------------------
@@ -350,7 +350,7 @@ class _CallContext:
 
     def with_config_block(self, values: Mapping[str, Mapping[str, Any]]) -> _CallContext: ...
     def with_passed_controls(self, passed: Mapping[str, Any] | None) -> _CallContext: ...
-    def opening_call(self, *, label: str, controls: Mapping[str, Any], execution: _ExecutionChoice) -> _CallContext: ...
+    def opening_call(self, *, label: str, controls: Mapping[str, Any], execution_choice: _ExecutionChoice) -> _CallContext: ...
     def evaluation_context(self) -> _CallContext: ...
     def is_default(self) -> bool: ...
 ```
@@ -362,9 +362,9 @@ Field by field:
 | `config_blocks` | mapping of section to setting to value | `config.<section>.using` and `config.using`, through `with_config_block` | `_Section._current` in `core/config.py` | #587 | `_TEMPORARY` (#587) | **Change:** the variable goes; its value is a field |
 | `passed_controls` | mapping or `None` | `_passing_down` in a derived route's scope; `opening_call`, which clears the counts and keeps `exact_only` (today's `_EXACT_ONLY_BELOW`) | `opening_call` through `Function._inheriting` | #587 | `_INHERITED_CONTROLS` (#547, #586) | **Change:** the variable goes; its value is a field |
 | `label` | `str` or `None` | `opening_call` | messages and warnings | #587 | none | new |
-| `controls` | mapping | `opening_call`: the view's `options` after `_inheriting`, without `executor` and `executor_options`, whose one home is `execution` | `_current_num_samples`, executors (E3a), requesters that read `method_options["on_failure"]` | #587 | `_MonteCarloRecord.num_samples` and `Function.options` | **Change:** `_MonteCarloRecord.num_samples` goes |
-| `draw_counts` | `_MonteCarloDrawCounts` | routes, through `_note_monte_carlo_draws`; `opening_call` and `_counting_monte_carlo_draws` create one | the call's provenance; the parent's counts on success, when the parent collects calls | #587 | `_MONTE_CARLO` (#586) | **Change:** renamed; the variable goes |
-| `execution` | `_ExecutionChoice(executor, options, source)`, the one home of the executor choice | `opening_call`, from the call's own `executor` controls, else the parent's choice; `evaluation_context` resets it | the executor dispatcher; the host side through the token | E3a | the controls `dispatch` and `max_workers` | new |
+| `controls` | mapping | `opening_call`: the view's `options` after `_inheriting`, without `executor` and `executor_options`, whose one home is `execution_choice` | `_current_num_samples`, executors (E3a), requesters that read `method_options["on_failure"]` | #587 | `_MonteCarloRecord.num_samples` and `Function.options` | **Change:** `_MonteCarloRecord.num_samples` goes |
+| `num_samples_used` | `_NumSamplesUsed` | routes, through `_note_num_samples_used`; `opening_call` and `_collecting_num_samples_used` create one | the call's provenance; the parent's counts on success, when the parent collects calls | #587 | `_MONTE_CARLO` (#586) | **Change:** renamed; the variable goes |
+| `execution_choice` | `_ExecutionChoice(executor, options, source)`, the one home of the executor choice | `opening_call`, from the call's own `executor` controls, else the parent's choice; `evaluation_context` resets it | the executor dispatcher; the host side through the token | E3a | the controls `dispatch` and `max_workers` | new |
 | `evaluation_log` | `_EvaluationLog` | the executor dispatcher and the host side; a closing child merges its log into its parent's, on success and on error | provenance; replay's `executor` | E3a | the key broker's `requested_dispatch` | **Change:** moves off the broker |
 | `embedded_calls` | `_EmbeddedCallState`: the call token (`None` until registered), the failure list, and the outputs of the JAX programs with embedded calls the call ran | `opening_call` creates it, empty, outside a trace; the engine registers the token before it first runs a JAX program with embedded calls; the host side writes failures | JAX programs with embedded calls; `_ACTIVE_CALLS`; the engine at close | E4 | none | new |
 | `evaluation_run_table` | `_EvaluationRunTable` | the host side and the dispatcher | the same, before running an evaluation point | E7 | none | new |
@@ -395,7 +395,7 @@ def _opening_call_context(method):
         context = parent.opening_call(
             label=view.label,
             controls=view.options,                           # explicit, then passed, then block, then session
-            execution=_execution_choice(view, parent),       # E3a; see § 5.3
+            execution_choice=_execution_choice(view, parent),       # E3a; see § 5.3
         )
         with _call_context_open(context, parent):           # releases any token (E4) and restores on exit
             return method(view, *args, **kwargs)
@@ -405,14 +405,14 @@ def _opening_call_context(method):
 `opening_call` builds the child:
 1. **`config_blocks`:** the parent's mapping, the same object.
 2. **`passed_controls`:** the parent's passed `exact_only` alone, or `None`, as `_EXACT_ONLY_BELOW` does today. The passed counts therefore apply only to the calls an identity makes directly.
-3. **`controls`, `label`, `execution`:** as resolved above.
-4. **`draw_counts`:** a new, empty `_MonteCarloDrawCounts`.
+3. **`controls`, `label`, `execution_choice`:** as resolved above.
+4. **`num_samples_used`:** a new, empty `_NumSamplesUsed`.
 5. **`embedded_calls` and `evaluation_run_table`:** new and empty, when the call opens while no trace is active (E4, E7). Creating them registers nothing. A call opened while a trace is active gets neither, because its JAX programs become part of the traced JAX program and run later under that JAX program's token.
 6. **`jax_settings`:** the parent's snapshot, or a new snapshot of the four shipped settings when the parent has no call (E3a).
 
 Two methods differ from `__call__`:
-- **`check`** opens a context without draw counts and without embedded-call state, since it draws nothing and runs no JAX program.
-- **`apply`** shares its parent's `draw_counts` instead of starting its own, so the draws an `apply` makes count toward the enclosing call, as they do today, where only `__call__` starts its own Monte Carlo draw counts (`functions/_function.py:313`).
+- **`check`** opens a context without `num_samples_used` and without embedded-call state, since it draws nothing and runs no JAX program.
+- **`apply`** shares its parent's `num_samples_used` instead of starting its own, so the draws an `apply` makes count toward the enclosing call, as they do today, where only `__call__` starts its own `num_samples_used` (`functions/_function.py:313`).
 
 **Registering a token.** A token is registered only for a JAX program with embedded calls, and only when no trace is active:
 1. **Detection.** The program store lowers a JAX program before its first run (execution plan §6.10, item 3, which step E3a builds). It traces the JAX program with `jax.jit(f).trace(...)`, searches the resulting jaxpr, sub-jaxprs included, and then lowers it. (A `Lowered` object carries no jaxpr.) The search looks for ProbPipe's own embedded-call callback, matched by the host-side function object, so `jax.debug.print` and a user's own callbacks do not count. A Python flag set while staging is not enough: a nested `jax.jit` that is already cached does not run its Python again when a second outer JAX program traces it (review test R1). The search found the callback through a nested `jit`, `custom_vjp` (its primal and under `grad`), `custom_jvp`, `checkpoint`, and `scan` (review test R1).
@@ -435,13 +435,13 @@ A ProbPipe call the evaluation point makes then opens a child of the evaluation 
 **Closing.** `_call_context_open` closes the context in this order:
 1. **Wait for JAX programs with embedded calls.** When the call holds a token, the engine blocks on the outputs of every JAX program with embedded calls it ran (`jax.block_until_ready`) before the call returns. JAX dispatches a JAX program asynchronously, so without the wait a callback could look up a released token. On CPU a JAX program with a callback returned only after the callback ran, and a JAX program without one returned before its result was ready (✅ `v04`). The design relies on neither. A call that ran no JAX program with embedded calls holds no token and waits for nothing, so its JAX programs keep running asynchronously after it returns.
 2. **Release the token** (E4), if the call registered one, in a `finally` clause.
-3. **Merge the draw counts** into the parent's on success, when the parent collects calls, as #586 does.
+3. **Merge `num_samples_used`** into the parent's on success, when the parent collects calls, as #586 does.
 4. **Merge what ran:** the call's `evaluation_log` merges into its parent's, on success and on error (§ 5.1).
 5. **Check the JAX settings** at a root call (E8, Q18). A change raises on success. On error, a note naming the change is added to the original exception, so the original error is not hidden.
 6. **Restore the context variable**, in the same `finally` clause.
 
 **On error.** An exception raised during the call propagates after steps 2, 4, and 6.
-The draw counts are not merged.
+`num_samples_used` is not merged.
 When the failures in the call's `embedded_calls` hold entries recorded by a callback, the engine raises `EvaluationError` with them, chained to the exception JAX raised.
 It decides by the recorded failures, not by the exception's type: a failing callback raised `JaxRuntimeError` in one JAX program and as `ValueError("INTERNAL: CpuCallback error ...")` in another (✅ `v07`, `v07b`).
 The execution plan's §6.4 rule 2 now states this.
@@ -484,9 +484,9 @@ Each boundary has one mechanism, and every mechanism installs with the same func
 | Boundary | Mechanism | What crosses | Evidence |
 |---|---|---|---|
 | A nested call in the same thread | the context variable; the child derives from the current context | everything; the child computes its own controls, draw counts, and token | ✅ `v01` |
-| The engine's worker threads (today `dispatch="thread"`; E3a's `thread` executor) | the work function carries `current.evaluation_context()`: `_ContextBoundFunction(func, context)` today, the `EvaluationChunk` from E3a | the evaluation context; the draw counts by reference | ✅ `v01`, `v09` item 2, `v12` |
-| Prefect tasks and flows (`workflow_kind` `TASK` or `FLOW`) | the same wrapper, inside Prefect's payload | the evaluation context; the draw counts are copied under a process runner | ✅ `v10` |
-| Spawned worker processes (E3a's `process` executor) | the pool's worker initializer applies `jax_settings` before the worker unpickles any chunk; the `EvaluationChunk` pickles the evaluation context | the evaluation context; the draw counts come back with the outcomes (OD4) | ✅ `v05` |
+| The engine's worker threads (today `dispatch="thread"`; E3a's `thread` executor) | the work function carries `current.evaluation_context()`: `_ContextBoundFunction(func, context)` today, the `EvaluationChunk` from E3a | the evaluation context; `num_samples_used` by reference | ✅ `v01`, `v09` item 2, `v12` |
+| Prefect tasks and flows (`workflow_kind` `TASK` or `FLOW`) | the same wrapper, inside Prefect's payload | the evaluation context; `num_samples_used` is copied under a process runner | ✅ `v10` |
+| Spawned worker processes (E3a's `process` executor) | the pool's worker initializer applies `jax_settings` before the worker unpickles any chunk; the `EvaluationChunk` pickles the evaluation context | the evaluation context; `num_samples_used` comes back with the outcomes (OD4) | ✅ `v05` |
 | Host callbacks in JAX programs ProbPipe opens, under `jit`, `vmap`, and `pmap` | the call token, an argument of the JAX program; the host side calls `_ACTIVE_CALLS.lookup(token)` | the whole context to the host side, which runs each evaluation point under its `evaluation_context()` | ✅ `v02`, `v03`, `v06`, `v13` |
 | A JAX program ProbPipe opens while tracing another | the enclosing traced token, passed as the inner JAX program's token argument | as above | ✅ `v06` |
 | A JAX program the user opens with their own `jax.jit` | no token: an embedded call stages token 0, and the host side runs under the default context | nothing | ✅ `v06`; OD3 |
@@ -559,11 +559,11 @@ Three consequences follow.
 ### 5.6 Provenance and replay
 
 Provenance reports each setting once, at the call whose work used it, under the setting's own name:
-1. **Route metadata.** A Monte Carlo route reports `num_samples` from `draw_counts.provenance_num_samples`, and a lift reports `max_evaluations`, as #586 does. A derived operation's call reports the draws of its formula's calls, because its counts collect theirs.
+1. **Route metadata.** A Monte Carlo route reports `num_samples` from `num_samples_used.provenance_num_samples`, and a lift reports `max_evaluations`, as #586 does. A derived operation's call reports the draws of its formula's calls, because its counts collect theirs.
 2. **Execution** (E3a, E4, E7). A call reports, from `evaluation_log`, each set of evaluation points it ran: the executor, its options, the number of evaluation points and of runs, and the failed or dropped evaluation points. An embedded call's sets of evaluation points are reported by the call that owns the token, never by a call that opened while tracing.
 3. **No block as such.** A `config` block is never recorded. Its effect is recorded through the resolved values that change a result, which items 1 and 2 already report. A setting that changes no result, such as `config.notation.max_depth`, is not recorded.
 4. **JAX's settings** (E8). A call that records a replay recipe records the root's `jax_settings` snapshot with the JAX version and the device count. It reads the snapshot from its context and never reads `jax.config` again, so the recorded values are the ones the call ran under.
-5. **Replay.** The recipe's `requested_dispatch` becomes `executor` (execution plan §6.8), read from the context's `execution`. **Change:** the key broker's `set_requested_execution` and its `requested_dispatch` and `requested_workflow_kind` fields go, so the broker keeps only randomness.
+5. **Replay.** The recipe's `requested_dispatch` becomes `executor` (execution plan §6.8), read from the context's `execution_choice`. **Change:** the key broker's `set_requested_execution` and its `requested_dispatch` and `requested_workflow_kind` fields go, so the broker keeps only randomness.
 
 ### 5.7 State that stays outside the call context
 
@@ -589,21 +589,21 @@ Each name says what the thing is, and none uses "record" for anything but `Recor
 |---|---|---|
 | (three context variables) | `_CallContext`, held in `_CALL_CONTEXT` | "call context" is the execution plan's term (§5) and is free in the glossary |
 | `_CarriedContext` | `_ContextBoundFunction(func, context)` | a function bound to the call context it runs under |
-| `_CarriedContext.record` | `_CallContext.draw_counts` | it holds the draw counts of Monte Carlo estimates |
+| `_CarriedContext.record` | `_CallContext.num_samples_used` | it holds the `num_samples` each Monte Carlo estimate used |
 | `_CarriedContext.inherited` | `_CallContext.passed_controls` | VI.0 says a derived route *passes* controls to the calls its formula makes |
 | `_CarriedContext.settings` | `_CallContext.config_blocks` | it holds the active `config.using` blocks, not every setting |
-| `_MonteCarloRecord` | `_MonteCarloDrawCounts` | |
+| `_MonteCarloRecord` | `_NumSamplesUsed` | |
 | `_MonteCarloRecord.num_samples` | removed; `_CallContext.controls["num_samples"]` | a second home of the resolved control |
-| `_MonteCarloRecord.recorded` | `_MonteCarloDrawCounts.provenance_num_samples` | the `num_samples` value the call's provenance reports |
+| `_MonteCarloRecord.recorded` | `_NumSamplesUsed.provenance_num_samples` | the `num_samples` value the call's provenance reports |
 | `_MonteCarloRecord.collects_calls` | unchanged | it matches the route attribute of the same name |
-| `_recording_monte_carlo` | `_counting_monte_carlo_draws` | the sub-scope that `_ByComponent` opens for each block, and that a call opens |
-| `_note_monte_carlo` | `_note_monte_carlo_draws` | |
+| `_recording_monte_carlo` | `_collecting_num_samples_used` | the sub-scope that `_ByComponent` opens for each block, and that a call opens |
+| `_note_monte_carlo` | `_note_num_samples_used` | |
 | `_MONTE_CARLO`, `_INHERITED_CONTROLS`, `_TEMPORARY` | removed | their values are fields |
 | `_temporary_settings`, `_applying` | removed | carrying the context replaces them |
 | `_temporarily` | `_CallContext.with_config_block` and `_under_call_context` | |
 | `_inheriting_controls` | `_opening_call_context` | it opens the call's context, and inheriting is one part of that |
 | `_carrying_call_context` | unchanged | it says what it does |
-| the local `record_token`, and `record` in `_run_call` and `_ByComponent` | `draw_counts`, and `block_entry` for `_ByComponent`'s per-block metadata | |
+| the local `record_token`, and `record` in `_run_call` and `_ByComponent` | `num_samples_used`, and `block_entry` for `_ByComponent`'s per-block metadata | |
 | (execution plan) table of active calls | `_ActiveCalls`, instance `_ACTIVE_CALLS` | |
 | (execution plan) traced token variable | `_TRACED_CALL_TOKEN` | |
 | (execution plan) resolved execution settings | `_ExecutionChoice` | the executor, its options, and where the choice came from |
@@ -621,12 +621,12 @@ The layering of `design/package-structure.md` and the decided Q5 place the code 
 
 | Module | Contents | Why there |
 |---|---|---|
-| `core/_call_context.py` (new) | `_CallContext`, `_CALL_CONTEXT`, `current_call_context`, `_under_call_context`, `_MonteCarloDrawCounts`, `_counting_monte_carlo_draws`, `_note_monte_carlo_draws`, `_ContextBoundFunction`, `_carrying_call_context`; later `_ExecutionChoice` (E3a), `_ActiveCalls` (E4), the JAX settings snapshot (E3a) | `core/config.py` reads `config_blocks`, and `core/_evaluation_points.py` (E3a) carries the context, so it must be in `core/`. It imports nothing outside `core/`. |
+| `core/_call_context.py` (new) | `_CallContext`, `_CALL_CONTEXT`, `current_call_context`, `_under_call_context`, `_NumSamplesUsed`, `_collecting_num_samples_used`, `_note_num_samples_used`, `_ContextBoundFunction`, `_carrying_call_context`; later `_ExecutionChoice` (E3a), `_ActiveCalls` (E4), the JAX settings snapshot (E3a) | `core/config.py` reads `config_blocks`, and `core/_evaluation_points.py` (E3a) carries the context, so it must be in `core/`. It imports nothing outside `core/`. |
 | `core/config.py` | the sections read `current_call_context().config_blocks`; `using` derives a context | as #587 |
 | `values/_function_base.py` | `_opening_call_context`, the decorator on `check`, `apply`, and `__call__`; `_passing_down` | the call's entry, as `_inheriting_controls` is today |
 | `operations/_operation.py` | `_derived_route_scope` calls `_passing_down`, unchanged | as today |
 | `functions/_execution.py` | `execute_many` wraps with `_carrying_call_context` until E3a replaces it with `EvaluationChunk` | as today |
-| `core/_evaluation_points.py`, `core/_executors.py` (E3a) | `EvaluationChunk` carries `evaluation_context()`; the dispatcher reads `execution` | execution plan §6.14 |
+| `core/_evaluation_points.py`, `core/_executors.py` (E3a) | `EvaluationChunk` carries `evaluation_context()`; the dispatcher reads `execution_choice` | execution plan §6.14 |
 | `functions/_boundary.py` (E4) | `_TRACED_CALL_TOKEN`, the staging of embedded calls, the host side | needs the `Function` engine |
 
 `_ContextBoundFunction` and `_carrying_call_context` move from `values/_function_base.py` to `core/_call_context.py`, because E3a's `EvaluationChunk` in `core/` uses them and `core/` cannot import `values/`.
@@ -652,7 +652,7 @@ The changes, in the order a reviewer reads them:
    ```
 
 3. **Passed controls.** `_passing_down` installs `current.with_passed_controls(...)`. `_INHERITED_CONTROLS` is removed, and `_inheriting_controls` becomes `_opening_call_context` (§ 5.2).
-4. **Draw counts.** `_recording_monte_carlo` becomes `_counting_monte_carlo_draws`, which installs a context with fresh `draw_counts`. `_opening_call_context` uses it, so `_call_function_in_context` no longer opens a record of its own. `_ByComponent._run_block` uses it for each block, as today. `_current_num_samples` reads `current_call_context().controls["num_samples"]` inside a call, and the block's or the session's value outside every call. `_MONTE_CARLO` is removed.
+4. **`num_samples` used.** `_recording_monte_carlo` becomes `_collecting_num_samples_used`, which installs a context with fresh `num_samples_used`. `_opening_call_context` uses it, so `_call_function_in_context` no longer opens a record of its own. `_ByComponent._run_block` uses it for each block, as today. `_current_num_samples` reads `current_call_context().controls["num_samples"]` inside a call, and the block's or the session's value outside every call. `_MONTE_CARLO` is removed.
 5. **The carrier.** `_carrying_call_context(func)` returns `_ContextBoundFunction(func, current_call_context().evaluation_context())`, or `func` itself when the context is empty. In #587 `evaluation_context()` returns the context unchanged, because the fields it drops arrive with E3a and E4.
 
    ```python
@@ -685,7 +685,7 @@ Each step adds fields and behaviour to the same type and the same functions, and
 
 | Step | Adds | Uses from #587 |
 |---|---|---|
-| E3a | `execution` and `_ExecutionChoice`; `evaluation_context()` drops `execution`; `evaluation_log` and its merge into the parent; `jax_settings`, shipped to process workers through the pool's initializer; `EvaluationChunk` carries `evaluation_context()` and returns its draw counts (OD4); the program store, holding `jax.jit` objects, tracing and lowering each JAX program before its first run (execution plan §6.10, item 3), with the passed controls and the traced settings in its cache key, and the declaration of each `config` setting's kind (OD6, CC4); replay reads `executor` from the context; the broker's requested-execution fields go | `_under_call_context`, `evaluation_context`, `_ContextBoundFunction` (or `EvaluationChunk.run` in its place) |
+| E3a | `execution_choice` and `_ExecutionChoice`; `evaluation_context()` drops `execution_choice`; `evaluation_log` and its merge into the parent; `jax_settings`, shipped to process workers through the pool's initializer; `EvaluationChunk` carries `evaluation_context()` and returns its `num_samples_used` (OD4); the program store, holding `jax.jit` objects, tracing and lowering each JAX program before its first run (execution plan §6.10, item 3), with the passed controls and the traced settings in its cache key, and the declaration of each `config` setting's kind (OD6, CC4); replay reads `executor` from the context; the broker's requested-execution fields go | `_under_call_context`, `evaluation_context`, `_ContextBoundFunction` (or `EvaluationChunk.run` in its place) |
 | E4 | `embedded_calls` and `_EmbeddedCallState`, `_ActiveCalls`; `evaluation_context()` drops `embedded_calls`; `_TRACED_CALL_TOKEN` and `_jax_tracing_active()`; detection and validity by a search of the jaxpr; lazy registration, the rule inside a trace, and the wait before release; raising recorded failures; the token threaded through every JAX program ProbPipe opens that runs user or route code, the inference runners included (execution plan §6.10, item 4, moves into E4); the output check per evaluation point and its cast warning; the error for reading a setting of neither kind while ProbPipe traces | the same |
 | E7 | `evaluation_run_table`; `evaluation_context()` drops it | the same |
 | E8 | the check of the JAX settings at close and on the host side; their provenance | the same |
@@ -721,7 +721,7 @@ with workflow_run(seed=1), config.sampling.using(num_samples=4096):
 
 What happens, step by step:
 1. **The block.** `config.sampling.using` installs a context whose `config_blocks` is `{"sampling": {"num_samples": 4096}}`. No call is open.
-2. **The call opens.** `condition_on`'s context takes the blocks, resolves its controls (its own `method`, `executor`, and `executor_options`; `num_samples` 4096 from the block), and gets `execution = _ExecutionChoice("slurm", {"n_jobs": 4}, "call")`. It registers no token yet.
+2. **The call opens.** `condition_on`'s context takes the blocks, resolves its controls (its own `method`, `executor`, and `executor_options`; `num_samples` 4096 from the block), and gets `execution_choice = _ExecutionChoice("slurm", {"n_jobs": 4}, "call")`. It registers no token yet.
 3. **The sampler compiles once.** The method opens a compiled JAX program whose first argument is the call token. While the store lowers it, `_TRACED_CALL_TOKEN` holds the traced token. The kernel's function calls `forward(theta)` on traced values, so `forward` becomes an embedded call staged with the traced token, and the store records a JAX program with embedded calls. Before running it, the engine registers `condition_on`'s context and gets token 7. The JAX program's cache key includes the traced settings, so `num_samples` 4096 is part of it (OD6).
 4. **Four XLA threads.** Under `pmap`, each chain's callback runs on its own XLA thread and sees no context variable (✅ `v02`). Each host side looks up token 7 and finds `slurm`, its options, and the blocks. It runs its evaluation points under the evaluation context, so code inside an evaluation point reads `num_samples` 4096.
 5. **A call inside an evaluation point.** If the solver's Python makes a ProbPipe call, that call opens a child of the evaluation context, which has no executor choice, so it uses automatic selection (Q8).
@@ -746,9 +746,9 @@ with workflow_run(seed=3), config.sampling.using(num_samples=4096):
 **#587 today** (`dispatch="thread"` in place of the executor): the wrapper carries the inherited controls, the record, and the blocks, so each worker reads 4096 (✅ `v09` item 2).
 
 **Proposed:**
-1. `loss`'s call opens a context with the block, `execution = ("thread", {"max_workers": 8}, "call")`, and its own draw counts.
+1. `loss`'s call opens a context with the block, `execution_choice = ("thread", {"max_workers": 8}, "call")`, and its own `num_samples_used`.
 2. Each cell is an evaluation point. The thread executor gives each worker `_ContextBoundFunction(evaluate_cell, context.evaluation_context())`, from E3a an `EvaluationChunk` holding the same evaluation context. One copied `Context` cannot serve two threads (✅ `v01`), and copying the whole context would carry the workflow frame (✅ `v12`), so carrying the named value is the mechanism.
-3. In a worker, `mean`'s call opens a child of the evaluation context. It inherits the block (4096) and no executor, so a Monte Carlo summary runs where the cell runs. Its draw counts are its own, and `loss`'s provenance does not collect them, because `loss` is not a derived operation.
+3. In a worker, `mean`'s call opens a child of the evaluation context. It inherits the block (4096) and no executor, so a Monte Carlo summary runs where the cell runs. Its `num_samples_used` is its own, and `loss`'s provenance does not collect them, because `loss` is not a derived operation.
 4. A `config.using` block that the body opens in one cell applies to that cell alone (✅ `v09` item 3: evaluation point 0 read 7, the other evaluation points and the caller read 1024).
 
 ### 8.3 A spawned process executor
@@ -764,7 +764,7 @@ with workflow_run(seed=4), config.sampling.using(num_samples=2048):
 2. The `process` executor checks that the chunks can be shipped, then ships each `EvaluationChunk` with the evaluation context pickled inside it.
 3. The pool starts each worker with an initializer that applies the shipped JAX settings before the worker unpickles anything. `EvaluationChunk.run` then installs the evaluation context, enters each evaluation point's workflow scope, and runs the evaluation points. Without the settings the worker draws in float32 (✅ `v05`), and settings applied after unpickling are too late: a float64 array in the payload had already become float32 (review test R4). `jax_num_cpu_devices` cannot be changed in a running process, so it is not shipped.
 4. A ProbPipe call inside an evaluation point opens a child of the evaluation context, so it sees the block and uses automatic selection.
-5. The chunk's outcomes carry the draw counts its evaluation points noted, and the parent merges them into the call's counts (OD4). Today a process worker notes into a copy that the call never receives (#586's docstring).
+5. The chunk's outcomes carry the `num_samples_used` its evaluation points noted, and the parent merges them into the call's (OD4). Today a process worker notes into a copy that the call never receives (#586's docstring).
 
 ---
 
@@ -772,9 +772,9 @@ with workflow_run(seed=4), config.sampling.using(num_samples=2048):
 
 Each case was tried against the contract as a skeptical reviewer would.
 
-1. **Nested calls.** `standard_deviation.using(num_samples=500)(y)` opens a context whose derived route's scope derives `passed_controls = {exact_only: False, num_samples: 500, ...}`. `variance` opens a child, takes 500 unless its own view sets a count, and clears the passed counts for its own inner calls. Its draw counts merge into `standard_deviation`'s on success, because the derived route collects calls. This is today's behaviour, with one variable in place of two.
+1. **Nested calls.** `standard_deviation.using(num_samples=500)(y)` opens a context whose derived route's scope derives `passed_controls = {exact_only: False, num_samples: 500, ...}`. `variance` opens a child, takes 500 unless its own view sets a count, and clears the passed counts for its own inner calls. Its `num_samples_used` merges into `standard_deviation`'s on success, because the derived route collects calls. This is today's behaviour, with one variable in place of two.
 2. **Threads inside a callback.** A host side that runs the `thread` executor gives each worker the evaluation context of the token's call. The worker's ProbPipe calls open their own contexts and tokens. ✅ `v06` ran a thread pool inside a callback, under `jit` and under `pmap`.
-3. **An exception mid-call.** The `finally` clause releases the token and restores the variable, and the draw counts are not merged (✅ `v07`: the variable was empty and the table was empty afterwards). An exception inside a worker evaluation point restores that worker's variable through `_under_call_context`, so a reused pool thread starts clean.
+3. **An exception mid-call.** The `finally` clause releases the token and restores the variable, and `num_samples_used` is not merged (✅ `v07`: the variable was empty and the table was empty afterwards). An exception inside a worker evaluation point restores that worker's variable through `_under_call_context`, so a reused pool thread starts clean.
 4. **Two concurrent calls on different threads.** Each thread has its own context variable, each call its own token, and the compiled JAX program is shared. ✅ `v07`: two threads made five calls each through one compiled JAX program, and every callback found its own call.
 5. **Re-entrant calls.** An evaluation point run by a host side opens a ProbPipe call, which opens its own JAX program with its own token while the outer JAX program waits. ✅ `v06`: under `jit` and under `pmap`, each inner call found its own context with no executor, and the table was empty at the end. The lock of `_ACTIVE_CALLS` is held only for the lookup, so re-entry cannot deadlock on it.
 6. **A `config.using` block opened inside an evaluation point.** It derives from the evaluation context and is reset on exit. ✅ `v09` item 3 for evaluation points on threads, and ✅ `v11` for embedded evaluation points on XLA threads: inside the block an evaluation point read 7, and after it 1024. In `v11` JAX started new XLA threads for each `pmap` call, so a leak across calls did not appear. JAX documents no such rule, so the reset on exit is required, not optional.
@@ -818,7 +818,7 @@ Scripts marked ‡ need `XLA_FLAGS=--xla_force_host_platform_device_count=4`.
 - Behaviour on a GPU or a TPU, where callbacks run on runtime threads and dispatch is asynchronous in more cases (execution plan §8 already lists this).
 - Ray and Dask task runners for Prefect, which are not installed. The design assumes they pickle the payload, as a process does.
 - Why the failing callback of `v07` arrived as `ValueError` and the one of `v07b` as `JaxRuntimeError`. The design does not depend on the type.
-- Free-threaded Python, where the draw counts' set needs its lock. The design gives it one.
+- Free-threaded Python, where the set in `num_samples_used` needs its lock. The design gives it one.
 
 ---
 
@@ -869,12 +869,12 @@ Under B the same code reads a block under `jit` and the session's value under `p
 
 **Recommendation: A.**
 
-### OD4. Draw counts from process workers
+### OD4. `num_samples` used in process workers
 
 **Background.** #586 notes that a worker process counts its draws into a copy that the call never receives, so the call's provenance can miss them.
 
 **Options.**
-- **A.** From E3a, an `EvaluationChunk` returns the draw counts its evaluation points noted with its outcomes, and the executor's merge adds them to the call's counts.
+- **A.** From E3a, an `EvaluationChunk` returns the `num_samples_used` its evaluation points noted with its outcomes, and the executor's merge adds them to the call's counts.
 - **B.** Keep #586's behaviour and document it.
 
 **Recommendation: A**, in E3a, which builds the chunk anyway.
@@ -953,12 +953,12 @@ Thanks for #587. The `config` sections and the `using` blocks are what we want, 
 **The proposal.** One frozen `_CallContext`, in one context variable, in a new module `core/_call_context.py`. Your three variables become three of its fields, and the execution steps add their fields to the same type later. The full design is in `plans/call-context-proposal.md`.
 
 **Concrete changes in #587:**
-1. Add `core/_call_context.py` with `_CallContext` (fields `config_blocks`, `passed_controls`, `label`, `controls`, `draw_counts`), the context variable, `current_call_context()`, and `_under_call_context(context)`.
+1. Add `core/_call_context.py` with `_CallContext` (fields `config_blocks`, `passed_controls`, `label`, `controls`, `num_samples_used`), the context variable, `current_call_context()`, and `_under_call_context(context)`.
 2. `_Section._current` reads `current_call_context().config_blocks`, and `using` installs `current.with_config_block(...)`. `_TEMPORARY`, `_temporarily`, `_temporary_settings`, and `_applying` go.
 3. `_passing_down` installs `current.with_passed_controls(...)`, and `_INHERITED_CONTROLS` goes. `_inheriting_controls` becomes `_opening_call_context`, which opens a child context for every call.
-4. `_recording_monte_carlo` becomes `_counting_monte_carlo_draws`, and `_MONTE_CARLO` goes. The call's resolved `num_samples` is read from `context.controls`, so `_MonteCarloRecord.num_samples` goes.
+4. `_recording_monte_carlo` becomes `_collecting_num_samples_used`, and `_MONTE_CARLO` goes. The call's resolved `num_samples` is read from `context.controls`, so `_MonteCarloRecord.num_samples` goes.
 5. `_carrying_call_context(func)` returns `_ContextBoundFunction(func, current_call_context().evaluation_context())`. In this PR `evaluation_context()` returns the context unchanged.
-6. Renames, so no name uses "record" for anything but `Record`: `_MonteCarloRecord` → `_MonteCarloDrawCounts`, the field `record` → `draw_counts`, `.recorded` → `.provenance_num_samples`, `_note_monte_carlo` → `_note_monte_carlo_draws`, `_CarriedContext` → `_ContextBoundFunction`, and the locals named `record`. If #586 is still open, these belong there.
+6. Renames, so no name uses "record" for anything but `Record`: `_MonteCarloRecord` → `_NumSamplesUsed`, the field `record` → `num_samples_used`, `.recorded` → `.provenance_num_samples`, `_note_monte_carlo` → `_note_num_samples_used`, `_CarriedContext` → `_ContextBoundFunction`, and the locals named `record`. If #586 is still open, these belong there.
 7. In V.2, replace "A setting read while JAX traces a function is its value at trace time." A compiled JAX program is reused across calls, so a value baked in while tracing leaks into the next call. The replacement says that ProbPipe reads settings when a call starts, in Python, and that ProbPipe code inside a user's own `jax.jit` keeps the values in effect while that JAX program was traced.
 8. Add "call context" to the glossary.
 9. In the PR body, the reason for carrying explicitly is that Prefect's process runners need pickled data and that `copy_context` would also copy the workflow frame. Prefect's thread runner does copy the context.
@@ -1002,3 +1002,4 @@ Nothing else changes. The sections, their checks and environment variables, `res
 | 18 | (2026-10-18) "Cache key" replaces "key" for what a cache looks a compiled JAX program up by, so "key" keeps its random-key and mapping senses; `_CallContext` gets a full docstring; the fields `evaluations_run` and `evaluation_runs`, easy to confuse, became `evaluation_log` and `run_table`. | The maintainer's review. |
 | 19 | (2026-10-18) `run_table` became `evaluation_run_table`, and `_RunTable` became `_EvaluationRunTable`. | The maintainer's review. |
 | 20 | (2026-10-18) A derived operation's "identity" is its **formula**, and the identity route is the **derived route**, so `passed_controls` are the controls a derived route passes to the calls its formula makes, and the identity scope is the derived route's scope (`_derived_route_scope`). | The maintainer's review. |
+| 21 | (2026-10-18) The record of the Monte Carlo draws a call took is named after the public control it reports: `draw_counts` became `num_samples_used`, `_MonteCarloDrawCounts` became `_NumSamplesUsed`, `_note_monte_carlo_draws` became `_note_num_samples_used`, and `_counting_monte_carlo_draws` became `_collecting_num_samples_used`; `execution` became `execution_choice`. | The maintainer's review: one name for what the user sees as `num_samples`, and "draw counts" also named an MCMC method's draws. |

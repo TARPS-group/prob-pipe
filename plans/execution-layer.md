@@ -1398,7 +1398,7 @@ The design therefore places the code by what it depends on:
 
 | Module | Contents | Why there |
 |---|---|---|
-| `core/_call_context.py` | the call context, its carrier, the table of active calls, and the Monte Carlo draw counts ([`call-context-proposal.md`](call-context-proposal.md)) | `core/config.py` and `core/_evaluation_points.py` read it |
+| `core/_call_context.py` | the call context, its carrier, the table of active calls, and the `num_samples` used by Monte Carlo estimates ([`call-context-proposal.md`](call-context-proposal.md)) | `core/config.py` and `core/_evaluation_points.py` read it |
 | `core/_evaluation_points.py` | `EvaluationPoints`, `EvaluationChunk`, `EvaluationOutcomes`, `EvaluationFailure`, `EvaluationError`, `evaluate_at_points` | every package builds sets of evaluation points |
 | `core/_executors.py` | the executor registry and the built-in executors | every package chooses through it |
 | `core/_compilation.py` | `compiled_or_eager` with the tracing rule, and the program store | as today |

@@ -31,10 +31,10 @@ Each item says why it matters, what is recommended, and where to read more.
 
 ### M2. The call-context plan
 
-**Why.** It is the one mechanism that carries per-call state (`config` blocks, inherited controls, Monte Carlo draw counts, the executor choice, the call token, the JAX settings) into threads, processes, Prefect, and host callbacks inside compiled JAX programs. It unifies jhuggins's #587 with the execution plan, so nothing is built twice. Read the proposal in full; its § 1 summarizes it in eleven statements.
+**Why.** It is the one mechanism that carries per-call state (`config` blocks, inherited controls, the `num_samples` its Monte Carlo estimates used, the executor choice, the call token, the JAX settings) into threads, processes, Prefect, and host callbacks inside compiled JAX programs. It unifies jhuggins's #587 with the execution plan, so nothing is built twice. Read the proposal in full; its § 1 summarizes it in eleven statements.
 
 **The design in brief:**
-- **One value.** One frozen `_CallContext`, in one context variable, in `core/_call_context.py`. #587's three context variables become three of its fields: `config_blocks`, `passed_controls`, and `draw_counts`. The execution steps add their own fields to the same type.
+- **One value.** One frozen `_CallContext`, in one context variable, in `core/_call_context.py`. #587's three context variables become three of its fields: `config_blocks`, `passed_controls`, and `num_samples_used`. The execution steps add their own fields to the same type.
 - **Who opens one.** Every `Function` call opens a child context. A `config.using` block or a derived route's scope derives a changed copy and opens no call.
 - **One precedence rule:** the call's explicit setting, then a value passed down, then the innermost block, then the session value, then the default. `exact_only` accumulates.
 - **Transport:**
@@ -46,8 +46,8 @@ Each item says why it matters, what is recommended, and where to read more.
   - *traced*, such as `num_samples`: part of the compiled JAX program's key;
   - *presentation*, such as `notation.max_depth`: readable anywhere, never part of a key.
 - **Renames:**
-  - `record` → `draw_counts`;
-  - `_MonteCarloRecord` → `_MonteCarloDrawCounts`;
+  - `record` → `num_samples_used`;
+  - `_MonteCarloRecord` → `_NumSamplesUsed`;
   - `_CarriedContext` → `_ContextBoundFunction`.
 
 **The open decisions** (each is explained in § 11 of the proposal):
@@ -57,7 +57,7 @@ Each item says why it matters, what is recommended, and where to read more.
 | OD1 | `config` blocks are a field of the one context, not a separate variable | Accept |
 | OD2 | The provenance mode becomes a per-call setting, which fixes a bug in #587 (M4) | Accept, as step PV |
 | OD3 | A callback in a JAX program the user compiles runs under the default context on every thread | Accept: otherwise `jit` and `pmap` read different settings |
-| OD4 | Process workers return their Monte Carlo draw counts with their outcomes, starting in E3a | Accept |
+| OD4 | Process workers return the `num_samples` their Monte Carlo estimates used with their outcomes, starting in E3a | Accept |
 | OD5 | #587 creates the one context before it merges, rather than a follow-up PR (M3) | Accept |
 | OD6 | A compiled JAX program's key holds the passed controls and the traced settings only | Accept (option A′) |
 | OD7 | An embedded call inside a program the `jax` executor compiles uses the call's executor, so `growth.using(executor="slurm")` sends the opaque `forward` inside it to the cluster | Accept; Q8 then covers only calls an evaluation point makes in Python |

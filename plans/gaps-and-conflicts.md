@@ -361,13 +361,13 @@ Inside a compiled program it cannot, for two reasons its verification found:
 So the plan passes a **call token** into every program as an argument, and the host looks the call's settings up by token (principle P11: per-call values are data at every boundary).
 
 **The problem.** Three things need to fit together.
-1. **Callbacks cannot see the carried context.** An embedded call's host side finds its settings by token. Unless the call context registered under the token also holds the active `config` blocks and the Monte Carlo draw counts, a callback on an XLA thread reads the session values instead of the block's, and its draws go unrecorded.
+1. **Callbacks cannot see the carried context.** An embedded call's host side finds its settings by token. Unless the call context registered under the token also holds the active `config` blocks and the `num_samples` used by Monte Carlo estimates, a callback on an XLA thread reads the session values instead of the block's, and its draws go unrecorded.
 2. **"Its value at trace time" meets program reuse.** A program store reuses one compiled program across calls. A setting read inside a traced function and baked in would then leak from one call into the next. A setting that changes what a compiled program computes must be part of the program's cache key or be passed as an argument.
 3. **Where executor settings are kept.** #587 adds `config.prefect`, which holds the Prefect task runner and auto-detects Ray or Dask. The execution plan's Q9 retires that auto-detection and turns Prefect's runners into a `prefect` executor, after the workshop. It is also open whether `executor` and `executor_options` get a `config.execution` section for session defaults.
 4. **When Prefect's auto-detection goes.** Step E3 replaces the dispatch modes before the workshop, while the `prefect` executor comes after it. Retiring the auto-detection in E3 would remove behaviour before its replacement exists, which directive 8 rules out.
 
 **Options.**
-1. One call context, the execution plan's, that captures #587's carried context (its active blocks and its Monte Carlo draw counts) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the cache key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
+1. One call context, the execution plan's, that captures #587's carried context (its active blocks and the `num_samples` its Monte Carlo estimates used) when the call starts, and travels by token into callbacks and by shipping into worker processes. Settings that change a compiled program join the cache key. No `config.execution` section for now. Prefect's auto-detection stays unchanged until the `prefect` executor replaces it.
 2. Two mechanisms side by side.
 
 **Recommendation.** Option 1, agreed with jhuggins before step E3 starts.

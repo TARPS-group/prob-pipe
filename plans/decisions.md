@@ -19,6 +19,7 @@ Newest first.
 
 | Date | Decision | Area | Source |
 |---|---|---|---|
+| 2026-10-18 | The record of the Monte Carlo draws a call actually took is named after the control it reports: `num_samples_used` (`_NumSamplesUsed`, `_note_num_samples_used`, `_collecting_num_samples_used`); "draw counts" is no longer used for it. The call context's executor choice is the field `execution_choice`. | execution | maintainer |
 | 2026-10-18 | A derived operation is computed by its **formula**, such as `prob = exp ∘ log_prob`, through its **derived route**; "identity" no longer names either, since it already means a term's, a random event's, and an evaluation point's identity. "Formula" always means a derived operation's defining equation; direct routes are "direct" or "closed form". Names: `derived_route=`, `_DerivedRoute`, `is_derived`, `_derived_route_scope`, `formula_check`, `OperationSummary.formula`, `_formula_source`; VI.0's heading "Controls inside a derived route". The rename is part of step E0. | operations | maintainer |
 | 2026-10-18 | "Cache key" names what a cache looks a compiled JAX program or a probe result up by; "key" alone keeps its random-key and mapping senses. | execution | maintainer |
 | 2026-10-18 | A private object of central importance, such as `_CallContext`, gets a full docstring: what it is, its lifecycle, its invariants, and each attribute (README directive 5). | process | maintainer |
